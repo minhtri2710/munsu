@@ -1016,15 +1016,43 @@ func newSessionStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "session-start",
 		Short: "Lock, bootstrap, wake-drain, and digest fleet state",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			_, err = session.RunSessionStart(homeDir)
+			return err
+		},
 	}
 }
 
 func newBootstrapCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "bootstrap",
+		Use:   "bootstrap [install <tools>...]",
 		Short: "Detect toolchain and run setup sweeps",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			locked := lock.IsLocked(homeDir)
+			var installTools []string
+			if len(args) > 1 && args[0] == "install" {
+				installTools = args[1:]
+			}
+			result, err := bootstrap.Run(homeDir, !locked, installTools)
+			if err != nil {
+				return err
+			}
+			for _, d := range result.Diagnostics {
+				fmt.Println(d)
+			}
+			for _, c := range result.ConfigDetails {
+				fmt.Println(c)
+			}
+			return nil
+		},
 	}
 }
 
@@ -1032,7 +1060,30 @@ func newFleetSyncCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fleet-sync [<project>]",
 		Short: "Fast-forward refresh project clones",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			projectName := ""
+			if len(args) > 0 {
+				projectName = args[0]
+			}
+			result, err := fleet.Sync(homeDir, projectName)
+			if err != nil {
+				return err
+			}
+			for _, s := range result.Synced {
+				fmt.Printf("synced: %s\n", s)
+			}
+			for _, s := range result.Stuck {
+				fmt.Printf("STUCK: %s\n", s)
+			}
+			for _, e := range result.Errors {
+				fmt.Printf("error: %s\n", e)
+			}
+			return nil
+		},
 	}
 }
 
@@ -1112,6 +1163,8 @@ func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "update",
 		Short: "Self-update munsu",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return selfupdate.Update()
+		},
 	}
 }
