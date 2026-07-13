@@ -1,36 +1,57 @@
 // Package session provides the session backend interface and resolution.
 //
-// The Backend interface abstracts session management operations (creating
-// windows, sending keys, capturing output, health checks, and teardown).
-// The default resolution (Backend()) returns a tmux-based implementation.
+// The Backend interface abstracts session management operations.
+// Default() returns auto-detected backend; fallback is tmux.
 package session
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // Backend defines the operations for managing agent session windows.
 type Backend interface {
-	// NewWindow creates a new window with the given session and window name.
-	// Returns the backend-specific window identifier and any error.
 	NewWindow(session, name string) (string, error)
-
-	// SendKeys sends literal text as keystrokes to the identified window/pane.
 	SendKeys(windowID, text string) error
-
-	// Capture captures the last N lines of output from the identified window/pane.
 	Capture(windowID string, lines int) (string, error)
-
-	// Alive checks whether the identified window/pane still exists.
 	Alive(windowID string) bool
-
-	// Teardown destroys the identified window/pane. Errors are suppressed
-	// if the window is already gone.
 	Teardown(windowID string) error
 }
 
-// Default returns the default session backend — currently the tmux adapter.
-func Default() Backend {
-	return &TmuxBackend{}
+// ErrNotImplemented is returned when a backend operation is not available.
+var ErrNotImplemented = fmt.Errorf("not yet implemented")
+
+// Select returns the named backend. Supported: "tmux", "herdr", "zellij",
+// "cmux", "orca". Falls back to tmux on unknown name.
+func Select(name string) Backend {
+	switch name {
+	case "herdr":
+		return &HerdrBackend{}
+	case "zellij":
+		return &ZellijBackend{}
+	case "cmux":
+		return &CmuxBackend{}
+	case "orca":
+		return &OrcaBackend{}
+	default:
+		return &TmuxBackend{}
+	}
 }
 
-// ErrNotImplemented is returned when a backend operation is not yet available.
-var ErrNotImplemented = fmt.Errorf("not yet implemented")
+// Default returns the auto-detected backend based on environment.
+// Detection order: HERDR_ENV > ZELLIJ > CMUX_SOCKET > ORCA_RUNTIME > tmux.
+func Default() Backend {
+	if os.Getenv("HERDR_ENV") != "" {
+		return &HerdrBackend{}
+	}
+	if os.Getenv("ZELLIJ_SESSION_NAME") != "" {
+		return &ZellijBackend{}
+	}
+	if os.Getenv("CMUX_SOCKET") != "" {
+		return &CmuxBackend{}
+	}
+	if os.Getenv("ORCA_RUNTIME") != "" {
+		return &OrcaBackend{}
+	}
+	return &TmuxBackend{}
+}
