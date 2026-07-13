@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/agentsmd"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
@@ -92,6 +93,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newEnsureAgentsMdCmd())
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newSecondmateCmd())
+	root.AddCommand(newAfkCmd())
 
 	return root
 }
@@ -1366,4 +1368,24 @@ func newSecondmateCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+func newAfkCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "afk",
+		Short: "Enter away-mode supervision",
+		Long: `Start the away-mode sub-supervisor daemon.
+
+The daemon sets the AFK flag and polls the fleet at a reduced cadence.
+Captain-relevant events (done/failed/needs-decision) are printed.
+
+Stop with SIGTERM/SIGINT. The flag is cleared on stop.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return afk.Start(homeDir)
+		},
+	}
 }
