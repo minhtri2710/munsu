@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/agentsmd"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
@@ -19,6 +20,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/selfupdate"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/stow"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/teardown"
@@ -1222,7 +1224,25 @@ func newStowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stow",
 		Short: "Sweep session for durable knowledge",
-		RunE:  notImplementedE,
+		Long: `Capture durable learnings from the current session and file them
+in data/learnings.md. Pass learnings as arguments.`,
+		Args: cobra.MinimumNArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			res, err := stow.Run(homeDir, args)
+			if err != nil {
+				return err
+			}
+			if res.DataLearnings != "" {
+				fmt.Printf("Stowed learnings to %s\n", res.DataLearnings)
+			} else {
+				fmt.Println("Nothing to stow (no learnings provided)")
+			}
+			return nil
+		},
 	}
 }
 
@@ -1230,7 +1250,24 @@ func newEnsureAgentsMdCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ensure-agents-md <project>",
 		Short: "Ensure project AGENTS.md and CLAUDE.md symlink",
-		RunE:  notImplementedE,
+		Long: `Create or update AGENTS.md and CLAUDE.md symlink for a project.
+Adds the self-governance section if missing.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectDir := args[0]
+			res, err := agentsmd.Ensure(projectDir)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Ensured AGENTS.md at %s\n", res.AGENTSMD)
+			if res.CLAUDEMDSym != "" {
+				fmt.Printf("Created CLAUDE.md symlink at %s\n", res.CLAUDEMDSym)
+			}
+			if res.SelfGovernSec {
+				fmt.Println("Added '## Maintaining this file' section")
+			}
+			return nil
+		},
 	}
 }
 
