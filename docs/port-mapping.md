@@ -14,7 +14,7 @@ Maintained as munsu ports more capabilities.
 | `bin/fm-peek.sh` | `munsu peek` | `internal/cli` (stub) | stub |
 | `bin/fm-crew-state.sh` | `munsu crew-state` | `internal/cli` (stub) | stub |
 | `bin/fm-promote.sh` | `munsu promote` | `internal/cli` (stub) | stub |
-| `bin/fm-harness.sh` | `munsu harness` | `internal/cli` (stub) | stub |
+| `bin/fm-harness.sh` | `munsu harness detect/crew/secondmate` | `internal/harness` | **A1: done** |
 | `bin/fm-project-mode.sh` | `munsu project mode` | `internal/cli` (stub) | stub |
 | `bin/fm-fleet-sync.sh` | `munsu fleet-sync` | `internal/cli` (stub) | stub |
 | `bin/fm-fleet-snapshot.sh` | `munsu fleet-snapshot` | `internal/cli` (stub) | stub |
@@ -34,11 +34,11 @@ Maintained as munsu ports more capabilities.
 | `bin/fm-review-diff.sh` | `munsu review-diff` | `internal/cli` (stub) | stub |
 | PR check/merge | `munsu pr-check` / `munsu pr-merge` | `internal/cli` (stub) | stub |
 | Local merge | `munsu merge-local` | `internal/cli` (stub) | stub |
-| Worktree pool (treehouse) | `munsu worktree` | `internal/cli` (stub) | stub |
+| Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/worktree` | **A1: done** |
 | Config | `munsu config get/set` | `internal/cli` (stub) | stub |
 | Session backend (tmux) | `--backend` flag | `internal/session` (future) | not yet |
 | Harness adapters | `munsu harness detect/crew/secondmate` | `internal/cli` (stub) | stub |
-| Dispatch profiles | `config/crew-dispatch.json` | `internal/config` (future) | not yet |
+| Dispatch profiles | `config/crew-dispatch.json` | `internal/harness` | **A1: done** |
 | Home init / init | `munsu init` | `internal/cli` (stub) | stub |
 
 ## Structural differences from firstmate
