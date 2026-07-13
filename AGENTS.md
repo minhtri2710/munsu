@@ -17,7 +17,7 @@ Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
 The full munsu module map lives in the port-mapping table at `docs/port-mapping.md`.
 
-Current A1 layout:
+Current layout:
 - `cmd/munsu/main.go` — entrypoint
 - `internal/cli/root.go` — cobra command tree
 - `internal/cli/init.go` — init command (home tree + starter config)
@@ -26,10 +26,10 @@ Current A1 layout:
 - `internal/project/` — project registry (data/projects.md parsing, ad-hoc cwd detection)
 - `internal/worktree/` — treehouse CLI wrapper: get/return/status + isolation assertion
 - `internal/harness/` — harness detection (env markers + process ancestry), crew/secondmate resolution, launch templates, dispatch profiles
+- `internal/session/` — session backend (Backend interface + tmux adapter)
+- `internal/task/` — task meta read/write (state/<id>.meta + status file)
 
 Later waves fill:
-- `internal/session/` — session backend (tmux)
-- `internal/task/` — task lifecycle
 - `internal/delivery/` — PR merge, local merge, review-diff
 - `internal/backlog/` — backlog adapter
 - `internal/watcher/` — supervision watcher
