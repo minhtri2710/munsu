@@ -11,7 +11,6 @@ const Version = "0.1.0-dev"
 
 var (
 	homeOverride string
-	noColor      bool
 )
 
 func notImplementedE(cmd *cobra.Command, args []string) error {
@@ -35,7 +34,6 @@ with no requirement to live inside a firstmate checkout.`,
 
 	// Global persistent flags
 	root.PersistentFlags().StringVar(&homeOverride, "home", "", "munsu home directory (overrides MUNSU_HOME)")
-	root.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable ANSI color output")
 
 	// All commands
 	root.AddCommand(newHomeCmd())

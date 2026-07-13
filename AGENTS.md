@@ -15,9 +15,7 @@ Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
 ## Module map
 
-The full munsu module map lives in the scout report at
-`/Users/beowulf/.treehouse/firstmate-8bf1b0/2/firstmate/data/munsu-port-spec-mvp-sj/report.md`
-and the port-mapping table at `docs/port-mapping.md`.
+The full munsu module map lives in the port-mapping table at `docs/port-mapping.md`.
 
 Current A0 layout:
 - `cmd/munsu/main.go` — entrypoint
