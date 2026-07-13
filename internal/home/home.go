@@ -30,7 +30,6 @@ func Resolve(override string) (string, error) {
 }
 
 // EnsureDirTree creates the home directory and subdirectory structure.
-// Returns the path to the home directory.
 func EnsureDirTree(path string) error {
 	for _, d := range append([]string{""}, HomeDirNames...) {
 		dir := filepath.Join(path, d)

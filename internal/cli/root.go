@@ -14,11 +14,6 @@ var (
 	noColor      bool
 )
 
-// notImplemented is the shared RunE body for all stub commands.
-var notImplemented = func(cmd *cobra.Command, args []string) error {
-	return fmt.Errorf("%s: not yet implemented", cmd.Name())
-}
-
 func notImplementedE(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("%s: not yet implemented", cmd.Name())
 }
