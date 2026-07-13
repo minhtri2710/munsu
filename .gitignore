@@ -1,0 +1,16 @@
+/munsu
+*.test
+*.test.exe
+*.test.exe~
+*.out
+*.cov
+
+state/
+data/
+config/
+projects/
+.no-mistakes/
+.env
+.DS_Store
+__pycache__/
+*.pyc
