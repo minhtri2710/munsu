@@ -19,17 +19,15 @@ The full munsu module map lives in the port-mapping table at `docs/port-mapping.
 
 Current A1 layout:
 - `cmd/munsu/main.go` — entrypoint
-- `internal/cli/root.go` — cobra command tree (home, config, project, init real; rest stubs)
+- `internal/cli/root.go` — cobra command tree
 - `internal/cli/init.go` — init command (home tree + starter config)
 - `internal/home/` — home resolution and dir tree creation
 - `internal/config/` — config read/write (flat key files + MUNSU_*_OVERRIDE env)
 - `internal/project/` — project registry (data/projects.md parsing, ad-hoc cwd detection)
+- `internal/worktree/` — treehouse CLI wrapper: get/return/status + isolation assertion
+- `internal/harness/` — harness detection (env markers + process ancestry), crew/secondmate resolution, launch templates, dispatch profiles
 
 Later waves fill:
-- `internal/config/` — config read/write
-- `internal/project/` — project registry
-- `internal/worktree/` — treehouse wrapper
-- `internal/harness/` — harness adapter
 - `internal/session/` — session backend (tmux)
 - `internal/task/` — task lifecycle
 - `internal/delivery/` — PR merge, local merge, review-diff

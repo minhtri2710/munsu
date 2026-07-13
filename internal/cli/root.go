@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
@@ -298,9 +300,53 @@ func newWorktreeCmd() *cobra.Command {
 		Use:   "worktree",
 		Short: "Manage pooled git worktrees",
 	}
-	cmd.AddCommand(&cobra.Command{Use: "get <repo-path>", Short: "Acquire a pooled worktree", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "return <path>", Short: "Return a worktree to the pool", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "status", Short: "Show worktree pool status", RunE: notImplementedE})
+
+	getCmd := &cobra.Command{
+		Use:   "get <repo-path>",
+		Short: "Acquire a pooled worktree",
+		Long:  `Acquire a pooled worktree via treehouse. With --lease, pass through to treehouse for durable holds.`,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			lease, _ := cmd.Flags().GetBool("lease")
+			path, err := worktree.Get(args[0], lease)
+			if err != nil {
+				return err
+			}
+			fmt.Println(path)
+			return nil
+		},
+	}
+	getCmd.Flags().Bool("lease", false, "Acquire a durable lease hold")
+
+	returnCmd := &cobra.Command{
+		Use:   "return <path>",
+		Short: "Return a worktree to the pool",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := worktree.Return(args[0]); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+
+	statusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show worktree pool status",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out, err := worktree.Status()
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+			return nil
+		},
+	}
+
+	cmd.AddCommand(getCmd)
+	cmd.AddCommand(returnCmd)
+	cmd.AddCommand(statusCmd)
 	return cmd
 }
 
@@ -309,9 +355,60 @@ func newHarnessCmd() *cobra.Command {
 		Use:   "harness",
 		Short: "Detect and manage agent harness adapters",
 	}
-	cmd.AddCommand(&cobra.Command{Use: "detect", Short: "Detect the running agent harness", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "crew", Short: "Resolve crewmate harness", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "secondmate", Short: "Resolve secondmate harness", RunE: notImplementedE})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "detect",
+		Short: "Detect the running agent harness",
+		Long:  `Detect the running agent harness using env markers first, then process ancestry.`,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			h, err := harness.Detect()
+			if err != nil {
+				return err
+			}
+			fmt.Println(h)
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "crew",
+		Short: "Resolve crewmate harness",
+		Long:  `Resolve the crewmate harness. Fallback chain: crew-dispatch.json default > config/crew-harness > detected harness.`,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			h, err := harness.Crew(homeDir)
+			if err != nil {
+				return err
+			}
+			fmt.Println(h)
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "secondmate",
+		Short: "Resolve secondmate harness",
+		Long:  `Resolve the secondmate harness. Fallback chain: config/secondmate-harness > config/crew-harness > detected harness.`,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			h, err := harness.Secondmate(homeDir)
+			if err != nil {
+				return err
+			}
+			fmt.Println(h)
+			return nil
+		},
+	})
+
 	return cmd
 }
 

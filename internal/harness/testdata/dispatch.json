@@ -1,0 +1,22 @@
+{
+  "defaultHarness": "pi",
+  "profiles": [
+    {
+      "name": "code-review",
+      "match": ["review", "audit", "check"],
+      "harness": "codex",
+      "maxConcurrent": 2
+    },
+    {
+      "name": "research",
+      "match": ["research", "investigate"],
+      "harness": "claude",
+      "maxConcurrent": 1
+    },
+    {
+      "name": "default",
+      "match": ["*"],
+      "harness": "pi"
+    }
+  ]
+}
