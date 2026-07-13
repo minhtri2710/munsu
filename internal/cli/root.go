@@ -2,8 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/spf13/cobra"
 )
 
@@ -100,23 +104,40 @@ With --mkdir, create the home directory tree {state,data,config,projects}.`,
 	return cmd
 }
 
-// --- Stub command constructors ---
-
-func newInitCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "init",
-		Short: "Create home and seed orchestrator operating manual",
-		RunE:  notImplementedE,
-	}
-}
-
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Read and write munsu configuration",
 	}
-	cmd.AddCommand(&cobra.Command{Use: "get <key>", Short: "Get a configuration value", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "set <key> <value>", Short: "Set a configuration value", RunE: notImplementedE})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "get <key>",
+		Short: "Get a configuration value",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			val, err := config.Get(homeDir, args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Println(val)
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Set a configuration value",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return config.Set(homeDir, args[0], args[1])
+		},
+	})
 	return cmd
 }
 
@@ -125,11 +146,150 @@ func newProjectCmd() *cobra.Command {
 		Use:   "project",
 		Short: "Manage project registry",
 	}
-	cmd.AddCommand(&cobra.Command{Use: "add <name> <path-or-url>", Short: "Register a project", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "list", Short: "List registered projects", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "show <name>", Short: "Show project details", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "rm <name>", Short: "Remove a registered project", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "mode <name>", Short: "Resolve delivery mode for a project", RunE: notImplementedE})
+
+	addCmd := &cobra.Command{
+		Use:   "add <name> <path-or-url>",
+		Short: "Register a project",
+		Long: `Register a project in the registry.
+
+If path-or-url is a git URL (http://, https://, git@, ssh://),
+the repository is cloned into the projects directory first.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode, _ := cmd.Flags().GetString("mode")
+			yolo, _ := cmd.Flags().GetBool("yolo")
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return project.Add(homeDir, args[0], args[1], mode, yolo)
+		},
+	}
+	addCmd.Flags().String("mode", "", "Delivery mode (feat, fix, refactor, etc.)")
+	addCmd.Flags().Bool("yolo", false, "Skip pre-flight checks")
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List registered projects",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			projects, err := project.List(homeDir)
+			if err != nil {
+				return err
+			}
+			if len(projects) == 0 {
+				fmt.Println("No projects registered.")
+				return nil
+			}
+			for _, p := range projects {
+				fmt.Printf("- %s", p.Name)
+				if p.Mode != "" {
+					fmt.Printf(" [%s]", p.Mode)
+				}
+				if p.Yolo {
+					fmt.Print(" +yolo")
+				}
+				fmt.Printf(" - %s (added %s)\n", p.Description, p.Added)
+			}
+			return nil
+		},
+	}
+
+	showCmd := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Show project details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			p, err := project.Find(homeDir, args[0])
+			if err != nil {
+				// Fall back to ad-hoc resolution
+				adhoc, aerr := project.ResolveAdhoc()
+				if aerr != nil {
+					return err // return original not-found error
+				}
+				p = adhoc
+				fmt.Printf("Name:        %s (ad-hoc)\n", p.Name)
+				fmt.Printf("Repository:  %s\n", p.Description)
+				return nil
+			}
+			fmt.Printf("Name:        %s\n", p.Name)
+			if p.Mode != "" {
+				fmt.Printf("Mode:        %s\n", p.Mode)
+			}
+			if p.Yolo {
+				fmt.Println("Yolo:        true")
+			}
+			fmt.Printf("Description: %s\n", p.Description)
+			fmt.Printf("Added:       %s\n", p.Added)
+
+			// Show project dir if it exists
+			projDir := filepath.Join(project.ProjectsDir(homeDir), p.Name)
+			if fi, statErr := os.Stat(projDir); statErr == nil && fi.IsDir() {
+				fmt.Printf("Directory:   %s\n", projDir)
+			}
+			return nil
+		},
+	}
+
+	rmCmd := &cobra.Command{
+		Use:   "rm <name>",
+		Short: "Remove a registered project",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return project.Rm(homeDir, args[0])
+		},
+	}
+
+	modeCmd := &cobra.Command{
+		Use:   "mode <name>",
+		Short: "Resolve delivery mode for a project",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			mode, yolo, err := project.Mode(homeDir, args[0])
+			if err != nil {
+				// Fall back to ad-hoc
+				adhoc, aerr := project.ResolveAdhoc()
+				if aerr != nil {
+					return err
+				}
+				mode = adhoc.Mode
+				yolo = adhoc.Yolo
+			}
+			if mode != "" {
+				fmt.Printf("%s", mode)
+			}
+			if yolo {
+				if mode != "" {
+					fmt.Print(" ")
+				}
+				fmt.Print("+yolo")
+			}
+			fmt.Println()
+			return nil
+		},
+	}
+
+	cmd.AddCommand(addCmd)
+	cmd.AddCommand(listCmd)
+	cmd.AddCommand(showCmd)
+	cmd.AddCommand(rmCmd)
+	cmd.AddCommand(modeCmd)
 	return cmd
 }
 

@@ -5,10 +5,10 @@
 *.out
 *.cov
 
-state/
-data/
-config/
-projects/
+/state/
+/data/
+/config/
+/projects/
 .no-mistakes/
 .env
 .DS_Store

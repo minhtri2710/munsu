@@ -55,6 +55,19 @@ func TestResolveFlagOverridesEnv(t *testing.T) {
 	}
 }
 
+func TestResolveRootOverride(t *testing.T) {
+	os.Unsetenv("MUNSU_HOME")
+	os.Setenv("MUNSU_ROOT_OVERRIDE", "/tmp/munsu-root-override")
+	defer os.Unsetenv("MUNSU_ROOT_OVERRIDE")
+	path, err := Resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/tmp/munsu-root-override" {
+		t.Errorf("Resolve() = %q, want %q", path, "/tmp/munsu-root-override")
+	}
+}
+
 func TestEnsureDirTree(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, ".munsu")
