@@ -26,11 +26,11 @@ func NewRootCommand() *cobra.Command {
 		Long: `munsu is an installable CLI that gives any coding-agent harness
 the firstmate crew capability, usable from any project directory,
 with no requirement to live inside a firstmate checkout.`,
-		Version:               Version,
-		SilenceErrors:         true,
-		SilenceUsage:          true,
-		DisableAutoGenTag:     true,
-		DisableSuggestions:    true,
+		Version:            Version,
+		SilenceErrors:      true,
+		SilenceUsage:       true,
+		DisableAutoGenTag:  true,
+		DisableSuggestions: true,
 	}
 
 	// Global persistent flags
