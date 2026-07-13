@@ -6,6 +6,7 @@ Maintained as munsu ports more capabilities.
 | firstmate concept / script | munsu command | munsu Go package | Status |
 |---|---|---|---|
 | `FM_HOME` / `~/.firstmate` | `munsu home` | `internal/home` | **A0: done** |
+| Task meta + status protocol | `munsu task add/list/show/status` | `internal/cli` (stub) | stub |
 | `bin/fm-send.sh` | `munsu send` | `internal/cli` (stub) | stub |
 | `bin/fm-spawn.sh` | `munsu spawn` | `internal/cli` (stub) | stub |
 | `bin/fm-brief.sh` | `munsu brief` | `internal/cli` (stub) | stub |
@@ -16,24 +17,29 @@ Maintained as munsu ports more capabilities.
 | `bin/fm-harness.sh` | `munsu harness` | `internal/cli` (stub) | stub |
 | `bin/fm-project-mode.sh` | `munsu project mode` | `internal/cli` (stub) | stub |
 | `bin/fm-fleet-sync.sh` | `munsu fleet-sync` | `internal/cli` (stub) | stub |
+| `bin/fm-fleet-snapshot.sh` | `munsu fleet-snapshot` | `internal/cli` (stub) | stub |
+| `bin/fm-fleet-view.sh` | `munsu fleet-view` | `internal/cli` (stub) | stub |
+| `bin/fm-bearings-snapshot.sh` | `munsu bearings` | `internal/cli` (stub) | stub |
 | `bin/fm-bootstrap.sh` | `munsu bootstrap` | `internal/cli` (stub) | stub |
 | `bin/fm-update.sh` | `munsu update` | `internal/cli` (stub) | stub |
 | `bin/fm-session-start.sh` | `munsu session-start` | `internal/cli` (stub) | stub |
 | `bin/fm-watch.sh` | `munsu watch` | `internal/cli` (stub) | stub |
 | `bin/fm-watch-arm.sh` | `munsu watch-arm` | `internal/cli` (stub) | stub |
+| `bin/fm-wake-drain.sh` | `munsu wake-drain` | `internal/cli` (stub) | stub |
 | `bin/fm-guard.sh` | `munsu guard` | `internal/cli` (stub) | stub |
-| `bin/fm-stow.sh` | `munsu stow` | `internal/cli` (stub) | stub |
+| Stow skill (`.agents/skills/stow`) | `munsu stow` | `internal/cli` (stub) | stub |
 | `bin/fm-ensure-agents-md.sh` | `munsu ensure-agents-md` | `internal/cli` (stub) | stub |
 | Project registry | `munsu project add/list/show/rm` | `internal/cli` (stub) | stub |
 | Backlog (tasks-axi) | `munsu backlog` | `internal/cli` (stub) | stub |
+| `bin/fm-review-diff.sh` | `munsu review-diff` | `internal/cli` (stub) | stub |
 | PR check/merge | `munsu pr-check` / `munsu pr-merge` | `internal/cli` (stub) | stub |
 | Local merge | `munsu merge-local` | `internal/cli` (stub) | stub |
 | Worktree pool (treehouse) | `munsu worktree` | `internal/cli` (stub) | stub |
 | Config | `munsu config get/set` | `internal/cli` (stub) | stub |
 | Session backend (tmux) | `--backend` flag | `internal/session` (future) | not yet |
-| Harness adapters | `munsu harness detect/crew/secondmate` | `internal/harness` (future) | not yet |
+| Harness adapters | `munsu harness detect/crew/secondmate` | `internal/cli` (stub) | stub |
 | Dispatch profiles | `config/crew-dispatch.json` | `internal/config` (future) | not yet |
-| Home init / init | `munsu init` | `internal/init` (future) | not yet |
+| Home init / init | `munsu init` | `internal/cli` (stub) | stub |
 
 ## Structural differences from firstmate
 
