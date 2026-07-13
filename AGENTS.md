@@ -33,8 +33,10 @@ Current layout:
 - `internal/crewstate/` — crewmate state reading (meta + pane liveness + status log)
 - `internal/cli/backlog.go` — backlog command wiring to tasks-axi (inline in root.go)
 
+Current layout (continued):
+- `internal/delivery/` — review-diff, pr-check, pr-merge, merge-local, no-mistakes axi helpers
+
 Later waves fill:
-- `internal/delivery/` — PR merge, local merge, review-diff
 - `internal/watcher/` — supervision watcher
 - `internal/stow/` — knowledge sweep
 
