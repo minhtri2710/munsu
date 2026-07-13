@@ -3,15 +3,19 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/teardown"
 	"github.com/minhtri2710/munsu/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -520,11 +524,63 @@ func newTaskCmd() *cobra.Command {
 }
 
 func newBriefCmd() *cobra.Command {
-	return &cobra.Command{
+	var scout bool
+
+	cmd := &cobra.Command{
 		Use:   "brief <id> <repo>",
 		Short: "Scaffold a task brief",
-		RunE:  notImplementedE,
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			repo := args[1]
+
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			// Resolve delivery mode from project registry
+			var mode string
+			var yolo bool
+			if m, y, err := project.Mode(homeDir, repo); err == nil {
+				mode = m
+				yolo = y
+			}
+
+			opts := brief.ScaffoldOptions{
+				HomeDir: homeDir,
+				ID:      id,
+				Repo:    repo,
+				Scout:   scout,
+				Mode:    mode,
+				Yolo:    yolo,
+			}
+
+			if err := brief.Scaffold(opts); err != nil {
+				return err
+			}
+
+			kind := "ship"
+			if scout {
+				kind = "scout"
+			}
+			fmt.Printf("Brief scaffolded at %s\n", brief.Path(homeDir, id))
+			fmt.Printf("  id:    %s\n", id)
+			fmt.Printf("  repo:  %s\n", repo)
+			fmt.Printf("  kind:  %s\n", kind)
+			if mode != "" {
+				fmt.Printf("  mode:  %s\n", mode)
+			}
+			if yolo {
+				fmt.Println("  yolo:  true")
+			}
+			return nil
+		},
 	}
+
+	cmd.Flags().BoolVar(&scout, "scout", false, "Generate a scout brief instead of ship brief")
+
+	return cmd
 }
 
 func newSpawnCmd() *cobra.Command {
@@ -704,7 +760,29 @@ func newCrewStateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "crew-state <id>",
 		Short: "Read crewmate current state",
-		RunE:  notImplementedE,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+
+			state, err := crewstate.Read(id)
+			if err != nil {
+				return fmt.Errorf("reading crew state: %w", err)
+			}
+
+			fmt.Printf("Task:  %s\n", state.TaskID)
+			fmt.Printf("State: %s\n", state.Status)
+			fmt.Printf("Info:  %s\n", state.Description)
+			fmt.Printf("Pane:  ")
+			if state.PaneAlive {
+				fmt.Println("alive")
+			} else {
+				fmt.Println("gone")
+			}
+			if state.StatusLines > 0 {
+				fmt.Printf("Log:   %d status lines\n", state.StatusLines)
+			}
+			return nil
+		},
 	}
 }
 
@@ -712,16 +790,57 @@ func newPromoteCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "promote <id>",
 		Short: "Promote a scout task to ship",
-		RunE:  notImplementedE,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+
+			if err := task.PromoteMeta(id); err != nil {
+				return fmt.Errorf("promote %s: %w", id, err)
+			}
+
+			fmt.Printf("Task %s promoted from scout to ship\n", id)
+			return nil
+		},
 	}
 }
 
 func newTeardownCmd() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+
+	cmd := &cobra.Command{
 		Use:   "teardown <id>",
 		Short: "Tear down a crewmate",
-		RunE:  notImplementedE,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			opts := teardown.Options{
+				HomeDir: homeDir,
+				ID:      id,
+				Force:   force,
+			}
+
+			result, err := teardown.Run(opts)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Teardown %s completed:\n", id)
+			for _, step := range result.Steps {
+				fmt.Printf("  - %s\n", step)
+			}
+			return nil
+		},
 	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "Skip safety checks")
+
+	return cmd
 }
 
 func newReviewDiffCmd() *cobra.Command {
@@ -762,9 +881,100 @@ func newBacklogCmd() *cobra.Command {
 		Short: "Manage the task backlog",
 		Long: `Manage the task backlog via the configured backlog backend.
 
-Verbs: add, start, done, list, show, block, unblock, ready, hold, update, render.`,
-		RunE: notImplementedE,
+Verbs: add, start, done, list, show, block, unblock, ready, hold, update, render.
+
+Uses tasks-axi CLI when available (>= 0.1.1), falling back to
+hand-editing $MUNSU_HOME/data/backlog.md.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			verb := args[0]
+			rest := args[1:]
+			return runBacklog(verb, rest)
+		},
 	}
+}
+
+// runBacklog dispatches to tasks-axi if compatible, or fallback.
+func runBacklog(verb string, args []string) error {
+	// Probe for compatible tasks-axi
+	if tasksAxiAvailable() {
+		return runTasksAxi(verb, args)
+	}
+
+	return fmt.Errorf("backlog: tasks-axi not available and fallback backlog.md editing not yet implemented")
+}
+
+// tasksAxiAvailable checks if tasks-axi >= 0.1.1 is on PATH.
+func tasksAxiAvailable() bool {
+	path, err := exec.LookPath("tasks-axi")
+	if err != nil {
+		return false
+	}
+
+	cmd := exec.Command(path, "--version")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	version := strings.TrimSpace(string(out))
+	return isCompatibleVersion(version, "0.1.1")
+}
+
+// isCompatibleVersion checks if the installed version is >= minimum.
+// Simple semver comparison (major.minor.patch).
+func isCompatibleVersion(installed, minimum string) bool {
+	installParts := parseVersion(installed)
+	minParts := parseVersion(minimum)
+
+	for i := 0; i < 3; i++ {
+		if installParts[i] > minParts[i] {
+			return true
+		}
+		if installParts[i] < minParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// parseVersion splits "x.y.z" into [major, minor, patch] ints.
+func parseVersion(v string) [3]int {
+	parts := strings.SplitN(v, ".", 3)
+	var result [3]int
+	for i, p := range parts {
+		result[i] = atoi(p)
+	}
+	return result
+}
+
+// atoi parses an integer from a string, returning 0 on error.
+func atoi(s string) int {
+	n := 0
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int(c-'0')
+		} else {
+			break
+		}
+	}
+	return n
+}
+
+// runTasksAxi runs tasks-axi with the given verb and args.
+func runTasksAxi(verb string, args []string) error {
+	path, err := exec.LookPath("tasks-axi")
+	if err != nil {
+		return fmt.Errorf("tasks-axi not found: %w", err)
+	}
+
+	cliArgs := []string{verb}
+	cliArgs = append(cliArgs, args...)
+
+	cmd := exec.Command(path, cliArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func newSessionStartCmd() *cobra.Command {

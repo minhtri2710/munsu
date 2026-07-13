@@ -27,11 +27,14 @@ Current layout:
 - `internal/worktree/` — treehouse CLI wrapper: get/return/status + isolation assertion
 - `internal/harness/` — harness detection (env markers + process ancestry), crew/secondmate resolution, launch templates, dispatch profiles
 - `internal/session/` — session backend (Backend interface + tmux adapter)
-- `internal/task/` — task meta read/write (state/<id>.meta + status file)
+- `internal/task/` — task meta read/write (state/<id>.meta + status file), status validation, promote
+- `internal/brief/` — task brief scaffolding (ship/scout templates at data/<id>/brief.md)
+- `internal/teardown/` — crewmate teardown with safety checks (dirty/remote/report gate)
+- `internal/crewstate/` — crewmate state reading (meta + pane liveness + status log)
+- `internal/cli/backlog.go` — backlog command wiring to tasks-axi (inline in root.go)
 
 Later waves fill:
 - `internal/delivery/` — PR merge, local merge, review-diff
-- `internal/backlog/` — backlog adapter
 - `internal/watcher/` — supervision watcher
 - `internal/stow/` — knowledge sweep
 

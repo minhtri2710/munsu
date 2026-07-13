@@ -289,3 +289,188 @@ func TestResolveIntegration(t *testing.T) {
 		t.Errorf("home.Resolve() = %q, want %q", h, tmp)
 	}
 }
+
+func TestIsValidStatusState(t *testing.T) {
+	valid := []string{"working", "needs-decision", "blocked", "paused", "resolved", "done", "failed"}
+	for _, s := range valid {
+		if !IsValidStatusState(s) {
+			t.Errorf("%q should be a valid status state", s)
+		}
+	}
+
+	invalid := []string{"", "unknown", "pending", "in-progress", "started"}
+	for _, s := range invalid {
+		if IsValidStatusState(s) {
+			t.Errorf("%q should not be a valid status state", s)
+		}
+	}
+}
+
+func TestValidStatusStates(t *testing.T) {
+	expected := []string{
+		"working", "needs-decision", "blocked", "paused", "resolved", "done", "failed",
+	}
+	if len(ValidStatusStates) != len(expected) {
+		t.Fatalf("ValidStatusStates length = %d, want %d", len(ValidStatusStates), len(expected))
+	}
+	for i, s := range expected {
+		if ValidStatusStates[i] != s {
+			t.Errorf("ValidStatusStates[%d] = %q, want %q", i, ValidStatusStates[i], s)
+		}
+	}
+}
+
+func TestParseStatusKey(t *testing.T) {
+	tests := []struct {
+		line    string
+		message string
+		key     string
+	}{
+		{"working: started", "working: started", ""},
+		{"needs-decision: pick approach [key=approach]", "needs-decision: pick approach", "approach"},
+		{"resolved: chose A [key=approach]", "resolved: chose A", "approach"},
+		{"blocked: waiting [key=dep]", "blocked: waiting", "dep"},
+		{"done: all done [key=task-1]", "done: all done", "task-1"},
+		{"key only [key=]", "key only [key=]", ""},
+		{"no brackets", "no brackets", ""},
+		{"[key=value]", "", "value"}, // bare key, extracts key with empty message
+	}
+
+	for _, tt := range tests {
+		msg, key := ParseStatusKey(tt.line)
+		if msg != tt.message {
+			t.Errorf("ParseStatusKey(%q) message = %q, want %q", tt.line, msg, tt.message)
+		}
+		if key != tt.key {
+			t.Errorf("ParseStatusKey(%q) key = %q, want %q", tt.line, key, tt.key)
+		}
+	}
+}
+
+func TestRemoveStatusKey(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"working: started", "working: started"},
+		{"done: done [key=x]", "done: done"},
+		{"blocked: blocked [key=dep]", "blocked: blocked"},
+		{"no key here", "no key here"},
+	}
+
+	for _, tt := range tests {
+		got := RemoveStatusKey(tt.input)
+		if got != tt.want {
+			t.Errorf("RemoveStatusKey(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestPromoteMeta(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	// Create a scout meta
+	if err := WriteMeta("scout-task", map[string]string{
+		"kind":     "scout",
+		"window":   "@1",
+		"worktree": "/tmp/wt",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Promote it
+	if err := PromoteMeta("scout-task"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify kind changed
+	meta, err := ReadMeta("scout-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta["kind"] != "ship" {
+		t.Errorf("kind = %q, want ship", meta["kind"])
+	}
+	// Other fields preserved
+	if meta["window"] != "@1" {
+		t.Errorf("window = %q, want @1", meta["window"])
+	}
+}
+
+func TestPromoteMeta_NotScout(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := WriteMeta("ship-task", map[string]string{
+		"kind": "ship",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := PromoteMeta("ship-task")
+	if err == nil {
+		t.Fatal("expected error promoting non-scout task")
+	}
+}
+
+func TestPromoteMeta_NoMeta(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	err := PromoteMeta("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent task")
+	}
+}
+
+func TestPromoteMeta_EmptyKind(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := WriteMeta("no-kind", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := PromoteMeta("no-kind")
+	if err == nil {
+		t.Fatal("expected error promoting task with empty kind")
+	}
+}
+
+func TestPromoteMeta_PreservesAllFields(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := WriteMeta("full-scout", map[string]string{
+		"kind":     "scout",
+		"window":   "@42",
+		"worktree": "/tmp/test-wt",
+		"project":  "test-project",
+		"harness":  "pi",
+		"model":    "claude-sonnet-4-20250515",
+		"mode":     "no-mistakes",
+		"yolo":     "off",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PromoteMeta("full-scout"); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := ReadMeta("full-scout")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if meta["kind"] != "ship" {
+		t.Errorf("kind = %q, want ship", meta["kind"])
+	}
+	if meta["window"] != "@42" {
+		t.Errorf("window = %q, want @42", meta["window"])
+	}
+	if meta["harness"] != "pi" {
+		t.Errorf("harness = %q, want pi", meta["harness"])
+	}
+}

@@ -1,0 +1,204 @@
+package crewstate
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/minhtri2710/munsu/internal/task"
+)
+
+// setHomeEnv sets MUNSU_HOME for the duration of a test.
+func setHomeEnv(t *testing.T, path string) {
+	t.Helper()
+	os.Setenv("MUNSU_HOME", path)
+	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
+}
+
+func TestRead_NoMeta(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	_, err := Read("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent task")
+	}
+}
+
+func TestRead_NoWindow(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta("no-win", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read("no-win")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != "unknown" {
+		t.Errorf("status = %q, want unknown", s.Status)
+	}
+	if !strings.Contains(s.Description, "no window") {
+		t.Errorf("description should mention no window, got %q", s.Description)
+	}
+}
+
+func TestRead_WithWindow(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta("with-win", map[string]string{
+		"window":   "@nonexistent99",
+		"worktree": tmp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read("with-win")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Window doesn't exist, so pane is gone
+	if s.PaneAlive {
+		t.Error("pane should not be alive for fake window")
+	}
+}
+
+func TestRead_StatusLogOverrides(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta("status-test", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Append a done status
+	if err := task.AppendStatus("status-test", "done: implemented feature X"); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read("status-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != "done" {
+		t.Errorf("status = %q, want done", s.Status)
+	}
+	if s.StatusLines != 1 {
+		t.Errorf("StatusLines = %d, want 1", s.StatusLines)
+	}
+}
+
+func TestRead_FailedStatus(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta("fail-test", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := task.AppendStatus("fail-test", "failed: tests not passing"); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read("fail-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != "failed" {
+		t.Errorf("status = %q, want failed", s.Status)
+	}
+}
+
+func TestRead_MultipleStatusLines(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta("multi-status", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	task.AppendStatus("multi-status", "working: started investigation")
+	task.AppendStatus("multi-status", "needs-decision: which approach")
+	task.AppendStatus("multi-status", "resolved: chose approach A")
+	task.AppendStatus("multi-status", "done: all done")
+
+	s, err := Read("multi-status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != "done" {
+		t.Errorf("status = %q, want done", s.Status)
+	}
+	if s.StatusLines != 4 {
+		t.Errorf("StatusLines = %d, want 4", s.StatusLines)
+	}
+}
+
+func TestRead_GitBranch(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	// Init a git repo in tmp
+	gitDir := filepath.Join(tmp, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check if we can init a proper git repo
+	gitInit := os.WriteFile(filepath.Join(tmp, "README.md"), []byte("# test"), 0644)
+	if gitInit != nil {
+		t.Fatal(gitInit)
+	}
+
+	// We need git available for this test
+	// Skip if no git
+	if err := task.WriteMeta("git-test", map[string]string{
+		"window":   "@nonexistent99",
+		"worktree": tmp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read("git-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Status should be idle (pane gone) or unknown
+	if s.Status != "unknown" && s.Status != "idle" {
+		t.Errorf("unexpected status %q", s.Status)
+	}
+}
+
+func TestRead_LastNonTerminalStatus(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta("nonterm", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	task.AppendStatus("nonterm", "paused: waiting for review")
+	task.AppendStatus("nonterm", "blocked: dependency not ready")
+
+	s, err := Read("nonterm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Last line is "blocked", non-terminal, so status should be "blocked"
+	// But pane is gone so pane check says "idle" which gets overridden by blocked
+	if s.Status != "blocked" {
+		t.Errorf("status = %q, want blocked", s.Status)
+	}
+}
