@@ -8,15 +8,21 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/brief"
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/lock"
 	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/selfupdate"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/teardown"
+	"github.com/minhtri2710/munsu/internal/waker"
 	"github.com/minhtri2710/munsu/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -1091,7 +1097,22 @@ func newFleetSnapshotCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fleet-snapshot",
 		Short: "Emit fleet snapshot JSON",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			snap, err := fleet.Snapshot(homeDir)
+			if err != nil {
+				return err
+			}
+			j, err := snap.JSON()
+			if err != nil {
+				return err
+			}
+			fmt.Println(j)
+			return nil
+		},
 	}
 }
 
@@ -1099,7 +1120,13 @@ func newFleetViewCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fleet-view",
 		Short: "Render fleet view from snapshot",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return fleet.View(homeDir)
+		},
 	}
 }
 
@@ -1107,7 +1134,14 @@ func newBearingsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "bearings",
 		Short: "Compact resume report",
-		RunE:  notImplementedE,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectDir := ""
+			if len(args) > 0 {
+				projectDir = args[0]
+			}
+			return fleet.Bearings(projectDir)
+		},
 	}
 }
 
@@ -1115,23 +1149,57 @@ func newWatchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "watch",
 		Short: "Run the event-driven watcher",
-		RunE:  notImplementedE,
+		Long:  `Run the event-driven watcher loop. Exits with a wake reason when an actionable event is found. Singleton-safe (home-scoped lock).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			reason, err := supervision.Run(homeDir)
+			if err != nil {
+				return err
+			}
+			if reason != nil {
+				fmt.Printf("wake: %s — %s\n", reason.Kind, reason.Message)
+			}
+			return nil
+		},
 	}
 }
 
 func newWatchArmCmd() *cobra.Command {
-	return &cobra.Command{
+	var restart bool
+	cmd := &cobra.Command{
 		Use:   "watch-arm",
 		Short: "Arm the watcher (home-scoped)",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return supervision.ArmBackground(homeDir, restart)
+		},
 	}
+	cmd.Flags().BoolVar(&restart, "restart", false, "Restart existing watcher before arming")
+	return cmd
 }
 
 func newWakeDrainCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "wake-drain",
 		Short: "Drain queued wakes",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			records, err := waker.Drain(homeDir)
+			if err != nil {
+				return err
+			}
+			waker.PrintRecords(records)
+			return nil
+		},
 	}
 }
 
@@ -1139,7 +1207,14 @@ func newGuardCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "guard",
 		Short: "Warn on tangle or stale watcher",
-		RunE:  notImplementedE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			waker.CheckGuard(homeDir)
+			return nil
+		},
 	}
 }
 
