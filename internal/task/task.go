@@ -127,6 +127,67 @@ func ReadStatus(id string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
+// ValidStatusStates lists the recognized status states.
+var ValidStatusStates = []string{
+	"working", "needs-decision", "blocked", "paused", "resolved", "done", "failed",
+}
+
+// IsValidStatusState checks whether the given state is recognized.
+func IsValidStatusState(state string) bool {
+	for _, s := range ValidStatusStates {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseStatusKey extracts an optional [key=<slug>] annotation from a status message.
+// Returns the cleaned message and the key (empty if none).
+func ParseStatusKey(line string) (message, key string) {
+	// Format: state: message [key=<slug>]
+	// Or just [key=<slug>] at the end.
+	// Try with space prefix first: " [key="
+	startMarker := " [key="
+	idx := strings.LastIndex(line, startMarker)
+	if idx < 0 {
+		// Try without space: "[key=" at start
+		startMarker = "[key="
+		idx = strings.LastIndex(line, startMarker)
+	}
+	if idx >= 0 {
+		end := strings.Index(line[idx+len(startMarker):], "]")
+		if end >= 0 {
+			keyVal := line[idx+len(startMarker) : idx+len(startMarker)+end]
+			if keyVal != "" {
+				key = keyVal
+				message = strings.TrimSpace(line[:idx])
+				return
+			}
+		}
+	}
+	return line, ""
+}
+
+// RemoveStatusKey removes the [key=<slug>] suffix from a line if present.
+func RemoveStatusKey(line string) string {
+	msg, _ := ParseStatusKey(line)
+	return msg
+}
+
+// PromoteMeta flips a task's kind from scout to ship in the meta file.
+func PromoteMeta(id string) error {
+	meta, err := ReadMeta(id)
+	if err != nil {
+		return fmt.Errorf("reading meta for promote: %w", err)
+	}
+	if meta["kind"] != "scout" {
+		return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, meta["kind"])
+	}
+	meta["kind"] = "ship"
+	return WriteMeta(id, meta)
+}
+
 // ValidMetaFields lists the recognized fields in a task meta file.
 var ValidMetaFields = []string{
 	"window", "worktree", "project", "harness",
