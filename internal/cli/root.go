@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -417,10 +420,102 @@ func newTaskCmd() *cobra.Command {
 		Use:   "task",
 		Short: "Manage task lifecycle",
 	}
-	cmd.AddCommand(&cobra.Command{Use: "add <id> <description>", Short: "Add a new task", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "list", Short: "List tasks", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "show <id>", Short: "Show task details", RunE: notImplementedE})
-	cmd.AddCommand(&cobra.Command{Use: "status <id>", Short: "Append a status line to a task", RunE: notImplementedE})
+
+	addCmd := &cobra.Command{
+		Use:   "add <id> <description>",
+		Short: "Add a new task to the backlog",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			desc := args[1]
+			kind, _ := cmd.Flags().GetString("kind")
+			repo, _ := cmd.Flags().GetString("repo")
+
+			meta := map[string]string{
+				"description": desc,
+				"kind":        kind,
+			}
+			if repo != "" {
+				meta["repo"] = repo
+			}
+
+			if err := task.WriteMeta(id, meta); err != nil {
+				return err
+			}
+			fmt.Printf("task %s added\n", id)
+			return nil
+		},
+	}
+	addCmd.Flags().String("kind", "ship", "Task kind (ship|scout)")
+	addCmd.Flags().String("repo", "", "Project repository name")
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List tasks",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, _ := cmd.Flags().GetString("state")
+			_ = state // filter not yet implemented for listing
+			fmt.Println("task: list not yet implemented (use tasks-axi)")
+			return nil
+		},
+	}
+	listCmd.Flags().String("state", "", "Filter by state (in-flight|queued|done)")
+
+	showCmd := &cobra.Command{
+		Use:   "show <id>",
+		Short: "Show task details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			full, _ := cmd.Flags().GetBool("full")
+
+			meta, err := task.ReadMeta(id)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Task: %s\n", id)
+			fmt.Printf("---\n")
+			for k, v := range meta {
+				fmt.Printf("%s: %s\n", k, v)
+			}
+
+			if full {
+				statusLines, err := task.ReadStatus(id)
+				if err == nil && len(statusLines) > 0 {
+					fmt.Printf("---\nStatus:\n")
+					for _, line := range statusLines {
+						fmt.Printf("  %s\n", line)
+					}
+				}
+			}
+			return nil
+		},
+	}
+	showCmd.Flags().Bool("full", false, "Show full details including status")
+
+	statusCmd := &cobra.Command{
+		Use:   "status <id> <state> <message>",
+		Short: "Append a status line to a task",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			state := args[1]
+			msg := args[2]
+			line := fmt.Sprintf("%s: %s", state, msg)
+			if err := task.AppendStatus(id, line); err != nil {
+				return err
+			}
+			fmt.Printf("status appended: %s\n", line)
+			return nil
+		},
+	}
+
+	cmd.AddCommand(addCmd)
+	cmd.AddCommand(listCmd)
+	cmd.AddCommand(showCmd)
+	cmd.AddCommand(statusCmd)
 	return cmd
 }
 
@@ -433,27 +528,176 @@ func newBriefCmd() *cobra.Command {
 }
 
 func newSpawnCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		kind string
+		mode string
+		yolo bool
+	)
+
+	cmd := &cobra.Command{
 		Use:   "spawn <id> <project>",
 		Short: "Spawn a crewmate agent",
-		RunE:  notImplementedE,
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			projectName := args[1]
+
+			// 1. Resolve home (used by task.WriteMeta internally)
+			_, err := home.Resolve(homeOverride)
+			if err != nil {
+				return fmt.Errorf("resolving home: %w", err)
+			}
+
+			// 2. Acquire worktree
+			wtPath, err := worktree.Get(projectName, false)
+			if err != nil {
+				return fmt.Errorf("acquiring worktree: %w", err)
+			}
+
+			// 3. Detect harness
+			h, err := harness.Detect()
+			if err != nil {
+				return fmt.Errorf("detecting harness: %w", err)
+			}
+
+			// 4. Resolve model/effort from template
+			var model, effort string
+			if tmpl, ok := harness.Templates[h]; ok {
+				model = tmpl.DefaultModel
+				if tmpl.DefaultEffort != "" {
+					effort = tmpl.DefaultEffort
+				}
+			}
+
+			// 5. Create tmux window
+			bk := session.Default()
+			windowID, err := bk.NewWindow(h, id)
+			if err != nil {
+				return fmt.Errorf("creating session window: %w", err)
+			}
+
+			// 6. Write task meta
+			yoloVal := "off"
+			if yolo {
+				yoloVal = "on"
+			}
+			meta := map[string]string{
+				"window":   windowID,
+				"worktree": wtPath,
+				"project":  projectName,
+				"harness":  h,
+				"model":    model,
+				"effort":   effort,
+				"kind":     kind,
+				"mode":     mode,
+				"yolo":     yoloVal,
+			}
+			if err := task.WriteMeta(id, meta); err != nil {
+				// Best-effort: print error but don't fail the spawn
+				fmt.Fprintf(os.Stderr, "warning: writing task meta: %v\n", err)
+			}
+
+			// 7. Print endpoint info
+			fmt.Printf("Spawned crewmate %s\n", id)
+			fmt.Printf("  window:   %s\n", windowID)
+			fmt.Printf("  worktree: %s\n", wtPath)
+			fmt.Printf("  project:  %s\n", projectName)
+			fmt.Printf("  harness:  %s\n", h)
+			fmt.Printf("  model:    %s\n", model)
+			if effort != "" {
+				fmt.Printf("  effort:   %s\n", effort)
+			}
+			fmt.Printf("  kind:     %s\n", kind)
+			fmt.Printf("  mode:     %s\n", mode)
+			fmt.Printf("  yolo:     %s\n", yoloVal)
+			return nil
+		},
 	}
+
+	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
+	cmd.Flags().StringVar(&mode, "mode", "no-mistakes", "Delivery mode (no-mistakes|direct-PR|local-only)")
+	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
+
+	return cmd
 }
 
 func newSendCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "send <id> <line>",
 		Short: "Send a line to a crewmate endpoint",
-		RunE:  notImplementedE,
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			line := args[1]
+
+			// Read meta to resolve window
+			meta, err := task.ReadMeta(id)
+			if err != nil {
+				return fmt.Errorf("reading task %s: %w", id, err)
+			}
+			windowID, ok := meta["window"]
+			if !ok {
+				return fmt.Errorf("task %s has no window endpoint", id)
+			}
+
+			bk := session.Default()
+			if err := bk.SendKeys(windowID, line); err != nil {
+				return fmt.Errorf("sending to %s: %w", id, err)
+			}
+			fmt.Printf("sent to %s: %s\n", id, line)
+			return nil
+		},
 	}
+	return cmd
 }
 
 func newPeekCmd() *cobra.Command {
-	return &cobra.Command{
+	var lines int
+
+	cmd := &cobra.Command{
 		Use:   "peek <id>",
 		Short: "Peek at crewmate output",
-		RunE:  notImplementedE,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+
+			// Read meta to resolve window
+			meta, err := task.ReadMeta(id)
+			if err != nil {
+				return fmt.Errorf("reading task %s: %w", id, err)
+			}
+			windowID, ok := meta["window"]
+			if !ok {
+				return fmt.Errorf("task %s has no window endpoint", id)
+			}
+
+			bk := session.Default()
+			out, err := bk.Capture(windowID, lines)
+			if err != nil {
+				return fmt.Errorf("capturing from %s: %w", id, err)
+			}
+
+			// Print with a header showing lines count
+			count := strings.Count(out, "\n")
+			if out != "" && out[len(out)-1] == '\n' && count > 0 {
+				// tmux output often ends with newline; don't overcount
+				count--
+			}
+			if count == 0 && out != "" {
+				count = 1
+			}
+			fmt.Printf("--- %s (captured %d lines) ---\n", id, count)
+			fmt.Print(out)
+			if out != "" && out[len(out)-1] != '\n' {
+				fmt.Println()
+			}
+			return nil
+		},
 	}
+
+	cmd.Flags().IntVar(&lines, "lines", 40, "Number of lines to capture")
+
+	return cmd
 }
 
 func newCrewStateCmd() *cobra.Command {
