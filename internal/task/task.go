@@ -119,7 +119,8 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 
 // ValidStatusStates lists the recognized status states.
 var ValidStatusStates = []string{
-	"working", "needs-decision", "blocked", "paused", "resolved", "done", "failed",
+	"working", "needs-decision", "blocked", "paused",
+	"awaiting_approval", "resolved", "done", "failed",
 }
 
 // IsValidStatusState checks whether the given state is recognized.
