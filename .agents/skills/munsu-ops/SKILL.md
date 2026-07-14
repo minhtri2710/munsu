@@ -24,7 +24,7 @@ Run `munsu session-start` to lock, bootstrap, and print the session-start digest
 4. **Supervision** — wake-handling reminder block.
 **Completion:** Digest understood; lock status known. Do not re-bulk-read what the digest already printed.
 
-**Context pointer:** Bootstrap diagnostics lines (`MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`) are handled in `docs/skills/bootstrap-diagnostics.md`. Review the Context and Fleet State sections — they replace reading those files by hand.
+**Context pointer:** Bootstrap diagnostics lines (`MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`) are handled in `.agents/skills/bootstrap-diagnostics/SKILL.md`. Review the Context and Fleet State sections — they replace reading those files by hand.
 
 ### 3. Classify work
 
@@ -41,7 +41,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 **Completion:** Meta exists, endpoint is alive (verify with `munsu peek <id>` or `munsu crew-state <id>`).
 
-**Context pointer:** `docs/skills/harness-adapters.md` describes launch templates per harness (model flags, effort flags) and turn-end hooks — consult before spawning if harness-specific flags are needed.
+**Context pointer:** `.agents/skills/harness-adapters/SKILL.md` describes launch templates per harness (model flags, effort flags) and turn-end hooks — consult before spawning if harness-specific flags are needed.
 
 **Context pointer:** For secondmate lifecycle operations (seed, launch, retire, handoff, config-push), see `.agents/skills/secondmate-provisioning/SKILL.md`.
 
@@ -54,7 +54,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 **Completion:** Actionable wakes handled; watcher re-armed if tasks are still in flight.
 
-**Context pointer:** If a crewmate is unresponsive or stuck, follow `docs/skills/stuck-crewmate-recovery.md` escalation ladder (peek -> steer -> interrupt -> relaunch -> fail).
+**Context pointer:** If a crewmate is unresponsive or stuck, follow `.agents/skills/stuck-crewmate-recovery/SKILL.md` escalation ladder (peek -> steer -> interrupt -> relaunch -> fail).
 
 **Supervision loop details:** See `SUPERVISION.md` for watch/wake-drain/guard/afk loop mechanics.
 
