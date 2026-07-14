@@ -3,12 +3,12 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/agentsmd"
+	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
@@ -456,7 +456,12 @@ func newTaskCmd() *cobra.Command {
 				meta["repo"] = repo
 			}
 
-			if err := task.WriteMeta(id, meta); err != nil {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			if err := task.WriteMeta(homeDir, id, meta); err != nil {
 				return err
 			}
 			fmt.Printf("task %s added\n", id)
@@ -487,7 +492,12 @@ func newTaskCmd() *cobra.Command {
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
 
-			meta, err := task.ReadMeta(id)
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			meta, err := task.ReadMeta(homeDir, id)
 			if err != nil {
 				return err
 			}
@@ -499,7 +509,7 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			if full {
-				statusLines, err := task.ReadStatus(id)
+				statusLines, err := task.ReadStatus(homeDir, id)
 				if err == nil && len(statusLines) > 0 {
 					fmt.Printf("---\nStatus:\n")
 					for _, line := range statusLines {
@@ -521,7 +531,13 @@ func newTaskCmd() *cobra.Command {
 			state := args[1]
 			msg := args[2]
 			line := fmt.Sprintf("%s: %s", state, msg)
-			if err := task.AppendStatus(id, line); err != nil {
+
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			if err := task.AppendStatus(homeDir, id, line); err != nil {
 				return err
 			}
 			fmt.Printf("status appended: %s\n", line)
@@ -612,7 +628,7 @@ func newSpawnCmd() *cobra.Command {
 			projectName := args[1]
 
 			// 1. Resolve home (used by task.WriteMeta internally)
-			_, err := home.Resolve(homeOverride)
+			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
 				return fmt.Errorf("resolving home: %w", err)
 			}
@@ -639,7 +655,7 @@ func newSpawnCmd() *cobra.Command {
 			}
 
 			// 5. Create tmux window
-			bk := session.Default()
+			bk := session.Resolve(homeDir)
 			windowID, err := bk.NewWindow(h, id)
 			if err != nil {
 				return fmt.Errorf("creating session window: %w", err)
@@ -661,7 +677,7 @@ func newSpawnCmd() *cobra.Command {
 				"mode":     mode,
 				"yolo":     yoloVal,
 			}
-			if err := task.WriteMeta(id, meta); err != nil {
+			if err := task.WriteMeta(homeDir, id, meta); err != nil {
 				// Best-effort: print error but don't fail the spawn
 				fmt.Fprintf(os.Stderr, "warning: writing task meta: %v\n", err)
 			}
@@ -699,8 +715,13 @@ func newSendCmd() *cobra.Command {
 			id := args[0]
 			line := args[1]
 
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
 			// Read meta to resolve window
-			meta, err := task.ReadMeta(id)
+			meta, err := task.ReadMeta(homeDir, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
@@ -709,7 +730,7 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk := session.Default()
+			bk := session.Resolve(homeDir)
 			if err := bk.SendKeys(windowID, line); err != nil {
 				return fmt.Errorf("sending to %s: %w", id, err)
 			}
@@ -730,8 +751,13 @@ func newPeekCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
 			// Read meta to resolve window
-			meta, err := task.ReadMeta(id)
+			meta, err := task.ReadMeta(homeDir, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
@@ -740,7 +766,7 @@ func newPeekCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk := session.Default()
+			bk := session.Resolve(homeDir)
 			out, err := bk.Capture(windowID, lines)
 			if err != nil {
 				return fmt.Errorf("capturing from %s: %w", id, err)
@@ -777,7 +803,12 @@ func newCrewStateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
-			state, err := crewstate.Read(id)
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			state, err := crewstate.Read(homeDir, id)
 			if err != nil {
 				return fmt.Errorf("reading crew state: %w", err)
 			}
@@ -807,7 +838,12 @@ func newPromoteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
-			if err := task.PromoteMeta(id); err != nil {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			if err := task.PromoteMeta(homeDir, id); err != nil {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
 
@@ -868,7 +904,11 @@ For PR tasks (where meta has pr=), fetches the PR head and compares.
 Warns if local default branch is stale vs origin.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delivery.ReviewDiff(args[0])
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return delivery.ReviewDiff(homeDir, args[0])
 		},
 	}
 }
@@ -883,7 +923,11 @@ and write a check.sh script to poll the PR merge status via gh CLI.
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delivery.PRCheck(args[0], args[1])
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return delivery.PRCheck(homeDir, args[0], args[1])
 		},
 	}
 }
@@ -901,8 +945,12 @@ The --repo/-R flag is not allowed (repository comes from the URL).
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
 			extra := args[2:]
-			return delivery.PRMerge(args[0], args[1], extra)
+			return delivery.PRMerge(homeDir, args[0], args[1], extra)
 		},
 	}
 	return cmd
@@ -917,7 +965,11 @@ Only works for local-only mode projects (no remote).
 Refuses if the merge is not a clean fast-forward.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return delivery.MergeLocal(args[0])
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			return delivery.MergeLocal(homeDir, args[0])
 		},
 	}
 }
@@ -936,92 +988,9 @@ hand-editing $MUNSU_HOME/data/backlog.md.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			verb := args[0]
 			rest := args[1:]
-			return runBacklog(verb, rest)
+			return backlog.Run(verb, rest)
 		},
 	}
-}
-
-// runBacklog dispatches to tasks-axi if compatible, or fallback.
-func runBacklog(verb string, args []string) error {
-	// Probe for compatible tasks-axi
-	if tasksAxiAvailable() {
-		return runTasksAxi(verb, args)
-	}
-
-	return fmt.Errorf("backlog: tasks-axi not available and fallback backlog.md editing not yet implemented")
-}
-
-// tasksAxiAvailable checks if tasks-axi >= 0.1.1 is on PATH.
-func tasksAxiAvailable() bool {
-	path, err := exec.LookPath("tasks-axi")
-	if err != nil {
-		return false
-	}
-
-	cmd := exec.Command(path, "--version")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-
-	version := strings.TrimSpace(string(out))
-	return isCompatibleVersion(version, "0.1.1")
-}
-
-// isCompatibleVersion checks if the installed version is >= minimum.
-// Simple semver comparison (major.minor.patch).
-func isCompatibleVersion(installed, minimum string) bool {
-	installParts := parseVersion(installed)
-	minParts := parseVersion(minimum)
-
-	for i := 0; i < 3; i++ {
-		if installParts[i] > minParts[i] {
-			return true
-		}
-		if installParts[i] < minParts[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// parseVersion splits "x.y.z" into [major, minor, patch] ints.
-func parseVersion(v string) [3]int {
-	parts := strings.SplitN(v, ".", 3)
-	var result [3]int
-	for i, p := range parts {
-		result[i] = atoi(p)
-	}
-	return result
-}
-
-// atoi parses an integer from a string, returning 0 on error.
-func atoi(s string) int {
-	n := 0
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			n = n*10 + int(c-'0')
-		} else {
-			break
-		}
-	}
-	return n
-}
-
-// runTasksAxi runs tasks-axi with the given verb and args.
-func runTasksAxi(verb string, args []string) error {
-	path, err := exec.LookPath("tasks-axi")
-	if err != nil {
-		return fmt.Errorf("tasks-axi not found: %w", err)
-	}
-
-	cliArgs := []string{verb}
-	cliArgs = append(cliArgs, args...)
-
-	cmd := exec.Command(path, cliArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func newSessionStartCmd() *cobra.Command {
@@ -1142,11 +1111,15 @@ func newBearingsCmd() *cobra.Command {
 		Short: "Compact resume report",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
 			projectDir := ""
 			if len(args) > 0 {
 				projectDir = args[0]
 			}
-			return fleet.Bearings(projectDir)
+			return fleet.Bearings(homeDir, projectDir)
 		},
 	}
 }

@@ -7,14 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // PRCheck runs `munsu pr-check <id> <pr-url>`.
 // It records the PR URL and head SHA in task meta, and writes a check.sh
 // script that polls the PR merge status via `gh pr view`.
-func PRCheck(id, prURL string) error {
+func PRCheck(homeDir string, id, prURL string) error {
 	// Parse the PR URL
 	ghURL, err := ParseGHURL(prURL)
 	if err != nil {
@@ -28,7 +27,7 @@ func PRCheck(id, prURL string) error {
 	}
 
 	// Read existing meta (ignore error if it doesn't exist)
-	meta, err := task.ReadMeta(id)
+	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
 		meta = make(map[string]string)
 	}
@@ -37,14 +36,8 @@ func PRCheck(id, prURL string) error {
 	meta["pr"] = prURL
 	meta["pr_head"] = headSHA
 
-	if err := task.WriteMeta(id, meta); err != nil {
+	if err := task.WriteMeta(homeDir, id, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
-	}
-
-	// Resolve home for the state directory
-	homeDir, err := home.Resolve("")
-	if err != nil {
-		return fmt.Errorf("resolving home: %w", err)
 	}
 
 	// Write check.sh script

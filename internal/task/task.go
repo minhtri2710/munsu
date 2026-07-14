@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // StateDir returns the path to the state directory under the given homeDir.
@@ -18,27 +16,19 @@ func StateDir(homeDir string) string {
 }
 
 // metaPath returns the path to the meta file for the given task ID.
-func metaPath(id string) (string, error) {
-	h, err := home.Resolve("")
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(StateDir(h), id+".meta"), nil
+func metaPath(homeDir string, id string) (string, error) {
+	return filepath.Join(StateDir(homeDir), id+".meta"), nil
 }
 
 // statusPath returns the path to the status file for the given task ID.
-func statusPath(id string) (string, error) {
-	h, err := home.Resolve("")
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(StateDir(h), id+".status"), nil
+func statusPath(homeDir string, id string) (string, error) {
+	return filepath.Join(StateDir(homeDir), id+".status"), nil
 }
 
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
 // The map is serialized as key=value lines, one per field.
-func WriteMeta(id string, meta map[string]string) error {
-	p, err := metaPath(id)
+func WriteMeta(homeDir string, id string, meta map[string]string) error {
+	p, err := metaPath(homeDir, id)
 	if err != nil {
 		return err
 	}
@@ -55,8 +45,8 @@ func WriteMeta(id string, meta map[string]string) error {
 // ReadMeta reads a task meta file at $MUNSU_HOME/state/<id>.meta.
 // Each key=value line is parsed into the returned map.
 // Returns an error if the file does not exist.
-func ReadMeta(id string) (map[string]string, error) {
-	p, err := metaPath(id)
+func ReadMeta(homeDir string, id string) (map[string]string, error) {
+	p, err := metaPath(homeDir, id)
 	if err != nil {
 		return nil, err
 	}
@@ -85,8 +75,8 @@ func ReadMeta(id string) (map[string]string, error) {
 }
 
 // AppendStatus appends a status line to $MUNSU_HOME/state/<id>.status.
-func AppendStatus(id, line string) error {
-	p, err := statusPath(id)
+func AppendStatus(homeDir string, id, line string) error {
+	p, err := statusPath(homeDir, id)
 	if err != nil {
 		return err
 	}
@@ -105,8 +95,8 @@ func AppendStatus(id, line string) error {
 }
 
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<id>.status.
-func ReadStatus(id string) ([]string, error) {
-	p, err := statusPath(id)
+func ReadStatus(homeDir string, id string) ([]string, error) {
+	p, err := statusPath(homeDir, id)
 	if err != nil {
 		return nil, err
 	}
@@ -176,8 +166,8 @@ func RemoveStatusKey(line string) string {
 }
 
 // PromoteMeta flips a task's kind from scout to ship in the meta file.
-func PromoteMeta(id string) error {
-	meta, err := ReadMeta(id)
+func PromoteMeta(homeDir string, id string) error {
+	meta, err := ReadMeta(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("reading meta for promote: %w", err)
 	}
@@ -185,7 +175,7 @@ func PromoteMeta(id string) error {
 		return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, meta["kind"])
 	}
 	meta["kind"] = "ship"
-	return WriteMeta(id, meta)
+	return WriteMeta(homeDir, id, meta)
 }
 
 // ValidMetaFields lists the recognized fields in a task meta file.

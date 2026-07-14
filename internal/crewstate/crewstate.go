@@ -20,11 +20,11 @@ type State struct {
 }
 
 // Read reads and synthesizes the current crewmate state.
-func Read(id string) (*State, error) {
+func Read(homeDir string, id string) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 
 	// 1. Read meta
-	meta, err := task.ReadMeta(id)
+	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading meta for %s: %w", id, err)
 	}
@@ -45,7 +45,7 @@ func Read(id string) (*State, error) {
 	}
 
 	// 3. Read status log for the latest state
-	statusLines, err := task.ReadStatus(id)
+	statusLines, err := task.ReadStatus(homeDir, id)
 	if err == nil && len(statusLines) > 0 {
 		s.StatusLines = len(statusLines)
 		lastLine := statusLines[len(statusLines)-1]

@@ -249,7 +249,7 @@ func TestGitDiffSummary_WithDiff(t *testing.T) {
 }
 
 func TestMergeLocal_NoWorktree(t *testing.T) {
-	err := MergeLocal("nonexistent")
+	err := MergeLocal(t.TempDir(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent task")
 	}

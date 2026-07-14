@@ -128,7 +128,7 @@ func scanFleet(homeDir string) *WakeReason {
 		id := strings.TrimSuffix(entry.Name(), ".meta")
 
 		// Read meta
-		meta, err := task.ReadMeta(id)
+		meta, err := task.ReadMeta(homeDir, id)
 		if err != nil {
 			continue
 		}

@@ -30,7 +30,7 @@ func Run(opts Options) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
 	// Read task meta
-	meta, err := task.ReadMeta(opts.ID)
+	meta, err := task.ReadMeta(opts.HomeDir, opts.ID)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, err)
 	}

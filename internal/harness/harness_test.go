@@ -59,6 +59,7 @@ func TestDetectFromEnv_Grok(t *testing.T) {
 func TestDetectFromEnv_Empty(t *testing.T) {
 	// Unset all env markers
 	for _, env := range []string{"CLAUDE_CODE", "CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
+		t.Setenv(env, "")
 		os.Unsetenv(env)
 	}
 
@@ -177,6 +178,7 @@ func TestCrew_HasCrewHarnessFile(t *testing.T) {
 
 func TestCrew_NoConfig(t *testing.T) {
 	tmp := t.TempDir()
+	t.Setenv("CLAUDE_CODE", "1")
 
 	// No config files at all — falls back to detected harness
 	h, err := Crew(tmp)
@@ -231,6 +233,7 @@ func TestSecondmate_FallsBackToCrewHarness(t *testing.T) {
 
 func TestSecondmate_NoConfig(t *testing.T) {
 	tmp := t.TempDir()
+	t.Setenv("CLAUDE_CODE", "1")
 
 	h, err := Secondmate(tmp)
 	if err != nil {

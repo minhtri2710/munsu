@@ -7,6 +7,10 @@ package session
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/minhtri2710/munsu/internal/hometag"
 )
 
 // Backend defines the operations for managing agent session windows.
@@ -54,4 +58,36 @@ func Default() Backend {
 		return &OrcaBackend{}
 	}
 	return &TmuxBackend{}
+}
+
+// Resolve returns the configured backend for homeDir.
+// Resolution order:
+//  1. homeDir/config/backend file (first whitespace-delimited word)
+//  2. Runtime env markers
+//  3. tmux (fallback)
+func Resolve(homeDir string) Backend {
+	if name := readConfigBackend(homeDir); name != "" {
+		tag := hometag.Tag(homeDir)
+		switch name {
+		case "tmux":
+			return &TmuxBackend{Tag: tag}
+		case "herdr":
+			return &HerdrBackend{}
+		default:
+			return Select(name)
+		}
+	}
+	return Default()
+}
+
+func readConfigBackend(homeDir string) string {
+	data, err := os.ReadFile(filepath.Join(homeDir, "config", "backend"))
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(strings.TrimSpace(string(data)))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }

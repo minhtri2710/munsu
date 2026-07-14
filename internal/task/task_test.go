@@ -31,7 +31,7 @@ func TestWriteMeta(t *testing.T) {
 		"yolo":     "off",
 	}
 
-	if err := WriteMeta("test-task-1", meta); err != nil {
+	if err := WriteMeta(tmp, "test-task-1", meta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestReadMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := ReadMeta("test-task-2")
+	meta, err := ReadMeta(tmp, "test-task-2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestReadMeta_NotFound(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	_, err := ReadMeta("nonexistent")
+	_, err := ReadMeta(tmp, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent meta file")
 	}
@@ -111,7 +111,7 @@ func TestReadMeta_EmptyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := ReadMeta("empty")
+	meta, err := ReadMeta(tmp, "empty")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestReadMeta_SkipsCommentsAndBlanks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := ReadMeta("comments")
+	meta, err := ReadMeta(tmp, "comments")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,11 +161,11 @@ func TestRoundTrip(t *testing.T) {
 		"kind":     "scout",
 	}
 
-	if err := WriteMeta("roundtrip", original); err != nil {
+	if err := WriteMeta(tmp, "roundtrip", original); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := ReadMeta("roundtrip")
+	got, err := ReadMeta(tmp, "roundtrip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,14 +181,14 @@ func TestAppendStatus(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := AppendStatus("test-task-3", "working: started"); err != nil {
+	if err := AppendStatus(tmp, "test-task-3", "working: started"); err != nil {
 		t.Fatal(err)
 	}
-	if err := AppendStatus("test-task-3", "done: complete"); err != nil {
+	if err := AppendStatus(tmp, "test-task-3", "done: complete"); err != nil {
 		t.Fatal(err)
 	}
 
-	lines, err := ReadStatus("test-task-3")
+	lines, err := ReadStatus(tmp, "test-task-3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestReadStatus_Nonexistent(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	lines, err := ReadStatus("nonexistent")
+	lines, err := ReadStatus(tmp, "nonexistent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestMetaPath_RespectsHomeOverride(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	fullPath, err := metaPath("test-id")
+	fullPath, err := metaPath(tmp, "test-id")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestStateDirCreatedByWrite(t *testing.T) {
 		os.RemoveAll(statePath)
 	}
 
-	if err := WriteMeta("dir-test", map[string]string{"window": "@1"}); err != nil {
+	if err := WriteMeta(tmp, "dir-test", map[string]string{"window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -371,7 +371,7 @@ func TestPromoteMeta(t *testing.T) {
 	setHomeEnv(t, tmp)
 
 	// Create a scout meta
-	if err := WriteMeta("scout-task", map[string]string{
+	if err := WriteMeta(tmp, "scout-task", map[string]string{
 		"kind":     "scout",
 		"window":   "@1",
 		"worktree": "/tmp/wt",
@@ -380,12 +380,12 @@ func TestPromoteMeta(t *testing.T) {
 	}
 
 	// Promote it
-	if err := PromoteMeta("scout-task"); err != nil {
+	if err := PromoteMeta(tmp, "scout-task"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Verify kind changed
-	meta, err := ReadMeta("scout-task")
+	meta, err := ReadMeta(tmp, "scout-task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,13 +402,13 @@ func TestPromoteMeta_NotScout(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := WriteMeta("ship-task", map[string]string{
+	if err := WriteMeta(tmp, "ship-task", map[string]string{
 		"kind": "ship",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	err := PromoteMeta("ship-task")
+	err := PromoteMeta(tmp, "ship-task")
 	if err == nil {
 		t.Fatal("expected error promoting non-scout task")
 	}
@@ -418,7 +418,7 @@ func TestPromoteMeta_NoMeta(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	err := PromoteMeta("nonexistent")
+	err := PromoteMeta(tmp, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent task")
 	}
@@ -428,11 +428,11 @@ func TestPromoteMeta_EmptyKind(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := WriteMeta("no-kind", map[string]string{}); err != nil {
+	if err := WriteMeta(tmp, "no-kind", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
 
-	err := PromoteMeta("no-kind")
+	err := PromoteMeta(tmp, "no-kind")
 	if err == nil {
 		t.Fatal("expected error promoting task with empty kind")
 	}
@@ -442,7 +442,7 @@ func TestPromoteMeta_PreservesAllFields(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := WriteMeta("full-scout", map[string]string{
+	if err := WriteMeta(tmp, "full-scout", map[string]string{
 		"kind":     "scout",
 		"window":   "@42",
 		"worktree": "/tmp/test-wt",
@@ -455,11 +455,11 @@ func TestPromoteMeta_PreservesAllFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := PromoteMeta("full-scout"); err != nil {
+	if err := PromoteMeta(tmp, "full-scout"); err != nil {
 		t.Fatal(err)
 	}
 
-	meta, err := ReadMeta("full-scout")
+	meta, err := ReadMeta(tmp, "full-scout")
 	if err != nil {
 		t.Fatal(err)
 	}
