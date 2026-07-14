@@ -324,8 +324,8 @@ func TestSecondmate_DefaultSecondmateHarnessFallsToCrewHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("MUNSU_SECONDMATE-HARNESS_OVERRIDE", "")
-	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
+	os.Unsetenv("MUNSU_SECONDMATE-HARNESS_OVERRIDE")
+	os.Unsetenv("MUNSU_CREW-HARNESS_OVERRIDE")
 
 	h, err := Secondmate(tmp)
 	if err != nil {
