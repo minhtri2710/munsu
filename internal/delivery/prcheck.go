@@ -56,8 +56,8 @@ set -euo pipefail
 PR_NUM=%d
 OWNER=%s
 REPO=%s
-HOME_DIR=%s
-PROJECT=%s
+HOME_DIR="%s"
+PROJECT="%s"
 
 echo "Polling PR #${PR_NUM} merge status for %s/%s..."
 RESULT=$(gh pr view "${PR_NUM}" --repo "${OWNER}/${REPO}" --json merged 2>&1 || echo "ERROR:$?")

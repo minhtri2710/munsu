@@ -77,10 +77,9 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	if project := meta["project"]; project != "" {
 		if res, err := fleet.Sync(homeDir, project); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: fleet-sync for %s failed: %v\n", project, err)
-		} else if len(res.Errors) > 0 {
-			for _, e := range res.Errors {
-				fmt.Fprintf(os.Stderr, "Warning: fleet-sync: %s\n", e)
-			}
+	} else if len(res.Stuck) > 0 {
+		for _, s := range res.Stuck {
+			fmt.Fprintf(os.Stderr, "Warning: fleet-sync: %s\n", s)
 		}
 	}
 	return nil
