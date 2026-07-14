@@ -9,15 +9,15 @@ import (
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/agentsmd"
 	"github.com/minhtri2710/munsu/internal/backlog"
-	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
+	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lock"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/secondmate"
 	"github.com/minhtri2710/munsu/internal/selfupdate"
@@ -1030,7 +1030,7 @@ func newBootstrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			locked := lock.IsLocked(homeDir)
+			locked := lifecycle.IsSessionLocked(homeDir)
 			var installTools []string
 			if len(args) > 1 && args[0] == "install" {
 				installTools = args[1:]
