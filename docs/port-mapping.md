@@ -8,7 +8,7 @@ Maintained as munsu ports more capabilities.
 | `FM_HOME` / `~/.firstmate` | `munsu home` | `internal/home` | **A0: done** |
 | Task meta + status protocol | `munsu task add/list/show/status` | `internal/cli` (stub) | stub |
 | `bin/fm-send.sh` | `munsu send` | `internal/cli` (stub) | stub |
-| `bin/fm-spawn.sh` | `munsu spawn` | `internal/cli` (stub) | stub |
+| `bin/fm-spawn.sh` | `munsu spawn` | `internal/cli` | **done** |
 | `bin/fm-brief.sh` | `munsu brief` | `internal/cli` (stub) | stub |
 | `bin/fm-teardown.sh` | `munsu teardown` | `internal/cli` (stub) | stub |
 | `bin/fm-peek.sh` | `munsu peek` | `internal/cli` (stub) | stub |
@@ -26,7 +26,7 @@ Maintained as munsu ports more capabilities.
 | `bin/fm-watch.sh` | `munsu watch` | `internal/cli` (stub) | stub |
 | `bin/fm-watch-arm.sh` | `munsu watch-arm` | `internal/cli` (stub) | stub |
 | `bin/fm-wake-drain.sh` | `munsu wake-drain` | `internal/cli` (stub) | stub |
-| `bin/fm-guard.sh` | `munsu guard` | `internal/cli` (stub) | stub |
+| `bin/fm-guard.sh` | `munsu guard` | `internal/cli` | **done** |
 | Stow skill (`.agents/skills/stow`) | `munsu stow` | `internal/cli` (stub) | stub |
 | `bin/fm-ensure-agents-md.sh` | `munsu ensure-agents-md` | `internal/cli` (stub) | stub |
 | Project registry | `munsu project add/list/show/rm` | `internal/cli` (stub) | stub |
