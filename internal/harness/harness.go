@@ -192,6 +192,8 @@ func lookupConfig(homeDir, key string) (string, bool) {
 //  1. Default harness from config/crew-dispatch.json
 //  2. config/crew-harness file value
 //  3. Detected harness from Detect()
+//
+// The config/crew-harness value "default" is treated as unset.
 func Crew(homeDir string) (string, error) {
 	// 1. Try dispatch config default
 	dp, err := LoadDispatch(filepath.Join(config.ConfigDir(homeDir), "crew-dispatch.json"))
@@ -213,6 +215,8 @@ func Crew(homeDir string) (string, error) {
 //  1. config/secondmate-harness file value
 //  2. config/crew-harness file value
 //  3. Detected harness from Detect()
+//
+// A value of "default" in config/secondmate-harness or config/crew-harness is treated as unset.
 func Secondmate(homeDir string) (string, error) {
 	// 1. Try config/secondmate-harness
 	if v, ok := lookupConfig(homeDir, "secondmate-harness"); ok {
