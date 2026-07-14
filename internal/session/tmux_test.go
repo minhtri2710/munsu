@@ -88,12 +88,88 @@ func TestResolve_ErrorsOnUnknownBackendConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Resolve(tmpDir)
+	_, _, err := Resolve(tmpDir, "")
 	if err == nil {
 		t.Fatal("expected error for unknown backend name in config")
 	} else if !strings.Contains(err.Error(), "unknown session backend") {
 		t.Errorf("unexpected error: %v", err)
 	}
+}
+
+func TestResolve_Precedence(t *testing.T) {
+	t.Run("override beats config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configDir := filepath.Join(tmpDir, "config")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		// Write config saying "herdr" but override says "tmux"
+		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		bk, name, err := Resolve(tmpDir, "tmux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "tmux" {
+			t.Errorf("Resolve with override 'tmux' returned name %q, want 'tmux'", name)
+		}
+		if _, ok := bk.(*TmuxBackend); !ok {
+			t.Errorf("Resolve with override 'tmux' returned %T, want *TmuxBackend", bk)
+		}
+	})
+
+	t.Run("config beats default", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configDir := filepath.Join(tmpDir, "config")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		// Write config saying "herdr" with no override
+		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		bk, name, err := Resolve(tmpDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "herdr" {
+			t.Errorf("Resolve with config 'herdr' returned name %q, want 'herdr'", name)
+		}
+		if _, ok := bk.(*HerdrBackend); !ok {
+			t.Errorf("Resolve with config 'herdr' returned %T, want *HerdrBackend", bk)
+		}
+	})
+
+	t.Run("default is tmux when no config and no env", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HERDR_ENV", "")
+		bk, name, err := Resolve(tmpDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "tmux" {
+			t.Errorf("Resolve with no config/env returned name %q, want 'tmux'", name)
+		}
+		if _, ok := bk.(*TmuxBackend); !ok {
+			t.Errorf("Resolve with no config/env returned %T, want *TmuxBackend", bk)
+		}
+	})
+
+	t.Run("HERDR_ENV selects herdr when no override and no config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HERDR_ENV", "1")
+		bk, name, err := Resolve(tmpDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "herdr" {
+			t.Errorf("Resolve with HERDR_ENV returned name %q, want 'herdr'", name)
+		}
+		if _, ok := bk.(*HerdrBackend); !ok {
+			t.Errorf("Resolve with HERDR_ENV returned %T, want *HerdrBackend", bk)
+		}
+	})
 }
 
 // TestTmux_NewWindow requires an active tmux server.

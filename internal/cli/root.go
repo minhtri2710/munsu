@@ -614,9 +614,10 @@ func newBriefCmd() *cobra.Command {
 
 func newSpawnCmd() *cobra.Command {
 	var (
-		kind string
-		mode string
-		yolo bool
+		kind    string
+		mode    string
+		yolo    bool
+		backend string
 	)
 
 	cmd := &cobra.Command{
@@ -654,14 +655,14 @@ func newSpawnCmd() *cobra.Command {
 				}
 			}
 
-			// 5. Create tmux window
-			bk, err := session.Resolve(homeDir)
+			// 5. Create session window
+			bk, bkName, err := session.Resolve(homeDir, backend)
 			if err != nil {
 				return err
 			}
 			windowID, err := bk.NewWindow(h, id)
 			if err != nil {
-				return fmt.Errorf("creating session window: %w", err)
+				return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
 			}
 
 			// 6. Write task meta
@@ -705,6 +706,7 @@ func newSpawnCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
 	cmd.Flags().StringVar(&mode, "mode", "no-mistakes", "Delivery mode (no-mistakes|direct-PR|local-only)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
+	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
 
 	return cmd
 }
@@ -733,7 +735,7 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, err := session.Resolve(homeDir)
+			bk, _, err := session.Resolve(homeDir, "")
 			if err != nil {
 				return err
 			}
@@ -772,7 +774,7 @@ func newPeekCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, err := session.Resolve(homeDir)
+			bk, _, err := session.Resolve(homeDir, "")
 			if err != nil {
 				return err
 			}

@@ -31,7 +31,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> <project> [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--yolo]` | Launch a crewmate agent in a worktree+tmux/herdr window. |
+| `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only] [--backend tmux|herdr] [--yolo]` | Launch a crewmate agent in a worktree+tmux/herdr window. |
 | `munsu send <id> "<line>"` | Send a line to a crewmate endpoint. |
 | `munsu peek <id> [--lines N]` | Read last N lines of crewmate pane output (default 40). |
 | `munsu crew-state <id>` | Read crewmate current state (meta + pane liveness + status log). |
