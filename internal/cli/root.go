@@ -898,8 +898,15 @@ func newCrewStateCmd() *cobra.Command {
 				fmt.Println("gone")
 			}
 			if state.StatusLines > 0 {
-				fmt.Printf("Log:   %d status lines\n", state.StatusLines)
-			}
+			fmt.Printf("Log:   %d status lines\n", state.StatusLines)
+		}
+
+		if state.NoMistakesRunStep != "" {
+			fmt.Printf("Run:   no-mistakes: %s\n", state.NoMistakesRunStep)
+		}
+		if state.StatusLogSuperseded {
+			fmt.Println("Note:  status log superseded by no-mistakes run-step")
+		}
 			return nil
 		},
 	}
