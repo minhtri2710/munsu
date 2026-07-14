@@ -2,7 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"os"
+"os"
+"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -39,6 +40,55 @@ var (
 
 func notImplementedE(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("%s: not yet implemented", cmd.Name())
+}
+
+// checkTangle checks if the project's primary checkout at projectDir is on a
+// non-default branch. Returns nil if HEAD is detached or on the default branch.
+func checkTangle(projectDir, projectName string) error {
+	// Check current HEAD state
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		// Can't determine branch state; skip tangle check
+		return nil
+	}
+	branch := strings.TrimSpace(string(out))
+
+	// Detached HEAD is the normal/expected state for worktree usage
+	if branch == "HEAD" {
+		return nil
+	}
+
+	// Get the default branch from origin/HEAD, with main/master fallback
+	cmd = exec.Command("git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	cmd.Dir = projectDir
+	out, err = cmd.Output()
+	if err == nil {
+		defaultRef := strings.TrimSpace(string(out))
+		defaultBranch := strings.TrimPrefix(defaultRef, "origin/")
+
+		// On the default branch = no tangle
+		if branch == defaultBranch {
+			return nil
+		}
+	} else {
+		// Fall back to common default branch names when origin/HEAD unavailable
+		for _, candidate := range []string{"main", "master"} {
+			chk := exec.Command("git", "rev-parse", "--verify", candidate)
+			chk.Dir = projectDir
+			if err := chk.Run(); err == nil {
+				// On the default branch = no tangle
+				if branch == candidate {
+					return nil
+				}
+				break
+			}
+		}
+	}
+	// Tangle detected: on a non-default branch in the primary checkout
+	return fmt.Errorf("cannot spawn: %s is on branch %s, not an isolated worktree. Use a detached HEAD or a worktree",
+		projectName, branch)
 }
 
 // NewRootCommand builds the munsu root cobra command with all subcommands.
@@ -632,6 +682,14 @@ func newSpawnCmd() *cobra.Command {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
 				return fmt.Errorf("resolving home: %w", err)
+			}
+
+			// 1b. Check for worktree tangle (unless yolo)
+			if !yolo {
+				projDir := filepath.Join(homeDir, "projects", projectName)
+				if err := checkTangle(projDir, projectName); err != nil {
+					return err
+				}
 			}
 
 			// 2. Acquire worktree
@@ -1376,6 +1434,22 @@ func newGuardCmd() *cobra.Command {
 				return err
 			}
 			waker.CheckGuard(homeDir)
+
+			// Check all registered projects for tangles
+			projects, err := project.List(homeDir)
+			if err == nil {
+				for _, p := range projects {
+					projDir := filepath.Join(homeDir, "projects", p.Name)
+					if err := checkTangle(projDir, p.Name); err != nil {
+						w := err.Error()
+						border := strings.Repeat("●", len(w)+4)
+						fmt.Println(border)
+						fmt.Println("● " + w + " ●")
+						fmt.Println(border)
+					}
+				}
+			}
+
 			return nil
 		},
 	}
