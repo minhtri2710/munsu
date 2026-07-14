@@ -2,62 +2,27 @@
 package waker
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
-const (
-	wakeQueueFile   = "state/.wake-queue"
-	watcherBeatFile = "state/.last-watcher-beat"
-	staleThreshold  = 300 * time.Second
-)
-
-// Record is a single wake queue entry.
-type Record struct {
-	Epoch   string
-	Seq     string
-	Kind    string
-	Key     string
-	Payload string
-}
+// Record is a single wake queue entry, imported from lifecycle.
+type Record lifecycle.WakeRecord
 
 // Drain reads and clears the wake queue.
 func Drain(homeDir string) ([]Record, error) {
-	qPath := filepath.Join(homeDir, wakeQueueFile)
-
-	f, err := os.Open(qPath)
+	records, err := lifecycle.DrainWakes(homeDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	defer f.Close()
-
-	var records []Record
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 5)
-		if len(parts) < 5 {
-			continue
-		}
-		records = append(records, Record{
-			Epoch:   parts[0],
-			Seq:     parts[1],
-			Kind:    parts[2],
-			Key:     parts[3],
-			Payload: parts[4],
-		})
+	out := make([]Record, len(records))
+	for i, r := range records {
+		out[i] = Record(r)
 	}
-
-	// Clear the queue
-	os.Remove(qPath)
-
-	return records, scanner.Err()
+	return out, nil
 }
 
 // PrintRecords prints drained records in a readable format.
@@ -72,22 +37,17 @@ func CheckGuard(homeDir string) []string {
 	var warnings []string
 
 	// Check watcher liveness
-	beatFile := filepath.Join(homeDir, watcherBeatFile)
-	if data, err := os.ReadFile(beatFile); err == nil {
-		var ts int64
-		fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &ts)
-		age := time.Since(time.Unix(ts, 0))
-		if age > staleThreshold {
-			w := fmt.Sprintf("WATCHER BEACON STALE - last beat %v ago (grace %v)", age.Round(time.Second), staleThreshold)
-			warnings = append(warnings, w)
-		}
-	} else {
+	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	if !status.Exists {
 		warnings = append(warnings, "WATCHER NEVER STARTED - no liveness beacon")
+	} else if status.Stale {
+		warnings = append(warnings, fmt.Sprintf(
+			"WATCHER BEACON STALE - last beat %v ago (grace %v)",
+			status.Age.Round(time.Second), lifecycle.StaleThreshold()))
 	}
 
 	// Check queued wakes
-	qPath := filepath.Join(homeDir, wakeQueueFile)
-	if fi, err := os.Stat(qPath); err == nil && fi.Size() > 0 {
+	if lifecycle.HasQueuedWakes(homeDir) {
 		warnings = append(warnings, "QUEUED WAKES PENDING - drain with munsu wake-drain")
 	}
 

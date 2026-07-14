@@ -6,7 +6,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/lock"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // SessionStartResult holds the full session-start output digest.
@@ -17,12 +17,12 @@ type SessionStartResult struct {
 }
 
 // RunSessionStart executes the full session-start sequence:
-// lock → bootstrap → context/fleet digest.
+// lock -> bootstrap -> context/fleet digest.
 func RunSessionStart(home string) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 
 	// 1. Acquire lock
-	acquired, err := lock.Acquire(home)
+	acquired, err := lifecycle.AcquireSession(home)
 	if err != nil {
 		return res, fmt.Errorf("lock acquire: %w", err)
 	}
@@ -42,7 +42,7 @@ func RunSessionStart(home string) (*SessionStartResult, error) {
 	// 3. Print diagnostics
 	fmt.Println("--- Bootstrap Diagnostics ---")
 	if !acquired {
-		fmt.Println("(read-only mode — mutating sweeps skipped)")
+		fmt.Println("(read-only mode -- mutating sweeps skipped)")
 	}
 	for _, d := range bootRes.Diagnostics {
 		fmt.Println("  " + d)
@@ -52,7 +52,7 @@ func RunSessionStart(home string) (*SessionStartResult, error) {
 	}
 	if len(bootRes.MissingTools) > 0 {
 		fmt.Println("")
-		fmt.Println("Missing tools — install with: munsu bootstrap install <tool>")
+		fmt.Println("Missing tools -- install with: munsu bootstrap install <tool>")
 	}
 
 	// 4. Fleet sync (mutating sweep, only when locked)
