@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -46,7 +47,7 @@ func ReviewDiff(homeDir string, id string) error {
 	prURL, hasPR := meta["pr"]
 	if hasPR && prURL != "" {
 		// PR tasks: compare against PR's merge ref
-		ghURL, err := ParseGHURL(prURL)
+		ghURL, err := ghurl.ParseGHURL(prURL)
 		if err != nil {
 			return fmt.Errorf("parsing PR URL from meta: %w", err)
 		}

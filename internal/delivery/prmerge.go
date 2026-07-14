@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -22,7 +23,7 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	// Parse the PR URL
-	ghURL, err := ParseGHURL(prURL)
+	ghURL, err := ghurl.ParseGHURL(prURL)
 	if err != nil {
 		return fmt.Errorf("invalid PR URL: %w", err)
 	}
