@@ -21,7 +21,7 @@ Maintained as munsu ports more capabilities.
 | `bin/fm-fleet-view.sh` | `munsu fleet-view` | `internal/cli` (stub) | stub |
 | `bin/fm-bearings-snapshot.sh` | `munsu bearings` | `internal/cli` (stub) | stub |
 | `bin/fm-bootstrap.sh` | `munsu bootstrap` | `internal/cli` (stub) | stub |
-| `bin/fm-update.sh` | `munsu update` | `internal/cli` (stub) | stub |
+| `bin/fm-update.sh` | `munsu update` | `internal/selfupdate` | **A6: done** |
 | `bin/fm-session-start.sh` | `munsu session-start` | `internal/session` | **A1: done** |
 | `bin/fm-watch.sh` | `munsu watch` | `internal/cli` (stub) | stub |
 | `bin/fm-watch-arm.sh` | `munsu watch-arm` | `internal/cli` (stub) | stub |

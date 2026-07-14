@@ -33,6 +33,7 @@ Current layout:
 - `internal/crewstate/` — crewmate state reading (meta + pane liveness + status log)
 - `internal/lifecycle/` — timing/lock invariants (wake queue, watcher beat, session lock): single definition of paths/constants, queue parse/append/drain, beat I/O, lock acquire/release/is-locked
 - `internal/cli/backlog.go` — backlog command wiring to tasks-axi (inline in root.go)
+- `internal/selfupdate/` — fast-forward-only self-update (`munsu update`)
 Current layout (continued):
 - `internal/delivery/` — review-diff, pr-check, pr-merge, merge-local, no-mistakes axi helpers
 
