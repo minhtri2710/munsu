@@ -89,7 +89,7 @@ func TestCheckTangle(t *testing.T) {
 	}
 	// Test 7: no remote but main branch exists (fallback path)
 	noRemoteDir := filepath.Join(tmpDir, "no-remote")
-	runCmd(t, "", "git", "init", noRemoteDir)
+	runCmd(t, "", "git", "init", "-b", "main", noRemoteDir)
 	runCmd(t, noRemoteDir, "git", "config", "user.email", "test@test.com")
 	runCmd(t, noRemoteDir, "git", "config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(noRemoteDir, "README.md"), []byte("# test\n"), 0644); err != nil {
