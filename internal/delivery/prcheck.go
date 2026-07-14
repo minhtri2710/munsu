@@ -41,6 +41,12 @@ func PRCheck(homeDir string, id, prURL string) error {
 		return fmt.Errorf("writing task meta: %w", err)
 	}
 
+	// Resolve project name for fleet-sync in check.sh script
+	project := meta["project"]
+	if project == "" {
+		project = ghURL.Repo
+	}
+
 	// Write check.sh script
 checkScript := fmt.Sprintf(`#!/bin/bash
 # PR merge poll script for task %s
@@ -51,6 +57,7 @@ PR_NUM=%d
 OWNER=%s
 REPO=%s
 HOME_DIR=%s
+PROJECT=%s
 
 echo "Polling PR #${PR_NUM} merge status for %s/%s..."
 RESULT=$(gh pr view "${PR_NUM}" --repo "${OWNER}/${REPO}" --json merged 2>&1 || echo "ERROR:$?")
@@ -58,10 +65,7 @@ RESULT=$(gh pr view "${PR_NUM}" --repo "${OWNER}/${REPO}" --json merged 2>&1 || 
 if echo "$RESULT" | grep -q '"merged": true'; then
 	echo "merged: true"
 	# Best-effort fleet-sync the project clone
-	PROJECT_DIR="${HOME_DIR}/projects/${REPO}"
-	if [ -d "$PROJECT_DIR" ]; then
-		(cd "$PROJECT_DIR" && git fetch origin && (git merge --ff-only origin/main 2>/dev/null || git merge --ff-only origin/master 2>/dev/null)) 2>/dev/null || echo "Warning: fleet-sync for ${REPO} failed" >&2
-	fi
+	munsu --home "$HOME_DIR" fleet-sync "$PROJECT" 2>/dev/null || echo "Warning: fleet-sync for ${PROJECT} failed" >&2
 	exit 0
 elif echo "$RESULT" | grep -q '"merged": false'; then
 	echo "merged: false"
@@ -70,7 +74,7 @@ else
 	echo "error: unexpected response: $RESULT"
 	exit 2
 fi
-`, id, ghURL.Num, ghURL.Owner, ghURL.Repo, homeDir, ghURL.Owner, ghURL.Repo)
+`, id, ghURL.Num, ghURL.Owner, ghURL.Repo, homeDir, project, ghURL.Owner, ghURL.Repo)
 
 	checkPath := filepath.Join(task.StateDir(homeDir), id+".check.sh")
 	if err := os.MkdirAll(filepath.Dir(checkPath), 0755); err != nil {

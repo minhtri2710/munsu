@@ -74,11 +74,13 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	fmt.Printf("PR merged: %s (%s method)\n", ghURL.FormatPRRef(), method)
 
 	// Best-effort fleet-sync the project clone
-	if res, err := fleet.Sync(homeDir, ghURL.Repo); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: fleet-sync for %s failed: %v\n", ghURL.Repo, err)
-	} else if len(res.Errors) > 0 {
-		for _, e := range res.Errors {
-			fmt.Fprintf(os.Stderr, "Warning: fleet-sync: %s\n", e)
+	if project := meta["project"]; project != "" {
+		if res, err := fleet.Sync(homeDir, project); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: fleet-sync for %s failed: %v\n", project, err)
+		} else if len(res.Errors) > 0 {
+			for _, e := range res.Errors {
+				fmt.Fprintf(os.Stderr, "Warning: fleet-sync: %s\n", e)
+			}
 		}
 	}
 	return nil
