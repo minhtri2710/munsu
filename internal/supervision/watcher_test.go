@@ -270,3 +270,61 @@ func TestScanFleet_MultipleTasks_OnlyOneWithWindow(t *testing.T) {
 		t.Errorf("kind = %q, want stale", reason.Kind)
 	}
 }
+
+// --- Evidence: absorb + streak integration tests ---
+//
+// These tests demonstrate the two behaviors from the user intent:
+// 1. Absorb provably-working wakes (no-mistakes run-step absorbs stale)
+// 2. Demand-deep-inspection streak tracking after 3 consecutive stale polls
+
+func TestHandleStale_DemandDeepInspectionStreak(t *testing.T) {
+	delete(staleStreaks, "deep-test")
+	consecutiveStaleThreshold = 3
+
+	r1 := handleStale("deep-test", "pane is dead")
+	if r1.DemandDeepInspection {
+		t.Error("poll 1 should not demand deep inspection")
+	}
+
+	r2 := handleStale("deep-test", "pane is dead")
+	if r2.DemandDeepInspection {
+		t.Error("poll 2 should not demand deep inspection")
+	}
+
+	r3 := handleStale("deep-test", "pane is dead")
+	if !r3.DemandDeepInspection {
+		t.Error("poll 3 should demand deep inspection")
+	}
+	if !strings.Contains(r3.Message, "demand-deep-inspection") {
+		t.Errorf("message should contain demand-deep-inspection, got %q", r3.Message)
+	}
+
+	r4 := handleStale("deep-test", "pane is dead")
+	if !r4.DemandDeepInspection {
+		t.Error("poll 4 should still demand deep inspection")
+	}
+}
+
+func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
+	absorbSteps := []string{"running", "fixing", "ci", "fix_review", "awaiting_approval"}
+	for _, step := range absorbSteps {
+		s := &crewstate.State{NoMistakesRunStep: step}
+		if !absorbStaleSignal(s) {
+			t.Errorf("%s should absorb stale signal", step)
+		}
+	}
+}
+
+func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
+	nonAbsorbSteps := []string{"", "done", "failed", "checks-passed", "passed", "cancelled", "some-unknown-step"}
+	for _, step := range nonAbsorbSteps {
+		s := &crewstate.State{NoMistakesRunStep: step}
+		if absorbStaleSignal(s) {
+			t.Errorf("%q should NOT absorb stale signal", step)
+		}
+	}
+
+	if absorbStaleSignal(nil) {
+		t.Error("nil state should NOT absorb stale signal")
+	}
+}
