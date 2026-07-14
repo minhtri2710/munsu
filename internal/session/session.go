@@ -44,24 +44,35 @@ func Default() Backend {
 	return &TmuxBackend{}
 }
 
-// Resolve returns the configured backend for homeDir.
+// Resolve returns the configured backend for homeDir with optional override.
 // Resolution order:
-//  1. homeDir/config/backend file (first whitespace-delimited word; unknown name = error)
-//  2. Runtime env markers
-//  3. tmux (fallback)
-func Resolve(homeDir string) (Backend, error) {
-	if name := readConfigBackend(homeDir); name != "" {
-		tag := hometag.Tag(homeDir)
-		switch name {
-		case "tmux":
-			return &TmuxBackend{Tag: tag}, nil
-		case "herdr":
-			return &HerdrBackend{}, nil
-		default:
-			return Select(name)
-		}
+//  1. backendOverride (from --backend flag, when non-empty)
+//  2. homeDir/config/backend file (first whitespace-delimited word; unknown name = error)
+//  3. Runtime env markers (HERDR_ENV)
+//  4. tmux (fallback)
+// Returns the backend, its resolved name, and any error.
+func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
+	name := backendOverride
+	if name == "" {
+		name = readConfigBackend(homeDir)
 	}
-	return Default(), nil
+	if name == "" {
+		bk := Default()
+		if _, ok := bk.(*HerdrBackend); ok {
+			return bk, "herdr", nil
+		}
+		return bk, "tmux", nil
+	}
+
+	tag := hometag.Tag(homeDir)
+	switch name {
+	case "tmux":
+		return &TmuxBackend{Tag: tag}, "tmux", nil
+	case "herdr":
+		return &HerdrBackend{}, "herdr", nil
+	default:
+		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr)", name)
+	}
 }
 
 func readConfigBackend(homeDir string) string {
