@@ -85,7 +85,9 @@ munsu teardown <id> [--force]
 - `munsu fleet-view` — see the full fleet.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
 - `munsu bearings` — compact resume report.
-- `munsu stow <learning...>` — capture durable learnings.
+- `munsu stow <text...>` — capture durable learnings (data/learnings.md); inspect-then-update: matching entries are replaced, not duplicated.
+- `munsu stow --captain <text...>` — capture captain preferences (data/captain.md); created lazily if absent.
+- `munsu stow --kind captain <text...>` — same as --captain.
 
 ## Reference rules
 

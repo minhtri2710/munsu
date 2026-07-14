@@ -27,7 +27,7 @@ Maintained as munsu ports more capabilities.
 | `bin/fm-watch-arm.sh` | `munsu watch-arm` | `internal/cli` (stub) | stub |
 | `bin/fm-wake-drain.sh` | `munsu wake-drain` | `internal/cli` (stub) | stub |
 | `bin/fm-guard.sh` | `munsu guard` | `internal/cli` | **done** |
-| Stow skill (`.agents/skills/stow`) | `munsu stow` | `internal/cli` (stub) | stub |
+| Stow skill (`.agents/skills/stow`) | `munsu stow` | `internal/stow` | **done** |
 | `bin/fm-ensure-agents-md.sh` | `munsu ensure-agents-md` | `internal/cli` (stub) | stub |
 | Project registry | `munsu project add/list/show/rm` | `internal/cli` (stub) | stub |
 | Backlog (tasks-axi + manual fallback) | `munsu backlog` | `internal/backlog` | **A5: done** |

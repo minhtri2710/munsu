@@ -1462,29 +1462,61 @@ func newGuardCmd() *cobra.Command {
 }
 
 func newStowCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "stow",
+	var kind string
+	var captain bool
+
+	cmd := &cobra.Command{
+		Use:   "stow [text...]",
 		Short: "Sweep session for durable knowledge",
-		Long: `Capture durable learnings from the current session and file them
-in data/learnings.md. Pass learnings as arguments.`,
+		Long: `Capture durable learnings or captain preferences from the current session.
+
+Flags:
+  --kind learning|captain   which file to stow (default: learning)
+  --captain                  shorthand for --kind captain
+
+Entries are inspect-then-update: if a new entry matches an existing
+entry (by substring), the existing entry is replaced in place rather
+than appended. Non-matching entries are appended as usual.
+
+Examples:
+  munsu stow "Go 1.26 uses range-over-func"
+  munsu stow --captain "Prefer simple project layouts"
+  munsu stow --kind captain "Prefer simple layouts"
+`,
 		Args: cobra.MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if captain {
+				kind = stow.KindCaptain
+			}
+			if kind == "" {
+				kind = stow.KindLearning
+			}
+
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
 				return err
 			}
-			res, err := stow.Run(homeDir, args)
+
+			res, err := stow.RunKinded(homeDir, kind, args)
 			if err != nil {
 				return err
 			}
-			if res.DataLearnings != "" {
+
+			switch {
+			case res.DataLearnings != "":
 				fmt.Printf("Stowed learnings to %s\n", res.DataLearnings)
-			} else {
-				fmt.Println("Nothing to stow (no learnings provided)")
+			case res.DataCaptain != "":
+				fmt.Printf("Stowed captain preferences to %s\n", res.DataCaptain)
+			default:
+				fmt.Println("Nothing to stow (no text provided)")
 			}
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVar(&kind, "kind", "", "Kind of stow entry (learning|captain)")
+	cmd.Flags().BoolVar(&captain, "captain", false, "Shorthand for --kind captain")
+	return cmd
 }
 
 func newEnsureAgentsMdCmd() *cobra.Command {
