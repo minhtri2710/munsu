@@ -78,7 +78,7 @@ func TestSelect_ReturnsKnownBackends(t *testing.T) {
 	}
 }
 
-func TestResolve_PanicsOnUnknownBackendConfig(t *testing.T) {
+func TestResolve_ErrorsOnUnknownBackendConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -88,14 +88,12 @@ func TestResolve_PanicsOnUnknownBackendConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for unknown backend name in config")
-		} else if !strings.Contains(r.(string), "unknown session backend") {
-			t.Errorf("unexpected panic message: %v", r)
-		}
-	}()
-	Resolve(tmpDir)
+	_, err := Resolve(tmpDir)
+	if err == nil {
+		t.Fatal("expected error for unknown backend name in config")
+	} else if !strings.Contains(err.Error(), "unknown session backend") {
+		t.Errorf("unexpected error: %v", err)
+	}
 }
 
 // TestTmux_NewWindow requires an active tmux server.

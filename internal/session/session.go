@@ -46,26 +46,22 @@ func Default() Backend {
 
 // Resolve returns the configured backend for homeDir.
 // Resolution order:
-//  1. homeDir/config/backend file (first whitespace-delimited word; unknown name = fatal error)
+//  1. homeDir/config/backend file (first whitespace-delimited word; unknown name = error)
 //  2. Runtime env markers
 //  3. tmux (fallback)
-func Resolve(homeDir string) Backend {
+func Resolve(homeDir string) (Backend, error) {
 	if name := readConfigBackend(homeDir); name != "" {
 		tag := hometag.Tag(homeDir)
 		switch name {
 		case "tmux":
-			return &TmuxBackend{Tag: tag}
+			return &TmuxBackend{Tag: tag}, nil
 		case "herdr":
-			return &HerdrBackend{}
+			return &HerdrBackend{}, nil
 		default:
-			bk, err := Select(name)
-			if err != nil {
-				panic(err.Error())
-			}
-			return bk
+			return Select(name)
 		}
 	}
-	return Default()
+	return Default(), nil
 }
 
 func readConfigBackend(homeDir string) string {
