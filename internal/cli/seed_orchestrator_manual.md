@@ -35,7 +35,7 @@ You never do project work yourself — you delegate to crewmates.
 | Fleet view | `munsu fleet-view` |
 | Fleet sync | `munsu fleet-sync [<project>]` |
 | Bearings | `munsu bearings` |
-| Stow learnings | `munsu stow <learning...>` |
+| Stow learnings / captain prefs | `munsu stow [text...]` / `munsu stow --captain [text...]` |
 | Guard check | `munsu guard` |
 | Self-update | `munsu update` |
 
