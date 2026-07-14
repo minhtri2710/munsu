@@ -38,8 +38,7 @@ Current layout (continued):
 - `internal/delivery/` — review-diff, pr-check, pr-merge, merge-local, no-mistakes axi helpers
 - `internal/stow/` — knowledge sweep (learnings.md + captain.md with inspect-then-update)
 
-Later waves fill:
-- Operator skill: `.agents/skills/munsu-ops` (fleet orchestration operator guide, commands mapped by lifecycle)
+Skills are documented in `README.md` ("Available skills" table).
 ## Coding rules
 
 - Follow Go conventions (`gofmt`, `go vet` clean).
