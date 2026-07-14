@@ -38,6 +38,7 @@ Current layout (continued):
 
 Later waves fill:
 - `internal/stow/` — knowledge sweep
+- Operator skill: `.agents/skills/munsu-ops` (fleet orchestration operator guide, commands mapped by lifecycle)
 ## Coding rules
 
 - Follow Go conventions (`gofmt`, `go vet` clean).
