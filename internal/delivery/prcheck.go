@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -15,7 +16,7 @@ import (
 // script that polls the PR merge status via `gh pr view`.
 func PRCheck(homeDir string, id, prURL string) error {
 	// Parse the PR URL
-	ghURL, err := ParseGHURL(prURL)
+	ghURL, err := ghurl.ParseGHURL(prURL)
 	if err != nil {
 		return fmt.Errorf("invalid PR URL: %w", err)
 	}
@@ -81,7 +82,7 @@ fi
 }
 
 // fetchPRHeadSHA fetches the head SHA of a PR via `gh pr view`.
-func fetchPRHeadSHA(ghURL GHURL) (string, error) {
+func fetchPRHeadSHA(ghURL ghurl.GHURL) (string, error) {
 	cmd := exec.Command("gh", "pr", "view",
 		fmt.Sprintf("%d", ghURL.Num),
 		"--repo", fmt.Sprintf("%s/%s", ghURL.Owner, ghURL.Repo),
