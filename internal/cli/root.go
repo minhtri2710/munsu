@@ -655,7 +655,10 @@ func newSpawnCmd() *cobra.Command {
 			}
 
 			// 5. Create tmux window
-			bk := session.Resolve(homeDir)
+			bk, err := session.Resolve(homeDir)
+			if err != nil {
+				return err
+			}
 			windowID, err := bk.NewWindow(h, id)
 			if err != nil {
 				return fmt.Errorf("creating session window: %w", err)
@@ -730,7 +733,10 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk := session.Resolve(homeDir)
+			bk, err := session.Resolve(homeDir)
+			if err != nil {
+				return err
+			}
 			if err := bk.SendKeys(windowID, line); err != nil {
 				return fmt.Errorf("sending to %s: %w", id, err)
 			}
@@ -766,7 +772,10 @@ func newPeekCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk := session.Resolve(homeDir)
+			bk, err := session.Resolve(homeDir)
+			if err != nil {
+				return err
+			}
 			out, err := bk.Capture(windowID, lines)
 			if err != nil {
 				return fmt.Errorf("capturing from %s: %w", id, err)

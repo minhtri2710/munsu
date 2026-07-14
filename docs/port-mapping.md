@@ -36,7 +36,7 @@ Maintained as munsu ports more capabilities.
 | Local merge | `munsu merge-local` | `internal/cli` (stub) | stub |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/worktree` | **A1: done** |
 | Config | `munsu config get/set` | `internal/cli` (stub) | stub |
-| Session backend (tmux) | `--backend` flag | `internal/session` (future) | not yet |
+| Session backend (tmux + herdr) | `--backend` flag | `internal/session` | **A1: done** (future backends: experimental — see docs) |
 | Harness adapters | `munsu harness detect/crew/secondmate` | `internal/cli` (stub) | stub |
 | Dispatch profiles | `config/crew-dispatch.json` | `internal/harness` | **A1: done** |
 | Home init / init | `munsu init` | `internal/cli` (stub) | stub |

@@ -26,7 +26,7 @@ Current layout:
 - `internal/project/` — project registry (data/projects.md parsing, ad-hoc cwd detection)
 - `internal/worktree/` — treehouse CLI wrapper: get/return/status + isolation assertion
 - `internal/harness/` — harness detection (env markers + process ancestry), crew/secondmate resolution, launch templates, dispatch profiles
-- `internal/session/` — session backend (Backend interface + tmux adapter)
+- `internal/session/` — session backend (Backend interface + tmux/herdr adapters; unknown names rejected)
 - `internal/task/` — task meta read/write (state/<id>.meta + status file), status validation, promote
 - `internal/brief/` — task brief scaffolding (ship/scout templates at data/<id>/brief.md)
 - `internal/teardown/` — crewmate teardown with safety checks (dirty/remote/report gate)

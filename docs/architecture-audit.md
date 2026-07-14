@@ -22,7 +22,8 @@ Several domain-level business logic functions and subprocess executions are defi
 ### Category 2: Missing Modules
 - ~~**Unimplemented Backlog Fallback**: `internal/cli/root.go` (line 951) fails with an error when `tasks-axi` is unavailable: `"backlog: tasks-axi not available and fallback backlog.md editing not yet implemented"`. In contrast, `firstmate` provides a fully defined manual fallback format for editing `$FM_HOME/data/backlog.md`.~~
   **RESOLVED**: `internal/backlog` now implements a full manual fallback parser/renderer with verbs: add, list, show, start, done, block, ready/unblock. Uses `$MUNSU_HOME/data/backlog.md` with markers `[ ]` queued, `[-]` in-flight, `[!]` blocked, `[x]` done. Auto-creates file with header on first add.
-- **Stubbed Session Backends**: In `internal/session/session.go`, backends like `zellij`, `cmux`, `herdr`, and `orca` are mapped to stub implementations in `internal/session/backend_*.go` that simply return `ErrNotImplemented`.
+- ~~**Stubbed Session Backends**: In `internal/session/session.go`, backends like `zellij`, `cmux`, and `orca` were mapped to stub implementations that simply returned errors.~~
+  **RESOLVED**: Stub backends removed. Only real adapters remain: tmux and herdr. Unknown backend names are rejected with a clear error at parse/Select time. Experimental backends (zellij, cmux, orca) are future work; see docs.
 - **Missing Hometag Isolation**: `munsu` lacks a home tag namespace isolation helper, which is defined in `firstmate` as `fm_backend_hometag()` in `bin/fm-backend-hometag-lib.sh`. This is crucial to prevent multiplexer namespace collisions.
 
 ### Category 3: Coupling Issues
