@@ -43,6 +43,8 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 **Context pointer:** `docs/skills/harness-adapters.md` describes launch templates per harness (model flags, effort flags) and turn-end hooks — consult before spawning if harness-specific flags are needed.
 
+**Context pointer:** For secondmate lifecycle operations (seed, launch, retire, handoff, config-push), see `.agents/skills/secondmate-provisioning/SKILL.md`.
+
 ### 5. Supervise
 
 - Arm the watcher: `munsu watch-arm [--restart]`.
