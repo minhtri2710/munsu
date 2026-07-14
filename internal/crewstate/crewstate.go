@@ -226,7 +226,6 @@ func (r *noMistakesResult) resolveActiveStep() (step, outcome string) {
 func parseNoMistakesOutput(output string) *noMistakesResult {
 	r := &noMistakesResult{}
 	inSteps := false
-	foundActiveStep := false
 
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
@@ -261,7 +260,6 @@ func parseNoMistakesOutput(output string) *noMistakesResult {
 				stepName := parts[0]
 				stepStatus := parts[1]
 				if stepStatus != "completed" && stepStatus != "pending" {
-					foundActiveStep = true
 					// Map step status to conceptual run-step.
 					// "ci" step with "running" status -> "ci" (step name matters)
 					if stepName == "ci" && stepStatus == "running" {
@@ -303,12 +301,6 @@ func parseNoMistakesOutput(output string) *noMistakesResult {
 		r.run = "in_progress"
 	}
 
-	// If we didn't find an active step in the steps list, but the run is
-	// in_progress, it could be that the current step is after the last step
-	// (e.g., waiting for CI to start). Treat as running.
-	if foundActiveStep && r.step == "" {
-		r.step = "running"
-	}
 
 	if r.run == "" {
 		return nil
