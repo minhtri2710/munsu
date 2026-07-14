@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,14 +45,57 @@ func TestTmuxBin_NotFound(t *testing.T) {
 }
 
 func TestDefault_ReturnsTmux(t *testing.T) {
-	for _, env := range []string{"HERDR_ENV", "ZELLIJ_SESSION_NAME", "CMUX_SOCKET", "ORCA_RUNTIME"} {
-		t.Setenv(env, "")
-		os.Unsetenv(env)
-	}
+	t.Setenv("HERDR_ENV", "")
+	os.Unsetenv("HERDR_ENV")
 	b := Default()
 	if _, ok := b.(*TmuxBackend); !ok {
 		t.Errorf("Default() returned %T, want *TmuxBackend", b)
 	}
+}
+
+func TestSelect_RejectsUnknownNames(t *testing.T) {
+	unknown := []string{"zellij", "cmux", "orca", "foobar", ""}
+	for _, name := range unknown {
+		_, err := Select(name)
+		if err == nil {
+			t.Errorf("Select(%q) expected error, got nil", name)
+		} else if !strings.Contains(err.Error(), "unknown session backend") {
+			t.Errorf("Select(%q) unexpected error: %v", name, err)
+		}
+	}
+}
+
+func TestSelect_ReturnsKnownBackends(t *testing.T) {
+	known := []string{"tmux", "herdr"}
+	for _, name := range known {
+		bk, err := Select(name)
+		if err != nil {
+			t.Errorf("Select(%q) unexpected error: %v", name, err)
+		}
+		if bk == nil {
+			t.Errorf("Select(%q) returned nil backend", name)
+		}
+	}
+}
+
+func TestResolve_PanicsOnUnknownBackendConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("zellij\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for unknown backend name in config")
+		} else if !strings.Contains(r.(string), "unknown session backend") {
+			t.Errorf("unexpected panic message: %v", r)
+		}
+	}()
+	Resolve(tmpDir)
 }
 
 // TestTmux_NewWindow requires an active tmux server.

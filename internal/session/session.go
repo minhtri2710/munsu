@@ -22,47 +22,31 @@ type Backend interface {
 	Teardown(windowID string) error
 }
 
-// ErrNotImplemented is returned when a backend operation is not available.
-var ErrNotImplemented = fmt.Errorf("not yet implemented")
-
-// Select returns the named backend. Supported: "tmux", "herdr", "zellij",
-// "cmux", "orca". Falls back to tmux on unknown name.
-func Select(name string) Backend {
+// Select returns the named backend. Supported: "tmux", "herdr".
+// Returns an error for unknown backend names.
+func Select(name string) (Backend, error) {
 	switch name {
 	case "herdr":
-		return &HerdrBackend{}
-	case "zellij":
-		return &ZellijBackend{}
-	case "cmux":
-		return &CmuxBackend{}
-	case "orca":
-		return &OrcaBackend{}
+		return &HerdrBackend{}, nil
+	case "tmux":
+		return &TmuxBackend{}, nil
 	default:
-		return &TmuxBackend{}
+		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr)", name)
 	}
 }
 
 // Default returns the auto-detected backend based on environment.
-// Detection order: HERDR_ENV > ZELLIJ > CMUX_SOCKET > ORCA_RUNTIME > tmux.
+// Detection order: HERDR_ENV > tmux (fallback).
 func Default() Backend {
 	if os.Getenv("HERDR_ENV") != "" {
 		return &HerdrBackend{}
-	}
-	if os.Getenv("ZELLIJ_SESSION_NAME") != "" {
-		return &ZellijBackend{}
-	}
-	if os.Getenv("CMUX_SOCKET") != "" {
-		return &CmuxBackend{}
-	}
-	if os.Getenv("ORCA_RUNTIME") != "" {
-		return &OrcaBackend{}
 	}
 	return &TmuxBackend{}
 }
 
 // Resolve returns the configured backend for homeDir.
 // Resolution order:
-//  1. homeDir/config/backend file (first whitespace-delimited word)
+//  1. homeDir/config/backend file (first whitespace-delimited word; unknown name = fatal error)
 //  2. Runtime env markers
 //  3. tmux (fallback)
 func Resolve(homeDir string) Backend {
@@ -74,7 +58,11 @@ func Resolve(homeDir string) Backend {
 		case "herdr":
 			return &HerdrBackend{}
 		default:
-			return Select(name)
+			bk, err := Select(name)
+			if err != nil {
+				panic(err.Error())
+			}
+			return bk
 		}
 	}
 	return Default()
