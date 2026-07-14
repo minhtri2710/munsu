@@ -10,6 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // SessionStartResult holds the full session-start output digest.
@@ -37,17 +38,18 @@ func printDataFile(home, name string) {
 }
 
 func printFleetState(home string) {
-	bk, _, err := Resolve(home, "")
-	if err != nil {
-		bk = nil
-	}
-	stateDir := filepath.Join(home, "state")
-	entries, readErr := os.ReadDir(stateDir)
-	if readErr != nil {
-		return
+	bk, _, resolveErr := Resolve(home, "")
+	if resolveErr != nil {
+		fmt.Printf("  backend unavailable: %v\n", resolveErr)
 	}
 	fmt.Println("")
 	fmt.Println("--- Fleet State ---")
+	stateDir := filepath.Join(home, "state")
+	entries, readErr := os.ReadDir(stateDir)
+	if readErr != nil {
+		fmt.Println("  (no in-flight tasks)")
+		return
+	}
 	hasTasks := false
 	for _, e := range entries {
 		name := e.Name()
@@ -56,21 +58,14 @@ func printFleetState(home string) {
 		}
 		id := name[:len(name)-5]
 		hasTasks = true
-		var lastStatus string
-		if data, err := os.ReadFile(filepath.Join(stateDir, id+".status")); err == nil {
-			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-			if len(lines) > 0 {
-				lastStatus = lines[len(lines)-1]
-			}
+		meta, _ := task.ReadMeta(home, id)
+		windowID := meta["window"]
+		lines, _ := task.ReadStatus(home, id)
+		lastStatus := ""
+		if len(lines) > 0 {
+			lastStatus = lines[len(lines)-1]
 		}
-		metaData, _ := os.ReadFile(filepath.Join(stateDir, name))
-		windowID := ""
-		for _, line := range strings.Split(string(metaData), "\n") {
-			if k, v, ok := strings.Cut(line, "="); ok && strings.TrimSpace(k) == "window" {
-				windowID = strings.TrimSpace(v)
-			}
-		}
-		alive := windowID != "" && bk != nil && bk.Alive(windowID)
+		alive := windowID != "" && resolveErr == nil && bk.Alive(windowID)
 		statusDisplay := lastStatus
 		if statusDisplay == "" {
 			statusDisplay = "no status"
