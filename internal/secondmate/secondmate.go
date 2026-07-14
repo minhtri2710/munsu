@@ -68,7 +68,7 @@ func Launch(secondmateHome, parentHome string) error {
 	model, _ := config.Get(parentHome, "model")
 
 	// Resolve the pi binary
-	piPath, err := exec.LookPath("pi")
+	piPath, err := exec.LookPath(harness.Pi)
 	if err != nil {
 		return fmt.Errorf("pi harness not found on PATH: %w", err)
 	}

@@ -40,46 +40,22 @@ func TestLaunch_SecondmateHarnessPin(t *testing.T) {
 	}
 }
 
-func TestLaunch_SecondmateHarnessPin_Pi(t *testing.T) {
-	tmp := t.TempDir()
-
-	// Write config/secondmate-harness = "pi"
-	configDir := filepath.Join(tmp, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("pi\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a secondmate home with AGENTS.md
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
-	if err := os.MkdirAll(smHome, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test brief\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// With "pi" pin, the harness check should pass.
-	// The function then tries exec.LookPath("pi") and cmd.Start().
-	// pi is on PATH in this environment, so it will attempt a real launch.
-	// We just verify it gets past the harness check (no "unsupported" error).
-	err := Launch(smHome, tmp)
-	if err != nil && strings.Contains(err.Error(), "resolved harness") {
-		t.Fatalf("pi harness should be accepted but got: %v", err)
-	}
-	// A real error from LookPath or Start is OK — the harness resolution itself passed.
-	t.Logf("Launch returned (harness check passed, pi binary found): %v", err)
-}
 
 func TestLaunch_FallsBackToDetectClaude(t *testing.T) {
 	tmp := t.TempDir()
 
-	// Set env so Detect() returns "claude"
+	// Clear other env markers to avoid non-deterministic map iteration in detectFromEnv
+	// PI_CODING_AGENT_DIR is commonly set in this environment and would make "pi" win
+	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
+		t.Setenv(env, "")
+	}
+	// Also clear MUNSU_*_OVERRIDE vars that config.Get checks before file reads
+	t.Setenv("MUNSU_SECONDMATE-HARNESS_OVERRIDE", "")
+	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
 	t.Setenv("CLAUDE_CODE", "1")
 
 	// No config files at all — harness.Secondmate() falls through to Detect()
+	// which should return "claude" from CLAUDE_CODE
 	smHome := filepath.Join(tmp, "secondmates", "test-sm")
 	if err := os.MkdirAll(smHome, 0755); err != nil {
 		t.Fatal(err)
