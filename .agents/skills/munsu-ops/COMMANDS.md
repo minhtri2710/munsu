@@ -16,7 +16,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu session-start` | Lock, bootstrap, wake-drain, digest fleet state. |
+| `munsu session-start` | Lock, bootstrap, print session-start digest (Context, Fleet State, Supervision). |
 | `munsu afk` | Enter away-mode sub-supervisor daemon (reduced polling cadence). |
 
 ## Task / Backlog

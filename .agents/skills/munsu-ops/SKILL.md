@@ -17,11 +17,14 @@ Run `munsu home` to check whether the munsu home directory exists. The resolutio
 
 ### 2. Session start
 
-Run `munsu session-start` to lock, bootstrap, wake-drain, and digest fleet state. The digest prints diagnostic lines; understand them before proceeding.
-
+Run `munsu session-start` to lock, bootstrap, and print the session-start digest. The digest has four sections:
+1. **Bootstrap Diagnostics** — toolchain readiness lines (see context pointer below).
+2. **Context** — content of `data/captain.md`, `data/learnings.md`, `data/projects.md`, and `data/secondmates.md` (first 20 lines each).
+3. **Fleet State** — in-flight tasks with last status line and pane liveness.
+4. **Supervision** — wake-handling reminder block.
 **Completion:** Digest understood; lock status known. Do not re-bulk-read what the digest already printed.
 
-**Context pointer:** If the digest prints diagnostic lines (`MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`), consult `docs/skills/bootstrap-diagnostics.md` for handling each one.
+**Context pointer:** Bootstrap diagnostics lines (`MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`) are handled in `docs/skills/bootstrap-diagnostics.md`. Review the Context and Fleet State sections — they replace reading those files by hand.
 
 ### 3. Classify work
 

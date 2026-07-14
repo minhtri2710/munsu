@@ -1244,7 +1244,7 @@ func newBacklogUnblockCmd() *cobra.Command {
 func newSessionStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "session-start",
-		Short: "Lock, bootstrap, wake-drain, and digest fleet state",
+		Short: "Lock, bootstrap, and print session-start digest (Context, Fleet State, Supervision)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {

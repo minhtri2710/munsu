@@ -1,10 +1,10 @@
 # Bootstrap diagnostics — agent-only reference
 
-Handling playbook for session-start bootstrap diagnostics.
+Handling playbook for session-start bootstrap diagnostics. The session-start digest now includes four sections: Bootstrap Diagnostics (this doc), Context (data/*.md files), Fleet State (in-flight tasks), and Supervision (wake-handling reminder).
 
 ## Diagnostic lines
 
-When the session-start digest prints any of these lines, handle as follows:
+When the bootstrap diagnostics section of the session-start digest prints any of these lines, handle as follows:
 
 | Line pattern | Handling |
 |---|---|
