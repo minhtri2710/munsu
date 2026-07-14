@@ -31,8 +31,9 @@ You never do project work yourself — you delegate to crewmates.
 | Read output | `munsu peek <id>` |
 | Teardown | `munsu teardown <id>` |
 | Record PR | `munsu pr-check <id> <pr-url>` |
-| Merge PR | `munsu pr-merge <id> <pr-url>` |
+| Merge PR | `munsu pr-merge <id> <pr-url>` (auto-syncs fleet project) |
 | Fleet view | `munsu fleet-view` |
+| Fleet sync | `munsu fleet-sync [<project>]` |
 | Bearings | `munsu bearings` |
 | Stow learnings | `munsu stow <learning...>` |
 | Guard check | `munsu guard` |

@@ -14,6 +14,8 @@ import (
 // PRCheck runs `munsu pr-check <id> <pr-url>`.
 // It records the PR URL and head SHA in task meta, and writes a check.sh
 // script that polls the PR merge status via `gh pr view`.
+// On detecting a merged PR, the check.sh script also runs
+// `munsu fleet-sync` to sync the project clone.
 func PRCheck(homeDir string, id, prURL string) error {
 	// Parse the PR URL
 	ghURL, err := ghurl.ParseGHURL(prURL)

@@ -13,6 +13,7 @@ import (
 
 // PRMerge runs `munsu pr-merge <id> <pr-url> [--merge|--rebase]`.
 // It merges a PR via gh-axi CLI and records the PR info in task meta.
+// After merging, it also runs a best-effort fleet-sync of the project clone.
 // The prURL must be a full https://github.com/<owner>/<repo>/pull/<n> URL.
 // Extra args after `--` can specify merge method: `-- --merge`, `-- --rebase`.
 func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
