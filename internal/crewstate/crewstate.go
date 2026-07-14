@@ -301,7 +301,6 @@ func parseNoMistakesOutput(output string) *noMistakesResult {
 		r.run = "in_progress"
 	}
 
-
 	if r.run == "" {
 		return nil
 	}

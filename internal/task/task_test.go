@@ -308,7 +308,7 @@ func TestIsValidStatusState(t *testing.T) {
 
 func TestValidStatusStates(t *testing.T) {
 	expected := []string{
-		"working", "needs-decision", "blocked", "paused", 
+		"working", "needs-decision", "blocked", "paused",
 		"awaiting_approval", "resolved", "done", "failed",
 	}
 	if len(ValidStatusStates) != len(expected) {
