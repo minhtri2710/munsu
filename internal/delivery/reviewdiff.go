@@ -12,8 +12,8 @@ import (
 // ReviewDiff runs `munsu review-diff` for the given task.
 // It compares the crewmate branch against the authoritative base and prints
 // a Markdown diff summary.
-func ReviewDiff(id string) error {
-	meta, err := task.ReadMeta(id)
+func ReviewDiff(homeDir string, id string) error {
+	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("reading task %s meta: %w", id, err)
 	}

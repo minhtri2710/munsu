@@ -7,7 +7,10 @@ import (
 )
 
 // TmuxBackend implements Backend using the tmux CLI.
-type TmuxBackend struct{}
+type TmuxBackend struct {
+	// Tag is a home-scoped prefix for window names (empty = no prefix).
+	Tag string
+}
 
 // tmuxBin returns the path to the tmux binary.
 func tmuxBin() (string, error) {
@@ -21,12 +24,21 @@ func tmuxBin() (string, error) {
 // NewWindow creates a new tmux window in the given session.
 // It uses `tmux new-window -P -F "#{window_id}" -n <name>`.
 // The session parameter can be a tmux session selector (e.g. "mysession").
+// windowName returns a hometag-prefixed window name.
+func (t *TmuxBackend) windowName(name string) string {
+	if t.Tag == "" {
+		return "fm-" + name
+	}
+	return t.Tag + "-fm-" + name
+}
+
 func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
 	bin, err := tmuxBin()
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(bin, "new-window", "-P", "-F", "#{window_id}", "-n", name, "-t", session)
+	wName := t.windowName(name)
+	cmd := exec.Command(bin, "new-window", "-P", "-F", "#{window_id}", "-n", wName, "-t", session)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

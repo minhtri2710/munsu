@@ -20,7 +20,7 @@ func TestRead_NoMeta(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	_, err := Read("nonexistent")
+	_, err := Read(tmp, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent task")
 	}
@@ -30,11 +30,11 @@ func TestRead_NoWindow(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta("no-win", map[string]string{"kind": "ship"}); err != nil {
+	if err := task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 
-	s, err := Read("no-win")
+	s, err := Read(tmp, "no-win")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +50,14 @@ func TestRead_WithWindow(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta("with-win", map[string]string{
+	if err := task.WriteMeta(tmp, "with-win", map[string]string{
 		"window":   "@nonexistent99",
 		"worktree": tmp,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	s, err := Read("with-win")
+	s, err := Read(tmp, "with-win")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,18 +71,18 @@ func TestRead_StatusLogOverrides(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta("status-test", map[string]string{
+	if err := task.WriteMeta(tmp, "status-test", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Append a done status
-	if err := task.AppendStatus("status-test", "done: implemented feature X"); err != nil {
+	if err := task.AppendStatus(tmp, "status-test", "done: implemented feature X"); err != nil {
 		t.Fatal(err)
 	}
 
-	s, err := Read("status-test")
+	s, err := Read(tmp, "status-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,17 +98,17 @@ func TestRead_FailedStatus(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta("fail-test", map[string]string{
+	if err := task.WriteMeta(tmp, "fail-test", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := task.AppendStatus("fail-test", "failed: tests not passing"); err != nil {
+	if err := task.AppendStatus(tmp, "fail-test", "failed: tests not passing"); err != nil {
 		t.Fatal(err)
 	}
 
-	s, err := Read("fail-test")
+	s, err := Read(tmp, "fail-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,18 +121,18 @@ func TestRead_MultipleStatusLines(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta("multi-status", map[string]string{
+	if err := task.WriteMeta(tmp, "multi-status", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	task.AppendStatus("multi-status", "working: started investigation")
-	task.AppendStatus("multi-status", "needs-decision: which approach")
-	task.AppendStatus("multi-status", "resolved: chose approach A")
-	task.AppendStatus("multi-status", "done: all done")
+	task.AppendStatus(tmp, "multi-status", "working: started investigation")
+	task.AppendStatus(tmp, "multi-status", "needs-decision: which approach")
+	task.AppendStatus(tmp, "multi-status", "resolved: chose approach A")
+	task.AppendStatus(tmp, "multi-status", "done: all done")
 
-	s, err := Read("multi-status")
+	s, err := Read(tmp, "multi-status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,14 +162,14 @@ func TestRead_GitBranch(t *testing.T) {
 
 	// We need git available for this test
 	// Skip if no git
-	if err := task.WriteMeta("git-test", map[string]string{
+	if err := task.WriteMeta(tmp, "git-test", map[string]string{
 		"window":   "@nonexistent99",
 		"worktree": tmp,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	s, err := Read("git-test")
+	s, err := Read(tmp, "git-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,16 +183,16 @@ func TestRead_LastNonTerminalStatus(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta("nonterm", map[string]string{
+	if err := task.WriteMeta(tmp, "nonterm", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	task.AppendStatus("nonterm", "paused: waiting for review")
-	task.AppendStatus("nonterm", "blocked: dependency not ready")
+	task.AppendStatus(tmp, "nonterm", "paused: waiting for review")
+	task.AppendStatus(tmp, "nonterm", "blocked: dependency not ready")
 
-	s, err := Read("nonterm")
+	s, err := Read(tmp, "nonterm")
 	if err != nil {
 		t.Fatal(err)
 	}

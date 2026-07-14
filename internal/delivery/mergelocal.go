@@ -12,8 +12,8 @@ import (
 // MergeLocal runs `munsu merge-local <id>`.
 // It fast-forward merges the crewmate branch into the local default branch.
 // Only works for local-only mode projects (no remote).
-func MergeLocal(id string) error {
-	meta, err := task.ReadMeta(id)
+func MergeLocal(homeDir string, id string) error {
+	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("reading task %s meta: %w", id, err)
 	}

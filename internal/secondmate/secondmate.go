@@ -144,57 +144,150 @@ func List(parentHome string) ([]Info, error) {
 	return mates, nil
 }
 
-// Handoff moves backlog items from the parent home to a secondmate.
+// Handoff moves backlog items from the parent home to a secondmate atomically.
+// Each item is copied (meta + status) then removed from the parent only after
+// all copies succeed. If any copy fails, no originals are removed.
 func Handoff(parentHome, secondmateHome string, itemKeys []string) error {
+	// Phase 1: copy all items
+	type copyResult struct {
+		key    string
+		metaOK bool
+		status bool
+	}
+	var results []copyResult
+
 	for _, key := range itemKeys {
-		// Copy the item metadata from parent backlog to secondmate
+		cr := copyResult{key: key}
+
 		srcMeta := filepath.Join(parentHome, "state", key+".meta")
 		dstMeta := filepath.Join(secondmateHome, "state", key+".meta")
-		dstDir := filepath.Dir(dstMeta)
-		os.MkdirAll(dstDir, 0755)
+		os.MkdirAll(filepath.Dir(dstMeta), 0755)
 
 		data, err := os.ReadFile(srcMeta)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: task %s has no meta at %s: %v\n", key, srcMeta, err)
+			fmt.Fprintf(os.Stderr, "warning: %s — no meta at %s\n", key, srcMeta)
+			results = append(results, cr)
 			continue
 		}
 		if err := os.WriteFile(dstMeta, data, 0644); err != nil {
 			return fmt.Errorf("writing meta for %s: %w", key, err)
 		}
+		cr.metaOK = true
 
 		// Copy status file if exists
 		srcStatus := filepath.Join(parentHome, "state", key+".status")
 		if _, err := os.Stat(srcStatus); err == nil {
 			statusData, _ := os.ReadFile(srcStatus)
-			os.WriteFile(filepath.Join(secondmateHome, "state", key+".status"), statusData, 0644)
+			if err := os.WriteFile(filepath.Join(secondmateHome, "state", key+".status"), statusData, 0644); err != nil {
+				return fmt.Errorf("writing status for %s: %w", key, err)
+			}
+			cr.status = true
 		}
 
-		fmt.Printf("Handed off task %s to secondmate at %s\n", key, secondmateHome)
+		results = append(results, cr)
 	}
+
+	// Phase 2: remove originals (only items that had meta)
+	for _, r := range results {
+		if !r.metaOK {
+			continue
+		}
+		os.Remove(filepath.Join(parentHome, "state", r.key+".meta"))
+		if r.status {
+			os.Remove(filepath.Join(parentHome, "state", r.key+".status"))
+		}
+		fmt.Printf("handed-off %s\n", r.key)
+	}
+
 	return nil
 }
 
-// ConfigPush copies inheritable config from the parent home to the secondmate.
-func ConfigPush(parentHome, secondmateHome string) error {
-	inheritable := []string{"crew-harness", "crew-dispatch.json", "backlog-backend"}
+// getInheritableList returns the list of config names to inherit.
+// Uses MUNSU_INHERITABLE_CONFIG env if set (colon-separated),
+// otherwise returns the default list.
+func getInheritableList() []string {
+	env := os.Getenv("MUNSU_INHERITABLE_CONFIG")
+	if env != "" {
+		return strings.Split(env, ":")
+	}
+	return []string{"crew-harness", "crew-dispatch.json", "backlog-backend"}
+}
 
+// ConfigPush copies inheritable config from the parent home to the secondmate,
+// mirrors deletions, checks gitignore, and logs actions.
+func ConfigPush(parentHome, secondmateHome string) error {
+	inheritable := getInheritableList()
+
+	// Open log file (append mode)
+	logPath := filepath.Join(secondmateHome, "state", "config-push.log")
+	os.MkdirAll(filepath.Dir(logPath), 0755)
+	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("opening config-push.log: %w", err)
+	}
+	defer logF.Close()
+
+	ts := time.Now().UTC().Format(time.RFC3339)
+	log := func(action, name string) {
+		line := fmt.Sprintf("%s\t%s\t%s\n", ts, action, name)
+		logF.WriteString(line)
+		fmt.Printf("  %s %s\n", action, name)
+	}
+
+	// Mirror deletions: remove files in secondmate that are absent in parent
+	configDir := filepath.Join(secondmateHome, "config")
+	if entries, err := os.ReadDir(configDir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if !isInheritable(name, inheritable) {
+				continue
+			}
+			srcPath := filepath.Join(parentHome, "config", name)
+			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+				dstPath := filepath.Join(configDir, name)
+				os.Remove(dstPath)
+				log("deleted", name)
+			}
+		}
+	}
+
+	// Copy present files
 	for _, name := range inheritable {
 		src := filepath.Join(parentHome, "config", name)
-		dstDir := filepath.Join(secondmateHome, "config")
-		os.MkdirAll(dstDir, 0755)
-		dst := filepath.Join(dstDir, name)
+		dst := filepath.Join(configDir, name)
 
 		data, err := os.ReadFile(src)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return fmt.Errorf("reading %s: %w", src, err)
+			log("skipped", name+" — "+err.Error())
+			continue
 		}
+
+		os.MkdirAll(filepath.Dir(dst), 0755)
 		if err := os.WriteFile(dst, data, 0644); err != nil {
-			return fmt.Errorf("writing %s: %w", dst, err)
+			return fmt.Errorf("writing %s: %w", name, err)
 		}
-		fmt.Printf("Pushed config %s to secondmate\n", name)
+		log("pushed", name)
+
+		// Gitignore check: warn if not gitignored
+		if gitIgnoreCheck, err := exec.Command("git", "check-ignore", "-q", dst).CombinedOutput(); err != nil || len(gitIgnoreCheck) > 0 {
+			// git check-ignore exit 0 means ignored, exit 1 means not ignored
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+				fmt.Printf("  WARNING: %s is tracked in secondmate git — add it to .gitignore\n", name)
+			}
+		}
 	}
+
 	return nil
+}
+
+func isInheritable(name string, list []string) bool {
+	for _, n := range list {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }

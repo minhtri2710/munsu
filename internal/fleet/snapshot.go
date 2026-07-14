@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -59,7 +58,7 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 		}
 
 		id := strings.TrimSuffix(entry.Name(), ".meta")
-		meta, err := task.ReadMeta(id)
+		meta, err := task.ReadMeta(homeDir, id)
 		if err != nil {
 			continue
 		}
@@ -137,14 +136,8 @@ func View(homeDir string) error {
 }
 
 // Bearings prints a compact resume report.
-func Bearings(projectDir string) error {
-	// Resolve home
-	h, err := home.Resolve("")
-	if err != nil {
-		return err
-	}
-
-	snap, err := Snapshot(h)
+func Bearings(homeDir string, projectDir string) error {
+	snap, err := Snapshot(homeDir)
 	if err != nil {
 		return err
 	}

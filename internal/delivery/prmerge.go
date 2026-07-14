@@ -13,7 +13,7 @@ import (
 // It merges a PR via gh-axi CLI and records the PR info in task meta.
 // The prURL must be a full https://github.com/<owner>/<repo>/pull/<n> URL.
 // Extra args after `--` can specify merge method: `-- --merge`, `-- --rebase`.
-func PRMerge(id, prURL string, extraArgs []string) error {
+func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	// Reject --repo/-R overrides in extraArgs
 	for _, arg := range extraArgs {
 		if arg == "--repo" || arg == "-R" || strings.HasPrefix(arg, "--repo=") {
@@ -59,13 +59,13 @@ func PRMerge(id, prURL string, extraArgs []string) error {
 	}
 
 	// Write PR info to task meta
-	meta, err := task.ReadMeta(id)
+	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
 		meta = make(map[string]string)
 	}
 	meta["pr"] = prURL
 	meta["pr_head"] = "" // not known at merge time without an extra API call
-	if err := task.WriteMeta(id, meta); err != nil {
+	if err := task.WriteMeta(homeDir, id, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
 	}
 

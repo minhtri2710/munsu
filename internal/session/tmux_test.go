@@ -44,6 +44,10 @@ func TestTmuxBin_NotFound(t *testing.T) {
 }
 
 func TestDefault_ReturnsTmux(t *testing.T) {
+	for _, env := range []string{"HERDR_ENV", "ZELLIJ_SESSION_NAME", "CMUX_SOCKET", "ORCA_RUNTIME"} {
+		t.Setenv(env, "")
+		os.Unsetenv(env)
+	}
 	b := Default()
 	if _, ok := b.(*TmuxBackend); !ok {
 		t.Errorf("Default() returned %T, want *TmuxBackend", b)
