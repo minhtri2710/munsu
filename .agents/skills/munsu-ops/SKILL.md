@@ -15,6 +15,8 @@ Run `munsu home` to check whether the munsu home directory exists. The resolutio
 
 **Completion:** Home path is known and exists. If missing, run `munsu init` to create it, which also seeds the orchestrator operating manual at `<home>/AGENTS.md`.
 
+**Context pointer:** To update munsu itself or any secondmate home after the repo advances, see `.agents/skills/munsu-update/SKILL.md`. Run `munsu update` to fast-forward the install root, then follow the manual procedure for each secondmate home.
+
 ### 2. Session start
 
 Run `munsu session-start` to lock, bootstrap, and print the session-start digest. The digest has four sections:
