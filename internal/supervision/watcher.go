@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -20,9 +21,10 @@ const pollInterval = 5 * time.Second
 
 // WakeReason describes why the watcher exited.
 type WakeReason struct {
-	Kind    string // signal, stale, check, heartbeat
-	TaskIDs []string
-	Message string
+	Kind                string   // signal, stale, check, heartbeat
+	TaskIDs             []string
+	Message             string
+	DemandDeepInspection bool     // set after N consecutive stale polls for same task
 }
 
 // Run starts the watcher loop. It acquires the watcher lock and polls
@@ -99,7 +101,19 @@ func ArmBackground(homeDir string, restart bool) error {
 	return nil
 }
 
+var (
+	// staleStreaks tracks consecutive stale polls per task ID.
+	// Persists across scanFleet calls within the watcher loop.
+	staleStreaks = map[string]int{}
+
+	// consecutiveStaleThreshold is the number of consecutive stale polls
+	// before demanding deep inspection (3 polls * 5s = ~15s).
+	consecutiveStaleThreshold = 3
+)
+
 // scanFleet checks all live tasks for actionable events.
+// It absorbs stale signals for tasks with an active no-mistakes run
+// and tracks per-task stale streaks for demand-deep-inspection.
 func scanFleet(homeDir string) *WakeReason {
 	metasDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(metasDir)
@@ -133,11 +147,14 @@ func scanFleet(homeDir string) *WakeReason {
 		alive := bk.Alive(windowID)
 
 		if !alive {
-			return &WakeReason{
-				Kind:    "stale",
-				TaskIDs: []string{id},
-				Message: fmt.Sprintf("pane %s is dead", windowID),
+			// Before raising stale, check if no-mistakes is actively running.
+			// The crewmate may be driving the no-mistakes pipeline even though
+			// the session pane appears dead.
+			if isNoMistakesActive(homeDir, id) {
+				resetStreak(id)
+				continue
 			}
+			return handleStale(id, fmt.Sprintf("pane %s is dead", windowID))
 		}
 
 		// Check status log for recent activity
@@ -145,13 +162,17 @@ func scanFleet(homeDir string) *WakeReason {
 		if fi, err := os.Stat(statusPath); err == nil {
 			age := time.Since(fi.ModTime())
 			if age > lifecycle.StaleThreshold() {
-				return &WakeReason{
-					Kind:    "stale",
-					TaskIDs: []string{id},
-					Message: fmt.Sprintf("pane %s idle for %v", windowID, age.Round(time.Second)),
+				// Before raising stale, check absorb.
+				if isNoMistakesActive(homeDir, id) {
+					resetStreak(id)
+					continue
 				}
+				return handleStale(id, fmt.Sprintf("pane %s idle for %v", windowID, age.Round(time.Second)))
 			}
 		}
+
+		// Task is healthy or absorbed — reset streak
+		resetStreak(id)
 
 		// Check wake queue
 		if lifecycle.HasQueuedWakes(homeDir) {
@@ -164,4 +185,56 @@ func scanFleet(homeDir string) *WakeReason {
 	}
 
 	return nil
+}
+
+// handleStale creates a stale WakeReason with streak tracking.
+// After consecutiveStaleThreshold consecutive stale polls for the same task,
+// it marks the reason as demanding deep inspection.
+func handleStale(id, msg string) *WakeReason {
+	staleStreaks[id]++
+	count := staleStreaks[id]
+
+	reason := &WakeReason{
+		Kind:    "stale",
+		TaskIDs: []string{id},
+		Message: msg,
+	}
+
+	if count >= consecutiveStaleThreshold {
+		reason.DemandDeepInspection = true
+		reason.Message += "; demand-deep-inspection"
+	}
+
+	return reason
+}
+
+// resetStreak clears the stale streak counter for a task.
+// Called when a task is provably working or its status changes.
+func resetStreak(id string) {
+	delete(staleStreaks, id)
+}
+
+// isNoMistakesActive checks whether the task has an active no-mistakes
+// run-step that indicates it is provably working. Tasks driving the
+// no-mistakes pipeline (running, fixing, ci, fix_review, awaiting_approval)
+// should not trigger stale wakes.
+func isNoMistakesActive(homeDir, id string) bool {
+	s, err := crewstate.Read(homeDir, id)
+	if err != nil {
+		return false
+	}
+	return absorbStaleSignal(s)
+}
+
+// absorbStaleSignal returns true when the crewmate state has an active
+// no-mistakes run-step that should absorb a stale signal.
+func absorbStaleSignal(s *crewstate.State) bool {
+	if s == nil {
+		return false
+	}
+	switch s.NoMistakesRunStep {
+	case "running", "fixing", "ci", "fix_review", "awaiting_approval":
+		return true
+	}
+	return false
 }
