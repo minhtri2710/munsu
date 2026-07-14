@@ -189,6 +189,104 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 	})
 }
 
+func TestRun_ConfigBackendGate(t *testing.T) {
+	oldLookPath := lookPath
+	oldExecCommand := execCommand
+	defer func() {
+		lookPath = oldLookPath
+		execCommand = oldExecCommand
+	}()
+
+	execCommand = func(command string, args ...string) *exec.Cmd {
+		cs := []string{"-test.run=TestHelperProcess", "--", command}
+		cs = append(cs, args...)
+		cmd := exec.Command(os.Args[0], cs...)
+		cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+		return cmd
+	}
+
+	t.Run("manual config forces manual with tasks-axi available", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
+
+		// Should use manual path, not tasks-axi
+		err := Run(homeDir, "add", []string{"TASK-1", "Forced manual"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Verify backlog.md was created in homeDir/data/ (manual path)
+		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		if _, err := os.Stat(backlogPath); os.IsNotExist(err) {
+			t.Errorf("expected backlog.md at %s, but it does not exist", backlogPath)
+		}
+	})
+
+	t.Run("absent config uses tasks-axi when available", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+
+		homeDir := t.TempDir()
+		// No config/backlog-backend file
+
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldStdout := os.Stdout
+		os.Stdout = w
+		defer func() { os.Stdout = oldStdout }()
+
+		err = Run(homeDir, "list", []string{})
+		w.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var buf bytes.Buffer
+		buf.ReadFrom(r)
+		output := buf.String()
+		if !strings.Contains(output, "EXEC_CMD:") {
+			t.Errorf("expected tasks-axi execution, got %q", output)
+		}
+	})
+
+	t.Run("no tasks-axi uses manual", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			return "", fmt.Errorf("file not found")
+		}
+		homeDir := t.TempDir()
+		// No config/backlog-backend and no tasks-axi
+
+		err := Run(homeDir, "add", []string{"TASK-1", "Manual fallback"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		if _, err := os.Stat(backlogPath); os.IsNotExist(err) {
+			t.Errorf("expected backlog.md at %s, but it does not exist", backlogPath)
+		}
+	})
+}
+
 func TestParseBacklog(t *testing.T) {
 	t.Run("nonexistent file", func(t *testing.T) {
 		items, err := parseBacklog("/nonexistent/path/backlog.md")

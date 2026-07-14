@@ -19,12 +19,27 @@ var (
 
 var semverRegex = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
-// Run dispatches to tasks-axi if compatible, or falls back to manual markdown.
+// Run dispatches to tasks-axi if compatible and not forced to manual, or falls back to manual markdown.
 func Run(homeDir, verb string, args []string) error {
+	if isManual(homeDir) {
+		return manualRun(homeDir, verb, args)
+	}
 	if tasksAxiAvailable() {
 		return runTasksAxi(verb, args)
 	}
 	return manualRun(homeDir, verb, args)
+}
+
+// isManual checks whether the config/backlog-backend file under homeDir contains "manual".
+func isManual(homeDir string) bool {
+	if homeDir == "" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(homeDir, "config", "backlog-backend"))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == "manual"
 }
 
 // manualRun handles backlog operations using a local markdown file.
