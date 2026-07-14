@@ -74,16 +74,22 @@ func checkTangle(projectDir, projectName string) error {
 		}
 	} else {
 		// Fall back to common default branch names when origin/HEAD unavailable
+		foundDefault := false
 		for _, candidate := range []string{"main", "master"} {
 			chk := exec.Command("git", "rev-parse", "--verify", candidate)
 			chk.Dir = projectDir
 			if err := chk.Run(); err == nil {
+				foundDefault = true
 				// On the default branch = no tangle
 				if branch == candidate {
 					return nil
 				}
 				break
 			}
+		}
+		if !foundDefault {
+			// Can't determine default branch; skip tangle check
+			return nil
 		}
 	}
 	// Tangle detected: on a non-default branch in the primary checkout
