@@ -3,6 +3,7 @@ package stow
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,7 +64,10 @@ func RunKinded(homeDir string, kind string, items []string) (*SweepResult, error
 // existing entries, and writes the file back. Entries are created as
 // "- DATE: text" lines.
 func stowFile(path string, items []string) error {
-	entries := readEntries(path)
+	entries, err := readEntries(path)
+	if err != nil && !errors.Is(err, errMissingFile) {
+		return err
+	}
 
 	date := time.Now().Format("2006-01-02")
 
@@ -83,24 +87,36 @@ func stowFile(path string, items []string) error {
 	return writeEntries(path, entries)
 }
 
+// errMissingFile is returned by readEntries when the file does not exist.
+// Callers treat this as an empty file, not a fatal error.
+var errMissingFile = errors.New("file does not exist")
+
 // readEntries reads a markdown file and returns non-empty lines.
-// Returns an empty slice if the file doesn't exist (lazy creation).
-func readEntries(path string) []string {
+// Returns (nil, errMissingFile) if the file doesn't exist (lazy creation).
+func readEntries(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, errMissingFile
+		}
+		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 	defer f.Close()
 
 	var entries []string
 	scanner := bufio.NewScanner(f)
+	// Bump scan buffer to handle long lines (default 64KB).
+	scanner.Buffer(make([]byte, 0, 512*1024), 512*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
 			entries = append(entries, line)
 		}
 	}
-	return entries
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	return entries, nil
 }
 
 // writeEntries writes lines to a markdown file, ensuring the parent
@@ -136,3 +152,4 @@ func replaceMatching(entries []string, text string, newLine string) bool {
 	}
 	return false
 }
+
