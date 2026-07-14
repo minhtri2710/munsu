@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 // Info holds the state of a secondmate.
@@ -48,37 +49,40 @@ func Seed(id, homePath, charter string) error {
 }
 
 // Launch starts a secondmate process in its home.
-// It runs the configured harness (from parent home's config/secondmate-harness)
-// with the AGENTS.md as the launch prompt.
+// It resolves the harness through the config chain (secondmate-harness -> crew-harness -> Detect),
+// then launches the agent with the AGENTS.md as the launch prompt.
+// Currently only the "pi" harness is supported for secondmate launch.
 func Launch(secondmateHome, parentHome string) error {
-	// Read secondmate harness config
-	shPath := filepath.Join(parentHome, "config", "secondmate-harness")
-	harness := "pi" // default
-	if data, err := os.ReadFile(shPath); err == nil {
-		if h := strings.TrimSpace(string(data)); h != "" && h != "default" {
-			parts := strings.Fields(h)
-			harness = parts[0]
-		}
+	// Resolve harness via harness.Secondmate (chain: config/secondmate-harness -> config/crew-harness -> Detect())
+	h, err := harness.Secondmate(parentHome)
+	if err != nil {
+		return fmt.Errorf("resolving secondmate harness: %w", err)
 	}
 
-	// Read model from crew-harness config if harness is pi
-	model := "cline-pass/deepseek-v4-flash"
-	if harness == "pi" {
-		if m, err := config.Get(parentHome, "model"); err == nil && m != "" {
-			model = m
-		}
+	// Currently only pi is supported for secondmate launch
+	if h != harness.Pi {
+		return fmt.Errorf("secondmate launch: resolved harness is %q but only %q is currently supported", h, harness.Pi)
 	}
+
+	// Read model from config (optional; omit --model flag when not configured)
+	model, _ := config.Get(parentHome, "model")
 
 	// Resolve the pi binary
-	piPath, err := exec.LookPath("pi")
+	piPath, err := exec.LookPath(harness.Pi)
 	if err != nil {
 		return fmt.Errorf("pi harness not found on PATH: %w", err)
 	}
 
-	// Launch: cd to secondmate home and run pi with AGENTS.md as prompt
-	cmd := exec.Command(piPath, "--model", model,
-		"--", secondmateHome,
+	// Build args: optional --model, then secondmate home and agent prompt
+	args := []string{}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, "--", secondmateHome,
 		"$(cat "+filepath.Join(secondmateHome, "AGENTS.md")+")")
+
+	// Launch: cd to secondmate home and run pi with AGENTS.md as prompt
+	cmd := exec.Command(piPath, args...)
 	cmd.Dir = secondmateHome
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

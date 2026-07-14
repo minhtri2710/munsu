@@ -177,11 +177,23 @@ var Templates = map[string]Template{
 	Grok: {},
 }
 
+// lookupConfig reports a config key's value when it is set to a concrete value.
+// Empty values and the "default" sentinel are treated as not set.
+func lookupConfig(homeDir, key string) (string, bool) {
+	v, err := config.Get(homeDir, key)
+	if err == nil && v != "" && v != "default" {
+		return v, true
+	}
+	return "", false
+}
+
 // Crew resolves the crewmate harness following the fallback chain:
 //
 //  1. Default harness from config/crew-dispatch.json
 //  2. config/crew-harness file value
 //  3. Detected harness from Detect()
+//
+// The config/crew-harness value "default" is treated as unset.
 func Crew(homeDir string) (string, error) {
 	// 1. Try dispatch config default
 	dp, err := LoadDispatch(filepath.Join(config.ConfigDir(homeDir), "crew-dispatch.json"))
@@ -190,8 +202,7 @@ func Crew(homeDir string) (string, error) {
 	}
 
 	// 2. Try config/crew-harness
-	v, err := config.Get(homeDir, "crew-harness")
-	if err == nil && v != "" {
+	if v, ok := lookupConfig(homeDir, "crew-harness"); ok {
 		return v, nil
 	}
 
@@ -204,16 +215,16 @@ func Crew(homeDir string) (string, error) {
 //  1. config/secondmate-harness file value
 //  2. config/crew-harness file value
 //  3. Detected harness from Detect()
+//
+// A value of "default" in config/secondmate-harness or config/crew-harness is treated as unset.
 func Secondmate(homeDir string) (string, error) {
 	// 1. Try config/secondmate-harness
-	v, err := config.Get(homeDir, "secondmate-harness")
-	if err == nil && v != "" {
+	if v, ok := lookupConfig(homeDir, "secondmate-harness"); ok {
 		return v, nil
 	}
 
 	// 2. Try config/crew-harness
-	v, err = config.Get(homeDir, "crew-harness")
-	if err == nil && v != "" {
+	if v, ok := lookupConfig(homeDir, "crew-harness"); ok {
 		return v, nil
 	}
 

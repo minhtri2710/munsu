@@ -256,3 +256,82 @@ func TestDispatchDefaultHarness(t *testing.T) {
 		t.Fatal("expected at least one profile")
 	}
 }
+
+func TestCrew_CrewHarnessDefaultIgnored(t *testing.T) {
+	tmp := t.TempDir()
+
+	configDir := filepath.Join(tmp, "config")
+	os.MkdirAll(configDir, 0755)
+
+	if err := os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("default\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
+	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
+		t.Setenv(env, "")
+	}
+	t.Setenv("CLAUDE_CODE", "1")
+
+	h, err := Crew(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != Claude {
+		t.Errorf("Crew() = %q, want %q (default sentinel should fall through to Detect)", h, Claude)
+	}
+}
+
+func TestSecondmate_DefaultSentinelsIgnored(t *testing.T) {
+	tmp := t.TempDir()
+
+	configDir := filepath.Join(tmp, "config")
+	os.MkdirAll(configDir, 0755)
+
+	if err := os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("default\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("default\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MUNSU_SECONDMATE-HARNESS_OVERRIDE", "")
+	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
+	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
+		t.Setenv(env, "")
+	}
+	t.Setenv("CLAUDE_CODE", "1")
+
+	h, err := Secondmate(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != Claude {
+		t.Errorf("Secondmate() = %q, want %q (default sentinels should fall through to Detect)", h, Claude)
+	}
+}
+
+func TestSecondmate_DefaultSecondmateHarnessFallsToCrewHarness(t *testing.T) {
+	tmp := t.TempDir()
+
+	configDir := filepath.Join(tmp, "config")
+	os.MkdirAll(configDir, 0755)
+
+	if err := os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("default\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	os.Unsetenv("MUNSU_SECONDMATE-HARNESS_OVERRIDE")
+	os.Unsetenv("MUNSU_CREW-HARNESS_OVERRIDE")
+
+	h, err := Secondmate(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != Pi {
+		t.Errorf("Secondmate() = %q, want %q (default secondmate sentinel should fall through to crew-harness)", h, Pi)
+	}
+}
