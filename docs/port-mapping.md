@@ -16,7 +16,7 @@ Maintained as munsu ports more capabilities.
 | `bin/fm-promote.sh` | `munsu promote` | `internal/cli` (stub) | stub |
 | `bin/fm-harness.sh` | `munsu harness detect/crew/secondmate` | `internal/harness` | **A1: done** |
 | `bin/fm-project-mode.sh` | `munsu project mode` | `internal/cli` (stub) | stub |
-| `bin/fm-fleet-sync.sh` | `munsu fleet-sync` | `internal/cli` (stub) | stub |
+| `bin/fm-fleet-sync.sh` | `munsu fleet-sync` | `internal/fleet` | **A4: done** |
 | `bin/fm-fleet-snapshot.sh` | `munsu fleet-snapshot` | `internal/cli` (stub) | stub |
 | `bin/fm-fleet-view.sh` | `munsu fleet-view` | `internal/cli` (stub) | stub |
 | `bin/fm-bearings-snapshot.sh` | `munsu bearings` | `internal/cli` (stub) | stub |

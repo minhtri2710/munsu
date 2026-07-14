@@ -6,12 +6,14 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // PRMerge runs `munsu pr-merge <id> <pr-url> [--merge|--rebase]`.
 // It merges a PR via gh-axi CLI and records the PR info in task meta.
+// After merging, it also runs a best-effort fleet-sync of the project clone.
 // The prURL must be a full https://github.com/<owner>/<repo>/pull/<n> URL.
 // Extra args after `--` can specify merge method: `-- --merge`, `-- --rebase`.
 func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
@@ -71,5 +73,16 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	fmt.Printf("PR merged: %s (%s method)\n", ghURL.FormatPRRef(), method)
+
+	// Best-effort fleet-sync the project clone
+	if project := meta["project"]; project != "" {
+		if res, err := fleet.Sync(homeDir, project); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: fleet-sync for %s failed: %v\n", project, err)
+		} else if len(res.Stuck) > 0 {
+			for _, s := range res.Stuck {
+				fmt.Fprintf(os.Stderr, "Warning: fleet-sync: %s\n", s)
+			}
+		}
+	}
 	return nil
 }
