@@ -73,6 +73,8 @@ type backlogItem struct {
 	id    string
 	desc  string
 	state string // " ", "x", "-", "!"
+	kind  string
+	repo  string
 }
 
 // stateDisplay maps internal state chars to display markers.
@@ -122,6 +124,7 @@ func parseBacklog(path string) ([]backlogItem, error) {
 	defer f.Close()
 
 	itemRe := regexp.MustCompile(`^\s*-\s+\[( |x|-|!)\]\s+(\S+):\s*(.*)$`)
+	metaRe := regexp.MustCompile(`^(.*)\s+\[kind=(\S+)\s+repo=(\S+)\]$`)
 	var items []backlogItem
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -130,10 +133,20 @@ func parseBacklog(path string) ([]backlogItem, error) {
 		if m == nil {
 			continue
 		}
+		desc := m[3]
+		kind := ""
+		repo := ""
+		if metaM := metaRe.FindStringSubmatch(desc); metaM != nil {
+			desc = metaM[1]
+			kind = metaM[2]
+			repo = metaM[3]
+		}
 		items = append(items, backlogItem{
 			state: m[1],
 			id:    m[2],
-			desc:  m[3],
+			desc:  desc,
+			kind:  kind,
+			repo:  repo,
 		})
 	}
 	return items, scanner.Err()
@@ -170,7 +183,18 @@ func renderBacklog(path string, items []backlogItem) error {
 	today := time.Now().Format("2006-01-02")
 	fmt.Fprintf(f, "## %s\n", today)
 	for _, item := range items {
-		fmt.Fprintf(f, "- %s %s: %s\n", stateDisplay(item.state), item.id, item.desc)
+		line := fmt.Sprintf("- %s %s: %s", stateDisplay(item.state), item.id, item.desc)
+		if item.kind != "" || item.repo != "" {
+			var parts []string
+			if item.kind != "" {
+				parts = append(parts, "kind="+item.kind)
+			}
+			if item.repo != "" {
+				parts = append(parts, "repo="+item.repo)
+			}
+			line += " [" + strings.Join(parts, " ") + "]"
+		}
+		fmt.Fprintln(f, line)
 	}
 
 	return f.Close()
@@ -199,6 +223,10 @@ func ensureBacklog(path string) error {
 // --- verb handlers ---
 
 func addItem(path string, args []string) error {
+	return addItemOpts(path, args, "", "", false)
+}
+
+func addItemOpts(path string, args []string, kind string, repo string, start bool) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: backlog add <id> <description>")
 	}
@@ -221,13 +249,32 @@ func addItem(path string, args []string) error {
 		}
 	}
 
-	items = append(items, backlogItem{id: id, desc: desc, state: " "})
+	initialState := " "
+	if start {
+		initialState = "-"
+	}
+
+	items = append(items, backlogItem{id: id, desc: desc, state: initialState, kind: kind, repo: repo})
 	if err := renderBacklog(path, items); err != nil {
 		return err
 	}
 	fmt.Printf("added: %s\n", id)
 	return nil
 }
+
+// AddItem adds a backlog item with optional metadata, using the manual (home-scoped) backend.
+// This is the public entry point for the backlog add command with --kind/--repo/--start.
+func AddItem(homeDir, id, desc, kind, repo string, start bool) error {
+	path := filepath.Join(homeDir, "data", "backlog.md")
+	return addItemOpts(path, []string{id, desc}, kind, repo, start)
+}
+
+// RunManual runs a backlog verb using the manual backend (always home-scoped).
+func RunManual(homeDir, verb string, args []string) error {
+	return manualRun(homeDir, verb, args)
+}
+
+
 
 func listItems(path string, args []string) error {
 	items, err := parseBacklog(path)
@@ -254,7 +301,18 @@ func listItems(path string, args []string) error {
 		if filterState != "" && item.state != filterState {
 			continue
 		}
-		fmt.Printf("- %s %s: %s\n", stateDisplay(item.state), item.id, item.desc)
+		line := fmt.Sprintf("- %s %s: %s", stateDisplay(item.state), item.id, item.desc)
+		if item.kind != "" || item.repo != "" {
+			var parts []string
+			if item.kind != "" {
+				parts = append(parts, "kind="+item.kind)
+			}
+			if item.repo != "" {
+				parts = append(parts, "repo="+item.repo)
+			}
+			line += " [" + strings.Join(parts, " ") + "]"
+		}
+		fmt.Println(line)
 	}
 	return nil
 }
@@ -284,6 +342,12 @@ func showItem(path string, args []string) error {
 			fmt.Printf("id:     %s\n", item.id)
 			fmt.Printf("desc:   %s\n", item.desc)
 			fmt.Printf("state:  %s %s\n", stateDisplay(item.state), stateName)
+			if item.kind != "" {
+				fmt.Printf("kind:   %s\n", item.kind)
+			}
+			if item.repo != "" {
+				fmt.Printf("repo:   %s\n", item.repo)
+			}
 			return nil
 		}
 	}

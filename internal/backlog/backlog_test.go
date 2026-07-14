@@ -767,3 +767,189 @@ func TestStateDisplay(t *testing.T) {
 		}
 	}
 }
+
+func TestAddItemWithMetadata(t *testing.T) {
+	t.Run("add with kind and repo", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "backlog.md")
+
+		if err := addItemOpts(path, []string{"TASK-1", "My task"}, "scout", "munsu", false); err != nil {
+			t.Fatal(err)
+		}
+
+		items, err := parseBacklog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(items))
+		}
+		if items[0].kind != "scout" {
+			t.Errorf("expected kind 'scout', got %q", items[0].kind)
+		}
+		if items[0].repo != "munsu" {
+			t.Errorf("expected repo 'munsu', got %q", items[0].repo)
+		}
+		if items[0].state != " " {
+			t.Errorf("expected state ' ' (queued), got %q", items[0].state)
+		}
+	})
+
+	t.Run("add with start flag sets in-flight", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "backlog.md")
+
+		if err := addItemOpts(path, []string{"TASK-1", "My task"}, "", "", true); err != nil {
+			t.Fatal(err)
+		}
+
+		items, err := parseBacklog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if items[0].state != "-" {
+			t.Errorf("expected state '-' (in-flight), got %q", items[0].state)
+		}
+	})
+
+	t.Run("add with all flags", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "backlog.md")
+
+		if err := addItemOpts(path, []string{"TASK-1", "My task"}, "scout", "munsu", true); err != nil {
+			t.Fatal(err)
+		}
+
+		items, err := parseBacklog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if items[0].kind != "scout" {
+			t.Errorf("expected kind 'scout', got %q", items[0].kind)
+		}
+		if items[0].repo != "munsu" {
+			t.Errorf("expected repo 'munsu', got %q", items[0].repo)
+		}
+		if items[0].state != "-" {
+			t.Errorf("expected state '-' (in-flight), got %q", items[0].state)
+		}
+	})
+}
+
+func TestRenderBacklogWithMetadata(t *testing.T) {
+	t.Run("metadata round-trip", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "backlog.md")
+
+		items := []backlogItem{
+			{id: "TASK-1", desc: "My task", state: " ", kind: "scout", repo: "munsu"},
+		}
+
+		if err := renderBacklog(path, items); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify the metadata suffix is in the file
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(data)
+		if !strings.Contains(content, "[kind=scout repo=munsu]") {
+			t.Errorf("expected metadata suffix, got %q", content)
+		}
+
+		// Reparse and verify
+		reloaded, err := parseBacklog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reloaded) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(reloaded))
+		}
+		if reloaded[0].kind != "scout" {
+			t.Errorf("expected kind 'scout', got %q", reloaded[0].kind)
+		}
+		if reloaded[0].repo != "munsu" {
+			t.Errorf("expected repo 'munsu', got %q", reloaded[0].repo)
+		}
+	})
+
+	t.Run("metadata round-trip both fields", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "backlog.md")
+
+		items := []backlogItem{
+			{id: "TASK-1", desc: "My task", state: "-", kind: "ship", repo: "firstmate"},
+			{id: "TASK-2", desc: "Other task", state: " ", kind: "scout", repo: "munsu"},
+			{id: "TASK-3", desc: "No meta", state: "x"},
+		}
+
+		if err := renderBacklog(path, items); err != nil {
+			t.Fatal(err)
+		}
+
+		reloaded, err := parseBacklog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reloaded) != 3 {
+			t.Fatalf("expected 3 items, got %d", len(reloaded))
+		}
+
+		// Check each item (sorted by state then id)
+		// Expected order: TASK-2 (queued ' '), TASK-1 (in-flight '-'), TASK-3 (done 'x')
+		if reloaded[0].kind != "scout" || reloaded[0].repo != "munsu" {
+			t.Errorf("TASK-2: expected kind=scout repo=munsu, got kind=%q repo=%q", reloaded[0].kind, reloaded[0].repo)
+		}
+		if reloaded[1].kind != "ship" || reloaded[1].repo != "firstmate" {
+			t.Errorf("TASK-1: expected kind=ship repo=firstmate, got kind=%q repo=%q", reloaded[1].kind, reloaded[1].repo)
+		}
+		if reloaded[2].kind != "" || reloaded[2].repo != "" {
+			t.Errorf("TASK-3: expected no metadata, got kind=%q repo=%q", reloaded[2].kind, reloaded[2].repo)
+		}
+
+	})
+}
+
+func TestAddItemPublic(t *testing.T) {
+	t.Run("AddItem with kind and repo", func(t *testing.T) {
+		homeDir := t.TempDir()
+
+		if err := AddItem(homeDir, "TASK-1", "My task", "scout", "munsu", false); err != nil {
+			t.Fatal(err)
+		}
+
+		path := filepath.Join(homeDir, "data", "backlog.md")
+		items, err := parseBacklog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(items))
+		}
+		if items[0].kind != "scout" {
+			t.Errorf("expected kind 'scout', got %q", items[0].kind)
+		}
+		if items[0].repo != "munsu" {
+			t.Errorf("expected repo 'munsu', got %q", items[0].repo)
+		}
+	})
+
+	t.Run("AddItem with start flag", func(t *testing.T) {
+		homeDir := t.TempDir()
+
+		if err := AddItem(homeDir, "TASK-1", "My task", "", "", true); err != nil {
+			t.Fatal(err)
+		}
+
+		path := filepath.Join(homeDir, "data", "backlog.md")
+		items, err := parseBacklog(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if items[0].state != "-" {
+			t.Errorf("expected state '-' (in-flight), got %q", items[0].state)
+		}
+	})
+}
