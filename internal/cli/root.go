@@ -988,7 +988,11 @@ hand-editing $MUNSU_HOME/data/backlog.md.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			verb := args[0]
 			rest := args[1:]
-			return backlog.Run(verb, rest)
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return fmt.Errorf("resolving home: %w", err)
+			}
+			return backlog.Run(homeDir, verb, rest)
 		},
 	}
 }

@@ -30,7 +30,7 @@ Maintained as munsu ports more capabilities.
 | Stow skill (`.agents/skills/stow`) | `munsu stow` | `internal/cli` (stub) | stub |
 | `bin/fm-ensure-agents-md.sh` | `munsu ensure-agents-md` | `internal/cli` (stub) | stub |
 | Project registry | `munsu project add/list/show/rm` | `internal/cli` (stub) | stub |
-| Backlog (tasks-axi) | `munsu backlog` | `internal/cli` (stub) | stub |
+| Backlog (tasks-axi + manual fallback) | `munsu backlog` | `internal/backlog` | **A5: done** |
 | `bin/fm-review-diff.sh` | `munsu review-diff` | `internal/cli` (stub) | stub |
 | PR check/merge | `munsu pr-check` / `munsu pr-merge` | `internal/cli` (stub) | stub |
 | Local merge | `munsu merge-local` | `internal/cli` (stub) | stub |

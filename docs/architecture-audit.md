@@ -20,7 +20,8 @@ Several domain-level business logic functions and subprocess executions are defi
 - **Firstmate Counterpart**: `firstmate` separates these concerns by utilizing standalone library and script files like `bin/fm-tasks-axi-lib.sh` instead of embedding them directly within command-line option handlers.
 
 ### Category 2: Missing Modules
-- **Unimplemented Backlog Fallback**: `internal/cli/root.go` (line 951) fails with an error when `tasks-axi` is unavailable: `"backlog: tasks-axi not available and fallback backlog.md editing not yet implemented"`. In contrast, `firstmate` provides a fully defined manual fallback format for editing `$FM_HOME/data/backlog.md`.
+- ~~**Unimplemented Backlog Fallback**: `internal/cli/root.go` (line 951) fails with an error when `tasks-axi` is unavailable: `"backlog: tasks-axi not available and fallback backlog.md editing not yet implemented"`. In contrast, `firstmate` provides a fully defined manual fallback format for editing `$FM_HOME/data/backlog.md`.~~
+  **RESOLVED**: `internal/backlog` now implements a full manual fallback parser/renderer with verbs: add, list, show, start, done, block, ready/unblock. Uses `$MUNSU_HOME/data/backlog.md` with markers `[ ]` queued, `[-]` in-flight, `[!]` blocked, `[x]` done. Auto-creates file with header on first add.
 - **Stubbed Session Backends**: In `internal/session/session.go`, backends like `zellij`, `cmux`, `herdr`, and `orca` are mapped to stub implementations in `internal/session/backend_*.go` that simply return `ErrNotImplemented`.
 - **Missing Hometag Isolation**: `munsu` lacks a home tag namespace isolation helper, which is defined in `firstmate` as `fm_backend_hometag()` in `bin/fm-backend-hometag-lib.sh`. This is crucial to prevent multiplexer namespace collisions.
 
@@ -64,7 +65,7 @@ Below is the prioritized plan to align `munsu` with `firstmate`'s architecture a
 - **Firstmate script/pattern**: Aligns with `bin/fm-backend-hometag-lib.sh` and `docs/configuration.md` backend resolution rules.
 - **Refactor or New Capability**: New Capability.
 
-### Item 5: Implement backlog manual fallback parser
-- **What to change and why**: Build a local fallback parser in `internal/backlog` to allow modifying `backlog.md` manually when `tasks-axi` is unavailable or `backlog-backend` is set to manual.
+### Item 5: Implement backlog manual fallback parser  **DONE**
+- **What was changed**: Built a local fallback parser/renderer in `internal/backlog` supporting all verbs (add, list, show, start, done, block, ready, unblock). The `Run` function now takes `homeDir` and falls back to `$MUNSU_HOME/data/backlog.md` when `tasks-axi` is unavailable. Auto-creates file with header on first add. Unknown verbs return a clear error.
 - **Firstmate script/pattern**: Aligns with firstmate's manual fallback backlog editing mode.
 - **Refactor or New Capability**: New Capability.
