@@ -19,3 +19,4 @@ All five architecture remediation items were implemented and merged:
 
 - `internal/backlog/backlog.go` exists but the CLI `munsu backlog` verb still dispatches through the original `runBacklog` in `root.go`. If `internal/backlog.ManualRun` is preferred as the single entry point, future cleanup could consolidate.
 - ConfigPush gitignore check uses `git check-ignore -q` on the secondmate home; if the secondmate home is not a git repo, this step silently succeeds with a warning printed to stdout.
+- Item 5 config gate: `Run()` checks `config/backlog-backend` for `"manual"` before consulting tasks-axi. When the file contains `"manual"` (trimmed), the manual markdown parser runs even if a compatible tasks-axi is on PATH.
