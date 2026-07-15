@@ -540,9 +540,38 @@ func newTaskCmd() *cobra.Command {
 		Short: "List tasks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state, _ := cmd.Flags().GetString("state")
-			_ = state // filter not yet implemented for listing
-			fmt.Println("task: list not yet implemented (use tasks-axi)")
+			stateFilter, _ := cmd.Flags().GetString("state")
+
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			entries, err := task.ListMeta(homeDir)
+			if err != nil {
+				return fmt.Errorf("listing tasks: %w", err)
+			}
+
+			if len(entries) == 0 {
+				fmt.Println("no tasks found")
+				return nil
+			}
+
+			fmt.Printf("%-20s %-8s %-16s %s\n", "ID", "KIND", "PROJECT", "STATUS")
+			for _, e := range entries {
+				if stateFilter != "" && !strings.Contains(e.LastStatus, stateFilter) {
+					continue
+				}
+				project := e.Project
+				if project == "" {
+					project = "-"
+				}
+				status := e.LastStatus
+				if status == "" {
+					status = "registered"
+				}
+				fmt.Printf("%-20s %-8s %-16s %s\n", e.ID, e.Kind, project, status)
+			}
 			return nil
 		},
 	}
@@ -618,6 +647,7 @@ func newTaskCmd() *cobra.Command {
 
 func newBriefCmd() *cobra.Command {
 	var scout bool
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "brief <id> <repo>",
@@ -640,6 +670,12 @@ func newBriefCmd() *cobra.Command {
 				yolo = y
 			}
 
+			// Require existing task meta unless --force
+			if !force {
+				if _, err := task.ReadMeta(homeDir, id); err != nil {
+					return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
+				}
+			}
 			opts := brief.ScaffoldOptions{
 				HomeDir: homeDir,
 				ID:      id,
@@ -672,6 +708,7 @@ func newBriefCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&scout, "scout", false, "Generate a scout brief instead of ship brief")
+	cmd.Flags().BoolVar(&force, "force", false, "Scaffold brief without requiring existing task meta")
 
 	return cmd
 }
@@ -698,6 +735,10 @@ func newSpawnCmd() *cobra.Command {
 				return fmt.Errorf("resolving home: %w", err)
 			}
 
+			// Preflight: require brief to exist before spawning
+			if !brief.Exists(homeDir, id) {
+				return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning", id, id, projectName)
+			}
 			// 2. Resolve project repo path from registry
 			projPath, err := project.ResolveRepoPath(homeDir, projectName)
 			if err != nil {
@@ -974,6 +1015,31 @@ func newPromoteCmd() *cobra.Command {
 				return err
 			}
 
+			// Preflight: verify task meta exists with kind=scout
+			meta, err := task.ReadMeta(homeDir, id)
+			if err != nil {
+				return fmt.Errorf("reading meta for %s: %w", id, err)
+			}
+			if meta["kind"] != "scout" {
+				return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, meta["kind"])
+			}
+
+			// Preflight: require report.md to exist
+			if !brief.ReportExists(homeDir, id) {
+				return fmt.Errorf("no report found for scout task %s: write report at %s/report.md before promoting", id, brief.Path(homeDir, id))
+			}
+
+			// Preflight: require last status to be done or resolved
+			if statusLines, err := task.ReadStatus(homeDir, id); err == nil && len(statusLines) > 0 {
+				lastLine := statusLines[len(statusLines)-1]
+				lastStatus, _ := task.ParseStatusKey(lastLine)
+				if !strings.HasPrefix(lastStatus, "done") && !strings.HasPrefix(lastStatus, "resolved") {
+					return fmt.Errorf("task %s has last status %q, need 'done' or 'resolved' before promote", id, lastStatus)
+				}
+			} else {
+				return fmt.Errorf("task %s has no status: report done or resolved before promoting", id)
+			}
+
 			if err := task.PromoteMeta(homeDir, id); err != nil {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
@@ -1054,11 +1120,24 @@ and write a check.sh script to poll the PR merge status via gh CLI.
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			prURL := args[1]
+
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
 				return err
 			}
-			return delivery.PRCheck(homeDir, args[0], args[1])
+
+			// Preflight: verify task meta exists with kind=ship
+			meta, err := task.ReadMeta(homeDir, id)
+			if err != nil {
+				return fmt.Errorf("reading meta for %s: %w", id, err)
+			}
+			if meta["kind"] != "ship" {
+				return fmt.Errorf("task %s has kind=%q, pr-check requires kind=ship (promote scout tasks before checking PRs)", id, meta["kind"])
+			}
+
+			return delivery.PRCheck(homeDir, id, prURL)
 		},
 	}
 }
@@ -1076,14 +1155,27 @@ The --repo/-R flag is not allowed (repository comes from the URL).
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			prURL := args[1]
+			extra := args[2:]
+
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
 				return err
 			}
-			extra := args[2:]
-			return delivery.PRMerge(homeDir, args[0], args[1], extra)
+
+			// Preflight: verify task meta exists with kind=ship
+			meta, err := task.ReadMeta(homeDir, id)
+			if err != nil {
+				return fmt.Errorf("reading meta for %s: %w", id, err)
+			}
+			if meta["kind"] != "ship" {
+				return fmt.Errorf("task %s has kind=%q, pr-merge requires kind=ship (promote scout tasks before merging)", id, meta["kind"])
+			}
+
+			return delivery.PRMerge(homeDir, id, prURL, extra)
 		},
-	}
+}
 	return cmd
 }
 
@@ -1160,7 +1252,7 @@ func newBacklogAddCmd() *cobra.Command {
 				return fmt.Errorf("resolving home: %w", err)
 			}
 
-			return backlog.AddItem(homeDir, id, desc, kind, repo, start)
+			return backlog.AddItemDispatch(homeDir, id, desc, kind, repo, start)
 		},
 	}
 
