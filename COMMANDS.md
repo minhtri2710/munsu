@@ -12,7 +12,7 @@ Full command map grouped by lifecycle phase.
 | `munsu config set <key> <value>` | Write a configuration value. |
 | `munsu project add <name> <path-or-url>` | Register a project. Git URLs are cloned automatically. |
 | `munsu project list` | List registered projects. |
-| `munsu project show <name>` | Show project details with ad-hoc fallback. |
+| `munsu project show <name>` | Show project details. |
 | `munsu project rm <name>` | Remove a registered project. |
 | `munsu project mode <name>` | Resolve delivery mode for a project. |
 | `munsu worktree get <repo-path> [--lease]` | Acquire a pooled worktree via treehouse. |
@@ -108,4 +108,4 @@ Uses `tasks-axi` CLI when available (>= 0.1.1), falling back to hand-editing `$M
 
 | Command | Description |
 |---------|-------------|
-| `munsu update` | Self-update munsu binary (fast-forward only). |
+| `munsu update` | Self-update munsu binary (fast-forward + rebuild with version stamp). |

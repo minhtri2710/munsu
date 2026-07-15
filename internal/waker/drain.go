@@ -27,6 +27,10 @@ func Drain(homeDir string) ([]Record, error) {
 
 // PrintRecords prints drained records in a readable format.
 func PrintRecords(records []Record) {
+	if len(records) == 0 {
+		fmt.Println("ok: no pending wakes")
+		return
+	}
 	for _, r := range records {
 		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", r.Epoch, r.Seq, r.Kind, r.Key, r.Payload)
 	}
@@ -58,6 +62,8 @@ func CheckGuard(homeDir string) []string {
 		fmt.Println("● " + w + " ●")
 		fmt.Println(border)
 	}
-
+	if len(warnings) == 0 {
+		fmt.Println("ok: no tangles; watcher fresh")
+	}
 	return warnings
 }

@@ -296,15 +296,7 @@ the repository is cloned into the projects directory first.`,
 			}
 			p, err := project.Find(homeDir, args[0])
 			if err != nil {
-				// Fall back to ad-hoc resolution
-				adhoc, aerr := project.ResolveAdhoc()
-				if aerr != nil {
-					return err // return original not-found error
-				}
-				p = adhoc
-				fmt.Printf("Name:        %s (ad-hoc)\n", p.Name)
-				fmt.Printf("Repository:  %s\n", p.Description)
-				return nil
+				return err
 			}
 			fmt.Printf("Name:        %s\n", p.Name)
 			if p.Mode != "" {
@@ -349,13 +341,7 @@ the repository is cloned into the projects directory first.`,
 			}
 			mode, yolo, err := project.Mode(homeDir, args[0])
 			if err != nil {
-				// Fall back to ad-hoc
-				adhoc, aerr := project.ResolveAdhoc()
-				if aerr != nil {
-					return err
-				}
-				mode = adhoc.Mode
-				yolo = adhoc.Yolo
+				return err
 			}
 			if mode != "" {
 				fmt.Printf("%s", mode)

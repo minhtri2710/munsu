@@ -74,7 +74,37 @@ func Update() error {
 		return fmt.Errorf("ff-merge failed (is the tree dirty or diverged?): %w", err)
 	}
 
-	fmt.Printf("Updated %s to %s", installRoot, strings.TrimSpace(string(out)))
+	fmt.Printf("Updated %s to %s\n", installRoot, strings.TrimSpace(string(out)))
+
+	// Determine commit hash for version stamping
+	commitBytes, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		return fmt.Errorf("determining commit hash: %w", err)
+	}
+	commit := strings.TrimSpace(string(commitBytes))
+
+	// Rebuild binary with version/commit ldflags
+	version := fmt.Sprintf("0.1.0-dev+%s", commit)
+	tmpPath := realPath + ".tmp"
+	buildCmd := exec.Command("go", "build",
+		"-ldflags", fmt.Sprintf("-X github.com/minhtri2710/munsu/internal/cli.Version=%s", version),
+		"-o", tmpPath,
+		"./cmd/munsu",
+	)
+	buildCmd.Dir = installRoot
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rebuild failed after update: %w", err)
+	}
+
+	// Atomic install: rename temp file over current binary
+	if err := os.Rename(tmpPath, realPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("installing updated binary: %w", err)
+	}
+
+	fmt.Printf("Rebuilt binary at %s (version %s)\n", realPath, version)
 	return nil
 }
 
