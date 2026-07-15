@@ -48,6 +48,7 @@ func Get(repoPath string, lease bool) (string, error) {
 		args = append(args, "--lease")
 	}
 	cmd := exec.Command(bin, args...)
+	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

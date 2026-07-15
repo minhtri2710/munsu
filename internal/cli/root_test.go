@@ -208,6 +208,15 @@ Antigravity CLI requires permission to read, edit, and execute files here.
                                                     Claude Sonnet 4.6 (Thinking)
 `
 
+// Fixture: r7 transcript capture of pi trust prompt.
+const piTrustCapture = `Trust project folder?
+/Users/beowulf/.treehouse/firstmate-8bf1b0/4/firstmate
+→ Trust
+  Trust parent folder (...)
+  Trust (this session only)
+  Do not trust
+`
+
 func TestPiReadyPatterns(t *testing.T) {
 	patterns := readyPatterns[harness.Pi]
 	if len(patterns) == 0 {
@@ -246,6 +255,34 @@ func TestAgyTrustDetection(t *testing.T) {
 	// Verify trust is NOT detected in pi capture when checking agy patterns.
 	if isTrustPrompt(piReadyCapture, harness.Agy) {
 		t.Error("isTrustPrompt should NOT detect trust in pi capture with agy harness")
+	}
+}
+
+func TestPiTrustDetection(t *testing.T) {
+	// Verify trust prompt patterns match the actual pi trust capture.
+	if !strings.Contains(piTrustCapture, "Trust project folder") {
+		t.Error("trust pattern 'Trust project folder' should match pi trust capture")
+	}
+	if !strings.Contains(piTrustCapture, "→ Trust") {
+		t.Error("trust pattern '→ Trust' should match pi trust capture")
+	}
+	if !strings.Contains(piTrustCapture, "Do not trust") {
+		t.Error("trust pattern 'Do not trust' should match pi trust capture")
+	}
+
+	// Verify isTrustPrompt detects trust in the pi capture.
+	if !isTrustPrompt(piTrustCapture, harness.Pi) {
+		t.Error("isTrustPrompt should detect trust in pi capture")
+	}
+
+	// Verify trust is NOT detected in agy capture when checking pi patterns.
+	if isTrustPrompt(agyTrustCapture, harness.Pi) {
+		t.Error("isTrustPrompt should NOT detect trust in agy capture with pi harness")
+	}
+
+	// Verify trust is NOT detected in pi ready capture (not a trust dialog).
+	if isTrustPrompt(piReadyCapture, harness.Pi) {
+		t.Error("isTrustPrompt should NOT detect trust in pi ready capture")
 	}
 }
 
