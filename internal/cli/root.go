@@ -96,13 +96,22 @@ func checkTangle(projectDir, projectName string) error {
 // buildHarnessLaunch builds the shell command to launch a harness agent.
 func buildHarnessLaunch(h string, tmpl harness.Template) string {
 	parts := []string{strings.ToLower(h)}
+	parts = append(parts, tmpl.ExtraArgs...)
 	if tmpl.ModelFlag != "" && tmpl.DefaultModel != "" {
-		parts = append(parts, tmpl.ModelFlag, tmpl.DefaultModel)
+		parts = append(parts, tmpl.ModelFlag, shellQuote(tmpl.DefaultModel))
 	}
 	if tmpl.EffortFlag != "" && tmpl.DefaultEffort != "" {
 		parts = append(parts, tmpl.EffortFlag, tmpl.DefaultEffort)
 	}
 	return strings.Join(parts, " ")
+}
+
+// shellQuote wraps a string in double quotes if it contains shell-special characters.
+func shellQuote(s string) string {
+	if strings.ContainsAny(s, " \t\n\r()\"'") {
+		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	}
+	return s
 }
 
 // validDeliveryModes lists the accepted delivery mode values.

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 func TestCheckTangle(t *testing.T) {
@@ -121,6 +123,24 @@ func TestCheckTangle(t *testing.T) {
 	runCmd(t, noRemoteDir, "git", "checkout", "--detach", defaultBranchBR)
 	if err := checkTangle(noRemoteDir, "test-project"); err != nil {
 		t.Fatalf("expected no error on detached HEAD (no remote), got: %v", err)
+	}
+}
+
+func TestBuildHarnessLaunch_Agy(t *testing.T) {
+	tmpl := harness.Templates[harness.Agy]
+	cmd := buildHarnessLaunch(harness.Agy, tmpl)
+
+	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
+		t.Error("agy launch command should contain --dangerously-skip-permissions")
+	}
+	if !strings.Contains(cmd, "--model") {
+		t.Error("agy launch command should contain --model")
+	}
+	if !strings.Contains(cmd, "-i") {
+		t.Error("agy launch command should contain -i")
+	}
+	if !strings.Contains(cmd, "Gemini 3.5 Flash (Medium)") {
+		t.Error("agy launch command should contain the default model name")
 	}
 }
 

@@ -4,13 +4,14 @@ Verified adapter launch templates for spawning crewmates.
 
 ## Launch templates per harness
 
-| Harness | Model flag | Effort flag |
-|---|---|---|
-| claude | `--model` | none (n/a) |
-| codex | none | n/a |
-| opencode | `--model` | n/a |
-| pi | `--model` | `--thinking` (low/medium/high) |
-| grok | none | n/a |
+| Harness | Model flag | Effort flag | Autonomy / interactive |
+|---|---|---|---|
+| claude | `--model` | none (n/a) | — |
+| codex | none | n/a | — |
+| opencode | `--model` | n/a | — |
+| pi | `--model` | `--thinking` (low/medium/high) | — |
+| grok | none | n/a | — |
+| agy | `--model` | none | `--dangerously-skip-permissions` + `-i` |
 
 ## Harness detection
 
@@ -20,6 +21,7 @@ Check env markers, then process ancestry:
 - OpenCode: `OPENCODE=1`
 - Pi: `PI_CODING_AGENT_DIR` set
 - Grok: `GROK_VM_ID` set
+- Agy: `ANTIGRAVITY_AGENT=1`
 
 Fallback: check process tree for harness-specific argv patterns.
 

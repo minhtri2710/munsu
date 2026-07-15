@@ -21,11 +21,11 @@ const (
 	Opencode = "opencode"
 	Pi       = "pi"
 	Grok     = "grok"
+	Agy      = "agy"
 )
 
 // KnownHarnesses lists all supported harness names.
-var KnownHarnesses = []string{Claude, Codex, Opencode, Pi, Grok}
-
+var KnownHarnesses = []string{Claude, Codex, Opencode, Pi, Grok, Agy}
 // IsKnownHarness reports whether name is a supported harness.
 func IsKnownHarness(name string) bool {
 	for _, h := range KnownHarnesses {
@@ -56,6 +56,7 @@ func detectFromEnv() string {
 		"OPENCODE":            Opencode,
 		"PI_CODING_AGENT_DIR": Pi,
 		"GROK_VM_ID":          Grok,
+		"ANTIGRAVITY_AGENT":   Agy,
 	}
 	for env, harness := range markers {
 		if os.Getenv(env) != "" {
@@ -140,6 +141,8 @@ func matchProcessName(name string) string {
 		return Pi
 	case strings.Contains(name, "grok"):
 		return Grok
+	case name == "agy" || name == "antigravity":
+		return Agy
 	}
 	return ""
 }
@@ -150,6 +153,7 @@ type Template struct {
 	EffortFlag    string
 	DefaultModel  string
 	DefaultEffort string
+	ExtraArgs     []string // Additional CLI arguments for launch (autonomy, interactive, etc.)
 }
 
 // Templates maps each known harness to its launch template (CLI flag conventions).
@@ -175,6 +179,11 @@ var Templates = map[string]Template{
 		EffortFlag: "",
 	},
 	Grok: {},
+	Agy: {
+		ModelFlag:  "--model",
+		DefaultModel: "Gemini 3.5 Flash (Medium)",
+		ExtraArgs: []string{"--dangerously-skip-permissions", "-i"},
+	},
 }
 
 // lookupConfig reports a config key's value when it is set to a concrete value.

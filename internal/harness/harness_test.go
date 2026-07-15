@@ -56,9 +56,19 @@ func TestDetectFromEnv_Grok(t *testing.T) {
 	}
 }
 
+func TestDetectFromEnv_Agy(t *testing.T) {
+	os.Setenv("ANTIGRAVITY_AGENT", "1")
+	defer os.Unsetenv("ANTIGRAVITY_AGENT")
+
+	h := detectFromEnv()
+	if h != Agy {
+		t.Errorf("detectFromEnv() = %q, want %q", h, Agy)
+	}
+}
+
 func TestDetectFromEnv_Empty(t *testing.T) {
 	// Unset all env markers
-	for _, env := range []string{"CLAUDE_CODE", "CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
+	for _, env := range []string{"CLAUDE_CODE", "CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID", "ANTIGRAVITY_AGENT"} {
 		t.Setenv(env, "")
 		os.Unsetenv(env)
 	}
@@ -85,6 +95,8 @@ func TestMatchProcessName(t *testing.T) {
 		{"pi", Pi},
 		{"pi-coding-agent", Pi},
 		{"grok", Grok},
+		{"agy", Agy},
+		{"antigravity", Agy},
 		{"bash", ""},
 		{"zsh", ""},
 		{"", ""},
@@ -132,6 +144,16 @@ func TestTemplates(t *testing.T) {
 		t.Errorf("missing template for %s", Grok)
 	} else if tmpl.ModelFlag != "" {
 		t.Errorf("Grok ModelFlag = %q, want empty", tmpl.ModelFlag)
+	}
+
+	if tmpl, ok := Templates[Agy]; !ok {
+		t.Errorf("missing template for %s", Agy)
+	} else if tmpl.ModelFlag != "--model" {
+		t.Errorf("Agy ModelFlag = %q, want --model", tmpl.ModelFlag)
+	} else if len(tmpl.ExtraArgs) == 0 {
+		t.Errorf("Agy ExtraArgs should not be empty")
+	} else if tmpl.ExtraArgs[0] != "--dangerously-skip-permissions" {
+		t.Errorf("Agy ExtraArgs[0] = %q, want --dangerously-skip-permissions", tmpl.ExtraArgs[0])
 	}
 }
 
