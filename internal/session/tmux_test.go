@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -334,3 +335,267 @@ func TestTmux_Backend_NotFound(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// FakeBackend — test double for the Backend interface
+// ---------------------------------------------------------------------------
+
+// fakeBackend implements Backend for testing purposes.
+// Tracks windows, captures, and errors in memory.
+type fakeBackend struct {
+	windows      map[string]bool    // windowID -> alive
+	captures     map[string]string  // windowID -> captured content
+	newWindowFn  func(session, name string) (string, error)
+	sendKeysFn   func(windowID, text string) error
+	captureFn    func(windowID string, lines int) (string, error)
+	aliveFn      func(windowID string) bool
+	teardownFn   func(windowID string) error
+}
+
+func newFakeBackend() *fakeBackend {
+	return &fakeBackend{
+		windows:  make(map[string]bool),
+		captures: make(map[string]string),
+	}
+}
+
+func (f *fakeBackend) NewWindow(session, name string) (string, error) {
+	if f.newWindowFn != nil {
+		return f.newWindowFn(session, name)
+	}
+	wid := session + "/" + name
+	f.windows[wid] = true
+	return wid, nil
+}
+
+func (f *fakeBackend) SendKeys(windowID, text string) error {
+	if f.sendKeysFn != nil {
+		return f.sendKeysFn(windowID, text)
+	}
+	if !f.windows[windowID] {
+		return fmt.Errorf("window %s not found", windowID)
+	}
+	return nil
+}
+
+func (f *fakeBackend) Capture(windowID string, lines int) (string, error) {
+	if f.captureFn != nil {
+		return f.captureFn(windowID, lines)
+	}
+	if !f.windows[windowID] {
+		return "", fmt.Errorf("window %s not found", windowID)
+	}
+	if c, ok := f.captures[windowID]; ok {
+		return c, nil
+	}
+	return "", nil
+}
+
+func (f *fakeBackend) Alive(windowID string) bool {
+	if f.aliveFn != nil {
+		return f.aliveFn(windowID)
+	}
+	return f.windows[windowID]
+}
+
+func (f *fakeBackend) Teardown(windowID string) error {
+	if f.teardownFn != nil {
+		return f.teardownFn(windowID)
+	}
+	delete(f.windows, windowID)
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// FakeBackend contract tests
+// ---------------------------------------------------------------------------
+
+func TestFakeBackend_NewWindow(t *testing.T) {
+	f := newFakeBackend()
+	wid, err := f.NewWindow("munsu", "test-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wid == "" {
+		t.Fatal("NewWindow returned empty window ID")
+	}
+	if !f.windows[wid] {
+		t.Error("window should be recorded as alive")
+	}
+}
+
+func TestFakeBackend_AliveAfterNewWindow(t *testing.T) {
+	f := newFakeBackend()
+	wid, _ := f.NewWindow("s", "n")
+	if !f.Alive(wid) {
+		t.Error("Alive should return true after NewWindow")
+	}
+}
+
+func TestFakeBackend_AliveUnknown(t *testing.T) {
+	f := newFakeBackend()
+	if f.Alive("@nonexistent") {
+		t.Error("Alive should return false for unknown window")
+	}
+}
+
+func TestFakeBackend_TeardownRemoves(t *testing.T) {
+	f := newFakeBackend()
+	wid, _ := f.NewWindow("s", "n")
+	f.Teardown(wid)
+	if f.Alive(wid) {
+		t.Error("Alive should return false after Teardown")
+	}
+}
+
+func TestFakeBackend_SendKeysToUnknown(t *testing.T) {
+	f := newFakeBackend()
+	err := f.SendKeys("@nonexistent", "echo hi")
+	if err == nil {
+		t.Fatal("expected error for unknown window")
+	}
+}
+
+func TestFakeBackend_CaptureToUnknown(t *testing.T) {
+	f := newFakeBackend()
+	_, err := f.Capture("@nonexistent", 10)
+	if err == nil {
+		t.Fatal("expected error for unknown window")
+	}
+}
+
+func TestFakeBackend_CaptureAfterSend(t *testing.T) {
+	f := newFakeBackend()
+	wid, _ := f.NewWindow("s", "n")
+	f.captures[wid] = "output line 1\noutput line 2\n"
+
+	out, err := f.Capture(wid, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "output line 1\noutput line 2\n" {
+		t.Errorf("captured = %q, want %q", out, "output line 1\noutput line 2\n")
+	}
+}
+
+func TestFakeBackend_Lifecycle(t *testing.T) {
+	f := newFakeBackend()
+
+	// Create
+	wid, err := f.NewWindow("munsu", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Use
+	if err := f.SendKeys(wid, "cd /tmp && go test"); err != nil {
+		t.Fatal(err)
+	}
+	f.captures[wid] = "ok\n"
+	out, err := f.Capture(wid, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ok\n" {
+		t.Errorf("capture = %q, want %q", out, "ok\n")
+	}
+
+	// Teardown
+	if err := f.Teardown(wid); err != nil {
+		t.Fatal(err)
+	}
+	if f.Alive(wid) {
+		t.Error("should not be alive after teardown")
+	}
+}
+
+func TestFakeBackend_CustomNewWindowFn(t *testing.T) {
+	f := newFakeBackend()
+	f.newWindowFn = func(session, name string) (string, error) {
+		return "", fmt.Errorf("custom error")
+	}
+	_, err := f.NewWindow("s", "n")
+	if err == nil || !strings.Contains(err.Error(), "custom error") {
+		t.Errorf("expected 'custom error', got %v", err)
+	}
+}
+
+func TestFakeBackend_CustomSendKeysFn(t *testing.T) {
+	f := newFakeBackend()
+	f.sendKeysFn = func(windowID, text string) error {
+		return fmt.Errorf("send failed")
+	}
+	err := f.SendKeys("@w0", "text")
+	if err == nil || !strings.Contains(err.Error(), "send failed") {
+		t.Errorf("expected 'send failed', got %v", err)
+	}
+}
+
+func TestFakeBackend_BackendSelectStaysSame(t *testing.T) {
+	// Verify that Select returns the expected types for known backends
+	bk, err := Select("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bk.(*TmuxBackend); !ok {
+		t.Errorf("Select('tmux') returned %T, want *TmuxBackend", bk)
+	}
+
+	bk, err = Select("herdr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bk.(*HerdrBackend); !ok {
+		t.Errorf("Select('herdr') returned %T, want *HerdrBackend", bk)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HerdrBackend tests (PATH-based mock)
+// ---------------------------------------------------------------------------
+
+// TestHerdrBackend_NotFound tests that HerdrBackend methods fail gracefully
+// when herdr is not on PATH.
+func TestHerdrBackend_NotFound(t *testing.T) {
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+
+	h := &HerdrBackend{}
+
+	t.Run("NewWindow", func(t *testing.T) {
+		_, err := h.NewWindow("s", "n")
+		if err == nil || !strings.Contains(err.Error(), "not found on PATH") {
+			t.Errorf("expected PATH error, got: %v", err)
+		}
+	})
+
+	t.Run("SendKeys", func(t *testing.T) {
+		err := h.SendKeys("@0", "text")
+		if err == nil || !strings.Contains(err.Error(), "not found on PATH") {
+			t.Errorf("expected PATH error, got: %v", err)
+		}
+	})
+
+	t.Run("Capture", func(t *testing.T) {
+		_, err := h.Capture("@0", 10)
+		if err == nil || !strings.Contains(err.Error(), "not found on PATH") {
+			t.Errorf("expected PATH error, got: %v", err)
+		}
+	})
+
+	t.Run("Alive", func(t *testing.T) {
+		if h.Alive("@0") {
+			t.Error("Alive returned true when herdr is not on PATH")
+		}
+	})
+
+	t.Run("Teardown", func(t *testing.T) {
+		err := h.Teardown("@0")
+		// Teardown suppresses "not found" errors — nil is expected
+		if err != nil {
+			t.Logf("Teardown returned error (expected with no herdr): %v", err)
+		}
+	})
+}
+

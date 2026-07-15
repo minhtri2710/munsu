@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/crewstate"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -327,4 +329,198 @@ func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
 	if absorbStaleSignal(nil) {
 		t.Error("nil state should NOT absorb stale signal")
 	}
+}
+
+func TestScanFleet_StaleStatusFile(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	task.WriteMeta(tmp, "stale-task", map[string]string{"window": "@nonexistent99"})
+
+	// Write a status file with old modification time
+	statusPath := filepath.Join(stateDir, "stale-task.status")
+	os.WriteFile(statusPath, []byte("working: started\n"), 0644)
+
+	// Set mod time to be older than stale threshold
+	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
+	os.Chtimes(statusPath, past, past)
+
+	reason := scanFleet(tmp)
+	if reason == nil {
+		t.Fatal("expected stale reason for old status file")
+	}
+	if reason.Kind != "stale" {
+		t.Errorf("kind = %q, want stale", reason.Kind)
+	}
+	// The pane dead check fires before status staleness check
+	if !strings.Contains(reason.Message, "dead") && !strings.Contains(reason.Message, "idle for") {
+		t.Errorf("message should mention dead or idle, got: %q", reason.Message)
+	}
+}
+
+func TestScanFleet_RecentStatusNoStale(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	task.WriteMeta(tmp, "recent-task", map[string]string{"window": "@nonexistent99"})
+
+	// Write a recent status file
+	statusPath := filepath.Join(stateDir, "recent-task.status")
+	os.WriteFile(statusPath, []byte("working: active\n"), 0644)
+
+	// The pane is dead but the status is recent — pane staleness takes precedence
+	// But the status staleness check won't trigger because modtime is recent
+	// The pane liveness check will trigger stale first
+	reason := scanFleet(tmp)
+	if reason == nil {
+		t.Fatal("expected stale reason for dead pane (recent status doesn't prevent pane check)")
+	}
+	if reason.Kind != "stale" {
+		t.Errorf("kind = %q, want stale", reason.Kind)
+	}
+}
+
+func TestScanFleet_NoMetaFiles(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Only create status files without corresponding meta files
+	os.WriteFile(filepath.Join(stateDir, "orphan.status"), []byte("working: stray\n"), 0644)
+	os.WriteFile(filepath.Join(stateDir, "another.status"), []byte("done: finished\n"), 0644)
+
+	reason := scanFleet(tmp)
+	if reason != nil {
+		t.Errorf("expected nil for orphan status files (no meta), got %v", reason)
+	}
+}
+
+func TestScanFleet_IgnoresNonWindowMeta(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Meta without window key should be skipped
+	task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship", "project": "munsu"})
+
+	reason := scanFleet(tmp)
+	if reason != nil {
+		t.Errorf("expected nil for meta without window, got %v", reason)
+	}
+}
+
+func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Task 1: has window but pane is dead
+	task.WriteMeta(tmp, "dead-task", map[string]string{"window": "@nonexistent1"})
+	// Task 2: no window (should be skipped)
+	task.WriteMeta(tmp, "no-win-task", map[string]string{"kind": "scout"})
+	// Task 3: has dead window and old status file
+	task.WriteMeta(tmp, "old-status-task", map[string]string{"window": "@nonexistent2"})
+
+	statusPath := filepath.Join(stateDir, "old-status-task.status")
+	os.WriteFile(statusPath, []byte("working: started\n"), 0644)
+	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
+	os.Chtimes(statusPath, past, past)
+
+	// scanFleet processes meta files in directory order — should find a stale task
+	reason := scanFleet(tmp)
+	if reason == nil {
+		t.Fatal("expected a stale reason")
+	}
+	if reason.Kind != "stale" {
+		t.Errorf("kind = %q, want stale", reason.Kind)
+	}
+}
+
+func TestScanFleet_WakeQueueSignal(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Task with alive window — but we can't guarantee pane is alive
+	// So test with a task that would be skipped (no window) to verify
+	// the wake queue path doesn't interfere when there are no actionable tasks
+
+	task.WriteMeta(tmp, "no-window-task", map[string]string{"kind": "ship"})
+
+	// No wake queue — should be nil
+	reason := scanFleet(tmp)
+	if reason != nil {
+		t.Errorf("expected nil when no wake queue and no actionable tasks, got %v", reason)
+	}
+}
+
+func TestScanFleet_StaleConsistency(t *testing.T) {
+	// Test that multiple scanFleet calls produce consistent behavior
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	task.WriteMeta(tmp, "consist-task", map[string]string{"window": "@nonexistentConsist"})
+
+	// First call
+	r1 := scanFleet(tmp)
+	if r1 == nil {
+		t.Fatal("first call expected stale")
+	}
+	if r1.Kind != "stale" {
+		t.Errorf("first call kind = %q, want stale", r1.Kind)
+	}
+
+	// Second call (streak should increment)
+	r2 := scanFleet(tmp)
+	if r2 == nil {
+		t.Fatal("second call expected stale")
+	}
+	if r2.Kind != "stale" {
+		t.Errorf("second call kind = %q, want stale", r2.Kind)
+	}
+
+	// Third call - should trigger demand deep inspection
+	r3 := scanFleet(tmp)
+	if r3 == nil {
+		t.Fatal("third call expected stale")
+	}
+	if !r3.DemandDeepInspection {
+		t.Error("third consecutive stale should demand deep inspection")
+	}
+}
+
+func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
+	// Simulate a full lifecycle: working → done → no-mistakes run step active
+	t.Run("working to done with no-mistakes run", func(t *testing.T) {
+		s := &crewstate.State{
+			Status:            "done",
+			NoMistakesRunStep: "running",
+		}
+		// Even though status says done, the active run-step absorbs stale
+		if !absorbStaleSignal(s) {
+			t.Error("active run on done status should absorb stale")
+		}
+	})
+
+	t.Run("done with checks-passed does NOT absorb stale", func(t *testing.T) {
+		s := &crewstate.State{
+			Status:            "done",
+			NoMistakesRunStep: "checks-passed",
+		}
+		if absorbStaleSignal(s) {
+			t.Error("checks-passed should NOT absorb stale")
+		}
+	})
+
+	t.Run("failed without run step does NOT absorb", func(t *testing.T) {
+		s := &crewstate.State{
+			Status: "failed",
+		}
+		if absorbStaleSignal(s) {
+			t.Error("failed without run step should NOT absorb stale")
+		}
+	})
 }
