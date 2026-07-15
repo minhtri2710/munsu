@@ -36,6 +36,18 @@ func IsKnownHarness(name string) bool {
 	return false
 }
 
+// ValidateHarness returns an error if name is not empty and not "default"
+// but is not in KnownHarnesses. Empty or "default" are treated as unset.
+func ValidateHarness(name string) error {
+	if name == "" || name == "default" {
+		return nil
+	}
+	if !IsKnownHarness(name) {
+		return fmt.Errorf("unknown harness %q: must be one of %v (or empty/default)", name, KnownHarnesses)
+	}
+	return nil
+}
+
 // Detect identifies the running agent harness.
 //
 // Detection order:
@@ -207,11 +219,17 @@ func Crew(homeDir string) (string, error) {
 	// 1. Try dispatch config default
 	dp, err := LoadDispatch(filepath.Join(config.ConfigDir(homeDir), "crew-dispatch.json"))
 	if err == nil && dp.DefaultHarness != "" {
+		if err := ValidateHarness(dp.DefaultHarness); err != nil {
+			return "", fmt.Errorf("dispatch default harness: %w", err)
+		}
 		return dp.DefaultHarness, nil
 	}
 
 	// 2. Try config/crew-harness
 	if v, ok := lookupConfig(homeDir, "crew-harness"); ok {
+		if err := ValidateHarness(v); err != nil {
+			return "", err
+		}
 		return v, nil
 	}
 
@@ -229,11 +247,17 @@ func Crew(homeDir string) (string, error) {
 func Secondmate(homeDir string) (string, error) {
 	// 1. Try config/secondmate-harness
 	if v, ok := lookupConfig(homeDir, "secondmate-harness"); ok {
+		if err := ValidateHarness(v); err != nil {
+			return "", err
+		}
 		return v, nil
 	}
 
 	// 2. Try config/crew-harness
 	if v, ok := lookupConfig(homeDir, "crew-harness"); ok {
+		if err := ValidateHarness(v); err != nil {
+			return "", err
+		}
 		return v, nil
 	}
 

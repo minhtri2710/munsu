@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -48,9 +49,10 @@ func Run(opts Options) (*TeardownResult, error) {
 	}
 
 	// 1. Kill session window
+	var wtPath string
+	var bk session.Backend
 	if windowID, ok := meta["window"]; ok && windowID != "" {
 		// Use the backend from meta, or fall back to Default()
-		var bk session.Backend
 		bkName, hasBackend := meta["backend"]
 		if hasBackend && bkName != "" {
 			if sel, err := session.Select(bkName); err == nil {
@@ -72,9 +74,19 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
+	// 1.5. Kill any remaining processes on the worktree path
+	// (orphaned node/agy processes that survive window kill)
+	wtPath, _ = meta["worktree"]
+	if wtPath != "" {
+		if killed := killProcessesOnPath(wtPath); killed > 0 {
+			result.Steps = append(result.Steps, fmt.Sprintf("killed %d residual process(es) on worktree", killed))
+		}
+		reapWorktreeHolders(wtPath)
+	}
+
 	// 2. Return worktree to pool — fail-closed: if return fails, abort teardown
 	//    so the lease is not falsely claimed as released (firstmate contract).
-	if wtPath, ok := meta["worktree"]; ok && wtPath != "" {
+	if wtPath != "" {
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
 			if err := worktree.Return(wtPath); err != nil {
 				return nil, fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err)
@@ -113,28 +125,38 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
-	// 5. Clean up data directory (orphan brief) if no report.md or brief.md is small
+	// 5. Clean up data directory
+	// Policy: --force always removes the data dir (GC orphan briefs).
+	// Normal teardown keeps the data dir if report.md or brief.md exist.
 	dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 	if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
-		reportPath := filepath.Join(dataDir, "report.md")
-		briefPath := filepath.Join(dataDir, "brief.md")
-		briefInfo, briefErr := os.Stat(briefPath)
-		_, reportErr := os.Stat(reportPath)
-		
-		if os.IsNotExist(reportErr) {
-			// No report.md — safe to remove orphan brief/data dir
-			// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
-			if briefErr == nil && briefInfo.Size() < 256 {
-				if err := os.RemoveAll(dataDir); err != nil {
-					result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
-				} else {
-					result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
-				}
+		if opts.Force {
+			if err := os.RemoveAll(dataDir); err != nil {
+				result.Steps = append(result.Steps, fmt.Sprintf("remove data dir: %v", err))
 			} else {
-				result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
+				result.Steps = append(result.Steps, "data dir removed (--force)")
 			}
 		} else {
-			result.Steps = append(result.Steps, "data dir kept (report.md present)")
+			reportPath := filepath.Join(dataDir, "report.md")
+			briefPath := filepath.Join(dataDir, "brief.md")
+			briefInfo, briefErr := os.Stat(briefPath)
+			_, reportErr := os.Stat(reportPath)
+
+			if os.IsNotExist(reportErr) {
+				// No report.md — safe to remove orphan brief/data dir
+				// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
+				if briefErr == nil && briefInfo.Size() < 256 {
+					if err := os.RemoveAll(dataDir); err != nil {
+						result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
+					} else {
+						result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
+					}
+				} else {
+					result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
+				}
+			} else {
+				result.Steps = append(result.Steps, "data dir kept (report.md present)")
+			}
 		}
 	}
 
@@ -214,4 +236,32 @@ func shipSafetyCheck(opts Options, meta map[string]string) error {
 // taskMetaFilePath returns the path to the task meta file.
 func taskMetaFilePath(homeDir, id string) (string, error) {
 	return filepath.Join(homeDir, "state", id+".meta"), nil
+}
+
+// killProcessesOnPath tries to kill any processes still accessing the given
+// path using fuser(1). Returns the number of processes killed (or 0 if fuser
+// is unavailable or the path is clear). Best-effort; errors are logged only.
+func killProcessesOnPath(path string) int {
+	cmd := exec.Command("fuser", "-k", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0
+	}
+	outStr := strings.TrimSpace(string(out))
+	if outStr == "" {
+		return 0
+	}
+	return strings.Count(outStr, " ") + 1
+}
+
+// reapWorktreeHolders waits briefly for any remaining holder processes on
+// the worktree path to exit. Returns after timeout regardless.
+func reapWorktreeHolders(wtPath string) {
+	for i := 0; i < 5; i++ {
+		cmd := exec.Command("fuser", wtPath)
+		if err := cmd.Run(); err != nil {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
