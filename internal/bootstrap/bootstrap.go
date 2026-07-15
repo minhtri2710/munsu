@@ -2,7 +2,6 @@
 package bootstrap
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -82,14 +81,17 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 }
 
 // ghAuth checks whether gh is authenticated.
+// Uses exit code only: gh auth status exits 0 when authenticated,
+// regardless of whether it prints to stdout or stderr.
 func ghAuth() bool {
 	cmd := exec.Command("gh", "auth", "status")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	// Capture both stdout and stderr to suppress output
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
 		return false
 	}
-	return strings.Contains(stderr.String(), "Logged in")
+	return true
 }
 
 // installTool runs the appropriate install command for a tool.

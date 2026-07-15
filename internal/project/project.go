@@ -179,6 +179,34 @@ func List(homeDir string) ([]*Project, error) {
 	return projects, nil
 }
 
+// ListFromFile reads and returns all registered projects from a specific registry file.
+// This is used by consumers outside the project package that need to specify a path.
+func ListFromFile(regPath string) ([]*Project, error) {
+	data, err := os.ReadFile(regPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading registry: %w", err)
+	}
+
+	var projects []*Project
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		p, err := ParseEntry(line)
+		if err != nil {
+			return nil, fmt.Errorf("parsing registry line %q: %w", line, err)
+		}
+		projects = append(projects, p)
+	}
+	return projects, nil
+}
+
+// Find looks up a project by name in the registry.
+
 // Find looks up a project by name in the registry.
 func Find(homeDir, name string) (*Project, error) {
 	projects, err := List(homeDir)
@@ -232,6 +260,33 @@ func Mode(homeDir, name string) (mode string, yolo bool, err error) {
 		return "", false, err
 	}
 	return p.Mode, p.Yolo, nil
+}
+
+// ResolveRepoPath resolves a project name to an absolute repo path.
+// Priority:
+//  1. If the project Description is an existing absolute directory → use it
+//  2. If projects/<name> is an existing directory → use it
+//  3. Otherwise → error
+func ResolveRepoPath(homeDir, name string) (string, error) {
+	p, err := Find(homeDir, name)
+	if err != nil {
+		return "", err
+	}
+
+	// 1. Check if Description is an absolute existing path
+	if filepath.IsAbs(p.Description) {
+		if fi, statErr := os.Stat(p.Description); statErr == nil && fi.IsDir() {
+			return p.Description, nil
+		}
+	}
+
+	// 2. Check if projects/<name> exists
+	projDir := filepath.Join(ProjectsDir(homeDir), name)
+	if fi, statErr := os.Stat(projDir); statErr == nil && fi.IsDir() {
+		return projDir, nil
+	}
+
+	return "", fmt.Errorf("project %q not resolvable: no local path or cloned repo found for %q", name, p.Description)
 }
 
 // ResolveAdhoc detects a git repo from cwd and returns a transient Project.

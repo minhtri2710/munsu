@@ -2,8 +2,8 @@ package worktree
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -134,11 +134,46 @@ func TestIsIsolatedWithoutTreehouse(t *testing.T) {
 		t.Error("expected isolated worktree")
 	}
 }
+func TestGet_EmptyPath_ReturnsError(t *testing.T) {
+	// Create a mock treehouse that returns empty stdout
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "treehouse")
+	if err := os.WriteFile(mockScript, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
-func init() {
-	// Verify we're running in a git worktree for meaningful test assertions
-	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
-	if out, err := cmd.Output(); err != nil || string(out) != "true\n" {
-		panic("tests must run inside a git worktree")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", mockDir+":"+oldPath)
+
+	// Get without lease should return empty -> error
+	_, err := Get("/some/repo", false)
+	if err == nil {
+		t.Fatal("expected error for empty path from treehouse, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty path") {
+		t.Errorf("expected 'empty path' in error, got: %v", err)
 	}
 }
+
+func TestGet_WithLease_ReturnsPath(t *testing.T) {
+	// Create a mock treehouse that returns a path
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "treehouse")
+	if err := os.WriteFile(mockScript, []byte("#!/bin/sh\necho /tmp/wt-12345\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", mockDir+":"+oldPath)
+
+	path, err := Get("/some/repo", true)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if path != "/tmp/wt-12345" {
+		t.Errorf("expected path '/tmp/wt-12345', got: %q", path)
+	}
+}
+

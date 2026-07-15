@@ -2,12 +2,13 @@
 package fleet
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/project"
 )
 
 // SyncResult holds the result of a fleet-sync operation.
@@ -47,44 +48,32 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 }
 
 // readProjectDirs reads the project registry and resolves project directories.
+// Uses the project registry to find both cloned repos (in projects/<name>)
+// and local-path registrations (where Description is an absolute existing path).
 func readProjectDirs(projectsFile, projectsDir string) ([]string, error) {
-	f, err := os.Open(projectsFile)
+	projects, err := project.ListFromFile(projectsFile)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	defer f.Close()
 
 	var dirs []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		raw := strings.TrimSpace(scanner.Text())
-		if raw == "" || strings.HasPrefix(raw, "#") || strings.HasPrefix(raw, "##") {
-			continue
+	for _, p := range projects {
+		// 1. Check if Description is an absolute existing path (local path registration)
+		if filepath.IsAbs(p.Description) {
+			if fi, statErr := os.Stat(p.Description); statErr == nil && fi.IsDir() {
+				dirs = append(dirs, p.Description)
+				continue
+			}
 		}
 
-		// Parse: - <name> [<mode>] [+yolo] - <desc> (added <date>)
-		raw = strings.TrimPrefix(raw, "- ")
-		parts := strings.SplitN(raw, " ", 2)
-		if len(parts) < 1 {
-			continue
-		}
-		name := parts[0]
-
-		// Skip synthetic entries (mode markers like [no-mistakes])
-		if strings.HasPrefix(name, "[") {
-			continue
-		}
-
-		dir := filepath.Join(projectsDir, name)
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+		// 2. Check if projects/<name> exists (cloned repo)
+		dir := filepath.Join(projectsDir, p.Name)
+		if fi, statErr := os.Stat(dir); statErr == nil && fi.IsDir() {
 			dirs = append(dirs, dir)
 		}
 	}
 
-	return dirs, scanner.Err()
+	return dirs, nil
 }
 
 // syncOne fast-forwards a single project clone.
