@@ -26,6 +26,7 @@ const (
 
 // KnownHarnesses lists all supported harness names.
 var KnownHarnesses = []string{Claude, Codex, Opencode, Pi, Grok, Agy}
+
 // IsKnownHarness reports whether name is a supported harness.
 func IsKnownHarness(name string) bool {
 	for _, h := range KnownHarnesses {
@@ -192,8 +193,8 @@ var Templates = map[string]Template{
 	},
 	Grok: {},
 	Agy: {
-		ModelFlag:  "--model",
-		DefaultModel: "Gemini 3.5 Flash (Medium)",
+		ModelFlag: "--model",
+		// DefaultModel omitted — let agy use its runtime default (Claude Sonnet 4.6)
 		ExtraArgs: []string{"--dangerously-skip-permissions", "-i"},
 	},
 }

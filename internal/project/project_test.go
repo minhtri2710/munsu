@@ -161,6 +161,43 @@ func TestListAndAdd(t *testing.T) {
 	}
 }
 
+func TestAddIdempotent(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, ".munsu")
+
+	// Add the same project twice
+	if err := Add(homeDir, "dup-proj", "/path/first", "feat", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(homeDir, "dup-proj", "/path/second", "fix", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have exactly 1 entry, not 2
+	projects, err := List(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("expected 1 project after duplicate add, got %d: %+v", len(projects), projects)
+	}
+
+	// Entry should have been updated to second call's values
+	p := projects[0]
+	if p.Name != "dup-proj" {
+		t.Errorf("Name = %q, want %q", p.Name, "dup-proj")
+	}
+	if p.Mode != "fix" {
+		t.Errorf("Mode = %q, want %q", p.Mode, "fix")
+	}
+	if p.Yolo {
+		t.Error("Yolo = true, want false")
+	}
+	if p.Description != "/path/second" {
+		t.Errorf("Description = %q, want %q", p.Description, "/path/second")
+	}
+}
+
 func TestFind(t *testing.T) {
 	tmp := t.TempDir()
 	if err := Add(tmp, "alpha", "/p/alpha", "", false); err != nil {
