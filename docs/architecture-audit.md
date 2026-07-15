@@ -1,8 +1,6 @@
-# Architecture Audit & Remediation Plan
-
 > **ARCHIVED — all findings resolved. See commit history for details.**
-
 > This document is retained as an architectural reference; the plan has been executed.
+> Verified still accurate at tip `0b88e6f` (2026-07-15).
 
 This document synthesizes the architectural audit findings comparing the `munsu` Go implementation against the reference `firstmate` bash implementation. It highlights architectural deviations, boundary violations, missing modules, coupling issues, and missing firstmate patterns, and proposes a prioritized remediation plan.
 
