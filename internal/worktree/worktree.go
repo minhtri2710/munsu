@@ -23,7 +23,7 @@ func treehouseBin() (string, error) {
 
 // Get acquires a pooled worktree for the given repo path. If lease is true,
 // the --lease flag is passed to treehouse for a durable hold.
-// Returns the worktree path.
+// Returns the worktree path, or an error if the path is empty.
 func Get(repoPath string, lease bool) (string, error) {
 	bin, err := treehouseBin()
 	if err != nil {
@@ -41,7 +41,11 @@ func Get(repoPath string, lease bool) (string, error) {
 		}
 		return "", fmt.Errorf("treehouse get: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	wtPath := strings.TrimSpace(string(out))
+	if wtPath == "" {
+		return "", fmt.Errorf("treehouse get returned empty path: use --lease for a durable worktree (non-lease is interactive-only)")
+	}
+	return wtPath, nil
 }
 
 // Return returns a worktree path to the pool via treehouse.

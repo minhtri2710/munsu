@@ -295,3 +295,79 @@ func TestRegistryFileFormat(t *testing.T) {
 		t.Errorf("delta: %+v", projects[3])
 	}
 }
+
+func TestResolveRepoPath_LocalPath(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	if err := os.MkdirAll(homeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a real directory to use as the local path
+	localRepo := filepath.Join(tmp, "my-project")
+	if err := os.MkdirAll(localRepo, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Register with local path
+	if err := Add(homeDir, "my-project", localRepo, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := ResolveRepoPath(homeDir, "my-project")
+	if err != nil {
+		t.Fatalf("ResolveRepoPath: %v", err)
+	}
+	if path != localRepo {
+		t.Errorf("expected path %q, got %q", localRepo, path)
+	}
+}
+
+func TestResolveRepoPath_ClonedProject(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	projectsDir := filepath.Join(homeDir, "projects")
+	if err := os.MkdirAll(projectsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write registry entry directly (avoid actual clone)
+	regPath := RegistryPath(homeDir)
+	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "- cloned-proj - https://github.com/user/repo.git (added 2026-07-01)\n"
+	if err := os.WriteFile(regPath, []byte(entry), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the projects/<name> dir to simulate a clone
+	cloneDir := filepath.Join(projectsDir, "cloned-proj")
+	if err := os.MkdirAll(cloneDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := ResolveRepoPath(homeDir, "cloned-proj")
+	if err != nil {
+		t.Fatalf("ResolveRepoPath: %v", err)
+	}
+	if path != cloneDir {
+		t.Errorf("expected path %q, got %q", cloneDir, path)
+	}
+}
+
+func TestResolveRepoPath_NotFound(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	if err := os.MkdirAll(homeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ResolveRepoPath(homeDir, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent project")
+	}
+	if !strings.Contains(err.Error(), "not found in registry") {
+		t.Errorf("expected 'not found in registry' in error, got: %v", err)
+	}
+}

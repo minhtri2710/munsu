@@ -121,7 +121,7 @@ func TestFleetSyncEndToEnd(t *testing.T) {
 	}
 
 	// Create project registry
-	projectsContent := "- test-project [ship] +yolo - test project\n"
+	projectsContent := "- test-project [ship] +yolo - test project (added 2026-07-01)\n"
 	if err := os.WriteFile(filepath.Join(dataDir, "projects.md"), []byte(projectsContent), 0644); err != nil {
 		t.Fatalf("writing projects.md: %v", err)
 	}

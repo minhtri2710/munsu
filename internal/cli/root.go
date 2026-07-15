@@ -93,6 +93,17 @@ func checkTangle(projectDir, projectName string) error {
 	return fmt.Errorf("cannot spawn: %s is on branch %s, not an isolated worktree. Use a detached HEAD or a worktree",
 		projectName, branch)
 }
+// buildHarnessLaunch builds the shell command to launch a harness agent.
+func buildHarnessLaunch(h string, tmpl harness.Template) string {
+	parts := []string{strings.ToLower(h)}
+	if tmpl.ModelFlag != "" && tmpl.DefaultModel != "" {
+		parts = append(parts, tmpl.ModelFlag, tmpl.DefaultModel)
+	}
+	if tmpl.EffortFlag != "" && tmpl.DefaultEffort != "" {
+		parts = append(parts, tmpl.EffortFlag, tmpl.DefaultEffort)
+	}
+	return strings.Join(parts, " ")
+}
 
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
@@ -681,52 +692,88 @@ func newSpawnCmd() *cobra.Command {
 			id := args[0]
 			projectName := args[1]
 
-			// 1. Resolve home (used by task.WriteMeta internally)
+			// 1. Resolve home
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
 				return fmt.Errorf("resolving home: %w", err)
 			}
 
-			// 1b. Check for worktree tangle (unless yolo)
+			// 2. Resolve project repo path from registry
+			projPath, err := project.ResolveRepoPath(homeDir, projectName)
+			if err != nil {
+				return fmt.Errorf("resolving project %q: %w", projectName, err)
+			}
+
+			// 3. Check for worktree tangle (unless yolo)
 			if !yolo {
-				projDir := filepath.Join(homeDir, "projects", projectName)
-				if err := checkTangle(projDir, projectName); err != nil {
+				if err := checkTangle(projPath, projectName); err != nil {
 					return err
 				}
 			}
 
-			// 2. Acquire worktree
-			wtPath, err := worktree.Get(projectName, false)
+			// 4. Acquire leased worktree
+			wtPath, err := worktree.Get(projPath, true)
 			if err != nil {
 				return fmt.Errorf("acquiring worktree: %w", err)
 			}
 
-			// 3. Detect harness
-			h, err := harness.Detect()
+			// 5. Resolve crewmate harness
+			h, err := harness.Crew(homeDir)
 			if err != nil {
-				return fmt.Errorf("detecting harness: %w", err)
+				// Cleanup: return worktree
+				_ = worktree.Return(wtPath)
+				return fmt.Errorf("resolving harness: %w", err)
 			}
 
-			// 4. Resolve model/effort from template
+			// 6. Resolve model/effort from template
 			var model, effort string
+			var launchCmd string
 			if tmpl, ok := harness.Templates[h]; ok {
 				model = tmpl.DefaultModel
 				if tmpl.DefaultEffort != "" {
 					effort = tmpl.DefaultEffort
 				}
+				launchCmd = buildHarnessLaunch(h, tmpl)
 			}
 
-			// 5. Create session window
+			// 7. Create session window
 			bk, bkName, err := session.Resolve(homeDir, backend)
 			if err != nil {
+				_ = worktree.Return(wtPath)
 				return err
 			}
 			windowID, err := bk.NewWindow(h, id)
 			if err != nil {
+				_ = worktree.Return(wtPath)
 				return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
 			}
 
-			// 6. Write task meta
+			// 8. Bootstrap window: cd to worktree and launch harness
+			if launchCmd != "" {
+				// Send cd + harness launch
+				fullCmd := fmt.Sprintf("cd %s && %s", wtPath, launchCmd)
+				if sendErr := bk.SendKeys(windowID, fullCmd); sendErr != nil {
+					// Non-fatal: log but don't fail the spawn
+					fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
+				}
+			}
+
+			// 9. Inject brief content
+			briefPath := brief.Path(homeDir, id)
+			if briefData, readErr := os.ReadFile(briefPath); readErr == nil {
+				lines := strings.Split(string(briefData), "\n")
+				for _, line := range lines {
+					if line == "" {
+						continue
+					}
+					// Send each non-empty line
+					_ = bk.SendKeys(windowID, line)
+				}
+			} else if !os.IsNotExist(readErr) {
+				fmt.Fprintf(os.Stderr, "warning: reading brief: %v\n", readErr)
+			}
+
+			// 10. Write task meta
 			yoloVal := "off"
 			if yolo {
 				yoloVal = "on"
@@ -735,6 +782,7 @@ func newSpawnCmd() *cobra.Command {
 				"window":   windowID,
 				"worktree": wtPath,
 				"project":  projectName,
+				"projpath": projPath,
 				"harness":  h,
 				"model":    model,
 				"effort":   effort,
@@ -747,10 +795,14 @@ func newSpawnCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "warning: writing task meta: %v\n", err)
 			}
 
-			// 7. Print endpoint info
+			// 11. Append working: spawned status
+			_ = task.AppendStatus(homeDir, id, "working: spawned")
+
+			// 12. Print endpoint info
 			fmt.Printf("Spawned crewmate %s\n", id)
 			fmt.Printf("  window:   %s\n", windowID)
 			fmt.Printf("  worktree: %s\n", wtPath)
+			fmt.Printf("  projpath: %s\n", projPath)
 			fmt.Printf("  project:  %s\n", projectName)
 			fmt.Printf("  harness:  %s\n", h)
 			fmt.Printf("  model:    %s\n", model)
@@ -1445,11 +1497,14 @@ func newGuardCmd() *cobra.Command {
 			}
 			waker.CheckGuard(homeDir)
 
-			// Check all registered projects for tangles
+			// Check all registered projects for tangles using resolved paths
 			projects, err := project.List(homeDir)
 			if err == nil {
 				for _, p := range projects {
-					projDir := filepath.Join(homeDir, "projects", p.Name)
+					projDir, resolveErr := project.ResolveRepoPath(homeDir, p.Name)
+					if resolveErr != nil {
+						continue // skip unresolvable projects
+					}
 					if err := checkTangle(projDir, p.Name); err != nil {
 						w := err.Error()
 						border := strings.Repeat("●", len(w)+4)
@@ -1528,10 +1583,28 @@ func newEnsureAgentsMdCmd() *cobra.Command {
 		Use:   "ensure-agents-md <project>",
 		Short: "Ensure project AGENTS.md and CLAUDE.md symlink",
 		Long: `Create or update AGENTS.md and CLAUDE.md symlink for a project.
-Adds the self-governance section if missing.`,
+Adds the self-governance section if missing.
+
+The <project> argument can be a project name (resolved from the registry)
+or an absolute path to a project directory.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectDir := args[0]
+			projectArg := args[0]
+
+			// Resolve project name to path if not already an absolute path
+			projectDir := projectArg
+			if !filepath.IsAbs(projectArg) {
+				homeDir, err := home.Resolve(homeOverride)
+				if err != nil {
+					return fmt.Errorf("resolving home: %w", err)
+				}
+				resolved, err := project.ResolveRepoPath(homeDir, projectArg)
+				if err != nil {
+					return fmt.Errorf("resolving project %q: %w", projectArg, err)
+				}
+				projectDir = resolved
+			}
+
 			res, err := agentsmd.Ensure(projectDir)
 			if err != nil {
 				return err
