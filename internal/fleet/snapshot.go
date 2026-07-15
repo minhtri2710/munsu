@@ -33,6 +33,19 @@ type TaskSnapshot struct {
 	LastStatus string `json:"last_status,omitempty"`
 }
 
+// PhaseFromMeta returns the display phase for a task from meta-only facts.
+// window empty → registered; window non-empty → alive if paneAlive else dead.
+func PhaseFromMeta(window string, paneAlive bool) string {
+	switch {
+	case window == "":
+		return "registered"
+	case paneAlive:
+		return "alive"
+	default:
+		return "dead"
+	}
+}
+
 // Snapshot builds a fleet snapshot by scanning state/*.meta and state/*.status.
 func Snapshot(homeDir string) (*FleetSnapshot, error) {
 	snap := &FleetSnapshot{
@@ -117,12 +130,7 @@ func View(homeDir string) error {
 	fmt.Printf("Tasks: %d\n\n", len(snap.Tasks))
 
 	for _, ts := range snap.Tasks {
-		phase := "dead"
-		if ts.PaneAlive {
-			phase = "alive"
-		} else if ts.Window == "" {
-			phase = "registered"
-		}
+		phase := PhaseFromMeta(ts.Window, ts.PaneAlive)
 
 		fmt.Printf("- **%s** (repo: %s)\n", ts.ID, ts.Project)
 		fmt.Printf("  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
@@ -150,14 +158,8 @@ func Bearings(homeDir string, projectDir string) error {
 	for _, ts := range snap.Tasks {
 		if ts.Kind == "ship" || ts.Kind == "scout" {
 			inFlight++
-			phase := "alive"
-			if !ts.PaneAlive {
-				if ts.Window == "" {
-					phase = "registered"
-				} else {
-					phase = "dead"
-				}
-			}
+			phase := PhaseFromMeta(ts.Window, ts.PaneAlive)
+
 			fmt.Printf("- **%s** (%s) — %s [%s]\n", ts.ID, ts.Project, ts.LastStatus, phase)
 		}
 	}

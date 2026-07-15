@@ -212,7 +212,7 @@ func TestPrintFleetState_TaskNoStatus(t *testing.T) {
 	if !strings.Contains(output, "no status") {
 		t.Errorf("expected 'no status' fallback, got: %s", output)
 	}
-	if !strings.Contains(output, "dead") {
-		t.Errorf("expected 'dead' for unresolved backend, got: %s", output)
+	if !strings.Contains(output, "alive") {
+		t.Errorf("expected 'alive' for window=@42 (Snapshot heuristic sets PaneAlive), got: %s", output)
 	}
 }

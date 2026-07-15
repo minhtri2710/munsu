@@ -32,7 +32,7 @@ func Update() error {
 	}
 
 	// Verify it's a git repo we can update
-	gitDir, err := os.ReadFile(filepath.Join(installRoot, ".git"))
+	gitMeta, err := os.ReadFile(filepath.Join(installRoot, ".git"))
 	if err != nil {
 		// Could be a bare .git directory
 		gitDirPath := filepath.Join(installRoot, ".git")
@@ -41,7 +41,7 @@ func Update() error {
 		}
 	} else {
 		// .git is a file pointing to a worktree gitdir — follow it
-		content := strings.TrimSpace(string(gitDir))
+		content := strings.TrimSpace(string(gitMeta))
 		if !strings.HasPrefix(content, "gitdir: ") {
 			return fmt.Errorf("unexpected .git format in %s", installRoot)
 		}
@@ -55,8 +55,7 @@ func Update() error {
 		return fmt.Errorf("git fetch failed: %w", err)
 	}
 
-	// Get current branch
-	branchBytes, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	branchBytes, err := gitDir(installRoot, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return fmt.Errorf("determining current branch: %w", err)
 	}
@@ -77,14 +76,13 @@ func Update() error {
 	fmt.Printf("Updated %s to %s\n", installRoot, strings.TrimSpace(string(out)))
 
 	// Determine commit hash for version stamping
-	commitBytes, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	commit, err := ShortHEAD(installRoot)
 	if err != nil {
 		return fmt.Errorf("determining commit hash: %w", err)
 	}
-	commit := strings.TrimSpace(string(commitBytes))
 
 	// Rebuild binary with version/commit ldflags
-	version := fmt.Sprintf("0.1.0-dev+%s", commit)
+	version := VersionString(commit)
 	tmpPath := realPath + ".tmp"
 	buildCmd := exec.Command("go", "build",
 		"-ldflags", fmt.Sprintf("-X github.com/minhtri2710/munsu/internal/cli.Version=%s", version),
@@ -126,4 +124,25 @@ func findGitRoot(dir string) (string, error) {
 		}
 		current = parent
 	}
+}
+
+// gitDir runs git with Dir fixed to root. All repo-scoped git goes through this.
+func gitDir(root string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	return cmd.Output()
+}
+
+// ShortHEAD returns the short commit SHA at root (never process CWD).
+func ShortHEAD(root string) (string, error) {
+	out, err := gitDir(root, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// VersionString builds "0.1.0-dev+<short>" (pure).
+func VersionString(shortCommit string) string {
+	return fmt.Sprintf("0.1.0-dev+%s", shortCommit)
 }
