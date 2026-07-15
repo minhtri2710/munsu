@@ -95,6 +95,24 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
+	// 4. Remove residual state artifacts
+	stateDir := filepath.Join(opts.HomeDir, "state")
+	residuals := []string{
+		opts.ID + ".status",
+		opts.ID + ".check.sh",
+		opts.ID + ".turn-ended",
+		opts.ID + ".pi-ext.ts",
+		opts.ID + ".grok-turnend-token",
+	}
+	for _, name := range residuals {
+		p := filepath.Join(stateDir, name)
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", name, err))
+		} else {
+			result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", name))
+		}
+	}
+
 	return result, nil
 }
 

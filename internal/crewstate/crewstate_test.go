@@ -20,9 +20,16 @@ func TestRead_NoMeta(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	_, err := Read(tmp, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
+	s, err := Read(tmp, "nonexistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if s.Status != "unknown" {
+		t.Errorf("status = %q, want unknown", s.Status)
+	}
+	if !strings.Contains(s.Description, "torn-down") {
+		t.Errorf("description should say 'torn-down', got %q", s.Description)
 	}
 }
 
