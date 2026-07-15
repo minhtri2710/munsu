@@ -97,7 +97,9 @@ func checkTangle(projectDir, projectName string) error {
 // buildHarnessLaunch builds the shell command to launch a harness agent.
 func buildHarnessLaunch(h string, tmpl harness.Template) string {
 	parts := []string{strings.ToLower(h)}
-	parts = append(parts, tmpl.ExtraArgs...)
+	for _, arg := range tmpl.ExtraArgs {
+		parts = append(parts, shellQuote(arg))
+	}
 	if tmpl.ModelFlag != "" && tmpl.DefaultModel != "" {
 		parts = append(parts, tmpl.ModelFlag, shellQuote(tmpl.DefaultModel))
 	}
