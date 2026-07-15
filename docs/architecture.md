@@ -119,12 +119,11 @@ flag > env override > config file > default.
 
 ```go
 type Backend interface {
-    Name() string
-    NewWindow(harness, id string) (windowID string, err error)
-    SendKeys(windowID, input string) error
+    NewWindow(session, name string) (windowID string, err error)
+    SendKeys(windowID, text string) error
     Capture(windowID string, lines int) (string, error)
-    Close(windowID string) error
-    IsAlive(windowID string) (bool, error)
+    Alive(windowID string) bool
+    Teardown(windowID string) error
 }
 ```
 
@@ -136,6 +135,11 @@ backend names are rejected at `session.Resolve` time with a clear error.
 Backend resolution: `session.Resolve(homeDir, backendOverride)` returns a
 `(Backend, name, error)` tuple. The caller receives the resolved adapter
 and its display name, then uses the adapter for all session operations.
+
+Other backends (zellij, cmux, orca) were evaluated but not implemented:
+- **zellij** — stable CLI but high implementation cost. Niche terminal multiplexer.
+- **cmux** — requires running macOS GUI app and socket control setup. macOS-only, niche.
+- **orca** — firstmate-specific terminal app.
 
 ### Task lifecycle
 
@@ -251,7 +255,7 @@ Key structural differences from firstmate:
 ```sh
 go build ./...
 go vet ./...
-go test ./...        # 348+ tests across 26 packages
+go test ./...        # 345+ tests across 26 packages
 ```
 
 Cobra is the only Go dependency. Zero runtime dependencies beyond the compiled
