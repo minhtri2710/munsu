@@ -196,7 +196,8 @@ func waitForHarnessReady(bk session.Backend, windowID, harness string, timeoutSe
 // first-run folder-trust dialog the agent is blocking on.
 var trustPromptPatterns = map[string][]string{
 	harness.Agy: {"Do you trust", "Yes, I trust this folder"},
-}
+	harness.Pi:  {"Trust project folder", "→ Trust", "Do not trust"},
+	}
 
 // isTrustPrompt reports whether capture contains a harness-specific trust
 // prompt that should be auto-dismissed with Enter.
@@ -1058,7 +1059,7 @@ func newSpawnCmd() *cobra.Command {
 
 			// 9b. Wait for harness ready signature before injecting brief
 			if len(briefData) > 0 {
-			if err := waitForHarnessReady(bk, windowID, h, 60); err != nil {
+				if err := waitForHarnessReady(bk, windowID, h, 60); err != nil {
 				// Capture final state for diagnostics before cleanup
 				capture, _ := bk.Capture(windowID, 60)
 				_ = task.AppendStatus(homeDir, id, "failed: harness not ready")
@@ -1071,8 +1072,12 @@ func newSpawnCmd() *cobra.Command {
 				_ = worktree.Return(wtPath)
 				return fmt.Errorf("harness %q not ready within timeout: %w", h, err)
 			}
-				// Inject full brief as single paste
-				_ = bk.SendKeys(windowID, string(briefData))
+				// Inject brief: full paste for non-agy, one-liner for agy (brief already in .crew-brief.md)
+				if h == harness.Agy {
+					_ = bk.SendKeys(windowID, "read and execute .crew-brief.md")
+				} else {
+					_ = bk.SendKeys(windowID, string(briefData))
+				}
 			}
 
 			// 10. Write task meta

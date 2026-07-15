@@ -146,8 +146,11 @@ func TestGet_EmptyPath_ReturnsError(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", mockDir+":"+oldPath)
 
+
+	repoDir := t.TempDir()
+
 	// Get without lease should return empty -> error
-	_, err := Get("/some/repo", false)
+	_, err := Get(repoDir, false)
 	if err == nil {
 		t.Fatal("expected error for empty path from treehouse, got nil")
 	}
@@ -168,7 +171,9 @@ func TestGet_WithLease_ReturnsPath(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", mockDir+":"+oldPath)
 
-	path, err := Get("/some/repo", true)
+	repoDir := t.TempDir()
+
+	path, err := Get(repoDir, true)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
