@@ -39,83 +39,8 @@ var (
 	homeOverride string
 )
 
-// checkTangle checks if the project's primary checkout at projectDir is on a
-// non-default branch. Returns nil if HEAD is detached or on the default branch.
-func checkTangle(projectDir, projectName string) error {
-	// Check current HEAD state
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = projectDir
-	out, err := cmd.Output()
-	if err != nil {
-		// Can't determine branch state; skip tangle check
-		return nil
-	}
-	branch := strings.TrimSpace(string(out))
 
-	// Detached HEAD is the normal/expected state for worktree usage
-	if branch == "HEAD" {
-		return nil
-	}
 
-	// Get the default branch from origin/HEAD, with main/master fallback
-	cmd = exec.Command("git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-	cmd.Dir = projectDir
-	out, err = cmd.Output()
-	if err == nil {
-		defaultRef := strings.TrimSpace(string(out))
-		defaultBranch := strings.TrimPrefix(defaultRef, "origin/")
-
-		// On the default branch = no tangle
-		if branch == defaultBranch {
-			return nil
-		}
-	} else {
-		// Fall back to common default branch names when origin/HEAD unavailable
-		foundDefault := false
-		for _, candidate := range []string{"main", "master"} {
-			chk := exec.Command("git", "rev-parse", "--verify", candidate)
-			chk.Dir = projectDir
-			if err := chk.Run(); err == nil {
-				foundDefault = true
-				// On the default branch = no tangle
-				if branch == candidate {
-					return nil
-				}
-				break
-			}
-		}
-		if !foundDefault {
-			// Can't determine default branch; skip tangle check
-			return nil
-		}
-	}
-	// Tangle detected: on a non-default branch in the primary checkout
-	return fmt.Errorf("cannot spawn: %s is on branch %s, not an isolated worktree. Use a detached HEAD or a worktree",
-		projectName, branch)
-}
-
-// buildHarnessLaunch builds the shell command to launch a harness agent.
-func buildHarnessLaunch(h string, tmpl harness.Template) string {
-	parts := []string{strings.ToLower(h)}
-	for _, arg := range tmpl.ExtraArgs {
-		parts = append(parts, shellQuote(arg))
-	}
-	if tmpl.ModelFlag != "" && tmpl.DefaultModel != "" {
-		parts = append(parts, tmpl.ModelFlag, shellQuote(tmpl.DefaultModel))
-	}
-	if tmpl.EffortFlag != "" && tmpl.DefaultEffort != "" {
-		parts = append(parts, tmpl.EffortFlag, tmpl.DefaultEffort)
-	}
-	return strings.Join(parts, " ")
-}
-
-// shellQuote wraps a string in double quotes if it contains shell-special characters.
-func shellQuote(s string) string {
-	if strings.ContainsAny(s, " \t\n\r()\"'") {
-		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
-	}
-	return s
-}
 
 // validDeliveryModes lists the accepted delivery mode values.
 var validDeliveryModes = map[string]bool{
@@ -983,7 +908,7 @@ func newSpawnCmd() *cobra.Command {
 
 			// 3. Check for worktree tangle (unless yolo)
 			if !yolo {
-				if err := checkTangle(projPath, projectName); err != nil {
+				if err := worktree.AssertNotTangled(projPath, projectName); err != nil {
 					return err
 				}
 			}
@@ -1018,7 +943,7 @@ func newSpawnCmd() *cobra.Command {
 				if tmpl.DefaultEffort != "" {
 					effort = tmpl.DefaultEffort
 				}
-				launchCmd = buildHarnessLaunch(h, tmpl)
+				launchCmd = harness.LaunchString(h, tmpl)
 			}
 
 			// 7. Create session window
@@ -1899,7 +1824,7 @@ func newGuardCmd() *cobra.Command {
 					if resolveErr != nil {
 						continue // skip unresolvable projects
 					}
-					if err := checkTangle(projDir, p.Name); err != nil {
+					if err := worktree.AssertNotTangled(projDir, p.Name); err != nil {
 						w := err.Error()
 						border := strings.Repeat("●", len(w)+4)
 						fmt.Println(border)
