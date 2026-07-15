@@ -119,6 +119,29 @@ func TestIsKnownHarness(t *testing.T) {
 	if IsKnownHarness("unknown") {
 		t.Error("IsKnownHarness('unknown') = true, want false")
 	}
+	if IsKnownHarness("unknown") {
+		t.Error("IsKnownHarness('unknown') = true, want false")
+	}
+}
+
+func TestValidateHarness(t *testing.T) {
+	if err := ValidateHarness(""); err != nil {
+		t.Errorf("ValidateHarness('') = %v, want nil", err)
+	}
+	if err := ValidateHarness("default"); err != nil {
+		t.Errorf("ValidateHarness('default') = %v, want nil", err)
+	}
+	for _, h := range KnownHarnesses {
+		if err := ValidateHarness(h); err != nil {
+			t.Errorf("ValidateHarness(%q) = %v, want nil", h, err)
+		}
+	}
+	if err := ValidateHarness("not-a-harness"); err == nil {
+		t.Error("ValidateHarness('not-a-harness') = nil, want error")
+	}
+	if err := ValidateHarness("invalid!"); err == nil {
+		t.Error("ValidateHarness('invalid!') = nil, want error")
+	}
 }
 
 func TestTemplates(t *testing.T) {

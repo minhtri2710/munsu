@@ -9,7 +9,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -54,12 +56,23 @@ func LockPath(homeDir string) string { return filepath.Join(homeDir, lockFile) }
 
 // AcquireSession attempts to acquire an exclusive file lock for the given home.
 // Returns true if the lock was acquired, false if held by another process.
+// If the lock file exists but the holding PID is no longer running, the lock
+// is cleared (stale lock recovery).
 func AcquireSession(homeDir string) (bool, error) {
 	path := LockPath(homeDir)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return false, fmt.Errorf("creating lock directory %s: %w", dir, err)
 	}
+
+	// Stale lock recovery: if lock file contains a dead PID, clear it
+	if pid := readLockPID(path); pid > 0 {
+		if !isProcessAlive(pid) {
+			fmt.Fprintf(os.Stderr, "WARNING: stale session lock from dead PID %d — clearing\n", pid)
+			os.Remove(path)
+		}
+	}
+
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return false, fmt.Errorf("opening lock file %s: %w", path, err)
@@ -72,6 +85,27 @@ func AcquireSession(homeDir string) (bool, error) {
 	// Leak the FD intentionally — held for the lifetime.
 	// ReleaseSession closes it via a separate OpenFile + unlock.
 	return true, nil
+}
+
+// readLockPID reads the PID from the lock file if present.
+// Returns 0 if the file cannot be read or parsed.
+func readLockPID(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var pid int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil {
+		return 0
+	}
+	return pid
+}
+
+// isProcessAlive checks whether a process with the given PID is running.
+// Uses kill -0 which tests existence without sending a signal.
+func isProcessAlive(pid int) bool {
+	cmd := exec.Command("kill", "-0", strconv.Itoa(pid))
+	return cmd.Run() == nil
 }
 
 // ReleaseSession releases the exclusive file lock for the given home.

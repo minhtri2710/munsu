@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/agentsmd"
@@ -132,6 +133,52 @@ func validateDeliveryMode(mode string) error {
 	return nil
 }
 
+// readyPatterns maps each harness to a set of substrings that indicate
+// the agent is ready for input.
+var readyPatterns = map[string][]string{
+	harness.Pi:   {">", "Agent:", "What would you like"},
+	harness.Agy:  {"esc to cancel", "Ready for your prompt", "What would you like"},
+	harness.Claude: {">", "ready"},
+}
+
+// defaultReadyPatterns are patterns checked for any harness not in the map.
+var defaultReadyPatterns = []string{">", "$"}
+
+// waitForHarnessReady polls the session pane until the harness shows a ready
+// signature or the timeout (in seconds) expires. Returns nil when ready,
+// an error if the timeout expires or the pane dies.
+func waitForHarnessReady(bk session.Backend, windowID, harness string, timeoutSec int) error {
+	patterns := readyPatterns[harness]
+	if patterns == nil {
+		patterns = defaultReadyPatterns
+	}
+	deadline := time.After(time.Duration(timeoutSec) * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			// Grab final capture for diagnostic
+			capture, _ := bk.Capture(windowID, 10)
+			return fmt.Errorf("harness not ready after %ds: last capture: %q", timeoutSec, capture)
+		case <-ticker.C:
+			// Check if pane is still alive
+			if !bk.Alive(windowID) {
+				return fmt.Errorf("window died while waiting for ready")
+			}
+			capture, err := bk.Capture(windowID, 10)
+			if err != nil {
+				continue
+			}
+			for _, p := range patterns {
+				if strings.Contains(capture, p) {
+					return nil
+				}
+			}
+		}
+	}
+}
 
 // ExactArgs returns a cobra.PositionalArgs validator that wraps cobra.ExactArgs
 // but includes the command's Use string in the error message so users see the
@@ -289,7 +336,14 @@ func newConfigCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return config.Set(homeDir, args[0], args[1])
+			key, value := args[0], args[1]
+			// Validate harness keys against KnownHarnesses
+			if key == "crew-harness" || key == "secondmate-harness" {
+				if err := harness.ValidateHarness(value); err != nil {
+					return fmt.Errorf("config set %s: %w", key, err)
+				}
+			}
+			return config.Set(homeDir, key, value)
 		},
 	})
 	return cmd
@@ -840,10 +894,11 @@ func newBriefCmd() *cobra.Command {
 
 func newSpawnCmd() *cobra.Command {
 	var (
-		kind    string
-		mode    string
-		yolo    bool
-		backend string
+		kind        string
+		mode        string
+		yolo        bool
+		backend     string
+		harnessFlag string
 	)
 
 	cmd := &cobra.Command{
@@ -899,12 +954,20 @@ func newSpawnCmd() *cobra.Command {
 				return fmt.Errorf("acquiring worktree: %w", err)
 			}
 
-			// 5. Resolve crewmate harness
-			h, err := harness.Crew(homeDir)
-			if err != nil {
-				// Cleanup: return worktree
-				_ = worktree.Return(wtPath)
-				return fmt.Errorf("resolving harness: %w", err)
+			// 5. Resolve crewmate harness (--harness flag overrides)
+			var h string
+			if harnessFlag != "" {
+				if err := harness.ValidateHarness(harnessFlag); err != nil {
+					_ = worktree.Return(wtPath)
+					return fmt.Errorf("--harness: %w", err)
+				}
+				h = harnessFlag
+			} else {
+				h, err = harness.Crew(homeDir)
+				if err != nil {
+					_ = worktree.Return(wtPath)
+					return fmt.Errorf("resolving harness: %w", err)
+				}
 			}
 
 			// 6. Resolve model/effort from template
@@ -940,18 +1003,28 @@ func newSpawnCmd() *cobra.Command {
 				}
 			}
 
-			// 9. Inject brief content
+			// 9a. Write brief into worktree for agent file access
+			var briefData []byte
 			briefPath := brief.Path(homeDir, id)
-			if briefData, readErr := os.ReadFile(briefPath); readErr == nil {
-				// Write brief into worktree for agent file access
+			if data, readErr := os.ReadFile(briefPath); readErr == nil {
+				briefData = data
 				briefWorktreePath := filepath.Join(wtPath, ".crew-brief.md")
 				if writeErr := os.WriteFile(briefWorktreePath, briefData, 0644); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "warning: writing brief to worktree: %v\n", writeErr)
 				}
-				// Inject full brief as single paste (one SendKeys call instead of N)
-				_ = bk.SendKeys(windowID, string(briefData))
 			} else if !os.IsNotExist(readErr) {
 				fmt.Fprintf(os.Stderr, "warning: reading brief: %v\n", readErr)
+			}
+
+			// 9b. Wait for harness ready signature before injecting brief
+			if len(briefData) > 0 {
+				if err := waitForHarnessReady(bk, windowID, h, 60); err != nil {
+					// If timeout or error, fail loud
+					_ = worktree.Return(wtPath)
+					return fmt.Errorf("harness %q not ready within timeout: %w", h, err)
+				}
+				// Inject full brief as single paste
+				_ = bk.SendKeys(windowID, string(briefData))
 			}
 
 			// 10. Write task meta
@@ -1008,6 +1081,7 @@ func newSpawnCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "no-mistakes", "Delivery mode (no-mistakes|direct-PR|local-only)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override crewmate harness (pi, agy, etc.)")
 
 	return cmd
 }
