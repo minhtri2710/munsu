@@ -21,9 +21,6 @@ func tmuxBin() (string, error) {
 	return path, nil
 }
 
-// NewWindow creates a new tmux window in the given session.
-// It uses `tmux new-window -P -F "#{window_id}" -n <name>`.
-// The session parameter can be a tmux session selector (e.g. "mysession").
 // windowName returns a hometag-prefixed window name.
 func (t *TmuxBackend) windowName(name string) string {
 	if t.Tag == "" {
@@ -32,9 +29,36 @@ func (t *TmuxBackend) windowName(name string) string {
 	return t.Tag + "-fm-" + name
 }
 
+// ensureSession checks whether session exists and creates it if missing.
+func (t *TmuxBackend) ensureSession(session string) error {
+	bin, err := tmuxBin()
+	if err != nil {
+		return err
+	}
+	// Check if session exists
+	has := exec.Command(bin, "has-session", "-t", session)
+	if has.Run() == nil {
+		return nil // session exists
+	}
+	// Create a detached session
+	out, err := exec.Command(bin, "new-session", "-d", "-s", session).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux new-session %q: %s", session, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// NewWindow creates a new tmux window in the given session.
+// If the session does not exist, it is created automatically.
+// It uses `tmux new-window -P -F "#{window_id}" -n <name>`.
+// The session parameter can be a tmux session selector (e.g. "mysession" or "munsu").
 func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
 	bin, err := tmuxBin()
 	if err != nil {
+		return "", err
+	}
+	// Ensure the session exists (auto-create for cold starts)
+	if err := t.ensureSession(session); err != nil {
 		return "", err
 	}
 	wName := t.windowName(name)

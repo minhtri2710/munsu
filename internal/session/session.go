@@ -7,6 +7,7 @@ package session
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -35,33 +36,52 @@ func Select(name string) (Backend, error) {
 	}
 }
 
-// Default returns the auto-detected backend based on environment.
-// Detection order: HERDR_ENV > tmux (fallback).
+// Default returns the auto-detected backend based on environment and PATH.
+// Detection order:
+//  1. $TMUX is set → tmux
+//  2. HERDR_ENV truthy → herdr
+//  3. herdr on PATH → herdr
+//  4. tmux on PATH → tmux
+//  5. nil (nothing found; caller handles error)
 func Default() Backend {
+	if os.Getenv("TMUX") != "" {
+		return &TmuxBackend{}
+	}
 	if os.Getenv("HERDR_ENV") != "" {
 		return &HerdrBackend{}
 	}
-	return &TmuxBackend{}
+	if _, err := exec.LookPath("herdr"); err == nil {
+		return &HerdrBackend{}
+	}
+	if _, err := exec.LookPath("tmux"); err == nil {
+		return &TmuxBackend{}
+	}
+	return nil
 }
 
 // Resolve returns the configured backend for homeDir with optional override.
 // Resolution order:
-//  1. backendOverride (from --backend flag, when non-empty)
-//  2. homeDir/config/backend file (first whitespace-delimited word; unknown name = error)
-//  3. Runtime env markers (HERDR_ENV)
-//  4. tmux (fallback)
+//  1. backendOverride (from --backend flag, when non-empty and not "auto")
+//  2. homeDir/config/backend file (first whitespace-delimited word; "auto" = detect)
+//  3. Auto-detection: $TMUX > HERDR_ENV > herdr PATH > tmux PATH
+//  4. Error if nothing found
 // Returns the backend, its resolved name, and any error.
 func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	name := backendOverride
-	if name == "" {
+	if name == "" || name == "auto" {
 		name = readConfigBackend(homeDir)
 	}
-	if name == "" {
+	if name == "" || name == "auto" {
 		bk := Default()
-		if _, ok := bk.(*HerdrBackend); ok {
-			return bk, "herdr", nil
+		if bk == nil {
+			return nil, "", fmt.Errorf("no session backend detected: set $TMUX, set $HERDR_ENV, or ensure tmux/herdr is on PATH")
 		}
-		return bk, "tmux", nil
+		switch bk.(type) {
+		case *HerdrBackend:
+			return bk, "herdr", nil
+		case *TmuxBackend:
+			return bk, "tmux", nil
+		}
 	}
 
 	tag := hometag.Tag(homeDir)

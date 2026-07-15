@@ -32,7 +32,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const Version = "0.1.0-dev"
+var Version = "0.1.0-dev"
 
 var (
 	homeOverride string
@@ -343,14 +343,9 @@ the repository is cloned into the projects directory first.`,
 			if err != nil {
 				return err
 			}
-			if mode != "" {
-				fmt.Printf("%s", mode)
-			}
+			fmt.Printf("%s", mode)
 			if yolo {
-				if mode != "" {
-					fmt.Print(" ")
-				}
-				fmt.Print("+yolo")
+				fmt.Print(" +yolo")
 			}
 			fmt.Println()
 			return nil
@@ -769,7 +764,7 @@ func newSpawnCmd() *cobra.Command {
 				_ = worktree.Return(wtPath)
 				return err
 			}
-			windowID, err := bk.NewWindow(h, id)
+			windowID, err := bk.NewWindow("munsu", id)
 			if err != nil {
 				_ = worktree.Return(wtPath)
 				return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
@@ -811,6 +806,7 @@ func newSpawnCmd() *cobra.Command {
 				"project":  projectName,
 				"projpath": projPath,
 				"harness":  h,
+				"backend":  bkName,
 				"model":    model,
 				"effort":   effort,
 				"kind":     kind,
@@ -1012,7 +1008,7 @@ func newPromoteCmd() *cobra.Command {
 
 			// Preflight: require report.md to exist
 			if !brief.ReportExists(homeDir, id) {
-				return fmt.Errorf("no report found for scout task %s: write report at %s/report.md before promoting", id, brief.Path(homeDir, id))
+				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, brief.ReportPath(homeDir, id))
 			}
 
 			// Preflight: require last status to be done or resolved

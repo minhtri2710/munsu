@@ -143,7 +143,18 @@ func scanFleet(homeDir string) *WakeReason {
 		}
 
 		// Check pane liveness
-		bk := session.Default()
+		// Use the backend stored in meta, or fall back to Default()
+		var bk session.Backend
+		bkName, hasBackend := meta["backend"]
+		if hasBackend && bkName != "" {
+			if sel, err := session.Select(bkName); err == nil {
+				bk = sel
+			} else {
+				bk = session.Default()
+			}
+		} else {
+			bk = session.Default()
+		}
 		alive := bk.Alive(windowID)
 
 		if !alive {

@@ -53,7 +53,18 @@ func Read(homeDir string, id string) (*State, error) {
 	// 3. Check pane liveness — only when no run-step was found
 	if s.NoMistakesRunStep == "" {
 		if windowID, ok := meta["window"]; ok && windowID != "" {
-			bk := session.Default()
+			// Use the backend stored in meta (set during spawn), or fall back to Default()
+			var bk session.Backend
+			bkName, hasBackend := meta["backend"]
+			if hasBackend && bkName != "" {
+				if sel, err := session.Select(bkName); err == nil {
+					bk = sel
+				} else {
+					bk = session.Default()
+				}
+			} else {
+				bk = session.Default()
+			}
 			s.PaneAlive = bk.Alive(windowID)
 			if s.PaneAlive {
 				s.Status = "working"
