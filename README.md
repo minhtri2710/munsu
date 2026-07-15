@@ -139,6 +139,7 @@ munsu secondmate list
 
 ## Documentation
 
+- `docs/architecture.md` — architecture overview, module layout, key interfaces, design decisions.
 - `docs/port-mapping.md` — mapping between firstmate concepts and munsu commands.
 - `CONTRIBUTING.md` — how to contribute.
 - `AGENTS.md` — conventions file for crewmates working on munsu.

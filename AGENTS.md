@@ -17,27 +17,6 @@ Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
 The full munsu module map lives in the port-mapping table at `docs/port-mapping.md`.
 
-Current layout:
-- `cmd/munsu/main.go` — entrypoint
-- `internal/cli/root.go` — cobra command tree
-- `internal/cli/init.go` — init command (home tree + starter config)
-- `internal/home/` — home resolution and dir tree creation
-- `internal/config/` — config read/write (flat key files + MUNSU_*_OVERRIDE env)
-- `internal/project/` — project registry (data/projects.md parsing, ad-hoc cwd detection)
-- `internal/worktree/` — treehouse CLI wrapper: get/return/status + isolation assertion
-- `internal/harness/` — harness detection (env markers + process ancestry), crew/secondmate resolution, launch templates, dispatch profiles
-- `internal/session/` — session backend (Backend interface + tmux/herdr adapters; unknown names rejected)
-- `internal/task/` — task meta read/write (state/<id>.meta + status file), status validation, promote
-- `internal/brief/` — task brief scaffolding (ship/scout templates at data/<id>/brief.md)
-- `internal/teardown/` — crewmate teardown with safety checks (dirty/remote/report gate)
-- `internal/crewstate/` — crewmate state reading (meta + no-mistakes run-step reconciliation + pane liveness + status log)
-- `internal/lifecycle/` — timing/lock invariants (wake queue, watcher beat, session lock): single definition of paths/constants, queue parse/append/drain, beat I/O, lock acquire/release/is-locked
-- `internal/cli/backlog.go` — backlog command wiring to tasks-axi (inline in root.go)
-- `internal/selfupdate/` — fast-forward-only self-update (`munsu update`)
-Current layout (continued):
-- `internal/delivery/` — review-diff, pr-check, pr-merge, merge-local, no-mistakes axi helpers
-- `internal/stow/` — knowledge sweep (learnings.md + captain.md with inspect-then-update)
-
 Skills are documented in `README.md` ("Available skills" table).
 ## Coding rules
 
@@ -47,7 +26,6 @@ Skills are documented in `README.md` ("Available skills" table).
 - Surgical changes: touch only what the task requires. Clean up only your own mess.
 - Match existing style in the file you're editing.
 - Test home resolution and other core logic in `internal/*/` packages.
-- Stub commands return `not yet implemented` (exit 1) until implemented.
 
 ## Go version
 
