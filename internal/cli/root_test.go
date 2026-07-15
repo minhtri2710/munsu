@@ -136,6 +136,9 @@ func TestBuildHarnessLaunch_Agy(t *testing.T) {
 	if !strings.Contains(cmd, "-i") {
 		t.Error("agy launch command should contain -i")
 	}
+	if !strings.Contains(cmd, "read and execute .crew-brief.md") {
+		t.Error("agy launch command should contain brief command")
+	}
 	// DefaultModel is omitted; agy uses its runtime default
 	if strings.Contains(cmd, "--model") {
 		t.Error("agy launch command should NOT contain --model when DefaultModel is empty")

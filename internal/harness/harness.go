@@ -195,7 +195,7 @@ var Templates = map[string]Template{
 	Agy: {
 		ModelFlag: "--model",
 		// DefaultModel omitted — let agy use its runtime default (Claude Sonnet 4.6)
-		ExtraArgs: []string{"--dangerously-skip-permissions", "-i"},
+		ExtraArgs: []string{"--dangerously-skip-permissions", "-i", "read and execute .crew-brief.md"},
 	},
 }
 
