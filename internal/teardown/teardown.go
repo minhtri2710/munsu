@@ -49,15 +49,26 @@ func Run(opts Options) (*TeardownResult, error) {
 
 	// 1. Kill session window
 	if windowID, ok := meta["window"]; ok && windowID != "" {
-		bk := session.Default()
-		if bk.Alive(windowID) {
-			if err := bk.Teardown(windowID); err != nil {
-				result.Steps = append(result.Steps, fmt.Sprintf("session teardown: %v", err))
+		// Use the backend from meta, or fall back to Default()
+		var bk session.Backend
+		bkName, hasBackend := meta["backend"]
+		if hasBackend && bkName != "" {
+			if sel, err := session.Select(bkName); err == nil {
+				bk = sel
 			} else {
-				result.Steps = append(result.Steps, "session window killed")
+				bk = session.Default()
 			}
 		} else {
-			result.Steps = append(result.Steps, "session window already gone")
+			bk = session.Default()
+		}
+		if bk.Alive(windowID) {
+			if err := bk.Teardown(windowID); err != nil {
+				result.Steps = append(result.Steps, fmt.Sprintf("session teardown %s: %v", windowID, err))
+			} else {
+				result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", windowID))
+			}
+		} else {
+			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone", windowID))
 		}
 	}
 

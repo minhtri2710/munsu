@@ -47,10 +47,32 @@ func TestTmuxBin_NotFound(t *testing.T) {
 
 func TestDefault_ReturnsTmux(t *testing.T) {
 	t.Setenv("HERDR_ENV", "")
-	os.Unsetenv("HERDR_ENV")
+	t.Setenv("TMUX", "/tmp/tmux-test")
 	b := Default()
 	if _, ok := b.(*TmuxBackend); !ok {
-		t.Errorf("Default() returned %T, want *TmuxBackend", b)
+		t.Errorf("Default() with $TMUX set returned %T, want *TmuxBackend", b)
+	}
+}
+
+func TestDefault_ReturnsHerdr(t *testing.T) {
+	// No TMUX, but HERDR_ENV set
+	t.Setenv("TMUX", "")
+	t.Setenv("HERDR_ENV", "1")
+	b := Default()
+	if _, ok := b.(*HerdrBackend); !ok {
+		t.Errorf("Default() with $HERDR_ENV set returned %T, want *HerdrBackend", b)
+	}
+}
+
+func TestDefault_ReturnsNilWhenNoBackend(t *testing.T) {
+	t.Setenv("HERDR_ENV", "")
+	t.Setenv("TMUX", "")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+	b := Default()
+	if b != nil {
+		t.Errorf("Default() returned %T, want nil when no backend available", b)
 	}
 }
 
@@ -142,18 +164,19 @@ func TestResolve_Precedence(t *testing.T) {
 		}
 	})
 
-	t.Run("default is tmux when no config and no env", func(t *testing.T) {
+	t.Run("default is tmux when TMUX env set", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		t.Setenv("TMUX", "/tmp/tmux-xxx/default")
 		t.Setenv("HERDR_ENV", "")
 		bk, name, err := Resolve(tmpDir, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if name != "tmux" {
-			t.Errorf("Resolve with no config/env returned name %q, want 'tmux'", name)
+			t.Errorf("Resolve with $TMUX returned name %q, want 'tmux'", name)
 		}
 		if _, ok := bk.(*TmuxBackend); !ok {
-			t.Errorf("Resolve with no config/env returned %T, want *TmuxBackend", bk)
+			t.Errorf("Resolve with $TMUX returned %T, want *TmuxBackend", bk)
 		}
 	})
 
@@ -234,15 +257,27 @@ func TestTmux_Alive_UnknownWindow(t *testing.T) {
 	}
 }
 
-func TestTmux_NewWindow_NoSession(t *testing.T) {
+func TestTmux_NewWindow_SessionAutoCreated(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not on PATH")
 	}
 
 	tk := &TmuxBackend{}
-	_, err := tk.NewWindow("nonexistent-session-12345", "test")
-	if err == nil {
-		t.Fatal("expected error for nonexistent session")
+	// With F1.1, a nonexistent session is auto-created
+	wid, err := tk.NewWindow("munsu-test-session-12345", "test")
+	if err != nil {
+		t.Fatalf("NewWindow should auto-create session, got error: %v", err)
+	}
+	if wid == "" {
+		t.Fatal("NewWindow returned empty window ID")
+	}
+	// Verify the window is alive
+	if !tk.Alive(wid) {
+		t.Fatal("NewWindow window not alive after session auto-create")
+	}
+	// Clean up
+	if err := tk.Teardown(wid); err != nil {
+		t.Errorf("Teardown failed: %v", err)
 	}
 }
 
