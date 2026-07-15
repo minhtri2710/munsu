@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,12 +10,24 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
+// requireGH skips the test if the GitHub CLI is not available.
+func requireGH(t *testing.T) {
+	t.Helper()
+	if os.Getenv("GH_TOKEN") == "" && os.Getenv("GITHUB_TOKEN") == "" {
+		t.Skip("skipping test: GH_TOKEN or GITHUB_TOKEN not set")
+	}
+	if err := exec.Command("gh", "--help").Run(); err != nil {
+		t.Skipf("skipping test: gh CLI not available: %v", err)
+	}
+}
+
 // TestPRCheck_GeneratesCheckScriptWithFleetSync verifies that PRCheck generates a
 // check.sh script including the fleet-sync command when project is in meta.
 func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	requireGH(t)
 
 	homeDir := t.TempDir()
 
@@ -81,6 +94,7 @@ func TestPRCheck_GeneratesCheckScriptWithoutProjectFallback(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	requireGH(t)
 
 	homeDir := t.TempDir()
 
