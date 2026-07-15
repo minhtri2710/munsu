@@ -3,10 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/agentsmd"
@@ -24,6 +22,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/secondmate"
 	"github.com/minhtri2710/munsu/internal/selfupdate"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/stow"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -42,104 +41,6 @@ var (
 
 
 
-// validDeliveryModes lists the accepted delivery mode values.
-var validDeliveryModes = map[string]bool{
-	"no-mistakes": true,
-	"direct-PR":   true,
-	"local-only":  true,
-}
-
-// validateDeliveryMode returns an error if the mode is not a known value.
-func validateDeliveryMode(mode string) error {
-	if mode == "" {
-		return nil // empty is allowed (will use registry default)
-	}
-	if !validDeliveryModes[mode] {
-		return fmt.Errorf("invalid delivery mode %q: must be one of: no-mistakes, direct-PR, local-only", mode)
-	}
-	return nil
-}
-
-// readyPatterns maps each harness to a set of substrings that indicate
-// the agent is ready for input.
-var readyPatterns = map[string][]string{
-	harness.Pi:     {">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
-	harness.Agy:    {"esc to cancel", "Ready for your prompt", "What would you like"},
-	harness.Claude: {">", "ready"},
-}
-
-// defaultReadyPatterns are patterns checked for any harness not in the map.
-var defaultReadyPatterns = []string{">", "$"}
-
-// waitForHarnessReady polls the session pane until the harness shows a ready
-// signature or the timeout (in seconds) expires. Returns nil when ready,
-// an error if the timeout expires or the pane dies.
-func waitForHarnessReady(bk session.Backend, windowID, harness string, timeoutSec int) error {
-	patterns := readyPatterns[harness]
-	if patterns == nil {
-		patterns = defaultReadyPatterns
-	}
-
-	// trustHandled tracks whether we've auto-accepted a per-worktree trust prompt.
-	trustHandled := false
-
-	deadline := time.After(time.Duration(timeoutSec) * time.Second)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-deadline:
-			// Grab final capture for diagnostic
-			capture, _ := bk.Capture(windowID, 60)
-			return fmt.Errorf("harness not ready after %ds: last capture: %q", timeoutSec, capture)
-		case <-ticker.C:
-			// Check if pane is still alive
-			if !bk.Alive(windowID) {
-				return fmt.Errorf("window died while waiting for ready")
-			}
-			capture, err := bk.Capture(windowID, 60)
-			if err != nil {
-				continue
-			}
-
-			// Dialog handlers: auto-answer trust prompts before checking ready patterns.
-			if !trustHandled && isTrustPrompt(capture, harness) {
-				_ = bk.SendKeys(windowID, "")
-				trustHandled = true
-				continue
-			}
-
-			for _, p := range patterns {
-				if strings.Contains(capture, p) {
-					return nil
-				}
-			}
-		}
-	}
-}
-
-// trustPromptPatterns maps each harness to patterns that indicate a
-// first-run folder-trust dialog the agent is blocking on.
-var trustPromptPatterns = map[string][]string{
-	harness.Agy: {"Do you trust", "Yes, I trust this folder"},
-	harness.Pi:  {"Trust project folder", "→ Trust", "Do not trust"},
-}
-
-// isTrustPrompt reports whether capture contains a harness-specific trust
-// prompt that should be auto-dismissed with Enter.
-func isTrustPrompt(capture, harness string) bool {
-	patterns, ok := trustPromptPatterns[harness]
-	if !ok {
-		return false
-	}
-	for _, p := range patterns {
-		if strings.Contains(capture, p) {
-			return true
-		}
-	}
-	return false
-}
 
 // ExactArgs returns a cobra.PositionalArgs validator that wraps cobra.ExactArgs
 // but includes the command's Use string in the error message so users see the
@@ -799,7 +700,7 @@ func newBriefCmd() *cobra.Command {
 			var yolo bool
 			if modeFlag != "" {
 				mode = modeFlag
-				if err := validateDeliveryMode(mode); err != nil {
+				if err := spawn.ValidateDeliveryMode(mode); err != nil {
 					return err
 				}
 			} else if m, y, err := project.Mode(homeDir, repo); err == nil {
@@ -865,196 +766,17 @@ func newSpawnCmd() *cobra.Command {
 		Short: "Spawn a crewmate agent",
 		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			id := args[0]
-			projectName := args[1]
-
-			// 1. Resolve home
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
-			}
-
-			// Validate delivery mode
-			if err := validateDeliveryMode(mode); err != nil {
-				return err
-			}
-
-			// Validate --harness flag before brief existence check (cheap, user-facing)
-			if harnessFlag != "" {
-				if err := harness.ValidateHarness(harnessFlag); err != nil {
-					return fmt.Errorf("--harness: %w", err)
-				}
-			}
-
-			// Preflight: require brief to exist before spawning
-			if !brief.Exists(homeDir, id) {
-				return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning", id, id, projectName)
-			}
-
-			// Warn if tasks-axi available but no backlog row for this id
-			if _, err := exec.LookPath("tasks-axi"); err == nil {
-				// tasks-axi available, check for backlog row
-				chk := exec.Command("tasks-axi", "show", id)
-				if out, err := chk.CombinedOutput(); err != nil || strings.Contains(string(out), "not found") {
-					fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row; register it with 'backlog add %s --kind %s' to track lifecycle\n", id, id, kind)
-				}
-			}
-
-			// 2. Resolve project repo path from registry
-			projPath, err := project.ResolveRepoPath(homeDir, projectName)
-			if err != nil {
-				return fmt.Errorf("resolving project %q: %w", projectName, err)
-			}
-
-			// 3. Check for worktree tangle (unless yolo)
-			if !yolo {
-				if err := worktree.AssertNotTangled(projPath, projectName); err != nil {
-					return err
-				}
-			}
-
-			// 4. Acquire leased worktree
-			wtPath, err := worktree.Get(projPath, true)
-			if err != nil {
-				return fmt.Errorf("acquiring worktree: %w", err)
-			}
-
-			// 5. Resolve crewmate harness (--harness flag overrides)
-			var h string
-			if harnessFlag != "" {
-				if err := harness.ValidateHarness(harnessFlag); err != nil {
-					_ = worktree.Return(wtPath)
-					return fmt.Errorf("--harness: %w", err)
-				}
-				h = harnessFlag
-			} else {
-				h, err = harness.Crew(homeDir)
-				if err != nil {
-					_ = worktree.Return(wtPath)
-					return fmt.Errorf("resolving harness: %w", err)
-				}
-			}
-
-			// 6. Resolve model/effort from template
-			var model, effort string
-			var launchCmd string
-			if tmpl, ok := harness.Templates[h]; ok {
-				model = tmpl.DefaultModel
-				if tmpl.DefaultEffort != "" {
-					effort = tmpl.DefaultEffort
-				}
-				launchCmd = harness.LaunchString(h, tmpl)
-			}
-
-			// 7. Create session window
-			bk, bkName, err := session.Resolve(homeDir, backend)
-			if err != nil {
-				_ = worktree.Return(wtPath)
-				return err
-			}
-			windowID, err := bk.NewWindow("munsu", id)
-			if err != nil {
-				_ = worktree.Return(wtPath)
-				return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
-			}
-
-			// 8. Bootstrap window: cd to worktree and launch harness
-			if launchCmd != "" {
-				// Write launch script to worktree (avoids tmux send-keys quoting issues)
-				launchScript := filepath.Join(wtPath, ".crew-launch.sh")
-				scriptContent := "#!/usr/bin/env bash\nset -e\n" + launchCmd + "\n"
-				if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
-				}
-				fullCmd := fmt.Sprintf("cd %s && bash .crew-launch.sh", wtPath)
-				if sendErr := bk.SendKeys(windowID, fullCmd); sendErr != nil {
-					// Non-fatal: log but don't fail the spawn
-					fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
-				}
-			}
-
-			// 9a. Write brief into worktree for agent file access
-			var briefData []byte
-			briefPath := brief.Path(homeDir, id)
-			if data, readErr := os.ReadFile(briefPath); readErr == nil {
-				briefData = data
-				briefWorktreePath := filepath.Join(wtPath, ".crew-brief.md")
-				if writeErr := os.WriteFile(briefWorktreePath, briefData, 0644); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: writing brief to worktree: %v\n", writeErr)
-				}
-			} else if !os.IsNotExist(readErr) {
-				fmt.Fprintf(os.Stderr, "warning: reading brief: %v\n", readErr)
-			}
-
-			// 9b. Wait for harness ready signature before injecting brief
-			if len(briefData) > 0 {
-				if err := waitForHarnessReady(bk, windowID, h, 60); err != nil {
-					// Capture final state for diagnostics before cleanup
-					capture, _ := bk.Capture(windowID, 60)
-					_ = task.AppendStatus(homeDir, id, "failed: harness not ready")
-					// Write diagnostic dump to data/<id>/ready-fail.txt
-					dataDir := filepath.Join(homeDir, "data", id)
-					_ = os.MkdirAll(dataDir, 0755)
-					failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", h, err, capture)
-					_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
-					_ = bk.Teardown(windowID)
-					_ = worktree.Return(wtPath)
-					return fmt.Errorf("harness %q not ready within timeout: %w", h, err)
-				}
-
-				// Brief settle: let harness present clean prompt before one-liner
-				time.Sleep(500 * time.Millisecond)
-				// Inject brief: all harnesses use file-based .crew-brief.md
-				_ = bk.SendKeys(windowID, "read and execute .crew-brief.md")
-			}
-
-			// 10. Write task meta
-			yoloVal := "off"
-			if yolo {
-				yoloVal = "on"
-			}
-			meta := map[string]string{
-				"window":   windowID,
-				"worktree": wtPath,
-				"project":  projectName,
-				"projpath": projPath,
-				"harness":  h,
-				"backend":  bkName,
-				"kind":     kind,
-				"mode":     mode,
-				"yolo":     yoloVal,
-			}
-			if model != "" {
-				meta["model"] = model
-			}
-			if effort != "" {
-				meta["effort"] = effort
-			}
-			if err := task.WriteMeta(homeDir, id, meta); err != nil {
-				// Best-effort: print error but don't fail the spawn
-				fmt.Fprintf(os.Stderr, "warning: writing task meta: %v\n", err)
-			}
-
-			// 11. Append working: spawned status
-			_ = task.AppendStatus(homeDir, id, "working: spawned")
-
-			// 12. Print endpoint info
-			fmt.Printf("Spawned crewmate %s\n", id)
-			fmt.Printf("  window:   %s\n", windowID)
-			fmt.Printf("  worktree: %s\n", wtPath)
-			fmt.Printf("  projpath: %s\n", projPath)
-			fmt.Printf("  project:  %s\n", projectName)
-			fmt.Printf("  harness:  %s\n", h)
-			if model != "" {
-				fmt.Printf("  model:    %s\n", model)
-			}
-			if effort != "" {
-				fmt.Printf("  effort:   %s\n", effort)
-			}
-			fmt.Printf("  kind:     %s\n", kind)
-			fmt.Printf("  mode:     %s\n", mode)
-			fmt.Printf("  yolo:     %s\n", yoloVal)
-			return nil
+			_, err := spawn.Run(spawn.Args{
+				ID:           args[0],
+				ProjectName:  args[1],
+				Kind:         kind,
+				Mode:         mode,
+				Yolo:         yolo,
+				Backend:      backend,
+				HarnessFlag:  harnessFlag,
+				HomeDir:      homeOverride,
+			})
+			return err
 		},
 	}
 
