@@ -67,7 +67,6 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("CREW_DISPATCH: active (%d rules)", ruleCount))
 	}
 
-
 	// 5. Check session backend preference
 	if data, err := os.ReadFile(filepath.Join(home, "config", "backend")); err == nil {
 		backend := strings.TrimSpace(string(data))
@@ -88,6 +87,13 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 			} else {
 				res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("INSTALLED: %s", tool))
 			}
+		}
+	}
+
+	// 7. GC orphan data dirs (only when lock held)
+	if lockHeld {
+		if cleaned := gcOrphanDataDirs(home); len(cleaned) > 0 {
+			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("GC: removed %d orphan data dir(s): %v", len(cleaned), cleaned))
 		}
 	}
 
@@ -120,4 +126,49 @@ func installTool(tool string) error {
 	default:
 		return fmt.Errorf("no automatic install for %s", tool)
 	}
+}
+
+// gcOrphanDataDirs scans data/<id>/ directories and removes those that have no
+// corresponding state/<id>.meta file and only contain a brief.md (orphan briefs
+// created by `munsu brief --force` that were never spawned).
+// Returns the list of removed directory names.
+func gcOrphanDataDirs(home string) []string {
+	dataDir := filepath.Join(home, "data")
+	stateDir := filepath.Join(home, "state")
+
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return nil
+	}
+
+	var cleaned []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		id := entry.Name()
+
+		// Skip if corresponding meta file exists
+		metaPath := filepath.Join(stateDir, id+".meta")
+		if _, err := os.Stat(metaPath); err == nil {
+			continue
+		}
+
+		// Skip if dir has more than just brief.md
+		dataEntries, err := os.ReadDir(filepath.Join(dataDir, id))
+		if err != nil {
+			continue
+		}
+		// Only remove if the only file is brief.md
+		hasOnlyBrief := len(dataEntries) == 1 && !dataEntries[0].IsDir() && dataEntries[0].Name() == "brief.md"
+		// Also remove empty dirs
+		hasNoFiles := len(dataEntries) == 0
+
+		if hasOnlyBrief || hasNoFiles {
+			if err := os.RemoveAll(filepath.Join(dataDir, id)); err == nil {
+				cleaned = append(cleaned, id)
+			}
+		}
+	}
+	return cleaned
 }

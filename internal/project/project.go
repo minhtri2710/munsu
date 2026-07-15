@@ -108,6 +108,7 @@ func isURL(s string) bool {
 }
 
 // Add registers a project. If pathOrURL is a URL, clones it first.
+// If the name is already registered, updates the existing entry in-place (no duplicate).
 func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 	regPath := RegistryPath(homeDir)
 
@@ -130,7 +131,6 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 		}
 	}
 
-	// Append registry entry
 	p := &Project{
 		Name:        name,
 		Mode:        mode,
@@ -139,12 +139,33 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 		Added:       today(),
 	}
 
+	// Check if name already exists — update in-place to avoid duplicates
+	existing, _ := ListFromFile(regPath)
+	for i, ep := range existing {
+		if ep.Name == name {
+			existing[i] = p
+			// Rewrite entire file with updated entry
+			f, err := os.Create(regPath)
+			if err != nil {
+				return fmt.Errorf("opening registry: %w", err)
+			}
+			defer f.Close()
+			for _, proj := range existing {
+				if _, err := fmt.Fprintln(f, FormatEntry(proj)); err != nil {
+					return fmt.Errorf("writing registry: %w", err)
+				}
+			}
+			fmt.Printf("Updated project %q (%s)\n", name, pathOrURL)
+			return nil
+		}
+	}
+
+	// Append new entry
 	f, err := os.OpenFile(regPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("opening registry: %w", err)
 	}
 	defer f.Close()
-
 	if _, err := fmt.Fprintln(f, FormatEntry(p)); err != nil {
 		return fmt.Errorf("writing registry: %w", err)
 	}

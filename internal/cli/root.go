@@ -39,7 +39,6 @@ var (
 	homeOverride string
 )
 
-
 // checkTangle checks if the project's primary checkout at projectDir is on a
 // non-default branch. Returns nil if HEAD is detached or on the default branch.
 func checkTangle(projectDir, projectName string) error {
@@ -94,6 +93,7 @@ func checkTangle(projectDir, projectName string) error {
 	return fmt.Errorf("cannot spawn: %s is on branch %s, not an isolated worktree. Use a detached HEAD or a worktree",
 		projectName, branch)
 }
+
 // buildHarnessLaunch builds the shell command to launch a harness agent.
 func buildHarnessLaunch(h string, tmpl harness.Template) string {
 	parts := []string{strings.ToLower(h)}
@@ -136,8 +136,8 @@ func validateDeliveryMode(mode string) error {
 // readyPatterns maps each harness to a set of substrings that indicate
 // the agent is ready for input.
 var readyPatterns = map[string][]string{
-	harness.Pi:   {">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
-	harness.Agy:  {"esc to cancel", "Ready for your prompt", "What would you like"},
+	harness.Pi:     {">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
+	harness.Agy:    {"esc to cancel", "Ready for your prompt", "What would you like"},
 	harness.Claude: {">", "ready"},
 }
 
@@ -197,7 +197,7 @@ func waitForHarnessReady(bk session.Backend, windowID, harness string, timeoutSe
 var trustPromptPatterns = map[string][]string{
 	harness.Agy: {"Do you trust", "Yes, I trust this folder"},
 	harness.Pi:  {"Trust project folder", "→ Trust", "Do not trust"},
-	}
+}
 
 // isTrustPrompt reports whether capture contains a harness-specific trust
 // prompt that should be auto-dismissed with Enter.
@@ -724,7 +724,6 @@ func newTaskCmd() *cobra.Command {
 				meta["project"] = repo // --repo maps directly to the project name
 			}
 
-
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
 				return err
@@ -881,7 +880,6 @@ func newBriefCmd() *cobra.Command {
 				yolo = y
 			}
 
-
 			// Require existing task meta unless --force
 			if !force {
 				if _, err := task.ReadMeta(homeDir, id); err != nil {
@@ -961,7 +959,6 @@ func newSpawnCmd() *cobra.Command {
 				}
 			}
 
-
 			// Preflight: require brief to exist before spawning
 			if !brief.Exists(homeDir, id) {
 				return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning", id, id, projectName)
@@ -1036,8 +1033,13 @@ func newSpawnCmd() *cobra.Command {
 
 			// 8. Bootstrap window: cd to worktree and launch harness
 			if launchCmd != "" {
-				// Send cd + harness launch
-				fullCmd := fmt.Sprintf("cd %s && %s", wtPath, launchCmd)
+				// Write launch script to worktree (avoids tmux send-keys quoting issues)
+				launchScript := filepath.Join(wtPath, ".crew-launch.sh")
+				scriptContent := "#!/usr/bin/env bash\nset -e\n" + launchCmd + "\n"
+				if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
+				}
+				fullCmd := fmt.Sprintf("cd %s && bash .crew-launch.sh", wtPath)
 				if sendErr := bk.SendKeys(windowID, fullCmd); sendErr != nil {
 					// Non-fatal: log but don't fail the spawn
 					fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
@@ -1060,18 +1062,21 @@ func newSpawnCmd() *cobra.Command {
 			// 9b. Wait for harness ready signature before injecting brief
 			if len(briefData) > 0 {
 				if err := waitForHarnessReady(bk, windowID, h, 60); err != nil {
-				// Capture final state for diagnostics before cleanup
-				capture, _ := bk.Capture(windowID, 60)
-				_ = task.AppendStatus(homeDir, id, "failed: harness not ready")
-				// Write diagnostic dump to data/<id>/ready-fail.txt
-				dataDir := filepath.Join(homeDir, "data", id)
-				_ = os.MkdirAll(dataDir, 0755)
-				failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", h, err, capture)
-				_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
-				_ = bk.Teardown(windowID)
-				_ = worktree.Return(wtPath)
-				return fmt.Errorf("harness %q not ready within timeout: %w", h, err)
-			}
+					// Capture final state for diagnostics before cleanup
+					capture, _ := bk.Capture(windowID, 60)
+					_ = task.AppendStatus(homeDir, id, "failed: harness not ready")
+					// Write diagnostic dump to data/<id>/ready-fail.txt
+					dataDir := filepath.Join(homeDir, "data", id)
+					_ = os.MkdirAll(dataDir, 0755)
+					failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", h, err, capture)
+					_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
+					_ = bk.Teardown(windowID)
+					_ = worktree.Return(wtPath)
+					return fmt.Errorf("harness %q not ready within timeout: %w", h, err)
+				}
+
+				// Brief settle: let harness present clean prompt before one-liner
+				time.Sleep(500 * time.Millisecond)
 				// Inject brief: full paste for non-agy, one-liner for agy (brief already in .crew-brief.md)
 				if h == harness.Agy {
 					_ = bk.SendKeys(windowID, "read and execute .crew-brief.md")
@@ -1449,7 +1454,7 @@ PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 
 			return delivery.PRMerge(homeDir, id, prURL, extra)
 		},
-}
+	}
 	return cmd
 }
 
@@ -1522,7 +1527,7 @@ The description must be quoted if it contains multiple words.
 Example:
   munsu backlog add flow-r2 "Flow retest scout"
 `,
-		Args:  ExactArgs(2),
+		Args: ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			desc := args[1]
@@ -2124,5 +2129,5 @@ Stop with SIGTERM/SIGINT. The flag is cleared on stop.`,
 			}
 			return afk.Start(homeDir)
 		},
-}
+	}
 }

@@ -133,14 +133,12 @@ func TestBuildHarnessLaunch_Agy(t *testing.T) {
 	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Error("agy launch command should contain --dangerously-skip-permissions")
 	}
-	if !strings.Contains(cmd, "--model") {
-		t.Error("agy launch command should contain --model")
-	}
 	if !strings.Contains(cmd, "-i") {
 		t.Error("agy launch command should contain -i")
 	}
-	if !strings.Contains(cmd, "Gemini 3.5 Flash (Medium)") {
-		t.Error("agy launch command should contain the default model name")
+	// DefaultModel is omitted; agy uses its runtime default
+	if strings.Contains(cmd, "--model") {
+		t.Error("agy launch command should NOT contain --model when DefaultModel is empty")
 	}
 }
 
