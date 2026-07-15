@@ -1,6 +1,7 @@
 # munsu — Remaining Architecture Remediation Tasks
 
-> Items 1–5 shipped in **PR #14** (commit `b67a160` on main).
+> **ARCHIVED — all remediation items shipped in PR #14. See commit history for details.**
+
 > This file is retained for reference only; no further action needed.
 
 ---

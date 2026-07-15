@@ -1,6 +1,9 @@
+disable_project_settings: true
+
 commands:
   lint: 'go build ./... && go vet ./...'
   test: 'go test ./...'
+
 test:
   evidence:
     store_in_repo: false
