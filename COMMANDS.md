@@ -43,6 +43,28 @@ Full command map grouped by lifecycle phase.
 | `munsu promote <id>` | Promote a scout task to ship. |
 | `munsu review-diff <id>` | Review diff between crewmate branch and base. |
 
+## Lifecycle (Happy Path)
+
+The recommended workflow for running a crewmate task end-to-end:
+
+1. **`munsu backlog add <id> <desc> [--kind ship|scout] [--repo <name>] [--start]`**
+   Register the intent in the backlog. Use `--start` to move it to in-flight immediately.
+2. **`munsu brief <id> <repo> [--scout]`**
+   Scaffold a task brief that the crewmate reads on startup.
+3. **`munsu spawn <id> <project>`**
+   Spawn the crewmate — acquires a worktree, creates a session pane, writes task meta, and launches the harness.
+4. **`munsu peek <id>` / `munsu send <id> <line>`**
+   Monitor and interact with the running crewmate as needed.
+5. **`munsu teardown <id>`**
+   Terminate the crewmate, release the worktree, and clean up runtime state.
+6. **`munsu backlog done <id>`**
+   Mark the item complete in the backlog (separate operator step after teardown).
+
+> **Note:** Prefer `backlog add --start` over bare `task add` for dogfood — the backlog links brief → spawn → teardown → closure.
+> `task add` registers runtime meta only and bypasses the lifecycle chain.
+
+See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
+
 ## Supervision
 
 | Command | Description |

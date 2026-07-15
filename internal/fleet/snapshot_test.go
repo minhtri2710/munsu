@@ -43,6 +43,26 @@ func captureStdout(fn func() error) (string, error) {
 	}
 }
 
+// TestPhaseFromMeta verifies all three display-phase transitions.
+func TestPhaseFromMeta(t *testing.T) {
+	tests := []struct {
+		window    string
+		paneAlive bool
+		want      string
+	}{
+		{"", false, "registered"},  // pre-spawn: no window
+		{"@1", true, "alive"},      // active pane
+		{"@1", false, "dead"},       // window set but pane gone
+		{"", true, "registered"},     // window empty, paneAlive irrelevant
+	}
+	for _, tc := range tests {
+		got := PhaseFromMeta(tc.window, tc.paneAlive)
+		if got != tc.want {
+			t.Errorf("PhaseFromMeta(%q, %v) = %q, want %q", tc.window, tc.paneAlive, got, tc.want)
+		}
+	}
+}
+
 func TestBearings_Idle(t *testing.T) {
 	tmpDir := t.TempDir()
 

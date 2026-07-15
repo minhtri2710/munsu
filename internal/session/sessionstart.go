@@ -10,7 +10,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // SessionStartResult holds the full session-start output digest.
@@ -38,46 +37,24 @@ func printDataFile(home, name string) {
 }
 
 func printFleetState(home string) {
-	bk, _, resolveErr := Resolve(home, "")
-	if resolveErr != nil {
-		fmt.Printf("  backend unavailable: %v\n", resolveErr)
+	snap, err := fleet.Snapshot(home)
+	if err != nil {
+		fmt.Printf("  error scanning fleet state: %v\n", err)
+		return
 	}
 	fmt.Println("")
 	fmt.Println("--- Fleet State ---")
-	stateDir := filepath.Join(home, "state")
-	entries, readErr := os.ReadDir(stateDir)
-	if readErr != nil {
+	if len(snap.Tasks) == 0 {
 		fmt.Println("  (no in-flight tasks)")
 		return
 	}
-	hasTasks := false
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".meta") {
-			continue
-		}
-		id := name[:len(name)-5]
-		hasTasks = true
-		meta, _ := task.ReadMeta(home, id)
-		windowID := meta["window"]
-		lines, _ := task.ReadStatus(home, id)
-		lastStatus := ""
-		if len(lines) > 0 {
-			lastStatus = lines[len(lines)-1]
-		}
-		alive := windowID != "" && resolveErr == nil && bk.Alive(windowID)
-		statusDisplay := lastStatus
+	for _, ts := range snap.Tasks {
+		phase := fleet.PhaseFromMeta(ts.Window, ts.PaneAlive)
+		statusDisplay := ts.LastStatus
 		if statusDisplay == "" {
 			statusDisplay = "no status"
 		}
-		aliveDisplay := "dead"
-		if alive {
-			aliveDisplay = "alive"
-		}
-		fmt.Printf("  %s: %s (%s)\n", id, statusDisplay, aliveDisplay)
-	}
-	if !hasTasks {
-		fmt.Println("  (no in-flight tasks)")
+		fmt.Printf("  %s: %s (%s)\n", ts.ID, statusDisplay, phase)
 	}
 }
 
