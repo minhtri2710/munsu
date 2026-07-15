@@ -38,9 +38,6 @@ var (
 	homeOverride string
 )
 
-func notImplementedE(cmd *cobra.Command, args []string) error {
-	return fmt.Errorf("%s: not yet implemented", cmd.Name())
-}
 
 // checkTangle checks if the project's primary checkout at projectDir is on a
 // non-default branch. Returns nil if HEAD is detached or on the default branch.
