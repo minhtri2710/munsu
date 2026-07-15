@@ -72,14 +72,14 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
-	// 2. Return worktree to pool
+	// 2. Return worktree to pool — fail-closed: if return fails, abort teardown
+	//    so the lease is not falsely claimed as released (firstmate contract).
 	if wtPath, ok := meta["worktree"]; ok && wtPath != "" {
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
 			if err := worktree.Return(wtPath); err != nil {
-				result.Steps = append(result.Steps, fmt.Sprintf("worktree return: %v", err))
-			} else {
-				result.Steps = append(result.Steps, "worktree returned to pool")
+				return nil, fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err)
 			}
+			result.Steps = append(result.Steps, "worktree returned to pool")
 		} else {
 			result.Steps = append(result.Steps, "worktree path no longer exists")
 		}
@@ -113,16 +113,25 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
-	// 5. Clean up data directory (orphan brief) if no report.md
+	// 5. Clean up data directory (orphan brief) if no report.md or brief.md is small
 	dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
 	if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
 		reportPath := filepath.Join(dataDir, "report.md")
-		if _, err := os.Stat(reportPath); os.IsNotExist(err) {
+		briefPath := filepath.Join(dataDir, "brief.md")
+		briefInfo, briefErr := os.Stat(briefPath)
+		_, reportErr := os.Stat(reportPath)
+		
+		if os.IsNotExist(reportErr) {
 			// No report.md — safe to remove orphan brief/data dir
-			if err := os.RemoveAll(dataDir); err != nil {
-				result.Steps = append(result.Steps, fmt.Sprintf("remove data dir: %v", err))
+			// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
+			if briefErr == nil && briefInfo.Size() < 256 {
+				if err := os.RemoveAll(dataDir); err != nil {
+					result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
+				} else {
+					result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
+				}
 			} else {
-				result.Steps = append(result.Steps, "data dir removed (no report.md)")
+				result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
 			}
 		} else {
 			result.Steps = append(result.Steps, "data dir kept (report.md present)")

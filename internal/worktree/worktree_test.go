@@ -175,5 +175,66 @@ func TestGet_WithLease_ReturnsPath(t *testing.T) {
 	if path != "/tmp/wt-12345" {
 		t.Errorf("expected path '/tmp/wt-12345', got: %q", path)
 	}
+	if path != "/tmp/wt-12345" {
+		t.Errorf("expected path '/tmp/wt-12345', got: %q", path)
+	}
 }
 
+func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "treehouse")
+	// treehouse return without --force prompts interactively when the worktree
+	// has uncommitted changes. With stdin closed / no tty, it prints "Aborted"
+	// and exits 0. Our Return must detect this as an error.
+	mockContent := []byte("#!/bin/sh\necho 'Aborted'\nexit 0\n")
+	if err := os.WriteFile(mockScript, mockContent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", mockDir+":"+oldPath)
+
+	err := Return("/some/wt-path")
+	if err == nil {
+		t.Fatal("expected error for Aborted output, got nil")
+	}
+	if !strings.Contains(err.Error(), "Aborted") {
+		t.Errorf("expected 'Aborted' in error, got: %v", err)
+	}
+}
+
+func TestReturn_Clean_ReturnsNil(t *testing.T) {
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "treehouse")
+	// Clean success: "worktree returned to pool" and exit 0.
+	mockContent := []byte("#!/bin/sh\necho 'worktree returned to pool'\nexit 0\n")
+	if err := os.WriteFile(mockScript, mockContent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", mockDir+":"+oldPath)
+
+	err := Return("/some/wt-path")
+	if err != nil {
+		t.Fatalf("expected no error for clean return, got: %v", err)
+	}
+}
+
+func TestReturn_ErrorExit_ReturnsError(t *testing.T) {
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "treehouse")
+	// treehouse exit non-zero (e.g. path not found)
+	mockContent := []byte("#!/bin/sh\necho 'path not found'\nexit 1\n")
+	if err := os.WriteFile(mockScript, mockContent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", mockDir+":"+oldPath)
+
+	err := Return("/some/wt-path")
+	if err == nil {
+		t.Fatal("expected error for non-zero exit, got nil")
+	}
+}

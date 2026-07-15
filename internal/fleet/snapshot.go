@@ -134,7 +134,17 @@ func View(homeDir string) error {
 
 		fmt.Printf("- **%s** (repo: %s)\n", ts.ID, ts.Project)
 		fmt.Printf("  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
-		fmt.Printf("  harness: %s | model: %s\n", ts.Harness, ts.Model)
+		// Only show harness line; omit empty model/effort
+		var modelEffortParts []string
+		if ts.Harness != "" {
+			modelEffortParts = append(modelEffortParts, fmt.Sprintf("harness: %s", ts.Harness))
+		}
+		if ts.Model != "" {
+			modelEffortParts = append(modelEffortParts, fmt.Sprintf("model: %s", ts.Model))
+		}
+		if len(modelEffortParts) > 0 {
+			fmt.Printf("  %s\n", strings.Join(modelEffortParts, " | "))
+		}
 		fmt.Printf("  pane: %s (%s)\n", ts.Window, phase)
 		if ts.LastStatus != "" {
 			fmt.Printf("  status: %s\n", ts.LastStatus)
