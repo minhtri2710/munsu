@@ -274,7 +274,33 @@ func RunManual(homeDir, verb string, args []string) error {
 	return manualRun(homeDir, verb, args)
 }
 
+// AddItemDispatch adds a backlog item using the unified dispatcher.
+// Routes to tasks-axi when available and not forced to manual.
+func AddItemDispatch(homeDir, id, desc, kind, repo string, start bool) error {
+	if isManual(homeDir) {
+		return AddItem(homeDir, id, desc, kind, repo, start)
+	}
+	if tasksAxiAvailable() {
+		args := buildTasksAxiAddArgs(id, desc, kind, repo, start)
+		return runTasksAxi("add", args)
+	}
+	return AddItem(homeDir, id, desc, kind, repo, start)
+}
 
+// buildTasksAxiAddArgs builds the argument list for tasks-axi add.
+func buildTasksAxiAddArgs(id, desc, kind, repo string, start bool) []string {
+	args := []string{id, desc}
+	if kind != "" {
+		args = append(args, "--kind", kind)
+	}
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
+	if start {
+		args = append(args, "--start")
+	}
+	return args
+}
 
 func listItems(path string, args []string) error {
 	items, err := parseBacklog(path)

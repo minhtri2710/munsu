@@ -30,6 +30,11 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 		return fmt.Errorf("invalid PR URL: %w", err)
 	}
 
+	// Verify PR is open before attempting merge
+	if err := checkPROpen(ghURL); err != nil {
+		return err
+	}
+
 	// Determine merge method (default squash)
 	method := "squash"
 	for _, arg := range extraArgs {
@@ -85,4 +90,35 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 		}
 	}
 	return nil
+}
+
+// checkPROpen verifies that a PR is in OPEN state before attempting merge.
+// Uses `gh pr view --json state` to check the current PR state.
+// Returns an error if the PR is merged, closed, or unreachable.
+func checkPROpen(ghURL ghurl.GHURL) error {
+	cmd := exec.Command("gh", "pr", "view",
+		fmt.Sprintf("%d", ghURL.Num),
+		"--repo", fmt.Sprintf("%s/%s", ghURL.Owner, ghURL.Repo),
+		"--json", "state",
+		"--jq", ".state",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("checking PR state: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return fmt.Errorf("checking PR state: %w", err)
+	}
+
+	state := strings.TrimSpace(string(out))
+	switch state {
+	case "OPEN":
+		return nil
+	case "MERGED":
+		return fmt.Errorf("PR #%d is already merged (state=%s): refusing to merge", ghURL.Num, state)
+	case "CLOSED":
+		return fmt.Errorf("PR #%d is closed (state=%s): refusing to merge", ghURL.Num, state)
+	default:
+		return fmt.Errorf("PR #%d has unexpected state %q: refusing to merge", ghURL.Num, state)
+	}
 }

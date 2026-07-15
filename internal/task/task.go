@@ -184,3 +184,76 @@ var ValidMetaFields = []string{
 	"window", "worktree", "project", "harness",
 	"model", "effort", "kind", "mode", "yolo",
 }
+
+// MetaEntry represents a single task entry from state meta files.
+type MetaEntry struct {
+	ID         string
+	Kind       string
+	Project    string
+	LastStatus string // last line from .status file, key stripped
+}
+
+// ListMeta reads all meta files from the state directory and returns them.
+// It reads *.meta files, extracts key fields, and reads the last status line
+// from the corresponding .status file for each task.
+func ListMeta(homeDir string) ([]MetaEntry, error) {
+	sd := StateDir(homeDir)
+	dir, err := os.Open(sd)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening state dir: %w", err)
+	}
+	defer dir.Close()
+
+	entries, err := dir.Readdir(-1)
+	if err != nil {
+		return nil, fmt.Errorf("reading state dir: %w", err)
+	}
+
+	// Collect unique task IDs from .meta files
+	var taskIDs []string
+	seen := make(map[string]bool)
+	for _, fi := range entries {
+		name := fi.Name()
+		if !strings.HasSuffix(name, ".meta") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".meta")
+		if !seen[id] {
+			seen[id] = true
+			taskIDs = append(taskIDs, id)
+		}
+	}
+
+	var result []MetaEntry
+	for _, id := range taskIDs {
+		meta, err := ReadMeta(homeDir, id)
+		if err != nil {
+			continue // skip unreadable meta
+		}
+
+		// Read last status line
+		lastStatus := ""
+		if statusLines, err := ReadStatus(homeDir, id); err == nil && len(statusLines) > 0 {
+			lastLine := statusLines[len(statusLines)-1]
+			msg, _ := ParseStatusKey(lastLine)
+			// Extract state prefix
+			if idx := strings.Index(msg, ":"); idx >= 0 {
+				lastStatus = msg
+			} else {
+				lastStatus = msg
+			}
+		}
+
+		result = append(result, MetaEntry{
+			ID:         id,
+			Kind:       meta["kind"],
+			Project:    meta["project"],
+			LastStatus: lastStatus,
+		})
+	}
+
+	return result, nil
+}
