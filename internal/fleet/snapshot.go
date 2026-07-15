@@ -117,15 +117,17 @@ func View(homeDir string) error {
 	fmt.Printf("Tasks: %d\n\n", len(snap.Tasks))
 
 	for _, ts := range snap.Tasks {
-		alive := "dead"
+		phase := "dead"
 		if ts.PaneAlive {
-			alive = "alive"
+			phase = "alive"
+		} else if ts.Window == "" {
+			phase = "registered"
 		}
 
 		fmt.Printf("- **%s** (repo: %s)\n", ts.ID, ts.Project)
 		fmt.Printf("  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
 		fmt.Printf("  harness: %s | model: %s\n", ts.Harness, ts.Model)
-		fmt.Printf("  pane: %s (%s)\n", ts.Window, alive)
+		fmt.Printf("  pane: %s (%s)\n", ts.Window, phase)
 		if ts.LastStatus != "" {
 			fmt.Printf("  status: %s\n", ts.LastStatus)
 		}
@@ -148,11 +150,15 @@ func Bearings(homeDir string, projectDir string) error {
 	for _, ts := range snap.Tasks {
 		if ts.Kind == "ship" || ts.Kind == "scout" {
 			inFlight++
-			alive := "alive"
+			phase := "alive"
 			if !ts.PaneAlive {
-				alive = "dead"
+				if ts.Window == "" {
+					phase = "registered"
+				} else {
+					phase = "dead"
+				}
 			}
-			fmt.Printf("- **%s** (%s) — %s [%s]\n", ts.ID, ts.Project, ts.LastStatus, alive)
+			fmt.Printf("- **%s** (%s) — %s [%s]\n", ts.ID, ts.Project, ts.LastStatus, phase)
 		}
 	}
 

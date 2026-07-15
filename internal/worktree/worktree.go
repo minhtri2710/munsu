@@ -1,9 +1,13 @@
 // Package worktree wraps the treehouse CLI for pooled git worktree management.
 //
+// Lease hygiene: every worktree acquired via Get (especially with --lease)
+// MUST be returned via Return when the owning crewmate finishes. Orphaned
+// leases block the pool and must be reclaimed manually.
+// Use "munsu worktree reclaim" to detect and return orphaned leases.
+//
 // All operations shell out to the treehouse binary. The treehouse CLI must be
 // installed and available on PATH.
 package worktree
-
 import (
 	"fmt"
 	"os"

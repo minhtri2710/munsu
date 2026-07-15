@@ -251,3 +251,54 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 		t.Error("expected teardown steps")
 	}
 }
+
+func TestRun_RemovesResidualArtifacts(t *testing.T) {
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create meta file
+	metaContent := "kind=scout\nwindow=@1\n"
+	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
+
+	// Create residual artifacts
+	residuals := []string{
+		"test-residual.status",
+		"test-residual.check.sh",
+		"test-residual.turn-ended",
+		"test-residual.pi-ext.ts",
+		"test-residual.grok-turnend-token",
+	}
+	for _, name := range residuals {
+		os.WriteFile(filepath.Join(stateDir, name), []byte("stale"), 0644)
+	}
+
+	// Run teardown with --force to skip safety
+	result, err := Run(Options{HomeDir: tmp, ID: "test-residual", Force: true})
+	if err != nil {
+		t.Fatalf("teardown should not fail: %v", err)
+	}
+
+	// Verify residual files are removed
+	for _, name := range residuals {
+		path := filepath.Join(stateDir, name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("residual %s should have been removed, but still exists", name)
+		}
+	}
+
+	// Verify steps mention residual removal
+	foundResidual := false
+	for _, step := range result.Steps {
+		if strings.Contains(step, "residual") {
+			foundResidual = true
+			break
+		}
+	}
+	if !foundResidual {
+		t.Errorf("expected teardown steps to mention residual removal, got: %v", result.Steps)
+	}
+}

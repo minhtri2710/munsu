@@ -27,9 +27,15 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 	projectsFile := filepath.Join(home, "data", "projects.md")
 
 	// Read the project registry to find directories
-	dirs, err := readProjectDirs(projectsFile, projectsDir)
+	dirs, localDirs, err := readProjectDirs(projectsFile, projectsDir)
 	if err != nil {
 		return res, fmt.Errorf("reading projects: %w", err)
+	}
+
+	// Track which dirs are local-path registrations
+	localSet := make(map[string]bool)
+	for _, d := range localDirs {
+		localSet[d] = true
 	}
 
 	for _, dir := range dirs {
@@ -37,8 +43,13 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 			continue
 		}
 
+		isLocal := localSet[dir]
 		if err := syncOne(dir); err != nil {
-			res.Stuck = append(res.Stuck, fmt.Sprintf("%s: %v", filepath.Base(dir), err))
+			if isLocal && strings.Contains(err.Error(), "dirty working tree") {
+				fmt.Fprintf(os.Stderr, "WARN: %s: %v (local path, skipping)\n", filepath.Base(dir), err)
+			} else {
+				res.Stuck = append(res.Stuck, fmt.Sprintf("%s: %v", filepath.Base(dir), err))
+			}
 		} else {
 			res.Synced = append(res.Synced, filepath.Base(dir))
 		}
@@ -50,18 +61,18 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 // readProjectDirs reads the project registry and resolves project directories.
 // Uses the project registry to find both cloned repos (in projects/<name>)
 // and local-path registrations (where Description is an absolute existing path).
-func readProjectDirs(projectsFile, projectsDir string) ([]string, error) {
+func readProjectDirs(projectsFile, projectsDir string) (dirs []string, localDirs []string, _ error) {
 	projects, err := project.ListFromFile(projectsFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	var dirs []string
 	for _, p := range projects {
 		// 1. Check if Description is an absolute existing path (local path registration)
 		if filepath.IsAbs(p.Description) {
 			if fi, statErr := os.Stat(p.Description); statErr == nil && fi.IsDir() {
 				dirs = append(dirs, p.Description)
+				localDirs = append(localDirs, p.Description)
 				continue
 			}
 		}
@@ -73,7 +84,7 @@ func readProjectDirs(projectsFile, projectsDir string) ([]string, error) {
 		}
 	}
 
-	return dirs, nil
+	return dirs, localDirs, nil
 }
 
 // syncOne fast-forwards a single project clone.

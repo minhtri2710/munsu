@@ -254,12 +254,17 @@ func Rm(homeDir, name string) error {
 }
 
 // Mode returns the delivery mode and yolo flag for a project.
+// If mode is empty, defaults to "no-mistakes" (the default delivery mode).
 func Mode(homeDir, name string) (mode string, yolo bool, err error) {
 	p, err := Find(homeDir, name)
 	if err != nil {
 		return "", false, err
 	}
-	return p.Mode, p.Yolo, nil
+	mode = p.Mode
+	if mode == "" {
+		mode = "no-mistakes"
+	}
+	return mode, p.Yolo, nil
 }
 
 // ResolveRepoPath resolves a project name to an absolute repo path.

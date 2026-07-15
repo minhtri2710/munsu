@@ -37,7 +37,11 @@ func Read(homeDir string, id string) (*State, error) {
 	// 1. Read meta
 	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
-		return nil, fmt.Errorf("reading meta for %s: %w", id, err)
+		// Missing meta means the task was never spawned or has been torn down.
+		// Return a soft "unknown" state instead of a hard error.
+		s.Status = "unknown"
+		s.Description = "torn-down: no meta file for " + id
+		return s, nil
 	}
 
 	// 2. Check no-mistakes run-step as authoritative source of truth

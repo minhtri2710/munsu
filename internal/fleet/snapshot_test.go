@@ -141,4 +141,40 @@ func TestBearings_WithTasks(t *testing.T) {
 	if !strings.Contains(out, "scouting around") {
 		t.Errorf("expected output to contain status 'scouting around', got: %q", out)
 	}
+	if !strings.Contains(out, "scouting around") {
+		t.Errorf("expected output to contain status 'scouting around', got: %q", out)
+	}
+}
+
+func TestView_RegisteredPhase(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create a pre-spawn meta (no window, no worktree)
+	preSpawnMeta := map[string]string{
+		"project": "munsu",
+		"harness": "pi",
+		"model":   "claude-sonnet",
+		"kind":    "ship",
+		"mode":    "no-mistakes",
+	}
+	if err := task.WriteMeta(tmp, "pre-spawn-task", preSpawnMeta); err != nil {
+		t.Fatalf("failed to write meta: %v", err)
+	}
+
+	out, err := captureStdout(func() error {
+		return View(tmp)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should show "registered" not "dead"
+	if !strings.Contains(out, "registered") {
+		t.Errorf("expected View to show 'registered' for pre-spawn task, got: %q", out)
+	}
+	if strings.Contains(out, "(dead)") {
+		t.Errorf("View should not show '(dead)' for pre-spawn meta with no window, got: %q", out)
+	}
 }

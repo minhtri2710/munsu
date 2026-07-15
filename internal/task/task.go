@@ -250,10 +250,18 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 		result = append(result, MetaEntry{
 			ID:         id,
 			Kind:       meta["kind"],
-			Project:    meta["project"],
+			Project:    pickProject(meta),
 			LastStatus: lastStatus,
 		})
 	}
 
 	return result, nil
+}
+
+// pickProject returns the project from meta, falling back to repo if project is unset.
+func pickProject(meta map[string]string) string {
+	if p := meta["project"]; p != "" {
+		return p
+	}
+	return meta["repo"]
 }

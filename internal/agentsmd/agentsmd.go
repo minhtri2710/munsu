@@ -15,8 +15,7 @@ type EnsureResult struct {
 	SelfGovernSec bool
 }
 
-// Ensure creates or updates a project's AGENTS.md and CLAUDE.md symlink.
-func Ensure(projectDir string) (*EnsureResult, error) {
+func Ensure(projectDir string, stage bool) (*EnsureResult, error) {
 	res := &EnsureResult{}
 	agentsPath := filepath.Join(projectDir, "AGENTS.md")
 
@@ -45,32 +44,50 @@ func Ensure(projectDir string) (*EnsureResult, error) {
 		res.SelfGovernSec = true
 	}
 
-	if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
-		return res, fmt.Errorf("writing AGENTS.md: %w", err)
+	// Only write if content actually changed
+	changed := !hasFile || content != string(existing)
+	if changed {
+		if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
+			return res, fmt.Errorf("writing AGENTS.md: %w", err)
+		}
 	}
 	res.AGENTSMD = agentsPath
 
 	// Create CLAUDE.md symlink
-	claudePath := filepath.Join(projectDir, "CLAUDE.md")
-	rel, err := filepath.Rel(projectDir, agentsPath)
-	if err != nil {
+	if err := ensureSymlink(projectDir, agentsPath); err != nil {
 		return res, err
 	}
 
-	if fi, err := os.Lstat(claudePath); err == nil && fi.Mode()&os.ModeSymlink == 0 {
-		os.Remove(claudePath)
-	}
-
-	if err := os.Symlink(rel, claudePath); err != nil && !os.IsExist(err) {
-		return res, fmt.Errorf("creating CLAUDE.md symlink: %w", err)
-	}
-	res.CLAUDEMDSym = claudePath
-
-	for _, p := range []string{agentsPath, claudePath} {
-		exec.Command("git", "add", p).Run()
+	// git add only when --stage flag is set
+	if stage && changed {
+		for _, p := range []string{agentsPath, claudePath(projectDir, agentsPath)} {
+			exec.Command("git", "add", "--", p).Run()
+		}
 	}
 
 	return res, nil
+}
+
+func claudePath(projectDir, agentsPath string) string {
+	return filepath.Join(projectDir, "CLAUDE.md")
+}
+
+func ensureSymlink(projectDir, agentsPath string) error {
+	claudePathStr := claudePath(projectDir, agentsPath)
+	rel, err := filepath.Rel(projectDir, agentsPath)
+	if err != nil {
+		return err
+	}
+
+	if fi, err := os.Lstat(claudePathStr); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+		os.Remove(claudePathStr)
+	}
+
+	if err := os.Symlink(rel, claudePathStr); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("creating CLAUDE.md symlink: %w", err)
+	}
+
+	return nil
 }
 
 func contains(s, sub string) bool {

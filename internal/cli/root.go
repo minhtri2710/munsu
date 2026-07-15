@@ -409,9 +409,75 @@ func newWorktreeCmd() *cobra.Command {
 		},
 	}
 
+	reclaimCmd := &cobra.Command{
+		Use:   "reclaim",
+		Short: "Reclaim orphaned worktrees not referenced by any task meta",
+		Long: `List all treehouse-visible worktrees and return those not
+referenced by any active task meta file. Use after crash recovery or
+manual cleanup to release stale leases.
+
+Leases should always be returned via "worktree return <path>" when a
+crewmate finishes. This command is a safety net for orphaned leases.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			// Get all active worktree paths from task meta
+			entries, err := task.ListMeta(homeDir)
+			if err != nil {
+				return fmt.Errorf("listing task meta: %w", err)
+			}
+			active := make(map[string]bool)
+			for _, e := range entries {
+				meta, err := task.ReadMeta(homeDir, e.ID)
+				if err != nil {
+					continue
+				}
+				if wt := meta["worktree"]; wt != "" {
+					active[wt] = true
+				}
+			}
+
+			// Get treehouse status and parse worktree list
+			out, err := worktree.Status()
+			if err != nil {
+				return fmt.Errorf("getting treehouse status: %w", err)
+			}
+
+			// Return worktrees not in active set
+			count := 0
+			for _, line := range strings.Split(out, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				parts := strings.Fields(line)
+				if len(parts) == 0 {
+					continue
+				}
+				wtPath := parts[len(parts)-1]
+				if !active[wtPath] {
+					fmt.Printf("returning orphaned worktree: %s\n", wtPath)
+					if err := worktree.Return(wtPath); err != nil {
+						fmt.Fprintf(os.Stderr, "  error: %v\n", err)
+					} else {
+						count++
+					}
+				}
+			}
+
+			fmt.Printf("Reclaimed %d orphaned worktrees\n", count)
+			return nil
+		},
+	}
+
 	cmd.AddCommand(getCmd)
 	cmd.AddCommand(returnCmd)
 	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(reclaimCmd)
 	return cmd
 }
 
@@ -720,6 +786,16 @@ func newSpawnCmd() *cobra.Command {
 			if !brief.Exists(homeDir, id) {
 				return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning", id, id, projectName)
 			}
+
+			// Warn if tasks-axi available but no backlog row for this id
+			if _, err := exec.LookPath("tasks-axi"); err == nil {
+				// tasks-axi available, check for backlog row
+				chk := exec.Command("tasks-axi", "show", id)
+				if out, err := chk.CombinedOutput(); err != nil || strings.Contains(string(out), "not found") {
+					fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row (use 'backlog add %s ...' to track lifecycle)\n", id, id)
+				}
+			}
+
 			// 2. Resolve project repo path from registry
 			projPath, err := project.ResolveRepoPath(homeDir, projectName)
 			if err != nil {
@@ -1679,7 +1755,7 @@ or an absolute path to a project directory.`,
 				projectDir = resolved
 			}
 
-			res, err := agentsmd.Ensure(projectDir)
+			res, err := agentsmd.Ensure(projectDir, false)
 			if err != nil {
 				return err
 			}
