@@ -177,6 +177,12 @@ func TestTemplates(t *testing.T) {
 		t.Errorf("Agy ExtraArgs should not be empty")
 	} else if tmpl.ExtraArgs[0] != "--dangerously-skip-permissions" {
 		t.Errorf("Agy ExtraArgs[0] = %q, want --dangerously-skip-permissions", tmpl.ExtraArgs[0])
+	} else if len(tmpl.ExtraArgs) < 3 {
+		t.Errorf("Agy ExtraArgs has %d elements, want >= 3", len(tmpl.ExtraArgs))
+	} else if tmpl.ExtraArgs[1] != "-i" {
+		t.Errorf("Agy ExtraArgs[1] = %q, want -i", tmpl.ExtraArgs[1])
+	} else if tmpl.ExtraArgs[2] != "read and execute .crew-brief.md" {
+		t.Errorf("Agy ExtraArgs[2] = %q, want 'read and execute .crew-brief.md'", tmpl.ExtraArgs[2])
 	}
 }
 

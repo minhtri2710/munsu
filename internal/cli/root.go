@@ -1077,12 +1077,8 @@ func newSpawnCmd() *cobra.Command {
 
 				// Brief settle: let harness present clean prompt before one-liner
 				time.Sleep(500 * time.Millisecond)
-				// Inject brief: full paste for non-agy, one-liner for agy (brief already in .crew-brief.md)
-				if h == harness.Agy {
-					_ = bk.SendKeys(windowID, "read and execute .crew-brief.md")
-				} else {
-					_ = bk.SendKeys(windowID, string(briefData))
-				}
+				// Inject brief: all harnesses use file-based .crew-brief.md
+				_ = bk.SendKeys(windowID, "read and execute .crew-brief.md")
 			}
 
 			// 10. Write task meta
