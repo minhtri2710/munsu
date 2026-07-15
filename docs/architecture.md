@@ -216,7 +216,8 @@ Delivery subcommands: `munsu review-diff` (diff summary), `munsu pr-check`
 
 `harness.Detect()` checks environment markers first (`PI_AGENT_ACTIVE`,
 `CLAUDE_CODE`, `CODEBOX_AGENT_SESSION`, `GEMINI_AGENT`, `OPENAI_AGENT`,
-`ANTHROPIC_API_KEY`, etc.), then falls back to process ancestry inspection.
+`ANTIGRAVITY_AGENT`, `ANTHROPIC_API_KEY`, etc.), then falls back to
+process ancestry inspection.
 
 `harness.Crew(homeDir)` — fallback chain: `crew-dispatch.json` default >
 `config/crew-harness` > detected harness.

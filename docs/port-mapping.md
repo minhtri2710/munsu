@@ -3,6 +3,10 @@
 This document maps firstmate scripts and concepts to their munsu equivalents.
 All commands are fully implemented unless marked otherwise.
 
+> **agy (Antigravity):** munsu detects and supports `agy` as a verified harness adapter. See `internal/harness/harness.go` entry `Agy` and `docs/skills/harness-adapters.md` for launch template.
+>
+> **ExtraArgs shell-quoting (F10.1):** `munsu spawn` shell-quotes `ExtraArgs` values to prevent word-splitting when the harness backend (tmux/herdr) interprets the command string. This matches firstmate's `printf %q` behavior.
+
 | firstmate concept / script | munsu command | munsu Go package | Status |
 |---|---|---|---|
 | `FM_HOME` / `~/.firstmate` | `munsu home` | `internal/home` | **implemented** |
@@ -52,3 +56,25 @@ All commands are fully implemented unless marked otherwise.
 | Dispatcher | None (harness calls bin/fm-*.sh directly) | Single `munsu` entrypoint dispatching subcommands |
 | Runtime dep on firstmate | N/A (is firstmate) | No (standalone) |
 | Orchestrator manual | Repo's AGENTS.md | Scaffolded by `munsu init` (Wave C2) |
+
+## Firstmate-only intentional gaps
+
+These firstmate capabilities are deliberately not ported to munsu — they are
+firstmate-specific infrastructure that do not belong in a standalone CLI port:
+
+| Capability | firstmate scripts | Rationale |
+|---|---|---|
+| X/Twitter integration | `fm-x-*.sh` (6 scripts) | Social-media interaction; firstmate-specific, not part of crew lifecycle. |
+| Turn-end guards | `fm-turnend-guard.sh` | Post-response hooks; munsu's watcher handles stale detection at 5s granularity. |
+| Composer mode | `fm-composer-lib.sh` | Multi-agent composition; munsu spawns 1:1 crewmates. |
+| Codex command policies | `fm-arm-command-policy.mjs` | Codex-specific ARM/CD gating; per-harness policies not in munsu's generic model. |
+| Classification / Gate-Refuse library | `fm-classify-lib.sh`, `fm-gate-refuse-lib.sh` | Logic is inline in munsu (`--kind`, cobra validation) — no extracted library needed. |
+| Transition library | `fm-transition-lib.sh` | State transitions encoded in cobra command relationships rather than a library. |
+| Supervision instructions | `fm-supervision-instructions.sh` | Watcher emits structured wake reasons instead of instruction templates. |
+| Herdr lab | `fm-herdr-lab.sh` | Developer tooling for Herdr experimentation; not a production capability. |
+| `secondmate retire --remove-home` | `fm-teardown.sh` | Deliberate safety choice — home directory persists by default. |
+
+> **Design principle:** Munsu ports the crew lifecycle model, not every firstmate
+> script. Capabilities that are firstmate-specific (social, Codex-only, or experimental
+> tooling) are intentionally excluded. Gaps that affect core lifecycle parity are
+> tracked in the wave roadmap.

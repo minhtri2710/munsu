@@ -1,8 +1,8 @@
 # munsu — Remaining Architecture Remediation Tasks
 
 > **ARCHIVED — all remediation items shipped in PR #14. See commit history for details.**
-
 > This file is retained for reference only; no further action needed.
+> Verified still accurate at tip `0b88e6f` (2026-07-15).
 
 ---
 
