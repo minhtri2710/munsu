@@ -136,7 +136,7 @@ func validateDeliveryMode(mode string) error {
 // readyPatterns maps each harness to a set of substrings that indicate
 // the agent is ready for input.
 var readyPatterns = map[string][]string{
-	harness.Pi:   {">", "Agent:", "What would you like"},
+	harness.Pi:   {">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
 	harness.Agy:  {"esc to cancel", "Ready for your prompt", "What would you like"},
 	harness.Claude: {">", "ready"},
 }
@@ -152,6 +152,10 @@ func waitForHarnessReady(bk session.Backend, windowID, harness string, timeoutSe
 	if patterns == nil {
 		patterns = defaultReadyPatterns
 	}
+
+	// trustHandled tracks whether we've auto-accepted a per-worktree trust prompt.
+	trustHandled := false
+
 	deadline := time.After(time.Duration(timeoutSec) * time.Second)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -160,17 +164,25 @@ func waitForHarnessReady(bk session.Backend, windowID, harness string, timeoutSe
 		select {
 		case <-deadline:
 			// Grab final capture for diagnostic
-			capture, _ := bk.Capture(windowID, 10)
+			capture, _ := bk.Capture(windowID, 60)
 			return fmt.Errorf("harness not ready after %ds: last capture: %q", timeoutSec, capture)
 		case <-ticker.C:
 			// Check if pane is still alive
 			if !bk.Alive(windowID) {
 				return fmt.Errorf("window died while waiting for ready")
 			}
-			capture, err := bk.Capture(windowID, 10)
+			capture, err := bk.Capture(windowID, 60)
 			if err != nil {
 				continue
 			}
+
+			// Dialog handlers: auto-answer trust prompts before checking ready patterns.
+			if !trustHandled && isTrustPrompt(capture, harness) {
+				_ = bk.SendKeys(windowID, "")
+				trustHandled = true
+				continue
+			}
+
 			for _, p := range patterns {
 				if strings.Contains(capture, p) {
 					return nil
@@ -178,6 +190,27 @@ func waitForHarnessReady(bk session.Backend, windowID, harness string, timeoutSe
 			}
 		}
 	}
+}
+
+// trustPromptPatterns maps each harness to patterns that indicate a
+// first-run folder-trust dialog the agent is blocking on.
+var trustPromptPatterns = map[string][]string{
+	harness.Agy: {"Do you trust", "Yes, I trust this folder"},
+}
+
+// isTrustPrompt reports whether capture contains a harness-specific trust
+// prompt that should be auto-dismissed with Enter.
+func isTrustPrompt(capture, harness string) bool {
+	patterns, ok := trustPromptPatterns[harness]
+	if !ok {
+		return false
+	}
+	for _, p := range patterns {
+		if strings.Contains(capture, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExactArgs returns a cobra.PositionalArgs validator that wraps cobra.ExactArgs
@@ -920,6 +953,13 @@ func newSpawnCmd() *cobra.Command {
 				return err
 			}
 
+			// Validate --harness flag before brief existence check (cheap, user-facing)
+			if harnessFlag != "" {
+				if err := harness.ValidateHarness(harnessFlag); err != nil {
+					return fmt.Errorf("--harness: %w", err)
+				}
+			}
+
 
 			// Preflight: require brief to exist before spawning
 			if !brief.Exists(homeDir, id) {
@@ -1018,11 +1058,19 @@ func newSpawnCmd() *cobra.Command {
 
 			// 9b. Wait for harness ready signature before injecting brief
 			if len(briefData) > 0 {
-				if err := waitForHarnessReady(bk, windowID, h, 60); err != nil {
-					// If timeout or error, fail loud
-					_ = worktree.Return(wtPath)
-					return fmt.Errorf("harness %q not ready within timeout: %w", h, err)
-				}
+			if err := waitForHarnessReady(bk, windowID, h, 60); err != nil {
+				// Capture final state for diagnostics before cleanup
+				capture, _ := bk.Capture(windowID, 60)
+				_ = task.AppendStatus(homeDir, id, "failed: harness not ready")
+				// Write diagnostic dump to data/<id>/ready-fail.txt
+				dataDir := filepath.Join(homeDir, "data", id)
+				_ = os.MkdirAll(dataDir, 0755)
+				failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", h, err, capture)
+				_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
+				_ = bk.Teardown(windowID)
+				_ = worktree.Return(wtPath)
+				return fmt.Errorf("harness %q not ready within timeout: %w", h, err)
+			}
 				// Inject full brief as single paste
 				_ = bk.SendKeys(windowID, string(briefData))
 			}
