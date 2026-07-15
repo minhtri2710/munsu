@@ -105,6 +105,65 @@ func buildHarnessLaunch(h string, tmpl harness.Template) string {
 	return strings.Join(parts, " ")
 }
 
+// validDeliveryModes lists the accepted delivery mode values.
+var validDeliveryModes = map[string]bool{
+	"no-mistakes": true,
+	"direct-PR":   true,
+	"local-only":  true,
+}
+
+// validateDeliveryMode returns an error if the mode is not a known value.
+func validateDeliveryMode(mode string) error {
+	if mode == "" {
+		return nil // empty is allowed (will use registry default)
+	}
+	if !validDeliveryModes[mode] {
+		return fmt.Errorf("invalid delivery mode %q: must be one of: no-mistakes, direct-PR, local-only", mode)
+	}
+	return nil
+}
+
+
+// ExactArgs returns a cobra.PositionalArgs validator that wraps cobra.ExactArgs
+// but includes the command's Use string in the error message so users see the
+// expected format (especially important when descriptions need quoting).
+func ExactArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) != n {
+			return fmt.Errorf("%s accepts %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use)
+		}
+		return nil
+	}
+}
+
+// NoArgs is a cobra.PositionalArgs validator that requires no arguments.
+func NoArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("%s accepts no arguments, received %d: %s", cmd.Name(), len(args), cmd.Use)
+	}
+	return nil
+}
+
+// MinimumNArgs returns a cobra.PositionalArgs validator that requires at least n args.
+func MinimumNArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) < n {
+			return fmt.Errorf("%s requires at least %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use)
+		}
+		return nil
+	}
+}
+
+// MaximumNArgs returns a cobra.PositionalArgs validator that requires at most n args.
+func MaximumNArgs(n int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) > n {
+			return fmt.Errorf("%s accepts at most %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use)
+		}
+		return nil
+	}
+}
+
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
@@ -198,7 +257,7 @@ func newConfigCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "get <key>",
 		Short: "Get a configuration value",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -215,7 +274,7 @@ func newConfigCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Set a configuration value",
-		Args:  cobra.ExactArgs(2),
+		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -240,7 +299,7 @@ func newProjectCmd() *cobra.Command {
 
 If path-or-url is a git URL (http://, https://, git@, ssh://),
 the repository is cloned into the projects directory first.`,
-		Args: cobra.ExactArgs(2),
+		Args: ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode, _ := cmd.Flags().GetString("mode")
 			yolo, _ := cmd.Flags().GetBool("yolo")
@@ -257,7 +316,7 @@ the repository is cloned into the projects directory first.`,
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered projects",
-		Args:  cobra.NoArgs,
+		Args:  NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -288,7 +347,7 @@ the repository is cloned into the projects directory first.`,
 	showCmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show project details",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -320,7 +379,7 @@ the repository is cloned into the projects directory first.`,
 	rmCmd := &cobra.Command{
 		Use:   "rm <name>",
 		Short: "Remove a registered project",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -333,7 +392,7 @@ the repository is cloned into the projects directory first.`,
 	modeCmd := &cobra.Command{
 		Use:   "mode <name>",
 		Short: "Resolve delivery mode for a project",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -370,7 +429,7 @@ func newWorktreeCmd() *cobra.Command {
 		Use:   "get <repo-path>",
 		Short: "Acquire a pooled worktree",
 		Long:  `Acquire a pooled worktree via treehouse. With --lease, pass through to treehouse for durable holds.`,
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			lease, _ := cmd.Flags().GetBool("lease")
 			path, err := worktree.Get(args[0], lease)
@@ -386,7 +445,7 @@ func newWorktreeCmd() *cobra.Command {
 	returnCmd := &cobra.Command{
 		Use:   "return <path>",
 		Short: "Return a worktree to the pool",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := worktree.Return(args[0]); err != nil {
 				return err
@@ -398,7 +457,7 @@ func newWorktreeCmd() *cobra.Command {
 	statusCmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show worktree pool status",
-		Args:  cobra.NoArgs,
+		Args:  NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out, err := worktree.Status()
 			if err != nil {
@@ -418,7 +477,7 @@ manual cleanup to release stale leases.
 
 Leases should always be returned via "worktree return <path>" when a
 crewmate finishes. This command is a safety net for orphaned leases.`,
-		Args: cobra.NoArgs,
+		Args: NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -491,7 +550,7 @@ func newHarnessCmd() *cobra.Command {
 		Use:   "detect",
 		Short: "Detect the running agent harness",
 		Long:  `Detect the running agent harness using env markers first, then process ancestry.`,
-		Args:  cobra.NoArgs,
+		Args:  NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			h, err := harness.Detect()
 			if err != nil {
@@ -506,7 +565,7 @@ func newHarnessCmd() *cobra.Command {
 		Use:   "crew",
 		Short: "Resolve crewmate harness",
 		Long:  `Resolve the crewmate harness. Fallback chain: crew-dispatch.json default > config/crew-harness > detected harness.`,
-		Args:  cobra.NoArgs,
+		Args:  NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -525,7 +584,7 @@ func newHarnessCmd() *cobra.Command {
 		Use:   "secondmate",
 		Short: "Resolve secondmate harness",
 		Long:  `Resolve the secondmate harness. Fallback chain: config/secondmate-harness > config/crew-harness > detected harness.`,
-		Args:  cobra.NoArgs,
+		Args:  NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -552,7 +611,7 @@ func newTaskCmd() *cobra.Command {
 	addCmd := &cobra.Command{
 		Use:   "add <id> <description>",
 		Short: "Add a new task to the backlog",
-		Args:  cobra.ExactArgs(2),
+		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			desc := args[1]
@@ -565,7 +624,9 @@ func newTaskCmd() *cobra.Command {
 			}
 			if repo != "" {
 				meta["repo"] = repo
+				meta["project"] = repo // --repo maps directly to the project name
 			}
+
 
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -585,7 +646,7 @@ func newTaskCmd() *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List tasks",
-		Args:  cobra.NoArgs,
+		Args:  NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stateFilter, _ := cmd.Flags().GetString("state")
 
@@ -627,7 +688,7 @@ func newTaskCmd() *cobra.Command {
 	showCmd := &cobra.Command{
 		Use:   "show <id>",
 		Short: "Show task details",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
@@ -665,7 +726,7 @@ func newTaskCmd() *cobra.Command {
 	statusCmd := &cobra.Command{
 		Use:   "status <id> <state> <message>",
 		Short: "Append a status line to a task",
-		Args:  cobra.ExactArgs(3),
+		Args:  ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			state := args[1]
@@ -700,7 +761,7 @@ func newBriefCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "brief <id> <repo>",
 		Short: "Scaffold a task brief",
-		Args:  cobra.ExactArgs(2),
+		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			repo := args[1]
@@ -715,10 +776,14 @@ func newBriefCmd() *cobra.Command {
 			var yolo bool
 			if modeFlag != "" {
 				mode = modeFlag
+				if err := validateDeliveryMode(mode); err != nil {
+					return err
+				}
 			} else if m, y, err := project.Mode(homeDir, repo); err == nil {
 				mode = m
 				yolo = y
 			}
+
 
 			// Require existing task meta unless --force
 			if !force {
@@ -759,7 +824,7 @@ func newBriefCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&scout, "scout", false, "Generate a scout brief instead of ship brief")
 	cmd.Flags().BoolVar(&force, "force", false, "Scaffold brief without requiring existing task meta")
-	cmd.Flags().StringVar(&modeFlag, "mode", "", "Override delivery mode (feat, fix, refactor, etc.)")
+	cmd.Flags().StringVar(&modeFlag, "mode", "", "Delivery mode override (no-mistakes|direct-PR|local-only)")
 
 	return cmd
 }
@@ -775,7 +840,7 @@ func newSpawnCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "spawn <id> <project>",
 		Short: "Spawn a crewmate agent",
-		Args:  cobra.ExactArgs(2),
+		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			projectName := args[1]
@@ -785,6 +850,12 @@ func newSpawnCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolving home: %w", err)
 			}
+
+			// Validate delivery mode
+			if err := validateDeliveryMode(mode); err != nil {
+				return err
+			}
+
 
 			// Preflight: require brief to exist before spawning
 			if !brief.Exists(homeDir, id) {
@@ -796,7 +867,7 @@ func newSpawnCmd() *cobra.Command {
 				// tasks-axi available, check for backlog row
 				chk := exec.Command("tasks-axi", "show", id)
 				if out, err := chk.CombinedOutput(); err != nil || strings.Contains(string(out), "not found") {
-					fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row (use 'backlog add %s ...' to track lifecycle)\n", id, id)
+					fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row; register it with 'backlog add %s --kind %s' to track lifecycle\n", id, id, kind)
 				}
 			}
 
@@ -936,7 +1007,7 @@ func newSendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send <id> <line>",
 		Short: "Send a line to a crewmate endpoint",
-		Args:  cobra.ExactArgs(2),
+		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			line := args[1]
@@ -976,7 +1047,7 @@ func newPeekCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "peek <id>",
 		Short: "Peek at crewmate output",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
@@ -1031,7 +1102,7 @@ func newCrewStateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "crew-state <id>",
 		Short: "Read crewmate current state",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
@@ -1073,7 +1144,7 @@ func newPromoteCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "promote <id>",
 		Short: "Promote a scout task to ship",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
@@ -1123,7 +1194,7 @@ func newTeardownCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "teardown <id>",
 		Short: "Tear down a crewmate",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 
@@ -1166,7 +1237,7 @@ a Markdown diff summary.
 For registered projects with a remote, compares against the default branch.
 For PR tasks (where meta has pr=), fetches the PR head and compares.
 Warns if local default branch is stale vs origin.`,
-		Args: cobra.ExactArgs(1),
+		Args: ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1185,7 +1256,7 @@ func newPRCheckCmd() *cobra.Command {
 and write a check.sh script to poll the PR merge status via gh CLI.
 
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
-		Args: cobra.ExactArgs(2),
+		Args: ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			prURL := args[1]
@@ -1220,7 +1291,7 @@ Use -- --merge or -- --rebase to override the merge method.
 The --repo/-R flag is not allowed (repository comes from the URL).
 
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
-		Args: cobra.MinimumNArgs(2),
+		Args: MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			prURL := args[1]
@@ -1253,7 +1324,7 @@ func newMergeLocalCmd() *cobra.Command {
 		Long: `Fast-forward merge the crewmate branch into the local default branch.
 Only works for local-only mode projects (no remote).
 Refuses if the merge is not a clean fast-forward.`,
-		Args: cobra.ExactArgs(1),
+		Args: ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1315,7 +1386,7 @@ The description must be quoted if it contains multiple words.
 Example:
   munsu backlog add flow-r2 "Flow retest scout"
 `,
-		Args:  cobra.ExactArgs(2),
+		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
 			desc := args[1]
@@ -1325,7 +1396,26 @@ Example:
 				return fmt.Errorf("resolving home: %w", err)
 			}
 
-			return backlog.AddItemDispatch(homeDir, id, desc, kind, repo, start)
+			if err := backlog.AddItemDispatch(homeDir, id, desc, kind, repo, start); err != nil {
+				return err
+			}
+			// When --start is set, also register the task meta so it appears in fleet state.
+			if start {
+				meta := map[string]string{
+					"description": desc,
+					"kind":        kind,
+				}
+				if repo != "" {
+					meta["repo"] = repo
+					meta["project"] = repo
+				}
+				if err := task.WriteMeta(homeDir, id, meta); err != nil {
+					// Non-fatal: log but don't fail the backlog add
+					fmt.Fprintf(os.Stderr, "warning: writing task meta for %s: %v\n", id, err)
+				}
+			}
+			return nil
+
 		},
 	}
 
@@ -1340,7 +1430,7 @@ func newBacklogListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list [state-filter]",
 		Short: "List backlog items",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1358,7 +1448,7 @@ func newBacklogShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <id>",
 		Short: "Show backlog item details",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1376,7 +1466,7 @@ func newBacklogStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start <id>",
 		Short: "Start a backlog item (mark in-flight)",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1394,7 +1484,7 @@ func newBacklogDoneCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "done <id>",
 		Short: "Mark a backlog item as done",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1412,7 +1502,7 @@ func newBacklogBlockCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "block <id>",
 		Short: "Block a backlog item",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1430,7 +1520,7 @@ func newBacklogReadyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ready <id>",
 		Short: "Unblock a backlog item (mark ready)",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1448,7 +1538,7 @@ func newBacklogUnblockCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "unblock <id>",
 		Short: "Alias for ready (unblock a backlog item)",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1578,7 +1668,7 @@ func newBearingsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "bearings",
 		Short: "Compact resume report",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1707,7 +1797,7 @@ Examples:
   munsu stow --captain "Prefer simple project layouts"
   munsu stow --kind captain "Prefer simple layouts"
 `,
-		Args: cobra.MinimumNArgs(0),
+		Args: MinimumNArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if captain {
 				kind = stow.KindCaptain
@@ -1752,7 +1842,7 @@ Adds the self-governance section if missing.
 
 The <project> argument can be a project name (resolved from the registry)
 or an absolute path to a project directory.`,
-		Args: cobra.ExactArgs(1),
+		Args: ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectArg := args[0]
 
@@ -1805,7 +1895,7 @@ func newSecondmateCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "seed <id> <home-path>",
 		Short: "Seed a secondmate home with charter",
-		Args:  cobra.ExactArgs(2),
+		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return secondmate.Seed(args[0], args[1], "# Secondmate charter\n\nPersistent domain supervisor.\n")
 		},
@@ -1814,7 +1904,7 @@ func newSecondmateCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "launch <secondmate-home>",
 		Short: "Launch a secondmate in its home",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1827,7 +1917,7 @@ func newSecondmateCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "retire <secondmate-home>",
 		Short: "Retire a secondmate",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return secondmate.Retire(args[0], false)
 		},
@@ -1855,7 +1945,7 @@ func newSecondmateCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "handoff <secondmate-home> <item-key...>",
 		Short: "Hand off backlog items to a secondmate",
-		Args:  cobra.MinimumNArgs(2),
+		Args:  MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1868,7 +1958,7 @@ func newSecondmateCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "config-push <secondmate-home>",
 		Short: "Push inheritable config to a secondmate",
-		Args:  cobra.ExactArgs(1),
+		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -1898,5 +1988,5 @@ Stop with SIGTERM/SIGINT. The flag is cleared on stop.`,
 			}
 			return afk.Start(homeDir)
 		},
-	}
+}
 }

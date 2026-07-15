@@ -5,9 +5,19 @@
 // leases block the pool and must be reclaimed manually.
 // Use "munsu worktree reclaim" to detect and return orphaned leases.
 //
+// IMPORTANT: Return always passes --force to treehouse to prevent interactive
+// prompts (e.g. "Worktree has uncommitted changes. Clean and return? [Y/n]")
+// from hanging crewmates with no stdin. If treehouse still emits "Aborted" in
+// its output even with --force, Return treats that as an error even on exit 0.
+//
+// The --force flag is required: without it, treehouse prompts interactively
+// and produces "Aborted" (exit 0) when stdin is closed, causing a false
+// "worktree returned to pool" success.
+//
 // All operations shell out to the treehouse binary. The treehouse CLI must be
 // installed and available on PATH.
 package worktree
+
 import (
 	"fmt"
 	"os"
@@ -52,16 +62,25 @@ func Get(repoPath string, lease bool) (string, error) {
 	return wtPath, nil
 }
 
-// Return returns a worktree path to the pool via treehouse.
+// Return returns a worktree path to the pool via treehouse, always using --force.
+// If the raw output contains "Aborted" (treehouse prompt aborted), an error is
+// returned even if the process exits 0.
 func Return(path string) error {
 	bin, err := treehouseBin()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin, "return", path)
+	cmd := exec.Command(bin, "return", "--force", path)
 	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+	// Even if exit code is 0, check for "Aborted" which means treehouse
+	// prompted interactively and was aborted (e.g. stdin closed).
+	// This produces a false "worktree returned to pool" without --force.
+	if strings.Contains(output, "Aborted") {
+		return fmt.Errorf("treehouse return: %s", output)
+	}
 	if err != nil {
-		return fmt.Errorf("treehouse return: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("treehouse return: %s", output)
 	}
 	return nil
 }
