@@ -695,6 +695,7 @@ func newTaskCmd() *cobra.Command {
 func newBriefCmd() *cobra.Command {
 	var scout bool
 	var force bool
+	var modeFlag string
 
 	cmd := &cobra.Command{
 		Use:   "brief <id> <repo>",
@@ -709,10 +710,12 @@ func newBriefCmd() *cobra.Command {
 				return err
 			}
 
-			// Resolve delivery mode from project registry
+			// Resolve delivery mode from project registry, or use --mode override
 			var mode string
 			var yolo bool
-			if m, y, err := project.Mode(homeDir, repo); err == nil {
+			if modeFlag != "" {
+				mode = modeFlag
+			} else if m, y, err := project.Mode(homeDir, repo); err == nil {
 				mode = m
 				yolo = y
 			}
@@ -756,6 +759,7 @@ func newBriefCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&scout, "scout", false, "Generate a scout brief instead of ship brief")
 	cmd.Flags().BoolVar(&force, "force", false, "Scaffold brief without requiring existing task meta")
+	cmd.Flags().StringVar(&modeFlag, "mode", "", "Override delivery mode (feat, fix, refactor, etc.)")
 
 	return cmd
 }
@@ -859,14 +863,13 @@ func newSpawnCmd() *cobra.Command {
 			// 9. Inject brief content
 			briefPath := brief.Path(homeDir, id)
 			if briefData, readErr := os.ReadFile(briefPath); readErr == nil {
-				lines := strings.Split(string(briefData), "\n")
-				for _, line := range lines {
-					if line == "" {
-						continue
-					}
-					// Send each non-empty line
-					_ = bk.SendKeys(windowID, line)
+				// Write brief into worktree for agent file access
+				briefWorktreePath := filepath.Join(wtPath, ".crew-brief.md")
+				if writeErr := os.WriteFile(briefWorktreePath, briefData, 0644); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: writing brief to worktree: %v\n", writeErr)
 				}
+				// Inject full brief as single paste (one SendKeys call instead of N)
+				_ = bk.SendKeys(windowID, string(briefData))
 			} else if !os.IsNotExist(readErr) {
 				fmt.Fprintf(os.Stderr, "warning: reading brief: %v\n", readErr)
 			}
@@ -883,11 +886,15 @@ func newSpawnCmd() *cobra.Command {
 				"projpath": projPath,
 				"harness":  h,
 				"backend":  bkName,
-				"model":    model,
-				"effort":   effort,
 				"kind":     kind,
 				"mode":     mode,
 				"yolo":     yoloVal,
+			}
+			if model != "" {
+				meta["model"] = model
+			}
+			if effort != "" {
+				meta["effort"] = effort
 			}
 			if err := task.WriteMeta(homeDir, id, meta); err != nil {
 				// Best-effort: print error but don't fail the spawn
@@ -904,7 +911,9 @@ func newSpawnCmd() *cobra.Command {
 			fmt.Printf("  projpath: %s\n", projPath)
 			fmt.Printf("  project:  %s\n", projectName)
 			fmt.Printf("  harness:  %s\n", h)
-			fmt.Printf("  model:    %s\n", model)
+			if model != "" {
+				fmt.Printf("  model:    %s\n", model)
+			}
 			if effort != "" {
 				fmt.Printf("  effort:   %s\n", effort)
 			}
@@ -1298,8 +1307,14 @@ func newBacklogAddCmd() *cobra.Command {
 	var start bool
 
 	cmd := &cobra.Command{
-		Use:   "add <id> <description>",
+		Use:   `add <id> "<description>"`,
 		Short: "Add a task to the backlog",
+		Long: `Add a task to the backlog.
+
+The description must be quoted if it contains multiple words.
+Example:
+  munsu backlog add flow-r2 "Flow retest scout"
+`,
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]

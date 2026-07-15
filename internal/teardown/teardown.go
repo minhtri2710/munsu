@@ -113,6 +113,22 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
+	// 5. Clean up data directory (orphan brief) if no report.md
+	dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
+	if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
+		reportPath := filepath.Join(dataDir, "report.md")
+		if _, err := os.Stat(reportPath); os.IsNotExist(err) {
+			// No report.md — safe to remove orphan brief/data dir
+			if err := os.RemoveAll(dataDir); err != nil {
+				result.Steps = append(result.Steps, fmt.Sprintf("remove data dir: %v", err))
+			} else {
+				result.Steps = append(result.Steps, "data dir removed (no report.md)")
+			}
+		} else {
+			result.Steps = append(result.Steps, "data dir kept (report.md present)")
+		}
+	}
+
 	return result, nil
 }
 

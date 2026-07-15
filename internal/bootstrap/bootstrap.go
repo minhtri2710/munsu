@@ -53,7 +53,8 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 	}
 
 	// 4. Check crew-dispatch profiles
-	dispatchPath := filepath.Join(home, "config", "crew-dispatch.json")
+	configDir := filepath.Join(home, "config")
+	dispatchPath := filepath.Join(configDir, "crew-dispatch.json")
 	if data, err := os.ReadFile(dispatchPath); err == nil {
 		dispatch := strings.TrimSpace(string(data))
 		lines := strings.Split(dispatch, "\n")
@@ -66,7 +67,20 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("CREW_DISPATCH: active (%d rules)", ruleCount))
 	}
 
-	// 5. Install tools if requested and lock held
+
+	// 5. Check session backend preference
+	if data, err := os.ReadFile(filepath.Join(home, "config", "backend")); err == nil {
+		backend := strings.TrimSpace(string(data))
+		if backend != "" && backend != "auto" {
+			res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("BACKEND: %s (config)", backend))
+		}
+	} else if herdrEnv := os.Getenv("HERDR_ENV"); herdrEnv != "" {
+		res.ConfigDetails = append(res.ConfigDetails, "BACKEND: herdr (HERDR_ENV)")
+	} else {
+		res.ConfigDetails = append(res.ConfigDetails, "BACKEND: auto (default)")
+	}
+
+	// 6. Install tools if requested and lock held
 	if lockHeld && len(installTools) > 0 {
 		for _, tool := range installTools {
 			if err := installTool(tool); err != nil {
