@@ -1,4 +1,8 @@
-// Package worktree wraps the treehouse CLI for pooled git worktree management.
+// Package worktree manages pooled (treehouse) and fallback (git worktree) worktree acquisition.
+//
+// When treehouse is on PATH, all operations delegate to the treehouse CLI for pooled
+// worktree management. When treehouse is absent, a bare git worktree fallback is used
+// with a one-time stderr note.
 //
 // Lease hygiene: every worktree acquired via Get (especially with --lease)
 // MUST be returned via Return when the owning crewmate finishes. Orphaned
@@ -14,31 +18,69 @@
 // and produces "Aborted" (exit 0) when stdin is closed, causing a false
 // "worktree returned to pool" success.
 //
-// All operations shell out to the treehouse binary. The treehouse CLI must be
-// installed and available on PATH.
+// The git worktree fallback uses stable hashed paths under $MUNSU_HOME/.worktrees
+// (or $TMPDIR/munsu-worktrees if MUNSU_HOME is unset). Worktrees are created with
+// --detach and removed with --force for non-interactive cleanup.
 package worktree
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
-// treehouseBin returns the path to the treehouse binary, or an error if not found.
-func treehouseBin() (string, error) {
-	path, err := exec.LookPath("treehouse")
-	if err != nil {
-		return "", fmt.Errorf("treehouse: not found on PATH — install treehouse or verify your PATH")
-	}
-	return path, nil
+// Provider is the interface for acquiring, returning, and querying worktrees.
+// treehouseProvider implements it via the treehouse CLI; gitWorktreeProvider
+// implements it via bare git worktree commands.
+type Provider interface {
+	Get(repoPath string, lease bool) (string, error)
+	Return(path string) error
+	Status() (string, error)
 }
 
-// Get acquires a pooled worktree for the given repo path. If lease is true,
-// the --lease flag is passed to treehouse for a durable hold.
-// Returns the worktree path, or an error if the path is empty.
+var printFallbackNote sync.Once
+
+// selectProvider chooses treehouseProvider when treehouse is on PATH,
+// otherwise falls back to gitWorktreeProvider. The fallback stderr note
+// is printed at most once per process lifetime.
+func selectProvider() Provider {
+	if _, err := exec.LookPath("treehouse"); err == nil {
+		return &treehouseProvider{}
+	}
+	printFallbackNote.Do(func() {
+		fmt.Fprintf(os.Stderr, "munsu: treehouse not found, using git worktree fallback (not pooled)\n")
+	})
+	return &gitWorktreeProvider{}
+}
+
+// Get acquires a worktree for the given repo path. If lease is true and
+// treehouse is the active provider, the --lease flag is passed for a durable hold.
 func Get(repoPath string, lease bool) (string, error) {
+	return selectProvider().Get(repoPath, lease)
+}
+
+// Return returns a worktree path. When treehouse is active, --force is always
+// passed to prevent interactive prompts.
+func Return(path string) error {
+	return selectProvider().Return(path)
+}
+
+// Status returns worktree status information. With treehouse, this shows pool
+// status. With the git fallback, it lists managed worktree directories.
+func Status() (string, error) {
+	return selectProvider().Status()
+}
+
+// --- treehouse provider ---
+
+type treehouseProvider struct{}
+
+func (p *treehouseProvider) Get(repoPath string, lease bool) (string, error) {
 	bin, err := treehouseBin()
 	if err != nil {
 		return "", err
@@ -63,10 +105,7 @@ func Get(repoPath string, lease bool) (string, error) {
 	return wtPath, nil
 }
 
-// Return returns a worktree path to the pool via treehouse, always using --force.
-// If the raw output contains "Aborted" (treehouse prompt aborted), an error is
-// returned even if the process exits 0.
-func Return(path string) error {
+func (p *treehouseProvider) Return(path string) error {
 	bin, err := treehouseBin()
 	if err != nil {
 		return err
@@ -86,8 +125,7 @@ func Return(path string) error {
 	return nil
 }
 
-// Status returns the treehouse pool status output.
-func Status() (string, error) {
+func (p *treehouseProvider) Status() (string, error) {
 	bin, err := treehouseBin()
 	if err != nil {
 		return "", err
@@ -102,6 +140,129 @@ func Status() (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// treehouseBin returns the path to the treehouse binary, or an error if not found.
+func treehouseBin() (string, error) {
+	path, err := exec.LookPath("treehouse")
+	if err != nil {
+		return "", fmt.Errorf("treehouse: not found on PATH — install treehouse or verify your PATH")
+	}
+	return path, nil
+}
+
+// ErrTreehouseNotFound is returned when treehouse is not on PATH.
+var ErrTreehouseNotFound = fmt.Errorf("treehouse: not found on PATH")
+
+// IsTreehouseNotFound reports whether the error indicates treehouse was
+// not found on PATH.
+func IsTreehouseNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Check if exec.LookPath wrapped it
+	if e, ok := err.(*exec.Error); ok && e.Err == exec.ErrNotFound {
+		return true
+	}
+	return strings.Contains(err.Error(), "not found on PATH")
+}
+
+// --- git worktree fallback provider ---
+
+type gitWorktreeProvider struct{}
+
+// getWorktreeBase returns the directory under which git worktrees are created.
+// Prefers $MUNSU_HOME/.worktrees; falls back to $TMPDIR/munsu-worktrees.
+func (p *gitWorktreeProvider) getWorktreeBase() string {
+	if home := os.Getenv("MUNSU_HOME"); home != "" {
+		return filepath.Join(home, ".worktrees")
+	}
+	return filepath.Join(os.TempDir(), "munsu-worktrees")
+}
+
+func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {
+	hash := stableHash(repoPath)
+	base := p.getWorktreeBase()
+	wtDir := filepath.Join(base, hash)
+
+	// Ensure base directory exists.
+	if err := os.MkdirAll(base, 0755); err != nil {
+		return "", fmt.Errorf("creating worktree base: %w", err)
+	}
+
+	// If worktree already exists, return it (idempotent).
+	if fi, err := os.Stat(wtDir); err == nil && fi.IsDir() {
+		return wtDir, nil
+	}
+
+	// Create new worktree with --detach.
+	cmd := exec.Command("git", "worktree", "add", "--detach", wtDir)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git worktree add: %s", strings.TrimSpace(string(out)))
+	}
+	return wtDir, nil
+}
+
+func (p *gitWorktreeProvider) Return(path string) error {
+	// Read the .git file to find the owning repo, since git worktree remove
+	// must be run from within a git repository.
+	gitFile := filepath.Join(path, ".git")
+	data, err := os.ReadFile(gitFile)
+	if err != nil {
+		return fmt.Errorf("reading worktree .git file: %w", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir: ") {
+		return fmt.Errorf("unexpected .git file format: %s", line)
+	}
+	repoGitDir := strings.TrimPrefix(line, "gitdir: ")
+	// Resolve relative paths against the worktree parent.
+	if !filepath.IsAbs(repoGitDir) {
+		repoGitDir = filepath.Join(filepath.Dir(path), repoGitDir)
+	}
+	// The repo root is three levels above .git/worktrees/<name>.
+	repoDir := filepath.Dir(filepath.Dir(filepath.Dir(repoGitDir)))
+
+	cmd := exec.Command("git", "worktree", "remove", "--force", path)
+	cmd.Dir = repoDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree remove: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (p *gitWorktreeProvider) Status() (string, error) {
+	base := p.getWorktreeBase()
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("reading %s: %w", base, err)
+	}
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() {
+			wtDir := filepath.Join(base, e.Name())
+			// Check it looks like a valid worktree (has .git file).
+			if _, err := os.Stat(filepath.Join(wtDir, ".git")); err == nil {
+				lines = append(lines, wtDir)
+			}
+		}
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// stableHash returns a deterministic short hex string from a path, used
+// as the directory name for git fallback worktrees.
+func stableHash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])[:16]
+}
+
+// --- isolation helpers ---
 
 // IsIsolated verifies that path is a git worktree and not the primary checkout.
 // It resolves the canonical path and compares git-dir vs git-common-dir.
@@ -151,22 +312,6 @@ func gitRevParse(dir, flag string) (string, error) {
 		return "", fmt.Errorf("%s: %w", flag, err)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// ErrTreehouseNotFound is returned when treehouse is not on PATH.
-var ErrTreehouseNotFound = fmt.Errorf("treehouse: not found on PATH")
-
-// IsTreehouseNotFound reports whether the error indicates treehouse was
-// not found on PATH.
-func IsTreehouseNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Check if exec.LookPath wrapped it
-	if e, ok := err.(*exec.Error); ok && e.Err == exec.ErrNotFound {
-		return true
-	}
-	return strings.Contains(err.Error(), "not found on PATH")
 }
 
 // EnsureNotPrimary is a convenience helper that calls IsIsolated and returns
@@ -237,7 +382,6 @@ func AssertNotTangled(projectDir, projectName string) error {
 	return fmt.Errorf("cannot spawn: %s is on branch %s, not an isolated worktree. Use a detached HEAD or a worktree",
 		projectName, branch)
 }
-
 
 // AbsRoot resolves the true absolute path of the current working directory.
 // Useful for comparison against the primary checkout root.

@@ -51,46 +51,109 @@ func TestEnsureNotPrimary_NonGit(t *testing.T) {
 	}
 }
 
-func TestTreehouseNotFound(t *testing.T) {
-	// Temporarily remove treehouse from PATH
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-
-	os.Setenv("PATH", "/dev/null")
-	_, err := Get("/some/repo", false)
-	if err == nil {
-		t.Fatal("expected error when treehouse is not on PATH, got nil")
+func TestGitFallback_GetAndReturn(t *testing.T) {
+	// Create a real git repo with a commit, then exercise the git fallback
+	// via gitWorktreeProvider directly.
+	repoDir := t.TempDir()
+	runCmd(t, repoDir, "git", "init")
+	runCmd(t, repoDir, "git", "config", "user.email", "test@test.com")
+	runCmd(t, repoDir, "git", "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if !IsTreehouseNotFound(err) {
-		t.Errorf("expected treehouse-not-found error, got: %v", err)
+	runCmd(t, repoDir, "git", "add", ".")
+	runCmd(t, repoDir, "git", "commit", "-m", "initial")
+
+	p := &gitWorktreeProvider{}
+
+	// Get via git fallback
+	wtPath, err := p.Get(repoDir, false)
+	if err != nil {
+		t.Fatalf("git fallback Get failed: %v", err)
+	}
+	if wtPath == "" {
+		t.Fatal("expected non-empty worktree path from git fallback")
+	}
+
+	// Verify it is a real worktree
+	isolated, err := IsIsolated(wtPath)
+	if err != nil {
+		t.Fatalf("IsIsolated on worktree: %v", err)
+	}
+	if !isolated {
+		t.Error("expected isolated worktree from git fallback")
+	}
+
+	// Return the worktree
+	if err := p.Return(wtPath); err != nil {
+		t.Fatalf("git fallback Return failed: %v", err)
+	}
+
+	// Verify worktree directory is removed
+	if _, err := os.Stat(wtPath); err == nil {
+		t.Error("worktree still exists after Return")
 	}
 }
 
-func TestTreehouseNotFound_Return(t *testing.T) {
-	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
-
-	os.Setenv("PATH", "/dev/null")
-	err := Return("/some/path")
-	if err == nil {
-		t.Fatal("expected error when treehouse is not on PATH, got nil")
+func TestGitFallback_Status(t *testing.T) {
+	// Create a real git repo, get a worktree, then check status lists it.
+	repoDir := t.TempDir()
+	runCmd(t, repoDir, "git", "init")
+	runCmd(t, repoDir, "git", "config", "user.email", "test@test.com")
+	runCmd(t, repoDir, "git", "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# test\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if !IsTreehouseNotFound(err) {
-		t.Errorf("expected treehouse-not-found error, got: %v", err)
+	runCmd(t, repoDir, "git", "add", ".")
+	runCmd(t, repoDir, "git", "commit", "-m", "initial")
+
+	p := &gitWorktreeProvider{}
+
+	// Status before Get should be empty or no-error
+	_, err := p.Status()
+	if err != nil {
+		t.Fatalf("git fallback Status failed: %v", err)
+	}
+
+	// Get a worktree
+	wtPath, err := p.Get(repoDir, false)
+	if err != nil {
+		t.Fatalf("git fallback Get failed: %v", err)
+	}
+	defer func() {
+		_ = p.Return(wtPath)
+	}()
+
+	// Status after Get should include the worktree path
+	out2, err := p.Status()
+	if err != nil {
+		t.Fatalf("git fallback Status after Get failed: %v", err)
+	}
+	if !strings.Contains(out2, wtPath) {
+		t.Errorf("Status output should contain worktree path %q, got: %q", wtPath, out2)
 	}
 }
 
-func TestTreehouseNotFound_Status(t *testing.T) {
+func TestProviderSelection(t *testing.T) {
+	// Without treehouse on PATH, selectProvider should return gitWorktreeProvider.
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
-
 	os.Setenv("PATH", "/dev/null")
-	_, err := Status()
-	if err == nil {
-		t.Fatal("expected error when treehouse is not on PATH, got nil")
+	p := selectProvider()
+	if _, ok := p.(*gitWorktreeProvider); !ok {
+		t.Errorf("expected gitWorktreeProvider when treehouse absent, got %T", p)
 	}
-	if !IsTreehouseNotFound(err) {
-		t.Errorf("expected treehouse-not-found error, got: %v", err)
+
+	// With a mock treehouse on PATH, selectProvider should return treehouseProvider.
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "treehouse")
+	if err := os.WriteFile(mockScript, []byte("#!/bin/sh\necho ok\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.Setenv("PATH", mockDir+":"+oldPath)
+	p2 := selectProvider()
+	if _, ok := p2.(*treehouseProvider); !ok {
+		t.Errorf("expected treehouseProvider when treehouse present, got %T", p2)
 	}
 }
 
@@ -146,7 +209,6 @@ func TestGet_EmptyPath_ReturnsError(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", mockDir+":"+oldPath)
-
 
 	repoDir := t.TempDir()
 
