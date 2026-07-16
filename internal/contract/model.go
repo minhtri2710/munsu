@@ -67,34 +67,53 @@ type Crewmate struct {
 	Branch string `json:"branch,omitempty"`
 }
 
+// GuardViolation is a single violation with supporting evidence.
+type GuardViolation struct {
+	Condition string   `json:"condition"`
+	Evidence  []string `json:"evidence"`
+}
+
 // Guard reports the current guard evaluation.
 type Guard struct {
-	State      string   `json:"state"`
-	Conditions []string `json:"conditions"`
+	State      string            `json:"state"` // healthy | unhealthy | indeterminate
+	Violations []GuardViolation  `json:"violations,omitempty"`
+	Conditions []string          `json:"conditions,omitempty"` // kept for backward compat
+}
+
+// WatchLeaseInfo carries identity and heartbeat metadata for a watcher lease.
+type WatchLeaseInfo struct {
+	Identity    string `json:"identity,omitempty"`
+	LeaseID     string `json:"lease_id,omitempty"`
+	Heartbeat   string `json:"heartbeat,omitempty"`
+	HeartbeatOK bool   `json:"heartbeat_ok,omitempty"`
 }
 
 // WatchEnsure reports the idempotent watcher-ensure result.
 type WatchEnsure struct {
-	WatchID  string `json:"watch_id"`
-	State    string `json:"state"`
-	Interval string `json:"interval"`
-	Noop     bool   `json:"noop"`
+	WatchID        string         `json:"watch_id"`
+	State          string         `json:"state"` // started | attached | healthy | failed
+	Interval       string         `json:"interval,omitempty"`
+	Lease          *WatchLeaseInfo `json:"lease,omitempty"`
+	Noop           bool           `json:"noop"`
 }
 
-// WatchRun reports one watcher execution.
+// WatchRun reports one watcher execution with terminal observation.
 type WatchRun struct {
-	WatchID      string `json:"watch_id"`
-	State        string `json:"state"`
-	WakesScanned int    `json:"wakes_scanned"`
-	WakesEmitted int    `json:"wakes_emitted"`
+	WatchID       string `json:"watch_id"`
+	State         string `json:"state"` // completed | failed
+	WakesScanned  int    `json:"wakes_scanned"`
+	WakesEmitted  int    `json:"wakes_emitted"`
+	EventsObserved int   `json:"events_observed,omitempty"`
 }
 
 // WakeClaim records a leased wake claim.
 type WakeClaim struct {
-	WakeID  string `json:"wake_id"`
-	ClaimID string `json:"claim_id"`
-	Owner   string `json:"owner"`
-	State   string `json:"state"`
+	WakeID     string `json:"wake_id"`
+	ClaimID    string `json:"claim_id"`
+	Owner      string `json:"owner"`
+	State      string `json:"state"` // claimed | replayed
+	LeaseExpires int64 `json:"lease_expires,omitempty"`
+	Reclaimed  int    `json:"reclaimed,omitempty"`
 }
 
 // WakeAck records acknowledgement of a claimed wake.
@@ -102,6 +121,23 @@ type WakeAck struct {
 	WakeID  string `json:"wake_id"`
 	ClaimID string `json:"claim_id"`
 	State   string `json:"state"`
+}
+
+// EventRecord is one typed event log entry.
+type EventRecord struct {
+	EventID   uint64 `json:"event_id"`
+	Timestamp int64  `json:"timestamp"`
+	Type      string `json:"type"`
+	Producer  string `json:"producer,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Payload   string `json:"payload"`
+}
+
+// EventAppend is the result of appending a typed event.
+type EventAppend struct {
+	EventID   uint64 `json:"event_id"`
+	Type      string `json:"type"`
+	Synthetic bool   `json:"synthetic,omitempty"`
 }
 
 // BackendCapabilities describes one session backend's supported operations.

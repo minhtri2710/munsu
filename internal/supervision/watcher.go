@@ -57,8 +57,8 @@ func Run(homeDir string) (*WakeReason, error) {
 
 		case <-ticker.C:
 			lifecycle.WriteBeat(homeDir)
+			reason := ScanFleet(homeDir)
 
-			reason := scanFleet(homeDir)
 			if reason != nil {
 				return reason, nil
 			}
@@ -111,10 +111,10 @@ var (
 	consecutiveStaleThreshold = 3
 )
 
-// scanFleet checks all live tasks for actionable events.
+// ScanFleet checks all live tasks for actionable events.
 // It absorbs stale signals for tasks with an active no-mistakes run
 // and tracks per-task stale streaks for demand-deep-inspection.
-func scanFleet(homeDir string) *WakeReason {
+func ScanFleet(homeDir string) *WakeReason {
 	metasDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(metasDir)
 	if err != nil {

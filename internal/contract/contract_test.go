@@ -98,7 +98,8 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 	for _, value := range []any{
 		ErrorResponse{}, ErrorEnvelope{}, Capabilities{}, TaskObserve{},
 		WakeAck{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, EmptyResult{},
-		TruncatedResult{},
+		TruncatedResult{}, Guard{}, WatchEnsure{}, WatchRun{}, WakeClaim{},
+		EventRecord{}, EventAppend{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		for field := range typeOf.Fields() {

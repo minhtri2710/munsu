@@ -13,6 +13,7 @@
       "watch run",
       "wake claim",
       "wake ack",
+      "event append",
       "backend capabilities",
       "spawn"
     ],

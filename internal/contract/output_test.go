@@ -19,7 +19,7 @@ func TestEncodeTOONMatchesCapabilitiesFixture(t *testing.T) {
 			ContractVersion: SchemaVersion,
 			Commands: []string{
 				"capabilities", "task observe", "fleet snapshot --version 2", "guard", "watch ensure",
-				"watch run", "wake claim", "wake ack", "backend capabilities", "spawn",
+				"watch run", "wake claim", "wake ack", "event append", "backend capabilities", "spawn",
 			},
 			OutputFormats: []string{OutputTOON, OutputJSON},
 		},

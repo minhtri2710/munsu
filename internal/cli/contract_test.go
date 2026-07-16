@@ -118,7 +118,7 @@ func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("guard: %v", err)
 	}
-	if !strings.Contains(guard, "kind: guard") || !strings.Contains(guard, "state: warning") {
+	if !strings.Contains(guard, "kind: guard") || !strings.Contains(guard, "state: unhealthy") {
 		t.Errorf("guard output = %s", guard)
 	}
 }
