@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -126,6 +127,11 @@ func newTaskCmd() *cobra.Command {
 			if err := task.AppendStatus(ctx.Home, id, line); err != nil {
 				return err
 			}
+
+			// Compatibility translator: also write as typed event
+			rec, _ := event.FromTaskStatus(ctx.Home, id, line)
+			_ = event.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
+
 			fmt.Printf("status appended: %s\n", line)
 			return nil
 		}),

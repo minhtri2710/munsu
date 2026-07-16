@@ -1,0 +1,133 @@
+package cli
+
+import (
+	"strconv"
+	"strings"
+
+	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/waker"
+	"github.com/spf13/cobra"
+)
+
+func newWakeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "wake",
+		Short: "Manage wake queue with lease-based claim/ack",
+	}
+
+	claimCmd := &cobra.Command{
+		Use:   "claim",
+		Short: "Claim wakes from the queue under a lease",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			consumer, _ := cmd.Flags().GetString("consumer")
+			leaseSec, _ := cmd.Flags().GetInt("lease-seconds")
+			limit, _ := cmd.Flags().GetInt("limit")
+
+			if consumer == "" {
+				return usageError("invalid_argument", "Run `munsu wake claim --consumer <id>`", "--consumer is required")
+			}
+
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+
+			result, err := lifecycle.ClaimWakes(ctx.Home, consumer, leaseSec, limit)
+			if err != nil {
+				return operationError("internal", "Run `munsu wake claim --consumer "+consumer+"` again", err.Error())
+			}
+
+			state := "claimed"
+			if result.Reclaimed > 0 {
+				state = "replayed"
+			}
+
+			// Build wake IDs for the response
+			var wakeIDs []string
+			for _, w := range result.Wakes {
+				wakeIDs = append(wakeIDs, w.Epoch+":"+w.Seq)
+			}
+
+			return writeContract(cmd, contract.Response[contract.WakeClaim]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "wake.claim",
+				Status:        "success",
+				Data: contract.WakeClaim{
+					WakeID:       strings.Join(wakeIDs, ","),
+					ClaimID:      result.LeaseID,
+					Owner:        result.Consumer,
+					State:        state,
+					LeaseExpires: result.ExpiresAt,
+					Reclaimed:    result.Reclaimed,
+				},
+			})
+		}),
+	}
+	claimCmd.Flags().String("consumer", "", "Consumer identifier (required)")
+	claimCmd.Flags().Int("lease-seconds", 60, "Lease duration in seconds")
+	claimCmd.Flags().Int("limit", 10, "Maximum wakes to claim")
+
+	ackCmd := &cobra.Command{
+		Use:   "ack <lease-id> <event-id...>",
+		Short: "Acknowledge claimed wakes by event ID (epoch:seq)",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return usageError("invalid_argument", "Run `munsu wake ack <lease-id> <event-id...>`", "Requires lease-id and at least one event-id")
+			}
+			return nil
+		},
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			leaseID := args[0]
+			eventIDs := args[1:]
+
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+
+			if err := lifecycle.AckWakes(ctx.Home, leaseID, eventIDs); err != nil {
+				return operationError("internal", "Run `munsu wake ack "+leaseID+" ...` again", err.Error())
+			}
+
+			// Count acked
+			ackedCount := strconv.Itoa(len(eventIDs))
+			state := "acknowledged"
+
+			return writeContract(cmd, contract.Response[contract.WakeAck]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "wake.ack",
+				Status:        "success",
+				Data: contract.WakeAck{
+					WakeID:  ackedCount,
+					ClaimID: leaseID,
+					State:   state,
+				},
+			})
+		}),
+	}
+
+	// Legacy wake-drain compatibility sugar
+	drainCmd := &cobra.Command{
+		Use:   "drain",
+		Short: "Drain queued wakes (legacy compatibility)",
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			records, err := waker.Drain(ctx.Home)
+			if err != nil {
+				return err
+			}
+			waker.PrintRecords(records)
+			return nil
+		}),
+	}
+
+	// Only the new claim/ack commands use contract output.
+	// Legacy drain stays as plain output for compatibility.
+	configureContractCommand(claimCmd)
+	configureContractCommand(ackCmd)
+
+	cmd.AddCommand(claimCmd)
+	cmd.AddCommand(ackCmd)
+	cmd.AddCommand(drainCmd)
+
+	return cmd
+}

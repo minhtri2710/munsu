@@ -209,7 +209,7 @@ func TestResetStreak_NonExistent(t *testing.T) {
 
 func TestScanFleet_NoStateDir(t *testing.T) {
 	tmp := t.TempDir()
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for no state dir, got %v", reason)
 	}
@@ -220,7 +220,7 @@ func TestScanFleet_EmptyStateDir(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for empty state dir, got %v", reason)
 	}
@@ -233,7 +233,7 @@ func TestScanFleet_IgnoresDotfiles(t *testing.T) {
 
 	os.WriteFile(filepath.Join(stateDir, ".hidden.meta"), []byte("window=@test\n"), 0644)
 
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil when only dotfiles present, got %v", reason)
 	}
@@ -248,7 +248,7 @@ func TestScanFleet_NoWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for task with no window, got %v", reason)
 	}
@@ -264,7 +264,7 @@ func TestScanFleet_MultipleTasks_OnlyOneWithWindow(t *testing.T) {
 	// Task with a window (but window doesn't exist, so pane is dead)
 	task.WriteMeta(tmp, "has-win", map[string]string{"window": "@nonexistent99"})
 
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected a stale reason for dead pane")
 	}
@@ -346,7 +346,7 @@ func TestScanFleet_StaleStatusFile(t *testing.T) {
 	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
 	os.Chtimes(statusPath, past, past)
 
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected stale reason for old status file")
 	}
@@ -373,7 +373,7 @@ func TestScanFleet_RecentStatusNoStale(t *testing.T) {
 	// The pane is dead but the status is recent — pane staleness takes precedence
 	// But the status staleness check won't trigger because modtime is recent
 	// The pane liveness check will trigger stale first
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected stale reason for dead pane (recent status doesn't prevent pane check)")
 	}
@@ -391,7 +391,7 @@ func TestScanFleet_NoMetaFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "orphan.status"), []byte("working: stray\n"), 0644)
 	os.WriteFile(filepath.Join(stateDir, "another.status"), []byte("done: finished\n"), 0644)
 
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for orphan status files (no meta), got %v", reason)
 	}
@@ -405,7 +405,7 @@ func TestScanFleet_IgnoresNonWindowMeta(t *testing.T) {
 	// Meta without window key should be skipped
 	task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship", "project": "munsu"})
 
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for meta without window, got %v", reason)
 	}
@@ -429,7 +429,7 @@ func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
 	os.Chtimes(statusPath, past, past)
 
 	// scanFleet processes meta files in directory order — should find a stale task
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected a stale reason")
 	}
@@ -450,7 +450,7 @@ func TestScanFleet_WakeQueueSignal(t *testing.T) {
 	task.WriteMeta(tmp, "no-window-task", map[string]string{"kind": "ship"})
 
 	// No wake queue — should be nil
-	reason := scanFleet(tmp)
+	reason := ScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil when no wake queue and no actionable tasks, got %v", reason)
 	}
@@ -465,7 +465,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 	task.WriteMeta(tmp, "consist-task", map[string]string{"window": "@nonexistentConsist"})
 
 	// First call
-	r1 := scanFleet(tmp)
+	r1 := ScanFleet(tmp)
 	if r1 == nil {
 		t.Fatal("first call expected stale")
 	}
@@ -474,7 +474,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 	}
 
 	// Second call (streak should increment)
-	r2 := scanFleet(tmp)
+	r2 := ScanFleet(tmp)
 	if r2 == nil {
 		t.Fatal("second call expected stale")
 	}
@@ -483,7 +483,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 	}
 
 	// Third call - should trigger demand deep inspection
-	r3 := scanFleet(tmp)
+	r3 := ScanFleet(tmp)
 	if r3 == nil {
 		t.Fatal("third call expected stale")
 	}

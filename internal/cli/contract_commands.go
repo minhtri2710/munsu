@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/crewstate"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -32,7 +34,7 @@ func newCapabilitiesCmd() *cobra.Command {
 					ContractVersion: contract.SchemaVersion,
 					Commands: []string{
 						"capabilities", "task observe", "fleet snapshot --version 2", "guard", "watch ensure",
-						"watch run", "wake claim", "wake ack", "backend capabilities", "spawn",
+						"watch run", "wake claim", "wake ack", "event append", "backend capabilities", "spawn",
 					},
 					OutputFormats: []string{contract.OutputTOON, contract.OutputJSON},
 				},
@@ -150,7 +152,20 @@ func newContractGuardCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
+
 			conditions := waker.GuardWarnings(ctx.Home)
+			var violations []contract.GuardViolation
+
+			// Collect violations with evidence
+			for _, c := range conditions {
+				v := contract.GuardViolation{
+					Condition: c,
+					Evidence:  []string{"munsu guard", "state/.wake-queue"},
+				}
+				violations = append(violations, v)
+			}
+
+			// Check project tangles
 			projects, err := project.List(ctx.Home)
 			if err == nil {
 				for _, entry := range projects {
@@ -159,21 +174,47 @@ func newContractGuardCmd() *cobra.Command {
 						continue
 					}
 					if guardErr := worktree.AssertNotTangled(projectDir, entry.Name); guardErr != nil {
-						conditions = append(conditions, guardErr.Error())
+						v := contract.GuardViolation{
+							Condition: guardErr.Error(),
+							Evidence:  []string{"git worktree list", "project: " + entry.Name},
+						}
+						violations = append(violations, v)
 					}
 				}
 			}
-			state := "clear"
-			if len(conditions) > 0 {
-				state = "warning"
-			} else {
-				conditions = []string{"no blocked work", "watcher healthy"}
+
+			// Determine state
+			state := "healthy"
+			beatStatus := lifecycle.ReadBeatStatus(ctx.Home, time.Now())
+
+			if !beatStatus.Exists {
+				state = "unhealthy"
+				violations = append(violations, contract.GuardViolation{
+					Condition: "WATCHER NEVER STARTED - no liveness beacon",
+					Evidence:  []string{"state/.last-watcher-beat", "munsu watch ensure"},
+				})
+			} else if beatStatus.Stale {
+				state = "unhealthy"
+				violations = append(violations, contract.GuardViolation{
+					Condition: "WATCHER BEACON STALE",
+					Evidence: []string{
+						fmt.Sprintf("last beat %v ago", beatStatus.Age.Round(time.Second)),
+						"munsu watch ensure --restart",
+					},
+				})
+			} else if len(violations) > 0 {
+				state = "indeterminate"
 			}
+
 			return writeContract(cmd, contract.Response[contract.Guard]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "guard",
 				Status:        "success",
-				Data:          contract.Guard{State: state, Conditions: conditions},
+				Data: contract.Guard{
+					State:      state,
+					Violations: violations,
+					Conditions: conditions,
+				},
 			})
 		}),
 	}

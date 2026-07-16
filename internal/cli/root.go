@@ -115,6 +115,8 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newWatchArmCmd())
 	root.AddCommand(newWakeDrainCmd())
+	root.AddCommand(newWakeCmd())
+	root.AddCommand(newEventCmd())
 	root.AddCommand(newContractGuardCmd())
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newStowCmd())

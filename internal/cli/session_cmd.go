@@ -125,7 +125,7 @@ func newBootstrapCmd() *cobra.Command {
 }
 
 func newWatchCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Run the event-driven watcher",
 		Long:  `Run the event-driven watcher loop. Exits with a wake reason when an actionable event is found. Singleton-safe (home-scoped lock).`,
@@ -140,6 +140,16 @@ func newWatchCmd() *cobra.Command {
 			return nil
 		}),
 	}
+
+	// Add subcommands
+	ensureCmd := newWatchEnsureCmd()
+	ensureCmd.Use = "ensure"
+	runCmd := newWatchRunCmd()
+	runCmd.Use = "run"
+	cmd.AddCommand(ensureCmd)
+	cmd.AddCommand(runCmd)
+
+	return cmd
 }
 
 func newWatchArmCmd() *cobra.Command {
