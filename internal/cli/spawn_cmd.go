@@ -34,23 +34,18 @@ func newSpawnCmd() *cobra.Command {
 				return err
 			}
 
-			// Resolve project mode from registry for delivery mode auto-selection
+			// Resolve project mode from registry
 			projectMode, _, projErr := project.Mode(homeDir, args[1])
 			if projErr != nil {
 				projectMode = "" // registry not set or not found — will use other fallbacks
-			}
-
-			// Resolve effective delivery mode
-			effectiveMode, err := spawn.ResolveDeliveryMode(homeDir, mode, projectMode)
-			if err != nil {
-				return err
 			}
 
 			_, err = spawn.Run(spawn.Args{
 				ID:          args[0],
 				ProjectName: args[1],
 				Kind:        kind,
-				Mode:        effectiveMode,
+				Mode:        mode,        // raw flag value; resolution happens inside Run
+				ProjectMode: projectMode, // raw project mode; resolution happens inside Run
 				Yolo:        yolo,
 				Backend:     backend,
 				HarnessFlag: harnessFlag,
@@ -59,7 +54,6 @@ func newSpawnCmd() *cobra.Command {
 			return err
 		},
 	}
-
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")

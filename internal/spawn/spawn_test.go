@@ -2,6 +2,8 @@ package spawn
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -382,5 +384,129 @@ func TestNoMistakesOnPath(t *testing.T) {
 	// This test is informational only; skip if no-mistakes not available
 	if !noMistakesOnPath() {
 		t.Skip("no-mistakes not on PATH (CI environments typically don't have it)")
+	}
+}
+
+func TestEffectiveModeForSpawn_AutoNoMistakesPresent(t *testing.T) {
+	// Create a fake no-mistakes binary on PATH
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "no-mistakes")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+
+	mode, err := effectiveModeForSpawn(t.TempDir(), Args{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "no-mistakes" {
+		t.Errorf("effectiveModeForSpawn auto = %q, want %q", mode, "no-mistakes")
+	}
+}
+
+func TestEffectiveModeForSpawn_AutoNoMistakesAbsent(t *testing.T) {
+	// Use a PATH where no-mistakes is definitely not found
+	t.Setenv("PATH", t.TempDir())
+
+	mode, err := effectiveModeForSpawn(t.TempDir(), Args{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "direct-PR" {
+		t.Errorf("effectiveModeForSpawn auto without no-mistakes = %q, want %q", mode, "direct-PR")
+	}
+}
+
+func TestEffectiveModeForSpawn_ExplicitNoMistakesWithBinary(t *testing.T) {
+	// Fake no-mistakes on PATH, explicit flag
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "no-mistakes")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+
+	mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "no-mistakes" {
+		t.Errorf("effectiveModeForSpawn explicit = %q, want %q", mode, "no-mistakes")
+	}
+}
+
+func TestEffectiveModeForSpawn_ExplicitNoMistakesWithoutBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	_, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+	if err == nil {
+		t.Fatal("expected error for explicit no-mistakes without binary")
+	}
+}
+
+func TestEffectiveModeForSpawn_ProjectModeHonored(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // ensure auto doesn't pick no-mistakes
+
+	mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "local-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "local-only" {
+		t.Errorf("effectiveModeForSpawn with project mode = %q, want %q", mode, "local-only")
+	}
+}
+
+func TestEffectiveModeForSpawn_ExplicitOverridesProject(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	// Explicit flag takes precedence over project mode
+	mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "direct-PR", ProjectMode: "no-mistakes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "direct-PR" {
+		t.Errorf("effectiveModeForSpawn explicit override = %q, want %q", mode, "direct-PR")
+	}
+}
+
+func TestEffectiveModeForSpawn_ConfigDefaultMode(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // ensure auto doesn't pick no-mistakes
+
+	homeDir := t.TempDir()
+	// Write config/default-mode
+	configDir := filepath.Join(homeDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("direct-PR"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No flag, no project mode — should pick up config/default-mode
+	mode, err := effectiveModeForSpawn(homeDir, Args{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "direct-PR" {
+		t.Errorf("effectiveModeForSpawn config/default-mode = %q, want %q", mode, "direct-PR")
+	}
+}
+
+func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
+	// A bogus mode flag should still be rejected by Run
+	args := Args{
+		ID:          "test-task",
+		ProjectName: "test-project",
+		Mode:        "bogus-mode",
+		HomeDir:     t.TempDir(),
+		Session:     &fakeBackend{},
+	}
+	_, err := Run(args)
+	if err == nil {
+		t.Fatal("expected error for invalid mode")
+	}
+	if !strings.Contains(err.Error(), "invalid delivery mode") {
+		t.Errorf("expected 'invalid delivery mode' error, got: %v", err)
 	}
 }

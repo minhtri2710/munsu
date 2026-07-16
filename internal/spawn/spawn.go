@@ -26,7 +26,8 @@ type Args struct {
 	ID          string
 	ProjectName string
 	Kind        string
-	Mode        string
+	Mode        string // --mode flag value; empty=auto-detect
+	ProjectMode string // project registry mode (raw, not defaulted); empty = resolve from registry
 	Yolo        bool
 	Backend     string          // --backend flag value; empty = auto-detect
 	HarnessFlag string          // --harness flag value; empty = resolve from config
@@ -124,6 +125,18 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 
 	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/minhtri2710/no-mistakes@latest, or run 'munsu doctor'")
 	return "direct-PR", nil
+}
+
+// effectiveModeForSpawn resolves the effective delivery mode for a spawn operation.
+// It falls back to project.Mode when ProjectMode is not set in args.
+func effectiveModeForSpawn(homeDir string, args Args) (string, error) {
+	projectMode := args.ProjectMode
+	if projectMode == "" {
+		if m, _, err := project.Mode(homeDir, args.ProjectName); err == nil {
+			projectMode = m
+		}
+	}
+	return ResolveDeliveryMode(homeDir, args.Mode, projectMode)
 }
 
 // ReadyPatterns maps each harness to a set of substrings that indicate
@@ -224,8 +237,9 @@ func Run(args Args) (windowID string, err error) {
 		}
 	}
 
-	// 2. Validate delivery mode
-	if err := ValidateDeliveryMode(args.Mode); err != nil {
+	// 2. Resolve effective delivery mode
+	effectiveMode, err := effectiveModeForSpawn(homeDir, args)
+	if err != nil {
 		return "", err
 	}
 
@@ -374,7 +388,7 @@ func Run(args Args) (windowID string, err error) {
 		"harness":  h,
 		"backend":  bkName,
 		"kind":     args.Kind,
-		"mode":     args.Mode,
+		"mode":     effectiveMode,
 		"yolo":     yoloVal,
 	}
 	if model != "" {
@@ -404,8 +418,7 @@ func Run(args Args) (windowID string, err error) {
 		fmt.Printf("  effort:   %s\n", effort)
 	}
 	fmt.Printf("  kind:     %s\n", args.Kind)
-	fmt.Printf("  mode:     %s\n", args.Mode)
+	fmt.Printf("  mode:     %s\n", effectiveMode)
 	fmt.Printf("  yolo:     %s\n", yoloVal)
-
 	return windowID, nil
 }
