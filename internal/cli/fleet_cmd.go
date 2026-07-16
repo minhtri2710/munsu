@@ -49,10 +49,17 @@ func newFleetSyncCmd() *cobra.Command {
 }
 
 func newFleetSnapshotCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "snapshot",
 		Short: "Emit fleet snapshot JSON",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			version, _ := cmd.Flags().GetInt("version")
+			if version != 1 && version != 2 {
+				return usageError("unsupported_input", "Run `munsu fleet snapshot --version 2`", "Only fleet snapshot versions 1 and 2 are supported")
+			}
+			if version == 2 {
+				return runFleetSnapshotV2(cmd, ctx)
+			}
 			snap, err := fleet.Snapshot(ctx.Home)
 			if err != nil {
 				return err
@@ -61,10 +68,15 @@ func newFleetSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(j)
+			fmt.Fprintln(cmd.OutOrStdout(), j)
 			return nil
 		}),
 	}
+	cmd.Flags().Int("version", 1, "Snapshot schema version")
+	cmd.Flags().String("fields", "", "Optional row fields for version 2")
+	cmd.Flags().Bool("full", false, "Include full truncated content for version 2")
+	cmd.Flags().String("output", "toon", "Output format for version 2 (toon|json)")
+	return cmd
 }
 
 func newFleetViewCmd() *cobra.Command {

@@ -135,5 +135,6 @@ func newTaskCmd() *cobra.Command {
 	cmd.AddCommand(listCmd)
 	cmd.AddCommand(showCmd)
 	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(newTaskObserveCmd())
 	return cmd
 }
