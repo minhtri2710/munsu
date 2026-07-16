@@ -188,14 +188,14 @@ func Run(args Args) (windowID string, err error) {
 	}
 
 	// 8. Acquire leased worktree
-	wtPath, err := worktree.Get(projPath, true)
+	wtPath, err := worktree.Get(homeDir, projPath, true)
 	if err != nil {
 		return "", fmt.Errorf("acquiring worktree: %w", err)
 	}
 	// On any subsequent error, return the worktree to pool (fail-closed).
 	defer func() {
 		if err != nil {
-			_ = worktree.Return(wtPath)
+			_ = worktree.Return(homeDir, wtPath)
 		}
 	}()
 

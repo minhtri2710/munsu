@@ -18,9 +18,9 @@
 // and produces "Aborted" (exit 0) when stdin is closed, causing a false
 // "worktree returned to pool" success.
 //
-// The git worktree fallback uses stable hashed paths under $MUNSU_HOME/.worktrees
-// (or $TMPDIR/munsu-worktrees if MUNSU_HOME is unset). Worktrees are created with
-// --detach and removed with --force for non-interactive cleanup.
+// The git worktree fallback uses stable hashed paths under <homeDir>/.worktrees.
+// homeDir must be non-empty when treehouse is absent; it is passed by callers
+// that have already resolved the munsu home (e.g. via home.Resolve).
 package worktree
 
 import (
@@ -46,34 +46,51 @@ type Provider interface {
 var printFallbackNote sync.Once
 
 // selectProvider chooses treehouseProvider when treehouse is on PATH,
-// otherwise falls back to gitWorktreeProvider. The fallback stderr note
-// is printed at most once per process lifetime.
-func selectProvider() Provider {
+// otherwise falls back to gitWorktreeProvider using the given homeDir.
+// homeDir must be non-empty when treehouse is absent.
+func selectProvider(homeDir string) (Provider, error) {
 	if _, err := exec.LookPath("treehouse"); err == nil {
-		return &treehouseProvider{}
+		return &treehouseProvider{}, nil
+	}
+	if homeDir == "" {
+		return nil, fmt.Errorf("worktree: homeDir is required for git worktree fallback (resolve munsu home before calling)")
 	}
 	printFallbackNote.Do(func() {
 		fmt.Fprintf(os.Stderr, "munsu: treehouse not found, using git worktree fallback (not pooled)\n")
 	})
-	return &gitWorktreeProvider{}
+	return &gitWorktreeProvider{homeDir: homeDir}, nil
 }
 
-// Get acquires a worktree for the given repo path. If lease is true and
-// treehouse is the active provider, the --lease flag is passed for a durable hold.
-func Get(repoPath string, lease bool) (string, error) {
-	return selectProvider().Get(repoPath, lease)
+// Get acquires a worktree for the given repo path within the given munsu home.
+// If lease is true and treehouse is the active provider, the --lease flag is
+// passed for a durable hold.
+func Get(homeDir, repoPath string, lease bool) (string, error) {
+	p, err := selectProvider(homeDir)
+	if err != nil {
+		return "", err
+	}
+	return p.Get(repoPath, lease)
 }
 
-// Return returns a worktree path. When treehouse is active, --force is always
-// passed to prevent interactive prompts.
-func Return(path string) error {
-	return selectProvider().Return(path)
+// Return returns a worktree path within the given munsu home.
+// When treehouse is active, --force is always passed to prevent interactive prompts.
+func Return(homeDir, path string) error {
+	p, err := selectProvider(homeDir)
+	if err != nil {
+		return err
+	}
+	return p.Return(path)
 }
 
-// Status returns worktree status information. With treehouse, this shows pool
-// status. With the git fallback, it lists managed worktree directories.
-func Status() (string, error) {
-	return selectProvider().Status()
+// Status returns worktree status within the given munsu home.
+// With treehouse, this shows pool status. With the git fallback, it lists
+// managed worktree directories.
+func Status(homeDir string) (string, error) {
+	p, err := selectProvider(homeDir)
+	if err != nil {
+		return "", err
+	}
+	return p.Status()
 }
 
 // --- treehouse provider ---
@@ -168,15 +185,14 @@ func IsTreehouseNotFound(err error) bool {
 
 // --- git worktree fallback provider ---
 
-type gitWorktreeProvider struct{}
+type gitWorktreeProvider struct {
+	homeDir string
+}
 
 // getWorktreeBase returns the directory under which git worktrees are created.
-// Prefers $MUNSU_HOME/.worktrees; falls back to $TMPDIR/munsu-worktrees.
+// Always <homeDir>/.worktrees — no env fallback.
 func (p *gitWorktreeProvider) getWorktreeBase() string {
-	if home := os.Getenv("MUNSU_HOME"); home != "" {
-		return filepath.Join(home, ".worktrees")
-	}
-	return filepath.Join(os.TempDir(), "munsu-worktrees")
+	return filepath.Join(p.homeDir, ".worktrees")
 }
 
 func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {

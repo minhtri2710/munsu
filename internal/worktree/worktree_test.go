@@ -64,7 +64,7 @@ func TestGitFallback_GetAndReturn(t *testing.T) {
 	runCmd(t, repoDir, "git", "add", ".")
 	runCmd(t, repoDir, "git", "commit", "-m", "initial")
 
-	p := &gitWorktreeProvider{}
+	p := &gitWorktreeProvider{homeDir: t.TempDir()}
 
 	// Get via git fallback
 	wtPath, err := p.Get(repoDir, false)
@@ -107,7 +107,7 @@ func TestGitFallback_Status(t *testing.T) {
 	runCmd(t, repoDir, "git", "add", ".")
 	runCmd(t, repoDir, "git", "commit", "-m", "initial")
 
-	p := &gitWorktreeProvider{}
+	p := &gitWorktreeProvider{homeDir: t.TempDir()}
 
 	// Status before Get should be empty or no-error
 	_, err := p.Status()
@@ -139,7 +139,10 @@ func TestProviderSelection(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", "/dev/null")
-	p := selectProvider()
+	p, err := selectProvider(t.TempDir())
+	if err != nil {
+		t.Fatalf("selectProvider with homeDir failed: %v", err)
+	}
 	if _, ok := p.(*gitWorktreeProvider); !ok {
 		t.Errorf("expected gitWorktreeProvider when treehouse absent, got %T", p)
 	}
@@ -151,51 +154,12 @@ func TestProviderSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Setenv("PATH", mockDir+":"+oldPath)
-	p2 := selectProvider()
+	p2, err2 := selectProvider("")
+	if err2 != nil {
+		t.Fatalf("selectProvider with treehouse on PATH should succeed, got: %v", err2)
+	}
 	if _, ok := p2.(*treehouseProvider); !ok {
 		t.Errorf("expected treehouseProvider when treehouse present, got %T", p2)
-	}
-}
-
-func TestAbsRoot(t *testing.T) {
-	root := AbsRoot()
-	if root == "" {
-		t.Fatal("AbsRoot() returned empty string")
-	}
-	if !filepath.IsAbs(root) {
-		t.Errorf("AbsRoot() = %q, want absolute path", root)
-	}
-}
-
-// TestGitRevParse validates the git rev-parse helper.
-func TestGitRevParse(t *testing.T) {
-	// Should work from within any git repo
-	gd, err := gitRevParse(".", "--git-dir")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gd == "" {
-		t.Fatal("--git-dir returned empty")
-	}
-
-	cd, err := gitRevParse(".", "--git-common-dir")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cd == "" {
-		t.Fatal("--git-common-dir returned empty")
-	}
-}
-
-// TestIsIsolatedWithoutTreehouse ensures IsIsolated doesn't need treehouse to work.
-func TestIsIsolatedWithoutTreehouse(t *testing.T) {
-	// IsIsolated should work without treehouse present (it only uses git)
-	isolated, err := IsIsolated(".")
-	if err != nil {
-		t.Fatalf("IsIsolated should work without treehouse: %v", err)
-	}
-	if !isolated {
-		t.Error("expected isolated worktree")
 	}
 }
 func TestGet_EmptyPath_ReturnsError(t *testing.T) {
@@ -213,7 +177,7 @@ func TestGet_EmptyPath_ReturnsError(t *testing.T) {
 	repoDir := t.TempDir()
 
 	// Get without lease should return empty -> error
-	_, err := Get(repoDir, false)
+	_, err := Get(t.TempDir(), repoDir, false)
 	if err == nil {
 		t.Fatal("expected error for empty path from treehouse, got nil")
 	}
@@ -236,7 +200,7 @@ func TestGet_WithLease_ReturnsPath(t *testing.T) {
 
 	repoDir := t.TempDir()
 
-	path, err := Get(repoDir, true)
+	path, err := Get(t.TempDir(), repoDir, true)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -262,7 +226,7 @@ func TestReturn_AbortedExit0_ReturnsError(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", mockDir+":"+oldPath)
 
-	err := Return("/some/wt-path")
+	err := Return(t.TempDir(), "/some/wt-path")
 	if err == nil {
 		t.Fatal("expected error for Aborted output, got nil")
 	}
@@ -283,7 +247,7 @@ func TestReturn_Clean_ReturnsNil(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", mockDir+":"+oldPath)
 
-	err := Return("/some/wt-path")
+	err := Return(t.TempDir(), "/some/wt-path")
 	if err != nil {
 		t.Fatalf("expected no error for clean return, got: %v", err)
 	}
@@ -301,7 +265,7 @@ func TestReturn_ErrorExit_ReturnsError(t *testing.T) {
 	defer os.Setenv("PATH", oldPath)
 	os.Setenv("PATH", mockDir+":"+oldPath)
 
-	err := Return("/some/wt-path")
+	err := Return(t.TempDir(), "/some/wt-path")
 	if err == nil {
 		t.Fatal("expected error for non-zero exit, got nil")
 	}
@@ -424,6 +388,47 @@ func TestCheckTangle(t *testing.T) {
 	runCmd(t, noRemoteDir, "git", "checkout", "--detach", defaultBranchBR)
 	if err := AssertNotTangled(noRemoteDir, "test-project"); err != nil {
 		t.Fatalf("expected no error on detached HEAD (no remote), got: %v", err)
+	}
+}
+func TestAbsRoot(t *testing.T) {
+	root := AbsRoot()
+	if root == "" {
+		t.Fatal("AbsRoot() returned empty string")
+	}
+	if !filepath.IsAbs(root) {
+		t.Errorf("AbsRoot() = %q, want absolute path", root)
+	}
+}
+
+// TestGitRevParse validates the git rev-parse helper.
+func TestGitRevParse(t *testing.T) {
+	// Should work from within any git repo
+	gd, err := gitRevParse(".", "--git-dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gd == "" {
+		t.Fatal("--git-dir returned empty")
+	}
+
+	cd, err := gitRevParse(".", "--git-common-dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cd == "" {
+		t.Fatal("--git-common-dir returned empty")
+	}
+}
+
+// TestIsIsolatedWithoutTreehouse ensures IsIsolated doesn't need treehouse to work.
+func TestIsIsolatedWithoutTreehouse(t *testing.T) {
+	// IsIsolated should work without treehouse present (it only uses git)
+	isolated, err := IsIsolated(".")
+	if err != nil {
+		t.Fatalf("IsIsolated should work without treehouse: %v", err)
+	}
+	if !isolated {
+		t.Error("expected isolated worktree")
 	}
 }
 
