@@ -16,6 +16,8 @@ var canonicalCommands = []struct {
 	{name: "bootstrap", use: "bootstrap [install <tools>...]"},
 	{name: "skill", use: "skill"},
 	{name: "config", use: "config"},
+	{name: "capabilities", use: "capabilities"},
+	{name: "backend", use: "backend"},
 	{name: "project", use: "project"},
 	{name: "worktree", use: "worktree"},
 	{name: "harness", use: "harness"},

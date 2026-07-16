@@ -48,7 +48,7 @@ type TaskObserve struct {
 	Status         string `json:"status"`
 	Description    string `json:"description,omitempty"`
 	Branch         string `json:"branch,omitempty"`
-	PaneAlive      bool   `json:"pane_alive"`
+	PaneAlive      *bool  `json:"pane_alive,omitempty"`
 	NoMistakesStep string `json:"no_mistakes_step,omitempty"`
 }
 

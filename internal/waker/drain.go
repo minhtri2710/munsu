@@ -36,11 +36,10 @@ func PrintRecords(records []Record) {
 	}
 }
 
-// CheckGuard checks for operational warnings.
-func CheckGuard(homeDir string) []string {
+// GuardWarnings returns the current operational guard warnings without writing output.
+func GuardWarnings(homeDir string) []string {
 	var warnings []string
 
-	// Check watcher liveness
 	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
 	if !status.Exists {
 		warnings = append(warnings, "WATCHER NEVER STARTED - no liveness beacon")
@@ -49,17 +48,19 @@ func CheckGuard(homeDir string) []string {
 			"WATCHER BEACON STALE - last beat %v ago (grace %v)",
 			status.Age.Round(time.Second), lifecycle.StaleThreshold()))
 	}
-
-	// Check queued wakes
 	if lifecycle.HasQueuedWakes(homeDir) {
 		warnings = append(warnings, "QUEUED WAKES PENDING - drain with munsu wake-drain")
 	}
+	return warnings
+}
 
-	// Print bordered warnings
-	for _, w := range warnings {
-		border := strings.Repeat("●", len(w)+4)
+// CheckGuard checks for operational warnings.
+func CheckGuard(homeDir string) []string {
+	warnings := GuardWarnings(homeDir)
+	for _, warning := range warnings {
+		border := strings.Repeat("●", len(warning)+4)
 		fmt.Println(border)
-		fmt.Println("● " + w + " ●")
+		fmt.Println("● " + warning + " ●")
 		fmt.Println(border)
 	}
 	if len(warnings) == 0 {
