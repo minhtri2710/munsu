@@ -40,20 +40,17 @@ Optional tools get warnings but do not fail the exit code:
 			}
 
 			// Determine hard-required tools for exit code
-			// git, tmux (or herdr), at least one coding harness
-			required := []string{"git", "tmux"}
+			// uses shared bootstrap.IsHardRequired from the ToolSpec registry
 			missingRequired := false
 			for _, tool := range result.MissingTools {
-				for _, req := range required {
-					if tool == req {
-						missingRequired = true
-						break
-					}
+				if bootstrap.IsHardRequired(tool) {
+					missingRequired = true
+					break
 				}
 			}
 
 			// Also check herdr as alternative session backend
-			if contains(result.MissingTools, "tmux") {
+			if !missingRequired && isMissing(result.MissingTools, "tmux") {
 				// Check if herdr is available (look for herdr binary or env)
 				herdrAvailable := os.Getenv("HERDR_ENV") != ""
 				if !herdrAvailable {
@@ -66,7 +63,7 @@ Optional tools get warnings but do not fail the exit code:
 				exitCode = 1
 			}
 
-			if contains(result.MissingTools, "herdr") {
+			if isMissing(result.MissingTools, "herdr") {
 				fmt.Println("herdr: optional (needed only if not using tmux)")
 			}
 
@@ -78,8 +75,8 @@ Optional tools get warnings but do not fail the exit code:
 	}
 }
 
-// contains returns true if the slice contains the given string.
-func contains(slice []string, s string) bool {
+// isMissing returns true if the slice contains the given string.
+func isMissing(slice []string, s string) bool {
 	for _, item := range slice {
 		if item == s {
 			return true

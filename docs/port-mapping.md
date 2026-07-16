@@ -65,7 +65,7 @@ firstmate-specific infrastructure that do not belong in a standalone CLI port:
 | Capability | firstmate scripts | Rationale |
 |---|---|---|
 | X/Twitter integration | `fm-x-*.sh` (6 scripts) | Social-media interaction; firstmate-specific, not part of crew lifecycle. |
-| Turn-end guards | `fm-turnend-guard.sh` | Post-response hooks; munsu's watcher handles stale detection at 5s granularity. |
+| Turn-end guards | `fm-turnend-guard.sh` | Push-based post-response hooks enforcing constraints at each agent turn boundary. Munsu uses pull-based watcher diagnostics instead (periodic fleet polling with structured wake reasons via `munsu watch` / `munsu wake-drain` / `munsu guard`). |
 | Composer mode | `fm-composer-lib.sh` | Multi-agent composition; munsu spawns 1:1 crewmates. |
 | Codex command policies | `fm-arm-command-policy.mjs` | Codex-specific ARM/CD gating; per-harness policies not in munsu's generic model. |
 | Classification / Gate-Refuse library | `fm-classify-lib.sh`, `fm-gate-refuse-lib.sh` | Logic is inline in munsu (`--kind`, cobra validation) — no extracted library needed. |

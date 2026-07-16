@@ -24,15 +24,14 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		LockAcquired: lockHeld,
 	}
 
-	// 1. Check required tools
-	tools := []string{"git", "treehouse", "no-mistakes", "tasks-axi", "gh-axi", "gh", "tmux"}
-	for _, tool := range tools {
-		path, err := exec.LookPath(tool)
+	// 1. Check required tools (uses shared ToolSpec registry)
+	for _, spec := range checkedTools {
+		path, err := exec.LookPath(spec.Name)
 		if err != nil {
-			res.MissingTools = append(res.MissingTools, tool)
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("MISSING: %s (install instructions vary)", tool))
+			res.MissingTools = append(res.MissingTools, spec.Name)
+			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("MISSING: %s (install instructions vary)", spec.Name))
 		} else {
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("FOUND: %s at %s", tool, path))
+			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("FOUND: %s at %s", spec.Name, path))
 		}
 	}
 
