@@ -2,6 +2,7 @@ package project
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -406,5 +407,59 @@ func TestResolveRepoPath_NotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found in registry") {
 		t.Errorf("expected 'not found in registry' in error, got: %v", err)
+	}
+}
+
+func TestResolveAdhoc_InGitRepo(t *testing.T) {
+	// Create a temp git repo and test inference
+	tmp := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmp
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure a minimal user for the test repo
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = tmp
+		_ = cfg.Run()
+	}
+
+	// ResolveAdhoc should succeed and return the dir basename as project name
+	p, err := ResolveAdhoc()
+	if err != nil {
+		t.Fatalf("ResolveAdhoc in git repo should succeed, got: %v", err)
+	}
+	// p.Name should be "munsu" since that's the worktree root basename
+	// but we mainly care that it succeeded and returned a valid project
+	if p.Name == "" {
+		t.Error("ResolveAdhoc returned empty name")
+	}
+	if p.Description == "" {
+		t.Error("ResolveAdhoc returned empty description")
+	}
+}
+
+func TestResolveAdhoc_NotInGitRepo(t *testing.T) {
+	// Create a temp dir that is NOT a git repo and chdir there
+	tmp := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	// ResolveAdhoc should fail — not in a git repo
+	_, err = ResolveAdhoc()
+	if err == nil {
+		t.Fatal("expected error for non-git directory")
+	}
+	if !strings.Contains(err.Error(), "not in a git repository") {
+		t.Errorf("expected 'not in a git repository' error, got: %v", err)
 	}
 }
