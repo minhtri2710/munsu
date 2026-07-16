@@ -463,3 +463,189 @@ func TestResolveAdhoc_NotInGitRepo(t *testing.T) {
 		t.Errorf("expected 'not in a git repository' error, got: %v", err)
 	}
 }
+
+func TestResolveFromCwd_RegistryAliasMatch(t *testing.T) {
+	// Create a git repo dir whose basename differs from the registered alias
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "repo-basename")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Init git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure minimal user
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = repoDir
+		_ = cfg.Run()
+	}
+
+	// Create munsu home dir
+	homeDir := filepath.Join(tmp, ".munsu")
+
+	// Register with alias name different from repo basename
+	aliasName := "my-custom-alias"
+	if err := Add(homeDir, aliasName, repoDir, "feat", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chdir into the repo so ResolveFromCwd detects it
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// ResolveFromCwd should match the registered alias, not the basename
+	p, err := ResolveFromCwd(homeDir)
+	if err != nil {
+		t.Fatalf("ResolveFromCwd: %v", err)
+	}
+	if p.Name != aliasName {
+		t.Errorf("Name = %q, want %q (registered alias should win over basename %q)", p.Name, aliasName, "repo-basename")
+	}
+	if p.Description != repoDir {
+		t.Errorf("Description = %q, want %q", p.Description, repoDir)
+	}
+	if p.Mode != "feat" {
+		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
+	}
+}
+
+func TestResolveFromCwd_NoRegistryMatch(t *testing.T) {
+	// Create a git repo with no matching registry entry
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "some-repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Init git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure minimal user
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = repoDir
+		_ = cfg.Run()
+	}
+
+	// Create munsu home dir with a registry entry that points elsewhere
+	homeDir := filepath.Join(tmp, ".munsu")
+	otherPath := filepath.Join(tmp, "other-repo")
+	if err := Add(homeDir, "other-project", otherPath, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chdir into some-repo (not other-repo)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should fall back to adhoc (basename as name)
+	p, err := ResolveFromCwd(homeDir)
+	if err != nil {
+		t.Fatalf("ResolveFromCwd: %v", err)
+	}
+	if p.Name != "some-repo" {
+		t.Errorf("Name = %q, want %q (should fall back to basename)", p.Name, "some-repo")
+	}
+}
+
+func TestResolveFromCwd_NotInGitRepo(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, ".munsu")
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not in a git repo — should fail
+	_, err = ResolveFromCwd(homeDir)
+	if err == nil {
+		t.Fatal("expected error for non-git directory")
+	}
+	if !strings.Contains(err.Error(), "not in a git repository") {
+		t.Errorf("expected 'not in a git repository' error, got: %v", err)
+	}
+}
+
+func TestResolveFromCwd_UrlSkipsPathMatch(t *testing.T) {
+	// URL-based project entries should be skipped during path matching
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "my-repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Init git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure minimal user
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = repoDir
+		_ = cfg.Run()
+	}
+
+	// Create munsu home dir and register project ONLY via URL (not a local path)
+	homeDir := filepath.Join(tmp, ".munsu")
+	// Write registry entry directly (avoid actual clone)
+	regPath := RegistryPath(homeDir)
+	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "- url-project - https://github.com/user/repo.git (added 2026-07-01)\n"
+	if err := os.WriteFile(regPath, []byte(entry), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chdir into the repo
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// URL should not match local path — falls back to adhoc
+	p, err := ResolveFromCwd(homeDir)
+	if err != nil {
+		t.Fatalf("ResolveFromCwd: %v", err)
+	}
+	if p.Name != "my-repo" {
+		t.Errorf("Name = %q, want %q (URL should be skipped, fallback to basename)", p.Name, "my-repo")
+	}
+}
