@@ -22,15 +22,15 @@ import (
 
 // Args holds all input parameters for spawning a crewmate.
 type Args struct {
-	ID           string
-	ProjectName  string
-	Kind         string
-	Mode         string
-	Yolo         bool
-	Backend      string // --backend flag value; empty = auto-detect
-	HarnessFlag  string // --harness flag value; empty = resolve from config
-	HomeDir      string // if empty, resolved via home.Resolve
-	Session      session.Backend // injectable session backend; nil = resolve at runtime
+	ID          string
+	ProjectName string
+	Kind        string
+	Mode        string
+	Yolo        bool
+	Backend     string          // --backend flag value; empty = auto-detect
+	HarnessFlag string          // --harness flag value; empty = resolve from config
+	HomeDir     string          // if empty, resolved via home.Resolve
+	Session     session.Backend // injectable session backend; nil = resolve at runtime
 }
 
 // ValidDeliveryModes lists the accepted delivery mode values.
@@ -54,8 +54,8 @@ func ValidateDeliveryMode(mode string) error {
 // ReadyPatterns maps each harness to a set of substrings that indicate
 // the agent is ready for input.
 var ReadyPatterns = map[string][]string{
-	harness.Pi:  {">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
-	harness.Agy: {"esc to cancel", "Ready for your prompt", "What would you like"},
+	harness.Pi:     {">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
+	harness.Agy:    {"esc to cancel", "Ready for your prompt", "What would you like"},
 	harness.Claude: {">", "ready"},
 }
 
@@ -244,7 +244,7 @@ func Run(args Args) (windowID string, err error) {
 	// 12. Bootstrap window: cd to worktree and launch harness
 	if launchCmd != "" {
 		launchScript := filepath.Join(wtPath, ".crew-launch.sh")
-		scriptContent := "#!/usr/bin/env bash\nset -e\n" + launchCmd + "\n"
+		scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", homeDir) + "\n" + launchCmd + "\n"
 		if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 		}

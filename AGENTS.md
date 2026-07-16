@@ -18,7 +18,10 @@ Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 The full munsu module map lives in the port-mapping table at `docs/port-mapping.md`.
 
 Skills are documented in `README.md` ("Available skills" table).
-## Coding rules
+
+Embedded skills live under `internal/cli/skills/` and are accessed via `//go:embed`.
+Runtime: `munsu skill list|show <name>` reads from the embed; `munsu init --skill`
+installs `munsu-ops` to the chosen destination and points at embedded auxiliaries.
 
 - Follow Go conventions (`gofmt`, `go vet` clean).
 - Use cobra for CLI commands.

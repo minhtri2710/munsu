@@ -1,0 +1,62 @@
+package cli
+
+import (
+	"fmt"
+	"sort"
+
+	"github.com/spf13/cobra"
+)
+
+func newSkillCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "skill",
+		Short: "Inspect embedded munsu skills",
+		Long: `Inspect the munsu skills embedded in the binary.
+
+munsu ships the munsu-ops skill on disk (installed by 'munsu init') plus several
+auxiliary skills that are read on demand via this command. munsu-ops points to
+them with "Context pointer" notes telling you which skill to read for each situation.`,
+	}
+	cmd.AddCommand(newSkillListCmd())
+	cmd.AddCommand(newSkillShowCmd())
+	return cmd
+}
+
+func newSkillListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List embedded skills",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			names, err := embeddedSkillNames()
+			if err != nil {
+				return err
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				fmt.Println(n)
+			}
+			return nil
+		},
+	}
+}
+
+func newSkillShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show <name>",
+		Short: "Print the contents of an embedded skill",
+		Long: `Print the full contents of an embedded skill to stdout.
+
+Read this output as the skill body when munsu-ops points you to one of the
+auxiliary skills (bootstrap-diagnostics, harness-adapters, munsu-update,
+secondmate-provisioning, stuck-crewmate-recovery).`,
+		Args: ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			content, err := readEmbeddedSkill(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Print(content)
+			return nil
+		},
+	}
+}
