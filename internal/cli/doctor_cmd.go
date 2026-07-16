@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -21,13 +20,8 @@ Hard-required tools (doctor exits non-zero if missing):
 
 Optional tools get warnings but do not fail the exit code:
   treehouse, no-mistakes, tasks-axi, gh-axi, gh, and GitHub auth.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
-			}
-
-			result, err := bootstrap.Run(homeDir, false, nil)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			result, err := bootstrap.Run(ctx.Home, false, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap: %w", err)
 			}
@@ -80,7 +74,7 @@ Optional tools get warnings but do not fail the exit code:
 				os.Exit(exitCode)
 			}
 			return nil
-		},
+		}),
 	}
 }
 

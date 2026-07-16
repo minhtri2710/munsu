@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -19,7 +18,7 @@ func newTaskCmd() *cobra.Command {
 		Use:   "add <id> <description>",
 		Short: "Add a new task to the backlog",
 		Args:  ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			desc := args[1]
 			kind, _ := cmd.Flags().GetString("kind")
@@ -34,17 +33,12 @@ func newTaskCmd() *cobra.Command {
 				meta["project"] = repo // --repo maps directly to the project name
 			}
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
-			if err := task.WriteMeta(homeDir, id, meta); err != nil {
+			if err := task.WriteMeta(ctx.Home, id, meta); err != nil {
 				return err
 			}
 			fmt.Printf("task %s added\n", id)
 			return nil
-		},
+		}),
 	}
 	addCmd.Flags().String("kind", "ship", "Task kind (ship|scout)")
 	addCmd.Flags().String("repo", "", "Project repository name")
@@ -53,15 +47,10 @@ func newTaskCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List tasks",
 		Args:  NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			stateFilter, _ := cmd.Flags().GetString("state")
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
-			entries, err := task.ListMeta(homeDir)
+			entries, err := task.ListMeta(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing tasks: %w", err)
 			}
@@ -87,7 +76,7 @@ func newTaskCmd() *cobra.Command {
 				fmt.Printf("%-20s %-8s %-16s %s\n", e.ID, e.Kind, project, status)
 			}
 			return nil
-		},
+		}),
 	}
 	listCmd.Flags().String("state", "", "Filter by state (in-flight|queued|done)")
 
@@ -95,16 +84,11 @@ func newTaskCmd() *cobra.Command {
 		Use:   "show <id>",
 		Short: "Show task details",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
-			meta, err := task.ReadMeta(homeDir, id)
+			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return err
 			}
@@ -116,7 +100,7 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			if full {
-				statusLines, err := task.ReadStatus(homeDir, id)
+				statusLines, err := task.ReadStatus(ctx.Home, id)
 				if err == nil && len(statusLines) > 0 {
 					fmt.Printf("---\nStatus:\n")
 					for _, line := range statusLines {
@@ -125,7 +109,7 @@ func newTaskCmd() *cobra.Command {
 				}
 			}
 			return nil
-		},
+		}),
 	}
 	showCmd.Flags().Bool("full", false, "Show full details including status")
 
@@ -133,23 +117,18 @@ func newTaskCmd() *cobra.Command {
 		Use:   "status <id> <state> <message>",
 		Short: "Append a status line to a task",
 		Args:  ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			state := args[1]
 			msg := args[2]
 			line := fmt.Sprintf("%s: %s", state, msg)
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
-			if err := task.AppendStatus(homeDir, id, line); err != nil {
+			if err := task.AppendStatus(ctx.Home, id, line); err != nil {
 				return err
 			}
 			fmt.Printf("status appended: %s\n", line)
 			return nil
-		},
+		}),
 	}
 
 	cmd.AddCommand(addCmd)

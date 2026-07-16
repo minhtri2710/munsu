@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/agentsmd"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/selfupdate"
 	"github.com/minhtri2710/munsu/internal/stow"
@@ -35,7 +34,7 @@ Examples:
   munsu stow --kind captain "Prefer simple layouts"
 `,
 		Args: MinimumNArgs(0),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if captain {
 				kind = stow.KindCaptain
 			}
@@ -43,12 +42,7 @@ Examples:
 				kind = stow.KindLearning
 			}
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
-			res, err := stow.RunKinded(homeDir, kind, args)
+			res, err := stow.RunKinded(ctx.Home, kind, args)
 			if err != nil {
 				return err
 			}
@@ -62,7 +56,7 @@ Examples:
 				fmt.Println("Nothing to stow (no text provided)")
 			}
 			return nil
-		},
+		}),
 	}
 
 	cmd.Flags().StringVar(&kind, "kind", "", "Kind of stow entry (learning|captain)")
@@ -80,17 +74,13 @@ Adds the self-governance section if missing.
 The <project> argument can be a project name (resolved from the registry)
 or an absolute path to a project directory.`,
 		Args: ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			projectArg := args[0]
 
 			// Resolve project name to path if not already an absolute path
 			projectDir := projectArg
 			if !filepath.IsAbs(projectArg) {
-				homeDir, err := home.Resolve(homeOverride)
-				if err != nil {
-					return fmt.Errorf("resolving home: %w", err)
-				}
-				resolved, err := project.ResolveRepoPath(homeDir, projectArg)
+				resolved, err := project.ResolveRepoPath(ctx.Home, projectArg)
 				if err != nil {
 					return fmt.Errorf("resolving project %q: %w", projectArg, err)
 				}
@@ -109,7 +99,7 @@ or an absolute path to a project directory.`,
 				fmt.Println("Added '## Maintaining this file' section")
 			}
 			return nil
-		},
+		}),
 	}
 }
 

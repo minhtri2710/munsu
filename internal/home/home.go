@@ -15,6 +15,9 @@ var HomeDirNames = []string{"state", "data", "config", "projects"}
 // 1. The override path (typically from --home flag)
 // 2. MUNSU_HOME environment variable
 // 3. Default ~/.munsu
+//
+// MUNSU_ROOT_OVERRIDE is intentionally not supported; use MUNSU_HOME instead.
+// If MUNSU_ROOT_OVERRIDE is set, it is ignored and a notice is printed to stderr.
 func Resolve(override string) (string, error) {
 	if override != "" {
 		return filepath.Abs(override)
@@ -23,7 +26,7 @@ func Resolve(override string) (string, error) {
 		return filepath.Abs(env)
 	}
 	if env := os.Getenv("MUNSU_ROOT_OVERRIDE"); env != "" {
-		return filepath.Abs(env)
+		fmt.Fprintf(os.Stderr, "warning: MUNSU_ROOT_OVERRIDE is deprecated; use MUNSU_HOME instead (ignoring %s)\n", env)
 	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

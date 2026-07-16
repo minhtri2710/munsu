@@ -6,7 +6,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/crewstate"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/spawn"
@@ -28,19 +27,14 @@ func newSpawnCmd() *cobra.Command {
 		Use:   "spawn <id> <project>",
 		Short: "Spawn a crewmate agent",
 		Args:  ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			// Resolve project mode from registry
-			projectMode, _, projErr := project.Mode(homeDir, args[1])
+			projectMode, _, projErr := project.Mode(ctx.Home, args[1])
 			if projErr != nil {
 				projectMode = "" // registry not set or not found — will use other fallbacks
 			}
 
-			_, err = spawn.Run(spawn.Args{
+			_, err := spawn.Run(spawn.Args{
 				ID:          args[0],
 				ProjectName: args[1],
 				Kind:        kind,
@@ -52,7 +46,7 @@ func newSpawnCmd() *cobra.Command {
 				HomeDir:     homeOverride,
 			})
 			return err
-		},
+		}),
 	}
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
@@ -68,17 +62,12 @@ func newSendCmd() *cobra.Command {
 		Use:   "send <id> <line>",
 		Short: "Send a line to a crewmate endpoint",
 		Args:  ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			line := args[1]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
 			// Read meta to resolve window
-			meta, err := task.ReadMeta(homeDir, id)
+			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
@@ -87,7 +76,7 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.Resolve(homeDir, "")
+			bk, _, err := session.Resolve(ctx.Home, "")
 			if err != nil {
 				return err
 			}
@@ -96,7 +85,7 @@ func newSendCmd() *cobra.Command {
 			}
 			fmt.Printf("sent to %s: %s\n", id, line)
 			return nil
-		},
+		}),
 	}
 	return cmd
 }
@@ -108,16 +97,11 @@ func newPeekCmd() *cobra.Command {
 		Use:   "peek <id>",
 		Short: "Peek at crewmate output",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
 			// Read meta to resolve window
-			meta, err := task.ReadMeta(homeDir, id)
+			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
@@ -126,7 +110,7 @@ func newPeekCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.Resolve(homeDir, "")
+			bk, _, err := session.Resolve(ctx.Home, "")
 			if err != nil {
 				return err
 			}
@@ -150,7 +134,7 @@ func newPeekCmd() *cobra.Command {
 				fmt.Println()
 			}
 			return nil
-		},
+		}),
 	}
 
 	cmd.Flags().IntVar(&lines, "lines", 40, "Number of lines to capture")
@@ -163,15 +147,10 @@ func newCrewStateCmd() *cobra.Command {
 		Use:   "crew-state <id>",
 		Short: "Read crewmate current state",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
-			state, err := crewstate.Read(homeDir, id)
+			state, err := crewstate.Read(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading crew state: %w", err)
 			}
@@ -196,7 +175,7 @@ func newCrewStateCmd() *cobra.Command {
 				fmt.Println("Note:  status log superseded by no-mistakes run-step")
 			}
 			return nil
-		},
+		}),
 	}
 }
 
@@ -205,16 +184,11 @@ func newPromoteCmd() *cobra.Command {
 		Use:   "promote <id>",
 		Short: "Promote a scout task to ship",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
 			// Preflight: verify task meta exists with kind=scout
-			meta, err := task.ReadMeta(homeDir, id)
+			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading meta for %s: %w", id, err)
 			}
@@ -223,12 +197,12 @@ func newPromoteCmd() *cobra.Command {
 			}
 
 			// Preflight: require report.md to exist
-			if !brief.ReportExists(homeDir, id) {
-				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, brief.ReportPath(homeDir, id))
+			if !brief.ReportExists(ctx.Home, id) {
+				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, brief.ReportPath(ctx.Home, id))
 			}
 
 			// Preflight: require last status to be done or resolved
-			if statusLines, err := task.ReadStatus(homeDir, id); err == nil && len(statusLines) > 0 {
+			if statusLines, err := task.ReadStatus(ctx.Home, id); err == nil && len(statusLines) > 0 {
 				lastLine := statusLines[len(statusLines)-1]
 				lastStatus, _ := task.ParseStatusKey(lastLine)
 				if !strings.HasPrefix(lastStatus, "done") && !strings.HasPrefix(lastStatus, "resolved") {
@@ -238,13 +212,13 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no status: report done or resolved before promoting", id)
 			}
 
-			if err := task.PromoteMeta(homeDir, id); err != nil {
+			if err := task.PromoteMeta(ctx.Home, id); err != nil {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
 
 			fmt.Printf("Task %s promoted from scout to ship\n", id)
 			return nil
-		},
+		}),
 	}
 }
 
@@ -255,16 +229,11 @@ func newTeardownCmd() *cobra.Command {
 		Use:   "teardown <id>",
 		Short: "Tear down a crewmate",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
 			opts := teardown.Options{
-				HomeDir: homeDir,
+				HomeDir: ctx.Home,
 				ID:      id,
 				Force:   force,
 			}
@@ -279,7 +248,7 @@ func newTeardownCmd() *cobra.Command {
 				fmt.Printf("  - %s\n", step)
 			}
 			return nil
-		},
+		}),
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip safety checks")

@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/backlog"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -52,16 +51,11 @@ Example:
   munsu backlog add flow-r2 "Flow retest scout"
 `,
 		Args: ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			desc := args[1]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
-			}
-
-			if err := backlog.AddItemDispatch(homeDir, id, desc, kind, repo, start); err != nil {
+			if err := backlog.AddItemDispatch(ctx.Home, id, desc, kind, repo, start); err != nil {
 				return err
 			}
 			// When --start is set, also register the task meta so it appears in fleet state.
@@ -74,14 +68,13 @@ Example:
 					meta["repo"] = repo
 					meta["project"] = repo
 				}
-				if err := task.WriteMeta(homeDir, id, meta); err != nil {
+				if err := task.WriteMeta(ctx.Home, id, meta); err != nil {
 					// Non-fatal: log but don't fail the backlog add
 					fmt.Fprintf(os.Stderr, "warning: writing task meta for %s: %v\n", id, err)
 				}
 			}
 			return nil
-
-		},
+		}),
 	}
 
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout|task)")
@@ -96,16 +89,12 @@ func newBacklogListCmd() *cobra.Command {
 		Use:   "list [state-filter]",
 		Short: "List backlog items",
 		Args:  MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "list", args)
 			}
-			if isDefaultHome(homeDir) {
-				return backlog.Run(homeDir, "list", args)
-			}
-			return backlog.RunManual(homeDir, "list", args)
-		},
+			return backlog.RunManual(ctx.Home, "list", args)
+		}),
 	}
 }
 
@@ -114,16 +103,12 @@ func newBacklogShowCmd() *cobra.Command {
 		Use:   "show <id>",
 		Short: "Show backlog item details",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "show", args)
 			}
-			if isDefaultHome(homeDir) {
-				return backlog.Run(homeDir, "show", args)
-			}
-			return backlog.RunManual(homeDir, "show", args)
-		},
+			return backlog.RunManual(ctx.Home, "show", args)
+		}),
 	}
 }
 
@@ -132,16 +117,12 @@ func newBacklogStartCmd() *cobra.Command {
 		Use:   "start <id>",
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "start", args)
 			}
-			if isDefaultHome(homeDir) {
-				return backlog.Run(homeDir, "start", args)
-			}
-			return backlog.RunManual(homeDir, "start", args)
-		},
+			return backlog.RunManual(ctx.Home, "start", args)
+		}),
 	}
 }
 
@@ -150,16 +131,12 @@ func newBacklogDoneCmd() *cobra.Command {
 		Use:   "done <id>",
 		Short: "Mark a backlog item as done",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "done", args)
 			}
-			if isDefaultHome(homeDir) {
-				return backlog.Run(homeDir, "done", args)
-			}
-			return backlog.RunManual(homeDir, "done", args)
-		},
+			return backlog.RunManual(ctx.Home, "done", args)
+		}),
 	}
 }
 
@@ -168,16 +145,12 @@ func newBacklogBlockCmd() *cobra.Command {
 		Use:   "block <id>",
 		Short: "Block a backlog item",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "block", args)
 			}
-			if isDefaultHome(homeDir) {
-				return backlog.Run(homeDir, "block", args)
-			}
-			return backlog.RunManual(homeDir, "block", args)
-		},
+			return backlog.RunManual(ctx.Home, "block", args)
+		}),
 	}
 }
 
@@ -186,16 +159,12 @@ func newBacklogReadyCmd() *cobra.Command {
 		Use:   "ready <id>",
 		Short: "Unblock a backlog item (mark ready)",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "ready", args)
 			}
-			if isDefaultHome(homeDir) {
-				return backlog.Run(homeDir, "ready", args)
-			}
-			return backlog.RunManual(homeDir, "ready", args)
-		},
+			return backlog.RunManual(ctx.Home, "ready", args)
+		}),
 	}
 }
 
@@ -204,15 +173,11 @@ func newBacklogUnblockCmd() *cobra.Command {
 		Use:   "unblock <id>",
 		Short: "Alias for ready (unblock a backlog item)",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "unblock", args)
 			}
-			if isDefaultHome(homeDir) {
-				return backlog.Run(homeDir, "unblock", args)
-			}
-			return backlog.RunManual(homeDir, "unblock", args)
-		},
+			return backlog.RunManual(ctx.Home, "unblock", args)
+		}),
 	}
 }

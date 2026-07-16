@@ -41,22 +41,18 @@ Writes starter configuration files and the orchestrator operating manual (AGENTS
 Also installs the munsu skills so coding-agent harnesses can discover them.
 
 Use --reconfigure to re-run auto-detection and overwrite existing config files.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return fmt.Errorf("resolving home: %w", err)
-			}
-			if err := home.EnsureDirTree(homeDir); err != nil {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := home.EnsureDirTree(ctx.Home); err != nil {
 				return fmt.Errorf("creating home tree: %w", err)
 			}
 
 			// Auto-detect and persist config (only if absent or --reconfigure)
-			if err := autoDetectConfig(homeDir); err != nil {
+			if err := autoDetectConfig(ctx.Home); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: auto-detect config: %v\n", err)
 			}
 
 			// Write orchestrator AGENTS.md
-			agentsPath := filepath.Join(homeDir, "AGENTS.md")
+			agentsPath := filepath.Join(ctx.Home, "AGENTS.md")
 			if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
 				if err := os.WriteFile(agentsPath, []byte(orchestratorManual), 0644); err != nil {
 					return fmt.Errorf("writing orchestrator manual: %w", err)
@@ -66,17 +62,17 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files.`
 				fmt.Printf("AGENTS.md already exists at %s (skipped)\n", agentsPath)
 			}
 
-			fmt.Printf("Initialized munsu home at %s\n", homeDir)
+			fmt.Printf("Initialized munsu home at %s\n", ctx.Home)
 
 			// Install munsu skills
-			if err := runSkillInstall(cmd, homeDir); err != nil {
+			if err := runSkillInstall(cmd, ctx.Home); err != nil {
 				return err
 			}
 
 			// Run bootstrap diagnostics and print
 			fmt.Println()
 			fmt.Println("--- Diagnostics ---")
-			result, err := bootstrap.Run(homeDir, false, nil)
+			result, err := bootstrap.Run(ctx.Home, false, nil)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "bootstrap diagnostics: %v\n", err)
 			} else {
@@ -89,10 +85,10 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files.`
 			}
 
 			// Print next steps
-			printNextSteps(homeDir)
+			printNextSteps(ctx.Home)
 
 			return nil
-		},
+		}),
 	}
 	cmd.Flags().StringVar(&skillChoice, "skill", "", "install munsu skills: global (~/.agents/skills/), local (<home>/.agents/skills/), or skip")
 	cmd.Flags().BoolVar(&reconfigure, "reconfigure", false, "Re-run auto-detection and overwrite existing config files")

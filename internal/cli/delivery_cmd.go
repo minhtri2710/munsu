@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -20,13 +19,9 @@ For registered projects with a remote, compares against the default branch.
 For PR tasks (where meta has pr=), fetches the PR head and compares.
 Warns if local default branch is stale vs origin.`,
 		Args: ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-			return delivery.ReviewDiff(homeDir, args[0])
-		},
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return delivery.ReviewDiff(ctx.Home, args[0])
+		}),
 	}
 }
 
@@ -39,17 +34,12 @@ and write a check.sh script to poll the PR merge status via gh CLI.
 
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 		Args: ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			prURL := args[1]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
 			// Preflight: verify task meta exists with kind=ship
-			meta, err := task.ReadMeta(homeDir, id)
+			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading meta for %s: %w", id, err)
 			}
@@ -57,8 +47,8 @@ PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 				return fmt.Errorf("task %s has kind=%q, pr-check requires kind=ship (promote scout tasks before checking PRs)", id, meta["kind"])
 			}
 
-			return delivery.PRCheck(homeDir, id, prURL)
-		},
+			return delivery.PRCheck(ctx.Home, id, prURL)
+		}),
 	}
 }
 
@@ -74,18 +64,13 @@ The --repo/-R flag is not allowed (repository comes from the URL).
 
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 		Args: MinimumNArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			prURL := args[1]
 			extra := args[2:]
 
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-
 			// Preflight: verify task meta exists with kind=ship
-			meta, err := task.ReadMeta(homeDir, id)
+			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading meta for %s: %w", id, err)
 			}
@@ -93,8 +78,8 @@ PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 				return fmt.Errorf("task %s has kind=%q, pr-merge requires kind=ship (promote scout tasks before merging)", id, meta["kind"])
 			}
 
-			return delivery.PRMerge(homeDir, id, prURL, extra)
-		},
+			return delivery.PRMerge(ctx.Home, id, prURL, extra)
+		}),
 	}
 	return cmd
 }
@@ -107,12 +92,8 @@ func newMergeLocalCmd() *cobra.Command {
 Only works for local-only mode projects (no remote).
 Refuses if the merge is not a clean fast-forward.`,
 		Args: ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-			return delivery.MergeLocal(homeDir, args[0])
-		},
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return delivery.MergeLocal(ctx.Home, args[0])
+		}),
 	}
 }
