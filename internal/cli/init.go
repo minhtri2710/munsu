@@ -36,7 +36,7 @@ func newInitCmd() *cobra.Command {
 		Long: `Initialize the munsu home directory tree.
 
 Creates the directory structure: {state, data, config, projects}.
-Auto-detects and persists session backend, crew harness, and backlog backend.
+Auto-detects and persists crew harness and backlog backend.
 Writes starter configuration files and the orchestrator operating manual (AGENTS.md).
 Also installs the munsu skills so coding-agent harnesses can discover them.
 
@@ -95,23 +95,12 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files.`
 	return cmd
 }
 
-// autoDetectConfig detects session backend, crew harness, and backlog backend,
+// autoDetectConfig detects crew harness and backlog backend,
 // persisting them only if the config file is absent (or --reconfigure is set).
 func autoDetectConfig(homeDir string) error {
-	// 1. Auto-detect backend
-	if reconfigure || !configFileExists(homeDir, "backend") {
-		backend := detectBackend()
-		if backend != "" {
-			if err := config.Set(homeDir, "backend", backend); err != nil {
-				return fmt.Errorf("setting backend: %w", err)
-			}
-			fmt.Printf("Detected and persisted backend: %s\n", backend)
-		}
-	} else {
-		fmt.Println("config/backend already exists (skipped; use --reconfigure to overwrite)")
-	}
+	// Note: backend is runtime context and is NOT persisted at init time.
 
-	// 2. Auto-detect crew harness
+	// 1. Auto-detect crew harness
 	if reconfigure || !configFileExists(homeDir, "crew-harness") {
 		harnessName, err := harness.Detect()
 		if err == nil && harnessName != "" {
@@ -124,7 +113,7 @@ func autoDetectConfig(homeDir string) error {
 		fmt.Println("config/crew-harness already exists (skipped; use --reconfigure to overwrite)")
 	}
 
-	// 3. Auto-detect backlog backend
+	// 2. Auto-detect backlog backend
 	if reconfigure || !configFileExists(homeDir, "backlog-backend") {
 		if _, err := exec.LookPath("tasks-axi"); err == nil {
 			if err := config.Set(homeDir, "backlog-backend", "tasks-axi"); err != nil {
@@ -139,17 +128,6 @@ func autoDetectConfig(homeDir string) error {
 	return nil
 }
 
-// detectBackend returns the preferred session backend.
-// Priority: HERDR_ENV env var > tmux availability.
-func detectBackend() string {
-	if os.Getenv("HERDR_ENV") != "" {
-		return "herdr"
-	}
-	if _, err := exec.LookPath("tmux"); err == nil {
-		return "tmux"
-	}
-	return "tmux" // default even if not found, will fail gracefully later
-}
 
 // configFileExists returns true if the config/<key> file exists under homeDir.
 func configFileExists(homeDir, key string) bool {

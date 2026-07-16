@@ -40,17 +40,13 @@ func Select(name string) (Backend, error) {
 // Detection order:
 //  1. $TMUX is set → tmux
 //  2. HERDR_ENV truthy → herdr
-//  3. herdr on PATH → herdr
-//  4. tmux on PATH → tmux
-//  5. nil (nothing found; caller handles error)
+//  3. tmux on PATH → tmux (cold-start default)
+//  4. nil (nothing found; caller handles error)
 func Default() Backend {
 	if os.Getenv("TMUX") != "" {
 		return &TmuxBackend{}
 	}
 	if os.Getenv("HERDR_ENV") != "" {
-		return &HerdrBackend{}
-	}
-	if _, err := exec.LookPath("herdr"); err == nil {
 		return &HerdrBackend{}
 	}
 	if _, err := exec.LookPath("tmux"); err == nil {
@@ -63,7 +59,7 @@ func Default() Backend {
 // Resolution order:
 //  1. backendOverride (from --backend flag, when non-empty and not "auto")
 //  2. homeDir/config/backend file (first whitespace-delimited word; "auto" = detect)
-//  3. Auto-detection: $TMUX > HERDR_ENV > herdr PATH > tmux PATH
+//  3. Auto-detection: $TMUX > HERDR_ENV > tmux PATH (cold-start)
 //  4. Error if nothing found
 // Returns the backend, its resolved name, and any error.
 func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
