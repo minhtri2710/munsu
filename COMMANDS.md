@@ -7,9 +7,10 @@ Full command map grouped by lifecycle phase.
 | Command | Description |
 |---------|-------------|
 | `munsu home [--mkdir]` | Print the munsu home directory (`~/.munsu`). With `--mkdir`, create the directory tree. |
-| `munsu init` | Create home directory and seed the orchestrator operating manual. |
+| `munsu init` | Create home directory and seed the orchestrator operating manual. Auto-detects backend, crew harness, and backlog backend. |
+| `munsu init --reconfigure` | Re-run auto-detection and overwrite existing config files. |
+| `munsu doctor` | Run read-only diagnostics with fix commands for missing tools. |
 | `munsu config get <key>` | Read a configuration value. |
-| `munsu config set <key> <value>` | Write a configuration value. |
 | `munsu project add <name> <path-or-url>` | Register a project. Git URLs are cloned automatically. |
 | `munsu project list` | List registered projects. |
 | `munsu project show <name>` | Show project details. |

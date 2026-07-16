@@ -37,17 +37,17 @@ func newBriefCmd() *cobra.Command {
 				return err
 			}
 
-			// Resolve delivery mode from project registry, or use --mode override
-			var mode string
-			var yolo bool
-			if modeFlag != "" {
-				mode = modeFlag
-				if err := spawn.ValidateDeliveryMode(mode); err != nil {
-					return err
-				}
-			} else if m, y, err := project.Mode(homeDir, repo); err == nil {
-				mode = m
-				yolo = y
+			// Resolve delivery mode using full auto-detection chain
+			projectMode := ""
+			projYolo := false
+			if m, y, err := project.Mode(homeDir, repo); err == nil {
+				projectMode = m
+				projYolo = y
+			}
+
+			resolvedMode, err := spawn.ResolveDeliveryMode(homeDir, modeFlag, projectMode)
+			if err != nil {
+				return err
 			}
 
 			// Require existing task meta unless --force
@@ -61,8 +61,8 @@ func newBriefCmd() *cobra.Command {
 				ID:      id,
 				Repo:    repo,
 				Scout:   scout,
-				Mode:    mode,
-				Yolo:    yolo,
+				Mode:    resolvedMode,
+				Yolo:    projYolo,
 			}
 
 			if err := brief.Scaffold(opts); err != nil {
@@ -77,10 +77,10 @@ func newBriefCmd() *cobra.Command {
 			fmt.Printf("  id:    %s\n", id)
 			fmt.Printf("  repo:  %s\n", repo)
 			fmt.Printf("  kind:  %s\n", kind)
-			if mode != "" {
-				fmt.Printf("  mode:  %s\n", mode)
+			if resolvedMode != "" {
+				fmt.Printf("  mode:  %s\n", resolvedMode)
 			}
-			if yolo {
+			if projYolo {
 				fmt.Println("  yolo:  true")
 			}
 			return nil

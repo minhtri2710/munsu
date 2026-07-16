@@ -7,6 +7,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -28,22 +29,39 @@ func newSpawnCmd() *cobra.Command {
 		Short: "Spawn a crewmate agent",
 		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := spawn.Run(spawn.Args{
-				ID:           args[0],
-				ProjectName:  args[1],
-				Kind:         kind,
-				Mode:         mode,
-				Yolo:         yolo,
-				Backend:      backend,
-				HarnessFlag:  harnessFlag,
-				HomeDir:      homeOverride,
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+
+			// Resolve project mode from registry for delivery mode auto-selection
+			projectMode, _, projErr := project.Mode(homeDir, args[1])
+			if projErr != nil {
+				projectMode = "" // registry not set or not found — will use other fallbacks
+			}
+
+			// Resolve effective delivery mode
+			effectiveMode, err := spawn.ResolveDeliveryMode(homeDir, mode, projectMode)
+			if err != nil {
+				return err
+			}
+
+			_, err = spawn.Run(spawn.Args{
+				ID:          args[0],
+				ProjectName: args[1],
+				Kind:        kind,
+				Mode:        effectiveMode,
+				Yolo:        yolo,
+				Backend:     backend,
+				HarnessFlag: harnessFlag,
+				HomeDir:     homeOverride,
 			})
 			return err
 		},
 	}
 
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
-	cmd.Flags().StringVar(&mode, "mode", "no-mistakes", "Delivery mode (no-mistakes|direct-PR|local-only)")
+	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override crewmate harness (pi, agy, etc.)")

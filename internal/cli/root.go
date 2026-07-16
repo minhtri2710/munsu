@@ -104,6 +104,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newBacklogCmd())
 	root.AddCommand(newSessionStartCmd())
 	root.AddCommand(newBootstrapCmd())
+	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newFleetSyncCmd())
 	root.AddCommand(newFleetSnapshotCmd())
 	root.AddCommand(newFleetViewCmd())

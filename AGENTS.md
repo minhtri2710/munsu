@@ -29,7 +29,9 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 - Surgical changes: touch only what the task requires. Clean up only your own mess.
 - Match existing style in the file you're editing.
 - Test home resolution and other core logic in `internal/*/` packages.
-
+- `munsu doctor` in `internal/cli/doctor_cmd.go` reuses `internal/bootstrap/bootstrap.go` diagnostics; fix strings live in `internal/bootstrap/fixes.go`.
+- Delivery mode auto-selection in `internal/spawn/spawn.go` (`ResolveDeliveryMode`) — precedence: --mode flag, project registry, config/default-mode, auto (no-mistakes on PATH).
+- Init auto-detect logic lives in `internal/cli/init.go` (`autoDetectConfig`) and respects `--reconfigure` flag.
 ## Go version
 
 Go 1.26.5 (use `go 1.26` in `go.mod`).

@@ -72,6 +72,8 @@ For standalone munsu use, skip this step — `munsu spawn --mode direct-PR` or `
 
 ```sh
 munsu home --mkdir       # create ~/.munsu/{state,data,config,projects}
+munsu init               # auto-detect backend, harness, backlog, and seed AGENTS.md
+munsu doctor             # run diagnostics with fix commands
 munsu --help             # see the full command tree
 munsu --version          # print version
 ```
@@ -108,6 +110,7 @@ agent harnesses auto-discover at session start.
 ```sh
 munsu home --mkdir
 munsu init
+munsu doctor
 ```
 
 ### Session start
@@ -127,7 +130,7 @@ munsu backlog done <task-id>
 ### Crewmate lifecycle
 
 ```sh
-munsu spawn <task-id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]
+munsu spawn <task-id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect)
 munsu watch-arm [--restart]
 munsu wake-drain
 munsu send <task-id> "<instruction>"
