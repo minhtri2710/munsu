@@ -261,7 +261,7 @@ func Run(args Args) (windowID string, err error) {
 	if _, err := exec.LookPath("tasks-axi"); err == nil {
 		chk := exec.Command("tasks-axi", "show", args.ID)
 		if out, err := chk.CombinedOutput(); err != nil || strings.Contains(string(out), "not found") {
-			fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row; register it with 'backlog add %s --kind %s' to track lifecycle\n", args.ID, args.ID, args.Kind)
+			fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row; register it with 'backlog add %s \"<description>\" --kind %s' to track lifecycle\n", args.ID, args.ID, args.Kind)
 		}
 	}
 
