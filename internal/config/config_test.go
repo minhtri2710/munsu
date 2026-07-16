@@ -94,3 +94,38 @@ func TestSetOverwrites(t *testing.T) {
 		t.Errorf("Get() = %q, want %q", val, "docker")
 	}
 }
+
+func TestKnownKeys(t *testing.T) {
+	expected := []string{"backend", "crew-harness", "secondmate-harness", "backlog-backend", "default-mode"}
+	if len(KnownKeys) != len(expected) {
+		t.Errorf("KnownKeys length = %d, want %d", len(KnownKeys), len(expected))
+	}
+	for i, k := range expected {
+		if i < len(KnownKeys) && KnownKeys[i] != k {
+			t.Errorf("KnownKeys[%d] = %q, want %q", i, KnownKeys[i], k)
+		}
+	}
+}
+
+func TestIsKnownKey(t *testing.T) {
+	tests := []struct {
+		key      string
+		expected bool
+	}{
+		{"backend", true},
+		{"crew-harness", true},
+		{"secondmate-harness", true},
+		{"backlog-backend", true},
+		{"default-mode", true},
+		{"unknown", false},
+		{"nonexistent", false},
+		{"", false},
+		{"BACKEND", false},  // case-sensitive
+	}
+	for _, tt := range tests {
+		got := IsKnownKey(tt.key)
+		if got != tt.expected {
+			t.Errorf("IsKnownKey(%q) = %v, want %v", tt.key, got, tt.expected)
+		}
+	}
+}
