@@ -67,16 +67,40 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("CREW_DISPATCH: active (%d rules)", ruleCount))
 	}
 
-	// 5. Check session backend preference
-	if data, err := os.ReadFile(filepath.Join(home, "config", "backend")); err == nil {
-		backend := strings.TrimSpace(string(data))
-		if backend != "" && backend != "auto" {
-			res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("BACKEND: %s (config)", backend))
-		}
+	// 5. Check session backend preference — distinguish config pin from runtime resolution
+	configBackendPath := filepath.Join(home, "config", "backend")
+	var configuredPin string
+	if data, err := os.ReadFile(configBackendPath); err == nil {
+		configuredPin = strings.TrimSpace(string(data))
+	}
+
+	// BACKEND_CONFIG: shows what is pinned/configured (auto or explicit name)
+	configDisplay := "auto"
+	if configuredPin != "" && configuredPin != "auto" {
+		configDisplay = configuredPin
+	}
+	res.ConfigDetails = append(res.ConfigDetails, "BACKEND_CONFIG: "+configDisplay)
+
+	// BACKEND_RESOLVED: shows the currently resolved runtime backend and its source
+	var resolved, source string
+	if configuredPin != "" && configuredPin != "auto" {
+		resolved = configuredPin
+		source = "config pin"
+	} else if tmuxEnv := os.Getenv("TMUX"); tmuxEnv != "" {
+		resolved = "tmux"
+		source = "active TMUX"
 	} else if herdrEnv := os.Getenv("HERDR_ENV"); herdrEnv != "" {
-		res.ConfigDetails = append(res.ConfigDetails, "BACKEND: herdr (HERDR_ENV)")
+		resolved = "herdr"
+		source = "active HERDR_ENV"
+	} else if _, err := exec.LookPath("tmux"); err == nil {
+		resolved = "tmux"
+		source = "cold-start"
+	}
+
+	if resolved != "" {
+		res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("BACKEND_RESOLVED: %s (source: %s)", resolved, source))
 	} else {
-		res.ConfigDetails = append(res.ConfigDetails, "BACKEND: auto (default)")
+		res.ConfigDetails = append(res.ConfigDetails, "BACKEND_RESOLVED: none (no backend available)")
 	}
 
 	// 6. Install tools if requested and lock held
