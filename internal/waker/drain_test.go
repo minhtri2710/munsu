@@ -1,0 +1,184 @@
+package waker
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/minhtri2710/munsu/internal/lifecycle"
+)
+
+// writeBeatFile writes a watcher liveness beat file at the given timestamp.
+func writeBeatFile(t *testing.T, homeDir string, ts int64) {
+	t.Helper()
+	path := lifecycle.BeatPath(homeDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := formatBeatContent(ts) + " 12345"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeWakeQueue writes tab-separated wake queue entries.
+func writeWakeQueue(t *testing.T, homeDir string, lines []string) {
+	t.Helper()
+	path := lifecycle.QueuePath(homeDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data := strings.Join(lines, "\n")
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// formatBeatContent formats a unix timestamp as the decimal + pid string
+// expected by lifecycle.ReadBeat.
+func formatBeatContent(ts int64) string {
+	// Use the same format as lifecycle.WriteBeat: "<unix_ts> <pid>"
+	return fmt.Sprintf("%d %d", ts, 12345)
+}
+
+func TestCheckGuard_NeverStarted(t *testing.T) {
+	home := t.TempDir()
+	warnings := CheckGuard(home)
+
+	if len(warnings) == 0 {
+		t.Fatal("expected warnings, got none")
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "WATCHER NEVER STARTED") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning containing 'WATCHER NEVER STARTED', got %v", warnings)
+	}
+}
+
+func TestCheckGuard_StaleWatcher(t *testing.T) {
+	home := t.TempDir()
+	// Write a beat file with a stale timestamp (>300s in the past)
+	writeBeatFile(t, home, time.Now().Add(-400*time.Second).Unix())
+
+	warnings := CheckGuard(home)
+
+	if len(warnings) == 0 {
+		t.Fatal("expected warnings, got none")
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "WATCHER BEACON STALE") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning containing 'WATCHER BEACON STALE', got %v", warnings)
+	}
+}
+
+func TestCheckGuard_QueuedWake(t *testing.T) {
+	home := t.TempDir()
+	// Write a fresh beat so we only trigger on queued wakes
+	writeBeatFile(t, home, time.Now().Unix())
+	writeWakeQueue(t, home, []string{"1780000000\t1\tsignal\tkey\tpayload"})
+
+	warnings := CheckGuard(home)
+
+	if len(warnings) == 0 {
+		t.Fatal("expected warnings, got none")
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "QUEUED WAKES PENDING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning containing 'QUEUED WAKES PENDING', got %v", warnings)
+	}
+}
+
+func TestCheckGuard_AllClear(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+
+	warnings := CheckGuard(home)
+
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+}
+
+func TestCheckGuard_EmptyWakeQueue(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+	// Write an empty wake queue file
+	writeWakeQueue(t, home, []string{""})
+
+	warnings := CheckGuard(home)
+
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings for empty queue, got %v", warnings)
+	}
+}
+
+func TestPrintRecords_Empty(t *testing.T) {
+	// Should not panic or produce output
+	PrintRecords(nil)
+	PrintRecords([]Record{})
+}
+
+func TestPrintRecords_NonEmpty(t *testing.T) {
+	records := []Record{
+		{Epoch: "1780000000", Seq: "1", Kind: "signal", Key: "task-abc", Payload: "build done"},
+		{Epoch: "1780000001", Seq: "2", Kind: "stale", Key: "task-xyz", Payload: "watcher dead"},
+	}
+
+	// Capture stdout
+	r := captureStdout(t, func() {
+		PrintRecords(records)
+	})
+
+	// Verify each record is printed as a tab-separated line
+	for _, rec := range records {
+		expected := rec.Epoch + "\t" + rec.Seq + "\t" + rec.Kind + "\t" + rec.Key + "\t" + rec.Payload
+		if !strings.Contains(r, expected) {
+			t.Errorf("expected output to contain %q, got %q", expected, r)
+		}
+	}
+}
+
+// captureStdout runs fn and returns its stdout output as a string.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	old := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+
+	fn()
+	w.Close()
+
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
