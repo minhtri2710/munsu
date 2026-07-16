@@ -1,7 +1,9 @@
 package spawn
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -557,5 +559,60 @@ func TestRun_BackendPersistenceRoundtrip(t *testing.T) {
 	}
 	if readMeta["backend"] != "herdr" {
 		t.Errorf("meta[backend] = %q, want 'herdr'", readMeta["backend"])
+	}
+}
+
+func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a minimal brief so spawn passes the preflight check
+	briefDir := filepath.Join(tmpDir, "data", "test-task")
+	if err := os.MkdirAll(briefDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("# test brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a fake tasks-axi that returns "not found" for any task
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "tasks-axi"), []byte("#!/bin/sh\necho 'not found: test-task'\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	// Capture stderr while running spawn (will fail on project resolution)
+	r, w, _ := os.Pipe()
+	oldStderr := os.Stderr
+	os.Stderr = w
+
+	_, err := Run(Args{
+		ID:          "test-task",
+		ProjectName: "test-project",
+		HomeDir:     tmpDir,
+		Session:     &fakeBackend{},
+	})
+
+	w.Close()
+	os.Stderr = oldStderr
+	var buf bytes.Buffer
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Fatal(copyErr)
+	}
+	r.Close()
+	stderr := buf.String()
+
+	// Must contain the warning with the required description placeholder
+	want := `backlog add test-task "<description>" --kind`
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr should contain suggested command with description placeholder\\n got: %s\\n want substring: %s", stderr, want)
+	}
+
+	// The spawn itself is expected to fail (no project registry)
+	if err == nil {
+		t.Error("expected error from missing project registry, got nil")
 	}
 }
