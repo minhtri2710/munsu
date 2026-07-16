@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/spf13/cobra"
 )
@@ -24,15 +23,11 @@ func newProjectCmd() *cobra.Command {
 If path-or-url is a git URL (http://, https://, git@, ssh://),
 the repository is cloned into the projects directory first.`,
 		Args: ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			mode, _ := cmd.Flags().GetString("mode")
 			yolo, _ := cmd.Flags().GetBool("yolo")
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-			return project.Add(homeDir, args[0], args[1], mode, yolo)
-		},
+			return project.Add(ctx.Home, args[0], args[1], mode, yolo)
+		}),
 	}
 	addCmd.Flags().String("mode", "", "Delivery mode (feat, fix, refactor, etc.)")
 	addCmd.Flags().Bool("yolo", false, "Skip pre-flight checks")
@@ -41,12 +36,8 @@ the repository is cloned into the projects directory first.`,
 		Use:   "list",
 		Short: "List registered projects",
 		Args:  NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-			projects, err := project.List(homeDir)
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			projects, err := project.List(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -65,19 +56,15 @@ the repository is cloned into the projects directory first.`,
 				fmt.Printf(" - %s (added %s)\n", p.Description, p.Added)
 			}
 			return nil
-		},
+		}),
 	}
 
 	showCmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show project details",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-			p, err := project.Find(homeDir, args[0])
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			p, err := project.Find(ctx.Home, args[0])
 			if err != nil {
 				return err
 			}
@@ -92,37 +79,29 @@ the repository is cloned into the projects directory first.`,
 			fmt.Printf("Added:       %s\n", p.Added)
 
 			// Show project dir if it exists
-			projDir := filepath.Join(project.ProjectsDir(homeDir), p.Name)
+			projDir := filepath.Join(project.ProjectsDir(ctx.Home), p.Name)
 			if fi, statErr := os.Stat(projDir); statErr == nil && fi.IsDir() {
 				fmt.Printf("Directory:   %s\n", projDir)
 			}
 			return nil
-		},
+		}),
 	}
 
 	rmCmd := &cobra.Command{
 		Use:   "rm <name>",
 		Short: "Remove a registered project",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-			return project.Rm(homeDir, args[0])
-		},
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return project.Rm(ctx.Home, args[0])
+		}),
 	}
 
 	modeCmd := &cobra.Command{
 		Use:   "mode <name>",
 		Short: "Resolve delivery mode for a project",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			homeDir, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
-			mode, yolo, err := project.Mode(homeDir, args[0])
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			mode, yolo, err := project.Mode(ctx.Home, args[0])
 			if err != nil {
 				return err
 			}
@@ -132,7 +111,7 @@ the repository is cloned into the projects directory first.`,
 			}
 			fmt.Println()
 			return nil
-		},
+		}),
 	}
 
 	cmd.AddCommand(addCmd)

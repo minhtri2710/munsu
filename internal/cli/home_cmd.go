@@ -17,19 +17,15 @@ func newHomeCmd() *cobra.Command {
 
 Resolution order: --home flag > MUNSU_HOME env > ~/.munsu.
 With --mkdir, create the home directory tree {state,data,config,projects}.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := home.Resolve(homeOverride)
-			if err != nil {
-				return err
-			}
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if mkdir {
-				if err := home.EnsureDirTree(path); err != nil {
+				if err := home.EnsureDirTree(ctx.Home); err != nil {
 					return err
 				}
 			}
-			fmt.Println(path)
+			fmt.Println(ctx.Home)
 			return nil
-		},
+		}),
 	}
 	cmd.Flags().BoolVar(&mkdir, "mkdir", false, "create the home directory tree")
 	return cmd
