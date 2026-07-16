@@ -111,7 +111,7 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.Resolve(ctx.Home, "")
+			bk, _, err := session.Resolve(ctx.Home, meta["backend"])
 			if err != nil {
 				return err
 			}
@@ -145,7 +145,7 @@ func newPeekCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.Resolve(ctx.Home, "")
+			bk, _, err := session.Resolve(ctx.Home, meta["backend"])
 			if err != nil {
 				return err
 			}
