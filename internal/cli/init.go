@@ -195,7 +195,7 @@ func installSkillsTo(dest string) error {
 		fmt.Printf("Skill %q kept as-is at %s\n", name, dest)
 	} else {
 		fmt.Printf("Installed skill %q to %s\n", name, dest)
-		fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, harness-adapters, munsu-update, secondmate-provisioning, stuck-crewmate-recovery")
+		fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, decision-hold-lifecycle, harness-adapters, munsu-update, secondmate-provisioning, stuck-crewmate-recovery")
 		fmt.Println("  Run: munsu skill show <name>")
 	}
 	return nil

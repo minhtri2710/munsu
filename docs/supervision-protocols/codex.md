@@ -1,0 +1,30 @@
+# Codex supervision protocol
+
+**Mode:** foreground checkpoint
+
+## Supervision loop
+
+When this session owns supervision and away mode is not active:
+
+1. Drain first: `munsu wake-drain`.
+2. Run one foreground watcher checkpoint: `munsu watch run --timeout <seconds>`.  
+   Recommended timeout: 180s (configure via `CODEX_WATCH_CHECKPOINT` or the harness adapter).
+3. If the command prints `signal:`, `stale:`, `check:`, or `heartbeat`: drain queued wakes, handle that wake, then start the next checkpoint.
+4. If the command exits with no wake (timeout or `checkpoint:`): drain queued wakes anyway, process any visible user message, then start the next checkpoint.
+5. Never use shell `&` or background tasks for watcher supervision.
+
+## Key differences from firstmate
+
+- Use `munsu watch run` instead of `bin/fm-watch-checkpoint.sh`.
+- Use `munsu wake-drain` instead of `bin/fm-wake-drain.sh`.
+- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for crewmates.
+
+## Harness-specific
+
+- Codex cannot reason while a foreground tool call is running; the bounded checkpoint returns control regularly.
+- No background mechanism — use foreground checkpoints only.
+
+## See also
+
+- `munsu watch run --help`, `munsu wake-drain --help`, `munsu guard --help`
+- Seeded `AGENTS.md` (orchestrator operating manual) §4 (Harness dispatch) and §5 (Supervision protocol)
