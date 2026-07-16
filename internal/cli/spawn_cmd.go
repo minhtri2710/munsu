@@ -46,7 +46,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			if len(args) >= 2 {
 				projectName = args[1]
 			} else {
-				p, err := project.ResolveAdhoc()
+				p, err := project.ResolveFromCwd(ctx.Home)
 				if err != nil {
 					return fmt.Errorf("no project argument and cannot infer from cwd: %w\n  Pass the project name: munsu spawn %s <project>\n  Or register this repo: munsu project add <name> <path>", err, id)
 				}

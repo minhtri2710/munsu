@@ -315,20 +315,69 @@ func ResolveRepoPath(homeDir, name string) (string, error) {
 	return "", fmt.Errorf("project %q not resolvable: no local path or cloned repo found for %q", name, p.Description)
 }
 
+// gitRoot returns the absolute path to the git repository root from cwd.
+func gitRoot() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("not in a git repository: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // ResolveAdhoc detects a git repo from cwd and returns a transient Project.
 // Uses git rev-parse --show-toplevel to find the repo root, then uses the
 // directory basename as the project name. No registry write occurs.
 func ResolveAdhoc() (*Project, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
+	repoRoot, err := gitRoot()
 	if err != nil {
-		return nil, fmt.Errorf("not in a git repository: %w", err)
+		return nil, err
 	}
-	repoRoot := strings.TrimSpace(string(out))
 	name := filepath.Base(repoRoot)
 	return &Project{
 		Name:        name,
 		Description: repoRoot,
 		Added:       today(),
 	}, nil
+}
+
+// ResolveFromCwd detects the git repo from cwd and tries to match its root
+// against registered project paths. If a registry project's Description (stored path)
+// matches the git root, the registered project (with its alias name) is returned.
+// If no registry path matches, falls back to ResolveAdhoc (transient project).
+func ResolveFromCwd(homeDir string) (*Project, error) {
+	repoRoot, err := gitRoot()
+	if err != nil {
+		return nil, err
+	}
+
+	// Normalize git root (resolve symlinks for robust matching)
+	cleanRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		cleanRoot = filepath.Clean(repoRoot)
+	}
+
+	// Check registered projects for a path match
+	projects, err := List(homeDir)
+	if err != nil {
+		// Can't read registry — fall back to adhoc
+		return ResolveAdhoc()
+	}
+
+	for _, p := range projects {
+		if !filepath.IsAbs(p.Description) {
+			continue // skip URLs and relative paths
+		}
+		// Normalize stored path
+		cleanDesc, err := filepath.EvalSymlinks(p.Description)
+		if err != nil {
+			cleanDesc = filepath.Clean(p.Description)
+		}
+		if cleanDesc == cleanRoot {
+			return p, nil
+		}
+	}
+
+	// No registry match — fall back to adhoc
+	return ResolveAdhoc()
 }
