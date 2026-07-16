@@ -81,8 +81,12 @@ func newFleetBearingsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "bearings [<project-dir>]",
 		Short: "Compact resume report",
-		Long:  `DEPRECATED: use 'munsu fleet bearings' instead.`,
-		Args:  MaximumNArgs(1),
+		Long: `Print a compact resume report for the fleet or a single project.
+
+The report shows the aggregate health of all registered projects, listing
+in-flight tasks with their project, phase, and last known status.
+When a project directory argument is given, only that project is shown.`,
+		Args: MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			projectDir := ""
 			if len(args) > 0 {
