@@ -233,14 +233,8 @@ func TestScaffoldCreatesDir(t *testing.T) {
 
 func TestShipBriefContainsStatusReporting(t *testing.T) {
 	tmpl := shipBriefTemplate("t1", "repo", "", false)
-	checks := []string{
-		"working", "needs-decision", "blocked", "paused",
-		"resolved", "done", "failed",
-	}
-	for _, c := range checks {
-		if !strings.Contains(tmpl, c) {
-			t.Errorf("ship brief missing state %q", c)
-		}
+	if !strings.Contains(tmpl, "munsu task status") {
+		t.Error("ship brief should reference munsu task status command")
 	}
 }
 

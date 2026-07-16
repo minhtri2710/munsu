@@ -84,6 +84,7 @@ with no requirement to live inside a firstmate checkout.`,
 	// All commands
 	root.AddCommand(newHomeCmd())
 	root.AddCommand(newInitCmd())
+	root.AddCommand(newSkillCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newProjectCmd())
 	root.AddCommand(newWorktreeCmd())
