@@ -7,6 +7,27 @@ import (
 	"strings"
 )
 
+// KnownKeys is the authoritative list of well-known config keys.
+// Used by both config show and config get to distinguish known-unset
+// from unknown keys.
+var KnownKeys = []string{
+	"backend",
+	"crew-harness",
+	"secondmate-harness",
+	"backlog-backend",
+	"default-mode",
+}
+
+// IsKnownKey returns true if key is a well-known config key.
+func IsKnownKey(key string) bool {
+	for _, k := range KnownKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
 // ConfigDir returns the path to the config directory under homeDir.
 func ConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, "config")

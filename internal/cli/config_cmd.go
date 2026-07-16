@@ -11,14 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// wellKnownConfigKeys lists the commonly used config keys for display.
-var wellKnownConfigKeys = []string{
-	"backend",
-	"crew-harness",
-	"secondmate-harness",
-	"backlog-backend",
-	"default-mode",
-}
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -30,7 +22,7 @@ Configuration values are stored as files under $MUNSU_HOME/config/<key>.
 Each value can be overridden at runtime by setting the environment variable
 MUNSU_<KEY>_OVERRIDE (e.g. MUNSU_BACKEND_OVERRIDE=tmux).
 
-Known config keys: ` + strings.Join(wellKnownConfigKeys, ", ") + `.
+Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 `,
 	}
 	cmd.AddCommand(&cobra.Command{
@@ -38,11 +30,15 @@ Known config keys: ` + strings.Join(wellKnownConfigKeys, ", ") + `.
 		Short: "Get a configuration value",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			val, err := config.Get(ctx.Home, args[0])
+			key := args[0]
+			val, err := config.Get(ctx.Home, key)
 			if err != nil {
+				if config.IsKnownKey(key) {
+					return nil
+				}
 				return err
 			}
-			fmt.Println(val)
+			fmt.Fprintln(cmd.OutOrStdout(), val)
 			return nil
 		}),
 	})
@@ -96,7 +92,7 @@ func showConfig(homeDir string) {
 	// Home path
 	fmt.Printf("%-30s %s\n", "home", homeDir)
 
-	for _, key := range wellKnownConfigKeys {
+	for _, key := range config.KnownKeys {
 		envKey := fmt.Sprintf("MUNSU_%s_OVERRIDE", strings.ToUpper(key))
 		val, err := config.Get(homeDir, key)
 		if err != nil {
@@ -133,8 +129,8 @@ func showConfig(homeDir string) {
 
 // findExtraConfigKeys lists config files that are not in the well-known list.
 func findExtraConfigKeys(homeDir string) []string {
-	known := make(map[string]bool, len(wellKnownConfigKeys))
-	for _, k := range wellKnownConfigKeys {
+	known := make(map[string]bool, len(config.KnownKeys))
+	for _, k := range config.KnownKeys {
 		known[k] = true
 	}
 	entries, err := os.ReadDir(config.ConfigDir(homeDir))
