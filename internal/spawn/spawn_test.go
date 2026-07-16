@@ -10,11 +10,11 @@ import (
 
 // fakeBackend implements session.Backend for testing.
 type fakeBackend struct {
-	newWindow  func(session, name string) (string, error)
-	sendKeys   func(windowID, text string) error
-	capture    func(windowID string, lines int) (string, error)
-	alive      func(windowID string) bool
-	teardown   func(windowID string) error
+	newWindow func(session, name string) (string, error)
+	sendKeys  func(windowID, text string) error
+	capture   func(windowID string, lines int) (string, error)
+	alive     func(windowID string) bool
+	teardown  func(windowID string) error
 }
 
 func (f *fakeBackend) NewWindow(session, name string) (string, error) {
@@ -293,5 +293,92 @@ func TestRun_InjectFakeSession(t *testing.T) {
 	}
 	if calledNewWindow {
 		t.Error("NewWindow should not be called before brief check")
+	}
+}
+
+func TestResolveDeliveryMode_AutoNoMistakes(t *testing.T) {
+	// no-mistakes is on PATH in test env, so auto should pick it
+	mode, err := ResolveDeliveryMode(t.TempDir(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "no-mistakes" {
+		t.Errorf("ResolveDeliveryMode auto = %q, want %q", mode, "no-mistakes")
+	}
+}
+
+func TestResolveDeliveryMode_ExplicitDirectPR(t *testing.T) {
+	mode, err := ResolveDeliveryMode(t.TempDir(), "direct-PR", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "direct-PR" {
+		t.Errorf("ResolveDeliveryMode explicit = %q, want %q", mode, "direct-PR")
+	}
+}
+
+func TestResolveDeliveryMode_ProjectModeHonored(t *testing.T) {
+	mode, err := ResolveDeliveryMode(t.TempDir(), "", "direct-PR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "direct-PR" {
+		t.Errorf("ResolveDeliveryMode project mode = %q, want %q", mode, "direct-PR")
+	}
+}
+
+func TestResolveDeliveryMode_ExplicitOverridesProject(t *testing.T) {
+	mode, err := ResolveDeliveryMode(t.TempDir(), "local-only", "no-mistakes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "local-only" {
+		t.Errorf("ResolveDeliveryMode explicit = %q, want %q", mode, "local-only")
+	}
+}
+
+func TestResolveDeliveryMode_InvalidExplicit(t *testing.T) {
+	_, err := ResolveDeliveryMode(t.TempDir(), "bogus", "")
+	if err == nil {
+		t.Fatal("expected error for invalid explicit mode")
+	}
+}
+
+func TestValidateDeliveryMode_Extended(t *testing.T) {
+	if err := ValidateDeliveryMode(""); err != nil {
+		t.Errorf("empty mode should be valid, got: %v", err)
+	}
+	if err := ValidateDeliveryMode("no-mistakes"); err != nil {
+		t.Errorf("no-mistakes should be valid, got: %v", err)
+	}
+	if err := ValidateDeliveryMode("direct-PR"); err != nil {
+		t.Errorf("direct-PR should be valid, got: %v", err)
+	}
+	if err := ValidateDeliveryMode("local-only"); err != nil {
+		t.Errorf("local-only should be valid, got: %v", err)
+	}
+	if err := ValidateDeliveryMode("invalid"); err == nil {
+		t.Error("invalid mode should produce error")
+	}
+}
+
+func TestEnsureDeliveryModeRunnable_NoMistakesOnPath(t *testing.T) {
+	// no-mistakes is on PATH in this test env, so this should pass
+	if err := EnsureDeliveryModeRunnable("no-mistakes"); err != nil {
+		t.Errorf("no-mistakes binary is on PATH, should be runnable: %v", err)
+	}
+}
+
+func TestEnsureDeliveryModeRunnable_DirectPR(t *testing.T) {
+	// direct-PR doesn't require any binary check
+	if err := EnsureDeliveryModeRunnable("direct-PR"); err != nil {
+		t.Errorf("direct-PR should always be runnable: %v", err)
+	}
+}
+
+func TestNoMistakesOnPath(t *testing.T) {
+	// no-mistakes should be on PATH in the test env since we use it for delivery
+	if !noMistakesOnPath() {
+		t.Error("no-mistakes should be on PATH in test environment")
 	}
 }
