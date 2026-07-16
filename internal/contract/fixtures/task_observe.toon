@@ -1,0 +1,11 @@
+schema_version: "munsu.orchestration/v2"
+kind: task.observe
+status: success
+data:
+  task_id: phase-0
+  status: working
+  description: Writing contract fixtures
+  branch: fm/phase-0
+  pane_alive: true
+  no_mistakes_step: test
+help[1]: "Run `munsu task observe phase-0 --fields description,branch` for expanded fields"

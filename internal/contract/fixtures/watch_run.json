@@ -1,0 +1,14 @@
+{
+  "schema_version": "munsu.orchestration/v2",
+  "kind": "watch.run",
+  "status": "success",
+  "data": {
+    "watch_id": "watch-01",
+    "state": "completed",
+    "wakes_scanned": 3,
+    "wakes_emitted": 1
+  },
+  "help": [
+    "Run `munsu wake claim <wake-id> --owner <owner>` to claim a wake"
+  ]
+}

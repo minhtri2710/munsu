@@ -1,0 +1,14 @@
+{
+  "schema_version": "munsu.orchestration/v2",
+  "kind": "task.observe",
+  "status": "success",
+  "data": {
+    "preview": "Long task detail...",
+    "total_chars": 8432,
+    "truncated": true,
+    "full_command": "munsu task observe phase-0 --full"
+  },
+  "help": [
+    "Run `munsu task observe phase-0 --full` to retrieve all 8432 characters"
+  ]
+}

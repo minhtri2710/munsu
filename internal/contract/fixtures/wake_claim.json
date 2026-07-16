@@ -1,0 +1,11 @@
+{
+  "schema_version": "munsu.orchestration/v2",
+  "kind": "wake.claim",
+  "status": "success",
+  "data": {
+    "wake_id": "wake-01",
+    "claim_id": "claim-01",
+    "owner": "watcher",
+    "state": "claimed"
+  }
+}

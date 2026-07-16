@@ -1,0 +1,8 @@
+schema_version: "munsu.orchestration/v2"
+kind: watch.ensure
+status: success
+data:
+  watch_id: watch-01
+  state: already_running
+  interval: 5s
+  noop: true

@@ -1,0 +1,25 @@
+{
+  "schema_version": "munsu.orchestration/v2",
+  "kind": "fleet.snapshot",
+  "status": "success",
+  "data": {
+    "scope": "/workspace",
+    "count": 2,
+    "total": 2,
+    "crewmates": [
+      {
+        "task_id": "phase-0",
+        "status": "working",
+        "branch": "fm/phase-0"
+      },
+      {
+        "task_id": "docs",
+        "status": "done",
+        "branch": "docs/cleanup"
+      }
+    ]
+  },
+  "help": [
+    "Run `munsu task observe <task-id>` to inspect a crewmate"
+  ]
+}

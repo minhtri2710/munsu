@@ -1,0 +1,7 @@
+schema_version: "munsu.orchestration/v2"
+kind: wake.ack
+status: success
+data:
+  wake_id: wake-01
+  claim_id: claim-01
+  state: acknowledged

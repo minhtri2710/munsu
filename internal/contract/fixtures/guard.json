@@ -1,0 +1,12 @@
+{
+  "schema_version": "munsu.orchestration/v2",
+  "kind": "guard",
+  "status": "success",
+  "data": {
+    "state": "clear",
+    "conditions": [
+      "no blocked work",
+      "watcher healthy"
+    ]
+  }
+}
