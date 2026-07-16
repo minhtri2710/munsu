@@ -36,7 +36,8 @@ func TestAutoDetectConfig_OnlyWhenAbsent(t *testing.T) {
 	}
 }
 
-// TestAutoDetectConfig_Reconfigure verifies that --reconfigure forces rewrite.
+// TestAutoDetectConfig_Reconfigure verifies that --reconfigure does NOT write
+// backend config (backend is runtime context, not init-time preference).
 func TestAutoDetectConfig_Reconfigure(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -52,13 +53,13 @@ func TestAutoDetectConfig_Reconfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify backend was overwritten (to detected value, likely "tmux")
+	// Backend is runtime context — even --reconfigure should not overwrite it
 	val, err := config.Get(tmpDir, "backend")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if val == "my-custom-backend" {
-		t.Errorf("backend config should have been overwritten with --reconfigure, still got %q", val)
+	if val != "my-custom-backend" {
+		t.Errorf("backend config should not be overwritten with --reconfigure (runtime context); got %q, want %q", val, "my-custom-backend")
 	}
 }
 
@@ -82,21 +83,8 @@ func TestConfigFileExists(t *testing.T) {
 	}
 }
 
-// TestDetectBackend verifies the backend detection logic.
-func TestDetectBackend(t *testing.T) {
-	// Save env
-	oldEnv := os.Getenv("HERDR_ENV")
-	defer os.Setenv("HERDR_ENV", oldEnv)
-
-	// Without HERDR_ENV, it should try tmux (or default to tmux)
-	os.Unsetenv("HERDR_ENV")
-	backend := detectBackend()
-	if backend == "" {
-		t.Error("detectBackend returned empty string")
-	}
-}
-
 // TestAutoDetectConfig_InitHome verifies full init flow in a tmp home.
+// Backend is runtime context and must NOT be persisted at init time.
 func TestAutoDetectConfig_InitHome(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -111,9 +99,9 @@ func TestAutoDetectConfig_InitHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should write backend config
-	if !configFileExists(tmpDir, "backend") {
-		t.Error("autoDetectConfig should write backend config")
+	// Backend is runtime context — init should NOT persist it
+	if configFileExists(tmpDir, "backend") {
+		t.Error("autoDetectConfig should NOT write backend (runtime context, not init-time preference)")
 	}
 
 	// Should write crew-harness only if harness.Detect() succeeds

@@ -76,6 +76,28 @@ func TestDefault_ReturnsNilWhenNoBackend(t *testing.T) {
 	}
 }
 
+func TestDefault_ColdStartPrefersTmux(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("HERDR_ENV", "")
+
+	// Create a temp directory with fake tmux and herdr binaries on PATH
+	fakeBin := t.TempDir()
+	for _, name := range []string{"tmux", "herdr"} {
+		path := filepath.Join(fakeBin, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
+	b := Default()
+	if _, ok := b.(*TmuxBackend); !ok {
+		t.Errorf("Default() with both binaries on PATH but no env returned %T, want *TmuxBackend", b)
+	}
+}
+
 func TestSelect_RejectsUnknownNames(t *testing.T) {
 	unknown := []string{"zellij", "cmux", "orca", "foobar", ""}
 	for _, name := range unknown {
@@ -192,6 +214,80 @@ func TestResolve_Precedence(t *testing.T) {
 		}
 		if _, ok := bk.(*HerdrBackend); !ok {
 			t.Errorf("Resolve with HERDR_ENV returned %T, want *HerdrBackend", bk)
+		}
+	})
+
+	t.Run("config pin beats active TMUX", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configDir := filepath.Join(tmpDir, "config")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		// Write config saying "herdr" but set active TMUX
+		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMUX", "/tmp/tmux-xxx")
+		t.Setenv("HERDR_ENV", "")
+
+		bk, name, err := Resolve(tmpDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "herdr" {
+			t.Errorf("Resolve with config 'herdr' and active $TMUX returned name %q, want 'herdr'", name)
+		}
+		if _, ok := bk.(*HerdrBackend); !ok {
+			t.Errorf("Resolve with config 'herdr' and active $TMUX returned %T, want *HerdrBackend", bk)
+		}
+	})
+
+	t.Run("config pin beats active HERDR_ENV", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configDir := filepath.Join(tmpDir, "config")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		// Write config saying "tmux" but set active HERDR_ENV
+		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("tmux\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HERDR_ENV", "1")
+
+		bk, name, err := Resolve(tmpDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "tmux" {
+			t.Errorf("Resolve with config 'tmux' and active $HERDR_ENV returned name %q, want 'tmux'", name)
+		}
+		if _, ok := bk.(*TmuxBackend); !ok {
+			t.Errorf("Resolve with config 'tmux' and active $HERDR_ENV returned %T, want *TmuxBackend", bk)
+		}
+	})
+
+	t.Run("override beats config and context", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configDir := filepath.Join(tmpDir, "config")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		// Write config saying "herdr" and set active TMUX
+		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TMUX", "/tmp/tmux-xxx")
+
+		// Override (--backend flag) beats both config and context
+		bk, name, err := Resolve(tmpDir, "tmux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name != "tmux" {
+			t.Errorf("Resolve with override 'tmux' returned name %q, want 'tmux'", name)
+		}
+		if _, ok := bk.(*TmuxBackend); !ok {
+			t.Errorf("Resolve with override 'tmux' returned %T, want *TmuxBackend", bk)
 		}
 	})
 }
@@ -378,13 +474,13 @@ func TestTmux_Backend_NotFound(t *testing.T) {
 // fakeBackend implements Backend for testing purposes.
 // Tracks windows, captures, and errors in memory.
 type fakeBackend struct {
-	windows      map[string]bool    // windowID -> alive
-	captures     map[string]string  // windowID -> captured content
-	newWindowFn  func(session, name string) (string, error)
-	sendKeysFn   func(windowID, text string) error
-	captureFn    func(windowID string, lines int) (string, error)
-	aliveFn      func(windowID string) bool
-	teardownFn   func(windowID string) error
+	windows     map[string]bool   // windowID -> alive
+	captures    map[string]string // windowID -> captured content
+	newWindowFn func(session, name string) (string, error)
+	sendKeysFn  func(windowID, text string) error
+	captureFn   func(windowID string, lines int) (string, error)
+	aliveFn     func(windowID string) bool
+	teardownFn  func(windowID string) error
 }
 
 func newFakeBackend() *fakeBackend {
@@ -633,4 +729,3 @@ func TestHerdrBackend_NotFound(t *testing.T) {
 		}
 	})
 }
-
