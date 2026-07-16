@@ -1,0 +1,6 @@
+schema_version: "munsu.orchestration/v2"
+kind: backend.capabilities
+status: success
+data:
+  backend: tmux
+  features[3]: create_session,send_input,pane_liveness

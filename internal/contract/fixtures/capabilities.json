@@ -1,0 +1,27 @@
+{
+  "schema_version": "munsu.orchestration/v2",
+  "kind": "capabilities",
+  "status": "success",
+  "data": {
+    "contract_version": "munsu.orchestration/v2",
+    "commands": [
+      "capabilities",
+      "task observe",
+      "fleet snapshot --version 2",
+      "guard",
+      "watch ensure",
+      "watch run",
+      "wake claim",
+      "wake ack",
+      "backend capabilities",
+      "spawn"
+    ],
+    "output_formats": [
+      "toon",
+      "json"
+    ]
+  },
+  "help": [
+    "Run `munsu task observe <task-id>` to inspect a task"
+  ]
+}

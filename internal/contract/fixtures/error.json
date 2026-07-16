@@ -1,0 +1,11 @@
+{
+  "schema_version": "munsu.orchestration/v2",
+  "kind": "error",
+  "status": "error",
+  "error": {
+    "error_code": "invalid_argument",
+    "retryable": false,
+    "action": "Run `munsu wake claim <wake-id> --owner <owner>`",
+    "message": "The --owner flag is required"
+  }
+}

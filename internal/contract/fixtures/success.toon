@@ -1,0 +1,6 @@
+schema_version: "munsu.orchestration/v2"
+kind: message
+status: success
+data:
+  message: Wake acknowledged
+  noop: false

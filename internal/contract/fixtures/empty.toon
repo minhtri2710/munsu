@@ -1,0 +1,8 @@
+schema_version: "munsu.orchestration/v2"
+kind: fleet.snapshot
+status: success
+data:
+  count: 0
+  context: No crewmates found for this directory
+  crewmates: []
+help[1]: Run `munsu spawn <task-id>` to start a crewmate
