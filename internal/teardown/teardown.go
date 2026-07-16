@@ -88,7 +88,7 @@ func Run(opts Options) (*TeardownResult, error) {
 	//    so the lease is not falsely claimed as released (firstmate contract).
 	if wtPath != "" {
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
-			if err := worktree.Return(wtPath); err != nil {
+			if err := worktree.Return(opts.HomeDir, wtPath); err != nil {
 				return nil, fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err)
 			}
 			result.Steps = append(result.Steps, "worktree returned to pool")

@@ -24,7 +24,11 @@ func newWorktreeCmd() *cobra.Command {
 		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			lease, _ := cmd.Flags().GetBool("lease")
-			path, err := worktree.Get(args[0], lease)
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			path, err := worktree.Get(homeDir, args[0], lease)
 			if err != nil {
 				return err
 			}
@@ -39,7 +43,11 @@ func newWorktreeCmd() *cobra.Command {
 		Short: "Return a worktree to the pool",
 		Args:  ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := worktree.Return(args[0]); err != nil {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			if err := worktree.Return(homeDir, args[0]); err != nil {
 				return err
 			}
 			return nil
@@ -51,7 +59,11 @@ func newWorktreeCmd() *cobra.Command {
 		Short: "Show worktree pool status",
 		Args:  NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out, err := worktree.Status()
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return err
+			}
+			out, err := worktree.Status(homeDir)
 			if err != nil {
 				return err
 			}
@@ -93,7 +105,7 @@ crewmate finishes. This command is a safety net for orphaned leases.`,
 			}
 
 			// Get treehouse status and parse worktree list
-			out, err := worktree.Status()
+			out, err := worktree.Status(homeDir)
 			if err != nil {
 				return fmt.Errorf("getting treehouse status: %w", err)
 			}
@@ -112,7 +124,7 @@ crewmate finishes. This command is a safety net for orphaned leases.`,
 				wtPath := parts[len(parts)-1]
 				if !active[wtPath] {
 					fmt.Printf("returning orphaned worktree: %s\n", wtPath)
-					if err := worktree.Return(wtPath); err != nil {
+					if err := worktree.Return(homeDir, wtPath); err != nil {
 						fmt.Fprintf(os.Stderr, "  error: %v\n", err)
 					} else {
 						count++
