@@ -7,9 +7,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func newFleetCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "fleet",
+		Short: "Manage fleet operations",
+		Long: `Manage fleet operations: sync project clones, emit snapshots,
+render fleet views, and print compact resume reports.`,
+	}
+	cmd.AddCommand(newFleetSyncCmd())
+	cmd.AddCommand(newFleetSnapshotCmd())
+	cmd.AddCommand(newFleetViewCmd())
+	cmd.AddCommand(newFleetBearingsCmd())
+	return cmd
+}
+
 func newFleetSyncCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "fleet-sync [<project>]",
+		Use:   "sync [<project>]",
 		Short: "Fast-forward refresh project clones",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			projectName := ""
@@ -36,7 +50,7 @@ func newFleetSyncCmd() *cobra.Command {
 
 func newFleetSnapshotCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "fleet-snapshot",
+		Use:   "snapshot",
 		Short: "Emit fleet snapshot JSON",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			snap, err := fleet.Snapshot(ctx.Home)
@@ -55,7 +69,7 @@ func newFleetSnapshotCmd() *cobra.Command {
 
 func newFleetViewCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "fleet-view",
+		Use:   "view",
 		Short: "Render fleet view from snapshot",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return fleet.View(ctx.Home)
@@ -63,10 +77,11 @@ func newFleetViewCmd() *cobra.Command {
 	}
 }
 
-func newBearingsCmd() *cobra.Command {
+func newFleetBearingsCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "bearings",
+		Use:   "bearings [<project-dir>]",
 		Short: "Compact resume report",
+		Long:  `DEPRECATED: use 'munsu fleet bearings' instead.`,
 		Args:  MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			projectDir := ""
@@ -76,4 +91,40 @@ func newBearingsCmd() *cobra.Command {
 			return fleet.Bearings(ctx.Home, projectDir)
 		}),
 	}
+}
+
+// newFleetSyncTopCmd is a hidden compatibility alias for 'munsu fleet sync'.
+func newFleetSyncTopCmd() *cobra.Command {
+	cmd := newFleetSyncCmd()
+	cmd.Use = "fleet-sync [<project>]"
+	cmd.Hidden = true
+	cmd.Deprecated = "use 'munsu fleet sync' instead"
+	return cmd
+}
+
+// newFleetSnapshotTopCmd is a hidden compatibility alias for 'munsu fleet snapshot'.
+func newFleetSnapshotTopCmd() *cobra.Command {
+	cmd := newFleetSnapshotCmd()
+	cmd.Use = "fleet-snapshot"
+	cmd.Hidden = true
+	cmd.Deprecated = "use 'munsu fleet snapshot' instead"
+	return cmd
+}
+
+// newFleetViewTopCmd is a hidden compatibility alias for 'munsu fleet view'.
+func newFleetViewTopCmd() *cobra.Command {
+	cmd := newFleetViewCmd()
+	cmd.Use = "fleet-view"
+	cmd.Hidden = true
+	cmd.Deprecated = "use 'munsu fleet view' instead"
+	return cmd
+}
+
+// newBearingsTopCmd is a hidden compatibility alias for 'munsu fleet bearings'.
+func newBearingsTopCmd() *cobra.Command {
+	cmd := newFleetBearingsCmd()
+	cmd.Use = "bearings"
+	cmd.Hidden = true
+	cmd.Deprecated = "use 'munsu fleet bearings' instead"
+	return cmd
 }

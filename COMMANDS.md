@@ -35,14 +35,13 @@ Full command map grouped by lifecycle phase.
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> <project> [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--yolo] [--backend tmux\|herdr]` | Spawn a crewmate agent — acquire worktree, create session window, write task meta. |
+| `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--yolo] [--backend tmux\|herdr] [--arm]` | Spawn a crewmate agent. Project inferred from cwd if omitted. With `--arm`, start the watcher after spawn. |
 | `munsu send <id> <line>` | Send a line to a crewmate session endpoint. |
 | `munsu peek <id> [--lines N]` | Capture and print crewmate output (default 40 lines). |
 | `munsu crew-state <id>` | Read crewmate current state (status, pane liveness, no-mistakes run-step). |
 | `munsu brief <id> <repo> [--scout]` | Scaffold a task brief (ship or scout template). |
 | `munsu teardown <id> [--force]` | Tear down a crewmate with safety checks. |
 | `munsu promote <id>` | Promote a scout task to ship. |
-| `munsu review-diff <id>` | Review diff between crewmate branch and base. |
 
 ## Lifecycle (Happy Path)
 
@@ -52,8 +51,8 @@ The recommended workflow for running a crewmate task end-to-end:
    Register the intent in the backlog. Use `--start` to move it to in-flight immediately.
 2. **`munsu brief <id> <repo> [--scout]`**
    Scaffold a task brief that the crewmate reads on startup.
-3. **`munsu spawn <id> <project>`**
-   Spawn the crewmate — acquires a worktree, creates a session pane, writes task meta, and launches the harness.
+3. **`munsu spawn <id> [<project>] [--arm]`**
+   Spawn the crewmate — acquires a worktree, creates a session pane, writes task meta, and launches the harness. Project inferred from cwd if omitted.
 4. **`munsu peek <id>` / `munsu send <id> <line>`**
    Monitor and interact with the running crewmate as needed.
 5. **`munsu teardown <id>`**
@@ -80,22 +79,29 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 
 | Command | Description |
 |---------|-------------|
-| `munsu fleet-sync [<project>]` | Fast-forward refresh project clones. |
-| `munsu fleet-snapshot` | Emit fleet snapshot as JSON. |
-| `munsu fleet-view` | Render fleet view from snapshot. |
-| `munsu bearings [<project-dir>]` | Compact resume report. |
+| `munsu fleet sync [<project>]` | Fast-forward refresh project clones. |
+| `munsu fleet snapshot` | Emit fleet snapshot as JSON. |
+| `munsu fleet view` | Render fleet view from snapshot. |
+| `munsu fleet bearings [<project-dir>]` | Compact resume report. |
 | `munsu secondmate seed <id> <home-path>` | Seed a secondmate home with charter. |
 | `munsu secondmate launch <secondmate-home>` | Launch a secondmate in its home. |
 | `munsu secondmate retire <secondmate-home>` | Retire a secondmate. |
 | `munsu secondmate list` | List registered secondmates. |
 
+Old top-level names (`fleet-sync`, `fleet-snapshot`, `fleet-view`, `bearings`) still work
+for this release as hidden deprecated aliases.
+
 ## Delivery
 
 | Command | Description |
 |---------|-------------|
-| `munsu pr-check <id> <pr-url>` | Record PR URL and SHA in task meta, write check.sh to poll merge status. |
-| `munsu pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI. Default method is squash. |
-| `munsu merge-local <id>` | Fast-forward merge crewmate branch to local default branch (no-remote projects only). |
+| `munsu delivery review-diff <id>` | Review diff between crewmate branch and base. |
+| `munsu delivery pr-check <id> <pr-url>` | Record PR URL and SHA in task meta, write check.sh to poll merge status. |
+| `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI. Default method is squash. |
+| `munsu delivery merge-local <id>` | Fast-forward merge crewmate branch to local default branch (no-remote projects only). |
+
+Old top-level names (`review-diff`, `pr-check`, `pr-merge`, `merge-local`) still work
+for this release as hidden deprecated aliases.
 
 ## Backlog
 

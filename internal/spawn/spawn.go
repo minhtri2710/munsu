@@ -33,6 +33,8 @@ type Args struct {
 	HarnessFlag string          // --harness flag value; empty = resolve from config
 	HomeDir     string          // if empty, resolved via home.Resolve
 	Session     session.Backend // injectable session backend; nil = resolve at runtime
+	Arm         bool
+	ArmFunc     func(homeDir string) error // injectable arm function; nil = no auto-arm
 }
 
 // ValidDeliveryModes lists the accepted delivery mode values.
@@ -420,5 +422,13 @@ func Run(args Args) (windowID string, err error) {
 	fmt.Printf("  kind:     %s\n", args.Kind)
 	fmt.Printf("  mode:     %s\n", effectiveMode)
 	fmt.Printf("  yolo:     %s\n", yoloVal)
+
+	// 17. Arm watcher if requested (warn-only on failure)
+	if args.Arm && args.ArmFunc != nil {
+		if armErr := args.ArmFunc(homeDir); armErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to arm watcher: %v\n  Run 'munsu watch-arm' manually to start the watcher.\n", armErr)
+		}
+	}
+
 	return windowID, nil
 }

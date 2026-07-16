@@ -130,7 +130,7 @@ munsu backlog done <task-id>
 ### Crewmate lifecycle
 
 ```sh
-munsu spawn <task-id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect)
+munsu spawn <task-id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
 munsu watch-arm [--restart]
 munsu wake-drain
 munsu send <task-id> "<instruction>"
@@ -141,7 +141,7 @@ munsu teardown <task-id>
 ### Fleet management
 
 ```sh
-munsu fleet-view
+munsu fleet view
 munsu guard
 munsu secondmate list
 ```

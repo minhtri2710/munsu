@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/brief"
@@ -21,22 +22,47 @@ func newSpawnCmd() *cobra.Command {
 		yolo        bool
 		backend     string
 		harnessFlag string
+		arm         bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "spawn <id> <project>",
-		Short: "Spawn a crewmate agent",
-		Args:  ExactArgs(2),
+		Use:   "spawn <id> [<project>]",
+		Short: "Spawn a crewmate agent (project inferred from cwd if omitted)",
+		Long: `Spawn a crewmate agent.
+
+Project can be omitted when the current working directory is inside a git
+repository that matches a registered project or can be ad-hoc inferred.
+
+Precedence: explicit project arg > registry match on cwd path > adhoc git
+remote/name heuristics.
+
+When inference fails, pass the project name explicitly or run 'munsu project add'.`,
+		Args: cobra.MatchAll(cobra.MinimumNArgs(1), cobra.MaximumNArgs(2)),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			id := args[0]
+
+			// Resolve project name: explicit arg, or infer from cwd
+			var projectName string
+			if len(args) >= 2 {
+				projectName = args[1]
+			} else {
+				p, err := project.ResolveAdhoc()
+				if err != nil {
+					return fmt.Errorf("no project argument and cannot infer from cwd: %w\n  Pass the project name: munsu spawn %s <project>\n  Or register this repo: munsu project add <name> <path>", err, id)
+				}
+				projectName = p.Name
+				fmt.Fprintf(os.Stderr, "info: inferred project %q from cwd\n", projectName)
+			}
+
 			// Resolve project mode from registry
-			projectMode, _, projErr := project.Mode(ctx.Home, args[1])
+			projectMode, _, projErr := project.Mode(ctx.Home, projectName)
 			if projErr != nil {
 				projectMode = "" // registry not set or not found — will use other fallbacks
 			}
 
 			_, err := spawn.Run(spawn.Args{
-				ID:          args[0],
-				ProjectName: args[1],
+				ID:          id,
+				ProjectName: projectName,
 				Kind:        kind,
 				Mode:        mode,        // raw flag value; resolution happens inside Run
 				ProjectMode: projectMode, // raw project mode; resolution happens inside Run
@@ -44,8 +70,16 @@ func newSpawnCmd() *cobra.Command {
 				Backend:     backend,
 				HarnessFlag: harnessFlag,
 				HomeDir:     homeOverride,
+				Arm:         arm,
 			})
-			return err
+			if err != nil {
+				return err
+			}
+
+			if !arm {
+				fmt.Fprintln(os.Stderr, "hint: arm the watcher with 'munsu watch-arm' or 'munsu spawn --arm' to auto-detect completion")
+			}
+			return nil
 		}),
 	}
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
@@ -53,6 +87,7 @@ func newSpawnCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override crewmate harness (pi, agy, etc.)")
+	cmd.Flags().BoolVar(&arm, "arm", false, "Arm the watcher after spawn (warn-only on failure)")
 
 	return cmd
 }
