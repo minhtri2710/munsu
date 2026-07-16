@@ -21,10 +21,10 @@ const pollInterval = 5 * time.Second
 
 // WakeReason describes why the watcher exited.
 type WakeReason struct {
-	Kind                string   // signal, stale, check, heartbeat
-	TaskIDs             []string
-	Message             string
-	DemandDeepInspection bool     // set after N consecutive stale polls for same task
+	Kind                 string // signal, stale, check, heartbeat
+	TaskIDs              []string
+	Message              string
+	DemandDeepInspection bool // set after N consecutive stale polls for same task
 }
 
 // Run starts the watcher loop. It acquires the watcher lock and polls
@@ -143,17 +143,9 @@ func scanFleet(homeDir string) *WakeReason {
 		}
 
 		// Check pane liveness
-		// Use the backend stored in meta, or fall back to Default()
-		var bk session.Backend
-		bkName, hasBackend := meta["backend"]
-		if hasBackend && bkName != "" {
-			if sel, err := session.Select(bkName); err == nil {
-				bk = sel
-			} else {
-				bk = session.Default()
-			}
-		} else {
-			bk = session.Default()
+		bk, _, err := session.BackendForTask(homeDir, meta)
+		if err != nil {
+			continue
 		}
 		alive := bk.Alive(windowID)
 

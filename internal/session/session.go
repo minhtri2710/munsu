@@ -61,6 +61,7 @@ func Default() Backend {
 //  2. homeDir/config/backend file (first whitespace-delimited word; "auto" = detect)
 //  3. Auto-detection: $TMUX > HERDR_ENV > tmux PATH (cold-start)
 //  4. Error if nothing found
+//
 // Returns the backend, its resolved name, and any error.
 func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	name := backendOverride
@@ -89,6 +90,23 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	default:
 		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr)", name)
 	}
+}
+
+// BackendForTask resolves the session backend for a task.
+// When the task metadata has a non-empty "backend" field, it is used as the
+// exact backend name. Otherwise, resolution falls through to the config file
+// (homeDir/config/backend) and then to runtime auto-detection.
+//
+// This ensures that explicit config pins and runtime auto-detection are
+// respected when no per-task backend override is specified.
+func BackendForTask(homeDir string, meta map[string]string) (Backend, string, error) {
+	if bkName := meta["backend"]; bkName != "" {
+		if bk, err := Select(bkName); err == nil {
+			return bk, bkName, nil
+		}
+		// Unknown backend in meta: fall through to Resolve.
+	}
+	return Resolve(homeDir, "")
 }
 
 func readConfigBackend(homeDir string) string {
