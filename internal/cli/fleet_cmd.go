@@ -35,20 +35,23 @@ func newFleetSyncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if len(result.Synced) == 0 && len(result.Stuck) == 0 && len(result.Errors) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No projects to sync.")
+				return nil
+			}
 			for _, s := range result.Synced {
-				fmt.Printf("synced: %s\n", s)
+				fmt.Fprintf(cmd.OutOrStdout(), "synced: %s\n", s)
 			}
 			for _, s := range result.Stuck {
-				fmt.Printf("STUCK: %s\n", s)
+				fmt.Fprintf(cmd.OutOrStdout(), "STUCK: %s\n", s)
 			}
 			for _, e := range result.Errors {
-				fmt.Printf("error: %s\n", e)
+				fmt.Fprintf(cmd.OutOrStdout(), "error: %s\n", e)
 			}
 			return nil
 		}),
 	}
 }
-
 func newFleetSnapshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "snapshot",

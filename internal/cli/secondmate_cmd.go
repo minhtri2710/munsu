@@ -48,8 +48,12 @@ func newSecondmateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if len(mates) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No secondmates registered.")
+				return nil
+			}
 			for _, m := range mates {
-				fmt.Printf("- %s (%s)\n", m.ID, m.Home)
+				fmt.Fprintf(cmd.OutOrStdout(), "- %s (%s)\n", m.ID, m.Home)
 			}
 			return nil
 		}),
