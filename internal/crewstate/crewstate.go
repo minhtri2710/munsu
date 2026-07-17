@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/nostatus"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -167,151 +168,27 @@ func (s *State) runStepOverrides(logState string) bool {
 	return false
 }
 
-// noMistakesResult holds parsed results from no-mistakes axi status.
-type noMistakesResult struct {
-	step    string // conceptual run-step
-	outcome string // raw outcome string
-	run     string // raw run status
-	branch  string // git branch the run is on
-}
 
-// checkNoMistakesRun runs no-mistakes axi status from the worktree path and
-// returns the conceptual run-step, outcome, and whether the info is relevant.
+// checkNoMistakesRun reads no-mistakes run status from the worktree path, using
+// the structured nostatus package at the CLI boundary, and returns the conceptual
+// run-step, outcome, and whether the info is relevant.
 func checkNoMistakesRun(wtPath, currentBranch string) (step, outcome string, ok bool) {
-	cmd := exec.Command("no-mistakes", "axi", "status")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
+	r, err := nostatus.Read(wtPath)
 	if err != nil {
-		return "", "", false
-	}
-	r := parseNoMistakesOutput(string(out))
-	if r == nil || r.run == "" {
 		return "", "", false
 	}
 
 	// Only consider runs for the current branch.
-	if r.branch != "" && r.branch != currentBranch {
+	if r.Branch != "" && r.Branch != currentBranch {
 		return "", "", false
 	}
 
 	// Determine conceptual run-step.
-	step, outcome = r.resolveStep()
+	step, outcome = r.ConceptualStep()
 	if step == "" {
 		return "", "", false
 	}
 	return step, outcome, true
-}
-
-// resolveStep derives the conceptual run-step and outcome from parsed data.
-func (r *noMistakesResult) resolveStep() (step, outcome string) {
-	switch r.run {
-	case "in_progress":
-		return r.resolveActiveStep()
-	case "completed":
-		switch r.outcome {
-		case "passed", "checks-passed":
-			return r.outcome, r.outcome
-		case "failed":
-			return "failed", "failed"
-		case "cancelled":
-			return "cancelled", "cancelled"
-		}
-	}
-	return "", ""
-}
-
-// resolveActiveStep finds the current step in an in-progress run.
-func (r *noMistakesResult) resolveActiveStep() (step, outcome string) {
-	if r.step != "" {
-		return r.step, ""
-	}
-	// No specific step detected: treat as generic running.
-	return "running", ""
-}
-
-// parseNoMistakesOutput parses the TOON output from no-mistakes axi status.
-func parseNoMistakesOutput(output string) *noMistakesResult {
-	r := &noMistakesResult{}
-	inSteps := false
-
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-
-		switch {
-		case strings.HasPrefix(trimmed, "run:"):
-			inSteps = false
-
-		case strings.HasPrefix(trimmed, "steps["):
-			inSteps = true
-
-		case inSteps:
-			// Check for non-step lines that break the steps block.
-			if strings.HasPrefix(trimmed, "outcome:") {
-				inSteps = false
-				val := strings.TrimSpace(strings.TrimPrefix(trimmed, "outcome:"))
-				val = strings.Trim(val, `"`)
-				r.outcome = val
-				break
-			}
-			if strings.HasPrefix(trimmed, "run:") {
-				inSteps = false
-				break
-			}
-			// Step line: "stepname,status,findings,duration_ms"
-			parts := strings.Split(trimmed, ",")
-			if len(parts) >= 2 {
-				stepName := parts[0]
-				stepStatus := parts[1]
-				if stepStatus != "completed" && stepStatus != "pending" {
-					// Map step status to conceptual run-step.
-					// "ci" step with "running" status -> "ci" (step name matters)
-					if stepName == "ci" && stepStatus == "running" {
-						r.step = "ci"
-					} else if stepStatus == "fixing" {
-						r.step = "fixing"
-					} else if stepStatus == "running" {
-						r.step = "running"
-					}
-				}
-			}
-
-		case strings.HasPrefix(trimmed, "status:") && r.run == "":
-			// This is inside run:{...} block: "  status: completed"
-			// Not a step-level status.
-			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "status:"))
-			val = strings.Trim(val, `"`)
-			r.run = val
-
-		case strings.HasPrefix(trimmed, "branch:"):
-			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "branch:"))
-			val = strings.Trim(val, `"`)
-			r.branch = val
-
-		case strings.HasPrefix(trimmed, "outcome:"):
-			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "outcome:"))
-			val = strings.Trim(val, `"`)
-			r.outcome = val
-
-		case strings.Contains(trimmed, "awaiting_agent:"):
-			// Pipeline is parked at a gate.
-			r.step = "awaiting_approval"
-		}
-	}
-
-	// If no active step was found (all completed or no steps parsed) but
-	// awaiting_agent was set, keep awaiting_approval.
-	if r.step == "awaiting_approval" && r.run == "" {
-		r.run = "in_progress"
-	}
-
-	if r.run == "" {
-		return nil
-	}
-	return r
 }
 
 // getGitBranch returns the current git branch name from the worktree path.
