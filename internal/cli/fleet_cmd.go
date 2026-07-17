@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
@@ -75,7 +76,7 @@ func newFleetSnapshotCmd() *cobra.Command {
 	cmd.Flags().Int("version", 1, "Snapshot schema version")
 	cmd.Flags().String("fields", "", "Optional row fields for version 2")
 	cmd.Flags().Bool("full", false, "Include full truncated content for version 2")
-	cmd.Flags().String("output", "toon", "Output format for version 2 (toon|json)")
+	cmd.Flags().String("output", contract.OutputTOON, "Output format for version 2 (toon|json)")
 	return cmd
 }
 

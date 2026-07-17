@@ -44,12 +44,14 @@ type Capabilities struct {
 
 // TaskObserve is the compact state of one task in the current project.
 type TaskObserve struct {
-	TaskID         string `json:"task_id"`
-	Status         string `json:"status"`
-	Description    string `json:"description,omitempty"`
-	Branch         string `json:"branch,omitempty"`
-	PaneAlive      *bool  `json:"pane_alive,omitempty"`
-	NoMistakesStep string `json:"no_mistakes_step,omitempty"`
+	TaskID              string `json:"task_id"`
+	Status              string `json:"status"`
+	Description         string `json:"description,omitempty"`
+	Branch              string `json:"branch,omitempty"`
+	PaneAlive           *bool  `json:"pane_alive,omitempty"`
+	NoMistakesStep      string `json:"no_mistakes_step,omitempty"`
+	StatusLines         int    `json:"status_lines,omitempty"`
+	StatusLogSuperseded bool   `json:"status_log_superseded,omitempty"`
 }
 
 // FleetSnapshotV2 is the version-two fleet state with cheap aggregate counts.

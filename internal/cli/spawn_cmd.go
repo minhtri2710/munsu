@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/brief"
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -178,40 +179,38 @@ func newPeekCmd() *cobra.Command {
 }
 
 func newCrewStateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "crew-state <id>",
 		Short: "Read crewmate current state",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
-
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
 			state, err := crewstate.Read(ctx.Home, id)
 			if err != nil {
-				return fmt.Errorf("reading crew state: %w", err)
+				return operationError("internal", "Run `munsu crew-state "+id+"` again", "Unable to read crew state")
 			}
-
-			fmt.Printf("Task:  %s\n", state.TaskID)
-			fmt.Printf("State: %s\n", state.Status)
-			fmt.Printf("Info:  %s\n", state.Description)
-			fmt.Printf("Pane:  ")
-			if state.PaneAlive {
-				fmt.Println("alive")
-			} else {
-				fmt.Println("gone")
-			}
-			if state.StatusLines > 0 {
-				fmt.Printf("Log:   %d status lines\n", state.StatusLines)
-			}
-
-			if state.NoMistakesRunStep != "" {
-				fmt.Printf("Run:   no-mistakes: %s\n", state.NoMistakesRunStep)
-			}
-			if state.StatusLogSuperseded {
-				fmt.Println("Note:  status log superseded by no-mistakes run-step")
-			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.TaskObserve]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "task.observe",
+				Status:        "success",
+				Data: contract.TaskObserve{
+					TaskID:              state.TaskID,
+					Status:              state.Status,
+					Description:         state.Description,
+					PaneAlive:           &state.PaneAlive,
+					NoMistakesStep:      state.NoMistakesRunStep,
+					StatusLines:         state.StatusLines,
+					StatusLogSuperseded: state.StatusLogSuperseded,
+				},
+				Help: []string{"Run `munsu task observe " + id + " --fields description,branch` for expanded fields"},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
 func newPromoteCmd() *cobra.Command {
