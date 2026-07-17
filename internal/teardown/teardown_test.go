@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/decisionhold"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -299,5 +301,101 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 	if !foundResidual {
 		t.Errorf("expected teardown steps to mention residual removal, got: %v", result.Steps)
+	}
+}
+
+func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Create the report so report.md check passes.
+	reportDir := filepath.Join(tmp, "data", "scout-1")
+	os.MkdirAll(reportDir, 0755)
+	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
+
+	// Create unresolved decision holds.
+	_, err := decisionhold.Create(tmp, "scout-1", "approach", "Pick the UI framework")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = decisionhold.Create(tmp, "scout-1", "db-schema", "Choose DB schema")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// scoutSafetyCheck should fail listing unresolved keys.
+	err = scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	if err == nil {
+		t.Fatal("should fail when unresolved decision holds exist")
+	}
+	if !strings.Contains(err.Error(), "approach") || !strings.Contains(err.Error(), "db-schema") {
+		t.Errorf("error should list unresolved keys, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "(use --force to override)") {
+		t.Errorf("error should mention --force override, got: %v", err)
+	}
+}
+
+func TestScoutSafetyCheck_NoUnresolvedHolds(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Create the report so report.md check passes.
+	reportDir := filepath.Join(tmp, "data", "scout-1")
+	os.MkdirAll(reportDir, 0755)
+	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
+
+	// Create a hold and resolve it.
+	_, err := decisionhold.Create(tmp, "scout-1", "approach", "Pick the UI framework")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = decisionhold.Resolve(tmp, "scout-1", "approach", "Choose React", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// scoutSafetyCheck should pass since all holds are resolved.
+	err = scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	if err != nil {
+		t.Fatalf("should pass when all holds resolved: %v", err)
+	}
+}
+
+func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	// Create meta file for a scout task.
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	metaContent := "kind=scout\nwindow=@1\n"
+	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
+
+	// Create report.md so report check passes before decision hold check.
+	reportDir := filepath.Join(tmp, "data", "scout-test")
+	os.MkdirAll(reportDir, 0755)
+	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
+	// Create unresolved decision holds.
+	_, err := decisionhold.Create(tmp, "scout-test", "approach", "Pick the UI framework")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Without --force, should fail due to unresolved holds.
+	_, err = Run(Options{HomeDir: tmp, ID: "scout-test", Force: false})
+	if err == nil {
+		t.Fatal("should fail for scout with unresolved holds without --force")
+	}
+	if !strings.Contains(err.Error(), "unresolved decision hold") {
+		t.Errorf("error should mention unresolved decision holds, got: %v", err)
+	}
+
+	// With --force, should proceed past safety checks.
+	result, err := Run(Options{HomeDir: tmp, ID: "scout-test", Force: true})
+	if err != nil {
+		t.Fatalf("with --force should proceed: %v", err)
+	}
+	if len(result.Steps) == 0 {
+		t.Error("expected teardown steps")
 	}
 }

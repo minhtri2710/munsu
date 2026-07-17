@@ -10,6 +10,7 @@ import (
 	"time"
 
 
+	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -171,6 +172,7 @@ func safetyCheck(opts Options, meta map[string]string, kind string) error {
 }
 
 // scoutSafetyCheck verifies the report.md exists.
+// scoutSafetyCheck verifies the report.md exists and checks for unresolved decision holds.
 func scoutSafetyCheck(opts Options, meta map[string]string) error {
 	reportPath := filepath.Join(opts.HomeDir, "data", opts.ID, "report.md")
 	if _, err := os.Stat(reportPath); err != nil {
@@ -179,6 +181,16 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 		}
 		return fmt.Errorf("checking report.md: %w", err)
 	}
+
+	// After report exists, check for unresolved decision holds.
+	unresolvedKeys, err := decisionhold.Verify(opts.HomeDir, opts.ID, nil)
+	if err != nil {
+		return fmt.Errorf("checking decision holds: %w", err)
+	}
+	if len(unresolvedKeys) > 0 {
+		return fmt.Errorf("scout task %s has %d unresolved decision hold(s): %s (use --force to override)", opts.ID, len(unresolvedKeys), strings.Join(unresolvedKeys, ", "))
+	}
+
 	return nil
 }
 
