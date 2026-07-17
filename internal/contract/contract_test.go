@@ -97,6 +97,7 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 	}
 	for _, value := range []any{
 		ErrorResponse{}, ErrorEnvelope{}, Capabilities{}, TaskObserve{},
+		FleetSnapshotV2{}, Crewmate{}, SecondmateEntry{},
 		WakeAck{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, EmptyResult{},
 		TruncatedResult{}, Guard{}, WatchEnsure{}, WatchRun{}, WakeClaim{},
 		EventRecord{}, EventAppend{},

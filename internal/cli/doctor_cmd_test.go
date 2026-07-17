@@ -1,0 +1,145 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestCheckInstructions_ValidCommands(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsPath := filepath.Join(tmpDir, "AGENTS.md")
+	content := `# Manual
+
+Run ` + "`" + `munsu doctor` + "`" + ` for diagnostics.
+Use ` + "`" + `munsu fleet snapshot --version 2` + "`" + ` for fleet state.
+Use ` + "`" + `munsu fleet bearings` + "`" + ` for a resume report.
+Spawn with ` + "`" + `munsu spawn` + "`" + `.
+`
+
+	if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	realCommands := buildCommandIndex(root)
+
+	mismatches, err := checkFileInstructions(agentsPath, realCommands)
+	if err != nil {
+		t.Fatalf("checkFileInstructions error: %v", err)
+	}
+	if mismatches > 0 {
+		t.Errorf("expected 0 mismatches for valid commands, got %d", mismatches)
+	}
+}
+
+func TestCheckInstructions_InvalidCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsPath := filepath.Join(tmpDir, "AGENTS.md")
+	content := `Use ` + "`" + `munsu spawn --timeout 300` + "`" + ` for spawning.
+`
+
+	if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	realCommands := buildCommandIndex(root)
+
+	mismatches, err := checkFileInstructions(agentsPath, realCommands)
+	if err != nil {
+		t.Fatalf("checkFileInstructions error: %v", err)
+	}
+	if mismatches > 0 {
+		t.Errorf("expected 0 mismatches (spawn exists, --timeout is just a flag), got %d", mismatches)
+	}
+}
+
+func TestCheckInstructions_NonexistentCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsPath := filepath.Join(tmpDir, "AGENTS.md")
+	content := `Use ` + "`" + `munsu nonexistent-command` + "`" + ` for something.
+`
+
+	if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	realCommands := buildCommandIndex(root)
+
+	mismatches, err := checkFileInstructions(agentsPath, realCommands)
+	if err != nil {
+		t.Fatalf("checkFileInstructions error: %v", err)
+	}
+	if mismatches != 1 {
+		t.Errorf("expected 1 mismatch for nonexistent command, got %d", mismatches)
+	}
+}
+
+func TestCheckInstructions_NonexistentSubcommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsPath := filepath.Join(tmpDir, "AGENTS.md")
+	content := `Use ` + "`" + `munsu fleet sync --all-projects` + "`" + ` to sync everything.
+`
+
+	if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	realCommands := buildCommandIndex(root)
+
+	mismatches, err := checkFileInstructions(agentsPath, realCommands)
+	if err != nil {
+		t.Fatalf("checkFileInstructions error: %v", err)
+	}
+	if mismatches > 0 {
+		t.Errorf("expected 0 mismatches (fleet sync exists, --all-projects is just a flag), got %d", mismatches)
+	}
+}
+
+func TestCheckInstructions_FlagAliasInRef(t *testing.T) {
+	tmpDir := t.TempDir()
+	agentsPath := filepath.Join(tmpDir, "AGENTS.md")
+	content := `Use ` + "`" + `munsu fleet snapshot --version 2` + "`" + ` for version 2 snapshot.
+`
+
+	if err := os.WriteFile(agentsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	realCommands := buildCommandIndex(root)
+
+	mismatches, err := checkFileInstructions(agentsPath, realCommands)
+	if err != nil {
+		t.Fatalf("checkFileInstructions error: %v", err)
+	}
+	if mismatches > 0 {
+		t.Errorf("expected 0 mismatches (fleet snapshot --version is a real flag), got %d", mismatches)
+	}
+}
+
+func TestBuildCommandIndex_ContainsExpected(t *testing.T) {
+	root := NewRootCommand()
+	index := buildCommandIndex(root)
+
+	expected := []string{
+		"doctor",
+		"fleet",
+		"fleet snapshot",
+		"fleet bearings",
+		"fleet view",
+		"fleet sync",
+		"spawn",
+		"backlog",
+		"help",
+	}
+
+	for _, cmd := range expected {
+		if !index[cmd] {
+			t.Errorf("buildCommandIndex missing %q", cmd)
+		}
+	}
+}

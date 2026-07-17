@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/spf13/cobra"
 )
 
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Read-only diagnostics with fix commands",
 		Long: `Run bootstrap diagnostics and print fix commands for each issue.
@@ -21,6 +24,11 @@ Hard-required tools (doctor exits non-zero if missing):
 Optional tools get warnings but do not fail the exit code:
   treehouse, no-mistakes, tasks-axi, gh-axi, gh, and GitHub auth.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			checkInstructions, _ := cmd.Flags().GetBool("check-instructions")
+			if checkInstructions {
+				return runCheckInstructions(ctx.Home)
+			}
+
 			result, err := bootstrap.Run(ctx.Home, false, nil)
 			if err != nil {
 				return fmt.Errorf("bootstrap: %w", err)
@@ -51,7 +59,6 @@ Optional tools get warnings but do not fail the exit code:
 
 			// Also check herdr as alternative session backend
 			if !missingRequired && isMissing(result.MissingTools, "tmux") {
-				// Check if herdr is available (look for herdr binary or env)
 				herdrAvailable := os.Getenv("HERDR_ENV") != ""
 				if !herdrAvailable {
 					missingRequired = true
@@ -73,6 +80,8 @@ Optional tools get warnings but do not fail the exit code:
 			return nil
 		}),
 	}
+	cmd.Flags().Bool("check-instructions", false, "Verify AGENTS.md/orchestrator manual references against real commands")
+	return cmd
 }
 
 // isMissing returns true if the slice contains the given string.
@@ -83,4 +92,197 @@ func isMissing(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// runCheckInstructions reads AGENTS.md / manual.md and verifies that every
+// `munsu <command>` reference corresponds to a real cobra command/flag.
+func runCheckInstructions(homeDir string) error {
+	// Build the authoritative command tree
+	rootCmd := NewRootCommand()
+
+	// Build a lookup table of all real commands
+	realCommands := buildCommandIndex(rootCmd)
+
+	// Collect manual files to check
+	var files []string
+	for _, name := range []string{"AGENTS.md", "manual.md", "orchestrator-manual.md"} {
+		p := filepath.Join(homeDir, name)
+		if _, err := os.Stat(p); err == nil {
+			files = append(files, p)
+		}
+	}
+
+	// Also check project AGENTS.md files
+	projectsDir := filepath.Join(homeDir, "projects")
+	if entries, err := os.ReadDir(projectsDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				agentsPath := filepath.Join(projectsDir, e.Name(), "AGENTS.md")
+				if _, err := os.Stat(agentsPath); err == nil {
+					files = append(files, agentsPath)
+				}
+			}
+		}
+	}
+
+	if len(files) == 0 {
+		fmt.Println("No AGENTS.md or manual.md found to check.")
+		return nil
+	}
+
+	mismatches := 0
+	for _, f := range files {
+		fileMismatches, err := checkFileInstructions(f, realCommands)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: error reading %s: %v\n", f, err)
+			continue
+		}
+		mismatches += fileMismatches
+	}
+
+	if mismatches > 0 {
+		fmt.Fprintf(os.Stderr, "\nFound %d doc-code mismatches. AGENTS.md references commands or flags that do not exist.\n", mismatches)
+		os.Exit(1)
+	} else {
+		fmt.Println("All command references in AGENTS.md match real commands.")
+	}
+	return nil
+}
+
+// buildCommandIndex walks the cobra command tree and returns a set of known
+// command paths excluding the root (e.g., "doctor", "fleet snapshot", "fleet bearings").
+func buildCommandIndex(cmd *cobra.Command) map[string]bool {
+	index := make(map[string]bool)
+	index["help"] = true // implicit cobra command
+	for _, sub := range cmd.Commands() {
+		// Include hidden commands (deprecated aliases like pr-check, bearings, fleet-sync)
+		collectCommand(sub, strings.Fields(sub.Use)[0], index)
+	}
+	return index
+}
+
+func collectCommand(cmd *cobra.Command, name string, index map[string]bool) {
+	index[name] = true
+	for _, sub := range cmd.Commands() {
+		// Include hidden commands (deprecated aliases like pr-check, bearings)
+		subName := name + " " + strings.Fields(sub.Use)[0]
+		collectCommand(sub, subName, index)
+	}
+}
+
+// checkFileInstructions scans a file for `munsu ` references and verifies them.
+func checkFileInstructions(path string, realCommands map[string]bool) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	mismatches := 0
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Find `munsu ` command references
+		checkDocLine(line, path, realCommands, &mismatches)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return mismatches, err
+	}
+	return mismatches, nil
+}
+
+// checkDocLine scans one line for `munsu ` references and validates them.
+func checkDocLine(line string, path string, realCommands map[string]bool, mismatches *int) {
+	idx := strings.Index(line, "`munsu ")
+	if idx < 0 {
+		// Also check without backticks
+		idx = strings.Index(line, "munsu ")
+		if idx < 0 {
+			return
+		}
+		// Skip if it's not a command reference
+		before := ""
+		if idx > 0 {
+			before = line[idx-1 : idx]
+		}
+		if before != "" && before != " " && before != "\t" && before != "(" && before != "\"" {
+			return
+		}
+	}
+
+	rest := line[idx:]
+	// Remove backtick prefix if present
+	rest = strings.TrimPrefix(rest, "`")
+	// Skip past "munsu "
+	rest = strings.TrimPrefix(rest, "munsu ")
+	if rest == "" {
+		return
+	}
+
+	// Extract the command reference: up to backtick, space, or punctuation
+	var ref string
+	// Collect the full command path: balance backticks
+	if strings.HasPrefix(line[idx:], "`") {
+		// Backtick-delimited
+		cmdPart := strings.TrimPrefix(line[idx:], "`")
+		end := strings.Index(cmdPart, "`")
+		if end < 0 {
+			ref = strings.Fields(cmdPart)[0]
+		} else {
+			ref = strings.TrimSpace(cmdPart[:end])
+		}
+		// Backtick ref still has "munsu " prefix — strip it
+		ref = strings.TrimPrefix(ref, "munsu ")
+	} else {
+		// Not backticked, take the next word or flag sequence
+		parts := strings.Fields(rest)
+		if len(parts) > 0 {
+			ref = parts[0]
+		}
+	}
+
+	if ref == "" {
+		return
+	}
+
+	// Normalize: strip flags from the ref
+	parts := strings.Fields(ref)
+	if len(parts) == 0 {
+		return
+	}
+
+	// Build command path (skip initial flags, their values, and argument placeholders)
+	cmdParts := make([]string, 0, len(parts))
+	skipNext := false
+	for _, p := range parts {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if strings.HasPrefix(p, "--") || (strings.HasPrefix(p, "-") && len(p) == 2) {
+			skipNext = true
+			continue
+		}
+		// Skip angle-bracket argument placeholders like <id>, <project>
+		if strings.HasPrefix(p, "<") && strings.HasSuffix(p, ">") {
+			continue
+		}
+		// Skip quoted placeholders like "<desc>" or '<desc>'
+		cleaned := strings.Trim(p, "\"'")
+		if strings.HasPrefix(cleaned, "<") && strings.HasSuffix(cleaned, ">") {
+			continue
+		}
+		cmdParts = append(cmdParts, p)
+	}
+	cmdPath := strings.Join(cmdParts, " ")
+	if cmdPath == "" {
+		cmdPath = parts[0]
+	}
+
+	// Validate against the real command tree
+	if !realCommands[cmdPath] {
+		fmt.Fprintf(os.Stderr, "MISMATCH: %s references command %q which does not exist\n", path, cmdPath)
+		*mismatches++
+	}
 }

@@ -54,10 +54,12 @@ type TaskObserve struct {
 
 // FleetSnapshotV2 is the version-two fleet state with cheap aggregate counts.
 type FleetSnapshotV2 struct {
-	Scope     string     `json:"scope"`
-	Count     int        `json:"count"`
-	Total     int        `json:"total"`
-	Crewmates []Crewmate `json:"crewmates"`
+	Scope           string            `json:"scope"`
+	Count           int               `json:"count"`
+	Total           int               `json:"total"`
+	Crewmates       []Crewmate        `json:"crewmates"`
+	Secondmates     []SecondmateEntry `json:"secondmates,omitempty"`
+	UnresolvedHolds int               `json:"unresolved_holds,omitempty"`
 }
 
 // Crewmate is the minimal row in a fleet snapshot.
@@ -65,6 +67,13 @@ type Crewmate struct {
 	TaskID string `json:"task_id"`
 	Status string `json:"status"`
 	Branch string `json:"branch,omitempty"`
+}
+
+// SecondmateEntry represents one secondmate in the fleet snapshot.
+type SecondmateEntry struct {
+	ID     string `json:"id"`
+	Scope  string `json:"scope,omitempty"`
+	Status string `json:"status"`
 }
 
 // GuardViolation is a single violation with supporting evidence.
