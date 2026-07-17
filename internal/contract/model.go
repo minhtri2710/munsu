@@ -117,6 +117,12 @@ type WatchRun struct {
 	EventsObserved int   `json:"events_observed,omitempty"`
 }
 
+// WatchStop reports the result of stopping a watcher.
+type WatchStop struct {
+	WatchID string `json:"watch_id"`
+	PID     int    `json:"pid"`
+	State   string `json:"state"` // stopped | already-stopped
+}
 // WakeClaim records a leased wake claim.
 type WakeClaim struct {
 	WakeID     string `json:"wake_id"`

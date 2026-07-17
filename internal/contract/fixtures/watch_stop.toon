@@ -1,0 +1,7 @@
+schema_version: "munsu.orchestration/v2"
+kind: watch.stop
+status: success
+data:
+  watch_id: watch-01
+  pid: 12345
+  state: stopped
