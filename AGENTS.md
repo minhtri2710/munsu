@@ -33,6 +33,7 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 - Delivery mode auto-selection in `internal/spawn/spawn.go` (`ResolveDeliveryMode`) — precedence: --mode flag, project registry, config/default-mode, auto (no-mistakes on PATH).
 - Init auto-detect logic lives in `internal/cli/init.go` (`autoDetectConfig`) and respects `--reconfigure` flag.
 - Secondmate launch (`internal/secondmate/secondmate.go`) resolves harness via `harness.Secondmate()` chain, looks up the adapter from the harness registry (`harness.GetAdapter`), and builds args from `adapter.LaunchTemplate` (ModelFlag, ExtraArgs). Unknown/unverified harnesses fail closed. Test launch path generation with `buildLaunchArgs` to avoid PATH dependency.
+- Delivery domain types live in `internal/delivery/domain.go` (PR, CheckRun, Review, PRStatus, ReviewState, CheckStatus) with `PR.CanMerge()` and `Review.IsApproving()` business rules. Pipeline interface and adapters (GHAxiAdapter, NoMistakesAdapter, GitLocalAdapter, CompositeAdapter) in `internal/delivery/pipeline.go`. Existing CLI function signatures are backward-compatible.
 ## Go version
 
 Go 1.26.5 (use `go 1.26` in `go.mod`).
