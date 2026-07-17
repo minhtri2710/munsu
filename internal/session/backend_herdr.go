@@ -151,6 +151,7 @@ type herdrWorkspaceEntry struct {
 	WorkspaceID string `json:"workspace_id"`
 	Label       string `json:"label"`
 	TabCount    int    `json:"tab_count"`
+	AgentStatus string `json:"agent_status"`
 }
 
 // findOrCreateWorkspace finds a workspace by label or creates one.

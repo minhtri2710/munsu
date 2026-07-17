@@ -180,6 +180,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newTeardownCmd())
 	root.AddCommand(newDeliveryCmd())
 	root.AddCommand(newFleetCmd())
+	root.AddCommand(newHerdrCmd())
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newWatchArmCmd())
 	root.AddCommand(newWakeDrainCmd())
