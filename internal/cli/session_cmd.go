@@ -185,6 +185,7 @@ func newWatchCmd() *cobra.Command {
 	runCmd.Use = "run"
 	cmd.AddCommand(ensureCmd)
 	cmd.AddCommand(runCmd)
+	cmd.AddCommand(newWatchStopCmd())
 
 	return cmd
 }

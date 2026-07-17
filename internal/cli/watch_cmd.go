@@ -213,3 +213,77 @@ func countQueuedWakes(homeDir string) int {
 	}
 	return len(lines)
 }
+
+// newWatchStopCmd creates the `munsu watch stop` command.
+// It reads the watcher PID from the beat file, sends SIGTERM, and reports stopped.
+func newWatchStopCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the watcher (idempotent)",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+
+			result := stopWatcher(ctx.Home)
+			return writeContract(cmd, result)
+		}),
+	}
+	configureContractCommand(cmd)
+	return cmd
+}
+
+// stopWatcher reads the watcher PID from the beat file, sends SIGTERM,
+// waits briefly, and reports the result. Idempotent: no running watcher
+// is a no-op success.
+func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
+	_, pid, ok := lifecycle.ReadBeat(homeDir)
+
+	// No watcher running — report already-stopped
+	if !ok || pid <= 0 {
+		return contract.Response[contract.WatchStop]{
+			SchemaVersion: contract.SchemaVersion,
+			Kind:          "watch.stop",
+			Status:        "success",
+			Data: contract.WatchStop{
+				WatchID: "",
+				PID:     0,
+				State:   "already-stopped",
+			},
+		}
+	}
+
+	watchID := fmt.Sprintf("watch-%d", pid)
+
+	// Find and signal the process
+	proc, err := os.FindProcess(pid)
+	if err == nil {
+		proc.Signal(syscall.SIGTERM)
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Check if process is still alive
+	alive := false
+	if proc != nil {
+		if err := proc.Signal(syscall.Signal(0)); err == nil {
+			alive = true
+		}
+	}
+
+	state := "stopped"
+	if alive {
+		state = "unresponsive"
+	}
+
+	return contract.Response[contract.WatchStop]{
+		SchemaVersion: contract.SchemaVersion,
+		Kind:          "watch.stop",
+		Status:        "success",
+		Data: contract.WatchStop{
+			WatchID: watchID,
+			PID:     pid,
+			State:   state,
+		},
+	}
+}

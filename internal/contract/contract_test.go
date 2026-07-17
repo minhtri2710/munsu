@@ -32,6 +32,7 @@ var fixtureNames = []string{
 	"wake_claim",
 	"watch_ensure",
 	"watch_run",
+	"watch_stop",
 }
 
 func TestGoldenFixturePairs(t *testing.T) {
@@ -99,7 +100,7 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 		ErrorResponse{}, ErrorEnvelope{}, Capabilities{}, TaskObserve{},
 		FleetSnapshotV2{}, Crewmate{}, SecondmateEntry{},
 		WakeAck{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, EmptyResult{},
-		TruncatedResult{}, Guard{}, WatchEnsure{}, WatchRun{}, WakeClaim{},
+		TruncatedResult{}, Guard{}, WatchEnsure{}, WatchRun{}, WatchStop{}, WakeClaim{},
 		EventRecord{}, EventAppend{},
 	} {
 		typeOf := reflect.TypeOf(value)
