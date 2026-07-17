@@ -88,9 +88,6 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 | `munsu secondmate retire <secondmate-home>` | Retire a secondmate. |
 | `munsu secondmate list` | List registered secondmates. |
 
-Old top-level names (`fleet-sync`, `fleet-snapshot`, `fleet-view`, `bearings`) still work
-for this release as hidden deprecated aliases.
-
 ## Delivery
 
 | Command | Description |
@@ -99,9 +96,6 @@ for this release as hidden deprecated aliases.
 | `munsu delivery pr-check <id> <pr-url>` | Record PR URL and SHA in task meta, write check.sh to poll merge status. |
 | `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI. Default method is squash. |
 | `munsu delivery merge-local <id>` | Fast-forward merge crewmate branch to local default branch (no-remote projects only). |
-
-Old top-level names (`review-diff`, `pr-check`, `pr-merge`, `merge-local`) still work
-for this release as hidden deprecated aliases.
 
 ## Backlog
 

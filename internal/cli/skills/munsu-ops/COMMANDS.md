@@ -51,10 +51,10 @@ See `SUPERVISION.md` for the full watch/wake-drain/guard/afk loop.
 
 | Command | Description |
 |---------|-------------|
-| `munsu pr-check <id> <pr-url>` | Record PR URL and head SHA in task meta; write check.sh for merge polling. |
-| `munsu pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI (default: squash). |
-| `munsu merge-local <id>` | Fast-forward merge crewmate branch to local default branch (local-only mode only). |
-| `munsu review-diff <id>` | Print diff summary between crewmate branch and base. |
+| `munsu delivery pr-check <id> <pr-url>` | Record PR URL and head SHA in task meta; write check.sh for merge polling. |
+| `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI (default: squash). |
+| `munsu delivery merge-local <id>` | Fast-forward merge crewmate branch to local default branch (local-only mode only). |
+| `munsu delivery review-diff <id>` | Print diff summary between crewmate branch and base. |
 | `munsu promote <id>` | Promote a scout task to ship. |
 
 ## Teardown
@@ -78,10 +78,10 @@ See `SUPERVISION.md` for the full watch/wake-drain/guard/afk loop.
 
 | Command | Description |
 |---------|-------------|
-| `munsu fleet-view` | Render fleet view from snapshot. |
-| `munsu fleet-snapshot` | Emit fleet snapshot JSON. |
-| `munsu fleet-sync` | Fast-forward refresh project clones. |
-| `munsu bearings` | Compact resume report of fleet state. |
+| `munsu fleet view` | Render fleet view from snapshot. |
+| `munsu fleet snapshot` | Emit fleet snapshot JSON. |
+| `munsu fleet sync` | Fast-forward refresh project clones. |
+| `munsu fleet bearings` | Compact resume report of fleet state. |
 | `munsu stow <learning...>` | Capture durable learnings from the current session. |
 | `munsu bootstrap [install <tools>...]` | Detect toolchain and run setup sweeps. |
 

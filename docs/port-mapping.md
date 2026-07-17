@@ -20,10 +20,10 @@ All commands are fully implemented unless marked otherwise.
 | `bin/fm-promote.sh` | `munsu promote` | `internal/task` | **implemented** |
 | `bin/fm-harness.sh` | `munsu harness detect/crew/secondmate` | `internal/harness` | **implemented** |
 | `bin/fm-project-mode.sh` | `munsu project mode` | `internal/project` | **implemented** |
-| `bin/fm-fleet-sync.sh` | `munsu fleet-sync` | `internal/fleet` | **implemented** |
-| `bin/fm-fleet-snapshot.sh` | `munsu fleet-snapshot` | `internal/fleet` | **implemented** |
-| `bin/fm-fleet-view.sh` | `munsu fleet-view` | `internal/fleet` | **implemented** |
-| `bin/fm-bearings-snapshot.sh` | `munsu bearings` | `internal/fleet` | **implemented** |
+| `bin/fm-fleet-sync.sh` | `munsu fleet sync` | `internal/fleet` | **implemented** |
+| `bin/fm-fleet-snapshot.sh` | `munsu fleet snapshot` | `internal/fleet` | **implemented** |
+| `bin/fm-fleet-view.sh` | `munsu fleet view` | `internal/fleet` | **implemented** |
+| `bin/fm-bearings-snapshot.sh` | `munsu fleet bearings` | `internal/fleet` | **implemented** |
 | `bin/fm-bootstrap.sh` | `munsu bootstrap` | `internal/bootstrap` | **implemented** |
 | `bin/fm-update.sh` | `munsu update` | `internal/selfupdate` | **implemented** |
 | `bin/fm-session-start.sh` | `munsu session-start` | `internal/session` | **implemented** |
@@ -35,9 +35,9 @@ All commands are fully implemented unless marked otherwise.
 | `bin/fm-ensure-agents-md.sh` | `munsu ensure-agents-md` | `internal/agentsmd` | **implemented** |
 | Project registry | `munsu project add/list/show/rm` | `internal/project` | **implemented** |
 | Backlog (tasks-axi + manual fallback) | `munsu backlog` | `internal/backlog` | **implemented** |
-| `bin/fm-review-diff.sh` | `munsu review-diff` | `internal/delivery` | **implemented** |
-| PR check/merge | `munsu pr-check` / `munsu pr-merge` | `internal/delivery` | **implemented** |
-| Local merge | `munsu merge-local` | `internal/delivery` | **implemented** |
+| `bin/fm-review-diff.sh` | `munsu delivery review-diff` | `internal/delivery` | **implemented** |
+| PR check/merge | `munsu delivery pr-check` / `munsu delivery pr-merge` | `internal/delivery` | **implemented** |
+| Local merge | `munsu delivery merge-local` | `internal/delivery` | **implemented** |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/worktree` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
 | Session backend (tmux + herdr) | `--backend` flag | `internal/session` | **implemented** (future backends: experimental — see docs) |

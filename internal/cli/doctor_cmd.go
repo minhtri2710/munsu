@@ -163,7 +163,7 @@ func buildCommandIndex(cmd *cobra.Command) map[string]bool {
 	index := make(map[string]bool)
 	index["help"] = true // implicit cobra command
 	for _, sub := range cmd.Commands() {
-		// Include hidden commands (deprecated aliases like pr-check, bearings, fleet-sync)
+// Include hidden commands for doctor validation
 		collectCommand(sub, strings.Fields(sub.Use)[0], index)
 	}
 	return index
@@ -172,7 +172,7 @@ func buildCommandIndex(cmd *cobra.Command) map[string]bool {
 func collectCommand(cmd *cobra.Command, name string, index map[string]bool) {
 	index[name] = true
 	for _, sub := range cmd.Commands() {
-		// Include hidden commands (deprecated aliases like pr-check, bearings)
+// Include hidden commands for doctor validation
 		subName := name + " " + strings.Fields(sub.Use)[0]
 		collectCommand(sub, subName, index)
 	}

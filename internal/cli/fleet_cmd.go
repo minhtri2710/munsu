@@ -113,38 +113,3 @@ When a project directory argument is given, only that project is shown.`,
 	}
 }
 
-// newFleetSyncTopCmd is a hidden compatibility alias for 'munsu fleet sync'.
-func newFleetSyncTopCmd() *cobra.Command {
-	cmd := newFleetSyncCmd()
-	cmd.Use = "fleet-sync [<project>]"
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu fleet sync' instead"
-	return cmd
-}
-
-// newFleetSnapshotTopCmd is a hidden compatibility alias for 'munsu fleet snapshot'.
-func newFleetSnapshotTopCmd() *cobra.Command {
-	cmd := newFleetSnapshotCmd()
-	cmd.Use = "fleet-snapshot"
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu fleet snapshot' instead"
-	return cmd
-}
-
-// newFleetViewTopCmd is a hidden compatibility alias for 'munsu fleet view'.
-func newFleetViewTopCmd() *cobra.Command {
-	cmd := newFleetViewCmd()
-	cmd.Use = "fleet-view"
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu fleet view' instead"
-	return cmd
-}
-
-// newBearingsTopCmd is a hidden compatibility alias for 'munsu fleet bearings'.
-func newBearingsTopCmd() *cobra.Command {
-	cmd := newFleetBearingsCmd()
-	cmd.Use = "bearings"
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu fleet bearings' instead"
-	return cmd
-}
