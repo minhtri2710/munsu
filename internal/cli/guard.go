@@ -7,7 +7,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/waker"
 	"github.com/spf13/cobra"
 )
 
@@ -53,17 +53,19 @@ func guardWarnWatcher() {
 		return
 	}
 
-	beat := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	result := waker.EvaluateGuard(homeDir, inFlight, time.Now())
+	beat := result.BeatStatus
 	if !beat.Exists || beat.Stale {
 		status := "alive"
-		switch {
-		case !beat.Exists:
+		ageStr := beat.Age.Round(time.Second).String()
+		if !beat.Exists {
 			status = "missing"
-		case beat.Stale:
+			ageStr = "never"
+		} else if beat.Stale {
 			status = "stale"
 		}
 		fmt.Fprintf(os.Stderr, "\nWARNING: %d task(s) in flight but watcher is %s (last beat %s ago)\n",
-			inFlight, status, beat.Age.Round(time.Second))
+			inFlight, status, ageStr)
 		fmt.Fprintf(os.Stderr, "  Start the watcher with 'munsu watch-arm' or set MUNSU_GUARD_SKIP=1 to silence.\n\n")
 	}
 }

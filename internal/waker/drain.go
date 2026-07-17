@@ -35,6 +35,31 @@ func PrintRecords(records []Record) {
 		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", r.Epoch, r.Seq, r.Kind, r.Key, r.Payload)
 	}
 }
+// GuardResult summarizes the shared guard evaluation for both the CLI
+// middleware and the contract guard command.
+type GuardResult struct {
+	BeatStatus lifecycle.BeatStatus
+	InFlight   int
+	Conditions []string
+}
+
+// EvaluateGuard returns the current guard state combining beat liveness,
+// queued-wake status, and the caller-supplied in-flight task count.
+// Both the pre-run middleware and the contract guard command use this to
+// produce consistent warnings and state.
+func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
+	result := GuardResult{
+		InFlight: inFlight,
+	}
+
+	result.BeatStatus = lifecycle.ReadBeatStatus(homeDir, now)
+
+	if lifecycle.HasQueuedWakes(homeDir) {
+		result.Conditions = append(result.Conditions, "QUEUED WAKES PENDING - drain with munsu wake-drain")
+	}
+
+	return result
+}
 
 // GuardWarnings returns the current operational guard warnings without writing output.
 func GuardWarnings(homeDir string) []string {
@@ -58,9 +83,9 @@ func GuardWarnings(homeDir string) []string {
 func CheckGuard(homeDir string) []string {
 	warnings := GuardWarnings(homeDir)
 	for _, warning := range warnings {
-		border := strings.Repeat("●", len(warning)+4)
+		border := strings.Repeat("\u25cf", len(warning)+4)
 		fmt.Println(border)
-		fmt.Println("● " + warning + " ●")
+		fmt.Println("\u25cf " + warning + " \u25cf")
 		fmt.Println(border)
 	}
 	if len(warnings) == 0 {
