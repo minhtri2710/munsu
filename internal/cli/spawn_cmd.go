@@ -38,7 +38,7 @@ Precedence: explicit project arg > registry match on cwd path > adhoc git
 remote/name heuristics.
 
 When inference fails, pass the project name explicitly or run 'munsu project add'.`,
-		Args: cobra.MatchAll(cobra.MinimumNArgs(1), cobra.MaximumNArgs(2)),
+		Args: cobra.MatchAll(MinimumNArgs(1), cobra.MaximumNArgs(2)),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 
@@ -112,7 +112,7 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.Resolve(ctx.Home, meta["backend"])
+			bk, _, err := session.BackendForTask(ctx.Home, meta)
 			if err != nil {
 				return err
 			}
@@ -151,7 +151,7 @@ func newPeekCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.Resolve(ctx.Home, meta["backend"])
+			bk, _, err := session.BackendForTask(ctx.Home, meta)
 			if err != nil {
 				return err
 			}

@@ -116,15 +116,12 @@ func newTaskObserveCmd() *cobra.Command {
 				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to observe task state")
 			}
 			meta, _ := task.ReadMeta(ctx.Home, args[0])
-			result := contract.TaskObserve{TaskID: state.TaskID, Status: state.Status}
+			result := contract.TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
 			if fields["description"] {
 				result.Description = state.Description
 			}
 			if fields["branch"] {
 				result.Branch = branchFor(meta)
-			}
-			if fields["pane_alive"] {
-				result.PaneAlive = &state.PaneAlive
 			}
 			if fields["no_mistakes_step"] {
 				result.NoMistakesStep = state.NoMistakesRunStep

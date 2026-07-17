@@ -244,7 +244,16 @@ munsu afk                           # away-mode supervision daemon
 5. **Isolated session/workspace:** Use a dedicated herdr workspace or tmux
    session scoped to each home (munsu auto-derives from home path). Avoid
    sharing a session/workspace across test homes to prevent interference.
-6. **Temp homes for dogfood:** Use temporary directories for exploratory
-   dogfood tests. Example: `mkdir -p /tmp/munsu-dogfood && MUNSU_HOME=/tmp/munsu-dogfood munsu init`.
-   Note: leftover `/tmp/munsu-* watch` processes from prior tests can trigger stale-watcher
-   warnings in a new test home; stop them with `munsu watch stop` in the original home or kill the PID.
+6. **Herdr session vs workspace label:** The Herdr session name (server name,
+	   e.g. `default` or a lab session) is **not** the same as the workspace label
+	   (home-derived hometag like `e7b346`). The `session.Resolve` function for
+	   the "herdr" backend uses `""` → `HERDR_SESSION` → `"default"`, *never*
+	   the hometag. The hometag is the workspace label passed separately by spawn
+	   to `NewWindow`. After spawn, lifecycle commands (peek, send, teardown)
+	   reconstruct the backend via `BackendForTask`, which reads the session from
+	   `meta["herdr_session"]` or the window handle prefix. Do not confuse
+	   these two values in meta or config.
+7. **Temp homes for dogfood:** Use temporary directories for exploratory
+	   dogfood tests. Example: `mkdir -p /tmp/munsu-dogfood && MUNSU_HOME=/tmp/munsu-dogfood munsu init`.
+	   Note: leftover `/tmp/munsu-* watch` processes from prior tests can trigger stale-watcher
+	   warnings in a new test home; stop them with `munsu watch stop` in the original home or kill the PID.

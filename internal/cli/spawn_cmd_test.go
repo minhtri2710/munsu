@@ -97,9 +97,9 @@ func TestSendCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
 	}
 }
 
-// TestSendCmd_ErrorsOnUnknownBackendInMeta verifies that an unknown backend name
-// in task meta produces a clear error rather than silently falling back to config.
-func TestSendCmd_ErrorsOnUnknownBackendInMeta(t *testing.T) {
+// TestSendCmd_UnknownMetaBackendFallsThroughToResolve verifies that an unknown backend name
+// in task meta falls through to config/auto-detection (it does not hard-error on unknown names).
+func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Write global config saying "herdr"
@@ -111,7 +111,7 @@ func TestSendCmd_ErrorsOnUnknownBackendInMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write task meta with backend=nonexistent
+	// Write task meta with backend=nonexistent (falls through to config/resolve)
 	stateDir := filepath.Join(tmpDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
@@ -121,15 +121,22 @@ func TestSendCmd_ErrorsOnUnknownBackendInMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Set PATH to nothing so backend resolution fails
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", "/dev/null")
+	defer os.Setenv("PATH", oldPath)
+
 	root := NewRootCommand()
 	root.SetArgs([]string{"send", "test-task", "echo hello", "--home", tmpDir})
 	err := root.Execute()
 
 	if err == nil {
-		t.Fatal("expected error for unknown backend, got nil")
+		t.Fatal("expected error for unknown backend (fallthrough), got nil")
 	}
-	if !strings.Contains(err.Error(), "nonexistent") {
-		t.Errorf("expected error mentioning unknown backend 'nonexistent', got: %v", err)
+	// Error should mention the resolved backend (herdr from config) or the send operation,
+	// not the original unknown backend name.
+	if strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("the unknown backend name should be transparent to the caller after fallthrough, got: %v", err)
 	}
 }
 

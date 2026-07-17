@@ -20,10 +20,13 @@ var (
 // ExactArgs returns a cobra.PositionalArgs validator that wraps cobra.ExactArgs
 // but includes the command's Use string in the error message so users see the
 // expected format (especially important when descriptions need quoting).
+// Returns a usageError (exit 2) when args are wrong, per AXI contract.
 func ExactArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) != n {
-			return fmt.Errorf("%s accepts %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use)
+			return usageError("invalid_argument",
+				fmt.Sprintf("Run `%s --help`", commandPath(cmd)),
+				fmt.Sprintf("%s accepts %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use))
 		}
 		return nil
 	}
@@ -32,7 +35,9 @@ func ExactArgs(n int) cobra.PositionalArgs {
 // NoArgs is a cobra.PositionalArgs validator that requires no arguments.
 func NoArgs(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
-		return fmt.Errorf("%s accepts no arguments, received %d: %s", cmd.Name(), len(args), cmd.Use)
+		return usageError("invalid_argument",
+			fmt.Sprintf("Run `%s --help`", commandPath(cmd)),
+			fmt.Sprintf("%s accepts no arguments, received %d: %s", cmd.Name(), len(args), cmd.Use))
 	}
 	return nil
 }
@@ -41,7 +46,9 @@ func NoArgs(cmd *cobra.Command, args []string) error {
 func MinimumNArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) < n {
-			return fmt.Errorf("%s requires at least %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use)
+			return usageError("invalid_argument",
+				fmt.Sprintf("Run `%s --help`", commandPath(cmd)),
+				fmt.Sprintf("%s requires at least %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use))
 		}
 		return nil
 	}
@@ -51,7 +58,9 @@ func MinimumNArgs(n int) cobra.PositionalArgs {
 func MaximumNArgs(n int) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) > n {
-			return fmt.Errorf("%s accepts at most %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use)
+			return usageError("invalid_argument",
+				fmt.Sprintf("Run `%s --help`", commandPath(cmd)),
+				fmt.Sprintf("%s accepts at most %d arg(s), received %d: %s", cmd.Name(), n, len(args), cmd.Use))
 		}
 		return nil
 	}
