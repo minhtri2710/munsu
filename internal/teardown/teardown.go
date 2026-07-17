@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -99,15 +101,19 @@ func Run(opts Options) (*TeardownResult, error) {
 	}
 
 	// 4. Remove residual state artifacts
+	// Munsu-native artifacts are always cleaned up for any task.
+	// Harness-specific artifacts are driven by the adapter registry.
 	stateDir := filepath.Join(opts.HomeDir, "state")
-	residuals := []string{
+	munsuArtifacts := []string{
 		opts.ID + ".status",
 		opts.ID + ".check.sh",
 		opts.ID + ".turn-ended",
-		opts.ID + ".pi-ext.ts",
-		opts.ID + ".grok-turnend-token",
 	}
-	for _, name := range residuals {
+	harnessArtifacts := harness.StateArtifactsForHarness(meta["harness"])
+	for _, suffix := range harnessArtifacts {
+		munsuArtifacts = append(munsuArtifacts, opts.ID+"."+suffix)
+	}
+	for _, name := range munsuArtifacts {
 		p := filepath.Join(stateDir, name)
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", name, err))

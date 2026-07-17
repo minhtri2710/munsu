@@ -260,17 +260,16 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Create meta file
-	metaContent := "kind=scout\nwindow=@1\n"
+	// Create meta file with harness=pi so adapter-driven artifacts are included
+	metaContent := "kind=scout\nwindow=@1\nharness=pi\n"
 	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
-	// Create residual artifacts
+	// Create residual artifacts: munsu-native + pi adapter artifacts
 	residuals := []string{
 		"test-residual.status",
 		"test-residual.check.sh",
 		"test-residual.turn-ended",
 		"test-residual.pi-ext.ts",
-		"test-residual.grok-turnend-token",
 	}
 	for _, name := range residuals {
 		os.WriteFile(filepath.Join(stateDir, name), []byte("stale"), 0644)
