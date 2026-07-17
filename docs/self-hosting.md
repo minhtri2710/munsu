@@ -253,7 +253,15 @@ munsu afk                           # away-mode supervision daemon
 	   reconstruct the backend via `BackendForTask`, which reads the session from
 	   `meta["herdr_session"]` or the window handle prefix. Do not confuse
 	   these two values in meta or config.
-7. **Temp homes for dogfood:** Use temporary directories for exploratory
 	   dogfood tests. Example: `mkdir -p /tmp/munsu-dogfood && MUNSU_HOME=/tmp/munsu-dogfood munsu init`.
-	   Note: leftover `/tmp/munsu-* watch` processes from prior tests can trigger stale-watcher
-	   warnings in a new test home; stop them with `munsu watch stop` in the original home or kill the PID.
+
+## State file rename (item-5 transition)
+
+In a future release, the legacy state suffixes `.check.sh` and `.turn-ended`
+will no longer be cleaned up during teardown. The canonical names are now
+`.check` and `.turnend`.
+
+Munsu currently writes `.check` and reads **both** old and new names during
+teardown cleanup. If you have scripts that reference `.check.sh` files in
+the state directory, update them to `.check`. Existing `.check.sh` and
+`.turn-ended` files will still be cleaned up. No immediate action required.

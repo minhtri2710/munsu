@@ -78,7 +78,7 @@ else
 fi
 `, id, ghURL.Num, ghURL.Owner, ghURL.Repo, homeDir, project, ghURL.Owner, ghURL.Repo)
 
-	checkPath := filepath.Join(task.StateDir(homeDir), id+".check.sh")
+	checkPath := filepath.Join(task.StateDir(homeDir), id+".check")
 	if err := os.MkdirAll(filepath.Dir(checkPath), 0755); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}

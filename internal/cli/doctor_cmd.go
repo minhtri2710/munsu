@@ -63,6 +63,11 @@ Optional tools get warnings but do not fail the exit code:
 					missingRequired = true
 					break
 				}
+				// Config-driven hard-required (e.g. require-no-mistakes)
+				if bootstrap.IsHardRequiredByConfig(ctx.Home, tool) {
+					missingRequired = true
+					break
+				}
 			}
 
 			// Also check herdr as alternative session backend

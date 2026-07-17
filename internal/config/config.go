@@ -16,6 +16,7 @@ var KnownKeys = []string{
 	"secondmate-harness",
 	"backlog-backend",
 	"default-mode",
+	"require-no-mistakes",
 }
 
 // IsKnownKey returns true if key is a well-known config key.

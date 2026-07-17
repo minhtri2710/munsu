@@ -266,11 +266,13 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	metaContent := "kind=scout\nwindow=@1\nharness=pi\n"
 	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
-	// Create residual artifacts: munsu-native + pi adapter artifacts
+	// Create residual artifacts: munsu-native (both old and new names) + pi adapter artifacts
 	residuals := []string{
 		"test-residual.status",
-		"test-residual.check.sh",
-		"test-residual.turn-ended",
+		"test-residual.check",          // new canonical name
+		"test-residual.check.sh",       // legacy name (dual-read)
+		"test-residual.turnend",        // new canonical name
+		"test-residual.turn-ended",     // legacy name (dual-read)
 		"test-residual.pi-ext.ts",
 	}
 	for _, name := range residuals {
@@ -316,14 +318,16 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	metaContent := "kind=scout\nwindow=@1\nharness=pi\n"
 	os.WriteFile(filepath.Join(stateDir, "legacy-test.meta"), []byte(metaContent), 0644)
 
-	// Munsu-native artifacts that the current code creates
+	// Munsu-native artifacts: new canonical names (post item-5 rename)
 	munsuNames := []string{
 		"legacy-test.status",
-		"legacy-test.check.sh",
+		"legacy-test.check",    // new canonical name
+		"legacy-test.turnend",  // new canonical name
 	}
-	// Legacy firstmate artifact for backward compatibility
+	// Legacy names still being cleaned up (dual-read window)
 	legacyNames := []string{
-		"legacy-test.turn-ended",
+		"legacy-test.check.sh",   // legacy name (deprecated)
+		"legacy-test.turn-ended", // legacy name (deprecated)
 	}
 	// Harness-specific artifact
 	harnessNames := []string{

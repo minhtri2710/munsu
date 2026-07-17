@@ -114,6 +114,12 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "CREW_DISPATCH", Value: fmt.Sprintf("active (%d rules)", ruleCount)})
 	}
 
+	// 4b. Check require-no-mistakes config
+	requireNoMistakesPath := filepath.Join(home, "config", "require-no-mistakes")
+	if _, err := os.Stat(requireNoMistakesPath); err == nil {
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "REQUIRE_NO_MISTAKES", Value: "strict"})
+	}
+
 	// 5. Check session backend preference — distinguish config pin from runtime resolution
 	configBackendPath := filepath.Join(home, "config", "backend")
 	var configuredPin string
