@@ -35,6 +35,7 @@ var canonicalCommands = []struct {
 	{name: "teardown", use: "teardown <id>"},
 	{name: "delivery", use: "delivery"},
 	{name: "fleet", use: "fleet"},
+	{name: "herdr", use: "herdr"},
 	{name: "watch", use: "watch"},
 	{name: "event", use: "event"},
 	{name: "watch-arm", use: "watch-arm"},
