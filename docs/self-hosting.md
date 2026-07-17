@@ -205,7 +205,37 @@ munsu guard                         # post-action safety check
 munsu afk                           # away-mode supervision daemon
 ```
 
-## 7. Guard supervision loop summary
+## 7. Away-mode (AFK supervision)
+
+When the captain is away, the AFK daemon supervises the fleet autonomously. It
+triages wakes, accumulates a digest, detects wedge conditions, and optionally
+injects summaries into the configured captain pane.
+
+```sh
+munsu afk                        # start the away-mode daemon (foreground)
+^Z bg                             # background it, or start in a dedicated pane
+```
+
+The daemon runs a 30s poll loop:
+1. Triage the wake queue
+2. Feed results into the digester (60s window)
+3. Check captain-pane target safety
+4. Check wedge conditions (stale beat, missing beat, repeated wake)
+5. Flush the batched digest to `state/.afk-digest` when the window expires
+6. Optionally inject the digest into the captain pane (if configured + safe)
+
+On return:
+
+```sh
+munsu afk return                  # stop daemon, drain digest, print summary
+munsu afk return check             # exit 0 = clean, 1 = actionable items remain
+```
+
+**Details:** `docs/skills/afk.md` covers the full AFK contract — consent flag,
+identity lock, sentinel marker, batched digest, wedge detection, target safety
+gates, and the return catch-up gate.
+
+## 8. Guard supervision loop summary
 
 ```
           ┌──────────────────┐
@@ -230,7 +260,7 @@ munsu afk                           # away-mode supervision daemon
           └──────────────────┘
 ```
 
-## 8. Safety rules for self-hosting
+## 9. Safety rules for self-hosting
 
 1. **Isolated home:** Always use a dedicated home (e.g. `~/.munsu-selfhost`)
    for self-hosting. Never share the live secondmate home that firstmate
