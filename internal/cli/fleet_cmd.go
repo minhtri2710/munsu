@@ -81,15 +81,11 @@ func newFleetSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			j, err := snap.JSON()
-			if err != nil {
-				return err
-			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
+			return writeContract(cmd, contract.Response[fleet.FleetSnapshot]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "fleet.snapshot.v1",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: j},
+				Data:          *snap,
 			})
 		}),
 	}
