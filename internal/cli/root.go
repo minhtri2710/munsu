@@ -122,6 +122,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newStowCmd())
 	root.AddCommand(newEnsureAgentsMdCmd())
 	root.AddCommand(newUpdateCmd())
+	root.AddCommand(newDecisionHoldCmd())
 	root.AddCommand(newSecondmateCmd())
 	root.AddCommand(newAfkCmd())
 
