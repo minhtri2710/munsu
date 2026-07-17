@@ -297,3 +297,109 @@ func TestDisable_Idempotent(t *testing.T) {
 		t.Fatalf("Disable() second call: unexpected error: %v", err)
 	}
 }
+
+// --- Dedup + wake-queue tests ---
+
+func TestScanStatusFiles_DedupSkipsRepeat(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Write a done status
+	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("done: PR merged\n"), 0644)
+
+	// Reset seen set for isolated test
+	seenMu.Lock()
+	seenLines = make(map[string]string)
+	seenMu.Unlock()
+
+	// First call: should escalate
+	firstOut := captureStdout(func() { scanStatusFiles(tmp) })
+	if !strings.Contains(firstOut, "done:") {
+		t.Fatalf("expected first call to escalate 'done:', got %q", firstOut)
+	}
+
+	// Verify wake-queue was written by the first call
+	wakePath := filepath.Join(tmp, "state", ".wake-queue")
+	data, err := os.ReadFile(wakePath)
+	if err != nil {
+		t.Fatalf("expected wake-queue file after escalation: %v", err)
+	}
+	if !strings.Contains(string(data), "task-1") {
+		t.Errorf("expected wake-queue to reference task-1, got: %s", string(data))
+	}
+	if !strings.Contains(string(data), "PR merged") {
+		t.Errorf("expected wake-queue to contain 'PR merged', got: %s", string(data))
+	}
+
+	// Second call: same content, should be suppressed
+	secondOut := captureStdout(func() { scanStatusFiles(tmp) })
+	if secondOut != "" {
+		t.Errorf("expected no output on repeat, got %q", secondOut)
+	}
+}
+
+func TestScanStatusFiles_EscalatesOnChange(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Write initial done status and simulate first poll
+	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("done: build green\n"), 0644)
+
+	seenMu.Lock()
+	seenLines = make(map[string]string)
+	seenMu.Unlock()
+
+	// First call: escalate
+	firstOut := captureStdout(func() { scanStatusFiles(tmp) })
+	if !strings.Contains(firstOut, "done:") {
+		t.Fatalf("expected first call to escalate 'done:', got %q", firstOut)
+	}
+
+	// Change the status line to something new
+	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("done: build green\nfailed: test failure\n"), 0644)
+
+	// Second call: line changed, should escalate again
+	secondOut := captureStdout(func() { scanStatusFiles(tmp) })
+	if !strings.Contains(secondOut, "failed:") {
+		t.Errorf("expected escalation on line change, got %q", secondOut)
+	}
+}
+
+func TestScanStatusFiles_WakeQueueAppendFormat(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	os.WriteFile(filepath.Join(stateDir, "task-99.status"), []byte("needs-decision: which target branch\n"), 0644)
+
+	seenMu.Lock()
+	seenLines = make(map[string]string)
+	seenMu.Unlock()
+
+	scanStatusFiles(tmp)
+
+	wakePath := filepath.Join(tmp, "state", ".wake-queue")
+	data, err := os.ReadFile(wakePath)
+	if err != nil {
+		t.Fatalf("expected wake-queue file: %v", err)
+	}
+
+	// Format: epoch\tseq\tkind\tkey\tpayload\n
+	line := strings.TrimSpace(string(data))
+	parts := strings.SplitN(line, "\t", 5)
+	if len(parts) != 5 {
+		t.Fatalf("expected 5 tab-separated fields, got %d: %q", len(parts), line)
+	}
+
+	if parts[2] != "afk" {
+		t.Errorf("expected kind 'afk', got %q", parts[2])
+	}
+	if parts[3] != "task-99" {
+		t.Errorf("expected key 'task-99', got %q", parts[3])
+	}
+	if parts[4] != "which target branch" {
+		t.Errorf("expected payload 'which target branch', got %q", parts[4])
+	}
+}

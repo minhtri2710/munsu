@@ -122,6 +122,7 @@ func fleetSummary(w io.Writer, homeDir string) {
 }
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
+	cobra.EnableTraverseRunHooks = true
 	root := &cobra.Command{
 		Use:   "munsu",
 		Short: "Standalone CLI port of firstmate crew capabilities",
