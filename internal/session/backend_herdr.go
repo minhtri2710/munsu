@@ -20,6 +20,19 @@ type HerdrBackend struct {
 	// used when the backend is reconstructed post-spawn (no in-memory lastCreate).
 	TeardownTabID string
 
+	// TeardownWorkspaceID is a durable workspace ID set from task metadata
+	// for teardown workspace/husk cleanup.
+	TeardownWorkspaceID string
+
+	// Hometag is the hometag of the munsu home that owns this backend.
+	// Set during BackendForTask to enable label-safe workspace close.
+	Hometag string
+
+	// DenyCloseWorkspaceIDs lists workspace IDs that must NOT be closed
+	// during teardown, even if label matches hometag. Populated by teardown.Run
+	// when other tasks still reference the same workspace.
+	DenyCloseWorkspaceIDs []string
+
 	// lastCreate stores the last tab-creation result for MetaExtras.
 	lastCreate *herdrLastCreate
 }
@@ -48,6 +61,15 @@ func NewHerdrBackend(session string) *HerdrBackend {
 // Used when the backend is reconstructed post-spawn (no in-memory lastCreate).
 func (h *HerdrBackend) SeedTeardownTab(tabID string) {
 	h.TeardownTabID = tabID
+}
+
+// workspaceIDToClose returns the workspace ID to close during teardown.
+// Checks lastCreate first, then TeardownWorkspaceID (from meta).
+func (h *HerdrBackend) workspaceIDToClose() string {
+	if h.lastCreate != nil && h.lastCreate.WorkspaceID != "" {
+		return h.lastCreate.WorkspaceID
+	}
+	return h.TeardownWorkspaceID
 }
 
 // effectiveSession returns the session for a given window handle.
@@ -86,9 +108,6 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// herdrForWindow calls herdr with the session appropriate for the given windowID.
-// If the window handle has a session prefix that differs from h.Session,
-// the window's session is used for this call (belt-and-suspenders).
 func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, error) {
 	sess := h.effectiveSession(windowID)
 	if sess != h.Session {
@@ -97,6 +116,15 @@ func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, 
 		return tmp.herdr(args...)
 	}
 	return h.herdr(args...)
+}
+
+// isNotFoundErr returns true for 'not found' / 'not_found' / '_not_found' herdr errors.
+func isNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found")
 }
 
 // herdrTabCreateResponse represents the JSON response from herdr tab create.
@@ -122,6 +150,7 @@ type herdrWorkspaceListResponse struct {
 type herdrWorkspaceEntry struct {
 	WorkspaceID string `json:"workspace_id"`
 	Label       string `json:"label"`
+	TabCount    int    `json:"tab_count"`
 }
 
 // findOrCreateWorkspace finds a workspace by label or creates one.
@@ -265,25 +294,60 @@ func (h *HerdrBackend) tabIDToClose() string {
 // meta, it also closes the tab idempotently to ensure no husk remains.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 // Idempotent: "not found" errors are silently ignored.
+// Teardown closes the pane and tab. After tab close, if we have a workspace_id
+// with matching hometag label and no deny-list entries, we close the workspace
+// to prevent husk tabs. Idempotent: 'not found' errors are silently ignored.
 func (h *HerdrBackend) Teardown(windowID string) error {
 	pid := paneID(windowID)
 
-	// Close pane first
+	// Close pane first (idempotent)
 	_, err := h.herdrForWindow(windowID, "pane", "close", pid)
-	if err != nil && (strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "pane_not_found")) {
-		err = nil
-	} else if err != nil {
+	if err != nil && !isNotFoundErr(err) {
 		return err
 	}
 
-	// If we have a tab_id from last create or from meta, also close the tab idempotently.
+	// Close tab (idempotent)
 	tabID := h.tabIDToClose()
 	if tabID != "" {
 		_, tabErr := h.herdrForWindow(windowID, "tab", "close", tabID)
-		if tabErr != nil && (strings.Contains(tabErr.Error(), "not found") || strings.Contains(tabErr.Error(), "tab_not_found")) {
-			return nil
+		if tabErr != nil && !isNotFoundErr(tabErr) {
+			return tabErr
 		}
-		return tabErr
+	}
+
+	// Husk cleanup: if workspace ID is known and safe, close the workspace.
+	wsID := h.workspaceIDToClose()
+	if wsID == "" {
+		return nil
+	}
+
+	// Check deny list first
+	for _, denied := range h.DenyCloseWorkspaceIDs {
+		if denied == wsID {
+			return nil // another task still references this workspace
+		}
+	}
+
+	// List workspaces to check label
+	out, wsErr := h.herdr("workspace", "list")
+	if wsErr != nil {
+		return nil // best-effort
+	}
+
+	var resp herdrWorkspaceListResponse
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return nil // best-effort
+	}
+
+	for _, ws := range resp.Result.Workspaces {
+		if ws.WorkspaceID == wsID && ws.Label != "" && ws.Label == h.Hometag {
+			// Label matches hometag — safe to close this workspace
+			_, closeErr := h.herdr("workspace", "close", wsID)
+			if isNotFoundErr(closeErr) {
+				return nil // already gone
+			}
+			return closeErr
+		}
 	}
 
 	return nil
