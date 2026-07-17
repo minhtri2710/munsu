@@ -57,14 +57,15 @@ func Run(opts Options) (*TeardownResult, error) {
 		bk, _, err := session.BackendForTask(opts.HomeDir, meta)
 		if err != nil {
 			result.Steps = append(result.Steps, fmt.Sprintf("session backend unavailable: %v", err))
-		} else if bk.Alive(windowID) {
+		} else {
+			if !bk.Alive(windowID) {
+				result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", windowID))
+			}
 			if err := bk.Teardown(windowID); err != nil {
 				result.Steps = append(result.Steps, fmt.Sprintf("session teardown %s: %v", windowID, err))
 			} else {
 				result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", windowID))
 			}
-		} else {
-			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone", windowID))
 		}
 	}
 
