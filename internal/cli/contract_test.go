@@ -188,3 +188,105 @@ func TestWriteContractErrorRespectsOutputFlag(t *testing.T) {
 		t.Errorf("JSON output missing error_code\n%s", bufJSON.String())
 	}
 }
+
+func TestBackendCapabilitiesHasHelpHint(t *testing.T) {
+	output, err := runContract(t, []string{"backend", "capabilities", "--backend", "tmux"})
+	if err != nil {
+		t.Fatalf("backend capabilities: %v", err)
+	}
+	if !strings.Contains(output, "help[1]:") {
+		t.Errorf("backend capabilities TOON missing help hint\n%s", output)
+	}
+	if !strings.Contains(output, "task observe") {
+		t.Errorf("backend capabilities help hint should mention task observe\n%s", output)
+	}
+}
+
+func TestGuardHasContextualHelpHint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	output, err := runContract(t, []string{"guard"})
+	if err != nil {
+		t.Fatalf("guard: %v", err)
+	}
+	if !strings.Contains(output, "help[2]:") && !strings.Contains(output, "help[1]:") {
+		t.Errorf("guard TOON should have contextual help\n%s", output)
+	}
+	if !strings.Contains(output, "fleet snapshot") {
+		t.Errorf("guard help hint should mention fleet snapshot\n%s", output)
+	}
+}
+
+func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+
+	// Empty snapshot: count:0, total:0, no crewmates, should still have help
+	output, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
+	if err != nil {
+		t.Fatalf("fleet snapshot v2: %v", err)
+	}
+	if !strings.Contains(output, "count: 0") || !strings.Contains(output, "total: 0") {
+		t.Errorf("empty snapshot should have count:0 and total:0\n%s", output)
+	}
+	if !strings.Contains(output, "help[1]:") {
+		t.Errorf("empty snapshot missing help hints\n%s", output)
+	}
+
+	// Non-empty snapshot: add a task
+	if err := task.WriteMeta(home, "alpha", map[string]string{"description": "inspect", "worktree": home}); err != nil {
+		t.Fatal(err)
+	}
+	out2, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
+	if err != nil {
+		t.Fatalf("fleet snapshot v2 non-empty: %v", err)
+	}
+	if !strings.Contains(out2, "count: 1") || !strings.Contains(out2, "total: 1") {
+		t.Errorf("non-empty snapshot should have count:1 and total:1\n%s", out2)
+	}
+	if !strings.Contains(out2, "crewmates[1]") {
+		t.Errorf("non-empty snapshot should have 1 crewmate\n%s", out2)
+	}
+	if !strings.Contains(out2, "help[1]:") {
+		t.Errorf("non-empty snapshot missing help hints\n%s", out2)
+	}
+}
+
+func TestTaskListShowsAggregateCount(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+
+	// Empty state: should show "no tasks found"
+	output1 := captureTaskList(t)
+	if !strings.Contains(output1, "no tasks found") {
+		t.Errorf("empty task list should say 'no tasks found', got: %s", output1)
+	}
+
+	// Add one task
+	if err := task.WriteMeta(home, "beta", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-empty: should show header and total count
+	output2 := captureTaskList(t)
+	if !strings.Contains(output2, "Total:") {
+		t.Errorf("task list should show total count, got: %s", output2)
+	}
+	if !strings.Contains(output2, "beta") {
+		t.Errorf("task list should list beta, got: %s", output2)
+	}
+}
+
+func captureTaskList(t *testing.T) string {
+	t.Helper()
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"task", "list"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("task list: %v", err)
+	}
+	return buf.String()
+}
+

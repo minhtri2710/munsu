@@ -80,6 +80,7 @@ func newBackendCmd() *cobra.Command {
 					Backend:  backend,
 					Features: []string{"create_session", "send_input", "pane_liveness"},
 				},
+				Help: []string{"Run `munsu task observe <task-id>` to inspect a task"},
 			})
 		}),
 	}
@@ -206,6 +207,23 @@ func newContractGuardCmd() *cobra.Command {
 				state = "indeterminate"
 			}
 
+			// Build contextual help based on guard state
+			var guardHelp []string
+			switch state {
+			case "unhealthy":
+				guardHelp = []string{
+					"Run `munsu watch ensure` to start or restart the watcher",
+					"Run `munsu fleet snapshot --version 2` to inspect fleet state",
+				}
+			case "indeterminate":
+				guardHelp = []string{
+					"Review and resolve the listed violations above",
+					"Run `munsu fleet snapshot --version 2` to inspect fleet state",
+				}
+			default:
+				guardHelp = []string{"Run `munsu fleet snapshot --version 2` to inspect fleet state"}
+			}
+
 			return writeContract(cmd, contract.Response[contract.Guard]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "guard",
@@ -215,6 +233,7 @@ func newContractGuardCmd() *cobra.Command {
 					Violations: violations,
 					Conditions: conditions,
 				},
+				Help: guardHelp,
 			})
 		}),
 	}
