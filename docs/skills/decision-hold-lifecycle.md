@@ -17,8 +17,7 @@ In Phase A, decision-hold uses status-file conventions and backlog primitives. S
 | Step | Action | Command |
 |------|--------|---------|
 | Record | Append `needs-decision` status | `munsu task status <id> "needs-decision" "<key>: <summary>"` |
-| Block | Block dependent task | `munsu backlog block <dependent-id>` |
-| Surface | Tell captain the key + summary | (escalation) |
+| Block | Block dependent task | `munsu backlog block <dependent-id> --by <blocker-id>` |
 | Record answer | Append resolved status | `munsu task status <id> "resolved" "<key>: <answer>"` |
 | Unblock | Clear blocker | `munsu backlog ready <dependent-id>` |
 | Verify | No stale needs-decision lines remain | `munsu backlog show <id>` |

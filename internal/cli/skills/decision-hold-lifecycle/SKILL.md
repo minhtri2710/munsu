@@ -28,10 +28,10 @@ The agent performs the semantic inventory — scripts must not infer decisions f
 2. **Capture context.** Use `munsu stow` to save the full decision context as a durable learning if the context is non-obvious from the report alone.
 3. **Block dependent work.** When other tasks depend on the decision, record the dependency:
    ```
-   munsu backlog block <dependent-id>
+   munsu backlog block <dependent-id> --by <blocker-id>
    ```
+   When using the tasks-axi backend, `--by <blocker-id>` is required. Omitting it falls back to manual backend.
    (The block will be cleared when the captain resolves the decision.)
-4. **Surface to captain.** Relay the structured decisions to the captain at the next escalation. Include each key and the one-line summary. Let the captain decide.
 5. **Record the answer.** After the captain decides, update the originating task:
    ```
    munsu task status <id> "resolved" "<key>: <captain decision summary>"

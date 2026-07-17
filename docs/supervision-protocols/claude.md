@@ -24,8 +24,8 @@ When this session owns supervision and away mode is not active:
 
 ## Harness-specific
 
-- Claude Code's background task completion is the wake mechanism.
 - The watcher itself is `munsu watch`; `munsu watch-arm` is the verified arm wrapper.
+- `munsu watch ensure` provides an idempotent alternative to check/arm the watcher.
 - On re-arm, an existing healthy cycle is reused; the background task stays live until it ends.
 
 ## See also
