@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,7 +132,8 @@ func runContract(t *testing.T, args []string) (string, error) {
 	root.SetErr(buffer)
 	root.SetArgs(args)
 	err := root.Execute()
-	if err != nil && WriteContractError(buffer, err, args) != 0 {
+	if err != nil {
+		WriteContractError(buffer, err, args)
 		return strings.TrimSpace(buffer.String()), err
 	}
 	return strings.TrimSpace(buffer.String()), err
@@ -156,5 +158,33 @@ func TestContractCLIReadsOnlyFreshTempHome(t *testing.T) {
 	}
 	if len(after) != 0 {
 		t.Errorf("read-only fleet snapshot changed clean home: %v", after)
+	}
+}
+
+func TestWriteContractErrorWrapsNonContractErrors(t *testing.T) {
+	var buf bytes.Buffer
+	err := fmt.Errorf("something went wrong")
+	exitCode := WriteContractError(&buf, err, []string{})
+	if exitCode != 1 {
+		t.Errorf("exitCode = %d, want 1", exitCode)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "error_code: error") {
+		t.Errorf("output missing error_code: error\n%s", output)
+	}
+	if !strings.Contains(output, "something went wrong") {
+		t.Errorf("output missing original message\n%s", output)
+	}
+}
+
+func TestWriteContractErrorRespectsOutputFlag(t *testing.T) {
+	var bufJSON bytes.Buffer
+	err := fmt.Errorf("json test error")
+	exitCode := WriteContractError(&bufJSON, err, []string{"--output", "json"})
+	if exitCode != 1 {
+		t.Errorf("exitCode = %d, want 1", exitCode)
+	}
+	if !strings.Contains(bufJSON.String(), `"error_code": "error"`) {
+		t.Errorf("JSON output missing error_code\n%s", bufJSON.String())
 	}
 }
