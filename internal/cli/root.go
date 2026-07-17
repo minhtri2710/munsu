@@ -133,6 +133,7 @@ with no requirement to live inside a firstmate checkout.`,
 		SilenceUsage:       true,
 		DisableAutoGenTag:  true,
 		DisableSuggestions: true,
+		PersistentPreRunE:   guardWatcherPreRunE(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
