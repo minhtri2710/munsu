@@ -16,6 +16,10 @@ type HerdrBackend struct {
 	// Cwd is the working directory for the new tab (set by spawn before NewWindow).
 	Cwd string
 
+	// TeardownTabID is a durable tab ID set from task metadata for teardown,
+	// used when the backend is reconstructed post-spawn (no in-memory lastCreate).
+	TeardownTabID string
+
 	// lastCreate stores the last tab-creation result for MetaExtras.
 	lastCreate *herdrLastCreate
 }
@@ -38,6 +42,23 @@ func NewHerdrBackend(session string) *HerdrBackend {
 		session = "default"
 	}
 	return &HerdrBackend{Session: session}
+}
+
+// SeedTeardownTab sets a durable tab ID for teardown from task metadata.
+// Used when the backend is reconstructed post-spawn (no in-memory lastCreate).
+func (h *HerdrBackend) SeedTeardownTab(tabID string) {
+	h.TeardownTabID = tabID
+}
+
+// effectiveSession returns the session for a given window handle.
+// If the window handle has a session prefix that differs from h.Session,
+// it uses the window's session (belt-and-suspenders).
+func (h *HerdrBackend) effectiveSession(windowID string) string {
+	sess, _ := ParseWindow(windowID)
+	if sess != "" && sess != h.Session {
+		return sess
+	}
+	return h.Session
 }
 
 // sessionArgs returns the --session flag argument for a herdr CLI call.
@@ -63,6 +84,19 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 		return "", fmt.Errorf("herdr %v: %w", fullArgs, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// herdrForWindow calls herdr with the session appropriate for the given windowID.
+// If the window handle has a session prefix that differs from h.Session,
+// the window's session is used for this call (belt-and-suspenders).
+func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, error) {
+	sess := h.effectiveSession(windowID)
+	if sess != h.Session {
+		tmp := *h
+		tmp.Session = sess
+		return tmp.herdr(args...)
+	}
+	return h.herdr(args...)
 }
 
 // herdrTabCreateResponse represents the JSON response from herdr tab create.
@@ -198,44 +232,54 @@ func paneID(windowID string) string {
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) SendKeys(windowID, text string) error {
 	pid := paneID(windowID)
-	if _, err := h.herdr("pane", "send-text", pid, text); err != nil {
+	if _, err := h.herdrForWindow(windowID, "pane", "send-text", pid, text); err != nil {
 		return err
 	}
-	_, err := h.herdr("pane", "send-keys", pid, "Enter")
+	_, err := h.herdrForWindow(windowID, "pane", "send-keys", pid, "Enter")
 	return err
 }
 
 // Capture reads the last N lines of output from the pane.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) Capture(windowID string, lines int) (string, error) {
-	return h.herdr("pane", "read", paneID(windowID), "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
+	return h.herdrForWindow(windowID, "pane", "read", paneID(windowID), "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
 }
 
 // Alive checks whether the pane still exists via herdr pane get.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) Alive(windowID string) bool {
-	_, err := h.herdr("pane", "get", paneID(windowID))
+	_, err := h.herdrForWindow(windowID, "pane", "get", paneID(windowID))
 	return err == nil
 }
 
-// Teardown closes the pane. When tab_id is known from last create, it also closes
-// the tab idempotently to ensure no husk remains.
+// tabIDToClose returns the tab ID to close during teardown.
+// Checks lastCreate first, then TeardownTabID (from meta).
+func (h *HerdrBackend) tabIDToClose() string {
+	if h.lastCreate != nil && h.lastCreate.TabID != "" {
+		return h.lastCreate.TabID
+	}
+	return h.TeardownTabID
+}
+
+// Teardown closes the pane. When tab_id is known from last create or seeded from
+// meta, it also closes the tab idempotently to ensure no husk remains.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 // Idempotent: "not found" errors are silently ignored.
 func (h *HerdrBackend) Teardown(windowID string) error {
 	pid := paneID(windowID)
 
 	// Close pane first
-	_, err := h.herdr("pane", "close", pid)
+	_, err := h.herdrForWindow(windowID, "pane", "close", pid)
 	if err != nil && (strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "pane_not_found")) {
 		err = nil
 	} else if err != nil {
 		return err
 	}
 
-	// If we have a tab_id from last create, also close the tab idempotently.
-	if h.lastCreate != nil && h.lastCreate.TabID != "" {
-		_, tabErr := h.herdr("tab", "close", h.lastCreate.TabID)
+	// If we have a tab_id from last create or from meta, also close the tab idempotently.
+	tabID := h.tabIDToClose()
+	if tabID != "" {
+		_, tabErr := h.herdrForWindow(windowID, "tab", "close", tabID)
 		if tabErr != nil && (strings.Contains(tabErr.Error(), "not found") || strings.Contains(tabErr.Error(), "tab_not_found")) {
 			return nil
 		}

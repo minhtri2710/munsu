@@ -53,6 +53,9 @@ func writeFakeHerdr(t *testing.T, dir string) string {
 		`      echo '{"id":"cli:tab:create","result":{"root_pane":{"pane_id":"wTest:p1"},"tab":{"tab_id":"wTest:t1","workspace_id":"wTest"},"type":"tab_created"}}'` + "\n" +
 		"      exit 0\n" +
 		"    fi\n" +
+		`    if [ "$2" = "close" ]; then` + "\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    ;;\n" +
 		"  pane)\n" +
 		`    if [ "$2" = "get" ]; then` + "\n" +
@@ -276,5 +279,144 @@ func TestMetaExtras_NilBeforeNewWindow(t *testing.T) {
 	h := NewHerdrBackend("test-s")
 	if extras := h.MetaExtras(); extras != nil {
 		t.Errorf("MetaExtras before NewWindow = %v, want nil", extras)
+	}
+}
+
+func TestResolve_HerdrUsesDefaultSessionNotHometag(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	if err := os.MkdirAll(homeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolve for "herdr" — Session should be "default" (or HERDR_SESSION), not the hometag
+	bk, name, err := Resolve(homeDir, "herdr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "herdr" {
+		t.Errorf("name = %q, want herdr", name)
+	}
+	hb, ok := bk.(*HerdrBackend)
+	if !ok {
+		t.Fatalf("expected *HerdrBackend, got %T", bk)
+	}
+	// hometag of homeDir should be something like "d671e5b" based on hash
+	// Session should never match a hash-like hometag
+	if hb.Session == "default" {
+		return // OK — default when no HERDR_SESSION set
+	}
+	if strings.HasPrefix(hb.Session, "d") && len(hb.Session) == 7 {
+		t.Errorf("Resolve herdr Session = %q, appears to be a hometag; want 'default' or HERDR_SESSION value", hb.Session)
+	}
+}
+
+func TestBackendForTask_HerdrSessionFromMeta(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// With herdr_session in meta
+	meta := map[string]string{
+		"backend":       "herdr",
+		"herdr_session": "my-lab-session",
+		"window":        "default:w1:p1",
+	}
+	bk, name, err := BackendForTask(tmpDir, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "herdr" {
+		t.Errorf("name = %q, want herdr", name)
+	}
+	hb, ok := bk.(*HerdrBackend)
+	if !ok {
+		t.Fatalf("expected *HerdrBackend, got %T", bk)
+	}
+	if hb.Session != "my-lab-session" {
+		t.Errorf("Session = %q, want my-lab-session (from meta herdr_session)", hb.Session)
+	}
+}
+
+func TestBackendForTask_HerdrSessionFromWindow(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// With window session prefix but no herdr_session
+	meta := map[string]string{
+		"backend": "herdr",
+		"window":  "my-session:w1:p1",
+	}
+	bk, name, err := BackendForTask(tmpDir, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "herdr" {
+		t.Errorf("name = %q, want herdr", name)
+	}
+	hb, ok := bk.(*HerdrBackend)
+	if !ok {
+		t.Fatalf("expected *HerdrBackend, got %T", bk)
+	}
+	if hb.Session != "my-session" {
+		t.Errorf("Session = %q, want my-session (from ParseWindow(window))", hb.Session)
+	}
+}
+
+func TestBackendForTask_HerdrSessionFallsBackToDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// No herdr_session, no window session prefix
+	meta := map[string]string{
+		"backend": "herdr",
+		"window":  "bare-pane",
+	}
+	bk, name, err := BackendForTask(tmpDir, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "herdr" {
+		t.Errorf("name = %q, want herdr", name)
+	}
+	hb, ok := bk.(*HerdrBackend)
+	if !ok {
+		t.Fatalf("expected *HerdrBackend, got %T", bk)
+	}
+	if hb.Session != "default" {
+		t.Errorf("Session = %q, want default (fallback when no HERDR_SESSION)", hb.Session)
+	}
+}
+
+func TestSeedTeardownTab(t *testing.T) {
+	h := NewHerdrBackend("test-s")
+
+	// Before seeding, tabIDToClose should be empty
+	if tabID := h.tabIDToClose(); tabID != "" {
+		t.Errorf("tabIDToClose before seed = %q, want empty", tabID)
+	}
+
+	// Seed a tab ID
+	h.SeedTeardownTab("meta-tab-123")
+
+	if tabID := h.tabIDToClose(); tabID != "meta-tab-123" {
+		t.Errorf("tabIDToClose after seed = %q, want meta-tab-123", tabID)
+	}
+
+	// lastCreate should still be nil (not affected by SeedTeardownTab)
+	if h.lastCreate != nil {
+		t.Errorf("lastCreate should remain nil after SeedTeardownTab")
+	}
+}
+
+func TestSeedTeardownTab_WithFakeHerdr(t *testing.T) {
+	tmp := t.TempDir()
+	fakePath := writeFakeHerdr(t, tmp)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakePath+":"+oldPath)
+
+	h := NewHerdrBackend("test-s")
+	// Seed a tab ID (simulating reconstruction from meta)
+	h.SeedTeardownTab("wTest:t1")
+
+	// Teardown should close the tab (fake herdr accepts it) even without lastCreate
+	if err := h.Teardown("wTest:p1"); err != nil {
+		t.Errorf("Teardown with seeded tab ID failed: %v", err)
 	}
 }

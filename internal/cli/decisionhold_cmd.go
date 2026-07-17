@@ -100,7 +100,7 @@ surface has no unresolved captain decisions.
 Examples:
   munsu decision-hold complete scout-r2 approach db-schema
   munsu decision-hold complete scout-r2 --none`,
-		Args: cobra.MinimumNArgs(1),
+		Args: MinimumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			originID := args[0]
 			keys := args[1:]
@@ -156,7 +156,7 @@ Exit codes: 0 = clean, 1 = unresolved decisions found, 2 = error.
 
 Example:
   munsu decision-hold verify scout-r2`,
-		Args: cobra.MinimumNArgs(1),
+		Args: MinimumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			originID := args[0]
 			keys := args[1:]

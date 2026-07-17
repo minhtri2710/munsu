@@ -69,6 +69,9 @@ func Default() Backend {
 //  4. Error if nothing found
 //
 // Returns the backend, its resolved name, and any error.
+// Important: for the "herdr" backend, Session is set to "" (→ HERDR_SESSION or "default"),
+// NOT the home-derived hometag. The hometag is the workspace label, passed separately
+// by spawn to NewWindow. See BackendForTask for session binding from task metadata.
 func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	name := backendOverride
 	if name == "" || name == "auto" {
@@ -92,27 +95,60 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	case "tmux":
 		return &TmuxBackend{Tag: tag}, "tmux", nil
 	case "herdr":
-		return NewHerdrBackend(tag), "herdr", nil
+		// NEVER pass hometag as Herdr session. Hometag is the workspace label,
+		// passed separately by spawn to NewWindow. The Herdr session is the server
+		// name (HERDR_SESSION or "default").
+		return NewHerdrBackend(""), "herdr", nil
 	default:
 		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr)", name)
 	}
 }
 
-// BackendForTask resolves the session backend for a task.
+// BackendForTask resolves the session backend for a task using its metadata.
 // When the task metadata has a non-empty "backend" field, it is used as the
 // exact backend name. Otherwise, resolution falls through to the config file
 // (homeDir/config/backend) and then to runtime auto-detection.
 //
-// This ensures that explicit config pins and runtime auto-detection are
-// respected when no per-task backend override is specified.
+// For the "herdr" backend, the session name is resolved from (in order):
+//  1. meta["herdr_session"]
+//  2. ParseWindow(meta["window"]).session
+//  3. HERDR_SESSION env or "default"
+// This ensures post-spawn lifecycle (peek/send/teardown) uses the correct session,
+// not the hometag.
 func BackendForTask(homeDir string, meta map[string]string) (Backend, string, error) {
-	if bkName := meta["backend"]; bkName != "" {
-		if bk, err := Select(bkName); err == nil {
-			return bk, bkName, nil
-		}
-		// Unknown backend in meta: fall through to Resolve.
+	var bkName string
+	if meta != nil {
+		bkName = meta["backend"]
 	}
-	return Resolve(homeDir, "")
+	if bkName == "" {
+		return Resolve(homeDir, "")
+	}
+	switch bkName {
+	case "herdr":
+		// Resolve session: meta herdr_session > ParseWindow(window) > env > "default"
+		sess := ""
+		if meta != nil {
+			sess = meta["herdr_session"]
+		}
+		if sess == "" && meta != nil {
+			wsess, _ := ParseWindow(meta["window"])
+			sess = wsess
+		}
+		bk := NewHerdrBackend(sess)
+		// Seed durable teardown tab ID from meta
+		if meta != nil {
+			if tabID := meta["herdr_tab_id"]; tabID != "" {
+				bk.SeedTeardownTab(tabID)
+			}
+		}
+		return bk, "herdr", nil
+	case "tmux":
+		bk, err := Select("tmux")
+		return bk, "tmux", err
+	default:
+		// Unknown backend in meta: fall through to Resolve.
+		return Resolve(homeDir, "")
+	}
 }
 
 func readConfigBackend(homeDir string) string {

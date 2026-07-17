@@ -2,10 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
-
 // canonicalCommands is the authoritative list of all visible (non-hidden)
 // top-level commands that must always be registered on the munsu root command.
 // A new entry must be added here when a new canonical command is defined.
@@ -272,5 +272,65 @@ func TestFleetSyncEmpty(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "No projects to sync.") {
 		t.Errorf("empty fleet sync should show 'No projects to sync.', got: %s", output)
+	}
+}
+
+func TestUsageErrorExitCode(t *testing.T) {
+	// usageError should return exit code 2 via WriteContractError
+	err := usageError("invalid_argument", "Run --help", "test usage error")
+	var buf bytes.Buffer
+	code := WriteContractError(&buf, err, []string{})
+	if code != 2 {
+		t.Errorf("usageError exit code = %d, want 2", code)
+	}
+}
+
+func TestOperationErrorExitCode(t *testing.T) {
+	// operationError should return exit code 1 via WriteContractError
+	err := operationError("not_found", "Try again", "test operation error")
+	var buf bytes.Buffer
+	code := WriteContractError(&buf, err, []string{})
+	if code != 1 {
+		t.Errorf("operationError exit code = %d, want 1", code)
+	}
+}
+
+func TestPlainErrorExitCode(t *testing.T) {
+	// Plain fmt.Errorf (non-contract error) should be wrapped as operation error → exit 1
+	err := fmt.Errorf("plain error")
+	var buf bytes.Buffer
+	code := WriteContractError(&buf, err, []string{})
+	if code != 1 {
+		t.Errorf("plain error exit code = %d, want 1", code)
+	}
+}
+
+func TestExactArgsMissingProducesUsageError(t *testing.T) {
+	// send cmd uses ExactArgs(2); missing args should produce usageError
+	root := NewRootCommand()
+	root.SetArgs([]string{"send"}) // missing both args
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for missing args on send")
+	}
+	var buf bytes.Buffer
+	code := WriteContractError(&buf, err, []string{"send"})
+	if code != 2 {
+		t.Errorf("missing args on send: exit code = %d, want 2 (usageError), err=%v", code, err)
+	}
+}
+
+func TestCrewStateMissingArgsProducesUsageError(t *testing.T) {
+	// crew-state uses ExactArgs(1); missing should produce usageError
+	root := NewRootCommand()
+	root.SetArgs([]string{"crew-state"}) // missing id
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for missing args on crew-state")
+	}
+	var buf bytes.Buffer
+	code := WriteContractError(&buf, err, []string{"crew-state"})
+	if code != 2 {
+		t.Errorf("missing args on crew-state: exit code = %d, want 2 (usageError), err=%v", code, err)
 	}
 }
