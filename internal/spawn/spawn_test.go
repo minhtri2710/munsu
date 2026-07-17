@@ -121,7 +121,7 @@ const piTrustCapture = `Trust project folder?
 `
 
 func TestPiReadyPatterns(t *testing.T) {
-	patterns := ReadyPatterns[harness.Pi]
+	patterns := harness.GetReadyPatterns(harness.Pi)
 	if len(patterns) == 0 {
 		t.Fatal("pi ready patterns should not be empty")
 	}
@@ -145,17 +145,17 @@ func TestAgyTrustDetection(t *testing.T) {
 	}
 
 	// Verify IsTrustPrompt detects trust in the agy capture.
-	if !IsTrustPrompt(agyTrustCapture, harness.Agy) {
+	if !harness.IsTrustPrompt(agyTrustCapture, harness.Agy) {
 		t.Error("IsTrustPrompt should detect trust in agy capture")
 	}
 
 	// Verify trust is NOT detected in pi capture.
-	if IsTrustPrompt(piReadyCapture, harness.Pi) {
+	if harness.IsTrustPrompt(piReadyCapture, harness.Pi) {
 		t.Error("IsTrustPrompt should NOT detect trust in pi capture")
 	}
 
 	// Verify trust is NOT detected in pi capture when checking agy patterns.
-	if IsTrustPrompt(piReadyCapture, harness.Agy) {
+	if harness.IsTrustPrompt(piReadyCapture, harness.Agy) {
 		t.Error("IsTrustPrompt should NOT detect trust in pi capture with agy harness")
 	}
 }
@@ -173,23 +173,23 @@ func TestPiTrustDetection(t *testing.T) {
 	}
 
 	// Verify IsTrustPrompt detects trust in the pi capture.
-	if !IsTrustPrompt(piTrustCapture, harness.Pi) {
+	if !harness.IsTrustPrompt(piTrustCapture, harness.Pi) {
 		t.Error("IsTrustPrompt should detect trust in pi capture")
 	}
 
 	// Verify trust is NOT detected in agy capture when checking pi patterns.
-	if IsTrustPrompt(agyTrustCapture, harness.Pi) {
+	if harness.IsTrustPrompt(agyTrustCapture, harness.Pi) {
 		t.Error("IsTrustPrompt should NOT detect trust in agy capture with pi harness")
 	}
 
 	// Verify trust is NOT detected in pi ready capture (not a trust dialog).
-	if IsTrustPrompt(piReadyCapture, harness.Pi) {
+	if harness.IsTrustPrompt(piReadyCapture, harness.Pi) {
 		t.Error("IsTrustPrompt should NOT detect trust in pi ready capture")
 	}
 }
 
 func TestAgyReadyPatterns(t *testing.T) {
-	patterns := ReadyPatterns[harness.Agy]
+	patterns := harness.GetReadyPatterns(harness.Agy)
 	if len(patterns) == 0 {
 		t.Fatal("agy ready patterns should not be empty")
 	}
@@ -203,10 +203,10 @@ func TestAgyReadyPatterns(t *testing.T) {
 }
 
 func TestDefaultReadyPatterns(t *testing.T) {
-	if len(DefaultReadyPatterns) == 0 {
+	if len(harness.DefaultReadyPatterns) == 0 {
 		t.Fatal("DefaultReadyPatterns should not be empty")
 	}
-	for _, p := range DefaultReadyPatterns {
+	for _, p := range harness.DefaultReadyPatterns {
 		if p == "" {
 			t.Error("DefaultReadyPatterns should not contain empty patterns")
 		}

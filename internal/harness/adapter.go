@@ -53,7 +53,17 @@ type Adapter struct {
 	LaunchTemplate Template
 
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
+	// ReadyPatterns is a list of substrings that indicate the agent is ready
+	// for input. When empty, DefaultReadyPatterns is used.
+	ReadyPatterns []string
+
+	// TrustPatterns is a list of substrings that indicate a first-run trust/permission
+	// dialog that should be auto-dismissed.
+	TrustPatterns []string
+
+	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	TrustDialog string
+
 
 	// SupervisionProtocol identifies the supervision protocol for this harness.
 	SupervisionProtocol string
@@ -72,6 +82,8 @@ var Adapters = map[string]Adapter{
 			{Name: "claude code"},
 		},
 		BusyPattern:       `esc to interrupt`,
+		ReadyPatterns:     []string{">", "ready"},
+		TrustPatterns:     nil,
 		ExitCommand:       `/exit`,
 		InterruptKeys:     `Escape`,
 		SkillInvocation:   `/`,
@@ -92,6 +104,8 @@ var Adapters = map[string]Adapter{
 			{Name: "codex", Substr: true},
 		},
 		BusyPattern:       `esc to interrupt`,
+		ReadyPatterns:     nil,
+		TrustPatterns:     nil,
 		ExitCommand:       `/quit`,
 		InterruptKeys:     `Escape`,
 		SkillInvocation:   `$`,
@@ -113,6 +127,8 @@ var Adapters = map[string]Adapter{
 			{Name: "opencode", Substr: true},
 		},
 		BusyPattern:       `esc interrupt`,
+		ReadyPatterns:     nil,
+		TrustPatterns:     nil,
 		ExitCommand:       `/exit`,
 		InterruptKeys:     `Escape Escape`,
 		SkillInvocation:   `/`,
@@ -135,6 +151,8 @@ var Adapters = map[string]Adapter{
 			{Name: "pi-coding", Substr: true},
 		},
 		BusyPattern:       `Working\.\.\.`,
+		ReadyPatterns:     []string{">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
+		TrustPatterns:     []string{"Trust project folder", "→ Trust", "Do not trust"},
 		ExitCommand:       `/quit`,
 		InterruptKeys:     `Escape`,
 		SkillInvocation:   `/`,
@@ -153,6 +171,8 @@ var Adapters = map[string]Adapter{
 			{Name: "grok", Substr: true},
 		},
 		BusyPattern:       `Ctrl\+c:cancel`,
+		ReadyPatterns:     nil,
+		TrustPatterns:     nil,
 		IdlePattern:       `Shift\+Tab:mode`,
 		ExitCommand:       `Ctrl+Q Ctrl+Q`,
 		InterruptKeys:     `Ctrl+C`,
@@ -173,6 +193,8 @@ var Adapters = map[string]Adapter{
 			{Name: "antigravity"},
 		},
 		BusyPattern:       `Thinking\.\.\.`,
+		ReadyPatterns:     []string{"esc to cancel", "Ready for your prompt", "What would you like"},
+		TrustPatterns:     []string{"Do you trust", "Yes, I trust this folder"},
 		IdlePattern:       `Press shift\+tab to cycle modes`,
 		ExitCommand:       `Ctrl+Q Ctrl+Q`,
 		InterruptKeys:     `Ctrl+C`,
@@ -225,4 +247,45 @@ func detectEnvFromAdapter() string {
 		}
 	}
 	return ""
+}
+
+// DefaultReadyPatterns are ready-check patterns used for any harness without
+// specific ReadyPatterns in its adapter.
+var DefaultReadyPatterns = []string{">", "$"}
+
+// IsTrustPrompt reports whether capture contains a harness-specific trust
+// prompt that should be auto-dismissed with Enter.
+func IsTrustPrompt(capture, harnessName string) bool {
+	a, ok := GetAdapter(harnessName)
+	if !ok {
+		return false
+	}
+	for _, p := range a.TrustPatterns {
+		if strings.Contains(capture, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetReadyPatterns returns the ready patterns for a given harness, or defaults
+// when the harness has no specific patterns set.
+func GetReadyPatterns(harnessName string) []string {
+	a, ok := GetAdapter(harnessName)
+	if !ok || len(a.ReadyPatterns) == 0 {
+		return DefaultReadyPatterns
+	}
+	return a.ReadyPatterns
+}
+
+// HasReadyPattern reports whether capture contains any ready pattern for
+// the given harness. Returns false for unknown harnesses.
+func HasReadyPattern(capture, harnessName string) bool {
+	patterns := GetReadyPatterns(harnessName)
+	for _, p := range patterns {
+		if strings.Contains(capture, p) {
+			return true
+		}
+	}
+	return false
 }
