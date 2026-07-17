@@ -363,6 +363,11 @@ func Complete(homeDir, originID string, keys []string) error {
 		if err := writeAnswer(homeDir, originID, key, "recorded (decision noted)"); err != nil {
 			return err
 		}
+		// Append resolved status line so Verify sees resolution via status.
+		statusLine := fmt.Sprintf("resolved: recorded (decision noted) [key=%s]", key)
+		if err := task.AppendStatus(homeDir, originID, statusLine); err != nil {
+			return fmt.Errorf("appending resolved status: %w", err)
+		}
 	}
 	return nil
 }

@@ -374,3 +374,36 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+func TestVerify_AfterComplete(t *testing.T) {
+	homeDir := t.TempDir()
+
+	// Create a hold (appends needs-decision status line).
+	Create(homeDir, "task-1", "approach", "Pick framework")
+
+	// Complete it — must append resolved status line so Verify sees it.
+	if err := Complete(homeDir, "task-1", []string{"approach"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify should now pass.
+	unresolved, err := Verify(homeDir, "task-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unresolved) != 0 {
+		t.Errorf("expected no unresolved after complete, got %v", unresolved)
+	}
+}
+
+func TestResolve_WrongOriginID_Fails(t *testing.T) {
+	homeDir := t.TempDir()
+
+	Create(homeDir, "task-1", "approach", "Pick framework")
+
+	// Resolving with a different originID than the hold's owner must fail.
+	err := Resolve(homeDir, "task-2", "approach", "Choose React", nil)
+	if err == nil {
+		t.Fatal("expected error for wrong originID, got nil")
+	}
+}
