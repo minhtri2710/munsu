@@ -43,7 +43,7 @@ All commands are fully implemented unless marked otherwise.
 | Session backend (tmux + herdr) | `--backend` flag | `internal/session` | **implemented** (future backends: experimental — see docs) |
 | Dispatch profiles | `config/crew-dispatch.json` | `internal/harness` | **implemented** |
 | Home init / init | `munsu init` | `internal/cli` | **implemented** |
-| AFK away-mode supervision | `munsu afk` | `internal/afk` | **implemented** |
+| AFK away-mode supervision | munsu afk | internal/afk | **implemented** (Go-native, full lifecycle — see `docs/skills/afk.md`) |
 | Self-update | `munsu update` | `internal/selfupdate` | **implemented** |
 | Secondmate lifecycle | `munsu secondmate seed/launch/retire/list/handoff/config-push` | `internal/secondmate` | **implemented** |
 ## Structural differences from firstmate
