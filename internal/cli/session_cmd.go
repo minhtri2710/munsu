@@ -249,17 +249,58 @@ func newGuardCmd() *cobra.Command {
 }
 
 func newAfkCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "afk",
 		Short: "Enter away-mode supervision",
 		Long: `Start the away-mode sub-supervisor daemon.
 
 The daemon sets the AFK consent flag, acquires an identity lock,
 and runs one wake-triage cycle. It then blocks until SIGTERM/SIGINT.
-The flag and lock are cleaned up on stop.`,
+The flag and lock are cleaned up on stop.
+
+Subcommands:
+  return     Ordered AFK daemon shutdown with digest drain
+  return check  Check if actionable AFK state remains`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			var d afk.Daemon
 			return d.Start(ctx.Home)
 		}),
 	}
+	cmd.AddCommand(newAfkReturnCmd())
+	return cmd
+}
+
+func newAfkReturnCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "return",
+		Short: "Perform ordered AFK daemon shutdown",
+		Long: `Stop the AFK daemon, drain the durable digest queue,
+and print a summary of escalations, wedge alarms, and blocked items.
+
+Check exit code via 'munsu afk return check' — returns 0 when
+no actionable AFK state remains.`,
+		Args: cobra.NoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			report, err := afk.Return(ctx.Home)
+			if err != nil {
+				return err
+			}
+			cmd.Println(report.String())
+			return nil
+		}),
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "check",
+		Short: "Check if any actionable AFK state remains",
+		Long: `Re-read the durable digest and exit 0 if clean,
+non-zero if actionable items remain.`,
+		Args: cobra.NoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if !afk.IsClean(ctx.Home) {
+				return fmt.Errorf("actionable AFK state remains — run 'munsu afk return' to reconcile")
+			}
+			return nil
+		}),
+	})
+	return cmd
 }
