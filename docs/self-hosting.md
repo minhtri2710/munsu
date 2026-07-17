@@ -59,6 +59,21 @@ commands. It checks two conditions:
 The guard is **fail-open**: it prints a warning to stderr but never blocks
 the command. Silence with `MUNSU_GUARD_SKIP=1`.
 
+### Watcher beat format
+
+The watcher liveness beat is stored in `state/.last-watcher-beat` with format:
+
+```
+<unix_epoch_seconds> <pid>
+```
+
+- **Content-timestamp drives staleness** — `ReadBeatStatus` reads the Unix
+  epoch from the file content and compares it to `time.Now()`.
+- `touch -t` alone does **not** produce a valid beat — the file content must
+  contain a valid epoch+pid pair.
+- If the content cannot be parsed, the beat is treated as missing
+- A missing beat file reports `Age: 0` (signaling never existed) rather than
+  the stale threshold.
 When the guard warns about in-flight tasks with a stale watcher, re-arm
 with `munsu watch-arm --restart` before resuming spawn/send operations.
 

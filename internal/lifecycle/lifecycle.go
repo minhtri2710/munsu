@@ -142,7 +142,9 @@ func IsSessionLocked(homeDir string) bool {
 
 // --- Beat operations ---
 
-// WriteBeat writes the current Unix timestamp and PID to the liveness beat file.
+// WriteBeat writes the current Unix timestamp (content-timestamp that drives
+// staleness) and PID to the liveness beat file.
+// Format: "<unix_epoch> <pid>" — mtime alone does NOT drive staleness.
 func WriteBeat(homeDir string) {
 	path := BeatPath(homeDir)
 	os.MkdirAll(filepath.Dir(path), 0755)
@@ -150,7 +152,10 @@ func WriteBeat(homeDir string) {
 	os.WriteFile(path, []byte(content), 0644)
 }
 
-// ReadBeat reads the timestamp and PID from the liveness beat file.
+// ReadBeat reads the content-timestamp and PID from the liveness beat file.
+// The content-timestamp (unix epoch) drives staleness; mtime fallback
+// is used only if content parse fails.
+// Format: "<unix_epoch> <pid>" (or older single-value "<unix_epoch>").
 // Returns false for ok if the file cannot be read or parsed.
 func ReadBeat(homeDir string) (timestamp int64, pid int, ok bool) {
 	data, err := os.ReadFile(BeatPath(homeDir))
@@ -170,10 +175,13 @@ func ReadBeat(homeDir string) (timestamp int64, pid int, ok bool) {
 
 // ReadBeatStatus returns whether the beat exists and whether it is stale
 // relative to the stale threshold and the given time.
+// Staleness is driven entirely by the content-timestamp (unix epoch)
+// written by WriteBeat. File mtime is NOT authoritative.
+// When the beat file does not exist, Age is 0 (signaling never existed).
 func ReadBeatStatus(homeDir string, now time.Time) BeatStatus {
 	ts, _, ok := ReadBeat(homeDir)
 	if !ok {
-		return BeatStatus{Exists: false, Stale: true, Age: staleThreshold}
+		return BeatStatus{Exists: false, Stale: true, Age: 0}
 	}
 	age := now.Sub(time.Unix(ts, 0))
 	return BeatStatus{Exists: true, Stale: age > staleThreshold, Age: age}

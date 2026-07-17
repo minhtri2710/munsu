@@ -8,6 +8,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/crewstate"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -154,10 +155,40 @@ func newContractGuardCmd() *cobra.Command {
 				return err
 			}
 
-			conditions := waker.GuardWarnings(ctx.Home)
+			// Count in-flight tasks for unified evaluation
+			inFlight := 0
+			snap, snapErr := fleet.Snapshot(ctx.Home)
+			if snapErr == nil && snap != nil {
+				for _, ts := range snap.Tasks {
+					if ts.Kind == "ship" || ts.Kind == "scout" {
+						inFlight++
+					}
+				}
+			}
+
+			// Use shared guard evaluation (same as middleware)
+			result := waker.EvaluateGuard(ctx.Home, inFlight, time.Now())
+			beatStatus := result.BeatStatus
+			conditions := result.Conditions
+			var warnings []string
+			if !beatStatus.Exists {
+				warnings = append(warnings, "WATCHER NEVER STARTED - no liveness beacon")
+			} else if beatStatus.Stale {
+				warnings = append(warnings, fmt.Sprintf(
+					"WATCHER BEACON STALE - last beat %v ago (grace %v)",
+					beatStatus.Age.Round(time.Second), lifecycle.StaleThreshold()))
+			}
+
 			var violations []contract.GuardViolation
 
-			// Collect violations with evidence
+			// Collect warnings as violations with evidence
+			for _, c := range warnings {
+				v := contract.GuardViolation{
+					Condition: c,
+					Evidence:  []string{"munsu guard", "state/.wake-queue"},
+				}
+				violations = append(violations, v)
+			}
 			for _, c := range conditions {
 				v := contract.GuardViolation{
 					Condition: c,
@@ -186,23 +217,11 @@ func newContractGuardCmd() *cobra.Command {
 
 			// Determine state
 			state := "healthy"
-			beatStatus := lifecycle.ReadBeatStatus(ctx.Home, time.Now())
 
-			if !beatStatus.Exists {
+			if !beatStatus.Exists || (beatStatus.Stale && inFlight > 0) {
 				state = "unhealthy"
-				violations = append(violations, contract.GuardViolation{
-					Condition: "WATCHER NEVER STARTED - no liveness beacon",
-					Evidence:  []string{"state/.last-watcher-beat", "munsu watch ensure"},
-				})
 			} else if beatStatus.Stale {
 				state = "unhealthy"
-				violations = append(violations, contract.GuardViolation{
-					Condition: "WATCHER BEACON STALE",
-					Evidence: []string{
-						fmt.Sprintf("last beat %v ago", beatStatus.Age.Round(time.Second)),
-						"munsu watch ensure --restart",
-					},
-				})
 			} else if len(violations) > 0 {
 				state = "indeterminate"
 			}
@@ -224,6 +243,10 @@ func newContractGuardCmd() *cobra.Command {
 				guardHelp = []string{"Run `munsu fleet snapshot --version 2` to inspect fleet state"}
 			}
 
+			// Merge conditions for backward compat
+			allConditions := append([]string{}, warnings...)
+			allConditions = append(allConditions, conditions...)
+
 			return writeContract(cmd, contract.Response[contract.Guard]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "guard",
@@ -231,7 +254,7 @@ func newContractGuardCmd() *cobra.Command {
 				Data: contract.Guard{
 					State:      state,
 					Violations: violations,
-					Conditions: conditions,
+					Conditions: allConditions,
 				},
 				Help: guardHelp,
 			})
