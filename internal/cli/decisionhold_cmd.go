@@ -174,24 +174,29 @@ Example:
 func newDecisionHoldResolveCmd() *cobra.Command {
 	var answer string
 	var unblock []string
-
+	var from string
 	cmd := &cobra.Command{
-		Use:   "resolve <key> --answer <text> [--unblock <dep-id>...]",
+		Use:   "resolve <key> --answer <text> --from <origin-id> [--unblock <dep-id>...]",
 		Short: "Record the captain's decision and unblock dependent work",
 		Long: `Record the captain's decision for a hold and unblock any dependent tasks.
 
+The --from flag specifies the originating task ID (must match the hold's origin).
 The --unblock flag may be repeated to unblock multiple dependencies.
 
-Example:
-  munsu decision-hold resolve approach --answer "Choose React" --unblock dep-task-1`,
+Examples:
+  munsu decision-hold resolve approach --answer "Choose React" --from scout-r2
+  munsu decision-hold resolve approach --answer "Choose React" --from scout-r2 --unblock dep-task-1`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key := args[0]
 			if answer == "" {
 				return fmt.Errorf("--answer is required")
 			}
+			if from == "" {
+				return fmt.Errorf("--from is required")
+			}
 
-			if err := decisionhold.Resolve(ctx.Home, key, key, answer, unblock); err != nil {
+			if err := decisionhold.Resolve(ctx.Home, from, key, answer, unblock); err != nil {
 				return fmt.Errorf("resolving hold: %w", err)
 			}
 
@@ -204,8 +209,8 @@ Example:
 	}
 
 	cmd.Flags().StringVar(&answer, "answer", "", "The captain's decision")
+	cmd.Flags().StringVar(&from, "from", "", "Originating task ID that owns this decision hold")
 	cmd.Flags().StringArrayVar(&unblock, "unblock", nil, "Dependent task to unblock (repeatable)")
-
 	return cmd
 }
 
