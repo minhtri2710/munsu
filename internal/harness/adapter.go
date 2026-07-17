@@ -15,9 +15,9 @@ type ProcessNameMatcher struct {
 	Substr bool
 }
 
-// Adapter describes a verified agent harness with detection, launch, and
-// supervision facts. Each adapter is populated from empirically verified
-// observations (see firstmate harness-adapters skill).
+// Adapter describes a verified agent harness with detection, launch,
+// supervision facts, and state artifact cleanup. Each adapter is populated
+// from empirically verified observations (see firstmate harness-adapters skill).
 type Adapter struct {
 	// Name is the harness identifier (matching the package-level constants).
 	Name string
@@ -67,9 +67,14 @@ type Adapter struct {
 
 	// SupervisionProtocol identifies the supervision protocol for this harness.
 	SupervisionProtocol string
+
+	// StateArtifacts lists the state file suffixes (excluding the task ID prefix)
+	// that this harness creates in the munsu state directory.
+	// These are cleaned up during teardown alongside munsu-native artifacts.
+	StateArtifacts []string
 }
 
-// Adapters is the registry of all verified harness adapters, keyed by harness name.
+// Adapters is the registry
 // This is the authoritative source of harness metadata; Templates and detection
 // functions derive from it.
 var Adapters = map[string]Adapter{
@@ -161,8 +166,9 @@ var Adapters = map[string]Adapter{
 			ModelFlag:  "--model",
 			EffortFlag: "--thinking",
 		},
-		TrustDialog:        `Project trust dialog on first run per path; accept with Enter`,
 		SupervisionProtocol: `pi`,
+		TrustDialog:        `Project trust dialog on first run per path; accept with Enter`,
+		StateArtifacts:      []string{"pi-ext.ts"},
 	},
 	Grok: {
 		Name:       Grok,
@@ -184,6 +190,7 @@ var Adapters = map[string]Adapter{
 		},
 		TrustDialog:        `No trust dialog when launched from a git repo root`,
 		SupervisionProtocol: `grok`,
+		StateArtifacts:      []string{"grok-turnend-token"},
 	},
 	Agy: {
 		Name:       Agy,
@@ -235,7 +242,19 @@ func GetAdapter(name string) (Adapter, bool) {
 	a, ok := Adapters[name]
 	return a, ok
 }
-
+// StateArtifactsForHarness returns the harness-specific state file suffixes
+// that should be cleaned up during teardown for the given harness name.
+// Returns an empty slice if the harness is unknown or has no artifacts.
+func StateArtifactsForHarness(name string) []string {
+	a, ok := Adapters[name]
+	if !ok {
+		return nil
+	}
+	// Return a copy to prevent mutation of the registry
+	artifacts := make([]string, len(a.StateArtifacts))
+	copy(artifacts, a.StateArtifacts)
+	return artifacts
+}
 // detectEnvFromAdapter checks well-known environment variable markers from the
 // adapter registry. Returns the harness name or empty string.
 func detectEnvFromAdapter() string {

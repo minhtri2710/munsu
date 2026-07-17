@@ -211,3 +211,47 @@ func TestAdapters_RegistryImmutability(t *testing.T) {
 		t.Error("modifying a returned Adapter should not affect the registry")
 	}
 }
+
+func TestStateArtifactsForHarness(t *testing.T) {
+	tests := []struct {
+		name     string
+		harness  string
+		expected []string
+	}{
+		{"pi returns pi-ext.ts", Pi, []string{"pi-ext.ts"}},
+		{"grok returns grok-turnend-token", Grok, []string{"grok-turnend-token"}},
+		{"claude has no artifacts", Claude, nil},
+		{"codex has no artifacts", Codex, nil},
+		{"opencode has no artifacts", Opencode, nil},
+		{"agy has no artifacts", Agy, nil},
+		{"unknown harness returns nil", "nonexistent", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StateArtifactsForHarness(tt.harness)
+			if len(got) != len(tt.expected) {
+				t.Errorf("StateArtifactsForHarness(%q) = %v, want %v", tt.harness, got, tt.expected)
+				return
+			}
+			for i, v := range got {
+				if v != tt.expected[i] {
+					t.Errorf("StateArtifactsForHarness(%q)[%d] = %q, want %q", tt.harness, i, v, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestStateArtifactsForHarness_ReturnsCopy(t *testing.T) {
+	got := StateArtifactsForHarness(Pi)
+	if len(got) == 0 {
+		t.Fatal("expected artifacts for pi")
+	}
+	// Modify the returned slice
+	got[0] = "modified"
+	// Get the artifacts again and verify the original is unchanged
+	got2 := StateArtifactsForHarness(Pi)
+	if got2[0] != "pi-ext.ts" {
+		t.Errorf("modifying returned slice should not affect registry, got %q", got2[0])
+	}
+}
