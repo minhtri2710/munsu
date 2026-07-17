@@ -27,37 +27,25 @@ func FixCommand(tool string) string {
 	}
 }
 
-// DoctorFix returns a human-readable fix string for a bootstrap diagnostic line.
-func DoctorFix(diagnostic string) string {
-	// Handle the known diagnostic prefixes
-	switch {
-	case len(diagnostic) < 8:
-		return ""
-	case diagnostic[:7] == "MISSING":
-		tool := diagnostic[8:]
-		if idx := indexOfAny(tool, " (\t"); idx >= 0 {
-			tool = tool[:idx]
+// Fix returns a human-readable fix string for a tool that is missing or failed to install.
+func (d ToolDiagnostic) Fix() string {
+	switch d.Status {
+	case ToolMissing:
+		return FixCommand(d.Tool)
+	case ToolInstallFailed:
+		if cmd := FixCommand(d.Tool); cmd != "" {
+			return cmd
 		}
-		if cmd := FixCommand(tool); cmd != "" {
-			return fmt.Sprintf("    Fix: %s", cmd)
-		}
-		return "    Fix: install " + tool + " (see its documentation)"
-	case diagnostic == "NEEDS_GH_AUTH: gh auth status failed (run gh auth login)":
-		return "    Fix: gh auth login"
-	case len(diagnostic) >= 13 && diagnostic[:13] == "NEEDS_GH_AUTH":
-		return "    Fix: gh auth login"
+		return fmt.Sprintf("install %s (see its documentation)", d.Tool)
 	}
 	return ""
 }
 
-// indexOfAny returns the index of the first occurrence of any of the runes in chars.
-func indexOfAny(s string, chars string) int {
-	for i, r := range s {
-		for _, c := range chars {
-			if r == c {
-				return i
-			}
-		}
+// Fix returns a human-readable fix string when GitHub auth has failed.
+func (d AuthDiagnostic) Fix() string {
+	if d.Status == AuthFailed {
+		return "gh auth login"
 	}
-	return -1
+	return ""
 }
+

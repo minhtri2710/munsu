@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -28,32 +29,71 @@ func TestFixCommand(t *testing.T) {
 	}
 }
 
-func TestDoctorFix(t *testing.T) {
-	tests := []struct {
-		diag string
-		want string
-	}{
-		{"MISSING git (install instructions vary)", "    Fix: Install git: https://git-scm.com/downloads"},
-		{"MISSING tmux (install instructions vary)", "    Fix: Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"},
-		{"MISSING no-mistakes (install instructions vary)", "    Fix: go install github.com/kunchenguid/no-mistakes@latest"},
-		{"NEEDS_GH_AUTH: gh auth status failed (run gh auth login)", "    Fix: gh auth login"},
-		{"FOUND: git at /usr/bin/git", ""},
-		{"short", ""},
-		{"MISSING unknownthing", "    Fix: install unknownthing (see its documentation)"},
-	}
-
-	for _, tt := range tests {
-		got := DoctorFix(tt.diag)
-		if got != tt.want {
-			t.Errorf("DoctorFix(%q) = %q, want %q", tt.diag, got, tt.want)
-		}
+func TestToolDiagnostic_Fix_Missing(t *testing.T) {
+	d := ToolDiagnostic{Tool: "git", Status: ToolMissing}
+	got := d.Fix()
+	want := "Install git: https://git-scm.com/downloads"
+	if got != want {
+		t.Errorf("ToolDiagnostic{Fix} for missing git = %q, want %q", got, want)
 	}
 }
 
-func TestDoctorFixNeedsGHAuthVariant(t *testing.T) {
-	// Test the length-based NEEDS_GH_AUTH branch
-	got := DoctorFix("NEEDS_GH_AUTH: some other message")
-	if got != "    Fix: gh auth login" {
-		t.Errorf("DoctorFix('NEEDS_GH_AUTH: ...') = %q, want '    Fix: gh auth login'", got)
+func TestToolDiagnostic_Fix_InstallFailed(t *testing.T) {
+	d := ToolDiagnostic{Tool: "no-mistakes", Status: ToolInstallFailed, Err: errors.New("timeout")}
+	got := d.Fix()
+	want := "go install github.com/kunchenguid/no-mistakes@latest"
+	if got != want {
+		t.Errorf("ToolDiagnostic{Fix} for install-failed no-mistakes = %q, want %q", got, want)
+	}
+}
+
+func TestToolDiagnostic_Fix_Found_NoFix(t *testing.T) {
+	d := ToolDiagnostic{Tool: "git", Status: ToolFound, Path: "/usr/bin/git"}
+	got := d.Fix()
+	if got != "" {
+		t.Errorf("ToolDiagnostic{Fix} for found tool = %q, want empty", got)
+	}
+}
+
+func TestToolDiagnostic_Fix_Installed_NoFix(t *testing.T) {
+	d := ToolDiagnostic{Tool: "treehouse", Status: ToolInstalled}
+	got := d.Fix()
+	if got != "" {
+		t.Errorf("ToolDiagnostic{Fix} for installed tool = %q, want empty", got)
+	}
+}
+
+func TestToolDiagnostic_Fix_UnknownToolMissing(t *testing.T) {
+	d := ToolDiagnostic{Tool: "unknownthing", Status: ToolMissing}
+	got := d.Fix()
+	// FixCommand returns "" for unknown tools; missing returns FixCommand directly
+	if got != "" {
+		t.Errorf("ToolDiagnostic{Fix} for missing unknown tool = %q, want empty", got)
+	}
+}
+
+func TestToolDiagnostic_Fix_UnknownToolInstallFailed_Fallback(t *testing.T) {
+	d := ToolDiagnostic{Tool: "unknownthing", Status: ToolInstallFailed, Err: errors.New("fail")}
+	got := d.Fix()
+	want := "install unknownthing (see its documentation)"
+	if got != want {
+		t.Errorf("ToolDiagnostic{Fix} for install-failed unknown tool = %q, want %q", got, want)
+	}
+}
+
+func TestAuthDiagnostic_Fix_Authenticated(t *testing.T) {
+	d := AuthDiagnostic{Status: AuthAuthenticated}
+	got := d.Fix()
+	if got != "" {
+		t.Errorf("AuthDiagnostic{Fix} for authenticated = %q, want empty", got)
+	}
+}
+
+func TestAuthDiagnostic_Fix_Failed(t *testing.T) {
+	d := AuthDiagnostic{Status: AuthFailed}
+	got := d.Fix()
+	want := "gh auth login"
+	if got != want {
+		t.Errorf("AuthDiagnostic{Fix} for failed = %q, want %q", got, want)
 	}
 }

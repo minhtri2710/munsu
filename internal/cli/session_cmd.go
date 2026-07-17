@@ -113,11 +113,17 @@ func newBootstrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			for _, d := range result.Diagnostics {
-				fmt.Println(d)
+			for _, d := range result.Tools {
+				fmt.Println(d.String())
 			}
-			for _, c := range result.ConfigDetails {
-				fmt.Println(c)
+			if result.Auth != nil {
+				fmt.Println(result.Auth.String())
+			}
+			for _, c := range result.Configs {
+				fmt.Println(c.String())
+			}
+			if result.GC != nil {
+				fmt.Println(result.GC.String())
 			}
 			return nil
 		}),

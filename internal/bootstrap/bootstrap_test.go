@@ -7,15 +7,20 @@ import (
 	"testing"
 )
 
-// assertContains fails t if slice does not contain a string matching want.
-func assertContains(t *testing.T, slice []string, want string) {
+// assertConfigContains fails t if result.Configs does not contain a ConfigDiagnostic
+// whose String() output matches want.
+func assertConfigContains(t *testing.T, configs []ConfigDiagnostic, want string) {
 	t.Helper()
-	for _, s := range slice {
-		if s == want {
+	for _, c := range configs {
+		if c.String() == want {
 			return
 		}
 	}
-	t.Errorf("expected %q in slice, got %v", want, slice)
+	var got []string
+	for _, c := range configs {
+		got = append(got, c.String())
+	}
+	t.Errorf("expected %q in Configs, got %v", want, got)
 }
 
 func TestRun_BackendDiagnostics_AutoWithActiveTMUX(t *testing.T) {
@@ -28,8 +33,8 @@ func TestRun_BackendDiagnostics_AutoWithActiveTMUX(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertContains(t, result.ConfigDetails, "BACKEND_CONFIG: auto")
-	assertContains(t, result.ConfigDetails, "BACKEND_RESOLVED: tmux (source: active TMUX)")
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: active TMUX)")
 }
 
 func TestRun_BackendDiagnostics_AutoWithActiveHERDRENV(t *testing.T) {
@@ -42,8 +47,8 @@ func TestRun_BackendDiagnostics_AutoWithActiveHERDRENV(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertContains(t, result.ConfigDetails, "BACKEND_CONFIG: auto")
-	assertContains(t, result.ConfigDetails, "BACKEND_RESOLVED: herdr (source: active HERDR_ENV)")
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: active HERDR_ENV)")
 }
 
 func TestRun_BackendDiagnostics_ColdStart(t *testing.T) {
@@ -64,8 +69,8 @@ func TestRun_BackendDiagnostics_ColdStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertContains(t, result.ConfigDetails, "BACKEND_CONFIG: auto")
-	assertContains(t, result.ConfigDetails, "BACKEND_RESOLVED: tmux (source: cold-start)")
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: cold-start)")
 }
 
 func TestRun_BackendDiagnostics_ExplicitConfigHerdr(t *testing.T) {
@@ -83,8 +88,8 @@ func TestRun_BackendDiagnostics_ExplicitConfigHerdr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertContains(t, result.ConfigDetails, "BACKEND_CONFIG: herdr")
-	assertContains(t, result.ConfigDetails, "BACKEND_RESOLVED: herdr (source: config pin)")
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: herdr")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: config pin)")
 }
 
 func TestRun_BackendDiagnostics_ExplicitConfigTmux(t *testing.T) {
@@ -102,12 +107,12 @@ func TestRun_BackendDiagnostics_ExplicitConfigTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertContains(t, result.ConfigDetails, "BACKEND_CONFIG: tmux")
-	assertContains(t, result.ConfigDetails, "BACKEND_RESOLVED: tmux (source: config pin)")
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: tmux")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: config pin)")
 }
 
 func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
-	// Verify that other ConfigDetails entries (like CREW_HARNESS, CREW_DISPATCH)
+	// Verify that other Configs entries (like CREW_HARNESS, CREW_DISPATCH)
 	// are not broken by the backend changes.
 	home := t.TempDir()
 	t.Setenv("TMUX", "/tmp/tmux-xxx")
@@ -118,13 +123,13 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should not have any backend-unrelated ConfigDetails in a bare home
+	// Should not have any backend-unrelated Configs in a bare home
 	// (CREW_HARNESS and CREW_DISPATCH require specific files).
-	for _, c := range result.ConfigDetails {
-		if strings.HasPrefix(c, "BACKEND_") {
+	for _, c := range result.Configs {
+		if strings.HasPrefix(c.String(), "BACKEND_") {
 			continue
 		}
-		t.Errorf("unexpected ConfigDetails entry from bare home: %q", c)
+		t.Errorf("unexpected Configs entry from bare home: %q", c.String())
 	}
 }
 
@@ -149,7 +154,6 @@ func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T)
 		t.Fatal(err)
 	}
 
-	assertContains(t, result.ConfigDetails, "BACKEND_CONFIG: auto")
-	assertContains(t, result.ConfigDetails, "BACKEND_RESOLVED: none (no backend available)")
-
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no backend available)")
 }
