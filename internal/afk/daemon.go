@@ -17,6 +17,13 @@ type Daemon struct {
 	lock    *Lock
 	digester *Digester
 	wedge    *WedgeDetector
+	capture  PaneCapture
+}
+
+// SetPaneCapture sets the pane capture interface for checking target safety.
+// Must be called before Start if target safety checking is desired.
+func (d *Daemon) SetPaneCapture(cap PaneCapture) {
+	d.capture = cap
 }
 
 // Start runs the AFK daemon foreground process:
@@ -107,7 +114,8 @@ func (d *Daemon) runLoop(stopCh chan struct{}) {
 	}
 }
 
-// triageCycle performs one iteration: triage → feed digester → check wedge → clear stale.
+// triageCycle performs one iteration:
+//   triage → feed digester → check target safety → feed wedge → check wedge → clear stale → flush.
 func (d *Daemon) triageCycle(now time.Time) {
 	// 1. Run triage (drain wake queue and classify).
 	digest, err := OneCycle(d.homeDir)
@@ -118,6 +126,23 @@ func (d *Daemon) triageCycle(now time.Time) {
 
 	// 2. Feed digester with triage results.
 	d.digester.Feed(digest)
+
+	// Phase 2.3: check captain-pane target safety when there are escalated entries.
+	// Capture-only — no SendKeys this phase.
+	if digest != nil && len(digest.Escalated) > 0 && d.capture != nil {
+		paneHandle, _, err := ResolveTarget(d.homeDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "afk: target resolution error (non-fatal): %v\n", err)
+		} else if paneHandle != "" {
+			safe, verdict, err := IsSafeInjectTarget(d.capture, paneHandle)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "afk: target safety capture error (non-fatal): %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "afk: target safety: safe=%v verdict=%s\n", safe, verdict)
+				d.digester.SetTargetSafety(safe, verdict.String())
+			}
+		}
+	}
 
 	// 3. Feed wedge detector (for repeated wake detection).
 	if digest != nil {
