@@ -254,12 +254,12 @@ func newAfkCmd() *cobra.Command {
 		Short: "Enter away-mode supervision",
 		Long: `Start the away-mode sub-supervisor daemon.
 
-The daemon sets the AFK flag and polls the fleet at a reduced cadence.
-Captain-relevant events (done/failed/needs-decision) are printed.
-
-Stop with SIGTERM/SIGINT. The flag is cleared on stop.`,
+The daemon sets the AFK consent flag, acquires an identity lock,
+and runs one wake-triage cycle. It then blocks until SIGTERM/SIGINT.
+The flag and lock are cleaned up on stop.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return afk.Start(ctx.Home)
+			var d afk.Daemon
+			return d.Start(ctx.Home)
 		}),
 	}
 }
