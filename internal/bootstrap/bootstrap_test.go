@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
-
 // assertConfigContains fails t if result.Configs does not contain a ConfigDiagnostic
 // whose String() output matches want.
 func assertConfigContains(t *testing.T, configs []ConfigDiagnostic, want string) {
@@ -156,4 +156,100 @@ func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T)
 
 	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
 	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no backend available)")
+}
+
+func setDirMtime(t *testing.T, dir string, age time.Duration) {
+	t.Helper()
+	at := time.Now().Add(-age)
+	if err := os.Chtimes(dir, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "orphan-id"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Make it older than the grace period
+	setDirMtime(t, filepath.Join(dataDir, "orphan-id"), 48*time.Hour)
+
+	cleaned := gcOrphanDataDirs(home)
+	if len(cleaned) != 1 || cleaned[0] != "orphan-id" {
+		t.Errorf("expected [orphan-id], got %v", cleaned)
+	}
+	// Verify dir was actually removed
+	if _, err := os.Stat(filepath.Join(dataDir, "orphan-id")); !os.IsNotExist(err) {
+		t.Errorf("expected dir to be removed, stat err: %v", err)
+	}
+}
+
+func TestGCOrphanDataDirs_WithReportKept(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "with-report"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create report.md — should protect from GC
+	if err := os.WriteFile(filepath.Join(dataDir, "with-report", "report.md"), []byte("report"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Make it older than the grace period so only the report keeps it
+	setDirMtime(t, filepath.Join(dataDir, "with-report"), 48*time.Hour)
+
+	cleaned := gcOrphanDataDirs(home)
+	// Should not remove dir with report.md
+	for _, id := range cleaned {
+		if id == "with-report" {
+			t.Errorf("expected dir with report.md to be kept, but it was removed")
+		}
+	}
+	// Verify dir still exists
+	if _, err := os.Stat(filepath.Join(dataDir, "with-report")); os.IsNotExist(err) {
+		t.Errorf("expected dir with report.md to still exist")
+	}
+}
+
+func TestGCOrphanDataDirs_WithBriefKept(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "with-brief"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create brief.md — should protect from GC
+	if err := os.WriteFile(filepath.Join(dataDir, "with-brief", "brief.md"), []byte("brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Make it older than the grace period so only the brief keeps it
+	setDirMtime(t, filepath.Join(dataDir, "with-brief"), 48*time.Hour)
+
+	cleaned := gcOrphanDataDirs(home)
+	for _, id := range cleaned {
+		if id == "with-brief" {
+			t.Errorf("expected dir with brief.md to be kept, but it was removed")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "with-brief")); os.IsNotExist(err) {
+		t.Errorf("expected dir with brief.md to still exist")
+	}
+}
+
+func TestGCOrphanDataDirs_RecentDirKept(t *testing.T) {
+	home := t.TempDir()
+	dataDir := filepath.Join(home, "data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "recent-id"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Leave it at its original mtime (current time) — should be too recent to GC
+
+	cleaned := gcOrphanDataDirs(home)
+	for _, id := range cleaned {
+		if id == "recent-id" {
+			t.Errorf("expected recent dir to be kept, but it was removed")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "recent-id")); os.IsNotExist(err) {
+		t.Errorf("expected recent dir to still exist")
+	}
 }
