@@ -50,8 +50,8 @@ func Seed(id, homePath, charter string) error {
 
 // Launch starts a secondmate process in its home.
 // It resolves the harness through the config chain (secondmate-harness -> crew-harness -> Detect),
+// looks up the verified harness adapter from the registry,
 // then launches the agent with the AGENTS.md as the launch prompt.
-// Currently only the "pi" harness is supported for secondmate launch.
 func Launch(secondmateHome, parentHome string) error {
 	// Resolve harness via harness.Secondmate (chain: config/secondmate-harness -> config/crew-harness -> Detect())
 	h, err := harness.Secondmate(parentHome)
@@ -59,30 +59,19 @@ func Launch(secondmateHome, parentHome string) error {
 		return fmt.Errorf("resolving secondmate harness: %w", err)
 	}
 
-	// Currently only pi is supported for secondmate launch
-	if h != harness.Pi {
-		return fmt.Errorf("secondmate launch: resolved harness is %q but only %q is currently supported", h, harness.Pi)
-	}
-
-	// Read model from config (optional; omit --model flag when not configured)
-	model, _ := config.Get(parentHome, "model")
-
-	// Resolve the pi binary
-	piPath, err := exec.LookPath(harness.Pi)
+	binName, args, err := buildLaunchArgs(secondmateHome, h, parentHome)
 	if err != nil {
-		return fmt.Errorf("pi harness not found on PATH: %w", err)
+		return err
 	}
 
-	// Build args: optional --model, then secondmate home and agent prompt
-	args := []string{}
-	if model != "" {
-		args = append(args, "--model", model)
+	// Resolve the binary on PATH
+	binPath, err := exec.LookPath(binName)
+	if err != nil {
+		return fmt.Errorf("%s harness not found on PATH: %w", binName, err)
 	}
-	args = append(args, "--", secondmateHome,
-		"$(cat "+filepath.Join(secondmateHome, "AGENTS.md")+")")
 
-	// Launch: cd to secondmate home and run pi with AGENTS.md as prompt
-	cmd := exec.Command(piPath, args...)
+	// Launch: cd to secondmate home and run agent with AGENTS.md as prompt
+	cmd := exec.Command(binPath, args...)
 	cmd.Dir = secondmateHome
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -91,9 +80,39 @@ func Launch(secondmateHome, parentHome string) error {
 		return fmt.Errorf("launching secondmate: %w", err)
 	}
 
-	fmt.Printf("Launched secondmate %s (pid %d) in %s\n",
-		filepath.Base(secondmateHome), cmd.Process.Pid, secondmateHome)
+	fmt.Printf("Launched secondmate %s (pid %d, harness=%s) in %s\n",
+		filepath.Base(secondmateHome), cmd.Process.Pid, binName, secondmateHome)
 	return nil
+}
+
+// buildLaunchArgs returns the harness binary name and argument list for a secondmate launch.
+// It resolves the harness adapter from the registry and builds argv from the adapter's LaunchTemplate.
+// This is separated from Launch for testability (no PATH dependency).
+func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, error) {
+	// Get adapter from registry — fail closed on unknown/unverified harness
+	adapter, ok := harness.GetAdapter(h)
+	if !ok {
+		return "", nil, fmt.Errorf("secondmate launch: harness %q is not a verified harness", h)
+	}
+
+	// Read model from config (optional; omit flag when not configured)
+	model, _ := config.Get(parentHome, "model")
+
+	// Build args from adapter LaunchTemplate
+	args := []string{}
+	if model != "" && adapter.LaunchTemplate.ModelFlag != "" {
+		args = append(args, adapter.LaunchTemplate.ModelFlag, model)
+	}
+
+	// ExtraArgs from template (harness-specific flags beyond model/effort)
+	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
+
+	// Secondmate args: home directory and AGENTS.md content as the launch prompt
+	// Uses the -- separator convention shared across CLI harnesses
+	args = append(args, "--", secondmateHome,
+		"$(cat "+filepath.Join(secondmateHome, "AGENTS.md")+")")
+
+	return adapter.Name, args, nil
 }
 
 // Retire tears down a secondmate: notifies the process and optionally removes the home.
