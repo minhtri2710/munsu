@@ -5,106 +5,139 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
-func TestLaunch_SecondmateHarnessPin(t *testing.T) {
+func TestBuildLaunchArgs_VerifiedHarnesses(t *testing.T) {
 	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
-	// Write config/secondmate-harness = "grok"
+	tests := []struct {
+		name      string
+		harness   string
+		wantBin   string
+	}{
+		{"claude", harness.Claude, "claude"},
+		{"codex", harness.Codex, "codex"},
+		{"opencode", harness.Opencode, "opencode"},
+		{"pi", harness.Pi, "pi"},
+		{"grok", harness.Grok, "grok"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binName, args, err := buildLaunchArgs(smHome, tt.harness, tmp)
+			if err != nil {
+				t.Fatalf("buildLaunchArgs(%q) error: %v", tt.harness, err)
+			}
+			if binName != tt.wantBin {
+				t.Errorf("binName = %q, want %q", binName, tt.wantBin)
+			}
+			// Verify secondmate home is in args
+			found := false
+			for _, a := range args {
+				if a == smHome {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("args should contain secondmate home %q, got %v", smHome, args)
+			}
+			// Verify AGENTS.md is referenced in args
+			hasPrompt := false
+			for _, a := range args {
+				if strings.Contains(a, "AGENTS.md") {
+					hasPrompt = true
+					break
+				}
+			}
+			if !hasPrompt {
+				t.Error("args should reference AGENTS.md")
+			}
+			// Verify -- separator is present
+			hasSep := false
+			for _, a := range args {
+				if a == "--" {
+					hasSep = true
+					break
+				}
+			}
+			if !hasSep {
+				t.Error("args should contain -- separator")
+			}
+		})
+	}
+}
+
+func TestBuildLaunchArgs_UnknownHarness(t *testing.T) {
+	_, _, err := buildLaunchArgs("/tmp", "unknown_harness", "/tmp")
+	if err == nil {
+		t.Fatal("expected error for unknown harness")
+	}
+	if !strings.Contains(err.Error(), "not a verified harness") {
+		t.Errorf("error should mention unverified harness, got: %v", err)
+	}
+}
+
+func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
+	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
+
+	// Set model config
 	configDir := filepath.Join(tmp, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet-4-20250515\n"), 0644)
+
+	binName, args, err := buildLaunchArgs(smHome, harness.Claude, tmp)
+	if err != nil {
+		t.Fatalf("buildLaunchArgs error: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("grok\n"), 0644); err != nil {
-		t.Fatal(err)
+	if binName != "claude" {
+		t.Errorf("binName = %q, want %q", binName, "claude")
 	}
 
-	// Create a secondmate home with AGENTS.md
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
-	if err := os.MkdirAll(smHome, 0755); err != nil {
-		t.Fatal(err)
+	// Verify --model flag and value are in args
+	foundModel := false
+	for i, a := range args {
+		if a == "--model" && i+1 < len(args) && args[i+1] == "claude-sonnet-4-20250515" {
+			foundModel = true
+			break
+		}
 	}
-	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test brief\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := Launch(smHome, tmp)
-	if err == nil {
-		t.Fatal("expected error for grok harness (only pi is supported)")
-	}
-	if !strings.Contains(err.Error(), `"grok"`) {
-		t.Errorf("error should mention resolved harness 'grok', got: %v", err)
-	}
-	if !strings.Contains(err.Error(), `"pi"`) {
-		t.Errorf("error should mention supported harness 'pi', got: %v", err)
+	if !foundModel {
+		t.Errorf("args should contain --model claude-sonnet-4-20250515, got: %v", args)
 	}
 }
 
-
-func TestLaunch_FallsBackToDetectClaude(t *testing.T) {
+func TestLaunch_HarnessBinaryNotFound(t *testing.T) {
 	tmp := t.TempDir()
-
-	// Clear other env markers to avoid non-deterministic map iteration in detectFromEnv
-	// PI_CODING_AGENT_DIR is commonly set in this environment and would make "pi" win
-	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
-		t.Setenv(env, "")
-	}
-	// Also clear MUNSU_*_OVERRIDE vars that config.Get checks before file reads
-	t.Setenv("MUNSU_SECONDMATE-HARNESS_OVERRIDE", "")
-	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
-	t.Setenv("CLAUDE_CODE", "1")
-
-	// No config files at all — harness.Secondmate() falls through to Detect()
-	// which should return "claude" from CLAUDE_CODE
 	smHome := filepath.Join(tmp, "secondmates", "test-sm")
-	if err := os.MkdirAll(smHome, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test brief\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	os.MkdirAll(smHome, 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
-	err := Launch(smHome, tmp)
-	if err == nil {
-		t.Fatal("expected error for claude harness (only pi is supported)")
-	}
-	if !strings.Contains(err.Error(), `"claude"`) {
-		t.Errorf("error should mention resolved harness 'claude', got: %v", err)
-	}
-	if !strings.Contains(err.Error(), `"pi"`) {
-		t.Errorf("error should mention supported harness 'pi', got: %v", err)
-	}
-}
-
-func TestLaunch_SecondmateHarnessPin_CrewHarnessFallback(t *testing.T) {
-	tmp := t.TempDir()
-
-	// No secondmate-harness, but set crew-harness = "grok"
+	// Configure secondmate-harness = claude
 	configDir := filepath.Join(tmp, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("grok\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("claude\n"), 0644)
 
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
-	if err := os.MkdirAll(smHome, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test brief\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Use a PATH that definitely doesn't have claude
+	t.Setenv("PATH", tmp)
 
-	// harness.Secondmate should fall through: no secondmate-harness → crew-harness = "grok"
 	err := Launch(smHome, tmp)
 	if err == nil {
-		t.Fatal("expected error for grok harness from crew-harness fallback")
+		t.Fatal("expected error for harness binary not on PATH")
 	}
-	if !strings.Contains(err.Error(), `"grok"`) {
-		t.Errorf("error should mention resolved harness 'grok', got: %v", err)
+	if !strings.Contains(err.Error(), "not found on PATH") {
+		t.Errorf("error should mention PATH, got: %v", err)
 	}
 }
+
 
 func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 	tmp := t.TempDir()

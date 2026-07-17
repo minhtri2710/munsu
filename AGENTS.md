@@ -32,7 +32,7 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 - `munsu doctor` in `internal/cli/doctor_cmd.go` reuses `internal/bootstrap/bootstrap.go` diagnostics; fix strings live in `internal/bootstrap/fixes.go`.
 - Delivery mode auto-selection in `internal/spawn/spawn.go` (`ResolveDeliveryMode`) — precedence: --mode flag, project registry, config/default-mode, auto (no-mistakes on PATH).
 - Init auto-detect logic lives in `internal/cli/init.go` (`autoDetectConfig`) and respects `--reconfigure` flag.
-- Status classification in `internal/classify/` — pure-string/stdio predicates (CaptainRelevant, IsPaused, OpenDecisions, AbsorbClass, ScanCaptainRelevant) ported from firstmate's `fm-classify-lib.sh`. Watcher uses it via `isStatusPaused` and `isStatusCaptainRelevant` in `internal/supervision/watcher.go`.
+- Secondmate launch (`internal/secondmate/secondmate.go`) resolves harness via `harness.Secondmate()` chain, looks up the adapter from the harness registry (`harness.GetAdapter`), and builds args from `adapter.LaunchTemplate` (ModelFlag, ExtraArgs). Unknown/unverified harnesses fail closed. Test launch path generation with `buildLaunchArgs` to avoid PATH dependency.
 ## Go version
 
 Go 1.26.5 (use `go 1.26` in `go.mod`).
