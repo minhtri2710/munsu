@@ -3,7 +3,9 @@ package cli
 import (
 	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +25,7 @@ them with "Context pointer" notes telling you which skill to read for each situa
 }
 
 func newSkillListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List embedded skills",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -32,12 +34,16 @@ func newSkillListCmd() *cobra.Command {
 				return err
 			}
 			sort.Strings(names)
-			for _, n := range names {
-				fmt.Println(n)
-			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "skill.list",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: strings.Join(names, "\n")},
+			})
 		},
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
 func newSkillShowCmd() *cobra.Command {

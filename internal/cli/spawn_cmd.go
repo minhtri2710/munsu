@@ -119,10 +119,15 @@ func newSendCmd() *cobra.Command {
 			if err := bk.SendKeys(windowID, line); err != nil {
 				return fmt.Errorf("sending to %s: %w", id, err)
 			}
-			fmt.Printf("sent to %s: %s\n", id, line)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "send",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: fmt.Sprintf("sent to %s: %s", id, line)},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 	return cmd
 }
 
@@ -214,7 +219,7 @@ func newCrewStateCmd() *cobra.Command {
 }
 
 func newPromoteCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "promote <id>",
 		Short: "Promote a scout task to ship",
 		Args:  ExactArgs(1),
@@ -250,10 +255,16 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
 
-			fmt.Printf("Task %s promoted from scout to ship\n", id)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "promote",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship", id)},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
 func newTeardownCmd() *cobra.Command {
@@ -277,13 +288,20 @@ func newTeardownCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Teardown %s completed:\n", id)
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("Teardown %s completed:\n", id))
 			for _, step := range result.Steps {
-				fmt.Printf("  - %s\n", step)
+				b.WriteString(fmt.Sprintf("  - %s\n", step))
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "teardown",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip safety checks")
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -23,7 +24,7 @@ render fleet views, and print compact resume reports.`,
 }
 
 func newFleetSyncCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "sync [<project>]",
 		Short: "Fast-forward refresh project clones",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -36,21 +37,33 @@ func newFleetSyncCmd() *cobra.Command {
 				return err
 			}
 			if len(result.Synced) == 0 && len(result.Stuck) == 0 && len(result.Errors) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No projects to sync.")
-				return nil
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "fleet.sync",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: "No projects to sync."},
+				})
 			}
+			var b strings.Builder
 			for _, s := range result.Synced {
-				fmt.Fprintf(cmd.OutOrStdout(), "synced: %s\n", s)
+				b.WriteString(fmt.Sprintf("synced: %s\n", s))
 			}
 			for _, s := range result.Stuck {
-				fmt.Fprintf(cmd.OutOrStdout(), "STUCK: %s\n", s)
+				b.WriteString(fmt.Sprintf("STUCK: %s\n", s))
 			}
 			for _, e := range result.Errors {
-				fmt.Fprintf(cmd.OutOrStdout(), "error: %s\n", e)
+				b.WriteString(fmt.Sprintf("error: %s\n", e))
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "fleet.sync",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 func newFleetSnapshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -72,8 +85,12 @@ func newFleetSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), j)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "fleet.snapshot.v1",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: j},
+			})
 		}),
 	}
 	cmd.Flags().Int("version", 1, "Snapshot schema version")

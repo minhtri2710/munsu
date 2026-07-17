@@ -95,11 +95,22 @@ func TestFleetSnapshotV2DefinitiveEmptyAndCompatibilityV1(t *testing.T) {
 		t.Errorf("fleet snapshot invalid version = %q, err = %v", invalidVersion, err)
 	}
 
-	v1, err := runContract(t, []string{"fleet", "snapshot"})
+	v1, err := runContract(t, []string{"fleet", "snapshot", "--output", "json"})
 	if err != nil {
 		t.Fatalf("fleet snapshot v1: %v", err)
 	}
-	if !strings.Contains(v1, `"schema": "munsu-fleet-snapshot.v1"`) {
+
+	var v1Resp struct {
+		SchemaVersion string `json:"schema_version"`
+		Kind          string `json:"kind"`
+		Data          struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(v1), &v1Resp); err != nil {
+		t.Fatalf("v1 response is not valid JSON: %v", err)
+	}
+	if !strings.Contains(v1Resp.Data.Message, `"schema": "munsu-fleet-snapshot.v1"`) {
 		t.Errorf("fleet snapshot v1 changed: %s", v1)
 	}
 }

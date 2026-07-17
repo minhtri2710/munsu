@@ -1,8 +1,7 @@
 package cli
 
 import (
-	"fmt"
-
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -23,10 +22,15 @@ With --mkdir, create the home directory tree {state,data,config,projects}.`,
 					return err
 				}
 			}
-			fmt.Println(ctx.Home)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "message",
+				Status:        "success",
+				Data: contract.MessageResult{Message: ctx.Home},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 	cmd.Flags().BoolVar(&mkdir, "mkdir", false, "create the home directory tree")
 	return cmd
 }

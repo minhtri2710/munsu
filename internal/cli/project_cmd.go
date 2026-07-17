@@ -1,10 +1,10 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/spf13/cobra"
 )
@@ -42,22 +42,33 @@ the repository is cloned into the projects directory first.`,
 				return err
 			}
 			if len(projects) == 0 {
-				fmt.Println("No projects registered.")
-				return nil
+				return writeContract(cmd, contract.Response[contract.EmptyResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "project.list",
+					Status:        "success",
+					Data:          contract.EmptyResult{Count: 0, Context: "No projects registered."},
+				})
 			}
-			for _, p := range projects {
-				fmt.Printf("- %s", p.Name)
-				if p.Mode != "" {
-					fmt.Printf(" [%s]", p.Mode)
+			entries := make([]contract.ProjectEntry, len(projects))
+			for i, p := range projects {
+				entries[i] = contract.ProjectEntry{
+					Name:        p.Name,
+					Mode:        p.Mode,
+					Yolo:        p.Yolo,
+					Description: p.Description,
+					Added:       p.Added,
 				}
-				if p.Yolo {
-					fmt.Print(" +yolo")
-				}
-				fmt.Printf(" - %s (added %s)\n", p.Description, p.Added)
 			}
-			return nil
+			return writeContract(cmd, contract.Response[[]contract.ProjectEntry]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "project.list",
+				Status:        "success",
+				Data:          entries,
+				Help:          []string{"Run `munsu project show <name>` for details"},
+			})
 		}),
 	}
+	configureContractCommand(listCmd)
 
 	showCmd := &cobra.Command{
 		Use:   "show <name>",
@@ -68,24 +79,27 @@ the repository is cloned into the projects directory first.`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Name:        %s\n", p.Name)
-			if p.Mode != "" {
-				fmt.Printf("Mode:        %s\n", p.Mode)
+			entry := contract.ProjectEntry{
+				Name:        p.Name,
+				Mode:        p.Mode,
+				Yolo:        p.Yolo,
+				Description: p.Description,
+				Added:       p.Added,
 			}
-			if p.Yolo {
-				fmt.Println("Yolo:        true")
-			}
-			fmt.Printf("Description: %s\n", p.Description)
-			fmt.Printf("Added:       %s\n", p.Added)
-
 			// Show project dir if it exists
 			projDir := filepath.Join(project.ProjectsDir(ctx.Home), p.Name)
 			if fi, statErr := os.Stat(projDir); statErr == nil && fi.IsDir() {
-				fmt.Printf("Directory:   %s\n", projDir)
+				entry.Directory = projDir
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.ProjectEntry]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "project.show",
+				Status:        "success",
+				Data:          entry,
+			})
 		}),
 	}
+	configureContractCommand(showCmd)
 
 	rmCmd := &cobra.Command{
 		Use:   "rm <name>",
@@ -105,14 +119,19 @@ the repository is cloned into the projects directory first.`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%s", mode)
+			msg := mode
 			if yolo {
-				fmt.Print(" +yolo")
+				msg += " +yolo"
 			}
-			fmt.Println()
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "project.mode",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: msg},
+			})
 		}),
 	}
+	configureContractCommand(modeCmd)
 
 	cmd.AddCommand(addCmd)
 	cmd.AddCommand(listCmd)

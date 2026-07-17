@@ -1,8 +1,7 @@
 package cli
 
 import (
-	"fmt"
-
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
@@ -13,7 +12,7 @@ func newHarnessCmd() *cobra.Command {
 		Short: "Detect and manage agent harness adapters",
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	detectCmd := &cobra.Command{
 		Use:   "detect",
 		Short: "Detect the running agent harness",
 		Long:  `Detect the running agent harness using env markers first, then process ancestry.`,
@@ -23,12 +22,18 @@ func newHarnessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(h)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "message",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: h},
+			})
 		},
-	})
+	}
+	configureContractCommand(detectCmd)
+	cmd.AddCommand(detectCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	crewCmd := &cobra.Command{
 		Use:   "crew",
 		Short: "Resolve crewmate harness",
 		Long:  `Resolve the crewmate harness. Fallback chain: crew-dispatch.json default > config/crew-harness > detected harness.`,
@@ -38,12 +43,18 @@ func newHarnessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(h)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "message",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: h},
+			})
 		}),
-	})
+	}
+	configureContractCommand(crewCmd)
+	cmd.AddCommand(crewCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	secondmateCmd := &cobra.Command{
 		Use:   "secondmate",
 		Short: "Resolve secondmate harness",
 		Long:  `Resolve the secondmate harness. Fallback chain: config/secondmate-harness > config/crew-harness > detected harness.`,
@@ -53,10 +64,16 @@ func newHarnessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(h)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "message",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: h},
+			})
 		}),
-	})
+	}
+	configureContractCommand(secondmateCmd)
+	cmd.AddCommand(secondmateCmd)
 
 	return cmd
 }

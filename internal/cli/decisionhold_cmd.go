@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/spf13/cobra"
 )
@@ -62,13 +63,22 @@ Example:
 			}
 
 			if result.Created {
-				fmt.Printf("Hold %s created on %s\n", result.HoldID, from)
-			} else {
-				fmt.Printf("Hold %s already exists on %s (idempotent)\n", result.HoldID, from)
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "decision-hold.hold",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("Hold %s created on %s", result.HoldID, from)},
+				})
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "decision-hold.hold",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: fmt.Sprintf("Hold %s already exists on %s (idempotent)", result.HoldID, from), Noop: true},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 
 	cmd.Flags().StringVar(&reason, "reason", "", "One-line summary of the decision needed")
 	cmd.Flags().StringVar(&from, "from", "", "Originating task ID that discovered this decision")
@@ -111,13 +121,22 @@ Examples:
 			}
 
 			if len(keys) == 1 && keys[0] == "--none" {
-				fmt.Printf("Attested no pending decisions for %s\n", originID)
-			} else {
-				fmt.Printf("Completed %d decision hold(s) for %s: %s\n", len(keys), originID, strings.Join(keys, ", "))
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "decision-hold.complete",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("Attested no pending decisions for %s", originID)},
+				})
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "decision-hold.complete",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: fmt.Sprintf("Completed %d decision hold(s) for %s: %s", len(keys), originID, strings.Join(keys, ", "))},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 
 	cmd.Flags().BoolVar(&none, "none", false, "Attest that no unresolved decisions exist")
 
@@ -200,13 +219,19 @@ Examples:
 				return fmt.Errorf("resolving hold: %w", err)
 			}
 
-			fmt.Printf("Hold %s resolved: %s\n", key, answer)
+			msg := fmt.Sprintf("Hold %s resolved: %s", key, answer)
 			if len(unblock) > 0 {
-				fmt.Printf("Unblocked: %s\n", strings.Join(unblock, ", "))
+				msg += "\nUnblocked: " + strings.Join(unblock, ", ")
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "decision-hold.resolve",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: msg},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 
 	cmd.Flags().StringVar(&answer, "answer", "", "The captain's decision")
 	cmd.Flags().StringVar(&from, "from", "", "Originating task ID that owns this decision hold")
@@ -228,17 +253,30 @@ func newDecisionHoldListCmd() *cobra.Command {
 			}
 
 			if len(holds) == 0 {
-				fmt.Printf("No unresolved decisions for %s\n", originID)
-				return nil
+				return writeContract(cmd, contract.Response[contract.EmptyResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "decision-hold.list",
+					Status:        "success",
+					Data:          contract.EmptyResult{Count: 0, Context: fmt.Sprintf("No unresolved decisions for %s", originID)},
+				})
 			}
 
-			fmt.Printf("Unresolved decisions for %s:\n", originID)
+			var holdEntries []contract.DecisionHoldInfo
 			for _, h := range holds {
-				fmt.Printf("  %s: %s\n", h.DecisionKey, h.Reason)
+				holdEntries = append(holdEntries, contract.DecisionHoldInfo{
+					DecisionKey: h.DecisionKey,
+					Reason:      h.Reason,
+				})
 			}
-			return nil
+
+			return writeContract(cmd, contract.Response[[]contract.DecisionHoldInfo]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "decision-hold.list",
+				Status:        "success",
+				Data:          holdEntries,
+			})
 		}),
 	}
-
+	configureContractCommand(cmd)
 	return cmd
 }
