@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
-
 // ToolStatus represents whether a tool was found during bootstrap.
 type ToolStatus int
 
@@ -198,10 +198,9 @@ func installTool(tool string) error {
 	}
 }
 
-// gcOrphanDataDirs scans data/<id>/ directories and removes those that have no
-// corresponding state/<id>.meta file and only contain a brief.md (orphan briefs
-// created by `munsu brief --force` that were never spawned).
-// Returns the list of removed directory names.
+// gcOrphanDataDirs scans data/<id>/ directories and removes orphan dirs
+// that have no meta, status, brief, or report AND are older than the grace
+// period (24h mtime). Returns the list of removed directory names.
 func gcOrphanDataDirs(home string) []string {
 	dataDir := filepath.Join(home, "data")
 	stateDir := filepath.Join(home, "state")
@@ -211,6 +210,8 @@ func gcOrphanDataDirs(home string) []string {
 		return nil
 	}
 
+	const gracePeriod = 24 * time.Hour
+
 	var cleaned []string
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -218,26 +219,44 @@ func gcOrphanDataDirs(home string) []string {
 		}
 		id := entry.Name()
 
+		dirPath := filepath.Join(dataDir, id)
+
+		// Check directory mtime — skip if younger than grace period
+		info, err := os.Stat(dirPath)
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) < gracePeriod {
+			continue
+		}
+
 		// Skip if corresponding meta file exists
 		metaPath := filepath.Join(stateDir, id+".meta")
 		if _, err := os.Stat(metaPath); err == nil {
 			continue
 		}
 
-		// Skip if dir has more than just brief.md
-		dataEntries, err := os.ReadDir(filepath.Join(dataDir, id))
-		if err != nil {
+		// Skip if corresponding status file exists
+		statusPath := filepath.Join(stateDir, id+".status")
+		if _, err := os.Stat(statusPath); err == nil {
 			continue
 		}
-		// Only remove if the only file is brief.md
-		hasOnlyBrief := len(dataEntries) == 1 && !dataEntries[0].IsDir() && dataEntries[0].Name() == "brief.md"
-		// Also remove empty dirs
-		hasNoFiles := len(dataEntries) == 0
 
-		if hasOnlyBrief || hasNoFiles {
-			if err := os.RemoveAll(filepath.Join(dataDir, id)); err == nil {
-				cleaned = append(cleaned, id)
-			}
+		// Skip if brief.md exists in data dir
+		briefPath := filepath.Join(dirPath, "brief.md")
+		if _, err := os.Stat(briefPath); err == nil {
+			continue
+		}
+
+		// Skip if report.md exists in data dir
+		reportPath := filepath.Join(dirPath, "report.md")
+		if _, err := os.Stat(reportPath); err == nil {
+			continue
+		}
+
+		// Dir is truly orphan and past grace period — remove
+		if err := os.RemoveAll(dirPath); err == nil {
+			cleaned = append(cleaned, id)
 		}
 	}
 	return cleaned
