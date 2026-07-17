@@ -72,9 +72,20 @@ func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
 		return "", fmt.Errorf("tmux new-window: %w", err)
 	}
 	// Return qualified "<session>:<window_id>" for firstmate compatibility.
-	// Old meta with bare "@N" is still accepted by Alive/Capture/SendKeys/Teardown
-	// since tmux accepts "-t session:@N" and "-t @N" interchangeably.
 	return session + ":" + strings.TrimSpace(string(out)), nil
+}
+
+// normalizeTarget converts a window handle to the correct tmux target.
+// Tmux window IDs (@N) are server-global; passing "session:@N" is invalid/fragile.
+// - "session:@digits" → bare "@digits"
+// - "session:name" (no @) → full "session:name"
+// - bare "@N" → bare "@N"
+func normalizeTarget(windowID string) string {
+	if strings.Contains(windowID, ":@") {
+		_, pid, _ := strings.Cut(windowID, ":")
+		return pid
+	}
+	return windowID
 }
 
 // SendKeys sends literal text followed by Enter to the identified window/pane.
@@ -84,7 +95,8 @@ func (t *TmuxBackend) SendKeys(windowID, text string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin, "send-keys", "-t", windowID, text, "Enter")
+	target := normalizeTarget(windowID)
+	cmd := exec.Command(bin, "send-keys", "-t", target, text, "Enter")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux send-keys: %s", strings.TrimSpace(string(out)))
@@ -99,8 +111,9 @@ func (t *TmuxBackend) Capture(windowID string, lines int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	target := normalizeTarget(windowID)
 	start := fmt.Sprintf("-%d", lines)
-	cmd := exec.Command(bin, "capture-pane", "-t", windowID, "-p", "-S", start)
+	cmd := exec.Command(bin, "capture-pane", "-t", target, "-p", "-S", start)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -118,7 +131,8 @@ func (t *TmuxBackend) Alive(windowID string) bool {
 	if err != nil {
 		return false
 	}
-	cmd := exec.Command(bin, "list-panes", "-t", windowID)
+	target := normalizeTarget(windowID)
+	cmd := exec.Command(bin, "list-panes", "-t", target)
 	return cmd.Run() == nil
 }
 
@@ -129,7 +143,8 @@ func (t *TmuxBackend) Teardown(windowID string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin, "kill-window", "-t", windowID)
+	target := normalizeTarget(windowID)
+	cmd := exec.Command(bin, "kill-window", "-t", target)
 	_ = cmd.Run() // ignore errors — window may already be gone
 	return nil
 }

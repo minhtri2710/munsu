@@ -68,9 +68,10 @@ func (r *Runner) Run() (string, error) {
 	if err := r.acquireWorktree(); err != nil {
 		return "", err
 	}
-	// Fail-closed: return worktree on any subsequent error.
+	success := false
+	// Fail-closed: return worktree on any subsequent error (but NOT on success).
 	defer func() {
-		if r.wtPath != "" {
+		if !success && r.wtPath != "" {
 			_ = worktree.Return(r.homeDir, r.wtPath)
 		}
 	}()
@@ -91,7 +92,7 @@ func (r *Runner) Run() (string, error) {
 	r.appendSpawnedStatus()
 	r.printEndpointInfo()
 	r.armWatcher()
-
+	success = true
 	return r.windowID, nil
 }
 
