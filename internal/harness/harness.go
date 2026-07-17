@@ -62,19 +62,9 @@ func Detect() (string, error) {
 }
 
 // detectFromEnv checks well-known environment variable markers.
-// It uses the adapter registry for all verified harnesses, with a legacy
-// fallback for unregistered harnesses (e.g., agy).
 func detectFromEnv() string {
-	if h := detectEnvFromAdapter(); h != "" {
-		return h
-	}
-	// Legacy fallback for unregistered harnesses.
-	if os.Getenv("ANTIGRAVITY_AGENT") != "" {
-		return Agy
-	}
-	return ""
+	return detectEnvFromAdapter()
 }
-
 // detectFromProcess walks the process tree upward looking for a known agent process.
 func detectFromProcess() (string, error) {
 	pid := os.Getppid()
@@ -137,20 +127,10 @@ func processInfo(pid int) (name string, ppid int, err error) {
 }
 
 // matchProcessName checks if a process name corresponds to a known harness.
-// It uses the adapter registry for all verified harnesses, with a legacy
-// fallback for unregistered harnesses (e.g., agy).
+// It uses the adapter registry for all verified harnesses.
 func matchProcessName(name string) string {
-	name = strings.ToLower(filepath.Base(name))
-	if h := matchProcessNameFromAdapter(name); h != "" {
-		return h
-	}
-	// Legacy fallback for unregistered harnesses.
-	if name == "agy" || name == "antigravity" {
-		return Agy
-	}
-	return ""
+	return matchProcessNameFromAdapter(name)
 }
-
 // Template describes the CLI flags and defaults for spawning a harness.
 type Template struct {
 	ModelFlag     string
@@ -162,9 +142,6 @@ type Template struct {
 
 // Templates maps each known harness to its launch template (CLI flag conventions).
 // The adapter registry (Adapters) is the authoritative source; Templates is a
-// convenience lookup that mirrors LaunchTemplate values from the registry.
-// For all verified harnesses (claude, codex, opencode, pi, grok), Templates
-// entries are derived from Adapters. Agy is registered here directly.
 var Templates = map[string]Template{
 	Claude: {
 		ModelFlag:    "--model",
@@ -193,7 +170,7 @@ var Templates = map[string]Template{
 	Agy: {
 		ModelFlag: "--model",
 		// DefaultModel omitted — let agy use its runtime default (Claude Sonnet 4.6)
-		ExtraArgs: []string{"--dangerously-skip-permissions", "-i", "read and execute .crew-brief.md"},
+		ExtraArgs: []string{"--dangerously-skip-permissions"},
 	},
 }
 

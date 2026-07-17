@@ -6,7 +6,7 @@ import (
 )
 
 func TestAdapters_AllVerifiedPresent(t *testing.T) {
-	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok} {
+	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok, Agy} {
 		a, ok := GetAdapter(name)
 		if !ok {
 			t.Errorf("missing adapter for verified harness %q", name)
@@ -45,12 +45,6 @@ func TestAdapters_AllVerifiedPresent(t *testing.T) {
 	}
 }
 
-func TestAdapters_AgyExcluded(t *testing.T) {
-	_, ok := GetAdapter(Agy)
-	if ok {
-		t.Error("ady adapter should not be in the Phase C verified-harness registry")
-	}
-}
 
 func TestAdapters_GetAdapterUnknown(t *testing.T) {
 	_, ok := GetAdapter("nonexistent")
@@ -63,7 +57,7 @@ func TestAdapters_DetectEnvMatchesAdapter(t *testing.T) {
 	// Verify that the env markers in the adapter registry are the same ones
 	// detectFromEnv() checks. For each verified harness, set its first env
 	// marker and verify detection returns that harness.
-	for _, name := range []string{Claude, Codex, Opencode, Grok} {
+	for _, name := range []string{Claude, Codex, Opencode, Grok, Agy} {
 		t.Run(name, func(t *testing.T) {
 			clearEnvMarkers(t)
 			a, ok := GetAdapter(name)
@@ -96,6 +90,8 @@ func TestAdapters_ProcessDetectionMatchesAdapter(t *testing.T) {
 		{"pi", Pi},
 		{"pi-coding-agent", Pi},
 		{"grok", Grok},
+		{"agy", Agy},
+		{"antigravity", Agy},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,7 +104,7 @@ func TestAdapters_ProcessDetectionMatchesAdapter(t *testing.T) {
 }
 
 func TestAdapters_LaunchStringFromRegistry(t *testing.T) {
-	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok} {
+	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok, Agy} {
 		t.Run(name, func(t *testing.T) {
 			a, ok := GetAdapter(name)
 			if !ok {
@@ -153,6 +149,7 @@ func TestAdapters_SkillInvocationFormat(t *testing.T) {
 		{Grok, "no-mistakes", "/no-mistakes"},
 		{Opencode, "no-mistakes", "/no-mistakes"},
 		{Pi, "no-mistakes", "/no-mistakes"},
+		{Agy, "no-mistakes", "/no-mistakes"},
 		{Codex, "no-mistakes", "$no-mistakes"},
 	}
 	for _, tt := range tests {
@@ -170,7 +167,7 @@ func TestAdapters_SkillInvocationFormat(t *testing.T) {
 }
 
 func TestAdapters_LaunchTemplateMatchesRegistry(t *testing.T) {
-	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok} {
+	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok, Agy} {
 		t.Run(name, func(t *testing.T) {
 			a, ok := GetAdapter(name)
 			if !ok {

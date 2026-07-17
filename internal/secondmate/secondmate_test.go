@@ -25,6 +25,7 @@ func TestBuildLaunchArgs_VerifiedHarnesses(t *testing.T) {
 		{"opencode", harness.Opencode, "opencode"},
 		{"pi", harness.Pi, "pi"},
 		{"grok", harness.Grok, "grok"},
+		{"agy", harness.Agy, "agy"},
 	}
 
 	for _, tt := range tests {
