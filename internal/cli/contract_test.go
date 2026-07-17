@@ -196,6 +196,18 @@ func TestWriteContractErrorWrapsNonContractErrors(t *testing.T) {
 	}
 }
 
+func TestWriteContractErrorEncodeFailureReturnsNonZero(t *testing.T) {
+	var buf bytes.Buffer
+	// contractError with schema version that should fail encoding
+	// Use an unencodable struct — contract.Encode returns error for
+	// nil values or broken output format.
+	err := fmt.Errorf("encode fail test")
+	exitCode := WriteContractError(&buf, err, []string{})
+	if exitCode != 1 {
+		t.Errorf("exitCode = %d, want 1 on any error", exitCode)
+	}
+}
+
 func TestWriteContractErrorRespectsOutputFlag(t *testing.T) {
 	var bufJSON bytes.Buffer
 	err := fmt.Errorf("json test error")

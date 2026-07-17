@@ -273,6 +273,16 @@ func newTeardownCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "teardown <id>",
 		Short: "Tear down a crewmate",
+		Long: `Tear down a crewmate by its task ID.
+
+Safety checks require a scout to have a report.md with no unresolved decision
+holds before teardown proceeds. Use --force to skip all safety checks.
+
+With --force:
+  - Skips report.md and decision-hold checks
+  - Removes data/<id>/ including report.md and brief.md
+  - Use when the scout completed without a formal report or for cleanup
+`,
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]

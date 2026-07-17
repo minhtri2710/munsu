@@ -40,7 +40,7 @@ func WriteContractError(writer io.Writer, err error, args []string) int {
 	}
 	encoded, encodeErr := contract.Encode(contractErr.value, output)
 	if encodeErr != nil {
-		return 0
+		return 1
 	}
 	_, _ = fmt.Fprintln(writer, strings.TrimSpace(encoded))
 	return contractErr.status
