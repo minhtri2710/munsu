@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -181,11 +183,7 @@ func runSkillInstall(cmd *cobra.Command, homeDir string) error {
 
 // isStdinTerminal returns true when stdin is connected to a terminal (TTY).
 func isStdinTerminal() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 // promptSkillChoice asks the user where to install skills.
 func promptSkillChoice() string {
