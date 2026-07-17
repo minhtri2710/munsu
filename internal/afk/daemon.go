@@ -1,6 +1,7 @@
 package afk
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -13,17 +14,34 @@ import (
 // It manages the consent flag, identity lock, and wake triage lifecycle.
 // Phase 2.2: runLoop integrates digester, wedge detection, and stale clearing.
 type Daemon struct {
-	homeDir string
-	lock    *Lock
+	homeDir  string
+	lock     *Lock
 	digester *Digester
 	wedge    *WedgeDetector
 	capture  PaneCapture
+	backend  Backend
+	injector *Injector
 }
 
 // SetPaneCapture sets the pane capture interface for checking target safety.
 // Must be called before Start if target safety checking is desired.
 func (d *Daemon) SetPaneCapture(cap PaneCapture) {
 	d.capture = cap
+	d.maybeInitInjector()
+}
+
+// SetBackend sets the backend for sending keystrokes to the captain pane.
+// Must be called before Start if inject is desired.
+func (d *Daemon) SetBackend(backend Backend) {
+	d.backend = backend
+	d.maybeInitInjector()
+}
+
+// maybeInitInjector creates the injector when both backend and capture are available.
+func (d *Daemon) maybeInitInjector() {
+	if d.backend != nil && d.capture != nil && d.injector == nil {
+		d.injector = NewInjector(d.backend, d.capture, d.homeDir)
+	}
 }
 
 // Start runs the AFK daemon foreground process:
@@ -117,6 +135,9 @@ func (d *Daemon) runLoop(stopCh chan struct{}) {
 // triageCycle performs one iteration:
 //   triage → feed digester → check target safety → feed wedge → check wedge → clear stale → flush.
 func (d *Daemon) triageCycle(now time.Time) {
+	// Track whether we need to attempt injection after flush.
+	var lastSafe bool
+
 	// 1. Run triage (drain wake queue and classify).
 	digest, err := OneCycle(d.homeDir)
 	if err != nil {
@@ -127,8 +148,7 @@ func (d *Daemon) triageCycle(now time.Time) {
 	// 2. Feed digester with triage results.
 	d.digester.Feed(digest)
 
-	// Phase 2.3: check captain-pane target safety when there are escalated entries.
-	// Capture-only — no SendKeys this phase.
+	// Phase 2.3/2.4: check captain-pane target safety when there are escalated entries.
 	if digest != nil && len(digest.Escalated) > 0 && d.capture != nil {
 		paneHandle, _, err := ResolveTarget(d.homeDir)
 		if err != nil {
@@ -139,6 +159,7 @@ func (d *Daemon) triageCycle(now time.Time) {
 				fmt.Fprintf(os.Stderr, "afk: target safety capture error (non-fatal): %v\n", err)
 			} else {
 				fmt.Fprintf(os.Stderr, "afk: target safety: safe=%v verdict=%s\n", safe, verdict)
+				lastSafe = safe
 				d.digester.SetTargetSafety(safe, verdict.String())
 			}
 		}
@@ -181,4 +202,42 @@ func (d *Daemon) triageCycle(now time.Time) {
 			fmt.Fprintf(os.Stderr, "afk: digest flushed\n")
 		}
 	}
+
+	// 7. Inject (phase 2.4): after flush, if safe and injector is set.
+	if d.injector != nil && lastSafe {
+		if err := d.tryInject(); err != nil {
+			fmt.Fprintf(os.Stderr, "afk: inject error (non-fatal): %v\n", err)
+		}
+	}
+}
+
+// tryInject reads the latest digest file and attempts to inject
+// it into the captain pane through the injector. Safe only when
+// the injector is configured and all safety gates pass.
+func (d *Daemon) tryInject() error {
+	path := filepath.Join(d.homeDir, digestFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading digest for inject: %w", err)
+	}
+
+	var be BatchedEscalation
+	if err := json.Unmarshal(data, &be); err != nil {
+		return fmt.Errorf("unmarshal digest for inject: %w", err)
+	}
+
+	// Nothing to inject.
+	if len(be.Entries) == 0 && be.WedgeAlarm == nil {
+		return nil
+	}
+
+	if _, err := d.injector.InjectIfSafe(&be); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "afk: injected %d entries into captain pane\n", len(be.Entries))
+	return nil
 }
