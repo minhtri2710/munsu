@@ -62,19 +62,15 @@ func Detect() (string, error) {
 }
 
 // detectFromEnv checks well-known environment variable markers.
+// It uses the adapter registry for all verified harnesses, with a legacy
+// fallback for unregistered harnesses (e.g., agy).
 func detectFromEnv() string {
-	markers := map[string]string{
-		"CLAUDE_CODE":         Claude,
-		"CODECLIMB":           Codex,
-		"OPENCODE":            Opencode,
-		"PI_CODING_AGENT_DIR": Pi,
-		"GROK_VM_ID":          Grok,
-		"ANTIGRAVITY_AGENT":   Agy,
+	if h := detectEnvFromAdapter(); h != "" {
+		return h
 	}
-	for env, harness := range markers {
-		if os.Getenv(env) != "" {
-			return harness
-		}
+	// Legacy fallback for unregistered harnesses.
+	if os.Getenv("ANTIGRAVITY_AGENT") != "" {
+		return Agy
 	}
 	return ""
 }
@@ -141,20 +137,15 @@ func processInfo(pid int) (name string, ppid int, err error) {
 }
 
 // matchProcessName checks if a process name corresponds to a known harness.
+// It uses the adapter registry for all verified harnesses, with a legacy
+// fallback for unregistered harnesses (e.g., agy).
 func matchProcessName(name string) string {
 	name = strings.ToLower(filepath.Base(name))
-	switch {
-	case name == "claude" || name == "claude-code" || name == "claude code":
-		return Claude
-	case name == "codex" || name == "codeclimb" || strings.Contains(name, "codex"):
-		return Codex
-	case name == "opencode" || strings.Contains(name, "opencode"):
-		return Opencode
-	case name == "pi" || name == "pi-coding-agent" || strings.Contains(name, "pi-coding"):
-		return Pi
-	case strings.Contains(name, "grok"):
-		return Grok
-	case name == "agy" || name == "antigravity":
+	if h := matchProcessNameFromAdapter(name); h != "" {
+		return h
+	}
+	// Legacy fallback for unregistered harnesses.
+	if name == "agy" || name == "antigravity" {
 		return Agy
 	}
 	return ""
@@ -170,6 +161,10 @@ type Template struct {
 }
 
 // Templates maps each known harness to its launch template (CLI flag conventions).
+// The adapter registry (Adapters) is the authoritative source; Templates is a
+// convenience lookup that mirrors LaunchTemplate values from the registry.
+// For all verified harnesses (claude, codex, opencode, pi, grok), Templates
+// entries are derived from Adapters. Agy is registered here directly.
 var Templates = map[string]Template{
 	Claude: {
 		ModelFlag:    "--model",
@@ -189,9 +184,12 @@ var Templates = map[string]Template{
 	},
 	Pi: {
 		ModelFlag:  "--model",
-		EffortFlag: "",
+		EffortFlag: "--thinking",
 	},
-	Grok: {},
+	Grok: {
+		ModelFlag:  "--model",
+		EffortFlag: "--reasoning-effort",
+	},
 	Agy: {
 		ModelFlag: "--model",
 		// DefaultModel omitted — let agy use its runtime default (Claude Sonnet 4.6)

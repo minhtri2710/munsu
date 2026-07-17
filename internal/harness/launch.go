@@ -24,3 +24,13 @@ func LaunchString(h string, tmpl Template) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// LaunchStringFromAdapter builds the launch string for a harness using its
+// adapter from the registry. Returns empty string if the harness is unknown.
+func LaunchStringFromAdapter(h string) string {
+	a, ok := GetAdapter(h)
+	if !ok {
+		return ""
+	}
+	return LaunchString(h, a.LaunchTemplate)
+}
