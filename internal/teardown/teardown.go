@@ -116,14 +116,19 @@ func Run(opts Options) (*TeardownResult, error) {
 	// Munsu-native artifacts are always cleaned up for any task.
 	// Legacy/firstmate artifacts are cleaned up for backward compatibility
 	// so existing firstmate homes still get a clean teardown.
+	// During the item-5 dual-read migration window, both old and new names
+	// are cleaned up. Old names (.check.sh, .turn-ended) will be removed
+	// in a future release; new names (.check, .turnend) are the canonical forms.
 	// Harness-specific artifacts are driven by the adapter registry.
 	stateDir := filepath.Join(opts.HomeDir, "state")
 	munsuArtifacts := []string{
-		// Munsu-native: written by munsu itself
+		// Munsu-native: canonical names (item-5 rename)
 		opts.ID + ".status",
-		opts.ID + ".check.sh",
-		// Legacy firstmate: backward-compat cleanup for existing homes
-		opts.ID + ".turn-ended",
+		opts.ID + ".check",          // new canonical name
+		opts.ID + ".turnend",        // new canonical name
+		// Legacy names (dual-read, remove next release)
+		opts.ID + ".check.sh",       // legacy name (deprecated)
+		opts.ID + ".turn-ended",     // legacy name (deprecated)
 	}
 	harnessArtifacts := harness.StateArtifactsForHarness(meta["harness"])
 	for _, suffix := range harnessArtifacts {

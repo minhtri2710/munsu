@@ -128,8 +128,15 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 		return "no-mistakes", nil
 	}
 
-	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/kunchenguid/no-mistakes@latest, or run 'munsu doctor'")
-	return "direct-PR", nil
+// 5. When require-no-mistakes config is set, refuse fallback
+if homeDir != "" {
+if _, err := config.Get(homeDir, "require-no-mistakes"); err == nil {
+return "", fmt.Errorf("config/require-no-mistakes is set but no-mistakes binary not found on PATH")
+}
+}
+
+fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/kunchenguid/no-mistakes@latest, or run 'munsu doctor'")
+return "direct-PR", nil
 }
 
 // effectiveModeForSpawn resolves the effective delivery mode for a spawn operation.

@@ -66,7 +66,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 		t.Fatalf("PRCheck: %v", err)
 	}
 
-	checkPath := filepath.Join(task.StateDir(homeDir), "pattern-task.check.sh")
+	checkPath := filepath.Join(task.StateDir(homeDir), "pattern-task.check")
 	data, err := os.ReadFile(checkPath)
 	if err != nil {
 		t.Fatalf("reading check script: %v", err)

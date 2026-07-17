@@ -48,7 +48,7 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	}
 
 	// Read the generated check.sh script
-	checkPath := filepath.Join(task.StateDir(homeDir), "test-task.check.sh")
+	checkPath := filepath.Join(task.StateDir(homeDir), "test-task.check")
 	data, err := os.ReadFile(checkPath)
 	if err != nil {
 		t.Fatalf("reading check script: %v", err)
@@ -116,7 +116,7 @@ func TestPRCheck_GeneratesCheckScriptWithoutProjectFallback(t *testing.T) {
 	}
 
 	// Read the generated check.sh script
-	checkPath := filepath.Join(task.StateDir(homeDir), "test-task-no-project.check.sh")
+	checkPath := filepath.Join(task.StateDir(homeDir), "test-task-no-project.check")
 	data, err := os.ReadFile(checkPath)
 	if err != nil {
 		t.Fatalf("reading check script: %v", err)

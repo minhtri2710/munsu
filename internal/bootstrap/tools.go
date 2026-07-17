@@ -1,5 +1,8 @@
 package bootstrap
 
+import (
+	"github.com/minhtri2710/munsu/internal/config"
+)
 // ToolSpec defines a tool that bootstrap checks for presence.
 type ToolSpec struct {
 	Name     string
@@ -26,4 +29,15 @@ func IsHardRequired(tool string) bool {
 		}
 	}
 	return false
+}
+
+// IsHardRequiredByConfig returns true when the tool is hard-required by home config.
+// Currently only handles no-mistakes via config/require-no-mistakes.
+// When the config file exists, no-mistakes is treated as hard-required.
+func IsHardRequiredByConfig(homeDir, tool string) bool {
+	if tool != "no-mistakes" {
+		return false
+	}
+	_, err := config.Get(homeDir, "require-no-mistakes")
+	return err == nil
 }
