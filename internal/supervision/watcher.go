@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -149,27 +150,50 @@ func ScanFleet(homeDir string) *WakeReason {
 		}
 		alive := bk.Alive(windowID)
 
-		if !alive {
-			// Before raising stale, check if no-mistakes is actively running.
-			// The crewmate may be driving the no-mistakes pipeline even though
-			// the session pane appears dead.
-			if isNoMistakesActive(homeDir, id) {
-				resetStreak(id)
-				continue
-			}
-			return handleStale(id, fmt.Sprintf("pane %s is dead", windowID))
+	if !alive {
+		// Captain-relevant status lines always surface, even with an active run-step.
+		if isStatusCaptainRelevant(homeDir, id) {
+			return handleStale(id, fmt.Sprintf("pane %s is dead (captain-relevant status)", windowID))
 		}
 
+		// Before raising stale, check if no-mistakes is actively running.
+		// The crewmate may be driving the no-mistakes pipeline even though
+		// the session pane appears dead.
+		if isNoMistakesActive(homeDir, id) {
+			resetStreak(id)
+			continue
+		}
+
+		// Paused tasks absorb stale signals (deliberate external wait).
+		if isStatusPaused(homeDir, id) {
+			resetStreak(id)
+			continue
+		}
+
+		return handleStale(id, fmt.Sprintf("pane %s is dead", windowID))
+	}
 		// Check status log for recent activity
 		statusPath := filepath.Join(homeDir, "state", id+".status")
 		if fi, err := os.Stat(statusPath); err == nil {
 			age := time.Since(fi.ModTime())
 			if age > lifecycle.StaleThreshold() {
+				// Captain-relevant stale statuses always surface.
+				if isStatusCaptainRelevant(homeDir, id) {
+					return handleStale(id, fmt.Sprintf("pane %s idle for %v (captain-relevant status)", windowID, age.Round(time.Second)))
+				}
+
 				// Before raising stale, check absorb.
 				if isNoMistakesActive(homeDir, id) {
 					resetStreak(id)
 					continue
 				}
+
+				// Paused tasks absorb stale signals.
+				if isStatusPaused(homeDir, id) {
+					resetStreak(id)
+					continue
+				}
+
 				return handleStale(id, fmt.Sprintf("pane %s idle for %v", windowID, age.Round(time.Second)))
 			}
 		}
@@ -240,4 +264,24 @@ func absorbStaleSignal(s *crewstate.State) bool {
 		return true
 	}
 	return false
+}
+
+// isStatusPaused checks whether the task's last status line is a declared
+// deliberate external-wait pause. Returns false if no status file exists.
+func isStatusPaused(homeDir, id string) bool {
+	lines, err := task.ReadStatus(homeDir, id)
+	if err != nil || len(lines) == 0 {
+		return false
+	}
+	return classify.IsPaused(lines[len(lines)-1])
+}
+
+// isStatusCaptainRelevant checks whether the task's last status line contains
+// a captain-relevant verb. Returns false if no status file exists.
+func isStatusCaptainRelevant(homeDir, id string) bool {
+	lines, err := task.ReadStatus(homeDir, id)
+	if err != nil || len(lines) == 0 {
+		return false
+	}
+	return classify.CaptainRelevant(lines[len(lines)-1])
 }
