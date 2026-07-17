@@ -304,6 +304,63 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 }
 
+func TestRun_BackwardCompatLegacyNames(t *testing.T) {
+	tmp := t.TempDir()
+	os.Setenv("MUNSU_HOME", tmp)
+	defer os.Unsetenv("MUNSU_HOME")
+
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create meta file (harness=pi to include adapter artifacts)
+	metaContent := "kind=scout\nwindow=@1\nharness=pi\n"
+	os.WriteFile(filepath.Join(stateDir, "legacy-test.meta"), []byte(metaContent), 0644)
+
+	// Munsu-native artifacts that the current code creates
+	munsuNames := []string{
+		"legacy-test.status",
+		"legacy-test.check.sh",
+	}
+	// Legacy firstmate artifact for backward compatibility
+	legacyNames := []string{
+		"legacy-test.turn-ended",
+	}
+	// Harness-specific artifact
+	harnessNames := []string{
+		"legacy-test.pi-ext.ts",
+	}
+
+	allResiduals := append(append(munsuNames, legacyNames...), harnessNames...)
+	for _, name := range allResiduals {
+		os.WriteFile(filepath.Join(stateDir, name), []byte("stale"), 0644)
+	}
+
+	// Run teardown with --force
+	result, err := Run(Options{HomeDir: tmp, ID: "legacy-test", Force: true})
+	if err != nil {
+		t.Fatalf("teardown should not fail: %v", err)
+	}
+
+	// All residuals should be removed
+	for _, name := range allResiduals {
+		path := filepath.Join(stateDir, name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("residual %s should have been removed, but still exists", name)
+		}
+	}
+
+	// Verify steps mention residual removal
+	foundResidual := false
+	for _, step := range result.Steps {
+		if strings.Contains(step, "residual") {
+			foundResidual = true
+			break
+		}
+	}
+	if !foundResidual {
+		t.Errorf("expected teardown steps to mention residual removal, got: %v", result.Steps)
+	}
+}
 func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 	tmp := t.TempDir()
 

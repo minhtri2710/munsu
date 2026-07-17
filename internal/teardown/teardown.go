@@ -103,11 +103,15 @@ func Run(opts Options) (*TeardownResult, error) {
 
 	// 4. Remove residual state artifacts
 	// Munsu-native artifacts are always cleaned up for any task.
+	// Legacy/firstmate artifacts are cleaned up for backward compatibility
+	// so existing firstmate homes still get a clean teardown.
 	// Harness-specific artifacts are driven by the adapter registry.
 	stateDir := filepath.Join(opts.HomeDir, "state")
 	munsuArtifacts := []string{
+		// Munsu-native: written by munsu itself
 		opts.ID + ".status",
 		opts.ID + ".check.sh",
+		// Legacy firstmate: backward-compat cleanup for existing homes
 		opts.ID + ".turn-ended",
 	}
 	harnessArtifacts := harness.StateArtifactsForHarness(meta["harness"])
