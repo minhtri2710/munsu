@@ -57,11 +57,12 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			if len(entries) == 0 {
-				fmt.Println("no tasks found")
+				fmt.Fprintln(cmd.OutOrStdout(), "no tasks found")
 				return nil
 			}
 
-			fmt.Printf("%-20s %-8s %-16s %s\n", "ID", "KIND", "PROJECT", "STATUS")
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-8s %-16s %s\n", "ID", "KIND", "PROJECT", "STATUS")
+			count := 0
 			for _, e := range entries {
 				if stateFilter != "" && !strings.Contains(e.LastStatus, stateFilter) {
 					continue
@@ -74,11 +75,13 @@ func newTaskCmd() *cobra.Command {
 				if status == "" {
 					status = "registered"
 				}
-				fmt.Printf("%-20s %-8s %-16s %s\n", e.ID, e.Kind, project, status)
+				fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-8s %-16s %s\n", e.ID, e.Kind, project, status)
+				count++
 			}
+			fmt.Fprintf(cmd.OutOrStdout(), "\nTotal: %d task(s)\n", count)
 			return nil
 		}),
-	}
+}
 	listCmd.Flags().String("state", "", "Filter by state (in-flight|queued|done)")
 
 	showCmd := &cobra.Command{
