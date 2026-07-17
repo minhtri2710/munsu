@@ -1,0 +1,2 @@
+empty|true
+[2mSuggest a command based on recent activity[0m
