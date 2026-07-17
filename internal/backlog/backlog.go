@@ -1,15 +1,12 @@
 package backlog
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
-	"time"
 )
 
 var (
@@ -18,6 +15,8 @@ var (
 )
 
 var semverRegex = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
+// --- Compat public API ---
 
 // Run dispatches to tasks-axi if compatible and not forced to manual, or falls back to manual markdown.
 func Run(homeDir, verb string, args []string) error {
@@ -42,236 +41,99 @@ func isManual(homeDir string) bool {
 	return strings.TrimSpace(string(data)) == "manual"
 }
 
-// manualRun handles backlog operations using a local markdown file.
-func manualRun(homeDir, verb string, args []string) error {
-	backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+// RunManual runs a backlog verb using the manual backend (always home-scoped).
+func RunManual(homeDir, verb string, args []string) error {
+	return manualRun(homeDir, verb, args)
+}
 
+// manualRun handles backlog operations using the FileBackend.
+func manualRun(homeDir, verb string, args []string) error {
+	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
 	switch verb {
 	case "add":
-		return addItem(backlogPath, args)
+		if len(args) < 2 {
+			return fmt.Errorf("usage: backlog add <id> <description>")
+		}
+		return fb.Add(args[0], strings.Join(args[1:], " "), "", "", false)
 	case "list":
-		return listItems(backlogPath, args)
+		return listViaFileBackend(fb, args)
 	case "show":
-		return showItem(backlogPath, args)
+		if len(args) < 1 {
+			return fmt.Errorf("usage: backlog show <id>")
+		}
+		return showViaFileBackend(fb, args[0])
 	case "start":
-		return transitionItem(backlogPath, args, "-")
+		return transitionViaFileBackend(fb, args, StateInFlight)
 	case "done":
-		return transitionItem(backlogPath, args, "x")
+		return transitionViaFileBackend(fb, args, StateDone)
 	case "block":
-		return transitionItem(backlogPath, args, "!")
+		return transitionViaFileBackend(fb, args, StateBlocked)
 	case "ready", "unblock":
-		return transitionItem(backlogPath, args, " ")
+		return transitionViaFileBackend(fb, args, StateQueued)
 	default:
 		return fmt.Errorf("backlog: unknown verb %q (supported: add, list, show, start, done, block, ready, unblock)", verb)
 	}
 }
 
-// --- data model ---
-
-// backlogItem represents a single backlog item.
-type backlogItem struct {
-	id    string
-	desc  string
-	state string // " ", "x", "-", "!"
-	kind  string
-	repo  string
-}
-
-// stateDisplay maps internal state chars to display markers.
-func stateDisplay(s string) string {
-	switch s {
-	case " ":
-		return "[ ]"
-	case "-":
-		return "[-]"
-	case "!":
-		return "[!]"
-	case "x":
-		return "[x]"
-	default:
-		return "[ ]"
+// listViaFileBackend lists items to stdout via the FileBackend.
+func listViaFileBackend(fb *FileBackend, args []string) error {
+	filter := StateQueued // zero value means no filter
+	if len(args) > 0 {
+		s, ok := nameToState[args[0]]
+		if !ok {
+			return fmt.Errorf("backlog: unknown state filter %q (supported: queued, in-flight, blocked, done)", args[0])
+		}
+		filter = s
 	}
-}
-
-// stateMap maps state verbs to their marker char.
-var stateMap = map[string]string{
-	"queued":    " ",
-	"in-flight": "-",
-	"blocked":   "!",
-	"done":      "x",
-}
-
-// --- parse ---
-
-// parseBacklog reads a backlog.md and returns items grouped by section.
-// Format:
-//
-//	# Backlog
-//
-//	## 2024-01-01
-//	- [ ] id: description
-//	- [-] id: description
-//	- [!] id: description
-//	- [x] id: description
-func parseBacklog(path string) ([]backlogItem, error) {
-	f, err := os.Open(path)
+	items, err := fb.List(filter)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("opening backlog: %w", err)
+		return err
 	}
-	defer f.Close()
-
-	itemRe := regexp.MustCompile(`^\s*-\s+\[( |x|-|!)\]\s+(\S+):\s*(.*)$`)
-	metaRe := regexp.MustCompile(`^(.*)\s+\[kind=(\S+)\s+repo=(\S+)\]$`)
-	var items []backlogItem
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		m := itemRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		desc := m[3]
-		kind := ""
-		repo := ""
-		if metaM := metaRe.FindStringSubmatch(desc); metaM != nil {
-			desc = metaM[1]
-			kind = metaM[2]
-			repo = metaM[3]
-		}
-		items = append(items, backlogItem{
-			state: m[1],
-			id:    m[2],
-			desc:  desc,
-			kind:  kind,
-			repo:  repo,
-		})
+	if len(items) == 0 {
+		fmt.Println("backlog is empty")
+		return nil
 	}
-	return items, scanner.Err()
-}
-
-// --- render ---
-
-// renderBacklog writes items to the backlog file, preserving the header/section structure.
-func renderBacklog(path string, items []backlogItem) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("creating data directory: %w", err)
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		// Items queued first, then in-flight, then blocked, then done
-		order := map[string]int{" ": 0, "-": 1, "!": 2, "x": 3}
-		oi := order[items[i].state]
-		oj := order[items[j].state]
-		if oi != oj {
-			return oi < oj
-		}
-		return items[i].id < items[j].id
-	})
-
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("writing backlog: %w", err)
-	}
-	defer f.Close()
-
-	fmt.Fprintln(f, "# Backlog")
-	fmt.Fprintln(f)
-
-	today := time.Now().Format("2006-01-02")
-	fmt.Fprintf(f, "## %s\n", today)
 	for _, item := range items {
-		line := fmt.Sprintf("- %s %s: %s", stateDisplay(item.state), item.id, item.desc)
-		if item.kind != "" || item.repo != "" {
-			var parts []string
-			if item.kind != "" {
-				parts = append(parts, "kind="+item.kind)
-			}
-			if item.repo != "" {
-				parts = append(parts, "repo="+item.repo)
-			}
-			line += " [" + strings.Join(parts, " ") + "]"
-		}
-		fmt.Fprintln(f, line)
-	}
-
-	return f.Close()
-}
-
-// --- ensureBacklog creates the backlog file with a header if it doesn't exist. ---
-func ensureBacklog(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return fmt.Errorf("creating data directory: %w", err)
-		}
-		f, err := os.Create(path)
-		if err != nil {
-			return fmt.Errorf("creating backlog: %w", err)
-		}
-		defer f.Close()
-		fmt.Fprintln(f, "# Backlog")
-		fmt.Fprintln(f)
-		today := time.Now().Format("2006-01-02")
-		fmt.Fprintf(f, "## %s\n", today)
-		return f.Close()
+		fmt.Println(formatItem(item))
 	}
 	return nil
 }
 
-// --- verb handlers ---
-
-func addItem(path string, args []string) error {
-	return addItemOpts(path, args, "", "", false)
+// showViaFileBackend shows item details to stdout via the FileBackend.
+func showViaFileBackend(fb *FileBackend, id string) error {
+	item, ok := fb.Show(id)
+	if !ok {
+		return fmt.Errorf("backlog: item %q not found", id)
+	}
+	fmt.Printf("id:     %s\n", item.ID)
+	fmt.Printf("desc:   %s\n", item.Description)
+	fmt.Printf("state:  %s %s\n", item.State.Display(), item.State)
+	if item.Kind != "" {
+		fmt.Printf("kind:   %s\n", item.Kind)
+	}
+	if item.Repo != "" {
+		fmt.Printf("repo:   %s\n", item.Repo)
+	}
+	return nil
 }
 
-func addItemOpts(path string, args []string, kind string, repo string, start bool) error {
-	if len(args) < 2 {
-		return fmt.Errorf("usage: backlog add <id> <description>")
+// transitionViaFileBackend transitions an item via the FileBackend and prints the result.
+func transitionViaFileBackend(fb *FileBackend, args []string, toState TaskState) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: backlog <verb> <id>")
 	}
 	id := args[0]
-	desc := strings.Join(args[1:], " ")
-
-	if err := ensureBacklog(path); err != nil {
+	if err := fb.UpdateState(id, toState); err != nil {
 		return err
 	}
-
-	items, err := parseBacklog(path)
-	if err != nil {
-		return err
-	}
-
-	// Check for duplicate
-	for _, item := range items {
-		if item.id == id {
-			return fmt.Errorf("backlog: item %q already exists", id)
-		}
-	}
-
-	initialState := " "
-	if start {
-		initialState = "-"
-	}
-
-	items = append(items, backlogItem{id: id, desc: desc, state: initialState, kind: kind, repo: repo})
-	if err := renderBacklog(path, items); err != nil {
-		return err
-	}
-	fmt.Printf("added: %s\n", id)
+	fmt.Printf("%s: %s\n", toState.Display(), id)
 	return nil
 }
 
 // AddItem adds a backlog item with optional metadata, using the manual (home-scoped) backend.
-// This is the public entry point for the backlog add command with --kind/--repo/--start.
 func AddItem(homeDir, id, desc, kind, repo string, start bool) error {
-	path := filepath.Join(homeDir, "data", "backlog.md")
-	return addItemOpts(path, []string{id, desc}, kind, repo, start)
-}
-
-// RunManual runs a backlog verb using the manual backend (always home-scoped).
-func RunManual(homeDir, verb string, args []string) error {
-	return manualRun(homeDir, verb, args)
+	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	return fb.Add(id, desc, kind, repo, start)
 }
 
 // AddItemDispatch adds a backlog item using the unified dispatcher.
@@ -287,127 +149,20 @@ func AddItemDispatch(homeDir, id, desc, kind, repo string, start bool) error {
 	return AddItem(homeDir, id, desc, kind, repo, start)
 }
 
-// buildTasksAxiAddArgs builds the argument list for tasks-axi add.
-func buildTasksAxiAddArgs(id, desc, kind, repo string, start bool) []string {
-	args := []string{id, desc}
-	if kind != "" {
-		args = append(args, "--kind", kind)
-	}
-	if repo != "" {
-		args = append(args, "--repo", repo)
-	}
-	if start {
-		args = append(args, "--start")
-	}
-	return args
-}
-
-func listItems(path string, args []string) error {
-	items, err := parseBacklog(path)
-	if err != nil {
-		return err
-	}
-
-	if len(items) == 0 {
-		fmt.Println("backlog is empty")
-		return nil
-	}
-
-	// Filter by state if requested
-	filterState := ""
-	if len(args) > 0 {
-		if s, ok := stateMap[args[0]]; ok {
-			filterState = s
-		} else {
-			return fmt.Errorf("backlog: unknown state filter %q (supported: queued, in-flight, blocked, done)", args[0])
+// formatItem formats an Item for display output.
+func formatItem(item Item) string {
+	line := fmt.Sprintf("- %s %s: %s", item.State.Display(), item.ID, item.Description)
+	if item.Kind != "" || item.Repo != "" {
+		var parts []string
+		if item.Kind != "" {
+			parts = append(parts, "kind="+item.Kind)
 		}
-	}
-
-	for _, item := range items {
-		if filterState != "" && item.state != filterState {
-			continue
+		if item.Repo != "" {
+			parts = append(parts, "repo="+item.Repo)
 		}
-		line := fmt.Sprintf("- %s %s: %s", stateDisplay(item.state), item.id, item.desc)
-		if item.kind != "" || item.repo != "" {
-			var parts []string
-			if item.kind != "" {
-				parts = append(parts, "kind="+item.kind)
-			}
-			if item.repo != "" {
-				parts = append(parts, "repo="+item.repo)
-			}
-			line += " [" + strings.Join(parts, " ") + "]"
-		}
-		fmt.Println(line)
+		line += " [" + strings.Join(parts, " ") + "]"
 	}
-	return nil
-}
-
-func showItem(path string, args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: backlog show <id>")
-	}
-	id := args[0]
-
-	items, err := parseBacklog(path)
-	if err != nil {
-		return err
-	}
-
-	for _, item := range items {
-		if item.id == id {
-			stateName := "queued"
-			switch item.state {
-			case "-":
-				stateName = "in-flight"
-			case "!":
-				stateName = "blocked"
-			case "x":
-				stateName = "done"
-			}
-			fmt.Printf("id:     %s\n", item.id)
-			fmt.Printf("desc:   %s\n", item.desc)
-			fmt.Printf("state:  %s %s\n", stateDisplay(item.state), stateName)
-			if item.kind != "" {
-				fmt.Printf("kind:   %s\n", item.kind)
-			}
-			if item.repo != "" {
-				fmt.Printf("repo:   %s\n", item.repo)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("backlog: item %q not found", id)
-}
-
-func transitionItem(path string, args []string, newState string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: backlog <verb> <id>")
-	}
-	id := args[0]
-
-	items, err := parseBacklog(path)
-	if err != nil {
-		return err
-	}
-
-	found := false
-	for i, item := range items {
-		if item.id == id {
-			items[i].state = newState
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("backlog: item %q not found", id)
-	}
-
-	if err := renderBacklog(path, items); err != nil {
-		return err
-	}
-	fmt.Printf("%s: %s\n", stateDisplay(newState), id)
-	return nil
+	return line
 }
 
 // --- tasks-axi integration ---
@@ -489,4 +244,19 @@ func runTasksAxi(verb string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// buildTasksAxiAddArgs builds the argument list for tasks-axi add.
+func buildTasksAxiAddArgs(id, desc, kind, repo string, start bool) []string {
+	args := []string{id, desc}
+	if kind != "" {
+		args = append(args, "--kind", kind)
+	}
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
+	if start {
+		args = append(args, "--start")
+	}
+	return args
 }
