@@ -56,8 +56,9 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	script := string(data)
 
 	// Verify the script contains the fleet-sync command
-	if !strings.Contains(script, "fleet-sync") {
-		t.Errorf("check.sh should contain fleet-sync command, got:\n%s", script)
+	// Verify check.sh now contains fleet sync (non-deprecated form)
+	if !strings.Contains(script, "fleet sync") {
+		t.Errorf("check.sh should contain 'fleet sync' command, got:\n%s", script)
 	}
 
 	// Verify the project is set correctly
@@ -71,20 +72,21 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	}
 
 	// Verify the best-effort fleet-sync shell pattern
+	// Verify the best-effort fleet sync shell pattern
 	if !strings.Contains(script, "munsu --home") {
-		t.Errorf("check.sh should call munsu --home for fleet-sync, got:\n%s", script)
+		t.Errorf("check.sh should call munsu --home for fleet sync, got:\n%s", script)
 	}
 
-	if !strings.Contains(script, "fleet-sync") {
-		t.Errorf("check.sh should contain fleet-sync subcommand, got:\n%s", script)
+	if !strings.Contains(script, "fleet sync") {
+		t.Errorf("check.sh should contain 'fleet sync' subcommand, got:\n%s", script)
 	}
 
 	if !strings.Contains(script, "2>/dev/null") {
-		t.Errorf("check.sh should suppress fleet-sync stderr, got:\n%s", script)
+		t.Errorf("check.sh should suppress fleet sync stderr, got:\n%s", script)
 	}
 
-	if !strings.Contains(script, "Warning: fleet-sync") {
-		t.Errorf("check.sh should print a warning on fleet-sync failure, got:\n%s", script)
+	if !strings.Contains(script, "Warning: fleet sync") {
+		t.Errorf("check.sh should print a warning on fleet sync failure, got:\n%s", script)
 	}
 }
 
@@ -126,8 +128,8 @@ func TestPRCheck_GeneratesCheckScriptWithoutProjectFallback(t *testing.T) {
 		t.Errorf("check.sh should have PROJECT=\"munsu\" (repo fallback), got:\n%s", script)
 	}
 
-	// Verify fleet-sync is still present
-	if !strings.Contains(script, "fleet-sync") {
-		t.Errorf("check.sh should contain fleet-sync even without explicit project, got:\n%s", script)
+	// Verify fleet sync is still present
+	if !strings.Contains(script, "fleet sync") {
+		t.Errorf("check.sh should contain 'fleet sync' even without explicit project, got:\n%s", script)
 	}
 }

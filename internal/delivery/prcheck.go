@@ -65,10 +65,10 @@ echo "Polling PR #${PR_NUM} merge status for %s/%s..."
 RESULT=$(gh pr view "${PR_NUM}" --repo "${OWNER}/${REPO}" --json merged 2>&1 || echo "ERROR:$?")
 
 if echo "$RESULT" | grep -q '"merged": true'; then
-	echo "merged: true"
-	# Best-effort fleet-sync the project clone
-	munsu --home "$HOME_DIR" fleet-sync "$PROJECT" 2>/dev/null || echo "Warning: fleet-sync for ${PROJECT} failed" >&2
-	exit 0
+	if echo "$RESULT" | grep -q '"merged": true'; then
+		echo "merged: true"
+		# Best-effort fleet-sync the project clone
+		munsu --home "$HOME_DIR" fleet sync "$PROJECT" 2>/dev/null || echo "Warning: fleet sync for ${PROJECT} failed" >&2
 elif echo "$RESULT" | grep -q '"merged": false'; then
 	echo "merged: false"
 	exit 1

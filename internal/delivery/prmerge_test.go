@@ -43,7 +43,7 @@ func TestPRMerge_FleetSyncReadsMeta(t *testing.T) {
 }
 
 // TestCheckScriptFleetSyncPattern verifies the generated check.sh contains
-// the exact expected fleet-sync shell pattern with a real PR.
+// the exact expected 'fleet sync' shell pattern with a real PR.
 func TestCheckScriptFleetSyncPattern(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -78,7 +78,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 		t.Errorf("should have merged: true branch, got:\n%s", script)
 	}
 
-	// Verify the structure: fleet-sync after merged: true
+	// Verify the structure: fleet sync after merged: true
 	lines := strings.Split(script, "\n")
 	foundMergeTrue := false
 	foundFleetSync := false
@@ -86,25 +86,24 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 		if strings.Contains(line, `echo "merged: true"`) {
 			foundMergeTrue = true
 		}
-		if strings.Contains(line, "fleet-sync") {
+		if strings.Contains(line, "fleet sync") {
 			foundFleetSync = true
 			if !foundMergeTrue {
-				t.Error("fleet-sync should appear after merged: true")
+				t.Error("fleet sync should appear after merged: true")
 			}
 		}
 	}
 	if !foundFleetSync {
-		t.Error("check.sh should contain fleet-sync command")
+		t.Error("check.sh should contain 'fleet sync' command")
 	}
 
-	// Verify the specific fleet-sync shell command pattern
-	if !strings.Contains(script, `munsu --home "$HOME_DIR" fleet-sync "$PROJECT" 2>/dev/null || echo "Warning: fleet-sync for ${PROJECT} failed" >&2`) {
-		t.Errorf("check.sh should contain exact fleet-sync shell command, got:\n%s", script)
+	// Verify the specific fleet sync shell command pattern
+	if !strings.Contains(script, `munsu --home "$HOME_DIR" fleet sync "$PROJECT" 2>/dev/null || echo "Warning: fleet sync for ${PROJECT} failed" >&2`) {
+		t.Errorf("check.sh should contain exact fleet sync shell command, got:\n%s", script)
 	}
 }
 
-// TestFleetSyncEndToEnd tests the fleet-sync mechanism end-to-end using the
-// fleet package's Sync function directly with a real git remote.
+// TestFleetSyncEndToEnd tests the fleet sync mechanism end-to-end using the
 func TestFleetSyncEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -194,16 +193,16 @@ func TestFleetSyncEndToEnd(t *testing.T) {
 		t.Fatalf("building munsu: %s, %v", string(out), err)
 	}
 
-	// Run fleet-sync
-	cmd2 := exec.Command(binaryPath, "--home", homeDir, "fleet-sync", "test-project")
+	// Run fleet sync
+	cmd2 := exec.Command(binaryPath, "--home", homeDir, "fleet", "sync", "test-project")
 	out, err2 := cmd2.CombinedOutput()
 	if err2 != nil {
-		t.Fatalf("fleet-sync failed: %s, %v", string(out), err2)
+		t.Fatalf("fleet sync failed: %s, %v", string(out), err2)
 	}
 
 	// Verify synced output mentions project name
 	if !strings.Contains(string(out), "test-project") {
-		t.Errorf("expected fleet-sync output to mention project name, got: %s", string(out))
+		t.Errorf("expected fleet sync output to mention project name, got: %s", string(out))
 	}
 }
 
