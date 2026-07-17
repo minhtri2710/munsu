@@ -187,6 +187,42 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 			t.Errorf("expected output %q, got %q", expectedOutput, output)
 		}
 	})
+	t.Run("TasksAxiBlockWithBy", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldStdout := os.Stdout
+		os.Stdout = w
+		defer func() { os.Stdout = oldStdout }()
+
+		err = Run("", "block", []string{"task-a", "--by", "task-b"})
+		w.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var buf bytes.Buffer
+		_, err = buf.ReadFrom(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := buf.String()
+
+		expectedOutput := "EXEC_CMD: block task-a --by task-b\n"
+		if output != expectedOutput {
+			t.Errorf("expected output %q, got %q", expectedOutput, output)
+		}
+	})
 }
 
 func TestRun_ConfigBackendGate(t *testing.T) {

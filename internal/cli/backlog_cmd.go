@@ -141,17 +141,24 @@ func newBacklogDoneCmd() *cobra.Command {
 }
 
 func newBacklogBlockCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "block <id>",
+	var by string
+	cmd := &cobra.Command{
+		Use:   "block <id> [--by <dependency-id>]",
 		Short: "Block a backlog item",
+		Long: `Mark a backlog item as blocked.
+When using tasks-axi backend, --by specifies the dependency that blocks this item.
+When --by is omitted, falls back to manual backend.`,
+
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "block", args)
+			if by != "" && isDefaultHome(ctx.Home) {
+				return backlog.Run(ctx.Home, "block", []string{args[0], "--by", by})
 			}
 			return backlog.RunManual(ctx.Home, "block", args)
 		}),
 	}
+	cmd.Flags().StringVar(&by, "by", "", "Dependency that blocks this item (required for tasks-axi backend)")
+	return cmd
 }
 
 func newBacklogReadyCmd() *cobra.Command {

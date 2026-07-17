@@ -7,11 +7,10 @@
 When this session owns supervision and away mode is not active:
 
 1. Drain first: `munsu wake-drain`.
-2. Run one foreground watcher checkpoint: `munsu watch run --timeout <seconds>`.  
-   Recommended timeout: 180s (configure via `CODEX_WATCH_CHECKPOINT` or the harness adapter).
+2. Run one foreground watcher checkpoint: `munsu watch run`.
+   The command polls once and exits — no timeout flag is needed.
 3. If the command prints `signal:`, `stale:`, `check:`, or `heartbeat`: drain queued wakes, handle that wake, then start the next checkpoint.
-4. If the command exits with no wake (timeout or `checkpoint:`): drain queued wakes anyway, process any visible user message, then start the next checkpoint.
-5. Never use shell `&` or background tasks for watcher supervision.
+4. If the command exits with `checkpoint:`: drain queued wakes anyway, process any visible user message, then start the next checkpoint.
 
 ## Key differences from firstmate
 
@@ -21,7 +20,7 @@ When this session owns supervision and away mode is not active:
 
 ## Harness-specific
 
-- Codex cannot reason while a foreground tool call is running; the bounded checkpoint returns control regularly.
+- Codex cannot reason while a foreground tool call is running; the poll-once checkpoint returns control regularly.
 - No background mechanism — use foreground checkpoints only.
 
 ## See also
