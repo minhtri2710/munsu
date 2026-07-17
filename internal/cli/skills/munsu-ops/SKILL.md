@@ -58,15 +58,15 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 **Context pointer:** If a crewmate is unresponsive or stuck, run `munsu skill show stuck-crewmate-recovery` and follow its escalation ladder (peek -> steer -> interrupt -> relaunch -> fail).
 
-**Supervision loop details:** See `SUPERVISION.md` for watch/wake-drain/guard/afk loop mechanics.
-
-### 6. Deliver
+**Context pointer:** Supervision behavior varies by harness. Run `munsu skill show harness-adapters`
+for launch templates. The per-harness supervision protocols at `docs/supervision-protocols/`
+describe the exact arm/wake/drain/guard loop for each supported harness (claude, codex, grok, pi, opencode).
 
 Delivery mode is set at spawn time (`--mode`). Act according to mode:
 
 - **no-mistakes** (default): The crewmate runs the no-mistakes pipeline. When it notifies completion, verify the PR is open and checks are green.
-- **direct-PR**: `munsu pr-check <id> <pr-url>` to record the PR, then `munsu pr-merge <id> <pr-url>` once approved.
-- **local-only**: `munsu merge-local <id>` for a fast-forward merge to the local default branch.
+- **direct-PR**: `munsu delivery pr-check <id> <pr-url>` to record the PR, then `munsu delivery pr-merge <id> <pr-url>` once approved.
+- **local-only**: `munsu delivery merge-local <id>` for a fast-forward merge to the local default branch.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.
 
@@ -82,11 +82,11 @@ munsu teardown <id> [--force]
 
 ### Fleet-wide checks
 
-- `munsu fleet-view` — see the full fleet.
+- `munsu fleet view` — see the full fleet.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
-- `munsu bearings` — compact resume report.
+- `munsu fleet bearings` — compact resume report.
 - `munsu stow <text...>` — capture durable learnings (data/learnings.md); inspect-then-update: matching entries are replaced, not duplicated.
-- `munsu stow --captain <text...>` — capture captain preferences (data/captain.md); created lazily if absent.
+- `munsu stow --captain <text...>` — capture captain preferences (data/learnings.md); created lazily if absent.
 - `munsu stow --kind captain <text...>` — same as --captain.
 
 ## Reference rules
@@ -95,8 +95,12 @@ munsu teardown <id> [--force]
 - Heed `blocked:`, `needs-decision:`, and `paused:` statuses from crewmates.
 - Run `munsu guard` after every fleet action.
 - The seeded orchestrator manual at `<home>/AGENTS.md` is the authoritative per-project operator guide.
+- Before marking a scout or review complete, load the `decision-hold-lifecycle` auxiliary skill
+  via `munsu skill show decision-hold-lifecycle` to durably track unresolved captain decisions.
 
 ## See also
 
 - `COMMANDS.md` — full command map grouped by lifecycle phase.
-- `SUPERVISION.md` — watch/wake-drain/guard/afk loop details.
+- `docs/supervision-protocols/` — per-harness supervision protocol docs.
+- `docs/skills/decision-hold-lifecycle.md` — decision-hold lifecycle canonical reference.
+- `munsu doctor` — toolchain diagnostics with fix commands.
