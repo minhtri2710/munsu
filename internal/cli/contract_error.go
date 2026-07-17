@@ -10,11 +10,24 @@ import (
 )
 
 // WriteContractError writes a structured contract error and returns its exit code.
-// It returns zero when err is not a contract error.
+// Non-contract errors are automatically wrapped as generic operation errors.
 func WriteContractError(writer io.Writer, err error, args []string) int {
 	var contractErr *contractError
 	if !errors.As(err, &contractErr) {
-		return 0
+		// Wrap non-contract errors as generic operation errors
+		contractErr = &contractError{
+			status: exitOperation,
+			value: contract.ErrorResponse{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "error",
+				Status:        "error",
+				Error: contract.ErrorEnvelope{
+					ErrorCode: "error",
+					Action:    "See the error message and retry",
+					Message:   err.Error(),
+				},
+			},
+		}
 	}
 	output := contract.OutputTOON
 	for index, arg := range args {
