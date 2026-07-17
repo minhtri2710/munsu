@@ -216,3 +216,169 @@ func TestPrintFleetState_TaskNoStatus(t *testing.T) {
 		t.Errorf("expected 'alive' for window=@42 (Snapshot heuristic sets PaneAlive), got: %s", output)
 	}
 }
+
+// TestSupervisionBlockHeader checks the header line for every harness.
+func TestSupervisionBlockHeader(t *testing.T) {
+	harnesses := []string{"claude", "codex", "grok", "pi", "opencode", "unknown"}
+	for _, h := range harnesses {
+		t.Run(h, func(t *testing.T) {
+			output := captureStdout(func() {
+				printSupervisionBlock(h, true)
+			})
+			if !strings.Contains(output, "primary harness: "+h) {
+				t.Errorf("expected harness name %q in header, got: %s", h, output)
+			}
+			if !strings.Contains(output, "Drain:   munsu wake-drain") {
+				t.Errorf("expected Drain line, got: %s", output)
+			}
+			if !strings.Contains(output, "Guard:   munsu guard") {
+				t.Errorf("expected Guard line, got: %s", output)
+			}
+		})
+	}
+}
+
+func TestSupervisionBlock_LockReadOnly(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("claude", false)
+	})
+	if !strings.Contains(output, "read-only") {
+		t.Errorf("expected read-only lock warning, got: %s", output)
+	}
+	if !strings.Contains(output, "do not drain, arm, or repair") {
+		t.Errorf("expected drain/arm/repair warning, got: %s", output)
+	}
+}
+
+func TestSupervisionBlock_LockAcquired(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("codex", true)
+	})
+	if !strings.Contains(output, "owns normal supervision") {
+		t.Errorf("expected 'owns normal supervision', got: %s", output)
+	}
+}
+
+func TestSupervisionBlock_ClaudeKeywords(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("claude", true)
+	})
+	if !strings.Contains(output, "background-notify") {
+		t.Errorf("expected background-notify mode, got: %s", output)
+	}
+	if !strings.Contains(output, "munsu watch-arm") {
+		t.Errorf("expected watch-arm reference, got: %s", output)
+	}
+	if !strings.Contains(output, "Never use shell") {
+		t.Errorf("expected no-shell-& warning, got: %s", output)
+	}
+	if !strings.Contains(output, "--restart") {
+		t.Errorf("expected --restart flag, got: %s", output)
+	}
+}
+
+func TestSupervisionBlock_CodexKeywords(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("codex", true)
+	})
+	if !strings.Contains(output, "foreground checkpoint") {
+		t.Errorf("expected foreground checkpoint mode, got: %s", output)
+	}
+	if !strings.Contains(output, "munsu watch run") {
+		t.Errorf("expected watch run reference, got: %s", output)
+	}
+	if !strings.Contains(output, "next checkpoint") {
+		t.Errorf("expected next-checkpoint reference, got: %s", output)
+	}
+}
+
+func TestSupervisionBlock_GrokKeywords(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("grok", true)
+	})
+	if !strings.Contains(output, "background-notify") {
+		t.Errorf("expected background-notify mode, got: %s", output)
+	}
+	if !strings.Contains(output, "run_terminal_command") {
+		t.Errorf("expected run_terminal_command ref, got: %s", output)
+	}
+	if !strings.Contains(output, "background: true") {
+		t.Errorf("expected background:true ref, got: %s", output)
+	}
+	if !strings.Contains(output, "Never use shell") {
+		t.Errorf("expected no-shell-& warning, got: %s", output)
+	}
+}
+
+func TestSupervisionBlock_PiKeywords(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("pi", true)
+	})
+	if !strings.Contains(output, "extension background wake") {
+		t.Errorf("expected extension background wake mode, got: %s", output)
+	}
+	if !strings.Contains(output, "fm_watch_arm_pi") {
+		t.Errorf("expected fm_watch_arm_pi tool ref, got: %s", output)
+	}
+	if !strings.Contains(output, "Do NOT run") {
+		t.Errorf("expected Do NOT run warning, got: %s", output)
+	}
+	if !strings.Contains(output, "Pi extension re-arms") {
+		t.Errorf("expected Pi extension re-arm ref, got: %s", output)
+	}
+}
+
+func TestSupervisionBlock_OpencodeKeywords(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("opencode", true)
+	})
+	if !strings.Contains(output, "TUI plugin background wake") {
+		t.Errorf("expected TUI plugin background wake mode, got: %s", output)
+	}
+	if !strings.Contains(output, "fm-primary-watch-arm.js") {
+		t.Errorf("expected plugin file ref, got: %s", output)
+	}
+	if !strings.Contains(output, "arms after session goes idle") {
+		t.Errorf("expected idle-arm ref, got: %s", output)
+	}
+	if !strings.Contains(output, "recovery probe") {
+		t.Errorf("expected recovery probe ref, got: %s", output)
+	}
+}
+
+func TestSupervisionBlock_DefaultKeywords(t *testing.T) {
+	output := captureStdout(func() {
+		printSupervisionBlock("unknown-harness", true)
+	})
+	if !strings.Contains(output, "generic fallback") {
+		t.Errorf("expected generic fallback mode, got: %s", output)
+	}
+	if !strings.Contains(output, "munsu watch ensure") {
+		t.Errorf("expected watch ensure ref, got: %s", output)
+	}
+	if !strings.Contains(output, "Never use shell") {
+		t.Errorf("expected no-shell-& warning, got: %s", output)
+	}
+}
+
+func TestSupervisionMode_AllKnown(t *testing.T) {
+	harnesses := []string{"claude", "codex", "grok", "pi", "opencode"}
+	for _, h := range harnesses {
+		t.Run(h, func(t *testing.T) {
+			m := supervisionMode(h)
+			if m == "generic fallback" {
+				t.Errorf("supervisionMode(%q) returned generic fallback, expected a real mode", h)
+			}
+			if m == "" {
+				t.Error("supervisionMode returned empty string")
+			}
+		})
+	}
+}
+
+func TestSupervisionMode_Unknown(t *testing.T) {
+	m := supervisionMode("nonexistent")
+	if m != "generic fallback" {
+		t.Errorf("supervisionMode('nonexistent') = %q, want 'generic fallback'", m)
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
@@ -58,8 +59,77 @@ func printFleetState(home string) {
 	}
 }
 
+// supervisionModes maps each harness to its supervision mode label.
+var supervisionModes = map[string]string{
+	"claude":   "background-notify",
+	"codex":    "foreground checkpoint",
+	"grok":     "background-notify",
+	"opencode": "TUI plugin background wake",
+	"pi":       "extension background wake",
+}
+
+func supervisionMode(h string) string {
+	if m, ok := supervisionModes[h]; ok {
+		return m
+	}
+	return "generic fallback"
+}
+
+// printSupervisionBlock prints a per-harness supervision operating block.
+func printSupervisionBlock(h string, acquired bool) {
+	mode := supervisionMode(h)
+	fmt.Printf("primary harness: %s\n", h)
+	fmt.Printf("supervision mode: %s\n", mode)
+	if acquired {
+		fmt.Println("lock: acquired — this session owns normal supervision.")
+	} else {
+		fmt.Println("lock: read-only — do not drain, arm, or repair fleet state here.")
+	}
+	fmt.Println("")
+	fmt.Println("Drain:   munsu wake-drain")
+
+	switch h {
+	case "claude":
+		fmt.Println("Arm:     munsu watch-arm (as own background tool call)")
+		fmt.Println("         Never use shell '&' for watcher supervision.")
+		fmt.Println("Re-arm:  munsu watch-arm --restart on signal/stale/check/heartbeat")
+		fmt.Println("Repair:  'watcher: FAILED - no live watcher' — fix and re-arm")
+
+	case "codex":
+		fmt.Println("Checkpoint: munsu watch run (one poll cycle — no timeout flag)")
+		fmt.Println("Re-arm:  drain, handle wake, then next checkpoint (munsu watch run)")
+		fmt.Println("Repair:  Re-run checkpoint after fixing any watcher issues")
+
+	case "grok":
+		fmt.Println("Arm:     munsu watch-arm (tracked background tool call)")
+		fmt.Println("         In Grok: run_terminal_command with background: true.")
+		fmt.Println("         Never use shell '&' for watcher supervision.")
+		fmt.Println("Re-arm:  munsu watch-arm --restart on signal/stale/check/heartbeat")
+		fmt.Println("Repair:  'watcher: FAILED ...' — fix and re-arm")
+
+	case "pi":
+		fmt.Println("Arm:     fm_watch_arm_pi tool (or 'munsu watch-arm --restart' as human fallback)")
+		fmt.Println("         Do NOT run 'munsu watch-arm' through Pi's bash tool.")
+		fmt.Println("Re-arm:  Pi extension re-arms automatically on watcher exit.")
+		fmt.Println("Repair:  Drain, inspect extension status, restart Pi with extensions loaded.")
+
+	case "opencode":
+		fmt.Println("Arm:     OpenCode TUI plugin arms after session goes idle.")
+		fmt.Println("         (.opencode/plugins/fm-primary-watch-arm.js)")
+		fmt.Println("Re-arm:  Plugin re-arms automatically on watcher exit.")
+		fmt.Println("Repair:  Drain, inspect, use 'munsu watch-arm' manually as recovery probe.")
+
+	default:
+		fmt.Println("Arm:     munsu watch ensure (idempotent start) or munsu watch run (checkpoint)")
+		fmt.Println("         Use tracked background mechanism when available.")
+		fmt.Println("         Never use shell '&' for watcher supervision.")
+		fmt.Println("Repair:  Run 'munsu guard' to diagnose, then arm with one of the above.")
+	}
+
+	fmt.Println("Guard:   munsu guard")
+}
+
 // RunSessionStart executes the full session-start sequence:
-// lock -> bootstrap -> context/fleet digest.
 func RunSessionStart(home string) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 
@@ -131,10 +201,14 @@ func RunSessionStart(home string) (*SessionStartResult, error) {
 	// 6. Fleet state section
 	printFleetState(home)
 
-	// 7. Supervision block
+	// 7. Supervision block — per-harness operating instructions
 	fmt.Println("")
 	fmt.Println("--- Supervision ---")
-	fmt.Println("Wake handling: wake-drain → crew-state <id> → watch-arm if tasks still in flight.")
+	h, err := harness.Crew(home)
+	if err != nil {
+		h = "unknown"
+	}
+	printSupervisionBlock(h, acquired)
 
 	// 8. Session start complete
 	fmt.Println("")
