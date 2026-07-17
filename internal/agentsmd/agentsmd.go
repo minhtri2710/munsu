@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // EnsureResult describes what was done.
@@ -27,7 +28,7 @@ func Ensure(projectDir string, stage bool) (*EnsureResult, error) {
 		base := filepath.Base(projectDir)
 		content = fmt.Sprintf("# %s -- project agent memory\n\n", base)
 		content += "This file is the conventions file for crewmates working on this project.\n\n"
-		content += "## Build / test / lint\n\n```sh\n# TODO: add build commands\n```\n\n"
+		content += "## Build / test / lint\n\n" + probeBuildCommands(projectDir) + "\n\n"
 		content += "Delivery mode: no-mistakes (push through the gate, never to origin directly).\n\n"
 	} else {
 		content = string(existing)
@@ -97,4 +98,24 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// probeBuildCommands probes a project directory and returns build/test commands.
+func probeBuildCommands(projectDir string) string {
+	// Go project
+	if _, err := os.Stat(filepath.Join(projectDir, "go.mod")); err == nil {
+		return "```sh\ngo build ./...\ngo test ./...\ngo vet ./...\n```"
+	}
+
+	// Node project
+	pkgJSON := filepath.Join(projectDir, "package.json")
+	if data, err := os.ReadFile(pkgJSON); err == nil {
+		if strings.Contains(string(data), `"build"`) {
+			return "```sh\nnpm test\nnpm run build\n```"
+		}
+		return "```sh\nnpm test\n```"
+	}
+
+	// Fallback: unknown project type
+	return "# Add build/test commands here\n# Run `munsu doctor` for toolchain diagnostics\n"
 }

@@ -7,13 +7,23 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 const (
 	afkFlagFile  = "state/.afk"
 	pollInterval = 30 * time.Second
+)
+
+// seenSet tracks (taskID → lastLine) for deduplication across polls.
+// Reset when a line changes; skip when it repeats.
+var (
+	seenMu    sync.Mutex
+	seenLines = make(map[string]string)
 )
 
 // Start begins the afk daemon: sets the durable afk flag, then runs a
@@ -76,17 +86,35 @@ func scanStatusFiles(homeDir string) {
 		if len(lines) == 0 {
 			continue
 		}
+		taskID := strings.TrimSuffix(entry.Name(), ".status")
 
 		lastLine := strings.TrimSpace(lines[len(lines)-1])
 		if lastLine == "" {
 			continue
 		}
 
-		// Escalate captain-relevant states
+		// Escalate captain-relevant states with dedup and wake-queue
 		if strings.HasPrefix(lastLine, "done:") ||
 			strings.HasPrefix(lastLine, "failed:") ||
 			strings.HasPrefix(lastLine, "needs-decision:") {
+
+			seenMu.Lock()
+			prev, seen := seenLines[taskID]
+			if seen && prev == lastLine {
+				seenMu.Unlock()
+				continue
+			}
+			seenLines[taskID] = lastLine
+			seenMu.Unlock()
+
 			fmt.Printf("[AFK] %s: %s\n", entry.Name(), lastLine)
+
+			// Append to durable wake queue
+			payload := strings.TrimPrefix(lastLine, "done:")
+			payload = strings.TrimPrefix(payload, "failed:")
+			payload = strings.TrimPrefix(payload, "needs-decision:")
+			payload = strings.TrimSpace(payload)
+			_ = lifecycle.EnqueueWake(homeDir, "afk", taskID, payload)
 		}
 	}
 }
