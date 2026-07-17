@@ -156,11 +156,17 @@ func RunSessionStart(home string) (*SessionStartResult, error) {
 	if !acquired {
 		fmt.Println("(read-only mode -- mutating sweeps skipped)")
 	}
-	for _, d := range bootRes.Diagnostics {
-		fmt.Println("  " + d)
+	for _, d := range bootRes.Tools {
+		fmt.Println("  " + d.String())
 	}
-	for _, c := range bootRes.ConfigDetails {
-		fmt.Println("  " + c)
+	if bootRes.Auth != nil {
+		fmt.Println("  " + bootRes.Auth.String())
+	}
+	for _, c := range bootRes.Configs {
+		fmt.Println("  " + c.String())
+	}
+	if bootRes.GC != nil {
+		fmt.Println("  " + bootRes.GC.String())
 	}
 	if len(bootRes.MissingTools) > 0 {
 		fmt.Println("")

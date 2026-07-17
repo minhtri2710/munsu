@@ -9,12 +9,59 @@ import (
 	"strings"
 )
 
+// ToolStatus represents whether a tool was found during bootstrap.
+type ToolStatus int
+
+const (
+	ToolFound ToolStatus = iota
+	ToolMissing
+	ToolInstallFailed
+	ToolInstalled
+)
+
+// AuthStatus represents whether GitHub CLI authentication is valid.
+type AuthStatus int
+
+const (
+	AuthAuthenticated AuthStatus = iota
+	AuthFailed
+)
+
+// ToolDiagnostic describes the result of checking a single tool.
+type ToolDiagnostic struct {
+	Tool   string
+	Status ToolStatus
+	Path   string
+	Err    error
+}
+
+// AuthDiagnostic describes the result of checking GitHub auth.
+type AuthDiagnostic struct {
+	Status AuthStatus
+	Err    error
+}
+
+// ConfigDiagnostic describes a resolved configuration key-value pair.
+type ConfigDiagnostic struct {
+	Key    string
+	Value  string
+	Source string
+}
+
+// GCDiagnostic describes the result of garbage-collecting orphan data dirs.
+type GCDiagnostic struct {
+	Removed int
+	Dirs    []string
+}
+
 // Result holds the full bootstrap diagnostic output.
 type Result struct {
 	LockAcquired  bool
-	Diagnostics   []string
+	Tools         []ToolDiagnostic
+	Auth          *AuthDiagnostic
+	Configs       []ConfigDiagnostic
+	GC            *GCDiagnostic
 	MissingTools  []string
-	ConfigDetails []string
 }
 
 // Run executes bootstrap diagnostics for the given munsu home.
@@ -28,18 +75,18 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 	for _, spec := range checkedTools {
 		path, err := exec.LookPath(spec.Name)
 		if err != nil {
+			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolMissing})
 			res.MissingTools = append(res.MissingTools, spec.Name)
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("MISSING: %s (install instructions vary)", spec.Name))
 		} else {
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("FOUND: %s at %s", spec.Name, path))
+			res.Tools = append(res.Tools, ToolDiagnostic{Tool: spec.Name, Status: ToolFound, Path: path})
 		}
 	}
 
 	// 2. Check GitHub auth
 	if ghAuth() {
-		res.Diagnostics = append(res.Diagnostics, "GH_AUTH: authenticated")
+		res.Auth = &AuthDiagnostic{Status: AuthAuthenticated}
 	} else {
-		res.Diagnostics = append(res.Diagnostics, "NEEDS_GH_AUTH: gh auth status failed (run gh auth login)")
+		res.Auth = &AuthDiagnostic{Status: AuthFailed}
 	}
 
 	// 3. Check crew-harness override
@@ -47,7 +94,7 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 	if data, err := os.ReadFile(harnessPath); err == nil {
 		harness := strings.TrimSpace(string(data))
 		if harness != "" && harness != "default" {
-			res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("CREW_HARNESS: %s", harness))
+			res.Configs = append(res.Configs, ConfigDiagnostic{Key: "CREW_HARNESS", Value: harness})
 		}
 	}
 
@@ -63,7 +110,7 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 				ruleCount++
 			}
 		}
-		res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("CREW_DISPATCH: active (%d rules)", ruleCount))
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "CREW_DISPATCH", Value: fmt.Sprintf("active (%d rules)", ruleCount)})
 	}
 
 	// 5. Check session backend preference — distinguish config pin from runtime resolution
@@ -78,7 +125,7 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 	if configuredPin != "" && configuredPin != "auto" {
 		configDisplay = configuredPin
 	}
-	res.ConfigDetails = append(res.ConfigDetails, "BACKEND_CONFIG: "+configDisplay)
+	res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_CONFIG", Value: configDisplay})
 
 	// BACKEND_RESOLVED: shows the currently resolved runtime backend and its source
 	var resolved, source string
@@ -97,18 +144,18 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 	}
 
 	if resolved != "" {
-		res.ConfigDetails = append(res.ConfigDetails, fmt.Sprintf("BACKEND_RESOLVED: %s (source: %s)", resolved, source))
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: resolved, Source: source})
 	} else {
-		res.ConfigDetails = append(res.ConfigDetails, "BACKEND_RESOLVED: none (no backend available)")
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: "none", Source: "no backend available"})
 	}
 
 	// 6. Install tools if requested and lock held
 	if lockHeld && len(installTools) > 0 {
 		for _, tool := range installTools {
 			if err := installTool(tool); err != nil {
-				res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("INSTALL_FAILED: %s — %v", tool, err))
+				res.Tools = append(res.Tools, ToolDiagnostic{Tool: tool, Status: ToolInstallFailed, Err: err})
 			} else {
-				res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("INSTALLED: %s", tool))
+				res.Tools = append(res.Tools, ToolDiagnostic{Tool: tool, Status: ToolInstalled})
 			}
 		}
 	}
@@ -116,7 +163,7 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 	// 7. GC orphan data dirs (only when lock held)
 	if lockHeld {
 		if cleaned := gcOrphanDataDirs(home); len(cleaned) > 0 {
-			res.Diagnostics = append(res.Diagnostics, fmt.Sprintf("GC: removed %d orphan data dir(s): %v", len(cleaned), cleaned))
+			res.GC = &GCDiagnostic{Removed: len(cleaned), Dirs: cleaned}
 		}
 	}
 

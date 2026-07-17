@@ -36,15 +36,23 @@ Optional tools get warnings but do not fail the exit code:
 
 			exitCode := 0
 
-			for _, d := range result.Diagnostics {
-				fmt.Println(d)
-				if fix := bootstrap.DoctorFix(d); fix != "" {
-					fmt.Println(fix)
+			for _, d := range result.Tools {
+				fmt.Println(d.String())
+				if fix := d.Fix(); fix != "" {
+					fmt.Println("    Fix: " + fix)
 				}
 			}
-
-			for _, c := range result.ConfigDetails {
-				fmt.Println(c)
+			if result.Auth != nil {
+				fmt.Println(result.Auth.String())
+				if fix := result.Auth.Fix(); fix != "" {
+					fmt.Println("    Fix: " + fix)
+				}
+			}
+			for _, c := range result.Configs {
+				fmt.Println(c.String())
+			}
+			if result.GC != nil {
+				fmt.Println(result.GC.String())
 			}
 
 			// Determine hard-required tools for exit code

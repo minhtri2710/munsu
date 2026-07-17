@@ -76,11 +76,17 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files.`
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "bootstrap diagnostics: %v\n", err)
 			} else {
-				for _, d := range result.Diagnostics {
-					fmt.Println(d)
+				for _, d := range result.Tools {
+					fmt.Println(d.String())
 				}
-				for _, c := range result.ConfigDetails {
-					fmt.Println(c)
+				if result.Auth != nil {
+					fmt.Println(result.Auth.String())
+				}
+				for _, c := range result.Configs {
+					fmt.Println(c.String())
+				}
+				if result.GC != nil {
+					fmt.Println(result.GC.String())
 				}
 			}
 
