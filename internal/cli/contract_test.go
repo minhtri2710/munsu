@@ -104,14 +104,22 @@ func TestFleetSnapshotV2DefinitiveEmptyAndCompatibilityV1(t *testing.T) {
 		SchemaVersion string `json:"schema_version"`
 		Kind          string `json:"kind"`
 		Data          struct {
-			Message string `json:"message"`
+			Schema string `json:"schema"`
+			Time   string `json:"time"`
+			Tasks  []any  `json:"tasks"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(v1), &v1Resp); err != nil {
 		t.Fatalf("v1 response is not valid JSON: %v", err)
 	}
-	if !strings.Contains(v1Resp.Data.Message, `"schema": "munsu-fleet-snapshot.v1"`) {
-		t.Errorf("fleet snapshot v1 changed: %s", v1)
+	if v1Resp.Kind != "fleet.snapshot.v1" {
+		t.Errorf("fleet snapshot v1 kind = %q, want fleet.snapshot.v1: %s", v1Resp.Kind, v1)
+	}
+	if v1Resp.Data.Schema != "munsu-fleet-snapshot.v1" {
+		t.Errorf("fleet snapshot v1 data.schema = %q, want munsu-fleet-snapshot.v1: %s", v1Resp.Data.Schema, v1)
+	}
+	if v1Resp.Data.Time == "" {
+		t.Errorf("fleet snapshot v1 data.time is empty: %s", v1)
 	}
 }
 

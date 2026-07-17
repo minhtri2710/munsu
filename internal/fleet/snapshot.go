@@ -1,7 +1,6 @@
 package fleet
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -110,14 +109,6 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 	return snap, nil
 }
 
-// JSON returns the snapshot as indented JSON.
-func (s *FleetSnapshot) JSON() (string, error) {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
 
 // View renders the fleet snapshot as Markdown.
 func View(homeDir string) error {
