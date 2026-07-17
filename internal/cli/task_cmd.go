@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
@@ -37,10 +38,15 @@ func newTaskCmd() *cobra.Command {
 			if err := task.WriteMeta(ctx.Home, id, meta); err != nil {
 				return err
 			}
-			fmt.Printf("task %s added\n", id)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "task.add",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: fmt.Sprintf("task %s added", id)},
+			})
 		}),
 	}
+	configureContractCommand(addCmd)
 	addCmd.Flags().String("kind", "ship", "Task kind (ship|scout)")
 	addCmd.Flags().String("repo", "", "Project repository name")
 
@@ -57,12 +63,15 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			if len(entries) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "no tasks found")
-				return nil
+				return writeContract(cmd, contract.Response[contract.EmptyResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "task.list",
+					Status:        "success",
+					Data:          contract.EmptyResult{Count: 0, Context: "no tasks found"},
+				})
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-8s %-16s %s\n", "ID", "KIND", "PROJECT", "STATUS")
-			count := 0
+			var taskEntries []contract.TaskEntry
 			for _, e := range entries {
 				if stateFilter != "" && !strings.Contains(e.LastStatus, stateFilter) {
 					continue
@@ -75,13 +84,24 @@ func newTaskCmd() *cobra.Command {
 				if status == "" {
 					status = "registered"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-8s %-16s %s\n", e.ID, e.Kind, project, status)
-				count++
+				taskEntries = append(taskEntries, contract.TaskEntry{
+					ID:      e.ID,
+					Kind:    e.Kind,
+					Project: project,
+					Status:  status,
+				})
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "\nTotal: %d task(s)\n", count)
-			return nil
+
+			return writeContract(cmd, contract.Response[[]contract.TaskEntry]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "task.list",
+				Status:        "success",
+				Data:          taskEntries,
+				Help:          []string{fmt.Sprintf("Total: %d task(s)", len(taskEntries))},
+			})
 		}),
-}
+	}
+	configureContractCommand(listCmd)
 	listCmd.Flags().String("state", "", "Filter by state (in-flight|queued|done)")
 
 	showCmd := &cobra.Command{
@@ -97,24 +117,31 @@ func newTaskCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Task: %s\n", id)
-			fmt.Printf("---\n")
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("Task: %s\n---\n", id))
 			for k, v := range meta {
-				fmt.Printf("%s: %s\n", k, v)
+				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
 
 			if full {
 				statusLines, err := task.ReadStatus(ctx.Home, id)
 				if err == nil && len(statusLines) > 0 {
-					fmt.Printf("---\nStatus:\n")
+					b.WriteString("---\nStatus:\n")
 					for _, line := range statusLines {
-						fmt.Printf("  %s\n", line)
+						b.WriteString(fmt.Sprintf("  %s\n", line))
 					}
 				}
 			}
-			return nil
+
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "task.show",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+			})
 		}),
 	}
+	configureContractCommand(showCmd)
 	showCmd.Flags().Bool("full", false, "Show full details including status")
 
 	statusCmd := &cobra.Command{
@@ -135,10 +162,15 @@ func newTaskCmd() *cobra.Command {
 			rec, _ := event.FromTaskStatus(ctx.Home, id, line)
 			_ = event.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
 
-			fmt.Printf("status appended: %s\n", line)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "task.status",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: fmt.Sprintf("status appended: %s", line)},
+			})
 		}),
 	}
+	configureContractCommand(statusCmd)
 
 	cmd.AddCommand(addCmd)
 	cmd.AddCommand(listCmd)

@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/secondmate"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +42,7 @@ func newSecondmateCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered secondmates",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -49,15 +51,27 @@ func newSecondmateCmd() *cobra.Command {
 				return err
 			}
 			if len(mates) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No secondmates registered.")
-				return nil
+				return writeContract(cmd, contract.Response[contract.EmptyResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "secondmate.list",
+					Status:        "success",
+					Data:          contract.EmptyResult{Count: 0, Context: "No secondmates registered."},
+				})
 			}
+			var b strings.Builder
 			for _, m := range mates {
-				fmt.Fprintf(cmd.OutOrStdout(), "- %s (%s)\n", m.ID, m.Home)
+				b.WriteString(fmt.Sprintf("- %s (%s)\n", m.ID, m.Home))
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "secondmate.list",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+			})
 		}),
-	})
+	}
+	configureContractCommand(listCmd)
+	cmd.AddCommand(listCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "handoff <secondmate-home> <item-key...>",

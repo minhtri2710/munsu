@@ -185,3 +185,27 @@ type TruncatedResult struct {
 	Truncated   bool   `json:"truncated"`
 	FullCommand string `json:"full_command"`
 }
+
+// TaskEntry is one row in a task list.
+type TaskEntry struct {
+	ID      string `json:"id"`
+	Kind    string `json:"kind,omitempty"`
+	Project string `json:"project,omitempty"`
+	Status  string `json:"status,omitempty"`
+}
+
+// ProjectEntry is one row in a project list.
+type ProjectEntry struct {
+	Name        string `json:"name"`
+	Mode        string `json:"mode,omitempty"`
+	Yolo        bool   `json:"yolo,omitempty"`
+	Description string `json:"description,omitempty"`
+	Added       string `json:"added,omitempty"`
+	Directory   string `json:"directory,omitempty"`
+}
+
+// DecisionHoldInfo is one row in a decision-hold list.
+type DecisionHoldInfo struct {
+	DecisionKey string `json:"decision_key"`
+	Reason      string `json:"reason,omitempty"`
+}

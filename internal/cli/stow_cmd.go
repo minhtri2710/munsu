@@ -3,8 +3,10 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/minhtri2710/munsu/internal/agentsmd"
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/selfupdate"
 	"github.com/minhtri2710/munsu/internal/stow"
@@ -49,23 +51,38 @@ Examples:
 
 			switch {
 			case res.DataLearnings != "":
-				fmt.Printf("Stowed learnings to %s\n", res.DataLearnings)
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "stow",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed learnings to %s", res.DataLearnings)},
+				})
 			case res.DataCaptain != "":
-				fmt.Printf("Stowed captain preferences to %s\n", res.DataCaptain)
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "stow",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed captain preferences to %s", res.DataCaptain)},
+				})
 			default:
-				fmt.Println("Nothing to stow (no text provided)")
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "stow",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: "Nothing to stow (no text provided)", Noop: true},
+				})
 			}
-			return nil
 		}),
 	}
 
+	configureContractCommand(cmd)
 	cmd.Flags().StringVar(&kind, "kind", "", "Kind of stow entry (learning|captain)")
 	cmd.Flags().BoolVar(&captain, "captain", false, "Shorthand for --kind captain")
 	return cmd
 }
 
 func newEnsureAgentsMdCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "ensure-agents-md <project>",
 		Short: "Ensure project AGENTS.md and CLAUDE.md symlink",
 		Long: `Create or update AGENTS.md and CLAUDE.md symlink for a project.
@@ -91,16 +108,25 @@ or an absolute path to a project directory.`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Ensured AGENTS.md at %s\n", res.AGENTSMD)
+
+			var msg strings.Builder
+			msg.WriteString(fmt.Sprintf("Ensured AGENTS.md at %s", res.AGENTSMD))
 			if res.CLAUDEMDSym != "" {
-				fmt.Printf("Created CLAUDE.md symlink at %s\n", res.CLAUDEMDSym)
+				msg.WriteString(fmt.Sprintf("\nCreated CLAUDE.md symlink at %s", res.CLAUDEMDSym))
 			}
 			if res.SelfGovernSec {
-				fmt.Println("Added '## Maintaining this file' section")
+				msg.WriteString("\nAdded '## Maintaining this file' section")
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "stow.ensure-agents-md",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: msg.String()},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
 func newUpdateCmd() *cobra.Command {

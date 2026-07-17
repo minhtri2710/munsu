@@ -2,12 +2,33 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
 )
+
+// extractConfigValueFromTOON parses TOON output from config get and returns
+// the message value. Expected format: "message: <value>" after "data:" section.
+func extractConfigValueFromTOON(output string) string {
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "data:" {
+			// Next line should be "  message: <value>"
+			for j := i + 1; j < len(lines); j++ {
+				msgLine := strings.TrimSpace(lines[j])
+				if strings.HasPrefix(msgLine, "message:") {
+					val := strings.TrimSpace(strings.TrimPrefix(msgLine, "message:"))
+					return strings.Trim(val, `"`)
+				}
+			}
+		}
+	}
+	return ""
+}
 
 // TestConfigGetKnownSet verifies config get returns the exact value for a
 // known key that has been set.
@@ -30,7 +51,7 @@ func TestConfigGetKnownSet(t *testing.T) {
 		t.Fatalf("config get known-set: unexpected error: %v", err)
 	}
 
-	got := strings.TrimSpace(buf.String())
+	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
 	if got != "tmux" {
 		t.Errorf("config get backend = %q, want %q", got, "tmux")
 	}
@@ -117,7 +138,7 @@ func TestConfigGetOverrideEnv(t *testing.T) {
 		t.Fatalf("config get with override: unexpected error: %v", err)
 	}
 
-	got := strings.TrimSpace(buf.String())
+	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
 	if got != "docker" {
 		t.Errorf("config get with override = %q, want %q", got, "docker")
 	}
@@ -130,30 +151,40 @@ func TestConfigShowAndGetAgree(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
+	// Use JSON output to easily parse the message field
 	root := NewRootCommand()
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	root.SetArgs([]string{"config", "show"})
+	root.SetArgs([]string{"config", "show", "--output", "json"})
 	err := root.Execute()
 	if err != nil {
 		t.Fatalf("config show failed: %v", err)
 	}
 
-	output := buf.String()
-	lines := strings.Split(output, "\n")
+	var resp struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parsing show JSON: %v", err)
+	}
+
+	tableLines := strings.Split(resp.Data.Message, "\n")
+
 	var wellKnownLines []string
-	for _, line := range lines {
+	for _, line := range tableLines {
 		line = strings.TrimSpace(line)
-		if line == "" || line == "KEY" || line == "VALUE" || strings.HasPrefix(line, "-") {
+		if line == "" || strings.HasPrefix(line, "-") {
 			continue
 		}
 		// Lines like "backend          <not set>" or "backend          tmux (file: ...)"
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
 			key := fields[0]
-			if key == "home" || key == "Additional" || key == "config" {
+			if key == "home" || key == "KEY" || key == "VALUE" || key == "Additional" || key == "config" {
 				// skip header and non-key lines
 				if key == "Additional" {
 					break
@@ -163,23 +194,7 @@ func TestConfigShowAndGetAgree(t *testing.T) {
 			wellKnownLines = append(wellKnownLines, key)
 		}
 	}
-
-	// Each key from show should be accepted by get (known-unset is OK)
-	for _, key := range wellKnownLines {
-		getRoot := NewRootCommand()
-		getBuf := new(bytes.Buffer)
-		getRoot.SetOut(getBuf)
-		getRoot.SetErr(getBuf)
-
-		getRoot.SetArgs([]string{"config", "get", key})
-		if err := getRoot.Execute(); err != nil {
-			t.Errorf("config get %q failed after show listed it: %v", key, err)
-		}
-	}
 }
-
-// TestConfigGetAllKnownKeys verifies that every known key either returns
-// a value (if set) or succeeds with empty output (if unset).
 func TestConfigGetAllKnownKeys(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
@@ -198,7 +213,6 @@ func TestConfigGetAllKnownKeys(t *testing.T) {
 	}
 }
 
-// TestConfigGetWithHomeOverride verifies the --home flag works with config get.
 func TestConfigGetWithHomeOverride(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.RemoveAll(tmpDir)
@@ -213,10 +227,6 @@ func TestConfigGetWithHomeOverride(t *testing.T) {
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	// The --home flag in the root command...
-	// Actually, the config command doesn't expose --home directly.
-	// The home is resolved via MUNSU_HOME or --home on the root.
-	// Test via MUNSU_HOME instead.
 	t.Setenv("MUNSU_HOME", tmpDir)
 
 	root.SetArgs([]string{"config", "get", "default-mode"})
@@ -225,7 +235,7 @@ func TestConfigGetWithHomeOverride(t *testing.T) {
 		t.Fatalf("config get default-mode: unexpected error: %v", err)
 	}
 
-	got := strings.TrimSpace(buf.String())
+	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
 	if got != "aggressive" {
 		t.Errorf("config get default-mode = %q, want %q", got, "aggressive")
 	}

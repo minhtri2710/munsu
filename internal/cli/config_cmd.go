@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
-
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -25,7 +25,7 @@ MUNSU_<KEY>_OVERRIDE (e.g. MUNSU_BACKEND_OVERRIDE=tmux).
 Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 `,
 	}
-	cmd.AddCommand(&cobra.Command{
+	getCmd := &cobra.Command{
 		Use:   "get <key>",
 		Short: "Get a configuration value",
 		Args:  ExactArgs(1),
@@ -38,11 +38,18 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 				}
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), val)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "message",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: val},
+			})
 		}),
-	})
-	cmd.AddCommand(&cobra.Command{
+	}
+	configureContractCommand(getCmd)
+	cmd.AddCommand(getCmd)
+
+	setCmd := &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Set a configuration value",
 		Args:  ExactArgs(2),
@@ -56,13 +63,14 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 			}
 			return config.Set(ctx.Home, key, value)
 		}),
-	})
+	}
+	cmd.AddCommand(setCmd)
 	cmd.AddCommand(newConfigShowCmd())
 	return cmd
 }
 
 func newConfigShowCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show resolved configuration values with source",
 		Args:  NoArgs,
@@ -78,19 +86,26 @@ Override environment variables:
   MUNSU_DEFAULT_MODE_OVERRIDE
 `,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			showConfig(ctx.Home)
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "config.show",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: showConfig(ctx.Home)},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
-// showConfig prints all well-known configuration values with their source.
-func showConfig(homeDir string) {
-	fmt.Printf("%-30s %s\n", "KEY", "VALUE")
-	fmt.Println(strings.Repeat("-", 80))
+// showConfig returns all well-known configuration values with their source.
+func showConfig(homeDir string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%-30s %s\n", "KEY", "VALUE"))
+	b.WriteString(strings.Repeat("-", 80) + "\n")
 
 	// Home path
-	fmt.Printf("%-30s %s\n", "home", homeDir)
+	b.WriteString(fmt.Sprintf("%-30s %s\n", "home", homeDir))
 
 	for _, key := range config.KnownKeys {
 		envKey := fmt.Sprintf("MUNSU_%s_OVERRIDE", strings.ToUpper(key))
@@ -99,32 +114,32 @@ func showConfig(homeDir string) {
 			// Check if env override exists (config.Get returns it, but if
 			// neither file nor env is set, it returns an error).
 			if envVal, ok := os.LookupEnv(envKey); ok {
-				fmt.Printf("%-30s %s (env: %s)\n", key, envVal, envKey)
+				b.WriteString(fmt.Sprintf("%-30s %s (env: %s)\n", key, envVal, envKey))
 			} else {
-				fmt.Printf("%-30s <not set>\n", key)
+				b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))
 			}
 			continue
 		}
 		// Determine source
 		if _, ok := os.LookupEnv(envKey); ok {
-			fmt.Printf("%-30s %s (env: %s)\n", key, val, envKey)
+			b.WriteString(fmt.Sprintf("%-30s %s (env: %s)\n", key, val, envKey))
 		} else {
-			fmt.Printf("%-30s %s (file: %s)\n", key, val, config.ConfigDir(homeDir)+"/"+key)
+			b.WriteString(fmt.Sprintf("%-30s %s (file: %s)\n", key, val, config.ConfigDir(homeDir)+"/"+key))
 		}
 	}
 
 	// Show additional keys that happen to exist.
 	additionalKeys := findExtraConfigKeys(homeDir)
 	if len(additionalKeys) > 0 {
-		fmt.Println()
-		fmt.Println("Additional config keys:")
+		b.WriteString("\nAdditional config keys:\n")
 		for _, key := range additionalKeys {
 			val, err := config.Get(homeDir, key)
 			if err == nil {
-				fmt.Printf("  %-26s %s\n", key, val)
+				b.WriteString(fmt.Sprintf("  %-26s %s\n", key, val))
 			}
 		}
 	}
+	return strings.TrimSpace(b.String())
 }
 
 // findExtraConfigKeys lists config files that are not in the well-known list.

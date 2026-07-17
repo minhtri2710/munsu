@@ -7,6 +7,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/brief"
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -67,19 +68,28 @@ func newBriefCmd() *cobra.Command {
 			if scout {
 				kind = "scout"
 			}
-			fmt.Printf("Brief scaffolded at %s\n", brief.Path(ctx.Home, id))
-			fmt.Printf("  id:    %s\n", id)
-			fmt.Printf("  repo:  %s\n", repo)
-			fmt.Printf("  kind:  %s\n", kind)
+
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("Brief scaffolded at %s\n", brief.Path(ctx.Home, id)))
+			b.WriteString(fmt.Sprintf("  id:    %s\n", id))
+			b.WriteString(fmt.Sprintf("  repo:  %s\n", repo))
+			b.WriteString(fmt.Sprintf("  kind:  %s\n", kind))
 			if resolvedMode != "" {
-				fmt.Printf("  mode:  %s\n", resolvedMode)
+				b.WriteString(fmt.Sprintf("  mode:  %s\n", resolvedMode))
 			}
 			if projYolo {
-				fmt.Println("  yolo:  true")
+				b.WriteString("  yolo:  true\n")
 			}
-			return nil
+
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "brief",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 
 	cmd.Flags().BoolVar(&scout, "scout", false, "Generate a scout brief instead of ship brief")
 	cmd.Flags().BoolVar(&force, "force", false, "Scaffold brief without requiring existing task meta")
@@ -100,7 +110,7 @@ func newSessionStartCmd() *cobra.Command {
 }
 
 func newBootstrapCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "bootstrap [install <tools>...]",
 		Short: "Detect toolchain and run setup sweeps",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -113,21 +123,31 @@ func newBootstrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			var b strings.Builder
 			for _, d := range result.Tools {
-				fmt.Println(d.String())
+				b.WriteString(d.String() + "\n")
 			}
 			if result.Auth != nil {
-				fmt.Println(result.Auth.String())
+				b.WriteString(result.Auth.String() + "\n")
 			}
 			for _, c := range result.Configs {
-				fmt.Println(c.String())
+				b.WriteString(c.String() + "\n")
 			}
 			if result.GC != nil {
-				fmt.Println(result.GC.String())
+				b.WriteString(result.GC.String() + "\n")
 			}
-			return nil
+
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "bootstrap",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
 func newWatchCmd() *cobra.Command {
@@ -141,11 +161,22 @@ func newWatchCmd() *cobra.Command {
 				return err
 			}
 			if reason != nil {
-				fmt.Printf("wake: %s — %s\n", reason.Kind, reason.Message)
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "watch",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("wake: %s — %s", reason.Kind, reason.Message)},
+				})
 			}
-			return nil
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "watch",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: "no wake reason", Noop: true},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
 
 	// Add subcommands
 	ensureCmd := newWatchEnsureCmd()
