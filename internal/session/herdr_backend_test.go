@@ -10,8 +10,8 @@ import (
 )
 
 // writeFakeHerdr creates a fake herdr executable in dir that responds to
-// expected commands: workspace list, workspace create, tab create, pane get,
-// pane close, pane send-text, pane send-keys, pane read.
+// expected commands: workspace list, workspace create, workspace close,
+// tab create, tab close, pane get, pane close, pane send-text, pane send-keys, pane read.
 // It asserts that --session is present on every call, and --no-focus on tab create.
 func writeFakeHerdr(t *testing.T, dir string) string {
 	t.Helper()
@@ -29,10 +29,10 @@ func writeFakeHerdr(t *testing.T, dir string) string {
 		`  exit 1` + "\n" +
 		`fi` + "\n" +
 		`case "$1" in` + "\n" +
-		"  workspace)\n" +
+"  workspace)\\\n" +
 		`    if [ "$2" = "list" ]; then` + "\n" +
 		`      cat <<'JSON'` + "\n" +
-		`{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[{"label":"test-ws","workspace_id":"wTest"}]}}` + "\n" +
+		`{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[{"label":"test-ws","workspace_id":"wTest","tab_count":1}]}}` + "\n" +
 		"JSON\n" +
 		"      exit 0\n" +
 		"    fi\n" +
@@ -40,6 +40,10 @@ func writeFakeHerdr(t *testing.T, dir string) string {
 		`      cat <<'JSON'` + "\n" +
 		`{"id":"cli:workspace:create","result":{"workspace":{"workspace_id":"w` + suffix + `"},"type":"workspace_created"}}` + "\n" +
 		"JSON\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		`    if [ "$2" = "close" ]; then` + "\n" +
+		`      echo "workspace $3 closed" >> "` + dir + `/herdr-trace"` + "\n" +
 		"      exit 0\n" +
 		"    fi\n" +
 		"    ;;\n" +
@@ -418,5 +422,83 @@ func TestSeedTeardownTab_WithFakeHerdr(t *testing.T) {
 	// Teardown should close the tab (fake herdr accepts it) even without lastCreate
 	if err := h.Teardown("wTest:p1"); err != nil {
 		t.Errorf("Teardown with seeded tab ID failed: %v", err)
+	}
+}
+
+func TestTeardown_ClosesWorkspace_WhenHometagMatches(t *testing.T) {
+	tmp := t.TempDir()
+	fakePath := writeFakeHerdr(t, tmp)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakePath+":"+oldPath)
+
+	h := NewHerdrBackend("test-s")
+	h.TeardownWorkspaceID = "wTest"
+	h.Hometag = "test-ws" // matches the workspace label in fake herdr
+	h.SeedTeardownTab("wTest:t1")
+
+	if err := h.Teardown("wTest:p1"); err != nil {
+		t.Errorf("Teardown with matching hometag should succeed: %v", err)
+	}
+}
+
+func TestTeardown_NoWorkspaceClose_WhenInDenyList(t *testing.T) {
+	tmp := t.TempDir()
+	fakePath := writeFakeHerdr(t, tmp)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakePath+":"+oldPath)
+
+	h := NewHerdrBackend("test-s")
+	h.TeardownWorkspaceID = "wTest"
+	h.Hometag = "test-ws"
+	h.DenyCloseWorkspaceIDs = []string{"wTest"}
+
+	if err := h.Teardown("wTest:p1"); err != nil {
+		t.Errorf("Teardown with deny-listed workspace should succeed: %v", err)
+	}
+}
+
+func TestTeardown_NoWorkspaceClose_WhenForeignLabel(t *testing.T) {
+	tmp := t.TempDir()
+	fakePath := writeFakeHerdr(t, tmp)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakePath+":"+oldPath)
+
+	h := NewHerdrBackend("test-s")
+	h.TeardownWorkspaceID = "wTest"
+	h.Hometag = "firstmate" // doesn't match workspace label 'test-ws'
+
+	if err := h.Teardown("wTest:p1"); err != nil {
+		t.Errorf("Teardown with non-matching hometag should succeed (no workspace close): %v", err)
+	}
+}
+
+func TestTeardown_NoWorkspaceClose_WhenEmptyHometag(t *testing.T) {
+	tmp := t.TempDir()
+	fakePath := writeFakeHerdr(t, tmp)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakePath+":"+oldPath)
+
+	h := NewHerdrBackend("test-s")
+	h.TeardownWorkspaceID = "wTest"
+	// Hometag is empty — no workspace close should happen
+
+	if err := h.Teardown("wTest:p1"); err != nil {
+		t.Errorf("Teardown with empty hometag should succeed: %v", err)
+	}
+}
+
+func TestWorkspaceIDToClose_PrefersLastCreate(t *testing.T) {
+	h := NewHerdrBackend("test-s")
+	h.TeardownWorkspaceID = "from-meta"
+
+	// Before lastCreate, should return from TeardownWorkspaceID
+	if wsID := h.workspaceIDToClose(); wsID != "from-meta" {
+		t.Errorf("workspaceIDToClose = %q, want from-meta", wsID)
+	}
+
+	// After setting lastCreate, should return lastCreate.WorkspaceID
+	h.lastCreate = &herdrLastCreate{WorkspaceID: "from-new-window"}
+	if wsID := h.workspaceIDToClose(); wsID != "from-new-window" {
+		t.Errorf("workspaceIDToClose after lastCreate = %q, want from-new-window", wsID)
 	}
 }

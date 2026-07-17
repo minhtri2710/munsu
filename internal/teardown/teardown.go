@@ -54,10 +54,20 @@ func Run(opts Options) (*TeardownResult, error) {
 	// 1. Kill session window
 	var wtPath string
 	if windowID, ok := meta["window"]; ok && windowID != "" {
-		bk, _, err := session.BackendForTask(opts.HomeDir, meta)
+		bk, bkName, err := session.BackendForTask(opts.HomeDir, meta)
 		if err != nil {
 			result.Steps = append(result.Steps, fmt.Sprintf("session backend unavailable: %v", err))
 		} else {
+			// For herdr backends, deny workspace close if another task references it
+			if bkName == "herdr" {
+				if hb, ok := bk.(*session.HerdrBackend); ok {
+					if wsID := meta["herdr_workspace_id"]; wsID != "" {
+						if refs := otherWorkspaceRefs(opts.HomeDir, opts.ID, wsID); len(refs) > 0 {
+							hb.DenyCloseWorkspaceIDs = append(hb.DenyCloseWorkspaceIDs, wsID)
+						}
+					}
+				}
+			}
 			if !bk.Alive(windowID) {
 				result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", windowID))
 			}
@@ -278,4 +288,35 @@ func reapWorktreeHolders(wtPath string) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// otherWorkspaceRefs scans all task meta files in homeDir for references to the given
+// workspace ID, excluding the task with the given ID. Returns a list of task IDs that
+// still reference the workspace. This prevents closing a workspace that another task is using.
+func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
+	stateDir := filepath.Join(homeDir, "state")
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		return nil
+	}
+
+	var refs []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
+			continue
+		}
+		taskID := strings.TrimSuffix(entry.Name(), ".meta")
+		if taskID == excludeID {
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(data), "herdr_workspace_id="+workspaceID) {
+			refs = append(refs, taskID)
+		}
+	}
+	return refs
 }

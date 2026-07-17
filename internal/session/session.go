@@ -135,11 +135,17 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 			sess = wsess
 		}
 		bk := NewHerdrBackend(sess)
-		// Seed durable teardown tab ID from meta
 		if meta != nil {
+			// Seed durable teardown tab ID from meta
 			if tabID := meta["herdr_tab_id"]; tabID != "" {
 				bk.SeedTeardownTab(tabID)
 			}
+			// Seed durable workspace ID from meta for husk cleanup
+			if wsID := meta["herdr_workspace_id"]; wsID != "" {
+				bk.TeardownWorkspaceID = wsID
+			}
+			// Set hometag for label-safe workspace close
+			bk.Hometag = hometag.Tag(homeDir)
 		}
 		return bk, "herdr", nil
 	case "tmux":
