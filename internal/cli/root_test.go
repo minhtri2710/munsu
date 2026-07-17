@@ -44,6 +44,7 @@ var canonicalCommands = []struct {
 	{name: "ensure-agents-md", use: "ensure-agents-md <project>"},
 	{name: "update", use: "update"},
 	{name: "secondmate", use: "secondmate"},
+	{name: "decision-hold", use: "decision-hold"},
 	{name: "afk", use: "afk"},
 }
 

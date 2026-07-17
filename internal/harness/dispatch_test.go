@@ -1,8 +1,10 @@
 package harness
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -157,6 +159,335 @@ func TestLoadDispatch_Full(t *testing.T) {
 	}
 }
 
+func TestLoadDispatch_WithSelect(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := tmpDir + "/dispatch-select.json"
+	jsonContent := `{
+		"defaultHarness": "codex",
+		"profiles": [
+			{"name": "quota", "match": ["*"], "harness": "codex", "select": "quota-balanced"}
+		]
+	}`
+	if err := writeFile(path, jsonContent); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadDispatch(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Profiles[0].SelectStrategy != "quota-balanced" {
+		t.Errorf("SelectStrategy = %q, want quota-balanced", cfg.Profiles[0].SelectStrategy)
+	}
+}
+
+func TestSelectProfile_UnknownStrategy(t *testing.T) {
+	profiles := []DispatchProfile{
+		{Name: "first", Match: []string{"*"}, Harness: "codex"},
+		{Name: "second", Match: []string{"*"}, Harness: "claude"},
+	}
+	got := SelectProfile(profiles, "unknown-strategy")
+	if got != "codex" {
+		t.Errorf("SelectProfile with unknown strategy = %q, want codex", got)
+	}
+}
+
+func TestSelectProfile_EmptyProfiles(t *testing.T) {
+	got := SelectProfile(nil, "quota-balanced")
+	if got != "" {
+		t.Errorf("SelectProfile(nil) = %q, want empty", got)
+	}
+}
+
+func TestSelectProfile_QuotaBalancedNoQuotaAxi(t *testing.T) {
+	profiles := []DispatchProfile{
+		{Name: "first", Match: []string{"*"}, Harness: "codex"},
+		{Name: "second", Match: []string{"*"}, Harness: "claude"},
+	}
+	got := SelectProfile(profiles, "quota-balanced")
+	if got != "codex" {
+		t.Errorf("SelectProfile(quota-balanced, no quota-axi) = %q, want codex", got)
+	}
+}
+
+func TestResolveDispatch_WithQuotaBalanced(t *testing.T) {
+	cfg := &DispatchConfig{
+		DefaultHarness: "pi",
+		Profiles: []DispatchProfile{
+			{
+				Name:           "quota-catchall",
+				Match:          []string{"*"},
+				Harness:        "codex",
+				SelectStrategy: "quota-balanced",
+			},
+		},
+	}
+
+	got := ResolveDispatch(cfg, "any task")
+	if got != "codex" {
+		t.Errorf("ResolveDispatch with quota-balanced (no quota-axi) = %q, want codex", got)
+	}
+}
+
+func TestSelectQuotaBalanced_MixedFreshStale(t *testing.T) {
+	tests := []struct {
+		name        string
+		profiles    []DispatchProfile
+		quotaJSON   string
+		wantHarness string
+	}{
+		{
+			name: "fresh_wins_over_slight_stale",
+			profiles: []DispatchProfile{
+				{Name: "codex", Harness: "codex"},
+				{Name: "claude", Harness: "claude"},
+			},
+			quotaJSON: `{
+				"providers": [
+					{"provider": "codex", "state": {"status": "fresh"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 60},
+						{"id": "weekly", "kind": "general", "percentRemaining": 70}
+					]},
+					{"provider": "claude", "state": {"status": "stale"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 75},
+						{"id": "seven_day", "kind": "general", "percentRemaining": 80}
+					]}
+				]
+			}`,
+			wantHarness: "codex",
+		},
+		{
+			name: "stale_wins_with_big_margin",
+			profiles: []DispatchProfile{
+				{Name: "codex", Harness: "codex"},
+				{Name: "claude", Harness: "claude"},
+			},
+			quotaJSON: `{
+				"providers": [
+					{"provider": "codex", "state": {"status": "fresh"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 30},
+						{"id": "weekly", "kind": "general", "percentRemaining": 40}
+					]},
+					{"provider": "claude", "state": {"status": "stale"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 75},
+						{"id": "seven_day", "kind": "general", "percentRemaining": 80}
+					]}
+				]
+			}`,
+			wantHarness: "claude",
+		},
+		{
+			name: "exact_tie_first_wins",
+			profiles: []DispatchProfile{
+				{Name: "codex", Harness: "codex"},
+				{Name: "claude", Harness: "claude"},
+			},
+			quotaJSON: `{
+				"providers": [
+					{"provider": "codex", "state": {"status": "fresh"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 50},
+						{"id": "weekly", "kind": "general", "percentRemaining": 50}
+					]},
+					{"provider": "claude", "state": {"status": "fresh"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 50},
+						{"id": "seven_day", "kind": "general", "percentRemaining": 50}
+					]}
+				]
+			}`,
+			wantHarness: "codex",
+		},
+		{
+			name: "model_windows_ignored",
+			profiles: []DispatchProfile{
+				{Name: "codex", Harness: "codex"},
+			},
+			quotaJSON: `{
+				"providers": [
+					{"provider": "codex", "state": {"status": "fresh"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 30},
+						{"id": "model:codex_bengalfox:gpt-5.2-codex", "kind": "model", "percentRemaining": 100},
+						{"id": "model:fable", "kind": "model", "percentRemaining": 100}
+					]}
+				]
+			}`,
+			wantHarness: "codex",
+		},
+		{
+			name: "unknown_harness_skipped",
+			profiles: []DispatchProfile{
+				{Name: "unknown", Harness: "unknown-harness"},
+				{Name: "codex", Harness: "codex"},
+			},
+			quotaJSON: `{
+				"providers": [
+					{"provider": "codex", "state": {"status": "fresh"}, "windows": [
+						{"id": "five_hour", "kind": "general", "percentRemaining": 80}
+					]}
+				]
+			}`,
+			wantHarness: "codex",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := selectQuotaBalancedWithFixture(tt.profiles, tt.quotaJSON)
+			if got != tt.wantHarness {
+				t.Errorf("selectQuotaBalanced = %q, want %q", got, tt.wantHarness)
+			}
+		})
+	}
+}
+
+func TestSelectQuotaBalanced_AllUnavailable(t *testing.T) {
+	profiles := []DispatchProfile{
+		{Name: "codex", Harness: "codex"},
+	}
+	quotaJSON := `{"providers": []}`
+	got := selectQuotaBalancedWithFixture(profiles, quotaJSON)
+	if got != "codex" {
+		t.Errorf("all unavailable = %q, want codex (first profile)", got)
+	}
+}
+
+func TestSelectQuotaBalanced_NoUsableWindows(t *testing.T) {
+	profiles := []DispatchProfile{
+		{Name: "codex", Harness: "codex"},
+	}
+	quotaJSON := `{
+		"providers": [
+			{"provider": "codex", "state": {"status": "fresh"}, "windows": [
+				{"id": "model:codex_bengalfox:gpt-5.2-codex", "kind": "model", "percentRemaining": 100}
+			]}
+		]
+	}`
+	got := selectQuotaBalancedWithFixture(profiles, quotaJSON)
+	if got != "codex" {
+		t.Errorf("no usable windows = %q, want codex (first profile)", got)
+	}
+}
+
+// selectQuotaBalancedWithFixture runs the quota-balanced selection with a
+// pre-supplied quota-axi JSON fixture instead of calling the real binary.
+func selectQuotaBalancedWithFixture(profiles []DispatchProfile, fixtureJSON string) string {
+	if len(profiles) == 0 {
+		return ""
+	}
+
+	var qd quotaData
+	if err := json.Unmarshal([]byte(fixtureJSON), &qd); err != nil {
+		return profiles[0].Harness
+	}
+
+	if len(qd.Providers) == 0 {
+		return profiles[0].Harness
+	}
+
+	type candidate struct {
+		index int
+		min   float64
+		fresh bool
+	}
+
+	var candidates []candidate
+	for i, p := range profiles {
+		providerName, ok := quotaProvider[p.Harness]
+		if !ok {
+			continue
+		}
+
+		var provider *quotaProviderData
+		for j := range qd.Providers {
+			if qd.Providers[j].Provider == providerName {
+				provider = &qd.Providers[j]
+				break
+			}
+		}
+		if provider == nil {
+			continue
+		}
+
+		genIDs := generalWindowIDs[p.Harness]
+		if len(genIDs) == 0 {
+			continue
+		}
+
+		var remaining []float64
+		for _, w := range provider.Windows {
+			if w.Kind == "model" {
+				continue
+			}
+			for _, gid := range genIDs {
+				if w.ID == gid {
+					remaining = append(remaining, w.PercentRemaining)
+					break
+				}
+			}
+		}
+
+		if len(remaining) == 0 {
+			continue
+		}
+
+		min := remaining[0]
+		for _, r := range remaining[1:] {
+			if r < min {
+				min = r
+			}
+		}
+
+		candidates = append(candidates, candidate{
+			index: i,
+			min:   min,
+			fresh: provider.State.Status == "fresh",
+		})
+	}
+
+	if len(candidates) == 0 {
+		return profiles[0].Harness
+	}
+
+	var freshCands, staleCands []candidate
+	for _, c := range candidates {
+		if c.fresh {
+			freshCands = append(freshCands, c)
+		} else {
+			staleCands = append(staleCands, c)
+		}
+	}
+
+	sort.Slice(freshCands, func(i, j int) bool {
+		if freshCands[i].min != freshCands[j].min {
+			return freshCands[i].min > freshCands[j].min
+		}
+		return freshCands[i].index < freshCands[j].index
+	})
+
+	sort.Slice(staleCands, func(i, j int) bool {
+		if staleCands[i].min != staleCands[j].min {
+			return staleCands[i].min > staleCands[j].min
+		}
+		return staleCands[i].index < staleCands[j].index
+	})
+
+	var best candidate
+	if len(freshCands) > 0 && len(staleCands) > 0 {
+		margin := 20.0
+		if staleCands[0].min >= freshCands[0].min+margin {
+			best = staleCands[0]
+		} else {
+			best = freshCands[0]
+		}
+	} else if len(freshCands) > 0 {
+		best = freshCands[0]
+	} else if len(staleCands) > 0 {
+		best = staleCands[0]
+	} else {
+		return profiles[0].Harness
+	}
+
+	return profiles[best.index].Harness
+}
+
 func splitWords(s string) []string {
 	if s == "" {
 		return nil
@@ -176,4 +507,27 @@ func splitWords(s string) []string {
 
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func TestSplitWords(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"hello", []string{"hello"}},
+		{"hello world", []string{"hello", "world"}},
+		{"  spaced  ", []string{"spaced"}},
+	}
+	for _, tt := range tests {
+		got := splitWords(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("splitWords(%q) length = %d, want %d", tt.input, len(got), len(tt.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("splitWords(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
 }
