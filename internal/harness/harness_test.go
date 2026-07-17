@@ -6,7 +6,28 @@ import (
 	"testing"
 )
 
+// clearEnvMarkers unsets all known harness env markers to avoid
+// system-level env var interference in detection tests.
+func clearEnvMarkers(t *testing.T) {
+	t.Helper()
+	for _, env := range []string{
+		"CLAUDE_CODE",
+		"CODECLIMB",
+		"OPENCODE",
+		"PI_CODING_AGENT_DIR",
+		"PI_CODING_AGENT",
+		"GROK_VM_ID",
+		"GROK_AGENT",
+		"ANTIGRAVITY_AGENT",
+	} {
+		t.Setenv(env, "")
+		os.Unsetenv(env)
+	}
+}
+
 func TestDetectFromEnv_Claude(t *testing.T) {
+	// Unset all markers first to avoid interference from system-level vars
+	clearEnvMarkers(t)
 	os.Setenv("CLAUDE_CODE", "1")
 	defer os.Unsetenv("CLAUDE_CODE")
 
@@ -17,6 +38,7 @@ func TestDetectFromEnv_Claude(t *testing.T) {
 }
 
 func TestDetectFromEnv_Codex(t *testing.T) {
+	clearEnvMarkers(t)
 	os.Setenv("CODECLIMB", "1")
 	defer os.Unsetenv("CODECLIMB")
 
@@ -27,6 +49,7 @@ func TestDetectFromEnv_Codex(t *testing.T) {
 }
 
 func TestDetectFromEnv_Opi(t *testing.T) {
+	clearEnvMarkers(t)
 	os.Setenv("OPENCODE", "1")
 	defer os.Unsetenv("OPENCODE")
 
@@ -37,6 +60,7 @@ func TestDetectFromEnv_Opi(t *testing.T) {
 }
 
 func TestDetectFromEnv_Pi(t *testing.T) {
+	clearEnvMarkers(t)
 	os.Setenv("PI_CODING_AGENT_DIR", "/some/path")
 	defer os.Unsetenv("PI_CODING_AGENT_DIR")
 
@@ -47,6 +71,7 @@ func TestDetectFromEnv_Pi(t *testing.T) {
 }
 
 func TestDetectFromEnv_Grok(t *testing.T) {
+	clearEnvMarkers(t)
 	os.Setenv("GROK_VM_ID", "vm-123")
 	defer os.Unsetenv("GROK_VM_ID")
 
@@ -56,7 +81,9 @@ func TestDetectFromEnv_Grok(t *testing.T) {
 	}
 }
 
+
 func TestDetectFromEnv_Agy(t *testing.T) {
+	clearEnvMarkers(t)
 	os.Setenv("ANTIGRAVITY_AGENT", "1")
 	defer os.Unsetenv("ANTIGRAVITY_AGENT")
 
@@ -66,18 +93,17 @@ func TestDetectFromEnv_Agy(t *testing.T) {
 	}
 }
 
+
 func TestDetectFromEnv_Empty(t *testing.T) {
-	// Unset all env markers
-	for _, env := range []string{"CLAUDE_CODE", "CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID", "ANTIGRAVITY_AGENT"} {
-		t.Setenv(env, "")
-		os.Unsetenv(env)
-	}
+	// Unset all env markers including system-level vars
+	clearEnvMarkers(t)
 
 	h := detectFromEnv()
 	if h != "" {
 		t.Errorf("detectFromEnv() = %q, want empty", h)
 	}
 }
+
 
 func TestMatchProcessName(t *testing.T) {
 	tests := []struct {
@@ -165,8 +191,8 @@ func TestTemplates(t *testing.T) {
 
 	if tmpl, ok := Templates[Grok]; !ok {
 		t.Errorf("missing template for %s", Grok)
-	} else if tmpl.ModelFlag != "" {
-		t.Errorf("Grok ModelFlag = %q, want empty", tmpl.ModelFlag)
+	} else if tmpl.ModelFlag != "--model" {
+		t.Errorf("Grok ModelFlag = %q, want --model", tmpl.ModelFlag)
 	}
 
 	if tmpl, ok := Templates[Agy]; !ok {
@@ -319,7 +345,7 @@ func TestCrew_CrewHarnessDefaultIgnored(t *testing.T) {
 	}
 
 	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
-	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
+	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT"} {
 		t.Setenv(env, "")
 	}
 	t.Setenv("CLAUDE_CODE", "1")
@@ -348,7 +374,7 @@ func TestSecondmate_DefaultSentinelsIgnored(t *testing.T) {
 
 	t.Setenv("MUNSU_SECONDMATE-HARNESS_OVERRIDE", "")
 	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
-	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "GROK_VM_ID"} {
+	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT"} {
 		t.Setenv(env, "")
 	}
 	t.Setenv("CLAUDE_CODE", "1")
