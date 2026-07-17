@@ -5,7 +5,9 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/secondmate"
 	"github.com/spf13/cobra"
 )
 
@@ -44,16 +46,41 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		}
 		crewmates = append(crewmates, row)
 	}
+	// Collect secondmate entries
+	matedata, err := secondmate.List(ctx.Home)
+	var secondmates []contract.SecondmateEntry
+	if err == nil {
+		for _, m := range matedata {
+			status := fleet.SecondmateStatus(m.Home)
+			secondmates = append(secondmates, contract.SecondmateEntry{
+				ID:     m.ID,
+				Scope:  m.Scope,
+				Status: status,
+			})
+		}
+	}
+
+	// Count unresolved holds across all tasks
+	unresolvedHolds := 0
+	for _, entry := range snapshot.Tasks {
+		holds, err := decisionhold.ListUnresolved(ctx.Home, entry.ID)
+		if err == nil {
+			unresolvedHolds += len(holds)
+		}
+	}
+
 	sort.Slice(crewmates, func(i, j int) bool { return crewmates[i].TaskID < crewmates[j].TaskID })
 	return writeContract(cmd, contract.Response[contract.FleetSnapshotV2]{
 		SchemaVersion: contract.SchemaVersion,
 		Kind:          "fleet.snapshot",
 		Status:        "success",
 		Data: contract.FleetSnapshotV2{
-			Scope:     ctx.Home,
-			Count:     len(crewmates),
-			Total:     len(crewmates),
-			Crewmates: crewmates,
+			Scope:           ctx.Home,
+			Count:           len(crewmates),
+			Total:           len(crewmates),
+			Crewmates:       crewmates,
+			Secondmates:     secondmates,
+			UnresolvedHolds: unresolvedHolds,
 		},
 		Help: []string{"Run `munsu task observe <task-id>` to inspect a crewmate"},
 	})

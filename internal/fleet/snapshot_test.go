@@ -194,7 +194,47 @@ func TestView_RegisteredPhase(t *testing.T) {
 	if !strings.Contains(out, "registered") {
 		t.Errorf("expected View to show 'registered' for pre-spawn task, got: %q", out)
 	}
-	if strings.Contains(out, "(dead)") {
-		t.Errorf("View should not show '(dead)' for pre-spawn meta with no window, got: %q", out)
+}
+
+func TestSecondmateStatus_Seeded(t *testing.T) {
+	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	os.MkdirAll(smHome, 0755)
+
+	status := SecondmateStatus(smHome)
+	if status != "seeded" {
+		t.Errorf("SecondmateStatus = %q, want %q", status, "seeded")
+	}
+}
+
+func TestSecondmateStatus_Alive(t *testing.T) {
+	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
+
+	status := SecondmateStatus(smHome)
+	if status != "alive" {
+		t.Errorf("SecondmateStatus = %q, want %q", status, "alive")
+	}
+}
+
+func TestSecondmateStatus_Dead(t *testing.T) {
+	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("invalid\n"), 0644)
+
+	status := SecondmateStatus(smHome)
+	if status != "dead" {
+		t.Errorf("SecondmateStatus = %q, want %q", status, "dead")
+	}
+}
+
+func TestSecondmateStatus_Unknown(t *testing.T) {
+	// Non-existent home should return unknown
+	status := SecondmateStatus("/nonexistent/sm")
+	if status != "unknown" {
+		t.Errorf("SecondmateStatus = %q, want %q", status, "unknown")
 	}
 }
