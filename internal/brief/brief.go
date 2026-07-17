@@ -93,7 +93,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
    daemon error, append `+"`"+`blocked: {the daemon error}`+"`"+` and stop; only firstmate manages the daemon.
 
 ## Project memory
-If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run the ensure-agents-md script provided by firstmate.
+If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
 Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
 If you touch a project `+"`"+`AGENTS.md`+"`"+` that lacks `+"`"+`## Maintaining this file`+"`"+`, add that short self-governance section in the same pass.
