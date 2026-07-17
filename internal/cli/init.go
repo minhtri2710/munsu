@@ -142,13 +142,26 @@ func configFileExists(homeDir, key string) bool {
 	return err == nil
 }
 
-// runSkillInstall resolves the skill destination (flag or interactive prompt)
+// runSkillInstall resolves the skill destination (flag, env, or interactive prompt)
 // and writes the embedded skills there. Existing skills are confirmed before overwrite.
 func runSkillInstall(cmd *cobra.Command, homeDir string) error {
 	choice := skillChoice
+
+	// 1. If no flag, check env override
+	if choice == "" {
+		choice = os.Getenv("MUNSU_INIT_SKILL")
+	}
+
+	// 2. If still unset and stdin is not a terminal, default to skip
+	if choice == "" && !isStdinTerminal() {
+		choice = skillSkip
+	}
+
+	// 3. Prompt interactively if still unset
 	if choice == "" {
 		choice = promptSkillChoice()
 	}
+
 	switch choice {
 	case "", skillSkip:
 		fmt.Println("Skipping skill install.")
@@ -166,6 +179,14 @@ func runSkillInstall(cmd *cobra.Command, homeDir string) error {
 	}
 }
 
+// isStdinTerminal returns true when stdin is connected to a terminal (TTY).
+func isStdinTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
 // promptSkillChoice asks the user where to install skills.
 func promptSkillChoice() string {
 	fmt.Println("\nInstall munsu skills?")
@@ -188,7 +209,6 @@ func promptSkillChoice() string {
 }
 
 // installSkillsTo writes the munsu-ops skill (the entry-point skill) under dest,
-// confirming overwrite if it already exists. Auxiliary skills stay embedded in
 // the binary and are read on demand via 'munsu skill show <name>'.
 func installSkillsTo(dest string) error {
 	name := "munsu-ops"
