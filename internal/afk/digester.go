@@ -63,6 +63,8 @@ type BatchedEscalation struct {
 	FirstAt       time.Time      `json:"first_at"`
 	LastAt        time.Time      `json:"last_at"`
 	WedgeAlarm    *WedgeAlarm    `json:"wedge_alarm,omitempty"`
+	SafeTarget    *bool          `json:"safe_target,omitempty"`
+	TargetVerdict string         `json:"target_verdict,omitempty"`
 }
 
 // Digester accumulates triage Digests over a time window and flushes
@@ -76,11 +78,23 @@ type Digester struct {
 	firstAt       time.Time
 	lastFlush     time.Time
 	homeDir       string
+	safeTarget    *bool
+	targetVerdict string
 }
 
 // NewDigester creates a Digester scoped to the given home directory.
 func NewDigester(homeDir string) *Digester {
 	return &Digester{homeDir: homeDir}
+}
+
+// SetTargetSafety records the captain-pane safety verdict for inclusion
+// in the next BatchedEscalation flush. Safe for concurrent use.
+func (d *Digester) SetTargetSafety(safe bool, verdict string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s := safe
+	d.safeTarget = &s
+	d.targetVerdict = verdict
 }
 
 // Feed adds triage results to the accumulator. A nil digest is a no-op.
@@ -163,15 +177,19 @@ func (d *Digester) Flush(now time.Time) error {
 	routineCount := d.routineCount
 	escalatedCount := d.escalatedCount
 	firstAt := d.firstAt
+	safeTarget := d.safeTarget
+	targetVerdict := d.targetVerdict
 
 	d.entries = nil
 	d.routineCount = 0
 	d.escalatedCount = 0
 	d.firstAt = time.Time{}
 	d.lastFlush = now
+	d.safeTarget = nil
+	d.targetVerdict = ""
 	d.mu.Unlock()
 
-	if len(entries) == 0 {
+	if len(entries) == 0 && safeTarget == nil {
 		return nil
 	}
 
@@ -181,7 +199,12 @@ func (d *Digester) Flush(now time.Time) error {
 		EscalatedCount: escalatedCount,
 		FirstAt:        firstAt,
 		LastAt:         now,
+		SafeTarget:     safeTarget,
+		TargetVerdict:  targetVerdict,
 	}
+
+	// If no entries but we have a safety verdict, write an info-only digest.
+	// This lets the captain see safety state even in quiet windows.
 
 	data, err := json.MarshalIndent(be, "", "  ")
 	if err != nil {
