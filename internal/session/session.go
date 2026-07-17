@@ -23,12 +23,18 @@ type Backend interface {
 	Teardown(windowID string) error
 }
 
+// BackendMetaExtras is an optional interface that a Backend can implement
+// to provide extra metadata fields to write into task meta after NewWindow.
+type BackendMetaExtras interface {
+	MetaExtras() map[string]string
+}
+
 // Select returns the named backend. Supported: "tmux", "herdr".
 // Returns an error for unknown backend names.
 func Select(name string) (Backend, error) {
 	switch name {
 	case "herdr":
-		return &HerdrBackend{}, nil
+		return NewHerdrBackend(""), nil
 	case "tmux":
 		return &TmuxBackend{}, nil
 	default:
@@ -47,7 +53,7 @@ func Default() Backend {
 		return &TmuxBackend{}
 	}
 	if os.Getenv("HERDR_ENV") != "" {
-		return &HerdrBackend{}
+		return NewHerdrBackend("")
 	}
 	if _, err := exec.LookPath("tmux"); err == nil {
 		return &TmuxBackend{}
@@ -86,7 +92,7 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	case "tmux":
 		return &TmuxBackend{Tag: tag}, "tmux", nil
 	case "herdr":
-		return &HerdrBackend{}, "herdr", nil
+		return NewHerdrBackend(tag), "herdr", nil
 	default:
 		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr)", name)
 	}

@@ -183,6 +183,7 @@ func PromoteMeta(homeDir string, id string) error {
 var ValidMetaFields = []string{
 	"window", "worktree", "project", "harness",
 	"model", "effort", "kind", "mode", "yolo",
+	"backend", "herdr_session", "herdr_workspace_id", "herdr_tab_id", "herdr_pane_id",
 }
 
 // MetaEntry represents a single task entry from state meta files.

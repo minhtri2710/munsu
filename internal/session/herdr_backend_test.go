@@ -12,11 +12,22 @@ import (
 // writeFakeHerdr creates a fake herdr executable in dir that responds to
 // expected commands: workspace list, workspace create, tab create, pane get,
 // pane close, pane send-text, pane send-keys, pane read.
+// It asserts that --session is present on every call, and --no-focus on tab create.
 func writeFakeHerdr(t *testing.T, dir string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "herdr")
 	suffix := fmt.Sprintf("%x", rand.Int63())
+	// Build the script. Lines without $ must be raw strings for readability.
+	// Lines with $ must use double-quoted strings.
 	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "--session" ]; then` + "\n" +
+		`  SESSION="$2"` + "\n" +
+		`  shift 2` + "\n" +
+		`fi` + "\n" +
+		`if [ -z "$SESSION" ]; then` + "\n" +
+		`  >&2 echo 'fake herdr: --session missing'` + "\n" +
+		`  exit 1` + "\n" +
+		`fi` + "\n" +
 		`case "$1" in` + "\n" +
 		"  workspace)\n" +
 		`    if [ "$2" = "list" ]; then` + "\n" +
@@ -34,15 +45,18 @@ func writeFakeHerdr(t *testing.T, dir string) string {
 		"    ;;\n" +
 		"  tab)\n" +
 		`    if [ "$2" = "create" ]; then` + "\n" +
-		`      cat <<'JSON'` + "\n" +
-		`{"id":"cli:tab:create","result":{"root_pane":{"pane_id":"wTest:p1"},"tab":{"tab_id":"wTest:t1","workspace_id":"wTest"},"type":"tab_created"}}` + "\n" +
-		"JSON\n" +
+		`      if [ "$3" != "--workspace" ] || [ "$5" != "--label" ] || [ "$7" != "--no-focus" ]; then` + "\n" +
+		"        >&2 echo 'fake herdr: tab create missing --no-focus'\n" +
+		"        exit 1\n" +
+		"      fi\n" +
+		// Use echo with fixed workspace-prefixed pane_id
+		`      echo '{"id":"cli:tab:create","result":{"root_pane":{"pane_id":"wTest:p1"},"tab":{"tab_id":"wTest:t1","workspace_id":"wTest"},"type":"tab_created"}}'` + "\n" +
 		"      exit 0\n" +
 		"    fi\n" +
 		"    ;;\n" +
 		"  pane)\n" +
 		`    if [ "$2" = "get" ]; then` + "\n" +
-		`      echo '{"id":"cli:pane:get","result":{"pane_id":"wTest:p1"}}'` + "\n" +
+		`      echo '{"id":"cli:pane:get","result":{"pane_id":"'$3'"}}'` + "\n" +
 		"      exit 0\n" +
 		"    fi\n" +
 		`    if [ "$2" = "close" ]; then` + "\n" +
@@ -76,13 +90,28 @@ func TestHerdrBackend_NewWindow_CreatesWorkspace(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-session")
 	win, err := h.NewWindow("test-ws", "task-1")
 	if err != nil {
 		t.Fatalf("NewWindow failed: %v", err)
 	}
-	if win != "wTest:p1" {
-		t.Errorf("windowID = %q, want wTest:p1", win)
+	want := "test-session:wTest:p1"
+	if win != want {
+		t.Errorf("windowID = %q, want %q", win, want)
+	}
+	// Verify meta extras
+	extras := h.MetaExtras()
+	if extras == nil {
+		t.Fatal("MetaExtras returned nil")
+	}
+	if extras["herdr_session"] != "test-session" {
+		t.Errorf("herdr_session = %q, want test-session", extras["herdr_session"])
+	}
+	if extras["herdr_tab_id"] != "wTest:t1" {
+		t.Errorf("herdr_tab_id = %q, want wTest:t1", extras["herdr_tab_id"])
+	}
+	if extras["herdr_pane_id"] != "wTest:p1" {
+		t.Errorf("herdr_pane_id = %q, want wTest:p1", extras["herdr_pane_id"])
 	}
 }
 
@@ -92,13 +121,17 @@ func TestHerdrBackend_NewWindow_CreatesMissingWorkspace(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-ms")
 	win, err := h.NewWindow("missing-ws", "task-2")
 	if err != nil {
 		t.Fatalf("NewWindow failed: %v", err)
 	}
-	if !strings.HasPrefix(win, "w") || !strings.Contains(win, ":p1") {
-		t.Errorf("windowID = %q, expected format like w<pfx>:p1", win)
+	want := "test-ms:"
+	if !strings.HasPrefix(win, want) {
+		t.Errorf("windowID = %q, want prefix %q", win, want)
+	}
+	if !strings.Contains(win, ":p1") {
+		t.Errorf("windowID = %q, expected :p1 suffix", win)
 	}
 }
 
@@ -108,9 +141,12 @@ func TestHerdrBackend_Alive(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-s")
 	if !h.Alive("wTest:p1") {
 		t.Error("Alive returned false for existing pane")
+	}
+	if !h.Alive("test-s:wTest:p1") {
+		t.Error("Alive returned false for session:prefix pane")
 	}
 }
 
@@ -120,9 +156,12 @@ func TestHerdrBackend_SendKeys(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-s")
 	if err := h.SendKeys("wTest:p1", "hello"); err != nil {
-		t.Errorf("SendKeys failed: %v", err)
+		t.Errorf("SendKeys failed for bare pane: %v", err)
+	}
+	if err := h.SendKeys("test-s:wTest:p1", "hello"); err != nil {
+		t.Errorf("SendKeys failed for session:pane: %v", err)
 	}
 }
 
@@ -132,7 +171,7 @@ func TestHerdrBackend_Capture(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-s")
 	out, err := h.Capture("wTest:p1", 5)
 	if err != nil {
 		t.Fatalf("Capture failed: %v", err)
@@ -148,9 +187,12 @@ func TestHerdrBackend_Teardown_Idempotent(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-s")
 	if err := h.Teardown("wTest:p1"); err != nil {
 		t.Errorf("Teardown failed: %v", err)
+	}
+	if err := h.Teardown("test-s:wTest:p1"); err != nil {
+		t.Errorf("Teardown with session prefix failed: %v", err)
 	}
 }
 
@@ -159,7 +201,10 @@ func writeFakeHerdrNotFound(t *testing.T, dir string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "herdr")
 	script := "#!/usr/bin/env bash\n" +
-		">&2 echo '{\"error\":{\"code\":\"pane_not_found\",\"message\":\"pane x not found\"}}'\n" +
+		`if [ "$1" = "--session" ]; then` + "\n" +
+		`  shift 2` + "\n" +
+		`fi` + "\n" +
+		`>&2 echo '{"error":{"code":"pane_not_found","message":"pane not found"}}'` + "\n" +
 		"exit 1\n"
 	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
 		t.Fatal(err)
@@ -173,7 +218,7 @@ func TestHerdrBackend_Teardown_NotFoundIgnored(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmp+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-s")
 	if err := h.Teardown("x"); err != nil {
 		t.Errorf("Teardown should ignore not-found: %v", err)
 	}
@@ -185,8 +230,51 @@ func TestHerdrBackend_Alive_ReturnsFalseWhenNotFound(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmp+":"+oldPath)
 
-	h := &HerdrBackend{}
+	h := NewHerdrBackend("test-s")
 	if h.Alive("nonexistent") {
 		t.Error("Alive returned true for nonexistent pane")
+	}
+}
+
+func TestParseWindow(t *testing.T) {
+	tests := []struct {
+		handle      string
+		wantSession string
+		wantPaneID  string
+	}{
+		{"test-session:wTest:p1", "test-session", "wTest:p1"},
+		{"bare:p1", "bare", "p1"},
+		{"nocolon", "", "nocolon"},
+		{"a:b:c", "a", "b:c"},
+	}
+	for _, tt := range tests {
+		session, paneID := ParseWindow(tt.handle)
+		if session != tt.wantSession {
+			t.Errorf("ParseWindow(%q) session = %q, want %q", tt.handle, session, tt.wantSession)
+		}
+		if paneID != tt.wantPaneID {
+			t.Errorf("ParseWindow(%q) paneID = %q, want %q", tt.handle, paneID, tt.wantPaneID)
+		}
+	}
+}
+
+func TestNewHerdrBackend_Defaults(t *testing.T) {
+	// With explicit session
+	h := NewHerdrBackend("explicit-session")
+	if h.Session != "explicit-session" {
+		t.Errorf("Session = %q, want explicit-session", h.Session)
+	}
+
+	// With empty session and no env, should fallback to "default"
+	h2 := NewHerdrBackend("")
+	if h2.Session != "default" {
+		t.Errorf("Session = %q, want default", h2.Session)
+	}
+}
+
+func TestMetaExtras_NilBeforeNewWindow(t *testing.T) {
+	h := NewHerdrBackend("test-s")
+	if extras := h.MetaExtras(); extras != nil {
+		t.Errorf("MetaExtras before NewWindow = %v, want nil", extras)
 	}
 }

@@ -224,7 +224,13 @@ func (r *Runner) createSession() error {
 			return err
 		}
 	}
-windowID, err := bk.NewWindow(hometag.Tag(r.homeDir), r.args.ID)
+
+	// If herdr backend, set Cwd so NewWindow can pass --cwd.
+	if hb, ok := bk.(*session.HerdrBackend); ok && r.wtPath != "" {
+		hb.Cwd = r.wtPath
+	}
+
+	windowID, err := bk.NewWindow(hometag.Tag(r.homeDir), r.args.ID)
 	if err != nil {
 		return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
 	}
@@ -348,6 +354,14 @@ func (r *Runner) writeTaskMeta() {
 	if r.effort != "" {
 		meta["effort"] = r.effort
 	}
+
+	// Backend extras: write herdr_* fields when the backend provides them.
+	if ex, ok := r.bk.(session.BackendMetaExtras); ok {
+		for k, v := range ex.MetaExtras() {
+			meta[k] = v
+		}
+	}
+
 	if err := task.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing task meta: %v\n", err)
 	}

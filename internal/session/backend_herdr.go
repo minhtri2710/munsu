@@ -3,31 +3,64 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
 
 // HerdrBackend implements Backend using the herdr CLI.
-// Experimental: herdr is a terminal workspace manager.
-type HerdrBackend struct{}
+// Every CLI invocation passes --session <name> and sets HERDR_SESSION env.
+type HerdrBackend struct {
+	// Session is the herdr session name. Default from HERDR_SESSION env or "default".
+	Session string
+	// Cwd is the working directory for the new tab (set by spawn before NewWindow).
+	Cwd string
 
-// herdrWorkspaceLabel is the workspace label used for all munsu tabs.
-// It is set by the caller (e.g., Resolve with home-derived name).
-// Workspaces are created on demand if they do not exist.
-const herdrWorkspaceLabel = "munsu"
+	// lastCreate stores the last tab-creation result for MetaExtras.
+	lastCreate *herdrLastCreate
+}
+
+// herdrLastCreate captures the IDs from the most recent NewWindow call.
+type herdrLastCreate struct {
+	Session      string
+	WorkspaceID  string
+	TabID        string
+	PaneID       string
+}
+
+// NewHerdrBackend creates a HerdrBackend with the given session name.
+// If session is empty, it defaults to os.Getenv("HERDR_SESSION") then "default".
+func NewHerdrBackend(session string) *HerdrBackend {
+	if session == "" {
+		session = os.Getenv("HERDR_SESSION")
+	}
+	if session == "" {
+		session = "default"
+	}
+	return &HerdrBackend{Session: session}
+}
+
+// sessionArgs returns the --session flag argument for a herdr CLI call.
+func (h *HerdrBackend) sessionArgs() []string {
+	return []string{"--session", h.Session}
+}
 
 func (h *HerdrBackend) herdr(args ...string) (string, error) {
 	bin, err := exec.LookPath("herdr")
 	if err != nil {
 		return "", fmt.Errorf("herdr: not found on PATH: %w", err)
 	}
-	cmd := exec.Command(bin, args...)
+
+	// Prepend --session flags to every call.
+	fullArgs := append(h.sessionArgs(), args...)
+	cmd := exec.Command(bin, fullArgs...)
+	cmd.Env = append(os.Environ(), "HERDR_SESSION="+h.Session)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("herdr %v: %s", args, strings.TrimSpace(string(ee.Stderr)))
+			return "", fmt.Errorf("herdr %v: %s", fullArgs, strings.TrimSpace(string(ee.Stderr)))
 		}
-		return "", fmt.Errorf("herdr %v: %w", args, err)
+		return "", fmt.Errorf("herdr %v: %w", fullArgs, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -75,7 +108,7 @@ func (h *HerdrBackend) findOrCreateWorkspace(label string) (string, error) {
 		}
 	}
 
-	// Workspace not found — create it.
+	// Workspace not found — create it with --no-focus.
 	createOut, err := h.herdr("workspace", "create", "--label", label, "--no-focus")
 	if err != nil {
 		return "", fmt.Errorf("creating workspace %q: %w", label, err)
@@ -100,11 +133,11 @@ type herdrWorkspaceCreateResponse struct {
 // NewWindow creates a new tab in the herdr workspace identified by session.
 // The session parameter is the workspace label (e.g., derived from MUNSU_HOME).
 // The name parameter is the tab label (e.g., the task ID).
-// Returns the pane ID as the window handle (globally unique).
+// Returns the window handle in "<session>:<pane_id>" format for firstmate compatibility.
 func (h *HerdrBackend) NewWindow(session, name string) (string, error) {
 	wsName := session
 	if wsName == "" {
-		wsName = herdrWorkspaceLabel
+		wsName = h.Session
 	}
 
 	workspaceID, err := h.findOrCreateWorkspace(wsName)
@@ -112,7 +145,11 @@ func (h *HerdrBackend) NewWindow(session, name string) (string, error) {
 		return "", err
 	}
 
-	out, err := h.herdr("tab", "create", "--workspace", workspaceID, "--label", name)
+	tabArgs := []string{"tab", "create", "--workspace", workspaceID, "--label", name, "--no-focus"}
+	if h.Cwd != "" {
+		tabArgs = append(tabArgs, "--cwd", h.Cwd)
+	}
+	out, err := h.herdr(tabArgs...)
 	if err != nil {
 		return "", fmt.Errorf("creating tab: %w", err)
 	}
@@ -127,34 +164,97 @@ func (h *HerdrBackend) NewWindow(session, name string) (string, error) {
 		return "", fmt.Errorf("herdr tab create returned empty pane_id")
 	}
 
-	return paneID, nil
+	tabID := resp.Result.Tab.TabID
+
+	// Store last create metadata so MetaExtras can return it.
+	h.lastCreate = &herdrLastCreate{
+		Session:     h.Session,
+		WorkspaceID: workspaceID,
+		TabID:       tabID,
+		PaneID:      paneID,
+	}
+
+	// Return "<session>:<pane_id>" for firstmate-compatible window handle.
+	return h.Session + ":" + paneID, nil
 }
 
-// SendKeys sends text followed by Enter to the pane identified by windowID (pane ID).
+// ParseWindow splits a firstmate-compatible window handle ("session:pane_id") on the first colon.
+// Returns the session name and the pane ID. If no colon is found, returns "" and the full string.
+func ParseWindow(handle string) (session, paneID string) {
+	idx := strings.Index(handle, ":")
+	if idx < 0 {
+		return "", handle
+	}
+	return handle[:idx], handle[idx+1:]
+}
+
+// paneID extracts the pane ID part from a window handle (session:pane or bare pane).
+func paneID(windowID string) string {
+	_, p := ParseWindow(windowID)
+	return p
+}
+
+// SendKeys sends text followed by Enter to the pane identified by windowID.
+// windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) SendKeys(windowID, text string) error {
-	if _, err := h.herdr("pane", "send-text", windowID, text); err != nil {
+	pid := paneID(windowID)
+	if _, err := h.herdr("pane", "send-text", pid, text); err != nil {
 		return err
 	}
-	_, err := h.herdr("pane", "send-keys", windowID, "Enter")
+	_, err := h.herdr("pane", "send-keys", pid, "Enter")
 	return err
 }
 
 // Capture reads the last N lines of output from the pane.
+// windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) Capture(windowID string, lines int) (string, error) {
-	return h.herdr("pane", "read", windowID, "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
+	return h.herdr("pane", "read", paneID(windowID), "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
 }
 
 // Alive checks whether the pane still exists via herdr pane get.
+// windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) Alive(windowID string) bool {
-	_, err := h.herdr("pane", "get", windowID)
+	_, err := h.herdr("pane", "get", paneID(windowID))
 	return err == nil
 }
 
-// Teardown closes the pane. Idempotent: "not found" errors are silently ignored.
+// Teardown closes the pane. When tab_id is known from last create, it also closes
+// the tab idempotently to ensure no husk remains.
+// windowID may be "<session>:<pane_id>" or a bare pane ID.
+// Idempotent: "not found" errors are silently ignored.
 func (h *HerdrBackend) Teardown(windowID string) error {
-	_, err := h.herdr("pane", "close", windowID)
+	pid := paneID(windowID)
+
+	// Close pane first
+	_, err := h.herdr("pane", "close", pid)
 	if err != nil && (strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "pane_not_found")) {
+		err = nil
+	} else if err != nil {
+		return err
+	}
+
+	// If we have a tab_id from last create, also close the tab idempotently.
+	if h.lastCreate != nil && h.lastCreate.TabID != "" {
+		_, tabErr := h.herdr("tab", "close", h.lastCreate.TabID)
+		if tabErr != nil && (strings.Contains(tabErr.Error(), "not found") || strings.Contains(tabErr.Error(), "tab_not_found")) {
+			return nil
+		}
+		return tabErr
+	}
+
+	return nil
+}
+
+// MetaExtras returns extra metadata fields from the last tab creation.
+// Implements the optional BackendMetaExtras interface.
+func (h *HerdrBackend) MetaExtras() map[string]string {
+	if h.lastCreate == nil {
 		return nil
 	}
-	return err
+	return map[string]string{
+		"herdr_session":      h.lastCreate.Session,
+		"herdr_workspace_id": h.lastCreate.WorkspaceID,
+		"herdr_tab_id":       h.lastCreate.TabID,
+		"herdr_pane_id":      h.lastCreate.PaneID,
+	}
 }
