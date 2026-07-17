@@ -152,8 +152,14 @@ munsu delivery merge-local <task-id>            # fast-forward merge
 
 ```sh
 munsu teardown <task-id>                        # safety-gated teardown
+munsu teardown <task-id> --force                # skip safety checks, removes data/<id>/
 munsu backlog done <task-id>                    # close the backlog item
 ```
+
+Without --force, scout teardown requires report.md and no unresolved decision
+holds. Ship teardown requires clean git state with a remote tracking branch.
+With --force, all safety checks are bypassed and the data/<id>/ directory
+(including report.md and brief.md) is removed.
 
 ## 5. Decision-hold scout gate
 
@@ -235,5 +241,10 @@ munsu afk                           # away-mode supervision daemon
    at `state/.lock` enforces this.
 4. **Guard after every action:** Run `munsu guard` after spawn, teardown,
    and fleet actions.
-5. **Temp homes for dogfood:** Use temporary directories for exploratory
+5. **Isolated session/workspace:** Use a dedicated herdr workspace or tmux
+   session scoped to each home (munsu auto-derives from home path). Avoid
+   sharing a session/workspace across test homes to prevent interference.
+6. **Temp homes for dogfood:** Use temporary directories for exploratory
    dogfood tests. Example: `mkdir -p /tmp/munsu-dogfood && MUNSU_HOME=/tmp/munsu-dogfood munsu init`.
+   Note: leftover `/tmp/munsu-* watch` processes from prior tests can trigger stale-watcher
+   warnings in a new test home; stop them with `munsu watch stop` in the original home or kill the PID.

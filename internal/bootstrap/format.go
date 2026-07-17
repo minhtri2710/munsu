@@ -40,5 +40,8 @@ func (d ConfigDiagnostic) String() string {
 
 // String returns the CLI-layer display line for a GC diagnostic.
 func (d GCDiagnostic) String() string {
+	if d.SkippedReason != "" {
+		return fmt.Sprintf("GC: skipped (%s)", d.SkippedReason)
+	}
 	return fmt.Sprintf("GC: removed %d orphan data dir(s): %v", d.Removed, d.Dirs)
 }

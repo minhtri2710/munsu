@@ -76,3 +76,11 @@ func TestGCDiagnostic_String(t *testing.T) {
 		t.Errorf("GCDiagnostic.String() = %q, want %q", got, want)
 	}
 }
+
+func TestGCDiagnostic_String_Skipped(t *testing.T) {
+	d := GCDiagnostic{SkippedReason: "session lock not held"}
+	want := "GC: skipped (session lock not held)"
+	if got := d.String(); got != want {
+		t.Errorf("GCDiagnostic.String() = %q, want %q", got, want)
+	}
+}

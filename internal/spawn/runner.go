@@ -11,6 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -223,7 +224,7 @@ func (r *Runner) createSession() error {
 			return err
 		}
 	}
-	windowID, err := bk.NewWindow("munsu", r.args.ID)
+windowID, err := bk.NewWindow(hometag.Tag(r.homeDir), r.args.ID)
 	if err != nil {
 		return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
 	}

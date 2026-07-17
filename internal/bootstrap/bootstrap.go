@@ -50,8 +50,9 @@ type ConfigDiagnostic struct {
 
 // GCDiagnostic describes the result of garbage-collecting orphan data dirs.
 type GCDiagnostic struct {
-	Removed int
-	Dirs    []string
+	Removed       int
+	Dirs          []string
+	SkippedReason string // set when GC was skipped (e.g., lock not held)
 }
 
 // Result holds the full bootstrap diagnostic output.
@@ -165,6 +166,8 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		if cleaned := gcOrphanDataDirs(home); len(cleaned) > 0 {
 			res.GC = &GCDiagnostic{Removed: len(cleaned), Dirs: cleaned}
 		}
+	} else {
+		res.GC = &GCDiagnostic{SkippedReason: "session lock not held"}
 	}
 
 	return res, nil
