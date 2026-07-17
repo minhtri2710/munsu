@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -156,5 +158,119 @@ func TestDoctorHelp(t *testing.T) {
 	err := root.Execute()
 	if err != nil {
 		t.Fatalf("doctor --help failed: %v", err)
+	}
+}
+
+// TestRootNoArgsOutput verifies that running munsu without arguments
+// prints a compact fleet/orientation snapshot instead of help text.
+func TestRootNoArgsOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{})
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("root no-args: unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "munsu @") {
+		t.Errorf("root no-args output should contain 'munsu @', got: %s", output)
+	}
+	if !strings.Contains(output, "fleet:") {
+		t.Errorf("root no-args output should contain 'fleet:', got: %s", output)
+	}
+	if !strings.Contains(output, "Next:") {
+		t.Errorf("root no-args output should contain 'Next:', got: %s", output)
+	}
+}
+
+// TestRootHelpStillWorks verifies that munsu --help still shows help text.
+func TestRootHelpStillWorks(t *testing.T) {
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{"--help"})
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("root --help failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Usage:") {
+		t.Error("--help output should contain 'Usage:' (help text)")
+	}
+}
+
+// TestRootNoArgsEmptyHome verifies no-args output handles empty home gracefully.
+func TestRootNoArgsEmptyHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{})
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("root no-args empty home: unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "No tasks") {
+		t.Errorf("empty home should show 'No tasks' hint, got: %s", output)
+	}
+}
+
+// TestSecondmateListEmpty verifies secondmate list prints empty state.
+func TestSecondmateListEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{"secondmate", "list"})
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("secondmate list: unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "No secondmates registered.") {
+		t.Errorf("empty secondmate list should show 'No secondmates registered.', got: %s", output)
+	}
+}
+
+// TestFleetSyncEmpty verifies fleet sync prints empty state.
+func TestFleetSyncEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{"fleet", "sync"})
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("fleet sync empty: unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "No projects to sync.") {
+		t.Errorf("empty fleet sync should show 'No projects to sync.', got: %s", output)
 	}
 }

@@ -2,8 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"time"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/spf13/cobra"
 )
 
@@ -63,6 +67,59 @@ func isDefaultHome(homeDir string) bool {
 	return homeDir == defaultHome
 }
 
+// fleetSummary prints a compact fleet/orientation snapshot to the given writer.
+func fleetSummary(w io.Writer, homeDir string) {
+	snap, snapErr := fleet.Snapshot(homeDir)
+
+	totalTasks := 0
+	inFlight := 0
+	if snapErr == nil && snap != nil {
+		totalTasks = len(snap.Tasks)
+		for _, ts := range snap.Tasks {
+			if ts.Kind == "ship" || ts.Kind == "scout" {
+				inFlight++
+			}
+		}
+	}
+
+	watcherStatus := "--"
+	beat := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	if beat.Exists {
+		if beat.Stale {
+			watcherStatus = "stale"
+		} else {
+			watcherStatus = "alive"
+		}
+	}
+
+	fmt.Fprintf(w, "munsu @ %s\n\n", homeDir)
+	fmt.Fprintf(w, "fleet: %d tasks (%d in-flight) | watcher: %s | holds: --\n", totalTasks, inFlight, watcherStatus)
+
+	if snapErr == nil && snap != nil && len(snap.Tasks) > 0 {
+		fmt.Fprintln(w)
+		for _, ts := range snap.Tasks {
+			phase := fleet.PhaseFromMeta(ts.Window, ts.PaneAlive)
+			project := ts.Project
+			if project == "" {
+				project = "-"
+			}
+			status := ts.LastStatus
+			if status == "" {
+				status = phase
+			}
+			fmt.Fprintf(w, "  %-20s [%-10s] %s\n", ts.ID, phase, project)
+			if status != "" && status != phase {
+				fmt.Fprintf(w, "  %-20s  %s\n", "", status)
+			}
+		}
+	} else {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "No tasks. Start with `munsu backlog add <id> \"<description>\"`.")
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Next: munsu fleet bearings | munsu peek <id> | munsu --help")
+}
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
@@ -76,6 +133,14 @@ with no requirement to live inside a firstmate checkout.`,
 		SilenceUsage:       true,
 		DisableAutoGenTag:  true,
 		DisableSuggestions: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			homeDir, err := home.Resolve(homeOverride)
+			if err != nil {
+				return fmt.Errorf("resolving home: %w", err)
+			}
+			fleetSummary(cmd.OutOrStdout(), homeDir)
+			return nil
+		},
 	}
 
 	// Global persistent flags
