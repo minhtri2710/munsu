@@ -141,10 +141,10 @@ func ghAuth() bool {
 func installTool(tool string) error {
 	switch tool {
 	case "treehouse":
-		cmd := exec.Command("go", "install", "github.com/elewis787/treehouse@latest")
+		cmd := exec.Command("go", "install", "github.com/kunchenguid/treehouse@latest")
 		return cmd.Run()
 	case "no-mistakes":
-		cmd := exec.Command("go", "install", "github.com/minhtri2710/no-mistakes@latest")
+		cmd := exec.Command("go", "install", "github.com/kunchenguid/no-mistakes@latest")
 		return cmd.Run()
 	default:
 		return fmt.Errorf("no automatic install for %s", tool)
