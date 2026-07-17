@@ -9,9 +9,9 @@ func FixCommand(tool string) string {
 	case "git":
 		return "Install git: https://git-scm.com/downloads"
 	case "treehouse":
-		return "go install github.com/elewis787/treehouse@latest"
+		return "go install github.com/kunchenguid/treehouse@latest"
 	case "no-mistakes":
-		return "go install github.com/minhtri2710/no-mistakes@latest"
+		return "go install github.com/kunchenguid/no-mistakes@latest"
 	case "tasks-axi":
 		return "npm install -g tasks-axi"
 	case "gh-axi":

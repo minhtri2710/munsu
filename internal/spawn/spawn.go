@@ -66,7 +66,7 @@ func noMistakesOnPath() bool {
 // with install guidance.
 func EnsureDeliveryModeRunnable(mode string) error {
 	if mode == "no-mistakes" && !noMistakesOnPath() {
-		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/minhtri2710/no-mistakes@latest'")
+		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")
 	}
 	return nil
 }
@@ -125,7 +125,7 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 		return "no-mistakes", nil
 	}
 
-	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/minhtri2710/no-mistakes@latest, or run 'munsu doctor'")
+	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/kunchenguid/no-mistakes@latest, or run 'munsu doctor'")
 	return "direct-PR", nil
 }
 

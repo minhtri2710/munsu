@@ -10,8 +10,8 @@ func TestFixCommand(t *testing.T) {
 		want string // empty means no fix expected
 	}{
 		{"git", "Install git: https://git-scm.com/downloads"},
-		{"treehouse", "go install github.com/elewis787/treehouse@latest"},
-		{"no-mistakes", "go install github.com/minhtri2710/no-mistakes@latest"},
+		{"treehouse", "go install github.com/kunchenguid/treehouse@latest"},
+		{"no-mistakes", "go install github.com/kunchenguid/no-mistakes@latest"},
 		{"tasks-axi", "npm install -g tasks-axi"},
 		{"gh-axi", "npm install -g gh-axi"},
 		{"gh", "Install GitHub CLI: brew install gh  |  https://cli.github.com/"},
@@ -35,7 +35,7 @@ func TestDoctorFix(t *testing.T) {
 	}{
 		{"MISSING git (install instructions vary)", "    Fix: Install git: https://git-scm.com/downloads"},
 		{"MISSING tmux (install instructions vary)", "    Fix: Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"},
-		{"MISSING no-mistakes (install instructions vary)", "    Fix: go install github.com/minhtri2710/no-mistakes@latest"},
+		{"MISSING no-mistakes (install instructions vary)", "    Fix: go install github.com/kunchenguid/no-mistakes@latest"},
 		{"NEEDS_GH_AUTH: gh auth status failed (run gh auth login)", "    Fix: gh auth login"},
 		{"FOUND: git at /usr/bin/git", ""},
 		{"short", ""},
