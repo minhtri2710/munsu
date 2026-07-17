@@ -1,0 +1,2 @@
+empty|false
+[1;38;2;255;200;100m❯ [0m[2mType a message...[0m

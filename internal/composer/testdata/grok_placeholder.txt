@@ -1,0 +1,2 @@
+empty|true
+[38;2;80;80;80mType a message...[0m
