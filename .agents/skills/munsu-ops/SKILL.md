@@ -65,8 +65,8 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 Delivery mode is set at spawn time (`--mode`). Act according to mode:
 
 - **no-mistakes** (default): The crewmate runs the no-mistakes pipeline. When it notifies completion, verify the PR is open and checks are green.
-- **direct-PR**: `munsu pr-check <id> <pr-url>` to record the PR, then `munsu pr-merge <id> <pr-url>` once approved.
-- **local-only**: `munsu merge-local <id>` for a fast-forward merge to the local default branch.
+- **direct-PR**: `munsu delivery pr-check <id> <pr-url>` to record the PR, then `munsu delivery pr-merge <id> <pr-url>` once approved.
+- **local-only**: `munsu delivery merge-local <id>` for a fast-forward merge to the local default branch.
 
 **Completion:** PR URL (for remote modes) or local merge note documented.
 
@@ -82,9 +82,9 @@ munsu teardown <id> [--force]
 
 ### Fleet-wide checks
 
-- `munsu fleet-view` — see the full fleet.
+- `munsu fleet view` — see the full fleet.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
-- `munsu bearings` — compact resume report.
+- `munsu fleet bearings` — compact resume report.
 - `munsu stow <text...>` — capture durable learnings (data/learnings.md); inspect-then-update: matching entries are replaced, not duplicated.
 - `munsu stow --captain <text...>` — capture captain preferences (data/captain.md); created lazily if absent.
 - `munsu stow --kind captain <text...>` — same as --captain.

@@ -73,7 +73,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 	}
 	script := string(data)
 
-	// The fleet-sync line should be in the merged: true path
+// The fleet sync line should be in the merged: true path
 	if !strings.Contains(script, `echo "merged: true"`) {
 		t.Errorf("should have merged: true branch, got:\n%s", script)
 	}

@@ -22,7 +22,7 @@ func requireGH(t *testing.T) {
 }
 
 // TestPRCheck_GeneratesCheckScriptWithFleetSync verifies that PRCheck generates a
-// check.sh script including the fleet-sync command when project is in meta.
+// check.sh script including the fleet sync command when project is in meta.
 func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -55,7 +55,7 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	}
 	script := string(data)
 
-	// Verify the script contains the fleet-sync command
+// Verify the script contains the fleet sync command
 	// Verify check.sh now contains fleet sync (non-deprecated form)
 	if !strings.Contains(script, "fleet sync") {
 		t.Errorf("check.sh should contain 'fleet sync' command, got:\n%s", script)
@@ -71,7 +71,7 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 		t.Errorf("check.sh should contain HOME_DIR with the correct path, got:\n%s", script)
 	}
 
-	// Verify the best-effort fleet-sync shell pattern
+// Verify the best-effort fleet sync shell pattern
 	// Verify the best-effort fleet sync shell pattern
 	if !strings.Contains(script, "munsu --home") {
 		t.Errorf("check.sh should call munsu --home for fleet sync, got:\n%s", script)

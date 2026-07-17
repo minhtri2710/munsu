@@ -111,35 +111,3 @@ Refuses if the merge is not a clean fast-forward.`,
 		}),
 	}
 }
-
-// newReviewDiffTopCmd is a hidden compatibility alias for 'munsu delivery review-diff'.
-func newReviewDiffTopCmd() *cobra.Command {
-	cmd := newReviewDiffCmd()
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu delivery review-diff' instead"
-	return cmd
-}
-
-// newPRCheckTopCmd is a hidden compatibility alias for 'munsu delivery pr-check'.
-func newPRCheckTopCmd() *cobra.Command {
-	cmd := newPRCheckCmd()
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu delivery pr-check' instead"
-	return cmd
-}
-
-// newPRMergeTopCmd is a hidden compatibility alias for 'munsu delivery pr-merge'.
-func newPRMergeTopCmd() *cobra.Command {
-	cmd := newPRMergeCmd()
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu delivery pr-merge' instead"
-	return cmd
-}
-
-// newMergeLocalTopCmd is a hidden compatibility alias for 'munsu delivery merge-local'.
-func newMergeLocalTopCmd() *cobra.Command {
-	cmd := newMergeLocalCmd()
-	cmd.Hidden = true
-	cmd.Deprecated = "use 'munsu delivery merge-local' instead"
-	return cmd
-}
