@@ -165,9 +165,26 @@ var Adapters = map[string]Adapter{
 		TrustDialog:        `No trust dialog when launched from a git repo root`,
 		SupervisionProtocol: `grok`,
 	},
-	// Agy is not part of the 5-verified-harness Phase C scope but remains in
-	// KnownHarnesses for backward compatibility. Its adapter is registered
-	// separately via the existing Templates map and detection code.
+	Agy: {
+		Name:       Agy,
+		EnvMarkers: []string{"ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_AGENT"},
+		ProcessMatchers: []ProcessNameMatcher{
+			{Name: "agy"},
+			{Name: "antigravity"},
+		},
+		BusyPattern:       `Thinking\.\.\.`,
+		IdlePattern:       `Press shift\+tab to cycle modes`,
+		ExitCommand:       `Ctrl+Q Ctrl+Q`,
+		InterruptKeys:     `Ctrl+C`,
+		SkillInvocation:   `/`,
+		TurnEndHook:       `No hook support (print-mode --print-timeout for turn-end detection)`,
+		LaunchTemplate: Template{
+			ModelFlag: "--model",
+			ExtraArgs: []string{"--dangerously-skip-permissions"},
+		},
+		TrustDialog:        `File/command permission dialog per session; pre-approved commands persisted in settings.json`,
+		SupervisionProtocol: `agy`,
+	},
 }
 
 // matchProcessNameFromAdapter checks a process name against the adapter registry.
