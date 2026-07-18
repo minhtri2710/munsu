@@ -15,6 +15,15 @@ type ProcessNameMatcher struct {
 	Substr bool
 }
 
+// SecondmateLaunchContract describes a verified shell-free secondmate invocation.
+type SecondmateLaunchContract struct {
+	Supported  bool
+	CwdAtHome  bool
+	Separator  string
+	ProjectArg bool
+	PromptArg  bool
+}
+
 // Adapter describes a verified agent harness with detection, launch,
 // supervision facts, and state artifact cleanup. Each adapter is populated
 // from empirically verified observations (see firstmate harness-adapters skill).
@@ -51,6 +60,9 @@ type Adapter struct {
 
 	// LaunchTemplate contains the CLI flag conventions and defaults for spawning.
 	LaunchTemplate Template
+
+	// SecondmateLaunch is populated only when the secondmate CLI contract is verified.
+	SecondmateLaunch SecondmateLaunchContract
 
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	// ReadyPatterns is a list of substrings that indicate the agent is ready
@@ -165,6 +177,13 @@ var Adapters = map[string]Adapter{
 		LaunchTemplate: Template{
 			ModelFlag:  "--model",
 			EffortFlag: "--thinking",
+		},
+		SecondmateLaunch: SecondmateLaunchContract{
+			Supported:  true,
+			CwdAtHome:  true,
+			Separator:  "--",
+			ProjectArg: true,
+			PromptArg:  true,
 		},
 		SupervisionProtocol: `pi`,
 		TrustDialog:        `Project trust dialog on first run per path; accept with Enter`,
