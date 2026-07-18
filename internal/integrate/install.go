@@ -297,7 +297,20 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 			allPresent = false
 			continue
 		}
-		if !FileContainsOwnershipMarker(tp) {
+		if harnessName == harness.Claude {
+			// Structural ownership check for Claude settings.json —
+			// JSON cannot carry a first-line comment marker.
+			munsuBin, resolveErr := ResolveMunsuPathString()
+			if resolveErr != nil {
+				allPresent = false
+				continue
+			}
+			present, _, hookErr := ClaudeSettingsHasOwnedHooks(tp, munsuBin)
+			if hookErr != nil || !present {
+				allPresent = false
+				continue
+			}
+		} else if !FileContainsOwnershipMarker(tp) {
 			allPresent = false
 			continue
 		}

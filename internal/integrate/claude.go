@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -117,6 +118,103 @@ func ClaudeSettingsDigest(munsuBinPath string) string {
 	content := ClaudeSettingsContent(munsuBinPath)
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
+}
+
+// ClaudeSettingsHasOwnedHooks checks whether the settings.json at settingsPath contains
+// all expected munsu-owned hook commands anchored to the given munsu binary path.
+// Returns true when all expected hooks are present, along with a descriptive message.
+// The message lists which hooks are missing when the check fails.
+func ClaudeSettingsHasOwnedHooks(settingsPath, munsuBin string) (bool, string, error) {
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return false, "", fmt.Errorf("reading claude settings: %w", err)
+	}
+
+	var parsed struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher,omitempty"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return false, "", fmt.Errorf("parsing claude settings JSON: %w", err)
+	}
+
+	sessionStartCmd := claudeHookCommand(munsuBin, "integrate", "sessionstart-nudge")
+	safetyCheckCmd := claudeHookCommand(munsuBin, "integrate", "safety-check", "--harness", "claude")
+	guardCmd := claudeHookCommand(munsuBin, "guard", "--harness", "claude")
+
+	hooksByEvent := parsed.Hooks
+	if hooksByEvent == nil {
+		return false, "no hooks section in settings", nil
+	}
+
+	var missing []string
+
+	// Check SessionStart hook
+	foundSessionStart := false
+	if matchers, ok := hooksByEvent["SessionStart"]; ok {
+		for _, m := range matchers {
+			for _, h := range m.Hooks {
+				if h.Type == "command" && h.Command == sessionStartCmd {
+					foundSessionStart = true
+					break
+				}
+			}
+			if foundSessionStart {
+				break
+			}
+		}
+	}
+	if !foundSessionStart {
+		missing = append(missing, "SessionStart")
+	}
+
+	// Check PreToolUse hook
+	foundPreToolUse := false
+	if matchers, ok := hooksByEvent["PreToolUse"]; ok {
+		for _, m := range matchers {
+			for _, h := range m.Hooks {
+				if h.Type == "command" && h.Command == safetyCheckCmd {
+					foundPreToolUse = true
+					break
+				}
+			}
+			if foundPreToolUse {
+				break
+			}
+		}
+	}
+	if !foundPreToolUse {
+		missing = append(missing, "PreToolUse")
+	}
+
+	// Check Stop hook
+	foundStop := false
+	if matchers, ok := hooksByEvent["Stop"]; ok {
+		for _, m := range matchers {
+			for _, h := range m.Hooks {
+				if h.Type == "command" && h.Command == guardCmd {
+					foundStop = true
+					break
+				}
+			}
+			if foundStop {
+				break
+			}
+		}
+	}
+	if !foundStop {
+		missing = append(missing, "Stop")
+	}
+
+	if len(missing) > 0 {
+		return false, fmt.Sprintf("missing munsu-owned hooks: %s", strings.Join(missing, ", ")), nil
+	}
+	return true, "all munsu-owned hooks present", nil
 }
 
 // ClaudeAdapter implements settings generation and installation for the Claude harness.

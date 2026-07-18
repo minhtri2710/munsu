@@ -739,3 +739,149 @@ func TestClaudeSettingsDigest_Deterministic(t *testing.T) {
 		t.Fatal("digest must differ for different binary paths")
 	}
 }
+
+// Test ClaudeSettingsHasOwnedHooks verifies structural ownership detection
+// for Claude settings.json — install → status=installed; remove a hook → drifted.
+func TestClaudeSettingsHasOwnedHooks(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// Write a valid settings.json with all hooks
+	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+	if err := os.WriteFile(settingsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// All hooks present → owned
+	present, msg, err := ClaudeSettingsHasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !present {
+		t.Errorf("expected all hooks present, got: %s", msg)
+	}
+
+	// Remove Stop hook → drifted
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	hooks := parsed["hooks"].(map[string]interface{})
+	delete(hooks, "Stop")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	present, msg, err = ClaudeSettingsHasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if present {
+		t.Error("expected hooks missing after Stop removal")
+	}
+	if !strings.Contains(msg, "Stop") {
+		t.Errorf("expected message to mention missing Stop hook, got: %s", msg)
+	}
+
+	// Missing file → error
+	_, _, err = ClaudeSettingsHasOwnedHooks(filepath.Join(dir, "nonexistent.json"), "/usr/local/bin/munsu")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+
+	// Invalid JSON → error
+	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte("not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = ClaudeSettingsHasOwnedHooks(filepath.Join(dir, "bad.json"), "/usr/local/bin/munsu")
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+// TestClaudeStatusDriftDetection tests that Status() detects drift structurally
+// in Claude settings.json: install → status=installed; remove a hook → drifted.
+// Uses SetMunsuPathResolver to avoid PATH dependency.
+func TestClaudeStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	// Create a stub munsu binary for path resolution
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	// Install Claude settings via Install() with ScopeProject to isolate writes
+	scope := ScopeProject
+	result, err := Install(homeDir, projectDir, "claude", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "claude", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed state, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Resolve the target settings path from the expected project location
+	targetPath := filepath.Join(projectDir, ".claude", "settings.json")
+
+	// Remove the Stop hooks from the target file
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	hooks := parsed["hooks"].(map[string]interface{})
+	delete(hooks, "Stop")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should now report drifted
+	status, err = Status(homeDir, projectDir, "claude", scope)
+	if err != nil {
+		t.Fatalf("Status failed after modification: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted state after hook removal, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook removal")
+	}
+}
+
+type testMunsuResolver struct {
+	path string
+}
+
+func (r testMunsuResolver) Resolve() (string, error) {
+	return r.path, nil
+}

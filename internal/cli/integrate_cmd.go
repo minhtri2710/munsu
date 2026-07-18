@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
@@ -500,7 +502,18 @@ func readParentPID(pid int) int {
 	}
 
 	// Fallback to `ps -o ppid= -p <pid>` (macOS/BSD)
-	// This is a simple check; on systems without /proc, we use os.Getppid
-	// which only gets our parent. For ancestry walks beyond parent, we need ps.
-	return os.Getppid()
+	cmd := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid))
+	out, err := cmd.Output()
+	if err != nil {
+		return -1
+	}
+	ppidStr := strings.TrimSpace(string(out))
+	if ppidStr == "" {
+		return -1
+	}
+	ppid, err := strconv.Atoi(ppidStr)
+	if err != nil || ppid <= 0 {
+		return -1
+	}
+	return ppid
 }

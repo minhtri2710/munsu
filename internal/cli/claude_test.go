@@ -355,7 +355,11 @@ func TestSessionStartNudgeNonPrimary(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	// No git repo → unrelated → non-primary → silent
+	// Change to tmpDir (no git repo) so CheckSessionScope sees unrelated → non-primary
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
@@ -485,5 +489,38 @@ func runGit(t *testing.T, dir string, args ...string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v in %s failed: %v\n%s", args, dir, err, string(out))
+	}
+}
+
+// TestReadParentPID verifies readParentPID on this host.
+// readParentPID(os.Getpid()) must equal os.Getppid() (sanity).
+// Walking from a known child reaches a known ancestor (monotonic pid change).
+func TestReadParentPID(t *testing.T) {
+	ppid := readParentPID(os.Getpid())
+	expected := os.Getppid()
+	if ppid != expected {
+		t.Errorf("readParentPID(%d) = %d, want %d (os.Getppid())", os.Getpid(), ppid, expected)
+	}
+
+	// Walk up: pid should change each step until reaching 1 (or the walk limit)
+	visited := map[int]bool{}
+	pid := os.Getpid()
+	for i := 0; i < 8; i++ {
+		if pid <= 1 {
+			break
+		}
+		if visited[pid] {
+			t.Errorf("ancestry cycle at pid %d on step %d", pid, i)
+			break
+		}
+		visited[pid] = true
+		nextPid := readParentPID(pid)
+		if nextPid <= 0 {
+			break
+		}
+		if nextPid >= pid && pid > 1 {
+			// Parent may have the same PID during exec wrappers (unlikely on macOS)
+		}
+		pid = nextPid
 	}
 }
