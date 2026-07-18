@@ -11,6 +11,20 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
+var fetchLiveIdentity = CaptureIdentity
+
+func validateLiveIdentity(stored, live *DeliveryIdentity) error {
+	if err := ValidateIdentity(live); err != nil {
+		return fmt.Errorf("invalid live PR identity: %w", err)
+	}
+	if stored.Provider != live.Provider || stored.Owner != live.Owner || stored.Repo != live.Repo ||
+		stored.Number != live.Number || stored.BaseRef != live.BaseRef || stored.HeadRef != live.HeadRef ||
+		stored.HeadSHA != live.HeadSHA {
+		return fmt.Errorf("live PR identity changed since capture; re-run pr-check before merge")
+	}
+	return nil
+}
+
 // PRMerge runs `munsu pr-merge <id> <pr-url> [--merge|--rebase]`.
 // It merges a PR via gh-axi CLI and validates the delivery identity
 // before performing the merge. The identity must have been captured
@@ -38,10 +52,17 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 		return fmt.Errorf("cannot merge without valid delivery identity: %w", err)
 	}
 
-	// Verify PR URL matches the stored identity
+	// Verify the requested and live PR identities still match the stored capture.
 	identURL := ghurl.GHURL{Owner: ident.Owner, Repo: ident.Repo, Num: ident.Number}.FullURL()
-	if identURL != prURL {
-		return fmt.Errorf("PR URL mismatch: stored identity points to %s, but merge target is %s; re-run pr-check to update", identURL, prURL)
+	if identURL != ghURL.FullURL() {
+		return fmt.Errorf("PR URL mismatch: stored identity points to %s, but merge target is %s; re-run pr-check to update", identURL, ghURL.FullURL())
+	}
+	live, err := fetchLiveIdentity(ghURL.FullURL())
+	if err != nil {
+		return fmt.Errorf("refreshing live PR identity: %w", err)
+	}
+	if err := validateLiveIdentity(ident, live); err != nil {
+		return err
 	}
 
 	// Verify PR is open before attempting merge

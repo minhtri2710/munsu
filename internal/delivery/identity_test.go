@@ -9,6 +9,15 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
+func validIdentity() *DeliveryIdentity {
+	return &DeliveryIdentity{
+		Provider: "github", Owner: "minhtri2710", Repo: "munsu", Number: 42,
+		URL: "https://github.com/minhtri2710/munsu/pull/42", BaseRef: "main",
+		HeadRef: "feature/test", HeadSHA: "abc123def456abc123def456abc123def456abc1",
+		CapturedAt: "2026-07-18T12:00:00Z",
+	}
+}
+
 // --- ValidateIdentity tests ---
 
 func TestValidateIdentity_Valid(t *testing.T) {
@@ -571,6 +580,49 @@ func TestPRMerge_RejectsURLMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PR URL mismatch") {
 		t.Errorf("expected 'PR URL mismatch' error, got: %v", err)
+	}
+}
+
+func TestPRMerge_RejectsLiveIdentityDrift(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*DeliveryIdentity)
+	}{
+		{"force push", func(id *DeliveryIdentity) { id.HeadSHA = "def456def456def456def456def456def456def4" }},
+		{"base retarget", func(id *DeliveryIdentity) { id.BaseRef = "release" }},
+		{"head ref change", func(id *DeliveryIdentity) { id.HeadRef = "feature/renamed" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			stored := validIdentity()
+			if err := task.WriteMeta(homeDir, "ship", stored.ToMeta()); err != nil {
+				t.Fatal(err)
+			}
+			live := *stored
+			tc.mutate(&live)
+			old := fetchLiveIdentity
+			fetchLiveIdentity = func(string) (*DeliveryIdentity, error) { return &live, nil }
+			t.Cleanup(func() { fetchLiveIdentity = old })
+			err := PRMerge(homeDir, "ship", stored.URL, nil)
+			if err == nil || !strings.Contains(err.Error(), "live PR identity changed") || !strings.Contains(err.Error(), "re-run pr-check") {
+				t.Fatalf("error = %v, want live identity refusal", err)
+			}
+		})
+	}
+}
+
+func TestIdentityFromMeta_RejectsCorruptNumber(t *testing.T) {
+	meta := validIdentity().ToMeta()
+	meta["pr_number"] = "not-a-number"
+	if _, err := IdentityFromMeta(meta); err == nil {
+		t.Fatal("expected corrupt pr_number error")
+	}
+}
+
+func TestIdentityFromMeta_RejectsPartialIdentityWithoutURL(t *testing.T) {
+	if _, err := IdentityFromMeta(map[string]string{"pr_head": "abc123"}); err == nil {
+		t.Fatal("expected partial identity error")
 	}
 }
 

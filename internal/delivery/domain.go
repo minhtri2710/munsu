@@ -168,20 +168,25 @@ func (id *DeliveryIdentity) ToMeta() map[string]string {
 func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 	prURL := meta["pr_url"]
 	if prURL == "" {
-		// Fallback: construct URL from legacy pr key
 		prURL = meta["pr"]
 	}
 	if prURL == "" {
-		return nil, nil // no identity present
+		for _, key := range (&DeliveryIdentity{}).MetaKeys() {
+			if meta[key] != "" {
+				return nil, fmt.Errorf("delivery identity has %s but no pr_url", key)
+			}
+		}
+		return nil, nil
 	}
 
 	numStr := meta["pr_number"]
 	num := 0
 	if numStr != "" {
 		n, err := strconv.Atoi(numStr)
-		if err == nil {
-			num = n
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid pr_number %q", numStr)
 		}
+		num = n
 	}
 
 	// Parse number from URL if not in meta
