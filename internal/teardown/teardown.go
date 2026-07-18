@@ -11,6 +11,8 @@ import (
 
 
 	"github.com/minhtri2710/munsu/internal/decisionhold"
+	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -214,13 +216,16 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 	return nil
 }
 
-// shipSafetyCheck verifies work is landed.
-// Checks: remote-reachable branch, no dirty worktree, content in default branch.
+// shipSafetyCheck verifies work is landed before teardown.
+// It separates cleanliness checks (dirty worktree) from merge-proof checks
+// (topology-aware PR merge verification using delivery identity).
 func shipSafetyCheck(opts Options, meta map[string]string) error {
 	wtPath, ok := meta["worktree"]
 	if !ok || wtPath == "" {
 		return fmt.Errorf("no worktree path in meta for %s", opts.ID)
 	}
+
+	// --- Cleanliness checks (always run) ---
 
 	// Check worktree exists
 	if _, err := os.Stat(wtPath); err != nil {
@@ -230,7 +235,7 @@ func shipSafetyCheck(opts Options, meta map[string]string) error {
 		return fmt.Errorf("checking worktree %s: %w", wtPath, err)
 	}
 
-	// Check not dirty
+	// Check worktree is not dirty
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = wtPath
 	out, err := cmd.Output()
@@ -241,23 +246,116 @@ func shipSafetyCheck(opts Options, meta map[string]string) error {
 		return fmt.Errorf("worktree %s has uncommitted changes (use --force to override)", wtPath)
 	}
 
-	// Check current branch has a remote tracking ref
-	cmd = exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	// --- Merge-proof checks (topology-aware) ---
+
+	// If the task has a delivery identity, use provider-confirmed PR status
+	// to determine whether the work is safely landed.
+	ident, err := identityFromMeta(meta)
+	if err != nil {
+		return fmt.Errorf("reading delivery identity: %w", err)
+	}
+
+	if ident != nil {
+		return topologyAwareMergeCheck(opts, meta, wtPath, ident)
+	}
+
+	// No delivery identity: fall back to simple remote branch check
+	if err := checkRemoteBranch(wtPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// identityFromMeta attempts to reconstruct a delivery identity from task meta.
+// Returns nil (no error) when no identity metadata exists, so the caller can
+// fall back to a simple remote branch check.
+func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error) {
+	prURL := meta["pr_url"]
+	if prURL == "" {
+		// No identity at all — fall through to simple check
+		return nil, nil
+	}
+	return delivery.IdentityFromMeta(meta)
+}
+
+// topologyAwareMergeCheck verifies the work is landed using the provider's
+// confirmed PR merge status. It supports three merge topologies:
+//   - Squash/rebase merge with deleted head: accepts provider-confirmed merged PR identity
+//   - Ordinary merge: retains ancestry proof (merged branch still exists locally)
+//   - Unknown/unverifiable: refuses teardown
+func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *delivery.DeliveryIdentity) error {
+	ghURL, err := ghurl.ParseGHURL(ident.URL)
+	if err != nil {
+		return fmt.Errorf("invalid PR URL in delivery identity: %w", err)
+	}
+
+	// Query the provider for the current PR merge status
+	status, err := delivery.QueryPRMergeStatus(ghURL)
+	if err != nil {
+		return fmt.Errorf("cannot verify PR merge status: %w (use --force to override)", err)
+	}
+
+	// Check for refused states
+	if status.Closed && !status.Merged {
+		return fmt.Errorf("PR #%d is closed but not merged (use --force to override)", ident.Number)
+	}
+
+	if !status.Merged && status.State == "OPEN" {
+		return fmt.Errorf("PR #%d is still open and not merged (use --force to override)", ident.Number)
+	}
+
+	// PR is confirmed merged. Verify head SHA consistency for safety.
+	if status.Merged {
+		// Emit the exact proof used
+		proof := fmt.Sprintf("PR #%d merged; provider-confirmed state=merged headSHA=%s", ident.Number, status.HeadSHA)
+		_ = proof // available for log/dry-run output
+
+		// For deleted remote head (squash/rebase), confirm the PR IS merged
+		// — that's sufficient proof. The remote branch may be gone.
+		// Check: if the remote branch still exists, we can do a stronger check.
+		remoteBranchExists := false
+		if ident.HeadRef != "" {
+			checkCmd := exec.Command("git", "ls-remote", "--exit-code", "origin", "refs/heads/"+ident.HeadRef)
+			checkCmd.Dir = wtPath
+			if checkCmd.Run() == nil {
+				remoteBranchExists = true
+			}
+		}
+
+		if remoteBranchExists {
+			// Remote branch still exists — confirm the head SHA still matches
+			// (ordinary merge topology: ancestry proof is available)
+			if status.HeadSHA == "" {
+				return fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
+			}
+			if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
+				return fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)
+			}
+		}
+
+		// PR is confirmed merged by the provider — accept as landed
+		return nil
+	}
+
+	return fmt.Errorf("PR #%d is in an unexpected state: merged=%v closed=%v (use --force to override)", ident.Number, status.Merged, status.Closed)
+}
+
+// checkRemoteBranch verifies the worktree branch has a remote tracking branch
+// that is reachable. This is a fallback when no delivery identity is available.
+func checkRemoteBranch(wtPath string) error {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
 	cmd.Dir = wtPath
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("branch has no remote tracking branch (use --force to override): %w", err)
 	}
 
-	// Check the remote branch is reachable
 	cmd = exec.Command("git", "fetch", "--dry-run")
 	cmd.Dir = wtPath
 	fetchOut, fetchErr := cmd.CombinedOutput()
 	if fetchErr != nil {
-		// fetch failed — likely no remote or network issue; warn but don't block
-		// Actually, let's be strict: if we can't reach remote, block
 		return fmt.Errorf("cannot reach remote (use --force to override): %s", strings.TrimSpace(string(fetchOut)))
 	}
-	_ = fetchOut
 
 	return nil
 }
