@@ -11,6 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/scope"
 )
 
 // SessionStartResult holds the full session-start output digest.
@@ -120,6 +121,14 @@ func RunSessionStart(home string) (*SessionStartResult, error) {
 // RunSessionStartWithWatcher executes the full session-start sequence.
 func RunSessionStartWithWatcher(home string, ensure WatchEnsureFunc) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
+
+	// 0. Check scope gate — refuse if cwd is a primary checkout with active gate
+	cwd, err := os.Getwd()
+	if err == nil {
+		if err := scope.GateRefusalError(cwd); err != nil {
+			return res, fmt.Errorf("session-start refused: %w", err)
+		}
+	}
 
 	// 1. Acquire lock
 	acquired, err := lifecycle.AcquireSession(home)
