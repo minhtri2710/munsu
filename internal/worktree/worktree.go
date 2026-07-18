@@ -102,12 +102,16 @@ func (p *treehouseProvider) Get(repoPath string, lease bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	args := []string{"get", repoPath}
+	absRepo, absErr := filepath.Abs(repoPath)
+	if absErr != nil {
+		return "", fmt.Errorf("resolving repo path: %w", absErr)
+	}
+	args := []string{"get", absRepo}
 	if lease {
 		args = append(args, "--lease")
 	}
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = repoPath
+	cmd.Dir = absRepo
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

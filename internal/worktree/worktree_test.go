@@ -441,3 +441,59 @@ func runCmd(t *testing.T, dir, name string, args ...string) {
 		t.Fatalf("cmd %s %v failed: %v\n%s", name, args, err, string(out))
 	}
 }
+
+func TestGet_RelativeRepoPath_PassesAbsolute(t *testing.T) {
+	// Regression: treehouseProvider.Get must pass an ABSOLUTE repo path to
+	// `treehouse get` and use it as cmd.Dir. A relative repoPath previously
+	// produced a cryptic "not a directory" error.
+	mockDir := t.TempDir()
+	argsFile := filepath.Join(mockDir, "args.txt")
+	mockScript := filepath.Join(mockDir, "treehouse")
+	mockBody := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\necho /tmp/wt-rel\n"
+	if err := os.WriteFile(mockScript, []byte(mockBody), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", mockDir+":"+oldPath)
+
+	// Build a real repo dir and reference it by a RELATIVE path from its parent.
+	repoDir := t.TempDir()
+	parent := filepath.Dir(repoDir)
+	rel := filepath.Base(repoDir)
+
+	// chdir to parent so the relative name resolves (package tests are sequential).
+	oldCwd, _ := os.Getwd()
+	defer os.Chdir(oldCwd)
+	if err := os.Chdir(parent); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := Get(t.TempDir(), rel, true)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if path != "/tmp/wt-rel" {
+		t.Errorf("expected path '/tmp/wt-rel', got: %q", path)
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(parts) < 2 {
+		t.Fatalf("expected >=2 args recorded, got %#v", parts)
+	}
+	if parts[0] != "get" {
+		t.Errorf("first arg = %q, want \"get\"", parts[0])
+	}
+	if !filepath.IsAbs(parts[1]) {
+		t.Errorf("repo arg = %q, want an absolute path", parts[1])
+	}
+	want, _ := filepath.Abs(rel)
+	if parts[1] != want {
+		t.Errorf("repo arg = %q, want %q", parts[1], want)
+	}
+}
