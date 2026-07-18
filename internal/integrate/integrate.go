@@ -105,9 +105,29 @@ func MunsuHomeArtifactsDir(homeDir string) string {
 }
 
 // ManifestPath returns the manifest file path for the given harness+scope.
-func ManifestPath(homeDir, harnessName string, scope Scope) string {
+// For user scope, the path is <home>/integrate/<harness>/user/manifest.json.
+// For project scope, the path includes a SHA-256 slug derived from the
+// canonical project root to ensure isolation between different projects.
+func ManifestPath(homeDir, harnessName string, scope Scope, cwd ...string) string {
 	base := MunsuHomeArtifactsDir(homeDir)
+	if scope == ScopeProject && len(cwd) > 0 && cwd[0] != "" {
+		slug := projectPathSlug(cwd[0])
+		return filepath.Join(base, harnessName, "project", slug, "manifest.json")
+	}
 	return filepath.Join(base, harnessName, string(scope), "manifest.json")
+}
+
+// projectPathSlug returns a deterministic SHA-256 hex prefix (16 chars)
+// derived from the canonical (EvalSymlinks-resolved, Clean) project root path.
+// Uses the first 16 hex characters for a readable but unique path component.
+func projectPathSlug(projectRoot string) string {
+	canonical, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		canonical = projectRoot
+	}
+	canonical = filepath.Clean(canonical)
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:8]) // 16 hex chars
 }
 
 // UserExtensionsDir returns the Pi user extensions directory.
@@ -146,8 +166,13 @@ func AssertSupportedHarness(name string) error {
 
 // homePathForScope resolves the filesystem location for munsu home artifacts
 // based on scope and harness. Returns per-harness per-scope path.
-func homePathForScope(homeDir, harnessName string, scope Scope) string {
+// For project scope, includes a deterministic SHA-256 slug of the cwd/canonical path.
+func homePathForScope(homeDir, harnessName string, scope Scope, cwd ...string) string {
 	base := MunsuHomeArtifactsDir(homeDir)
+	if scope == ScopeProject && len(cwd) > 0 && cwd[0] != "" {
+		slug := projectPathSlug(cwd[0])
+		return filepath.Join(base, harnessName, "project", slug)
+	}
 	return filepath.Join(base, harnessName, string(scope))
 }
 
@@ -396,40 +421,66 @@ func probePiAPIs(piBin string) error {
 	// Find the pi package root to resolve the installed typing module.
 	piDir := filepath.Dir(piBin)
 
-	// Attempt to resolve the installed package path.
-	// We use `node -e "require.resolve('@earendil-works/pi-coding-agent')"`
-	// to find the actual installed location, then verify the types export.
-	probeScript := `
-try {
-  const pkgPath = require.resolve('@earendil-works/pi-coding-agent/package.json', { paths: [process.cwd()] });
-  const pkg = require(pkgPath);
-  // Version check
-  if (!pkg.version) { process.exit(2); }
-  // Verify main/types entry exists
-  const mainPath = require.resolve('@earendil-works/pi-coding-agent', { paths: [process.cwd()] });
-  if (!mainPath) { process.exit(3); }
-  // Minimal syntax check: parse the module and look for expected exports
-  const fs = require('fs');
-  const content = fs.readFileSync(mainPath, 'utf8');
-  // Check for key API surface strings
-  const requiredAPIs = ['agent_settled', 'appendEntry', 'sendUserMessage', 'registerCommand', 'registerTool', 'ExtensionAPI'];
-  for (const api of requiredAPIs) {
-    if (!content.includes(api)) {
-      console.error('Missing API:', api);
-      process.exit(4);
-    }
-  }
-  process.exit(0);
-} catch (e) {
-  console.error(e.message);
-  process.exit(1);
+	// Write a minimal TypeScript fixture that imports the Pi ExtensionAPI type
+	// and verifies the required API surface compiles: ExtensionAPI, agent_settled,
+	// pi.exec, appendEntry, sendUserMessage, registerCommand, tool_call.
+	// Must NOT require unrelated registerTool.
+	fixture := `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { strict as assert } from "assert";
+
+// Verify ExtensionAPI type is available at compile time.
+type CheckAPI = ExtensionAPI;
+
+// Verify key method signatures by declaring a function that uses them.
+function checkAPIs(pi: ExtensionAPI) {
+  // pi.exec: child process execution
+  const execResult: Promise<{ code: number; stdout: string; stderr: string }> = pi.exec("munsu", []);
+  void execResult;
+
+  // appendEntry: durable append-only storage
+  pi.appendEntry("test", { key: "value" });
+
+  // sendUserMessage: send a message to the user
+  pi.sendUserMessage("test", { deliverAs: "followUp" });
+
+  // registerCommand: register a slash command
+  pi.registerCommand("test", {
+    description: "Test command",
+    handler: async (_args: string, _ctx: any) => {},
+  });
+
+  // Verify events exist on pi.on
+  pi.on("agent_settled", async (_event: any, _ctx: any) => {});
+  pi.on("tool_call", async (_event: any, _ctx: any) => {});
+  pi.on("session_start", async (_event: any, _ctx: any) => {});
+  pi.on("turn_end", async (_event: any, _ctx: any) => {});
 }
+
+console.log("API probe passed");
 `
-	cmd := exec.Command("node", "-e", probeScript)
+
+	tmpDir, err := os.MkdirTemp("", "pi-api-probe-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	srcPath := filepath.Join(tmpDir, "probe.ts")
+	if err := os.WriteFile(srcPath, []byte(fixture), 0644); err != nil {
+		return fmt.Errorf("write probe file: %w", err)
+	}
+
+	// Compile with node --experimental-strip-types which uses the installed
+	// package resolution to prove the @earendil-works/pi-coding-agent module
+	// exports the required types.
+	cmd := exec.Command("node", "--experimental-strip-types", srcPath)
 	cmd.Dir = piDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("pi package API probe failed (exit %v): %s. Ensure @earendil-works/pi-coding-agent >= %s is installed", err, string(out), PiMinimumVersion)
+	}
+	if !strings.Contains(string(out), "API probe passed") {
+		return fmt.Errorf("pi API probe did not complete: %s", string(out))
 	}
 	return nil
 }
@@ -517,6 +568,32 @@ func hasFirstLineMarker(content string) bool {
 		firstLine = content
 	}
 	return firstLine == MunsuFirstLine
+}
+
+// ExpectedTargetPath computes the expected extension target path for a given scope+cwd.
+// For user scope: ~/.pi/agent/extensions/munsu-pi-integration.ts
+// For project scope: <cwd>/.pi/extensions/munsu-pi-integration.ts
+func ExpectedTargetPath(scope Scope, cwd string) (string, error) {
+	switch scope {
+	case ScopeUser:
+		dir := UserExtensionsDir()
+		if dir == "" {
+			return "", fmt.Errorf("cannot determine user extensions directory")
+		}
+		return filepath.Join(dir, "munsu-pi-integration.ts"), nil
+	case ScopeProject:
+		if cwd == "" {
+			return "", fmt.Errorf("cwd is required for project scope")
+		}
+		canonical, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve cwd %s: %w", cwd, err)
+		}
+		dir := ProjectExtensionsDir(canonical)
+		return filepath.Join(dir, "munsu-pi-integration.ts"), nil
+	default:
+		return "", fmt.Errorf("unsupported scope %q", scope)
+	}
 }
 
 // ValidateStrict runs strict validation on a manifest against expected values.

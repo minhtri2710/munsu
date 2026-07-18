@@ -203,7 +203,7 @@ class MockAPI {
         code: 0,
         stdout: JSON.stringify({
           schema_version: "munsu.orchestration/v2",
-          kind: "session_start",
+          kind: "session.start",
           status: "success",
           data: {
             message: "session started",

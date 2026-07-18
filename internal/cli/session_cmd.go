@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -100,17 +101,55 @@ func newBriefCmd() *cobra.Command {
 }
 
 func newSessionStartCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "session-start",
 		Short: "Lock, bootstrap, ensure watcher for in-flight work, and print the session-start digest",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			_, err := session.RunSessionStartWithWatcher(ctx.Home, func(home string) session.WatchEnsureResult {
-				result := ensureWatcher(home, false)
-				return session.WatchEnsureResult{State: result.Data.State}
+			output, err := contractOutput(cmd)
+			if err != nil {
+				return err
+			}
+
+			// Discard verbose output when JSON contract is requested.
+			var w io.Writer = cmd.OutOrStdout()
+			if output == contract.OutputJSON {
+				w = io.Discard
+			}
+
+			result, err := session.RunSessionStartWithWatcher(w, ctx.Home, func(home string) session.WatchEnsureResult {
+				r := ensureWatcher(home, false)
+				return session.WatchEnsureResult{State: r.Data.State}
 			})
-			return err
+			if err != nil {
+				return err
+			}
+
+			// Build structured data for contract output.
+			lockState := "acquired"
+			if !result.LockAcquired {
+				lockState = "refused (read-only)"
+			}
+			watcherState := result.Watcher.State
+			if watcherState == "" {
+				watcherState = "unknown"
+			}
+
+			return writeContract(cmd, contract.Response[contract.SessionStart]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "session.start",
+				Status:        "success",
+				Data: contract.SessionStart{
+					Lock:        lockState,
+					Watcher:     watcherState,
+					BootstrapOK: result.Bootstrap != nil,
+					FleetSyncOK: result.FleetSync != nil,
+					Message:     "Session started. Lock: " + lockState + ". Watcher: " + watcherState + ".",
+				},
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
 func newBootstrapCmd() *cobra.Command {

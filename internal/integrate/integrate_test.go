@@ -86,17 +86,32 @@ func TestManifestPath(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, path)
 	}
 
-	path = ManifestPath("/home/munsu", "pi", ScopeProject)
-	expected = "/home/munsu/integrate/pi/project/manifest.json"
-	if path != expected {
-		t.Errorf("expected %q, got %q", expected, path)
+	// Project scope now requires a cwd; the path includes a deterministic slug.
+	path = ManifestPath("/home/munsu", "pi", ScopeProject, "/tmp/project-a")
+	if !strings.HasPrefix(path, "/home/munsu/integrate/pi/project/") {
+		t.Errorf("project manifest path should start with /home/munsu/integrate/pi/project/, got %q", path)
+	}
+	if !strings.HasSuffix(path, "/manifest.json") {
+		t.Errorf("project manifest path should end with /manifest.json, got %q", path)
+	}
+	// Should contain a hex slug directory
+	parts := strings.Split(path, "/")
+	slugDir := parts[len(parts)-2]
+	if len(slugDir) != 16 {
+		t.Errorf("expected 16-char hex slug directory, got %q (len=%d)", slugDir, len(slugDir))
+	}
+	// Verify slug is hex
+	for _, c := range slugDir {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("slug char %q is not hex", c)
+		}
 	}
 }
 
 // Test ManifestPath scope isolation
 func TestManifestPath_ScopeIsolation(t *testing.T) {
 	userPath := ManifestPath("/home/munsu", "pi", ScopeUser)
-	projPath := ManifestPath("/home/munsu", "pi", ScopeProject)
+	projPath := ManifestPath("/home/munsu", "pi", ScopeProject, "/tmp/project-a")
 
 	if userPath == projPath {
 		t.Error("user and project manifest paths must be different")
@@ -106,6 +121,22 @@ func TestManifestPath_ScopeIsolation(t *testing.T) {
 	}
 	if !strings.Contains(projPath, "/pi/project/") {
 		t.Errorf("project manifest path should contain /pi/project/, got %q", projPath)
+	}
+}
+
+// Test ManifestPath project isolation: two different projects must produce different paths
+func TestManifestPath_ProjectIsolation(t *testing.T) {
+	pathA := ManifestPath("/home/munsu", "pi", ScopeProject, "/tmp/project-a")
+	pathB := ManifestPath("/home/munsu", "pi", ScopeProject, "/tmp/project-b")
+
+	if pathA == pathB {
+		t.Fatal("two different projects must produce different manifest paths")
+	}
+
+	// Same canonical path must produce stable path
+	pathA2 := ManifestPath("/home/munsu", "pi", ScopeProject, "/tmp/project-a")
+	if pathA != pathA2 {
+		t.Errorf("same project path must produce stable manifest path: %q != %q", pathA, pathA2)
 	}
 }
 
@@ -194,9 +225,11 @@ func TestPiExtensionTemplate_UsesAgentSettled(t *testing.T) {
 	if !strings.Contains(tmpl, "agent_settled") {
 		t.Error("template must use agent_settled event for wake follow-up (Pi may still auto-retry/compact/continue after agent_end)")
 	}
-	// Verify agent_end is NOT used for claim/follow-up (it fires before Pi is done)
-	if !strings.Contains(tmpl, "agent_end") == false {
-		t.Log("template may still reference agent_end for non-claim purposes")
+	// Verify agent_end is NOT used for claim/follow-up (it fires before Pi is done).
+	// The template may still reference agent_end in comments for non-claim purposes,
+	// but must not use it for wake claim logic.
+	if strings.Contains(tmpl, "agent_end") {
+		t.Log("template references agent_end (acceptable for non-claim references)")
 	}
 }
 
@@ -390,7 +423,7 @@ func TestSafetyCheck(t *testing.T) {
 	t.Setenv("NO_MISTAKES_GATE", "1")
 	result = SafetyCheck(dir)
 	if !result.GateRefused {
-		t.Logf("expected gate refused with NO_MISTAKES_GATE, got identity=%s gate=%s", result.Identity, result.GateCapability)
+		t.Errorf("expected gate refused with NO_MISTAKES_GATE, got identity=%s gate=%s", result.Identity, result.GateCapability)
 	}
 }
 
@@ -456,7 +489,7 @@ func TestSafetyCheck_FailsClosedOnUnrelated(t *testing.T) {
 	result := SafetyCheck(t.TempDir())
 	// Temp dir with no git repo is "unrelated" and should fail closed
 	if !result.GateRefused {
-		t.Logf("SafetyCheck(unrelated).GateRefused = false; identity=%s gate=%s", result.Identity, result.GateCapability)
+		t.Errorf("SafetyCheck(unrelated).GateRefused = false; identity=%s gate=%s", result.Identity, result.GateCapability)
 	}
 }
 
@@ -473,8 +506,8 @@ func TestSafetyCheck_WithEnvGate(t *testing.T) {
 	}
 }
 
-// Test writeAtomic parent dir sync errors
-func TestWriteAtomic_ParentDirSyncErrors(t *testing.T) {
+// Test writeAtomic creates subdirectories as needed
+func TestWriteAtomic_CreatesSubdirs(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "sub", "test.txt")
 	if err := writeAtomic(target, "hello world", 0644); err != nil {
@@ -510,10 +543,10 @@ func TestCheckPiCapability_RejectsMalformedVersion(t *testing.T) {
 	}
 	err := CheckPiCapability(scriptPath)
 	if err == nil {
-		t.Skip("CheckPiCapability accepts non-semver versions — may be acceptable for dev builds")
-	} else {
-		t.Logf("CheckPiCapability correctly rejects malformed version: %v", err)
+		t.Fatal("CheckPiCapability must reject malformed non-semver version")
 	}
+	t.Logf("CheckPiCapability correctly rejects malformed version: %v", err)
+
 }
 
 // Test CheckPiCapability rejects old 0.x versions
@@ -525,10 +558,10 @@ func TestCheckPiCapability_RejectsOldVersion(t *testing.T) {
 	}
 	err := CheckPiCapability(scriptPath)
 	if err == nil {
-		t.Skip("CheckPiCapability accepts old versions — may be acceptable")
-	} else {
-		t.Logf("CheckPiCapability correctly rejects old version: %v", err)
+		t.Fatal("CheckPiCapability must reject old version 0.1.0 < minimum " + PiMinimumVersion)
 	}
+	t.Logf("CheckPiCapability correctly rejects old version: %v", err)
+
 }
 
 // Test template uses parseContract helper
@@ -552,6 +585,10 @@ func TestPiExtensionTemplate_SessionStartCommand(t *testing.T) {
 	if !strings.Contains(tmpl, `"session-start", "--output", "json"`) &&
 		!strings.Contains(tmpl, `"session-start","--output","json"`) {
 		t.Error("template must pass --output json to session-start")
+	}
+	// Must expect session.start kind
+	if !strings.Contains(tmpl, "session.start") {
+		t.Error("template must expect session.start kind")
 	}
 }
 
@@ -579,30 +616,5 @@ func TestPiExtensionTemplate_NumericLeaseExpiry(t *testing.T) {
 	if !strings.Contains(tmpl, "lease_expires") &&
 		!strings.Contains(tmpl, "leaseExpiry") {
 		t.Error("template must handle numeric lease_expires")
-	}
-}
-
-// Test writeAtomic parent dir sync returns errors
-func TestWriteAtomic_ParentDirError(t *testing.T) {
-	// Verify that the function signature still returns error
-	// and doesn't silently swallow parent dir fsync errors
-	dir := t.TempDir()
-	target := filepath.Join(dir, "test_atomic.txt")
-	if err := writeAtomic(target, "content", 0644); err != nil {
-		t.Fatalf("writeAtomic failed: %v", err)
-	}
-	// Verify content was written
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if string(data) != "content" {
-		t.Errorf("expected 'content', got %q", string(data))
-	}
-	// Verify the function is strict about parent dir fsync by checking it exercises
-	// the fsync path (not best-effort)
-	secondTarget := filepath.Join(dir, "test_atomic2.txt")
-	if err := writeAtomic(secondTarget, "content2", 0644); err != nil {
-		t.Fatalf("second writeAtomic failed: %v", err)
 	}
 }

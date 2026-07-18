@@ -61,9 +61,12 @@ function parseSafetyCheck(raw: string): { ok: true; gate_refused: boolean; block
     return { ok: false, reason: "malformed JSON" };
   }
   if (typeof parsed !== "object" || parsed === null) return { ok: false, reason: "not a JSON object" };
-  // Accept both envelope {data:{...}} and flat response
-  const data = parsed.data || parsed;
-  if (typeof data !== "object" || data === null) return { ok: false, reason: "missing data" };
+  // Only accept exact envelope: schema_version, kind, status, data.
+  if (parsed.schema_version !== "munsu.orchestration/v2") return { ok: false, reason: "wrong schema_version: " + String(parsed.schema_version) };
+  if (parsed.kind !== "integrate.safety-check") return { ok: false, reason: "wrong kind: " + String(parsed.kind) };
+  if (parsed.status !== "success") return { ok: false, reason: "status is not success: " + String(parsed.status) };
+  const data = parsed.data;
+  if (!data || typeof data !== "object") return { ok: false, reason: "missing or non-object data" };
   if (typeof data.gate_refused !== "boolean") return { ok: false, reason: "missing or non-boolean gate_refused" };
   if (typeof data.block !== "boolean") return { ok: false, reason: "missing or non-boolean block" };
   return { ok: true, gate_refused: data.gate_refused, block: data.block, reason: data.reason };
@@ -131,6 +134,7 @@ export default function (pi: ExtensionAPI) {
       "integrate", "safety-check", ctx.cwd || ".",
       "--output", "json",
     ]);
+    if (safetyResult.code !== 0) { ctx.ui.notify("munsu: safety check failed (exit code " + safetyResult.code + ")", "error"); return; }
     const safety = parseSafetyCheck(safetyResult.stdout);
     if (!safety.ok) {
       ctx.ui.notify("munsu: safety check failed (" + safety.reason + "). Cannot start session.", "warning");
@@ -143,7 +147,8 @@ export default function (pi: ExtensionAPI) {
 
     // Invoke munsu session-start --output json after safety succeeds.
     const sessionResult = await pi.exec(MUNSU_BIN, ["session-start", "--output", "json"]);
-    const sessionParsed = parseContract<{ message?: string; state?: string }>(sessionResult.stdout, "session_start");
+    if (sessionResult.code !== 0) { ctx.ui.notify("munsu: session-start failed (exit code " + sessionResult.code + ")", "error"); return; }
+    const sessionParsed = parseContract<{ message?: string; state?: string }>(sessionResult.stdout, "session.start");
     if (!sessionParsed.ok) {
       ctx.ui.notify("munsu: session-start failed (" + sessionParsed.reason + ")", "error");
       return;
@@ -172,6 +177,7 @@ export default function (pi: ExtensionAPI) {
       "integrate", "safety-check", ctx.cwd || ".",
       "--output", "json",
     ]);
+    if (safetyCheck.code !== 0) return;
     const safety = parseSafetyCheck(safetyCheck.stdout);
     if (!safety.ok || safety.gate_refused) return;
 
@@ -193,13 +199,15 @@ export default function (pi: ExtensionAPI) {
 
     const d = parsed.data;
     const claimId = d.claim_id;
-    if (!claimId) return;  // No claim ID — no known lease
+    if (typeof claimId !== "string" || !claimId.trim()) return;  // Non-empty string claim_id required
+
+    // Require numeric finite lease_expires; do not silently default a malformed value.
+    if (typeof d.lease_expires !== "number" || !isFinite(d.lease_expires)) return;
+    const leaseExpiry = d.lease_expires * 1000;
 
     const wakeId = d.wake_id || "";
     const eventIds = wakeId ? wakeId.split(",").filter((id: string) => id.trim()) : [];
     const key = d.key || eventIds[0] || claimId;
-    // Require numeric lease_expires for proper expiry tracking
-    const leaseExpiry = typeof d.lease_expires === "number" ? d.lease_expires * 1000 : Date.now() + 120000;
     const summary = d.summary || "wake";
     const keyAttr = key !== claimId ? " [key=" + key + "]" : "";
 
@@ -231,6 +239,7 @@ export default function (pi: ExtensionAPI) {
       "integrate", "safety-check", ctx.cwd || ".",
       "--output", "json",
     ]);
+    if (safetyCheck.code !== 0) return;
     const safety = parseSafetyCheck(safetyCheck.stdout);
     if (!safety.ok || safety.gate_refused) return;
 
@@ -255,12 +264,15 @@ export default function (pi: ExtensionAPI) {
 
     const d = parsed.data;
     const claimId = d.claim_id;
-    if (!claimId) return;
+    if (typeof claimId !== "string" || !claimId.trim()) return;  // Non-empty string claim_id required
+
+    // Require numeric finite lease_expires; do not silently default.
+    if (typeof d.lease_expires !== "number" || !isFinite(d.lease_expires)) return;
+    const leaseExpiry = d.lease_expires * 1000;
 
     const wakeId = d.wake_id || "";
     const eventIds = wakeId ? wakeId.split(",").filter((id: string) => id.trim()) : [];
     const key = d.key || eventIds[0] || claimId;
-    const leaseExpiry = typeof d.lease_expires === "number" ? d.lease_expires * 1000 : Date.now() + 120000;
     const keyAttr = key !== claimId ? " [key=" + key + "]" : "";
 
     pendingWake = { leaseId: claimId, eventIds, key, leaseExpiry, deliveryState: "pending" };
@@ -292,6 +304,9 @@ export default function (pi: ExtensionAPI) {
       "--command", cmd,
       "--output", "json",
     ]);
+    if (safetyResult.code !== 0) {
+      return { block: true, reason: "Command blocked: safety check failed (exit " + safetyResult.code + ")" };
+    }
     const safety = parseSafetyCheck(safetyResult.stdout);
     if (!safety.ok) {
       // Fail closed: cannot verify safety, block the command.
@@ -343,6 +358,12 @@ export default function (pi: ExtensionAPI) {
       // Ack the wake with lease ID and event IDs.
       const ackArgs = ["wake", "ack", pendingWake.leaseId, ...pendingWake.eventIds, "--output", "json"];
       const ackResult = await pi.exec(MUNSU_BIN, ackArgs);
+
+      // Reject nonzero code before parsing.
+      if (ackResult.code !== 0) {
+        ctx.ui.notify("Failed to ack wake (exit " + ackResult.code + ")", "error");
+        return;
+      }
 
       // Parse ack response — require exact contract envelope.
       const ackParsed = parseContract<{ claim_id: string; state: string }>(ackResult.stdout, "wake.ack");

@@ -192,6 +192,15 @@ type TruncatedResult struct {
 	FullCommand string `json:"full_command"`
 }
 
+// SessionStart is the structured session-start digest.
+type SessionStart struct {
+	Lock        string `json:"lock"`
+	Watcher     string `json:"watcher"`
+	BootstrapOK bool   `json:"bootstrap_ok"`
+	FleetSyncOK bool   `json:"fleet_sync_ok"`
+	Message     string `json:"message"`
+}
+
 // TaskEntry is one row in a task list.
 type TaskEntry struct {
 	ID      string `json:"id"`

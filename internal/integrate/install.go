@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -65,12 +67,12 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 			// Write manifest to per-harness per-scope path.
 			manifest := GenerateManifest(harnessName, string(scope), caps, digest)
 			manifest.TargetPaths = []string{target}
-			artifactDir := homePathForScope(homeDir, harnessName, scope)
+			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
 			if err := os.MkdirAll(artifactDir, 0755); err != nil {
 				return nil, fmt.Errorf("create artifact dir: %w", err)
 			}
 
-			manifestPath := ManifestPath(homeDir, harnessName, scope)
+			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
 			manifestData, err := json.MarshalIndent(manifest, "", "  ")
 			if err != nil {
 				return nil, fmt.Errorf("marshal manifest: %w", err)
@@ -165,7 +167,7 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	}
 
 	// Read manifest from per-harness per-scope path.
-	manifestPath := ManifestPath(homeDir, harnessName, scope)
+	manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		result.State = "absent"
@@ -184,9 +186,18 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		result.Drifted = true
 		return result, nil
 	}
-	// Check for trailing JSON values (e.g., multiple objects).
+	// Check for trailing non-whitespace after the main object.
+	// The second decode must specifically return io.EOF to be clean.
+	// Any non-EOF error or a successful decode is drift.
 	var trailing json.RawMessage
-	if err := dec.Decode(&trailing); err == nil {
+	if err := dec.Decode(&trailing); err != nil {
+		if !errors.Is(err, io.EOF) {
+			result.State = "drifted"
+			result.Message = "manifest trailing data decode error: " + err.Error()
+			result.Drifted = true
+			return result, nil
+		}
+	} else {
 		result.State = "drifted"
 		result.Message = "manifest contains trailing JSON values after the main object"
 		result.Drifted = true
@@ -194,22 +205,48 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	}
 
 	// Strict validation against expected values.
-	// Derive expected target count from scope: user scope = 1 target, project scope = 1.
 	expectedCaps := caps
-	var expectedTargets int
-	switch scope {
-	case ScopeUser, ScopeProject:
-		expectedTargets = 1
-	default:
-		expectedTargets = 0
-	}
+	expectedTargets := 1
 	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", expectedCaps, expectedTargets); err != nil {
 		result.State = "drifted"
 		result.Message = fmt.Sprintf("manifest validation: %v", err)
 		result.Drifted = true
 		return result, nil
 	}
-	// Verify all target paths exist, have ownership markers, and digest matches.
+
+	// Verify that TargetPaths contains exactly the expected canonical target for this scope+cwd.
+	expectedTarget, err := ExpectedTargetPath(scope, cwd)
+	if err != nil {
+		result.State = "drifted"
+		result.Message = fmt.Sprintf("cannot compute expected target: %v", err)
+		result.Drifted = true
+		return result, nil
+	}
+	targetFound := false
+	for _, tp := range manifest.TargetPaths {
+		canonicalTP, resolveErr := filepath.EvalSymlinks(tp)
+		if resolveErr != nil {
+			continue
+		}
+		canonicalTP = filepath.Clean(canonicalTP)
+		canonicalExpected, resolveErr := filepath.EvalSymlinks(expectedTarget)
+		if resolveErr != nil {
+			continue
+		}
+		canonicalExpected = filepath.Clean(canonicalExpected)
+		if canonicalTP == canonicalExpected {
+			targetFound = true
+			break
+		}
+	}
+	if !targetFound {
+		result.State = "drifted"
+		result.Message = fmt.Sprintf("target path mismatch: expected %q not found in manifest target paths", expectedTarget)
+		result.Drifted = true
+		return result, nil
+	}
+
+	// Verify the target file exists, has ownership marker, and digest matches.
 	allPresent := true
 	for _, tp := range manifest.TargetPaths {
 		if _, err := os.Stat(tp); err != nil {
@@ -256,8 +293,8 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 func reader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
 
 // WriteManifestBackup writes the manifest to a backup path.
-func WriteManifestBackup(homeDir, harnessName string, scope Scope, manifest Manifest) (string, error) {
-	artifactDir := homePathForScope(homeDir, harnessName, scope)
+func WriteManifestBackup(homeDir, harnessName string, scope Scope, manifest Manifest, cwd ...string) (string, error) {
+	artifactDir := homePathForScope(homeDir, harnessName, scope, cwd...)
 	if err := os.MkdirAll(artifactDir, 0755); err != nil {
 		return "", fmt.Errorf("create backup dir: %w", err)
 	}
