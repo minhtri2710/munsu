@@ -169,7 +169,8 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		os.Stdout = w
 		defer func() { os.Stdout = oldStdout }()
 
-		err = Run("", "add", []string{"task-1", "priority:high"})
+		homeDir := t.TempDir()
+		err = Run(homeDir, "add", []string{"task-1", "priority:high"})
 		w.Close()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -182,7 +183,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		}
 		output := buf.String()
 
-		expectedOutput := "EXEC_CMD: add task-1 priority:high\n"
+		expectedOutput := fmt.Sprintf("EXEC_CMD: add task-1 priority:high --file %s\n", filepath.Join(homeDir, "data", "backlog.md"))
 		if output != expectedOutput {
 			t.Errorf("expected output %q, got %q", expectedOutput, output)
 		}
@@ -205,7 +206,8 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		os.Stdout = w
 		defer func() { os.Stdout = oldStdout }()
 
-		err = Run("", "block", []string{"task-a", "--by", "task-b"})
+		homeDir := t.TempDir()
+		err = Run(homeDir, "block", []string{"task-a", "--by", "task-b"})
 		w.Close()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -218,7 +220,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		}
 		output := buf.String()
 
-		expectedOutput := "EXEC_CMD: block task-a --by task-b\n"
+		expectedOutput := fmt.Sprintf("EXEC_CMD: block task-a --by task-b --file %s\n", filepath.Join(homeDir, "data", "backlog.md"))
 		if output != expectedOutput {
 			t.Errorf("expected output %q, got %q", expectedOutput, output)
 		}
@@ -299,8 +301,9 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 		var buf bytes.Buffer
 		buf.ReadFrom(r)
 		output := buf.String()
-		if !strings.Contains(output, "EXEC_CMD:") {
-			t.Errorf("expected tasks-axi execution, got %q", output)
+		expectedFile := filepath.Join(homeDir, "data", "backlog.md")
+		if !strings.Contains(output, "EXEC_CMD: list --file "+expectedFile) {
+			t.Errorf("expected tasks-axi execution scoped to %s, got %q", expectedFile, output)
 		}
 	})
 
@@ -321,6 +324,41 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 			t.Errorf("expected backlog.md at %s, but it does not exist", backlogPath)
 		}
 	})
+}
+
+func TestTasksAxiBackendScopesOperationsToHome(t *testing.T) {
+	oldLookPath := lookPath
+	oldExecCommand := execCommand
+	defer func() {
+		lookPath = oldLookPath
+		execCommand = oldExecCommand
+	}()
+
+	lookPath = func(name string) (string, error) {
+		if name == "tasks-axi" {
+			return "/mock/tasks-axi", nil
+		}
+		return "", fmt.Errorf("file not found")
+	}
+	execCommand = func(command string, args ...string) *exec.Cmd {
+		cs := []string{"-test.run=TestHelperProcess", "--", command}
+		cs = append(cs, args...)
+		cmd := exec.Command(os.Args[0], cs...)
+		cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+		return cmd
+	}
+
+	homeDir := t.TempDir()
+	backend := &TasksAxiBackend{HomeDir: homeDir}
+	output := captureStdout(func() {
+		if err := backend.Add("task-1", "scoped", "ship", "munsu", false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	expectedFile := filepath.Join(homeDir, "data", "backlog.md")
+	if !strings.Contains(output, "--file "+expectedFile) {
+		t.Errorf("expected home-scoped tasks-axi call, got %q", output)
+	}
 }
 
 func TestFileBackend_Parse(t *testing.T) {

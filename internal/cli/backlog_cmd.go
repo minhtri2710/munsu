@@ -15,7 +15,7 @@ func newBacklogCmd() *cobra.Command {
 		Short: "Manage the task backlog",
 		Long: `Manage the task backlog via the configured backlog backend.
 
-Subcommands: add, list, show, start, done, block, ready, unblock.
+Subcommands: add, list, show, start, done, block, ready, unblock, paths.
 
 Uses tasks-axi CLI when available (>= 0.1.1), falling back to
 hand-editing $MUNSU_HOME/data/backlog.md.
@@ -32,6 +32,7 @@ When --home is a non-default path, the manual backend is forced to prevent data 
 	cmd.AddCommand(newBacklogBlockCmd())
 	cmd.AddCommand(newBacklogReadyCmd())
 	cmd.AddCommand(newBacklogUnblockCmd())
+	cmd.AddCommand(newBacklogPathsCmd())
 
 	return cmd
 }
@@ -55,7 +56,13 @@ Example:
 			id := args[0]
 			desc := args[1]
 
-			if err := backlog.AddItemDispatch(ctx.Home, id, desc, kind, repo, start); err != nil {
+			var err error
+			if isDefaultHome(ctx.Home) {
+				err = backlog.AddItemDispatch(ctx.Home, id, desc, kind, repo, start)
+			} else {
+				err = backlog.AddItem(ctx.Home, id, desc, kind, repo, start)
+			}
+			if err != nil {
 				return err
 			}
 			// When --start is set, also register the task meta so it appears in fleet state.
@@ -149,7 +156,7 @@ func newBacklogBlockCmd() *cobra.Command {
 When using tasks-axi backend, --by specifies the dependency that blocks this item.
 When --by is omitted, falls back to manual backend.`,
 
-		Args:  ExactArgs(1),
+		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if by != "" && isDefaultHome(ctx.Home) {
 				return backlog.Run(ctx.Home, "block", []string{args[0], "--by", by})
@@ -185,6 +192,31 @@ func newBacklogUnblockCmd() *cobra.Command {
 				return backlog.Run(ctx.Home, "unblock", args)
 			}
 			return backlog.RunManual(ctx.Home, "unblock", args)
+		}),
+	}
+}
+
+func newBacklogPathsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "paths",
+		Short: "Show separate development and runtime backlog paths",
+		Args:  NoArgs,
+		RunE: withHome(func(cmd *cobra.Command, _ []string, ctx Ctx) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("resolving working directory: %w", err)
+			}
+			paths, err := backlog.ResolvePaths(cwd, ctx.Home)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "development: %s\nruntime: %s\n", paths.Development, paths.Runtime)
+			if paths.Config != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "config: %s\n", paths.Config)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "config: (none; development defaults to cwd/backlog.md)")
+			}
+			return nil
 		}),
 	}
 }

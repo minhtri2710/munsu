@@ -24,7 +24,7 @@ func Run(homeDir, verb string, args []string) error {
 		return manualRun(homeDir, verb, args)
 	}
 	if tasksAxiAvailable() {
-		return runTasksAxi(verb, args)
+		return runTasksAxiForHome(homeDir, verb, args)
 	}
 	return manualRun(homeDir, verb, args)
 }
@@ -144,7 +144,7 @@ func AddItemDispatch(homeDir, id, desc, kind, repo string, start bool) error {
 	}
 	if tasksAxiAvailable() {
 		args := buildTasksAxiAddArgs(id, desc, kind, repo, start)
-		return runTasksAxi("add", args)
+		return runTasksAxiForHome(homeDir, "add", args)
 	}
 	return AddItem(homeDir, id, desc, kind, repo, start)
 }
@@ -230,8 +230,13 @@ func atoi(s string) int {
 	return n
 }
 
-// runTasksAxi runs tasks-axi with the given verb and args.
+// runTasksAxi runs tasks-axi using its current-directory configuration.
 func runTasksAxi(verb string, args []string) error {
+	return runTasksAxiForHome("", verb, args)
+}
+
+// runTasksAxiForHome scopes tasks-axi to a runtime home's durable backlog.
+func runTasksAxiForHome(homeDir, verb string, args []string) error {
 	path, err := lookPath("tasks-axi")
 	if err != nil {
 		return fmt.Errorf("tasks-axi not found: %w", err)
@@ -239,6 +244,13 @@ func runTasksAxi(verb string, args []string) error {
 
 	cliArgs := []string{verb}
 	cliArgs = append(cliArgs, args...)
+	if homeDir != "" {
+		backlogPath, err := filepath.Abs(filepath.Join(homeDir, "data", "backlog.md"))
+		if err != nil {
+			return fmt.Errorf("resolving backlog path: %w", err)
+		}
+		cliArgs = append(cliArgs, "--file", backlogPath)
+	}
 
 	cmd := execCommand(path, cliArgs...)
 	cmd.Stdout = os.Stdout

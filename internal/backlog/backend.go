@@ -22,12 +22,15 @@ type Backend interface {
 }
 
 // TasksAxiBackend implements Backend by delegating to the tasks-axi CLI.
-type TasksAxiBackend struct{}
+// HomeDir scopes operations to <home>/data/backlog.md; an empty value uses cwd configuration.
+type TasksAxiBackend struct {
+	HomeDir string
+}
 
 // Add delegates to tasks-axi add.
 func (b *TasksAxiBackend) Add(id, description, kind, repo string, start bool) error {
 	args := buildTasksAxiAddArgs(id, description, kind, repo, start)
-	return runTasksAxi("add", args)
+	return runTasksAxiForHome(b.HomeDir, "add", args)
 }
 
 // List delegates to tasks-axi list.
@@ -37,7 +40,7 @@ func (b *TasksAxiBackend) List(filter TaskState) ([]Item, error) {
 		// Only pass filter for non-default states
 		args = append(args, filter.String())
 	}
-	if err := runTasksAxi("list", args); err != nil {
+	if err := runTasksAxiForHome(b.HomeDir, "list", args); err != nil {
 		return nil, err
 	}
 	return nil, nil // tasks-axi writes to stdout directly; we return no structured data
@@ -45,7 +48,7 @@ func (b *TasksAxiBackend) List(filter TaskState) ([]Item, error) {
 
 // Show delegates to tasks-axi show.
 func (b *TasksAxiBackend) Show(id string) (Item, bool) {
-	if err := runTasksAxi("show", []string{id}); err != nil {
+	if err := runTasksAxiForHome(b.HomeDir, "show", []string{id}); err != nil {
 		return Item{}, false
 	}
 	return Item{}, true // tasks-axi writes to stdout directly
@@ -57,7 +60,7 @@ func (b *TasksAxiBackend) UpdateState(id string, state TaskState) error {
 	if err != nil {
 		return err
 	}
-	return runTasksAxi(verb, []string{id})
+	return runTasksAxiForHome(b.HomeDir, verb, []string{id})
 }
 
 // stateToVerb maps a TaskState to the corresponding tasks-axi verb.
