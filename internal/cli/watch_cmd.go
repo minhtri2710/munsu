@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -177,21 +176,29 @@ func newWatchRunCmd() *cobra.Command {
 				return err
 			}
 
-			// Run one scan cycle
-			reason := supervision.ScanFleet(ctx.Home)
-
 			wakesBefore := countQueuedWakes(ctx.Home)
-			_ = reason
+			emitted, err := supervision.RunCycle(ctx.Home)
+			if err != nil {
+				return err
+			}
+			wakesAfter := countQueuedWakes(ctx.Home)
+			wakesEmitted := 0
+			if emitted {
+				wakesEmitted = wakesAfter - wakesBefore
+				if wakesEmitted < 0 {
+					wakesEmitted = 0
+				}
+			}
 
 			return writeContract(cmd, contract.Response[contract.WatchRun]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "watch.run",
 				Status:        "success",
 				Data: contract.WatchRun{
-					WatchID:       identifyWatcher(ctx.Home),
-					State:         "completed",
-					WakesScanned:  wakesBefore,
-					WakesEmitted:  0,
+					WatchID:        identifyWatcher(ctx.Home),
+					State:          "completed",
+					WakesScanned:   wakesBefore,
+					WakesEmitted:   wakesEmitted,
 					EventsObserved: 1,
 				},
 			})
@@ -203,7 +210,7 @@ func newWatchRunCmd() *cobra.Command {
 
 // countQueuedWakes returns the number of entries in the wake queue file.
 func countQueuedWakes(homeDir string) int {
-	data, err := os.ReadFile(filepath.Join(homeDir, "state", ".wake-queue"))
+	data, err := os.ReadFile(lifecycle.QueuePath(homeDir))
 	if err != nil {
 		return 0
 	}

@@ -65,6 +65,9 @@ func (r *Runner) Run() (string, error) {
 	if err := r.checkTangle(); err != nil {
 		return "", err
 	}
+	if err := r.preflightNoMistakes(); err != nil {
+		return "", err
+	}
 	if err := r.acquireWorktree(); err != nil {
 		return "", err
 	}
@@ -165,6 +168,17 @@ func (r *Runner) checkTangle() error {
 		return nil
 	}
 	return worktree.AssertNotTangled(r.projPath, r.args.ProjectName)
+}
+
+func (r *Runner) preflightNoMistakes() error {
+	if r.effectiveMode != "no-mistakes" {
+		return nil
+	}
+	preflight := r.args.NoMistakesPreflight
+	if preflight == nil {
+		preflight = defaultNoMistakesPreflight
+	}
+	return preflight(r.projPath)
 }
 
 // Phase 8: acquireWorktree acquires a leased worktree from the pool.
@@ -402,6 +416,6 @@ func (r *Runner) armWatcher() {
 		return
 	}
 	if armErr := r.args.ArmFunc(r.homeDir); armErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to arm watcher: %v\n  Run 'munsu watch-arm' manually to start the watcher.\n", armErr)
+		fmt.Fprintf(os.Stderr, "warning: failed to ensure watcher: %v\n  Run 'munsu watch ensure' to repair supervision.\n", armErr)
 	}
 }

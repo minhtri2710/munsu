@@ -259,105 +259,24 @@ func TestSupervisionBlock_LockAcquired(t *testing.T) {
 	}
 }
 
-func TestSupervisionBlock_ClaudeKeywords(t *testing.T) {
-	output := captureStdout(func() {
-		printSupervisionBlock("claude", true)
-	})
-	if !strings.Contains(output, "background-notify") {
-		t.Errorf("expected background-notify mode, got: %s", output)
-	}
-	if !strings.Contains(output, "munsu watch-arm") {
-		t.Errorf("expected watch-arm reference, got: %s", output)
-	}
-	if !strings.Contains(output, "Never use shell") {
-		t.Errorf("expected no-shell-& warning, got: %s", output)
-	}
-	if !strings.Contains(output, "--restart") {
-		t.Errorf("expected --restart flag, got: %s", output)
-	}
-}
-
-func TestSupervisionBlock_CodexKeywords(t *testing.T) {
-	output := captureStdout(func() {
-		printSupervisionBlock("codex", true)
-	})
-	if !strings.Contains(output, "foreground checkpoint") {
-		t.Errorf("expected foreground checkpoint mode, got: %s", output)
-	}
-	if !strings.Contains(output, "munsu watch run") {
-		t.Errorf("expected watch run reference, got: %s", output)
-	}
-	if !strings.Contains(output, "next checkpoint") {
-		t.Errorf("expected next-checkpoint reference, got: %s", output)
-	}
-}
-
-func TestSupervisionBlock_GrokKeywords(t *testing.T) {
-	output := captureStdout(func() {
-		printSupervisionBlock("grok", true)
-	})
-	if !strings.Contains(output, "background-notify") {
-		t.Errorf("expected background-notify mode, got: %s", output)
-	}
-	if !strings.Contains(output, "run_terminal_command") {
-		t.Errorf("expected run_terminal_command ref, got: %s", output)
-	}
-	if !strings.Contains(output, "background: true") {
-		t.Errorf("expected background:true ref, got: %s", output)
-	}
-	if !strings.Contains(output, "Never use shell") {
-		t.Errorf("expected no-shell-& warning, got: %s", output)
-	}
-}
-
-func TestSupervisionBlock_PiKeywords(t *testing.T) {
-	output := captureStdout(func() {
-		printSupervisionBlock("pi", true)
-	})
-	if !strings.Contains(output, "extension background wake") {
-		t.Errorf("expected extension background wake mode, got: %s", output)
-	}
-	if !strings.Contains(output, "fm_watch_arm_pi") {
-		t.Errorf("expected fm_watch_arm_pi tool ref, got: %s", output)
-	}
-	if !strings.Contains(output, "Do NOT run") {
-		t.Errorf("expected Do NOT run warning, got: %s", output)
-	}
-	if !strings.Contains(output, "Pi extension re-arms") {
-		t.Errorf("expected Pi extension re-arm ref, got: %s", output)
-	}
-}
-
-func TestSupervisionBlock_OpencodeKeywords(t *testing.T) {
-	output := captureStdout(func() {
-		printSupervisionBlock("opencode", true)
-	})
-	if !strings.Contains(output, "TUI plugin background wake") {
-		t.Errorf("expected TUI plugin background wake mode, got: %s", output)
-	}
-	if !strings.Contains(output, "fm-primary-watch-arm.js") {
-		t.Errorf("expected plugin file ref, got: %s", output)
-	}
-	if !strings.Contains(output, "arms after session goes idle") {
-		t.Errorf("expected idle-arm ref, got: %s", output)
-	}
-	if !strings.Contains(output, "recovery probe") {
-		t.Errorf("expected recovery probe ref, got: %s", output)
-	}
-}
-
-func TestSupervisionBlock_DefaultKeywords(t *testing.T) {
-	output := captureStdout(func() {
-		printSupervisionBlock("unknown-harness", true)
-	})
-	if !strings.Contains(output, "generic fallback") {
-		t.Errorf("expected generic fallback mode, got: %s", output)
-	}
-	if !strings.Contains(output, "munsu watch ensure") {
-		t.Errorf("expected watch ensure ref, got: %s", output)
-	}
-	if !strings.Contains(output, "Never use shell") {
-		t.Errorf("expected no-shell-& warning, got: %s", output)
+func TestSupervisionBlock_UsesPersistentWatcherGuidance(t *testing.T) {
+	for _, h := range []string{"claude", "codex", "grok", "pi", "opencode", "unknown"} {
+		t.Run(h, func(t *testing.T) {
+			output := captureStdout(func() {
+				printSupervisionBlock(h, true)
+			})
+			if !strings.Contains(output, "munsu watch ensure") {
+				t.Errorf("expected watch ensure guidance, got: %s", output)
+			}
+			if !strings.Contains(output, "munsu watch run") {
+				t.Errorf("expected one-cycle watch run guidance, got: %s", output)
+			}
+			for _, legacy := range []string{"fm_watch_arm_pi", "watch-arm", "re-arms automatically", "extension background wake"} {
+				if strings.Contains(output, legacy) {
+					t.Errorf("output contains legacy watcher guidance %q: %s", legacy, output)
+				}
+			}
+		})
 	}
 }
 
@@ -365,20 +284,66 @@ func TestSupervisionMode_AllKnown(t *testing.T) {
 	harnesses := []string{"claude", "codex", "grok", "pi", "opencode"}
 	for _, h := range harnesses {
 		t.Run(h, func(t *testing.T) {
-			m := supervisionMode(h)
-			if m == "generic fallback" {
-				t.Errorf("supervisionMode(%q) returned generic fallback, expected a real mode", h)
-			}
-			if m == "" {
-				t.Error("supervisionMode returned empty string")
+			if got := supervisionMode(h); got != "persistent daemon" {
+				t.Errorf("supervisionMode(%q) = %q, want persistent daemon", h, got)
 			}
 		})
 	}
 }
 
 func TestSupervisionMode_Unknown(t *testing.T) {
-	m := supervisionMode("nonexistent")
-	if m != "generic fallback" {
-		t.Errorf("supervisionMode('nonexistent') = %q, want 'generic fallback'", m)
+	if got := supervisionMode("nonexistent"); got != "persistent daemon" {
+		t.Errorf("supervisionMode('nonexistent') = %q, want persistent daemon", got)
+	}
+}
+
+func TestEnsureWatcherForSession_StartsOnlyForOwnedInFlightFleet(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=ship\n"), 0644)
+
+	calls := 0
+	result := ensureWatcherForSession(tmp, true, func(home string) WatchEnsureResult {
+		calls++
+		return WatchEnsureResult{State: "started"}
+	})
+	if calls != 1 || result.State != "started" {
+		t.Fatalf("calls=%d result=%+v, want one started ensure", calls, result)
+	}
+
+	calls = 0
+	result = ensureWatcherForSession(tmp, false, func(home string) WatchEnsureResult {
+		calls++
+		return WatchEnsureResult{State: "started"}
+	})
+	if calls != 0 || result.State != "read-only" {
+		t.Fatalf("read-only calls=%d result=%+v", calls, result)
+	}
+}
+
+func TestEnsureWatcherForSession_IdleFleetDoesNotStart(t *testing.T) {
+	tmp := t.TempDir()
+	calls := 0
+	result := ensureWatcherForSession(tmp, true, func(home string) WatchEnsureResult {
+		calls++
+		return WatchEnsureResult{State: "started"}
+	})
+	if calls != 0 || result.State != "idle" {
+		t.Fatalf("calls=%d result=%+v, want idle no-op", calls, result)
+	}
+}
+
+func TestEnsureWatcherForSession_HealthyWatcherIsReported(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=scout\n"), 0644)
+
+	result := ensureWatcherForSession(tmp, true, func(home string) WatchEnsureResult {
+		return WatchEnsureResult{State: "healthy"}
+	})
+	if result.State != "healthy" {
+		t.Fatalf("result=%+v, want healthy", result)
 	}
 }

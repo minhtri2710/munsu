@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 
 const pollInterval = 5 * time.Second
 
-// WakeReason describes why the watcher exited.
+// WakeReason describes an actionable watcher condition.
 type WakeReason struct {
 	Kind                 string // signal, stale, check, heartbeat
 	TaskIDs              []string
@@ -28,10 +29,19 @@ type WakeReason struct {
 	DemandDeepInspection bool // set after N consecutive stale polls for same task
 }
 
-// Run starts the watcher loop. It acquires the watcher lock and polls
-// until an actionable wake is found, then exits with the reason.
+// Run starts the persistent watcher daemon. It records actionable conditions in
+// the durable wake queue and continues polling until SIGTERM or SIGINT.
 func Run(homeDir string) (*WakeReason, error) {
-	// Acquire watcher lock
+	return run(homeDir, time.NewTicker, signalChannel())
+}
+
+func signalChannel() <-chan os.Signal {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	return sigCh
+}
+
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal) (*WakeReason, error) {
 	acquired, err := lifecycle.AcquireSession(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -41,27 +51,18 @@ func Run(homeDir string) (*WakeReason, error) {
 	}
 	defer lifecycle.ReleaseSession(homeDir)
 
-	// Handle SIGTERM for graceful cleanup
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-	// Touch liveness beacon
 	lifecycle.WriteBeat(homeDir)
-
-	ticker := time.NewTicker(pollInterval)
+	ticker := newTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-sigCh:
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
-
 		case <-ticker.C:
 			lifecycle.WriteBeat(homeDir)
-			reason := ScanFleet(homeDir)
-
-			if reason != nil {
-				return reason, nil
+			if _, err := runCycle(homeDir); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -104,122 +105,152 @@ func ArmBackground(homeDir string, restart bool) error {
 
 var (
 	// staleStreaks tracks consecutive stale polls per task ID.
-	// Persists across scanFleet calls within the watcher loop.
-	staleStreaks = map[string]int{}
+	// Persists across scanFleet calls within a process; protected for concurrent package use.
+	staleStreaksMu sync.Mutex
+	staleStreaks   = map[string]int{}
 
 	// consecutiveStaleThreshold is the number of consecutive stale polls
 	// before demanding deep inspection (3 polls * 5s = ~15s).
 	consecutiveStaleThreshold = 3
 )
 
-// ScanFleet checks all live tasks for actionable events.
-// It absorbs stale signals for tasks with an active no-mistakes run
-// and tracks per-task stale streaks for demand-deep-inspection.
+// ScanFleet checks all live tasks for the first actionable condition.
 func ScanFleet(homeDir string) *WakeReason {
-	metasDir := filepath.Join(homeDir, "state")
-	entries, err := os.ReadDir(metasDir)
+	reasons := scanFleet(homeDir, false)
+	if len(reasons) == 0 {
+		return nil
+	}
+	return reasons[0]
+}
+
+func scanFleet(homeDir string, clearResolved bool) []*WakeReason {
+	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
 	if err != nil {
 		return nil
 	}
 
+	var reasons []*WakeReason
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".meta") {
+		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-
 		id := strings.TrimSuffix(entry.Name(), ".meta")
-
-		// Read meta
-		meta, err := task.ReadMeta(homeDir, id)
-		if err != nil {
+		reason := scanTask(homeDir, id)
+		if reason == nil {
+			if clearResolved {
+				clearWakeMarker(homeDir, id)
+			}
 			continue
 		}
+		reasons = append(reasons, reason)
+	}
+	return reasons
+}
 
-		windowID, hasWindow := meta["window"]
-		if !hasWindow {
-			continue
-		}
+func scanTask(homeDir, id string) *WakeReason {
+	meta, err := task.ReadMeta(homeDir, id)
+	if err != nil {
+		return nil
+	}
+	windowID, hasWindow := meta["window"]
+	if !hasWindow {
+		return nil
+	}
 
-		// Check pane liveness
-		bk, _, err := session.BackendForTask(homeDir, meta)
-		if err != nil {
-			continue
-		}
-		alive := bk.Alive(windowID)
-
-	if !alive {
-		// Captain-relevant status lines always surface, even with an active run-step.
+	taskBackend, _, err := session.BackendForTask(homeDir, meta)
+	if err != nil {
+		return nil
+	}
+	if !taskBackend.Alive(windowID) {
 		if isStatusCaptainRelevant(homeDir, id) {
 			return handleStale(id, fmt.Sprintf("pane %s is dead (captain-relevant status)", windowID))
 		}
-
-		// Before raising stale, check if no-mistakes is actively running.
-		// The crewmate may be driving the no-mistakes pipeline even though
-		// the session pane appears dead.
-		if isNoMistakesActive(homeDir, id) {
+		if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
 			resetStreak(id)
-			continue
+			return nil
 		}
-
-		// Paused tasks absorb stale signals (deliberate external wait).
-		if isStatusPaused(homeDir, id) {
-			resetStreak(id)
-			continue
-		}
-
 		return handleStale(id, fmt.Sprintf("pane %s is dead", windowID))
 	}
-		// Check status log for recent activity
-		statusPath := filepath.Join(homeDir, "state", id+".status")
-		if fi, err := os.Stat(statusPath); err == nil {
-			age := time.Since(fi.ModTime())
-			if age > lifecycle.StaleThreshold() {
-				// Captain-relevant stale statuses always surface.
-				if isStatusCaptainRelevant(homeDir, id) {
-					return handleStale(id, fmt.Sprintf("pane %s idle for %v (captain-relevant status)", windowID, age.Round(time.Second)))
-				}
 
-				// Before raising stale, check absorb.
-				if isNoMistakesActive(homeDir, id) {
-					resetStreak(id)
-					continue
-				}
-
-				// Paused tasks absorb stale signals.
-				if isStatusPaused(homeDir, id) {
-					resetStreak(id)
-					continue
-				}
-
-				return handleStale(id, fmt.Sprintf("pane %s idle for %v", windowID, age.Round(time.Second)))
+	statusPath := filepath.Join(homeDir, "state", id+".status")
+	if fi, err := os.Stat(statusPath); err == nil {
+		age := time.Since(fi.ModTime())
+		if age > lifecycle.StaleThreshold() {
+			if isStatusCaptainRelevant(homeDir, id) {
+				return handleStale(id, fmt.Sprintf("pane %s idle for %v (captain-relevant status)", windowID, age.Round(time.Second)))
 			}
-		}
-
-		// Task is healthy or absorbed — reset streak
-		resetStreak(id)
-
-		// Check wake queue
-		if lifecycle.HasQueuedWakes(homeDir) {
-			return &WakeReason{
-				Kind:    "signal",
-				TaskIDs: []string{id},
-				Message: "queued wake records present",
+			if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
+				resetStreak(id)
+				return nil
 			}
+			return handleStale(id, fmt.Sprintf("pane %s idle for %v", windowID, age.Round(time.Second)))
 		}
 	}
 
+	resetStreak(id)
 	return nil
+}
+
+// RunCycle performs one durable scan/enqueue cycle with condition dedupe.
+// It is the shared path used by the persistent daemon and `munsu watch run`.
+func RunCycle(homeDir string) (bool, error) {
+	return runCycle(homeDir)
+}
+
+func runCycle(homeDir string) (bool, error) {
+	emitted := false
+	for _, reason := range scanFleet(homeDir, true) {
+		if len(reason.TaskIDs) == 0 {
+			continue
+		}
+		id := reason.TaskIDs[0]
+		fingerprint := wakeFingerprint(homeDir, reason)
+		marker := wakeMarkerPath(homeDir, id)
+		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
+			continue
+		}
+		if err := lifecycle.EnqueueWake(homeDir, reason.Kind, id, reason.Message); err != nil {
+			return emitted, fmt.Errorf("enqueue watcher wake: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+			return emitted, err
+		}
+		if err := os.WriteFile(marker, []byte(fingerprint), 0644); err != nil {
+			return emitted, err
+		}
+		emitted = true
+	}
+	return emitted, nil
+}
+
+func wakeFingerprint(homeDir string, reason *WakeReason) string {
+	message := strings.TrimSuffix(reason.Message, "; demand-deep-inspection")
+	status := ""
+	if len(reason.TaskIDs) > 0 {
+		if lines, err := task.ReadStatus(homeDir, reason.TaskIDs[0]); err == nil && len(lines) > 0 {
+			status = lines[len(lines)-1]
+		}
+	}
+	return reason.Kind + "\n" + message + "\n" + status
+}
+
+func wakeMarkerPath(homeDir, id string) string {
+	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(id)
+	return filepath.Join(homeDir, "state", ".watcher-seen-"+safeID)
+}
+
+func clearWakeMarker(homeDir, id string) {
+	_ = os.Remove(wakeMarkerPath(homeDir, id))
 }
 
 // handleStale creates a stale WakeReason with streak tracking.
 // After consecutiveStaleThreshold consecutive stale polls for the same task,
 // it marks the reason as demanding deep inspection.
 func handleStale(id, msg string) *WakeReason {
+	staleStreaksMu.Lock()
 	staleStreaks[id]++
 	count := staleStreaks[id]
+	staleStreaksMu.Unlock()
 
 	reason := &WakeReason{
 		Kind:    "stale",
@@ -238,7 +269,9 @@ func handleStale(id, msg string) *WakeReason {
 // resetStreak clears the stale streak counter for a task.
 // Called when a task is provably working or its status changes.
 func resetStreak(id string) {
+	staleStreaksMu.Lock()
 	delete(staleStreaks, id)
+	staleStreaksMu.Unlock()
 }
 
 // isNoMistakesActive checks whether the task has an active no-mistakes

@@ -7,31 +7,79 @@ import (
 	"testing"
 )
 
-func TestShipBriefTemplate(t *testing.T) {
-	tmpl := shipBriefTemplate("test-task-1", "munsu", "feat", false)
+func TestShipBriefTemplateNoMistakes(t *testing.T) {
+	tmpl := shipBriefTemplate("test-task-1", "munsu", "no-mistakes", false)
 
-	// Must contain key ship-mode features
 	checks := []string{
 		"Task brief: test-task-1",
 		"git checkout -b fm/",
 		"no-mistakes doctor",
-		"Delivery mode: feat",
-		"Verify isolation",
-		"Never push to the default branch",
-		"Definition of done",
-		"Project memory",
-		"ask-user",
+		"Delivery mode: no-mistakes",
 		"no-mistakes axi respond",
+		"CI green",
 	}
 	for _, c := range checks {
 		if !strings.Contains(tmpl, c) {
-			t.Errorf("ship brief missing %q", c)
+			t.Errorf("no-mistakes brief missing %q", c)
 		}
 	}
+	if strings.Contains(tmpl, "open a PR directly") {
+		t.Error("no-mistakes brief inherited direct-PR instructions")
+	}
+	if strings.Contains(tmpl, "local-only") {
+		t.Error("no-mistakes brief inherited local-only instructions")
+	}
+	for _, required := range []string{
+		"shared `no-mistakes` daemon",
+		"every lane/home",
+		"kills other lanes",
+	} {
+		if !strings.Contains(tmpl, required) {
+			t.Errorf("no-mistakes brief missing shared-daemon rule fragment %q", required)
+		}
+	}
+}
 
-	// Must NOT have scout markers
-	if strings.Contains(tmpl, "SCOUT task") {
-		t.Error("ship brief should not contain scout markers")
+func TestShipBriefTemplateDirectPR(t *testing.T) {
+	tmpl := shipBriefTemplate("test-task-1", "munsu", "direct-PR", false)
+
+	checks := []string{
+		"Delivery mode: direct-PR",
+		"commit",
+		"push",
+		"open a PR directly",
+		"Never merge",
+	}
+	for _, c := range checks {
+		if !strings.Contains(tmpl, c) {
+			t.Errorf("direct-PR brief missing %q", c)
+		}
+	}
+	for _, forbidden := range []string{"no-mistakes doctor", "/no-mistakes", "no-mistakes axi", "orchestrator merge"} {
+		if strings.Contains(tmpl, forbidden) {
+			t.Errorf("direct-PR brief inherited forbidden instruction %q", forbidden)
+		}
+	}
+}
+
+func TestShipBriefTemplateLocalOnly(t *testing.T) {
+	tmpl := shipBriefTemplate("test-task-1", "munsu", "local-only", false)
+
+	checks := []string{
+		"Delivery mode: local-only",
+		"Commit locally",
+		"orchestrator merge",
+		"Do not push",
+	}
+	for _, c := range checks {
+		if !strings.Contains(tmpl, c) {
+			t.Errorf("local-only brief missing %q", c)
+		}
+	}
+	for _, forbidden := range []string{"no-mistakes doctor", "/no-mistakes", "no-mistakes axi", "open a PR directly"} {
+		if strings.Contains(tmpl, forbidden) {
+			t.Errorf("local-only brief inherited forbidden instruction %q", forbidden)
+		}
 	}
 }
 

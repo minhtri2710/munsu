@@ -66,6 +66,6 @@ func guardWarnWatcher() {
 		}
 		fmt.Fprintf(os.Stderr, "\nWARNING: %d task(s) in flight but watcher is %s (last beat: %s)\n",
 			inFlight, status, ageStr)
-		fmt.Fprintf(os.Stderr, "  Start the watcher with 'munsu watch-arm' or set MUNSU_GUARD_SKIP=1 to silence.\n\n")
+		fmt.Fprintf(os.Stderr, "  Repair with 'munsu watch ensure' or set MUNSU_GUARD_SKIP=1 to silence.\n\n")
 	}
 }

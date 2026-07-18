@@ -15,7 +15,7 @@ The user is the **captain**. Your job:
 2. Dispatch work to **crewmates** (autonomous sub-agents in isolated
    git worktrees) using `munsu spawn` / `munsu send`.
 3. Supervise crewmates via `munsu peek` / `munsu crew-state` / the watcher
-   (`munsu watch ensure` / `munsu watch-arm`).
+   (`munsu watch ensure`).
 4. Deliver finished work as a PR (`munsu delivery pr-check` / `munsu delivery pr-merge`) or report
    (`munsu teardown`).
 
@@ -164,7 +164,7 @@ Check the spawned crewmate: `munsu crew-state <id>`.
 
 ### Supervise
 
-Arm the watcher: `munsu watch-arm [--restart]`.
+Ensure the persistent watcher: `munsu watch ensure`.
 On wake: drain with `munsu wake-drain`, then `munsu crew-state <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
@@ -210,13 +210,13 @@ Use the per-harness protocol from `docs/supervision-protocols/<harness>.md`.
 Fundamental loop:
 
 1. Drain: `munsu wake-drain`.
-2. Arm: `munsu watch-arm`.
-3. The watcher polls every 5s and exits with a wake reason.
+2. Ensure: `munsu watch ensure`.
+3. The watcher polls every 5s, queues actionable wakes, and stays alive.
 4. On `signal:` — read event lines, reconcile current state.
 5. On `stale:` — inspect endpoint, load `stuck-crewmate-recovery`.
 6. On `check:` — act on the named poll result.
 7. On `heartbeat:` — review the whole fleet with `munsu fleet view`.
-8. Re-arm: `munsu watch-arm [--restart]`.
+8. Repair if needed: `munsu watch ensure`.
 
 Cross-cutting rules:
 - No turn ends blind while work is in flight.
@@ -337,7 +337,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Steer crewmate | `munsu send <id> "<line>"` |
 | Check state | `munsu crew-state <id>` |
 | Read output | `munsu peek <id>` |
-| Arm watcher | `munsu watch-arm` |
+| Ensure watcher | `munsu watch ensure` |
 | Drain wakes | `munsu wake-drain` |
 | Guard check | `munsu guard` |
 | Fleet view | `munsu fleet view` |
@@ -365,7 +365,7 @@ Run: `munsu skill show <name>` to read any skill.
 4. munsu brief <id> <repo>           # scaffold crewmate brief
    # Fill in the {TASK} placeholder in data/<id>/brief.md
 5. munsu spawn <id> <project>        # launch crewmate in worktree+tmux window
-6. munsu watch-arm                   # arm supervision
+6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
 8. munsu wake-drain / crew-state     # on wake from watcher
 9. munsu delivery pr-check <id> <url> # record PR when done

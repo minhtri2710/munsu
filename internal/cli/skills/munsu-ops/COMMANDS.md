@@ -40,8 +40,8 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu watch` | Run the event-driven watcher loop (singleton-safe, home-scoped lock). Exits with a wake reason. |
-| `munsu watch-arm [--restart]` | Arm the watcher daemon (home-scoped). |
+| `munsu watch` | Run the persistent watcher daemon (singleton-safe, home-scoped lock). Queues actionable wakes until stopped. |
+| `munsu watch ensure [--restart]` | Ensure the watcher daemon is healthy (home-scoped, idempotent). |
 | `munsu wake-drain` | Drain queued wakes. |
 | `munsu guard` | Warn on tangle or stale watcher. |
 
