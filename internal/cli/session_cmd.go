@@ -1,17 +1,21 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/supervision"
@@ -265,10 +269,21 @@ func newWakeDrainCmd() *cobra.Command {
 }
 
 func newGuardCmd() *cobra.Command {
-	return &cobra.Command{
+	var harnessFlag string
+	cmd := &cobra.Command{
 		Use:   "guard",
 		Short: "Warn on tangle or stale watcher",
+		Long: `Check fleet state and watcher liveness.
+
+With --harness claude, this command acts as a Claude Stop hook:
+- Reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
+- Checks watcher health and in-flight tasks
+- On blind-turn (tasks in-flight + unhealthy watcher): exit 2 + stderr reason
+- Otherwise: exit 0`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if harnessFlag == "claude" {
+				return runGuardClaude(ctx.Home)
+			}
 			waker.CheckGuard(ctx.Home)
 
 			// Check all registered projects for tangles using resolved paths
@@ -292,6 +307,75 @@ func newGuardCmd() *cobra.Command {
 			return nil
 		}),
 	}
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude (Stop hook exit 2 + stderr)")
+	return cmd
+}
+
+// runGuardClaude implements the Claude Stop hook guard.
+// It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
+// and checks fleet state + watcher health for blind-turn detection.
+func runGuardClaude(homeDir string) error {
+	// Read stdin JSON for loop guard
+	stopHookActive := false
+	data, err := io.ReadAll(os.Stdin)
+	if err == nil {
+		var payload map[string]interface{}
+		if json.Unmarshal([]byte(strings.TrimSpace(string(data))), &payload) == nil {
+			if active, ok := payload["stop_hook_active"].(bool); ok && active {
+				stopHookActive = true
+			}
+		}
+	}
+
+	// Loop guard: stop_hook_active means Claude has already been forced
+	// to continue one turn. Allow the stop by exiting 0.
+	if stopHookActive {
+		return nil
+	}
+
+	// Check scope: only guard primary checkouts
+	cls := scope.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != scope.Primary {
+		return nil
+	}
+
+	// Check fleet state for in-flight tasks
+	inFlight := 0
+	snap, snapErr := fleet.Snapshot(homeDir)
+	if snapErr == nil {
+		for _, ts := range snap.Tasks {
+			if ts.Kind == "ship" || ts.Kind == "scout" {
+				inFlight++
+			}
+		}
+	}
+
+	// No in-flight work → safe to end turn
+	if inFlight == 0 {
+		return nil
+	}
+
+	// Check watcher liveness
+	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+
+	// If watcher is healthy and not stale, allow the stop
+	if status.Exists && !status.Stale {
+		return nil
+	}
+
+	// Blind turn: in-flight work + unhealthy watcher → block the stop
+	reason := "TURN WOULD END BLIND: "
+	if !status.Exists {
+		reason += "watcher never started"
+	} else {
+		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
+	}
+	reason += fmt.Sprintf(" with %d in-flight task(s)", inFlight)
+
+	// Claude Stop hook block: exit 2 + stderr reason
+	fmt.Fprintln(os.Stderr, reason)
+	exitWithCode(2)
+	return nil // unreachable
 }
 
 func newAfkCmd() *cobra.Command {

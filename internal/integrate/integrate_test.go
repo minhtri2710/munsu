@@ -1,6 +1,7 @@
 package integrate
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,37 @@ func TestEnabledCapabilities_Pi(t *testing.T) {
 	}
 }
 
+// Test capabilities for Claude
+func TestEnabledCapabilities_Claude(t *testing.T) {
+	caps := EnabledCapabilities("claude")
+	if len(caps) == 0 {
+		t.Fatal("expected Claude capabilities to be non-empty")
+	}
+
+	capSet := make(map[Capability]bool)
+	for _, c := range caps {
+		capSet[c] = true
+	}
+
+	if !capSet[CapSessionStart] {
+		t.Error("expected CapSessionStart for Claude")
+	}
+	if !capSet[CapTurnEndGuard] {
+		t.Error("expected CapTurnEndGuard for Claude")
+	}
+	if !capSet[CapPreToolCheck] {
+		t.Error("expected CapPreToolCheck for Claude")
+	}
+
+	// Claude does NOT have CapWakeFollowUp or CapScopeGate
+	if capSet[CapWakeFollowUp] {
+		t.Error("Claude should NOT have CapWakeFollowUp")
+	}
+	if capSet[CapScopeGate] {
+		t.Error("Claude should NOT have CapScopeGate")
+	}
+}
+
 // Test unknown harness returns no capabilities
 func TestEnabledCapabilities_Unknown(t *testing.T) {
 	caps := EnabledCapabilities("nonexistent")
@@ -51,7 +83,7 @@ func TestAssertSupportedHarness(t *testing.T) {
 		wantErr bool
 	}{
 		{"pi", false},
-		{"claude", true},
+		{"claude", false},
 		{"", true},
 		{"nonexistent", true},
 	}
@@ -617,4 +649,239 @@ func TestPiExtensionTemplate_NumericLeaseExpiry(t *testing.T) {
 		!strings.Contains(tmpl, "leaseExpiry") {
 		t.Error("template must handle numeric lease_expires")
 	}
+}
+
+// Test ClaudeSettingsContent contains required hook entries
+func TestClaudeSettingsContent_Hooks(t *testing.T) {
+	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+	if content == "" {
+		t.Fatal("expected non-empty settings content")
+	}
+
+	// Must have all three hook types
+	if !strings.Contains(content, "SessionStart") {
+		t.Error("settings must contain SessionStart hooks")
+	}
+	if !strings.Contains(content, "PreToolUse") {
+		t.Error("settings must contain PreToolUse hooks")
+	}
+	if !strings.Contains(content, "Stop") {
+		t.Error("settings must contain Stop hooks")
+	}
+
+	// Must not contain BINPATH placeholder
+	if strings.Contains(content, "BINPATH") {
+		t.Error("BINPATH placeholder must be replaced")
+	}
+
+	// Must anchor commands to the munsu binary path
+	if !strings.Contains(content, "/usr/local/bin/munsu") {
+		t.Error("settings must reference the munsu binary path")
+	}
+
+	// SessionStart matcher must exclude compact
+	if strings.Contains(content, "compact") {
+		t.Error("SessionStart matcher must not include compact")
+	}
+
+	// Verify structure matches firstmate: correct hook event keys
+	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
+		t.Error("SessionStart matcher must match startup|resume|clear")
+	}
+	if !strings.Contains(content, `"matcher": "Bash"`) {
+		t.Error("PreToolUse matcher must be Bash")
+	}
+
+	// Valid JSON
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("settings content must be valid JSON: %v", err)
+	}
+
+	// Check that SessionStart does NOT have a matcher for exclusion (no matcher = all events)
+	hooks := parsed.(map[string]interface{})
+	if _, ok := hooks["hooks"]; !ok {
+		t.Fatal("settings must have hooks key")
+	}
+}
+
+// Test ClaudeSettingsContent binary substitution
+func TestClaudeSettingsContent_BinarySubstitution(t *testing.T) {
+	binPath := "/custom/path/with spaces/munsu"
+	content := ClaudeSettingsContent(binPath)
+	if strings.Contains(content, "BINPATH") {
+		t.Errorf("BINPATH still present in settings output")
+	}
+	if !strings.Contains(content, "/custom/path/with spaces/munsu") {
+		t.Errorf("expected binary path with spaces in settings output")
+	}
+
+	// Must be valid JSON
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("settings content must be valid JSON: %v", err)
+	}
+}
+
+// Test ClaudeSettingsDigest determinism
+func TestClaudeSettingsDigest_Deterministic(t *testing.T) {
+	d1 := ClaudeSettingsDigest("/usr/local/bin/munsu")
+	d2 := ClaudeSettingsDigest("/usr/local/bin/munsu")
+	if d1 == "" || len(d1) != 64 {
+		t.Fatal("expected 64-char hex digest")
+	}
+	if d1 != d2 {
+		t.Fatal("digest must be deterministic")
+	}
+
+	d3 := ClaudeSettingsDigest("/opt/bin/munsu")
+	if d1 == d3 {
+		t.Fatal("digest must differ for different binary paths")
+	}
+}
+
+// Test ClaudeSettingsHasOwnedHooks verifies structural ownership detection
+// for Claude settings.json — install → status=installed; remove a hook → drifted.
+func TestClaudeSettingsHasOwnedHooks(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// Write a valid settings.json with all hooks
+	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+	if err := os.WriteFile(settingsPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// All hooks present → owned
+	present, msg, err := ClaudeSettingsHasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !present {
+		t.Errorf("expected all hooks present, got: %s", msg)
+	}
+
+	// Remove Stop hook → drifted
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	hooks := parsed["hooks"].(map[string]interface{})
+	delete(hooks, "Stop")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	present, msg, err = ClaudeSettingsHasOwnedHooks(settingsPath, "/usr/local/bin/munsu")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if present {
+		t.Error("expected hooks missing after Stop removal")
+	}
+	if !strings.Contains(msg, "Stop") {
+		t.Errorf("expected message to mention missing Stop hook, got: %s", msg)
+	}
+
+	// Missing file → error
+	_, _, err = ClaudeSettingsHasOwnedHooks(filepath.Join(dir, "nonexistent.json"), "/usr/local/bin/munsu")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+
+	// Invalid JSON → error
+	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte("not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = ClaudeSettingsHasOwnedHooks(filepath.Join(dir, "bad.json"), "/usr/local/bin/munsu")
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+// TestClaudeStatusDriftDetection tests that Status() detects drift structurally
+// in Claude settings.json: install → status=installed; remove a hook → drifted.
+// Uses SetMunsuPathResolver to avoid PATH dependency.
+func TestClaudeStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	// Create a stub munsu binary for path resolution
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	// Install Claude settings via Install() with ScopeProject to isolate writes
+	scope := ScopeProject
+	result, err := Install(homeDir, projectDir, "claude", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "claude", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed state, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Resolve the target settings path from the expected project location
+	targetPath := filepath.Join(projectDir, ".claude", "settings.json")
+
+	// Remove the Stop hooks from the target file
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	hooks := parsed["hooks"].(map[string]interface{})
+	delete(hooks, "Stop")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should now report drifted
+	status, err = Status(homeDir, projectDir, "claude", scope)
+	if err != nil {
+		t.Fatalf("Status failed after modification: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted state after hook removal, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook removal")
+	}
+}
+
+type testMunsuResolver struct {
+	path string
+}
+
+func (r testMunsuResolver) Resolve() (string, error) {
+	return r.path, nil
 }

@@ -1,14 +1,19 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -33,10 +38,11 @@ install native hooks (Pi extensions, Claude hooks, etc.) for your
 detected or chosen agent harness.
 
 Commands:
-  install        Install integration artifacts for a harness
-  repair         Detect drift and repair integration artifacts
-  status         Show integration status for a harness
-  safety-check   Evaluate scope/gate and command safety for a path
+  install             Install integration artifacts for a harness
+  repair              Detect drift and repair integration artifacts
+  status              Show integration status for a harness
+  safety-check        Evaluate scope/gate and command safety for a path
+  sessionstart-nudge  Print session-start instruction or stay silent (for Claude SessionStart hook)
 
 Flags:
   --harness          Target harness (default: auto-detect)
@@ -109,23 +115,44 @@ Results:
   reason           explanation when blocked
 
 Flags:
-  --command      Command string to evaluate for blocking rules (for tool_call safety)`,
+  --command      Command string to evaluate for blocking rules (for tool_call safety)
+  --harness      Output shape: "pi" (default, JSON contract) or "claude" (native deny exit 2 + stderr)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			checkPath, _ := os.Getwd()
 			if len(args) > 0 {
 				checkPath = args[0]
 			}
-			return runSafetyCheck(cmd, checkPath, flags.command)
+			return runSafetyCheck(cmd, checkPath, flags.command, flags.harness)
 		}),
 	}
 	safetyCmd.Flags().StringVar(&flags.command, "command", "", "Command to evaluate for blocking rules")
+	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default) or claude")
 	configureContractCommand(safetyCmd)
+
+	sessionstartNudgeCmd := &cobra.Command{
+		Use:   "sessionstart-nudge",
+		Short: "Print session-start instruction or stay silent (for Claude SessionStart hook)",
+		Long: `Lightweight SessionStart hook command for Claude.
+
+Checks:
+1. NO_MISTAKES_GATE gate agent → silent, exit 0
+2. Primary checkout scope → silent, exit 0 if not primary
+3. Lock ancestry (8 parents) → silent, exit 0 if lock pid is in ancestry
+
+When all checks pass, prints exactly one instruction line and exits 0.
+Always exits 0 because Claude SessionStart exit 2 blocks session init.`,
+		Args: cobra.NoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return runSessionStartNudge(cmd, ctx)
+		}),
+	}
 
 	cmd.AddCommand(installCmd)
 	cmd.AddCommand(repairCmd)
 	cmd.AddCommand(statusCmd)
 	cmd.AddCommand(safetyCmd)
+	cmd.AddCommand(sessionstartNudgeCmd)
 
 	return cmd
 }
@@ -275,24 +302,69 @@ func renderIntegrateResult(data integrateResultData) string {
 	return strings.TrimSpace(b.String())
 }
 
-func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string) error {
+// exitWithCode is overridable for testing. Defaults to os.Exit.
+var exitWithCode = func(code int) {
+	os.Exit(code)
+}
+
+// readStdinForCommand reads JSON from stdin and extracts the command field.
+// Supports both Claude shape (.tool_input.command) and plain JSON with command.
+func readStdinForCommand() (string, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("reading stdin: %w", err)
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return "", nil
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return "", nil // not JSON, return empty
+	}
+
+	// Try Claude shape: .tool_input.command
+	if ti, ok := payload["tool_input"].(map[string]interface{}); ok {
+		if cmd, ok := ti["command"].(string); ok && cmd != "" {
+			return cmd, nil
+		}
+	}
+	// Try non-nested "command" key
+	if cmd, ok := payload["command"].(string); ok && cmd != "" {
+		return cmd, nil
+	}
+
+	return "", nil
+}
+
+func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, harnessFlag string) error {
+	// When --harness claude and no --command, try to read command from stdin
+	effectiveCommand := checkCommand
+	if harnessFlag == "claude" && effectiveCommand == "" {
+		stdinCommand, err := readStdinForCommand()
+		if err == nil && stdinCommand != "" {
+			effectiveCommand = stdinCommand
+		}
+	}
+
 	// Evaluate scope/gate safety.
 	result := integrate.SafetyCheck(checkPath)
 
 	// Evaluate command blocking rules.
 	block := false
 	reason := ""
-	if checkCommand != "" {
-		if strings.Contains(checkCommand, "munsu watch arm") ||
-			strings.Contains(checkCommand, "munsu watch ensure") {
+	if effectiveCommand != "" {
+		if strings.Contains(effectiveCommand, "munsu watch arm") ||
+			strings.Contains(effectiveCommand, "munsu watch ensure") {
 			block = true
 			reason = "Use 'munsu guard' or 'munsu watch run' for inspection; watcher lifecycle is managed automatically."
 		}
 
-		if strings.Contains(checkCommand, "cd .no-mistakes") ||
-			strings.Contains(checkCommand, "cd ~/.no-mistakes") ||
-			strings.Contains(checkCommand, "/.no-mistakes/") {
-			if !strings.Contains(checkCommand, "guard") && !strings.Contains(checkCommand, "doctor") {
+		if strings.Contains(effectiveCommand, "cd .no-mistakes") ||
+			strings.Contains(effectiveCommand, "cd ~/.no-mistakes") ||
+			strings.Contains(effectiveCommand, "/.no-mistakes/") {
+			if !strings.Contains(effectiveCommand, "guard") && !strings.Contains(effectiveCommand, "doctor") {
 				block = true
 				reason = "No-mistakes managed directories are not regular projects."
 			}
@@ -307,6 +379,34 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string) e
 		_ = nmHome
 	}
 
+	// Determine effective block: gate_refused also blocks
+	effectiveBlock := block || result.GateRefused
+	if result.GateRefused && reason == "" {
+		reason = result.Error
+		if reason == "" {
+			reason = "Scope/gate refuses action in this directory."
+		}
+	}
+
+	// Harness-specific output shapes
+	if harnessFlag == "claude" {
+		if effectiveBlock {
+			// Claude deny: stdout EMPTY, stderr JSON, exit 2
+			denyJSON, _ := json.Marshal(map[string]interface{}{
+				"hookSpecificOutput": map[string]interface{}{
+					"hookEventName":      "PreToolUse",
+					"permissionDecision": "deny",
+				},
+				"systemMessage": "[safety-block] " + reason,
+			})
+			fmt.Fprint(os.Stderr, string(denyJSON))
+			exitWithCode(2)
+		}
+		// Claude allow: exit 0, both streams empty
+		return nil
+	}
+
+	// Default Pi-shaped output: JSON contract on stdout
 	data := contract.SafetyCheckData{
 		Identity:       result.Identity,
 		GateCapability: result.GateCapability,
@@ -323,4 +423,97 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string) e
 		Status:        "success",
 		Data:          data,
 	})
+}
+
+// runSessionStartNudge implements the Claude SessionStart hook nudge.
+// It prints a one-line instruction for a genuine primary checkout whose
+// current harness session has not already acquired the home lock.
+// Every silence and error path exits 0 because Claude SessionStart exit 2
+// blocks session initialization.
+func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
+	// 1. Check for gate agent (NO_MISTAKES_GATE)
+	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
+		return nil
+	}
+
+	// 2. Check primary scope
+	scopeResult := session.CheckSessionScope(ctx.Home)
+	if !scopeResult.IsPrimary {
+		return nil
+	}
+
+	// 3. Check lock ancestry (8 parents of current pid)
+	if lockPIDInAncestry(ctx.Home) {
+		return nil
+	}
+
+	// 4. All checks passed — print the nudge
+	fmt.Println("Run `munsu session-start` now, exactly once, before executing any other instructions.")
+	return nil
+}
+
+// lockPIDInAncestry reads state/.lock and walks up to 8 parent PIDs
+// to check if the lock holder is in the current process ancestry.
+func lockPIDInAncestry(homeDir string) bool {
+	lockPath := filepath.Join(homeDir, "state", ".lock")
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false
+	}
+
+	var lockPID int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &lockPID); err != nil {
+		return false
+	}
+	if lockPID <= 1 {
+		return false
+	}
+
+	// Walk up to 8 parents from current PID
+	pid := os.Getpid()
+	for i := 0; i < 8; i++ {
+		if pid == lockPID {
+			return true
+		}
+		// Read parent PID from /proc (Linux) or fallback to ps
+		ppid := readParentPID(pid)
+		if ppid <= 1 {
+			return false
+		}
+		pid = ppid
+	}
+	return false
+}
+
+// readParentPID reads the parent PID of the given PID.
+// Tries /proc first (Linux), falls back to `ps` (macOS/BSD).
+func readParentPID(pid int) int {
+	// Try /proc/[pid]/status (Linux)
+	statusPath := fmt.Sprintf("/proc/%d/status", pid)
+	if data, err := os.ReadFile(statusPath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "PPid:") {
+				var ppid int
+				if _, err := fmt.Sscanf(line, "PPid:%d", &ppid); err == nil {
+					return ppid
+				}
+			}
+		}
+	}
+
+	// Fallback to `ps -o ppid= -p <pid>` (macOS/BSD)
+	cmd := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid))
+	out, err := cmd.Output()
+	if err != nil {
+		return -1
+	}
+	ppidStr := strings.TrimSpace(string(out))
+	if ppidStr == "" {
+		return -1
+	}
+	ppid, err := strconv.Atoi(ppidStr)
+	if err != nil || ppid <= 0 {
+		return -1
+	}
+	return ppid
 }
