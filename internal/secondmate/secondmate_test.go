@@ -1,7 +1,9 @@
 package secondmate
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,68 +11,59 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
-func TestBuildLaunchArgs_VerifiedHarnesses(t *testing.T) {
+func TestBuildLaunchArgs_VerifiedSecondmateHarness(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "secondmates", "test-sm")
-	os.MkdirAll(smHome, 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
-
-	tests := []struct {
-		name      string
-		harness   string
-		wantBin   string
-	}{
-		{"claude", harness.Claude, "claude"},
-		{"codex", harness.Codex, "codex"},
-		{"opencode", harness.Opencode, "opencode"},
-		{"pi", harness.Pi, "pi"},
-		{"grok", harness.Grok, "grok"},
-		{"agy", harness.Agy, "agy"},
+	if err := os.MkdirAll(smHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	charter := []byte("# Test charter\n\nFollow this exactly.\n")
+	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), charter, 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			binName, args, err := buildLaunchArgs(smHome, tt.harness, tmp)
-			if err != nil {
-				t.Fatalf("buildLaunchArgs(%q) error: %v", tt.harness, err)
+	binName, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	if err != nil {
+		t.Fatalf("buildLaunchArgs() error: %v", err)
+	}
+	if binName != "pi" {
+		t.Fatalf("binName = %q, want pi", binName)
+	}
+	wantArgs := []string{"--", smHome, string(charter)}
+	if len(args) != len(wantArgs) {
+		t.Fatalf("args = %#v, want %#v", args, wantArgs)
+	}
+	for i := range wantArgs {
+		if args[i] != wantArgs[i] {
+			t.Errorf("args[%d] = %q, want %q", i, args[i], wantArgs[i])
+		}
+	}
+	if strings.Contains(args[len(args)-1], "$(cat") {
+		t.Fatalf("prompt contains shell expression: %q", args[len(args)-1])
+	}
+}
+
+func TestBuildLaunchArgs_UnverifiedSecondmateHarnesses(t *testing.T) {
+	for _, name := range []string{harness.Claude, harness.Codex, harness.Opencode, harness.Grok, harness.Agy} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := buildLaunchArgs(t.TempDir(), name, t.TempDir())
+			if err == nil {
+				t.Fatal("expected unverified secondmate contract error")
 			}
-			if binName != tt.wantBin {
-				t.Errorf("binName = %q, want %q", binName, tt.wantBin)
-			}
-			// Verify secondmate home is in args
-			found := false
-			for _, a := range args {
-				if a == smHome {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("args should contain secondmate home %q, got %v", smHome, args)
-			}
-			// Verify AGENTS.md is referenced in args
-			hasPrompt := false
-			for _, a := range args {
-				if strings.Contains(a, "AGENTS.md") {
-					hasPrompt = true
-					break
-				}
-			}
-			if !hasPrompt {
-				t.Error("args should reference AGENTS.md")
-			}
-			// Verify -- separator is present
-			hasSep := false
-			for _, a := range args {
-				if a == "--" {
-					hasSep = true
-					break
-				}
-			}
-			if !hasSep {
-				t.Error("args should contain -- separator")
+			if !strings.Contains(err.Error(), "does not have a verified secondmate launch contract") {
+				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+func TestBuildLaunchArgs_MissingCharterFailsClosed(t *testing.T) {
+	_, _, err := buildLaunchArgs(t.TempDir(), harness.Pi, t.TempDir())
+	if err == nil {
+		t.Fatal("expected missing AGENTS.md error")
+	}
+	if !strings.Contains(err.Error(), "reading secondmate charter") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -93,26 +86,25 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 	// Set model config
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet-4-20250515\n"), 0644)
+	model := "opencode-go/deepseek-v4-flash"
+	os.WriteFile(filepath.Join(configDir, "model"), []byte(model+"\n"), 0644)
 
-	binName, args, err := buildLaunchArgs(smHome, harness.Claude, tmp)
+	binName, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchArgs error: %v", err)
 	}
-	if binName != "claude" {
-		t.Errorf("binName = %q, want %q", binName, "claude")
+	if binName != "pi" {
+		t.Errorf("binName = %q, want %q", binName, "pi")
 	}
 
-	// Verify --model flag and value are in args
-	foundModel := false
-	for i, a := range args {
-		if a == "--model" && i+1 < len(args) && args[i+1] == "claude-sonnet-4-20250515" {
-			foundModel = true
-			break
-		}
+	wantPrefix := []string{"--model", model, "--"}
+	if len(args) < len(wantPrefix) {
+		t.Fatalf("args = %v, want prefix %v", args, wantPrefix)
 	}
-	if !foundModel {
-		t.Errorf("args should contain --model claude-sonnet-4-20250515, got: %v", args)
+	for i := range wantPrefix {
+		if args[i] != wantPrefix[i] {
+			t.Errorf("args[%d] = %q, want %q", i, args[i], wantPrefix[i])
+		}
 	}
 }
 
@@ -122,12 +114,12 @@ func TestLaunch_HarnessBinaryNotFound(t *testing.T) {
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
-	// Configure secondmate-harness = claude
+	// Configure secondmate-harness = pi
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("claude\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("pi\n"), 0644)
 
-	// Use a PATH that definitely doesn't have claude
+	// Use a PATH that definitely doesn't have pi
 	t.Setenv("PATH", tmp)
 
 	err := Launch(smHome, tmp)
@@ -139,6 +131,77 @@ func TestLaunch_HarnessBinaryNotFound(t *testing.T) {
 	}
 }
 
+func TestLaunch_DeliversCharterAndWorkingDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	if err := os.MkdirAll(smHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	charter := []byte("# Secondmate\n\nObserve exactly.\n")
+	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), charter, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	configDir := filepath.Join(tmp, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	captureDir := filepath.Join(tmp, "capture")
+	if err := os.MkdirAll(captureDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fakePi := filepath.Join(tmp, "pi")
+	script := "#!/bin/sh\npwd > \"$CAPTURE_DIR/cwd\"\nprintf '%s\\0' \"$@\" > \"$CAPTURE_DIR/argv\"\n"
+	if err := os.WriteFile(fakePi, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmp)
+	t.Setenv("CAPTURE_DIR", captureDir)
+	originalStart := startSecondmateProcess
+	startSecondmateProcess = func(binPath string, args []string, dir string) (int, error) {
+		cmd := exec.Command(binPath, args...)
+		cmd.Dir = dir
+		cmd.Env = os.Environ()
+		if err := cmd.Run(); err != nil {
+			return 0, err
+		}
+		return os.Getpid(), nil
+	}
+	t.Cleanup(func() { startSecondmateProcess = originalStart })
+
+	if err := Launch(smHome, tmp); err != nil {
+		t.Fatalf("Launch() error: %v", err)
+	}
+
+	cwd, err := os.ReadFile(filepath.Join(captureDir, "cwd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capturedDir := strings.TrimSpace(string(cwd))
+	capturedInfo, err := os.Stat(capturedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInfo, err := os.Stat(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(capturedInfo, wantInfo) {
+		t.Errorf("cwd = %q, want same directory as %q", capturedDir, smHome)
+	}
+	argv, err := os.ReadFile(filepath.Join(captureDir, "argv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Join([][]byte{[]byte("--"), []byte(smHome), charter, nil}, []byte{0})
+	if !bytes.Equal(argv, want) {
+		t.Errorf("argv = %q, want %q", argv, want)
+	}
+}
 
 func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 	tmp := t.TempDir()

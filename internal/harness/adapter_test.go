@@ -45,6 +45,28 @@ func TestAdapters_AllVerifiedPresent(t *testing.T) {
 	}
 }
 
+func TestAdapters_SecondmateLaunchContracts(t *testing.T) {
+	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok, Agy} {
+		t.Run(name, func(t *testing.T) {
+			a, ok := GetAdapter(name)
+			if !ok {
+				t.Fatal("missing adapter")
+			}
+			if name == Pi {
+				if !a.SecondmateLaunch.Supported {
+					t.Fatal("pi secondmate launch contract must be supported")
+				}
+				if !a.SecondmateLaunch.ProjectArg || !a.SecondmateLaunch.PromptArg {
+					t.Fatalf("pi secondmate launch contract = %+v", a.SecondmateLaunch)
+				}
+				return
+			}
+			if a.SecondmateLaunch.Supported {
+				t.Fatalf("%s secondmate launch must fail closed until verified", name)
+			}
+		})
+	}
+}
 
 func TestAdapters_GetAdapterUnknown(t *testing.T) {
 	_, ok := GetAdapter("nonexistent")

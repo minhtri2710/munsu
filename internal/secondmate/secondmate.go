@@ -13,6 +13,17 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
+var startSecondmateProcess = func(binPath string, args []string, dir string) (int, error) {
+	cmd := exec.Command(binPath, args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	return cmd.Process.Pid, nil
+}
+
 // Info holds the state of a secondmate.
 type Info struct {
 	ID      string
@@ -70,18 +81,13 @@ func Launch(secondmateHome, parentHome string) error {
 		return fmt.Errorf("%s harness not found on PATH: %w", binName, err)
 	}
 
-	// Launch: cd to secondmate home and run agent with AGENTS.md as prompt
-	cmd := exec.Command(binPath, args...)
-	cmd.Dir = secondmateHome
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Start(); err != nil {
+	pid, err := startSecondmateProcess(binPath, args, secondmateHome)
+	if err != nil {
 		return fmt.Errorf("launching secondmate: %w", err)
 	}
 
 	fmt.Printf("Launched secondmate %s (pid %d, harness=%s) in %s\n",
-		filepath.Base(secondmateHome), cmd.Process.Pid, binName, secondmateHome)
+		filepath.Base(secondmateHome), pid, binName, secondmateHome)
 	return nil
 }
 
@@ -89,28 +95,33 @@ func Launch(secondmateHome, parentHome string) error {
 // It resolves the harness adapter from the registry and builds argv from the adapter's LaunchTemplate.
 // This is separated from Launch for testability (no PATH dependency).
 func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, error) {
-	// Get adapter from registry — fail closed on unknown/unverified harness
 	adapter, ok := harness.GetAdapter(h)
 	if !ok {
 		return "", nil, fmt.Errorf("secondmate launch: harness %q is not a verified harness", h)
 	}
+	contract := adapter.SecondmateLaunch
+	if !contract.Supported {
+		return "", nil, fmt.Errorf("secondmate launch: harness %q does not have a verified secondmate launch contract", h)
+	}
+	if !contract.CwdAtHome || !contract.ProjectArg || !contract.PromptArg {
+		return "", nil, fmt.Errorf("secondmate launch: harness %q has an incomplete secondmate launch contract", h)
+	}
 
-	// Read model from config (optional; omit flag when not configured)
+	charter, err := os.ReadFile(filepath.Join(secondmateHome, "AGENTS.md"))
+	if err != nil {
+		return "", nil, fmt.Errorf("reading secondmate charter: %w", err)
+	}
+
 	model, _ := config.Get(parentHome, "model")
-
-	// Build args from adapter LaunchTemplate
 	args := []string{}
 	if model != "" && adapter.LaunchTemplate.ModelFlag != "" {
 		args = append(args, adapter.LaunchTemplate.ModelFlag, model)
 	}
-
-	// ExtraArgs from template (harness-specific flags beyond model/effort)
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
-
-	// Secondmate args: home directory and AGENTS.md content as the launch prompt
-	// Uses the -- separator convention shared across CLI harnesses
-	args = append(args, "--", secondmateHome,
-		"$(cat "+filepath.Join(secondmateHome, "AGENTS.md")+")")
+	if contract.Separator != "" {
+		args = append(args, contract.Separator)
+	}
+	args = append(args, secondmateHome, string(charter))
 
 	return adapter.Name, args, nil
 }
