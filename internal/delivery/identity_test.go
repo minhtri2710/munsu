@@ -554,6 +554,22 @@ func TestPRMerge_ValidatesIdentity(t *testing.T) {
 	}
 }
 
+func TestIdentityFromMeta_RejectsMalformedURL(t *testing.T) {
+	meta := validIdentity().ToMeta()
+	meta["pr_url"] = "not-a-pr-url"
+	if _, err := IdentityFromMeta(meta); err == nil {
+		t.Fatal("expected malformed pr_url error")
+	}
+}
+
+func TestIdentityFromMeta_RejectsURLFieldMismatch(t *testing.T) {
+	meta := validIdentity().ToMeta()
+	meta["pr_owner"] = "different-owner"
+	if _, err := IdentityFromMeta(meta); err == nil {
+		t.Fatal("expected URL/field mismatch error")
+	}
+}
+
 func TestPRMerge_RejectsURLMismatch(t *testing.T) {
 	homeDir := t.TempDir()
 	id := "mismatch-task"

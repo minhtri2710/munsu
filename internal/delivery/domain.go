@@ -189,21 +189,29 @@ func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 		num = n
 	}
 
-	// Parse number from URL if not in meta
+	parsed, err := ghurl.ParseGHURL(prURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid pr_url %q: %w", prURL, err)
+	}
 	owner := meta["pr_owner"]
 	repo := meta["pr_repo"]
-	if (num <= 0 || owner == "" || repo == "") && prURL != "" {
-		if ghURL, err := ghurl.ParseGHURL(prURL); err == nil {
-			if num <= 0 {
-				num = ghURL.Num
-			}
-			if owner == "" {
-				owner = ghURL.Owner
-			}
-			if repo == "" {
-				repo = ghURL.Repo
-			}
-		}
+	if owner != "" && owner != parsed.Owner {
+		return nil, fmt.Errorf("pr_owner %q does not match pr_url owner %q", owner, parsed.Owner)
+	}
+	if repo != "" && repo != parsed.Repo {
+		return nil, fmt.Errorf("pr_repo %q does not match pr_url repo %q", repo, parsed.Repo)
+	}
+	if num > 0 && num != parsed.Num {
+		return nil, fmt.Errorf("pr_number %d does not match pr_url number %d", num, parsed.Num)
+	}
+	if owner == "" {
+		owner = parsed.Owner
+	}
+	if repo == "" {
+		repo = parsed.Repo
+	}
+	if num <= 0 {
+		num = parsed.Num
 	}
 
 	id := &DeliveryIdentity{
