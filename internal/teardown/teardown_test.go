@@ -20,8 +20,8 @@ func setupGitRepo(t *testing.T, dir, remoteDir string) {
 		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", dir),
 	)
 
-	// Init
-	cmd := exec.Command("git", "init")
+	// Init with consistent branch name (CI runners may default to master)
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = dir
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {

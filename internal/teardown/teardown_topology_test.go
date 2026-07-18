@@ -44,6 +44,8 @@ func fixtureMeta(wtPath string, withIdentity bool) map[string]string {
 
 // setupTopologyRepo creates a git repo with a remote and returns the worktree path.
 // Creates a branch with upstream so it's in a "clean with remote" state.
+// Sets up a real ordinary merge topology: a feature commit, merged into main,
+// and main pushed to origin so the feature head IS an ancestor of origin/main.
 func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath string) {
 	t.Helper()
 	wtPath = filepath.Join(tmp, "worktree")
@@ -53,7 +55,7 @@ func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath string) {
 
 	gitEnv := topologyGitEnv(wtPath)
 
-	// Create a branch with upstream
+	// Create a feature branch with a unique feature commit
 	cmd := exec.Command("git", "checkout", "-b", "fm/feature-branch")
 	cmd.Dir = wtPath
 	cmd.Env = gitEnv
@@ -61,11 +63,65 @@ func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath string) {
 		t.Fatalf("git checkout -b: %s", out)
 	}
 
+	featureFile := filepath.Join(wtPath, "feature.txt")
+	os.WriteFile(featureFile, []byte("feature work"), 0644)
+	cmd = exec.Command("git", "add", "feature.txt")
+	cmd.Dir = wtPath
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add feature: %s", out)
+	}
+	cmd = exec.Command("git", "commit", "-m", "feature work")
+	cmd.Dir = wtPath
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit feature: %s", out)
+	}
+
+	// Push feature branch to origin
 	cmd = exec.Command("git", "push", "-u", "origin", "fm/feature-branch")
 	cmd.Dir = wtPath
 	cmd.Env = gitEnv
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git push: %s", out)
+	}
+
+	// Simulate ordinary merge: checkout main, merge feature, push updated main
+	cmd = exec.Command("git", "checkout", "main")
+	cmd.Dir = wtPath
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout main: %s", out)
+	}
+
+	cmd = exec.Command("git", "merge", "fm/feature-branch")
+	cmd.Dir = wtPath
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git merge: %s", out)
+	}
+
+	cmd = exec.Command("git", "push", "origin", "main")
+	cmd.Dir = wtPath
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push main: %s", out)
+	}
+
+	// Fetch/update remote refs so origin/main is current
+	cmd = exec.Command("git", "fetch", "origin", "main")
+	cmd.Dir = wtPath
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git fetch: %s", out)
+	}
+
+	// Return to feature branch so tests start from it
+	cmd = exec.Command("git", "checkout", "fm/feature-branch")
+	cmd.Dir = wtPath
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout feature: %s", out)
 	}
 
 	return wtPath, remotePath
