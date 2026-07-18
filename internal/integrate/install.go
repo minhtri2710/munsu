@@ -1,6 +1,7 @@
 package integrate
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -173,8 +174,9 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	}
 
 	// Decode with DisallowUnknownFields to reject unknown JSON fields.
+	// Reject trailing JSON values after the main object.
 	var manifest Manifest
-	dec := json.NewDecoder(bytesReader(manifestData))
+	dec := json.NewDecoder(reader(manifestData))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&manifest); err != nil {
 		result.State = "drifted"
@@ -182,16 +184,31 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		result.Drifted = true
 		return result, nil
 	}
+	// Check for trailing JSON values (e.g., multiple objects).
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err == nil {
+		result.State = "drifted"
+		result.Message = "manifest contains trailing JSON values after the main object"
+		result.Drifted = true
+		return result, nil
+	}
 
 	// Strict validation against expected values.
+	// Derive expected target count from scope: user scope = 1 target, project scope = 1.
 	expectedCaps := caps
-	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", expectedCaps, len(manifest.TargetPaths)); err != nil {
+	var expectedTargets int
+	switch scope {
+	case ScopeUser, ScopeProject:
+		expectedTargets = 1
+	default:
+		expectedTargets = 0
+	}
+	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", expectedCaps, expectedTargets); err != nil {
 		result.State = "drifted"
 		result.Message = fmt.Sprintf("manifest validation: %v", err)
 		result.Drifted = true
 		return result, nil
 	}
-
 	// Verify all target paths exist, have ownership markers, and digest matches.
 	allPresent := true
 	for _, tp := range manifest.TargetPaths {
@@ -236,18 +253,7 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 }
 
 // bytesReader returns a reader for a byte slice.
-func bytesReader(b []byte) *bytesReaderT { return &bytesReaderT{b: b} }
-
-type bytesReaderT struct{ b []byte; off int }
-
-func (r *bytesReaderT) Read(p []byte) (int, error) {
-	if r.off >= len(r.b) {
-		return 0, fmt.Errorf("EOF")
-	}
-	n := copy(p, r.b[r.off:])
-	r.off += n
-	return n, nil
-}
+func reader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
 
 // WriteManifestBackup writes the manifest to a backup path.
 func WriteManifestBackup(homeDir, harnessName string, scope Scope, manifest Manifest) (string, error) {

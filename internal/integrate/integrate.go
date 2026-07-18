@@ -17,7 +17,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/scope"
 )
 
 // Scope identifies where integration artifacts are installed.
@@ -62,11 +64,11 @@ type Manifest struct {
 
 // SafetyCheckResult is returned by SafetyCheck.
 type SafetyCheckResult struct {
-	Identity      string `json:"identity"`       // "primary", "worktree", "unrelated"
+	Identity       string `json:"identity"`        // "primary", "worktree", "unrelated"
 	GateCapability string `json:"gate_capability"` // "gate-present", "gate-absent", "gate-unknown"
-	CanonicalPath string `json:"canonical_path,omitempty"`
-	GateRefused   bool   `json:"gate_refused"`
-	Error         string `json:"error,omitempty"`
+	CanonicalPath  string `json:"canonical_path,omitempty"`
+	GateRefused    bool   `json:"gate_refused"`
+	Error          string `json:"error,omitempty"`
 }
 
 // Capability describes a supported integration capability.
@@ -275,10 +277,17 @@ func writeAtomic(path, content string, perm os.FileMode) error {
 		return fmt.Errorf("rename %s -> %s: %w", tmpPath, path, err)
 	}
 
-	// fsync parent directory after rename (best-effort on platforms that support it).
-	if dirF, err := os.Open(dir); err == nil {
-		dirF.Sync()
+	// fsync parent directory after rename and check errors.
+	dirF, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("open parent dir for fsync: %w", err)
+	}
+	if err := dirF.Sync(); err != nil {
 		dirF.Close()
+		return fmt.Errorf("fsync parent dir: %w", err)
+	}
+	if err := dirF.Close(); err != nil {
+		return fmt.Errorf("close parent dir: %w", err)
 	}
 
 	return nil
@@ -350,9 +359,77 @@ func CheckPiCapability(piBin string) error {
 	if ver == "" {
 		return fmt.Errorf("pi --version returned empty output. Install Pi >= %s first", PiMinimumVersion)
 	}
-	// Check version is at least PiMinimumVersion (simple prefix compare).
-	if !strings.HasPrefix(ver, "0.") {
-		return nil // development/unreleased build — assume compatible
+
+	// Parse version with semver. Strip leading 'v' if present.
+	cleanVer := strings.TrimPrefix(ver, "v")
+	parsed, err := semver.NewVersion(cleanVer)
+	if err != nil {
+		return fmt.Errorf("cannot parse pi version %q: %w. Install Pi >= %s first", ver, err, PiMinimumVersion)
+	}
+
+	minVer, err := semver.NewVersion(PiMinimumVersion)
+	if err != nil {
+		return fmt.Errorf("invalid minimum version %q: %w", PiMinimumVersion, err)
+	}
+
+	if parsed.LessThan(minVer) {
+		return fmt.Errorf("pi version %s < minimum %s. Upgrade Pi to >= %s", parsed.String(), PiMinimumVersion, PiMinimumVersion)
+	}
+
+	// Before mutation, verify the installed Pi package supports required APIs
+	// by probing the actual ExtensionAPI type via a compile/load check.
+	if err := probePiAPIs(piBin); err != nil {
+		return fmt.Errorf("pi API capability check failed: %w", err)
+	}
+
+	return nil
+}
+
+// probePiAPIs verifies the installed @earendil-works/pi-coding-agent package
+// supports required ExtensionAPI methods by attempting to import the package
+// with a minimal type check script.
+func probePiAPIs(piBin string) error {
+	if piBin == "" {
+		return fmt.Errorf("pi binary path required for API probe")
+	}
+
+	// Find the pi package root to resolve the installed typing module.
+	piDir := filepath.Dir(piBin)
+
+	// Attempt to resolve the installed package path.
+	// We use `node -e "require.resolve('@earendil-works/pi-coding-agent')"`
+	// to find the actual installed location, then verify the types export.
+	probeScript := `
+try {
+  const pkgPath = require.resolve('@earendil-works/pi-coding-agent/package.json', { paths: [process.cwd()] });
+  const pkg = require(pkgPath);
+  // Version check
+  if (!pkg.version) { process.exit(2); }
+  // Verify main/types entry exists
+  const mainPath = require.resolve('@earendil-works/pi-coding-agent', { paths: [process.cwd()] });
+  if (!mainPath) { process.exit(3); }
+  // Minimal syntax check: parse the module and look for expected exports
+  const fs = require('fs');
+  const content = fs.readFileSync(mainPath, 'utf8');
+  // Check for key API surface strings
+  const requiredAPIs = ['agent_settled', 'appendEntry', 'sendUserMessage', 'registerCommand', 'registerTool', 'ExtensionAPI'];
+  for (const api of requiredAPIs) {
+    if (!content.includes(api)) {
+      console.error('Missing API:', api);
+      process.exit(4);
+    }
+  }
+  process.exit(0);
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
+`
+	cmd := exec.Command("node", "-e", probeScript)
+	cmd.Dir = piDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pi package API probe failed (exit %v): %s. Ensure @earendil-works/pi-coding-agent >= %s is installed", err, string(out), PiMinimumVersion)
 	}
 	return nil
 }
@@ -361,118 +438,48 @@ func CheckPiCapability(piBin string) error {
 // Safety check
 // ---------------------------------------------------------------------------
 
-// SafetyCheck evaluates the scope and gate status for a path using internal/scope.
 func SafetyCheck(path string) *SafetyCheckResult {
-	result := &SafetyCheckResult{}
+	scopeResult := scope.Classify(path)
 
-	// We reuse the scope.Classify logic inline to avoid a direct import
-	// dependency from this package. Instead, we shell out to `munsu scope classify`
-	// when available, or use a simplified check directly.
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		result.Error = fmt.Sprintf("cannot resolve path: %v", err)
-		result.GateRefused = true
-		return result
+	result := &SafetyCheckResult{
+		CanonicalPath: scopeResult.CanonicalPath,
 	}
-	result.CanonicalPath = absPath
 
-	// Try to use scope classification via git.
-	identity, gateRefused, gateSource := classifyLocal(absPath)
-	result.Identity = identity
-
-	switch {
-	case gateRefused:
-		result.GateCapability = "gate-present"
-		result.GateRefused = true
-		result.Error = gateSource
+	// Map scope.Identity to string
+	switch scopeResult.Identity {
+	case scope.Primary:
+		result.Identity = "primary"
+	case scope.Worktree:
+		result.Identity = "worktree"
 	default:
+		result.Identity = "unrelated"
+	}
+
+	// Map scope.GateCap
+	switch scopeResult.GateCap {
+	case scope.GatePresent:
+		result.GateCapability = "gate-present"
+	case scope.GateAbsent:
 		result.GateCapability = "gate-absent"
+	default:
+		result.GateCapability = "gate-unknown"
+	}
+
+	// GateRefused: true when classification errored (GateUnknown), gate is present,
+	// or identity is Unrelated (fail closed for unknown repos).
+	if scopeResult.Err != nil {
+		result.GateRefused = true
+		result.Error = scopeResult.Err.Error()
+	} else if scopeResult.GateCap == scope.GatePresent {
+		result.GateRefused = true
+		result.Error = scopeResult.GateSource
+	} else if scopeResult.Identity == scope.Unrelated {
+		// Unrelated identity with no explicit gate still fails closed
+		result.GateRefused = true
+		result.Error = "unrelated checkout (not a recognized repository)"
 	}
 
 	return result
-}
-
-// classifyLocal does a best-effort scope classification without importing internal/scope.
-func classifyLocal(path string) (identity string, gateRefused bool, gateSource string) {
-	// Check for NO_MISTAKES_GATE env var.
-	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
-		return "unrelated", true, "env"
-	}
-
-	// Try git rev-parse to classify identity.
-	gitDir, err := gitRevParse(path, "--git-dir")
-	if err != nil || gitDir == "" {
-		return "unrelated", false, ""
-	}
-
-	commonDir, err := gitRevParse(path, "--git-common-dir")
-	if err != nil || commonDir == "" {
-		return "unrelated", false, ""
-	}
-
-	resolvedGit := resolveGitPath(path, gitDir)
-	resolvedCommon := resolveGitPath(path, commonDir)
-
-	identity = "primary"
-	if resolvedGit != resolvedCommon {
-		identity = "worktree"
-	}
-
-	// Check for no-mistakes gate markers.
-	nmHome := nmHome()
-	if nmHome != "" {
-		markersDir := filepath.Join(nmHome, "repos")
-		if info, err := os.Stat(markersDir); err == nil && info.IsDir() {
-			entries, err := os.ReadDir(markersDir)
-			if err == nil {
-				for _, e := range entries {
-					if e.IsDir() && strings.HasSuffix(e.Name(), ".git") {
-						markerConfig := filepath.Join(markersDir, e.Name(), "config")
-						if _, err := os.Stat(markerConfig); err == nil {
-							resolvedCommonDir := filepath.Clean(resolvedCommon)
-							resolvedMarkerDir := filepath.Clean(markerConfig)
-							rel, err := filepath.Rel(filepath.Dir(resolvedMarkerDir), resolvedCommonDir)
-							if err == nil && !strings.HasPrefix(rel, "..") {
-								gateRefused = true
-								gateSource = "git-common-dir"
-								return
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return identity, false, ""
-}
-
-func resolveGitPath(repoPath, gitPath string) string {
-	if filepath.IsAbs(gitPath) {
-		return filepath.Clean(gitPath)
-	}
-	return filepath.Clean(filepath.Join(repoPath, gitPath))
-}
-
-func gitRevParse(path, flag string) (string, error) {
-	cmd := exec.Command("git", "-C", path, "rev-parse", flag)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func nmHome() string {
-	if h := os.Getenv("NM_HOME"); h != "" {
-		return h
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".no-mistakes")
 }
 
 // FileContainsOwnershipMarker reports whether the file at path has the
