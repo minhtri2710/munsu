@@ -19,10 +19,20 @@ func TestPRMerge_FleetSyncReadsMeta(t *testing.T) {
 
 	homeDir := t.TempDir()
 
-	// Write meta with a project name
-	meta := map[string]string{
-		"project": "munsu",
+	// Write meta with a project name and delivery identity
+	ident := &DeliveryIdentity{
+		Provider:   "github",
+		Owner:      "minhtri2710",
+		Repo:       "munsu",
+		Number:     999999,
+		URL:        "https://github.com/minhtri2710/munsu/pull/999999",
+		BaseRef:    "main",
+		HeadRef:    "feature/test",
+		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
+		CapturedAt: "2026-07-18T12:00:00Z",
 	}
+	meta := ident.ToMeta()
+	meta["project"] = "munsu"
 	if err := task.WriteMeta(homeDir, "test-merge-task", meta); err != nil {
 		t.Fatalf("writing meta: %v", err)
 	}
@@ -73,7 +83,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 	}
 	script := string(data)
 
-// The fleet sync line should be in the merged: true path
+	// The fleet sync line should be in the merged: true path
 	if !strings.Contains(script, `echo "merged: true"`) {
 		t.Errorf("should have merged: true branch, got:\n%s", script)
 	}
