@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -150,8 +151,8 @@ func TestSnapshotWatcher_Active(t *testing.T) {
 // --- waitForNewWatcher tests ---
 
 func TestWaitForNewWatcher_Timeout(t *testing.T) {
-	defer SetHandshakeTimeout(50 * time.Millisecond)()
-	defer SetHeartBeatPoll(10 * time.Millisecond)()
+	defer setHandshakeTimeout(50 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
@@ -183,8 +184,8 @@ func TestWaitForNewWatcher_Timeout(t *testing.T) {
 }
 
 func TestWaitForNewWatcher_IdentityAppears(t *testing.T) {
-	defer SetHandshakeTimeout(2 * time.Second)()
-	defer SetHeartBeatPoll(20 * time.Millisecond)()
+	defer setHandshakeTimeout(2 * time.Second)()
+	defer setHeartBeatPoll(20 * time.Millisecond)()
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
@@ -218,8 +219,8 @@ func TestWaitForNewWatcher_IdentityAppears(t *testing.T) {
 }
 
 func TestWaitForNewWatcher_OnlyBeatWithoutIdentity(t *testing.T) {
-	defer SetHandshakeTimeout(50 * time.Millisecond)()
-	defer SetHeartBeatPoll(10 * time.Millisecond)()
+	defer setHandshakeTimeout(50 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
@@ -294,45 +295,230 @@ func TestHandshakeError_PartialSuccess(t *testing.T) {
 	}
 }
 
-// --- Integration: update with controlled fake build transition ---
+// --- Integration: UpdateWithHandshake orchestration tests ---
 
-// TestUpdateWithHandshake_NoActiveWatcher exercises the path where no watcher
-// is active — verifies no unsolicited start.
+// TestUpdateWithHandshake_NoActiveWatcher verifies that when no watcher is
+// running, UpdateWithHandshake runs the update, skips restart, and returns
+// a snapshot with Active=false.
 func TestUpdateWithHandshake_NoActiveWatcher(t *testing.T) {
+	defer setHandshakeTimeout(100 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
+
 	home := t.TempDir()
 	// Deliberately no identity or beat — watcher is not active.
 
-	// UpdateWithHandshake requires a real git repo at the binary location.
-	// In test context, os.Executable() returns the test binary path which is
-	// outside any git repo. We'll test the snapshot/restart logic instead
-	// by calling the lower-level functions.
-
-	snap := snapshotWatcher(home)
-	if snap.Active {
-		t.Fatal("expected no active watcher")
+	calledUpdate := false
+	savedUpdate := doUpdate
+	doUpdate = func() error {
+		calledUpdate = true
+		return nil
 	}
-	// The update call itself would fail in test context, but we verify that
-	// the snapshot correctly reports no active watcher.
+	defer func() { doUpdate = savedUpdate }()
+
+	snap, err := UpdateWithHandshake(home)
+	if err != nil {
+		t.Fatalf("UpdateWithHandshake: %v", err)
+	}
+	if !calledUpdate {
+		t.Error("Update() was not called")
+	}
+	if snap.Active {
+		t.Error("expected Active=false for empty home")
+	}
 }
 
-// TestUpdateWithHandshake_WatcherRestartFailure verifies that when
-// ArmBackground fails (e.g., binary is missing), the error is propagated
-// and the snapshot carries evidence.
-func TestUpdateWithHandshake_SnapshotEvidence(t *testing.T) {
+// TestUpdateWithHandshake_ActiveWatcherRestarts verifies that when a watcher
+// is active, UpdateWithHandshake restarts it and waits for the new build
+// identity to appear.
+func TestUpdateWithHandshake_ActiveWatcherRestarts(t *testing.T) {
+	defer setHandshakeTimeout(2 * time.Second)()
+	defer setHeartBeatPoll(20 * time.Millisecond)()
+
 	home := t.TempDir()
+
+	// Set up a fake active watcher: identity matches beat.
 	id := supervision.NewIdentity(home)
 	supervision.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
-	snap := snapshotWatcher(home)
+	installedVersion := "0.1.0-dev+newcommit"
+
+	// Override version resolution so the snapshot carries the test version.
+	savedResolve := resolveInstalledVersion
+	resolveInstalledVersion = func(snap *WatcherSnapshot) {
+		snap.InstalledPath = "/tmp/fake-munsu"
+		snap.InstalledVersion = installedVersion
+	}
+	defer func() { resolveInstalledVersion = savedResolve }()
+
+	// Replace doUpdate with a no-op.
+	savedUpdate := doUpdate
+	doUpdate = func() error {
+		return nil
+	}
+	defer func() { doUpdate = savedUpdate }()
+
+	// Replace doArmBackground to simulate starting a new watcher.
+	savedArm := doArmBackground
+	doArmBackground = func(dir string, restart bool) error {
+		// Simulate new watcher appearing after a short delay with a new PID.
+		newPID := os.Getpid() + 1 // simulate a different PID
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			newID := supervision.NewIdentity(home)
+			newID.PID = newPID
+			newID.BuildVersion = installedVersion
+			supervision.WriteIdentity(home, newID)
+			// Write beat manually with the new PID.
+			beatContent := fmt.Sprintf("%d %d", time.Now().Unix(), newPID)
+			os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+		}()
+		return nil
+	}
+	defer func() { doArmBackground = savedArm }()
+
+	snap, err := UpdateWithHandshake(home)
+	if err != nil {
+		t.Fatalf("UpdateWithHandshake: %v", err)
+	}
 	if !snap.Active {
-		t.Fatal("expected active watcher")
+		t.Error("expected Active=true")
+	}
+	if snap.InstalledVersion != installedVersion {
+		t.Errorf("InstalledVersion = %q, want %q", snap.InstalledVersion, installedVersion)
 	}
 	if snap.OldPID != os.Getpid() {
 		t.Errorf("OldPID = %d, want %d", snap.OldPID, os.Getpid())
 	}
-	if snap.OldVersion != supervision.BuildVersion {
-		t.Errorf("OldVersion = %q, want %q", snap.OldVersion, supervision.BuildVersion)
+}
+
+// TestUpdateWithHandshake_TimeoutCarriesEvidence verifies that when the
+// watcher does not appear after the update, the error is a HandshakeError
+// with old/new evidence, and the message includes "binary updated but watcher
+// convergence failed".
+func TestUpdateWithHandshake_TimeoutCarriesEvidence(t *testing.T) {
+	defer setHandshakeTimeout(50 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
+
+	home := t.TempDir()
+
+	// Set up a fake active watcher.
+	id := supervision.NewIdentity(home)
+	id.BuildVersion = "0.1.0-dev+oldcommit"
+	supervision.WriteIdentity(home, id)
+	lifecycle.WriteBeat(home)
+
+	installedVersion := "0.1.0-dev+newcommit"
+
+	// Override version resolution so the snapshot carries a known InstalledVersion.
+	savedResolve := resolveInstalledVersion
+	resolveInstalledVersion = func(snap *WatcherSnapshot) {
+		snap.InstalledPath = "/tmp/fake-munsu"
+		snap.InstalledVersion = installedVersion
+	}
+	defer func() { resolveInstalledVersion = savedResolve }()
+
+	// Track that old version was captured in snapshot.
+	oldPID := os.Getpid()
+
+	// Replace doUpdate with a no-op.
+	savedUpdate := doUpdate
+	doUpdate = func() error {
+		return nil
+	}
+	defer func() { doUpdate = savedUpdate }()
+
+	// Replace doArmBackground to NOT start a new watcher (simulate hang).
+	savedArm := doArmBackground
+	doArmBackground = func(dir string, restart bool) error {
+		return nil // arm succeeds but watcher never starts
+	}
+	defer func() { doArmBackground = savedArm }()
+
+	_, err := UpdateWithHandshake(home)
+	if err == nil {
+		t.Fatal("expected error on timeout, got nil")
+	}
+
+	// Error message must clearly state binary was updated but convergence failed.
+	msg := err.Error()
+	if !strings.Contains(msg, "binary updated but watcher convergence failed") {
+		t.Errorf("error message should mention binary-update success: %s", msg)
+	}
+
+	// Must be a HandshakeError with evidence.
+	var he *HandshakeError
+	if !errors.As(err, &he) {
+		t.Fatalf("expected *HandshakeError, got %T: %v", err, err)
+	}
+	if he.OldVersion != "0.1.0-dev+oldcommit" {
+		t.Errorf("OldVersion = %q, want 0.1.0-dev+oldcommit", he.OldVersion)
+	}
+	if he.OldPID != fmt.Sprintf("%d", oldPID) {
+		t.Errorf("OldPID = %q, want %d", he.OldPID, oldPID)
+	}
+	if he.IdentityOK {
+		t.Error("IdentityOK should be false on timeout")
+	}
+}
+
+// TestUpdateWithHandshake_UpdateFails verifies that when Update() returns an
+// error, it is propagated directly without wrapping.
+func TestUpdateWithHandshake_UpdateFails(t *testing.T) {
+	home := t.TempDir()
+
+	savedUpdate := doUpdate
+	doUpdate = func() error {
+		return fmt.Errorf("git fetch failed: test error")
+	}
+	defer func() { doUpdate = savedUpdate }()
+
+	snap, err := UpdateWithHandshake(home)
+	if err == nil {
+		t.Fatal("expected error from Update()")
+	}
+	if !strings.Contains(err.Error(), "git fetch failed") {
+		t.Errorf("error should contain Update() error: %v", err)
+	}
+	if snap.Active {
+		t.Error("expected Active=false when no watcher was set up")
+	}
+}
+
+// TestUpdateWithHandshake_ArmBackgroundFails verifies that when ArmBackground
+// errors, the message includes "binary updated but watcher convergence failed".
+func TestUpdateWithHandshake_ArmBackgroundFails(t *testing.T) {
+	defer setHandshakeTimeout(100 * time.Millisecond)()
+
+	home := t.TempDir()
+
+	// Set up a fake active watcher.
+	id := supervision.NewIdentity(home)
+	supervision.WriteIdentity(home, id)
+	lifecycle.WriteBeat(home)
+
+	savedUpdate := doUpdate
+	doUpdate = func() error {
+		return nil
+	}
+	defer func() { doUpdate = savedUpdate }()
+
+	savedArm := doArmBackground
+	doArmBackground = func(dir string, restart bool) error {
+		return fmt.Errorf("starting watcher: exec format error")
+	}
+	defer func() { doArmBackground = savedArm }()
+
+	_, err := UpdateWithHandshake(home)
+	if err == nil {
+		t.Fatal("expected error from ArmBackground")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "binary updated but watcher convergence failed") {
+		t.Errorf("error should mention binary-update success: %s", msg)
+	}
+	if !strings.Contains(msg, "starting watcher: exec format error") {
+		t.Errorf("error should contain underlying error: %s", msg)
 	}
 }
 
@@ -477,11 +663,5 @@ func shortHEADFromCWD(t *testing.T, root string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// avoid unused import error for fmt
-var _ = fmt.Sprintf
-
 // avoid unused import error for filepath
 var _ = filepath.Join
-
-// avoid unused import error for os
-var _ = os.Getpid

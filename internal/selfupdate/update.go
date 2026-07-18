@@ -30,6 +30,37 @@ var handshakeTimeout = 15 * time.Second
 // heartBeatPoll is the interval between polls while waiting for the watcher.
 var heartBeatPoll = 200 * time.Millisecond
 
+// doUpdate is an injectable seam for tests. Production code must not replace it.
+var doUpdate = Update
+
+// doArmBackground is an injectable seam for tests. Production code must not replace it.
+var doArmBackground = supervision.ArmBackground
+
+// resolveInstalledVersion populates InstalledPath and InstalledVersion on the
+// snapshot by resolving the binary's real path and inspecting the git HEAD.
+// Made injectable for tests so they can set a known version without a real git repo.
+var resolveInstalledVersion = func(snap *WatcherSnapshot) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return
+	}
+	realPath, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		realPath = execPath
+	}
+	snap.InstalledPath = realPath
+
+	installRoot, err := findGitRoot(filepath.Dir(realPath))
+	if err != nil {
+		return
+	}
+	commit, err := ShortHEAD(installRoot)
+	if err != nil {
+		return
+	}
+	snap.InstalledVersion = VersionString(commit)
+}
+
 // Update performs a fast-forward-only git pull on the munsu installation.
 // It determines the install root by resolving the munsu binary's real path,
 // then walking up to find the git repository root.
@@ -135,8 +166,14 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 	if !ok || pid <= 0 || id == nil {
 		return &WatcherSnapshot{Active: false}
 	}
-	// Only consider it active if identity PID matches beat PID.
+	// Identity PID must match beat PID (fresh heartbeat).
 	if id.PID != pid {
+		return &WatcherSnapshot{Active: false}
+	}
+	// OS-backed process ownership validation: PID must provably belong to
+	// the process that wrote the identity (start time + executable match).
+	// This rejects stale or reused PIDs.
+	if !supervision.ValidatePIDOwnership(homeDir, pid) {
 		return &WatcherSnapshot{Active: false}
 	}
 	return &WatcherSnapshot{
@@ -153,42 +190,26 @@ func UpdateWithHandshake(homeDir string) (*WatcherSnapshot, error) {
 	snap := snapshotWatcher(homeDir)
 
 	// Run the standard update (ff-only pull + rebuild + atomic install).
-	if err := Update(); err != nil {
+	if err := doUpdate(); err != nil {
 		return snap, err
 	}
 
 	// Resolve the install root for evidence.
-	execPath, err := os.Executable()
-	if err != nil {
-		return snap, fmt.Errorf("finding binary after update: %w", err)
-	}
-	realPath, err := filepath.EvalSymlinks(execPath)
-	if err != nil {
-		realPath = execPath
-	}
-	snap.InstalledPath = realPath
-
-	installRoot, err := findGitRoot(filepath.Dir(realPath))
-	if err == nil {
-		commit, err := ShortHEAD(installRoot)
-		if err == nil {
-			snap.InstalledVersion = VersionString(commit)
-		}
-	}
+	resolveInstalledVersion(snap)
 
 	// No active watcher: skip restart entirely (no unsolicited start).
 	if !snap.Active {
 		return snap, nil
 	}
 
-	// Gracefully stop old watcher and start through canonical service.
-	if err := supervision.ArmBackground(homeDir, true); err != nil {
-		return snap, fmt.Errorf("watcher restart failed: %w", err)
+	// Binary was swapped successfully. Attempt to converge watcher.
+	if err := doArmBackground(homeDir, true); err != nil {
+		return snap, fmt.Errorf("binary updated but watcher convergence failed: %w", err)
 	}
 
 	// Wait boundedly for heartbeat carrying the new build identity.
 	if err := waitForNewWatcher(homeDir, snap); err != nil {
-		return snap, err
+		return snap, fmt.Errorf("binary updated but watcher convergence failed: %w", err)
 	}
 
 	return snap, nil
@@ -339,17 +360,17 @@ func VersionString(shortCommit string) string {
 	return fmt.Sprintf("0.1.0-dev+%s", shortCommit)
 }
 
-// SetHandshakeTimeout overrides the handshake timeout for testing.
+// setHandshakeTimeout overrides the handshake timeout for testing.
 // Returns a cleanup function that restores the previous value.
-func SetHandshakeTimeout(d time.Duration) func() {
+func setHandshakeTimeout(d time.Duration) func() {
 	prev := handshakeTimeout
 	handshakeTimeout = d
 	return func() { handshakeTimeout = prev }
 }
 
-// SetHeartBeatPoll overrides the heartbeat poll interval for testing.
+// setHeartBeatPoll overrides the heartbeat poll interval for testing.
 // Returns a cleanup function that restores the previous value.
-func SetHeartBeatPoll(d time.Duration) func() {
+func setHeartBeatPoll(d time.Duration) func() {
 	prev := heartBeatPoll
 	heartBeatPoll = d
 	return func() { heartBeatPoll = prev }

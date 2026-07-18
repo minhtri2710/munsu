@@ -132,9 +132,23 @@ or an absolute path to a project directory.`,
 func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "update",
-		Short: "Self-update munsu",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return selfupdate.Update()
-		},
+		Short: "Self-update munsu with watcher handshake",
+		Long: `Pull latest munsu sources, rebuild, and atomically install the binary.
+If a watcher is currently running, gracefully restart it and wait for
+heartbeat confirmation with the new build version.`,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			snap, err := selfupdate.UpdateWithHandshake(ctx.Home)
+			if err != nil {
+				return err
+			}
+			if snap.Active {
+				fmt.Fprintf(cmd.OutOrStdout(), "Updated munsu to %s; watcher restarted (pid was %d)\n",
+					snap.InstalledVersion, snap.OldPID)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Updated munsu to %s (no active watcher)\n",
+					snap.InstalledVersion)
+			}
+			return nil
+		}),
 	}
 }
