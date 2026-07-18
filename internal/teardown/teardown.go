@@ -289,15 +289,12 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 	return nil, nil
 }
 
-// identityFromMeta attempts to reconstruct a delivery identity from task meta.
-// Returns nil (no error) when no identity metadata exists, so the caller can
-// fall back to a simple remote branch check.
+// identityFromMeta reconstructs a delivery identity from task meta using the
+// authoritative delivery.IdentityFromMeta, which correctly distinguishes:
+//   - nil, nil     (truly no identity metadata — legacy fallback allowed)
+//   - nil, error   (partial identity with missing pr_url — fail closed)
+//   - identity, nil (valid identity — proceed to topology-aware check)
 func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error) {
-	prURL := meta["pr_url"]
-	if prURL == "" {
-		// No identity at all — fall through to simple check
-		return nil, nil
-	}
 	return delivery.IdentityFromMeta(meta)
 }
 
@@ -328,8 +325,19 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 		return "", fmt.Errorf("PR #%d is still open and not merged (use --force to override)", ident.Number)
 	}
 
-	// PR is confirmed merged. Verify head SHA consistency for safety.
+	// PR is confirmed merged. Verify head SHA consistency for ALL merged
+	// topologies, including deleted remote head (squash/rebase).
+	// The live provider HeadSHA must be nonempty and exactly equal to the
+	// stored ident.HeadSHA before accepting. A wrong head must fail even
+	// when the remote head has been deleted.
 	if status.Merged {
+		if status.HeadSHA == "" {
+			return "", fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
+		}
+		if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
+			return "", fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)
+		}
+
 		// Build the exact proof used, augmented with topology details below.
 		proof := fmt.Sprintf("PR #%d merged; provider-confirmed state=merged headSHA=%s", ident.Number, status.HeadSHA)
 
@@ -347,19 +355,8 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 
 		if remoteBranchExists {
 			// Remote branch still exists — ordinary merge topology.
-			// Confirm the head SHA still matches, then prove the captured
-			// head SHA is an ancestor of the base/default target using
-			// git merge-base --is-ancestor.
-			if status.HeadSHA == "" {
-				return "", fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
-			}
-			if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
-				return "", fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)
-			}
-
-			// Prove Git ancestry: the captured/verified head SHA must be
-			// an ancestor of the base target. This distinguishes a true
-			// ancestor (merged commit) from orphaned or force-pushed branches.
+			// Prove the captured head SHA is an ancestor of the base/default
+			// target using git merge-base --is-ancestor.
 			baseRef := ident.BaseRef
 			if baseRef != "" {
 				ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", status.HeadSHA, "origin/"+baseRef)

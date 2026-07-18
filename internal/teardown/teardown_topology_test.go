@@ -693,3 +693,66 @@ func TestShipSafetyCheck_Topology_ProviderEmptyState(t *testing.T) {
 	}
 }
 
+func TestShipSafetyCheck_Topology_DeletedHeadWrongSHA(t *testing.T) {
+	// Deleted remote head but provider-reported head SHA does NOT match
+	// stored identity — must fail closed. This covers the squash/rebase
+	// topology where the remote branch is gone but the live head SHA
+	// differs from the one captured at PR-check time.
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	meta := fixtureMeta(wt, true)
+	// Stored head SHA differs from provider-reported head SHA
+	meta["pr_head"] = "storedsha0000000000000000000000000000000000"
+
+	// Delete the remote branch to simulate squash+delete
+	gitEnv := topologyGitEnv(wt)
+	cmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	_ = cmd.Run()
+
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:    true,
+		MergedSHA: "livesha1111111111111111111111111111111111",
+		HeadSHA:   "livesha1111111111111111111111111111111111",
+		State:     "MERGED",
+	}, nil)
+	defer cleanup()
+
+	_, err := shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("deleted-head wrong SHA should fail")
+	}
+	if !strings.Contains(err.Error(), "head SHA mismatch") {
+		t.Errorf("expected head SHA mismatch error, got: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_Topology_PartialIdentityNoURL(t *testing.T) {
+	// Partial identity with multiple fields but no pr_url must fail closed
+	// and NOT fall through to the legacy remote branch check.
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	meta := map[string]string{
+		"worktree":    wt,
+		"kind":        "ship",
+		"pr_provider": "github",
+		"pr_owner":    "minhtri2710",
+		"pr_repo":     "munsu",
+		"pr_number":   "42",
+		"pr_head":     "abc123def456abc123def456abc123def456abc1",
+		"pr_head_ref": "fm/feature-branch",
+		"pr_base":     "main",
+		// No pr_url
+	}
+	_, err := shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("partial identity without pr_url should fail closed")
+	}
+	// Must error about delivery identity, not about remote branch
+	if !strings.Contains(err.Error(), "reading delivery identity") {
+		t.Errorf("expected 'reading delivery identity' error, got: %v", err)
+	}
+}
