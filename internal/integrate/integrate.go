@@ -93,7 +93,7 @@ func EnabledCapabilities(name string) []Capability {
 			CapPreToolCheck,
 			CapScopeGate,
 		}
-	case harness.Claude, harness.Grok:
+	case harness.Claude, harness.Grok, harness.Codex:
 		return []Capability{
 			CapSessionStart,
 			CapTurnEndGuard,
