@@ -42,6 +42,22 @@ func initRepoWithRemote(t *testing.T, dir, originURL string) string {
 	return repo
 }
 
+func initGateCheckout(t *testing.T) (string, string) {
+	t.Helper()
+	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
+	commonDir := filepath.Join(nmHome, "repos", "gate.git")
+	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runCmd(t, filepath.Dir(commonDir), "git", "init", "--bare", commonDir)
+	checkout := t.TempDir()
+	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NM_HOME", nmHome)
+	return checkout, commonDir
+}
+
 // --- ClassifyIdentity tests ---
 
 func TestClassifyIdentity_PrimaryCheckout(t *testing.T) {
@@ -95,19 +111,10 @@ func TestClassifyIdentity_Worktree(t *testing.T) {
 	}
 }
 
-func TestClassifyIdentity_DeletedPath(t *testing.T) {
-	// A path that doesn't exist
+func TestClassifyIdentity_DeletedPathFailsClosed(t *testing.T) {
 	nonexistent := filepath.Join(t.TempDir(), "does-not-exist")
-
-	identity, gitDir, commonDir, err := ClassifyIdentity(nonexistent)
-	if err != nil {
-		t.Fatalf("ClassifyIdentity(%q) = _, _, _, %v", nonexistent, err)
-	}
-	if identity != Unrelated {
-		t.Errorf("ClassifyIdentity(%q) = %v, want Unrelated for non-existent path", nonexistent, identity)
-	}
-	if gitDir != "" || commonDir != "" {
-		t.Errorf("expected empty gitDir/commonDir for non-existent, got %q / %q", gitDir, commonDir)
+	if _, _, _, err := ClassifyIdentity(nonexistent); err == nil {
+		t.Fatal("expected deleted path classification error")
 	}
 }
 
@@ -161,51 +168,20 @@ func TestDetectGateCapability_EnvVarSet(t *testing.T) {
 	}
 }
 
-func TestDetectGateCapability_EnvVarEmpty(t *testing.T) {
+func TestDetectGateCapability_EnvVarEmptyUsesPresence(t *testing.T) {
 	repo := initRepo(t, t.TempDir())
-
 	t.Setenv("NO_MISTAKES_GATE", "")
 	cap, source := DetectGateCapability(repo)
-	if cap != GateAbsent {
-		t.Errorf("with NO_MISTAKES_GATE='', cap = %v, want GateAbsent (empty string not treated as present)", cap)
-	}
-	if source != "" {
-		t.Errorf("with NO_MISTAKES_GATE='', source = %q, want empty", source)
+	if cap != GatePresent || source != "env" {
+		t.Fatalf("cap=%v source=%q, want gate-present env", cap, source)
 	}
 }
 
-func TestDetectGateCapability_MarkerDir(t *testing.T) {
-	// Create a repo with a known origin URL
-	repo := initRepo(t, t.TempDir())
-	originURL := "https://github.com/test-owner/test-repo.git"
-	runCmd(t, repo, "git", "remote", "add", "origin", originURL)
-
-	// Create the no-mistakes repos marker directory with a matching marker
-	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
-	markersDir := filepath.Join(nmHome, "repos")
-	if err := os.MkdirAll(markersDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a marker as a bare git dir
-	markerDir := filepath.Join(markersDir, "abc123def456.git")
-	if err := os.MkdirAll(markerDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	markerConfig := "[remote \"origin\"]\n\turl = " + originURL + "\n"
-	if err := os.WriteFile(filepath.Join(markerDir, "config"), []byte(markerConfig), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Override NM_HOME for the test
-	t.Setenv("NM_HOME", nmHome)
-
-	cap, source := DetectGateCapability(repo)
-	if cap != GatePresent {
-		t.Errorf("with matching marker, cap = %v, want GatePresent", cap)
-	}
-	if source != "marker" {
-		t.Errorf("with matching marker, source = %q, want 'marker'", source)
+func TestDetectGateCapability_GitCommonDirMarker(t *testing.T) {
+	checkout, _ := initGateCheckout(t)
+	cap, source := DetectGateCapability(checkout)
+	if cap != GatePresent || source != "git-common-dir" {
+		t.Fatalf("cap=%v source=%q, want gate-present git-common-dir", cap, source)
 	}
 }
 
@@ -306,41 +282,21 @@ func TestClassify_PrimaryWithEnvGate(t *testing.T) {
 	}
 }
 
-func TestClassify_PrimaryWithMarkerGate(t *testing.T) {
-	repo := initRepoWithRemote(t, t.TempDir(), "https://github.com/test-owner/test-repo.git")
-
-	// Create matching marker
-	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
-	markersDir := filepath.Join(nmHome, "repos")
-	if err := os.MkdirAll(markersDir, 0755); err != nil {
+func TestClassify_GitCommonDirGate(t *testing.T) {
+	checkout, commonDir := initGateCheckout(t)
+	commonDir, err := canonicalPath(commonDir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	markerDir := filepath.Join(markersDir, "abc123def456.git")
-	if err := os.MkdirAll(markerDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	markerConfig := "[remote \"origin\"]\n\turl = https://github.com/test-owner/test-repo.git\n"
-	if err := os.WriteFile(filepath.Join(markerDir, "config"), []byte(markerConfig), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("NM_HOME", nmHome)
-
-	res := Classify(repo)
+	res := Classify(checkout)
 	if res.Err != nil {
-		t.Fatalf("Classify(%q).Err = %v", repo, res.Err)
+		t.Fatal(res.Err)
 	}
-	if res.Identity != Primary {
-		t.Errorf("Classify(%q).Identity = %v, want Primary", repo, res.Identity)
+	if res.CommonDir != commonDir {
+		t.Fatalf("common dir = %q, want %q", res.CommonDir, commonDir)
 	}
-	if res.GateCap != GatePresent {
-		t.Errorf("Classify(%q).GateCap = %v, want GatePresent", repo, res.GateCap)
-	}
-	if res.GateSource != "marker" {
-		t.Errorf("Classify(%q).GateSource = %q, want 'marker'", repo, res.GateSource)
-	}
-	if !res.IsGateRefusal() {
-		t.Error("Classify(Primary, marker gate).IsGateRefusal() = false, want true")
+	if res.GateCap != GatePresent || res.GateSource != "git-common-dir" || !res.IsGateRefusal() {
+		t.Fatalf("result = %+v", res)
 	}
 }
 
@@ -363,9 +319,8 @@ func TestClassify_WorktreeWithGate(t *testing.T) {
 	if res.GateCap != GatePresent {
 		t.Errorf("Classify(%q).GateCap = %v, want GatePresent", wtDir, res.GateCap)
 	}
-	// A worktree should NOT trigger gate refusal — only primary checkouts do
-	if res.IsGateRefusal() {
-		t.Error("Classify(Worktree, gate).IsGateRefusal() = true, want false")
+	if !res.IsGateRefusal() {
+		t.Error("ambient gate marker must refuse fleet entry from a worktree")
 	}
 }
 
@@ -411,9 +366,16 @@ func TestClassify_UnrelatedWithEnvGate(t *testing.T) {
 	if res.Identity != Unrelated {
 		t.Errorf("Classify(%q).Identity = %v, want Unrelated", tmp, res.Identity)
 	}
-	// Even though env is set, unrelated isn't a repo — still no refusal
-	if res.IsGateRefusal() {
-		t.Error("Classify(Unrelated, env gate).IsGateRefusal() = true, want false")
+	if !res.IsGateRefusal() {
+		t.Error("ambient gate marker must refuse fleet entry from an unrelated cwd")
+	}
+}
+
+func TestClassifyIdentity_GitUnavailableFailsClosed(t *testing.T) {
+	repo := initRepo(t, t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	if _, _, _, err := ClassifyIdentity(repo); err == nil {
+		t.Fatal("expected git unavailable error")
 	}
 }
 

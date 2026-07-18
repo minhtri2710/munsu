@@ -174,13 +174,8 @@ func (r *Runner) checkTangle() error {
 	return worktree.AssertNotTangled(r.projPath, r.args.ProjectName)
 }
 
-// checkScopeGate verifies that the project path is not a gated primary checkout.
-// Gate-capable agents are refused at spawn: a primary checkout with an active
-// gate cannot be a crewmate.
+// checkScopeGate refuses no-mistakes gate agents before worktree allocation.
 func (r *Runner) checkScopeGate() error {
-	if r.args.Yolo {
-		return nil
-	}
 	if err := scope.GateRefusalError(r.projPath); err != nil {
 		return fmt.Errorf("scope gate: %w", err)
 	}

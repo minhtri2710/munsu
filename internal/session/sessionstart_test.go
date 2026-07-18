@@ -4,10 +4,48 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCheckSessionScope_RefusesAmbientGateWithoutProjects(t *testing.T) {
+	t.Setenv("NO_MISTAKES_GATE", "")
+	if err := checkSessionScope(t.TempDir()); err == nil {
+		t.Fatal("expected ambient gate refusal")
+	}
+}
+
+func TestCheckSessionScope_UsesRegisteredProjectPath(t *testing.T) {
+	home := t.TempDir()
+	projectDir := filepath.Join(home, "projects", "demo")
+	commonDir := filepath.Join(t.TempDir(), ".no-mistakes", "repos", "gate.git")
+	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "--bare", commonDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v: %s", err, out)
+	}
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	registry := "- demo - https://github.com/example/demo.git (added 2026-07-18)\n"
+	if err := os.WriteFile(filepath.Join(home, "data", "projects.md"), []byte(registry), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NM_HOME", filepath.Dir(filepath.Dir(commonDir)))
+	if err := checkSessionScope(home); err == nil {
+		t.Fatal("expected registered gate checkout refusal")
+	}
+}
 
 // captureStdout runs f and returns everything written to stdout.
 func captureStdout(f func()) string {
