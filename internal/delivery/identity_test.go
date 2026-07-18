@@ -684,3 +684,26 @@ func TestReviewDiff_LegacyPRKeyRead(t *testing.T) {
 		t.Errorf("error should not be about missing identity, got: %v", err)
 	}
 }
+
+func TestIdentityFromMeta_RejectsMultipleFieldsWithoutURL(t *testing.T) {
+	// Multiple identity fields present but no pr_url — must fail closed.
+	// This regression catches the case where the teardown package incorrectly
+	// treats any non-empty identity field as "no identity" when pr_url is absent.
+	meta := map[string]string{
+		"pr_provider":  "github",
+		"pr_owner":     "minhtri2710",
+		"pr_repo":      "munsu",
+		"pr_number":    "42",
+		"pr_head":      "abc123def456abc123def456abc123def456abc1",
+		"pr_head_ref":  "fm/feature-branch",
+		"pr_base":      "main",
+		"pr_timestamp": "2026-07-18T00:00:00Z",
+	}
+	_, err := IdentityFromMeta(meta)
+	if err == nil {
+		t.Fatal("expected error for partial identity with multiple fields but no pr_url")
+	}
+	if !strings.Contains(err.Error(), "no pr_url") {
+		t.Errorf("expected 'no pr_url' error, got: %v", err)
+	}
+}
