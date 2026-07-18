@@ -299,6 +299,20 @@ func TestOpenDecisions_KeyedResolved(t *testing.T) {
 	}
 }
 
+func TestOpenDecisions_RepeatedKeyedResolvedIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.status")
+	if err := os.WriteFile(path, []byte(
+		"needs-decision [key=api-shape]: choose the API shape\n"+
+			"resolved [key=api-shape]: chose REST\n"+
+			"resolved [key=api-shape]: confirmed REST\n",
+	), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if decisions := OpenDecisions(path); len(decisions) != 0 {
+		t.Fatalf("expected resolution to remain closed, got %+v", decisions)
+	}
+}
+
 func TestOpenDecisions_MultipleKeys(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "test.status")

@@ -104,7 +104,8 @@ If the top-level path is the primary checkout or not the worktree you were launc
    would act on and the needs-decision/blocked/paused/done/failed states.
 5. If you hit the same obstacle twice, append `+"`"+`blocked: {why}`+"`"+` and stop; munsu will help.
 6. If a decision belongs to a human, append `+"`"+`needs-decision: {summary of options}`+"`"+` and stop.
-7. Never stop, restart, or update the shared `+"`"+`no-mistakes`+"`"+` daemon - it is one instance serving every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes daemon error, append `+"`"+`blocked: {the daemon error}`+"`"+` and stop; only munsu manages the daemon.
+7. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
+8. Never stop, restart, or update the shared `+"`"+`no-mistakes`+"`"+` daemon - it is one instance serving every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes daemon error, append `+"`"+`blocked: {the daemon error}`+"`"+` and stop; only munsu manages the daemon.
 
 ## Project memory
 If `+"`"+`AGENTS.md`+"`"+` or `+"`"+`CLAUDE.md`+"`"+` already exists, or if this task produced durable project-intrinsic knowledge, run `+"`"+`munsu ensure-agents-md .`+"`"+`.
@@ -113,6 +114,7 @@ Record only project knowledge useful to almost every future session.
 ## Definition of done
 The task is complete only when committed on your branch.
 When delivery is complete, append `+"`"+`done: {summary}`+"`"+` to the status file and stop.
+Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`.
 `, id, repo, id, setupStep, modeLine+"\n"+deliveryRules, id)
 }
 
@@ -145,8 +147,9 @@ what was found, and any recommendations.
 2. Stay inside this worktree; modify nothing outside it.
 3. Report status by appending one line:
    `+"`"+`munsu task status %s {state} "message"
-4. When done, append `+"`"+`done: {summary of findings location}`+"`"+` and stop.
-5. Do not modify project files - only the report.
+4. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
+5. When done, append `+"`"+`done: {summary of findings location}`+"`"+` and stop.
+6. Do not modify project files - only the report.
 `, id, repo, id, modeLine, id)
 }
 

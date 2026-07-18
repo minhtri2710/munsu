@@ -70,11 +70,12 @@ func (inj *Injector) InjectIfSafe(escalation *BatchedEscalation) (bool, error) {
 		return false, nil
 	}
 
-	// Gate 2: Resolve target pane.
-	paneHandle, _, err := ResolveTarget(inj.homeDir)
-	if err != nil || paneHandle == "" {
+	// Gate 2: Resolve and validate target ownership.
+	target, err := ResolveTargetWithSource(inj.homeDir)
+	if err != nil || ValidateTargetOwnership(&target) != nil {
 		return false, nil
 	}
+	paneHandle := target.Handle
 
 	// Gate 3: Re-check IsSafeInjectTarget immediately before SendKeys
 	// (capture state may have changed since the last triage check).

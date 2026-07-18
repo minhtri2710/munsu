@@ -116,7 +116,9 @@ func (d *Daemon) Start(homeDir string) error {
 }
 
 // runLoop is the main supervision loop:
-//   triage → feed digester → check wedge → clear stale → flush if window expired.
+//
+//	triage → feed digester → check wedge → clear stale → flush if window expired.
+//
 // Runs until stopCh is closed.
 func (d *Daemon) runLoop(stopCh chan struct{}) {
 	ticker := time.NewTicker(pollInterval)
@@ -133,7 +135,8 @@ func (d *Daemon) runLoop(stopCh chan struct{}) {
 }
 
 // triageCycle performs one iteration:
-//   triage → feed digester → check target safety → feed wedge → check wedge → clear stale → flush.
+//
+//	triage → feed digester → check target safety → feed wedge → check wedge → clear stale → flush.
 func (d *Daemon) triageCycle(now time.Time) {
 	// Track whether we need to attempt injection after flush.
 	var lastSafe bool
@@ -150,15 +153,17 @@ func (d *Daemon) triageCycle(now time.Time) {
 
 	// Phase 2.3/2.4: check captain-pane target safety when there are escalated entries.
 	if digest != nil && len(digest.Escalated) > 0 && d.capture != nil {
-		paneHandle, _, err := ResolveTarget(d.homeDir)
+		target, err := ResolveTargetWithSource(d.homeDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "afk: target resolution error (non-fatal): %v\n", err)
-		} else if paneHandle != "" {
-			safe, verdict, err := IsSafeInjectTarget(d.capture, paneHandle)
+		} else if err := ValidateTargetOwnership(&target); err != nil {
+			fmt.Fprintf(os.Stderr, "afk: target ownership error (non-fatal): %v\n", err)
+		} else {
+			safe, verdict, err := IsSafeInjectTarget(d.capture, target.Handle)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "afk: target safety capture error (non-fatal): %v\n", err)
 			} else {
-				fmt.Fprintf(os.Stderr, "afk: target safety: safe=%v verdict=%s\n", safe, verdict)
+				fmt.Fprintf(os.Stderr, "afk: target safety: source=%s safe=%v verdict=%s\n", target.Source, safe, verdict)
 				lastSafe = safe
 				d.digester.SetTargetSafety(safe, verdict.String())
 			}
