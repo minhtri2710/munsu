@@ -1,6 +1,8 @@
 package integrate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -52,23 +54,22 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 			Scope:   string(scope),
 			DryRun:  dryRun,
 		}
-		target, written, err := piAdpt.InstallPiExtension()
+		target, written, digest, err := piAdpt.InstallPiExtension()
 		if err != nil {
 			return nil, fmt.Errorf("pi extension install: %w", err)
 		}
 		result.Message = fmt.Sprintf("pi extension: %s", target)
 
 		if !dryRun && written {
-			// Write manifest
-			manifest := GenerateManifest(homeDir, harnessName, caps)
+			// Write manifest to per-harness per-scope path.
+			manifest := GenerateManifest(harnessName, string(scope), caps, digest)
 			manifest.TargetPaths = []string{target}
-
-			artifactDir := homePathForScope(homeDir, scope)
+			artifactDir := homePathForScope(homeDir, harnessName, scope)
 			if err := os.MkdirAll(artifactDir, 0755); err != nil {
 				return nil, fmt.Errorf("create artifact dir: %w", err)
 			}
 
-			manifestPath := filepath.Join(artifactDir, "manifest.json")
+			manifestPath := ManifestPath(homeDir, harnessName, scope)
 			manifestData, err := json.MarshalIndent(manifest, "", "  ")
 			if err != nil {
 				return nil, fmt.Errorf("marshal manifest: %w", err)
@@ -99,11 +100,7 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 }
 
 // Repair checks for drift and repairs integration artifacts.
-// It is idempotent: a healthy installation reports no drift.
-// A drifted installation re-installs the owned content and restores
-// the manifest.
 func Repair(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*IntegrationResult, error) {
-	// First, check current status
 	status, err := Status(homeDir, cwd, harnessName, scope)
 	if err != nil {
 		return nil, fmt.Errorf("pre-repair status: %w", err)
@@ -123,7 +120,6 @@ func Repair(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integr
 		}, nil
 	}
 
-	// Absent or drifted — (re)install
 	result, err := Install(homeDir, cwd, harnessName, scope, dryRun)
 	if err != nil {
 		return nil, fmt.Errorf("repair install: %w", err)
@@ -167,9 +163,8 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		Scope:   scope,
 	}
 
-	// Read manifest
-	artifactDir := homePathForScope(homeDir, scope)
-	manifestPath := filepath.Join(artifactDir, "manifest.json")
+	// Read manifest from per-harness per-scope path.
+	manifestPath := ManifestPath(homeDir, harnessName, scope)
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		result.State = "absent"
@@ -177,15 +172,27 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		return result, nil
 	}
 
+	// Decode with DisallowUnknownFields to reject unknown JSON fields.
 	var manifest Manifest
-	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+	dec := json.NewDecoder(bytesReader(manifestData))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&manifest); err != nil {
 		result.State = "drifted"
-		result.Message = "manifest corrupted"
+		result.Message = "manifest corrupted or contains unknown fields: " + err.Error()
 		result.Drifted = true
 		return result, nil
 	}
 
-	// Verify all target paths exist and have ownership markers
+	// Strict validation against expected values.
+	expectedCaps := caps
+	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", expectedCaps, len(manifest.TargetPaths)); err != nil {
+		result.State = "drifted"
+		result.Message = fmt.Sprintf("manifest validation: %v", err)
+		result.Drifted = true
+		return result, nil
+	}
+
+	// Verify all target paths exist, have ownership markers, and digest matches.
 	allPresent := true
 	for _, tp := range manifest.TargetPaths {
 		if _, err := os.Stat(tp); err != nil {
@@ -194,6 +201,21 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		}
 		if !FileContainsOwnershipMarker(tp) {
 			allPresent = false
+			continue
+		}
+
+		// Verify content digest if manifest has one.
+		if manifest.ContentDigest != "" {
+			currentData, readErr := os.ReadFile(tp)
+			if readErr != nil {
+				allPresent = false
+				continue
+			}
+			sum := sha256.Sum256(currentData)
+			currentDigest := hex.EncodeToString(sum[:])
+			if currentDigest != manifest.ContentDigest {
+				allPresent = false
+			}
 		}
 	}
 
@@ -204,13 +226,6 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		result.State = "installed"
 		result.Message = "integration is healthy"
 		result.Drifted = false
-
-		// Check version compatibility
-		if manifest.Version != "1.0.0" {
-			result.State = "drifted"
-			result.Drifted = true
-			result.Message = fmt.Sprintf("installed version %s does not match current %s", manifest.Version, "1.0.0")
-		}
 	} else {
 		result.State = "drifted"
 		result.Drifted = true
@@ -220,9 +235,23 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	return result, nil
 }
 
+// bytesReader returns a reader for a byte slice.
+func bytesReader(b []byte) *bytesReaderT { return &bytesReaderT{b: b} }
+
+type bytesReaderT struct{ b []byte; off int }
+
+func (r *bytesReaderT) Read(p []byte) (int, error) {
+	if r.off >= len(r.b) {
+		return 0, fmt.Errorf("EOF")
+	}
+	n := copy(p, r.b[r.off:])
+	r.off += n
+	return n, nil
+}
+
 // WriteManifestBackup writes the manifest to a backup path.
-func WriteManifestBackup(homeDir string, manifest Manifest) (string, error) {
-	artifactDir := MunsuHomeArtifactsDir(homeDir)
+func WriteManifestBackup(homeDir, harnessName string, scope Scope, manifest Manifest) (string, error) {
+	artifactDir := homePathForScope(homeDir, harnessName, scope)
 	if err := os.MkdirAll(artifactDir, 0755); err != nil {
 		return "", fmt.Errorf("create backup dir: %w", err)
 	}

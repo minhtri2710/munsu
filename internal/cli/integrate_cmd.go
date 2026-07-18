@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
@@ -15,6 +16,7 @@ type integrateFlags struct {
 	harness string
 	scope   string
 	dryRun  bool
+	command string
 }
 
 func newIntegrateCmd() *cobra.Command {
@@ -31,9 +33,10 @@ install native hooks (Pi extensions, Claude hooks, etc.) for your
 detected or chosen agent harness.
 
 Commands:
-  install   Install integration artifacts for a harness
-  repair    Detect drift and repair integration artifacts
-  status    Show integration status for a harness
+  install        Install integration artifacts for a harness
+  repair         Detect drift and repair integration artifacts
+  status         Show integration status for a harness
+  safety-check   Evaluate scope/gate and command safety for a path
 
 Flags:
   --harness          Target harness (default: auto-detect)
@@ -90,13 +93,39 @@ health state.`,
 	}
 	configureContractCommand(statusCmd)
 
-	cmd.PersistentFlags().StringVar(&flags.harness, "harness", "", "Target harness (default: auto-detect)")
-	cmd.PersistentFlags().StringVar(&flags.scope, "scope", "user", "Installation scope: user (default) or project")
-	cmd.PersistentFlags().BoolVar(&flags.dryRun, "dry-run", false, "Report what would change without writing")
+	safetyCmd := &cobra.Command{
+		Use:   "safety-check [path]",
+		Short: "Evaluate scope/gate and command safety for a path",
+		Long: `Evaluate whether the given path (or cwd) is safe for fleet lifecycle operations.
+
+Returns structured safety assessment including identity classification,
+gate detection, and optional command-blocking rules.
+
+Results:
+  identity         primary | worktree | unrelated
+  gate_capability  gate-present | gate-absent | gate-unknown
+  gate_refused     true if gate is active
+  block            true if the supplied --command should be blocked
+  reason           explanation when blocked
+
+Flags:
+  --command      Command string to evaluate for blocking rules (for tool_call safety)`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			checkPath, _ := os.Getwd()
+			if len(args) > 0 {
+				checkPath = args[0]
+			}
+			return runSafetyCheck(cmd, checkPath, flags.command)
+		}),
+	}
+	safetyCmd.Flags().StringVar(&flags.command, "command", "", "Command to evaluate for blocking rules")
+	configureContractCommand(safetyCmd)
 
 	cmd.AddCommand(installCmd)
 	cmd.AddCommand(repairCmd)
 	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(safetyCmd)
 
 	return cmd
 }
@@ -244,4 +273,62 @@ func renderIntegrateResult(data integrateResultData) string {
 		b.WriteString(fmt.Sprintf("installed:  %s\n", data.InstalledAt))
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string) error {
+	// Evaluate scope/gate safety.
+	result := integrate.SafetyCheck(checkPath)
+
+	// Evaluate command blocking rules.
+	block := false
+	reason := ""
+	if checkCommand != "" {
+		if strings.Contains(checkCommand, "munsu watch arm") ||
+			strings.Contains(checkCommand, "munsu watch ensure") {
+			block = true
+			reason = "Use 'munsu guard' or 'munsu watch run' for inspection; watcher lifecycle is managed automatically."
+		}
+
+		if strings.Contains(checkCommand, "cd .no-mistakes") ||
+			strings.Contains(checkCommand, "cd ~/.no-mistakes") ||
+			strings.Contains(checkCommand, "/.no-mistakes/") {
+			if !strings.Contains(checkCommand, "guard") && !strings.Contains(checkCommand, "doctor") {
+				block = true
+				reason = "No-mistakes managed directories are not regular projects."
+			}
+		}
+
+		nmHome := os.Getenv("NM_HOME")
+		if nmHome == "" {
+			if h, err := os.UserHomeDir(); err == nil {
+				nmHome = filepath.Join(h, ".no-mistakes")
+			}
+		}
+		_ = nmHome
+	}
+
+	data := struct {
+		Identity       string `json:"identity"`
+		GateCapability string `json:"gate_capability"`
+		CanonicalPath  string `json:"canonical_path,omitempty"`
+		GateRefused    bool   `json:"gate_refused"`
+		Block          bool   `json:"block,omitempty"`
+		Reason         string `json:"reason,omitempty"`
+		Error          string `json:"error,omitempty"`
+	}{
+		Identity:       result.Identity,
+		GateCapability: result.GateCapability,
+		CanonicalPath:  result.CanonicalPath,
+		GateRefused:    result.GateRefused,
+		Block:          block,
+		Reason:         reason,
+		Error:          result.Error,
+	}
+
+	return writeContract(cmd, contract.Response[interface{}]{
+		SchemaVersion: contract.SchemaVersion,
+		Kind:          "integrate.safety-check",
+		Status:        "success",
+		Data:          data,
+	})
 }
