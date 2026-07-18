@@ -173,6 +173,11 @@ func ReadBeat(homeDir string) (timestamp int64, pid int, ok bool) {
 	return timestamp, pid, true
 }
 
+// ClearBeat removes the watcher liveness beat file.
+func ClearBeat(homeDir string) {
+	os.Remove(BeatPath(homeDir))
+}
+
 // ReadBeatStatus returns whether the beat exists and whether it is stale
 // relative to the stale threshold and the given time.
 // Staleness is driven entirely by the content-timestamp (unix epoch)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/afk"
@@ -193,9 +194,16 @@ func newWatchArmCmd() *cobra.Command {
 	var restart bool
 	cmd := &cobra.Command{
 		Use:   "watch-arm",
-		Short: "Arm the watcher (home-scoped)",
+		Short: "Arm the watcher (deprecated: use 'munsu watch ensure')",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return supervision.ArmBackground(ctx.Home, restart)
+			result := ensureWatcher(ctx.Home, restart)
+			if result.Status != "success" {
+				return fmt.Errorf("watch-arm failed: %s", result.Data.State)
+			}
+			// Print deprecation warning to stderr
+			_, _ = fmt.Fprintf(os.Stderr, "WARNING: 'munsu watch-arm' is deprecated. Use 'munsu watch ensure' instead.\n")
+			fmt.Printf("Watcher armed (state=%s)\n", result.Data.State)
+			return nil
 		}),
 	}
 	cmd.Flags().BoolVar(&restart, "restart", false, "Restart existing watcher before arming")

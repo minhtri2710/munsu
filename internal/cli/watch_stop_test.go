@@ -22,8 +22,7 @@ func TestStopWatcherNoBeat(t *testing.T) {
 	}
 }
 
-// TestStopWatcherStaleBeat verifies that stopping with a stale/dead PID
-// returns stopped (idempotent, no error on non-existent process).
+// TestStopWatcherStaleBeat verifies that ambiguous beat-only state is not signaled.
 func TestStopWatcherStaleBeat(t *testing.T) {
 	home := t.TempDir()
 
@@ -40,8 +39,8 @@ func TestStopWatcherStaleBeat(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("expected status success, got %q", result.Status)
 	}
-	if result.Data.State != "stopped" && result.Data.State != "unresponsive" {
-		t.Fatalf("expected state stopped or unresponsive, got %q", result.Data.State)
+	if result.Data.State != "identity-mismatch" {
+		t.Fatalf("expected state identity-mismatch, got %q", result.Data.State)
 	}
 }
 

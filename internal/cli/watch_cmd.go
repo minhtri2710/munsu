@@ -41,10 +41,10 @@ func newWatchEnsureCmd() *cobra.Command {
 func ensureWatcher(homeDir string, restart bool) contract.Response[contract.WatchEnsure] {
 	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
 
-	// If restart requested, signal existing watcher
+	// If restart requested, signal existing watcher using identity validation
 	if restart && beatStatus.Exists {
 		_, pid, ok := lifecycle.ReadBeat(homeDir)
-		if ok && pid > 0 {
+		if ok && pid > 0 && supervision.ValidatePIDOwnership(homeDir, pid) {
 			proc, err := os.FindProcess(pid)
 			if err == nil {
 				proc.Signal(syscall.SIGTERM)
@@ -54,19 +54,22 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		beatStatus = lifecycle.ReadBeatStatus(homeDir, time.Now())
 	}
 
-	// If watcher is running and healthy, return attached
+	// A fresh beat is healthy only when its PID has validated ownership.
 	if beatStatus.Exists && !beatStatus.Stale {
-		return contract.Response[contract.WatchEnsure]{
-			SchemaVersion: contract.SchemaVersion,
-			Kind:          "watch.ensure",
-			Status:        "success",
-			Data: contract.WatchEnsure{
-				WatchID:  identifyWatcher(homeDir),
-				State:    "attached",
-				Interval: "5s",
-				Lease:    watcherLeaseInfo(homeDir),
-				Noop:     true,
-			},
+		_, pid, ok := lifecycle.ReadBeat(homeDir)
+		if ok && pid > 0 && supervision.ValidatePIDOwnership(homeDir, pid) {
+			return contract.Response[contract.WatchEnsure]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "watch.ensure",
+				Status:        "success",
+				Data: contract.WatchEnsure{
+					WatchID:  identifyWatcher(homeDir),
+					State:    "attached",
+					Interval: "5s",
+					Lease:    watcherLeaseInfo(homeDir),
+					Noop:     true,
+				},
+			}
 		}
 	}
 
@@ -105,12 +108,13 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	}
 
 	pid := cmd.Process.Pid
-	// Wait briefly for the watcher to write its beat
+	// Wait briefly for the watcher to write its beat AND identity
 	time.Sleep(200 * time.Millisecond)
 	afterStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
 
+	validated := afterStatus.Exists && supervision.ValidatePIDOwnership(homeDir, pid)
 	state := "started"
-	if afterStatus.Exists {
+	if validated {
 		state = "healthy"
 	}
 
@@ -119,10 +123,17 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		heartbeatAge = afterStatus.Age.Round(time.Second).String()
 	}
 
+	// Read identity for identity-aware lease info
+	id := supervision.ReadIdentity(homeDir)
+	identityStr := fmt.Sprintf("pid:%d", pid)
+	if id != nil {
+		identityStr = fmt.Sprintf("pid:%d version=%s proto=%d", id.PID, id.BuildVersion, id.ProtocolVersion)
+	}
+
 	leaseInfo := &contract.WatchLeaseInfo{
-		Identity:    fmt.Sprintf("pid:%d", pid),
+		Identity:    identityStr,
 		Heartbeat:   heartbeatAge,
-		HeartbeatOK: afterStatus.Exists && !afterStatus.Stale,
+		HeartbeatOK: validated && !afterStatus.Stale,
 	}
 
 	return contract.Response[contract.WatchEnsure]{
@@ -139,8 +150,12 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	}
 }
 
-// identifyWatcher generates a watcher identity from the beat file.
+// identifyWatcher generates a watcher identity string. Prefers the persisted
+// identity file over PID-only inference.
 func identifyWatcher(homeDir string) string {
+	if id := supervision.ReadIdentity(homeDir); id != nil {
+		return fmt.Sprintf("watch-%d-v%s", id.PID, id.BuildVersion)
+	}
 	_, pid, ok := lifecycle.ReadBeat(homeDir)
 	if ok && pid > 0 {
 		return fmt.Sprintf("watch-%d", pid)
@@ -148,19 +163,25 @@ func identifyWatcher(homeDir string) string {
 	return "watch-unknown"
 }
 
-// watcherLeaseInfo builds WatchLeaseInfo from the current beat.
+// watcherLeaseInfo builds WatchLeaseInfo from the current beat and identity.
 func watcherLeaseInfo(homeDir string) *contract.WatchLeaseInfo {
-	_, pid, ok := lifecycle.ReadBeat(homeDir)
-	if !ok {
-		return nil
-	}
 	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
-	heartbeatAge := beatStatus.Age.Round(time.Second).String()
+	heartbeatAge := ""
+	if beatStatus.Exists {
+		heartbeatAge = beatStatus.Age.Round(time.Second).String()
+	}
+
+	identityStr := ""
+	validated := false
+	if id := supervision.ReadIdentity(homeDir); id != nil {
+		identityStr = fmt.Sprintf("pid:%d version=%s proto=%d", id.PID, id.BuildVersion, id.ProtocolVersion)
+		validated = supervision.ValidatePIDOwnership(homeDir, id.PID)
+	}
 
 	return &contract.WatchLeaseInfo{
-		Identity:    fmt.Sprintf("pid:%d", pid),
+		Identity:    identityStr,
 		Heartbeat:   heartbeatAge,
-		HeartbeatOK: !beatStatus.Stale,
+		HeartbeatOK: validated && beatStatus.Exists && !beatStatus.Stale,
 	}
 }
 
@@ -241,9 +262,11 @@ func newWatchStopCmd() *cobra.Command {
 	return cmd
 }
 
-// stopWatcher reads the watcher PID from the beat file, sends SIGTERM,
-// waits briefly, and reports the result. Idempotent: no running watcher
-// is a no-op success.
+// stopWatcher reads the watcher PID from the beat file, validates ownership
+// when identity is available, sends SIGTERM, waits briefly, and reports the
+// result. Idempotent: no running watcher is a no-op success.
+//
+// Ownership must be proven from the identity file; beat-only state is ambiguous.
 func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 	_, pid, ok := lifecycle.ReadBeat(homeDir)
 
@@ -262,6 +285,19 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 	}
 
 	watchID := fmt.Sprintf("watch-%d", pid)
+
+	if !supervision.ValidatePIDOwnership(homeDir, pid) {
+		return contract.Response[contract.WatchStop]{
+			SchemaVersion: contract.SchemaVersion,
+			Kind:          "watch.stop",
+			Status:        "success",
+			Data: contract.WatchStop{
+				WatchID: watchID,
+				PID:     pid,
+				State:   "identity-mismatch",
+			},
+		}
+	}
 
 	// Find and signal the process
 	proc, err := os.FindProcess(pid)
@@ -283,6 +319,7 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 		state = "unresponsive"
 	}
 
+	lifecycle.ClearBeat(homeDir)
 	return contract.Response[contract.WatchStop]{
 		SchemaVersion: contract.SchemaVersion,
 		Kind:          "watch.stop",
