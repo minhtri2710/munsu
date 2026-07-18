@@ -55,6 +55,43 @@ Optional tools get warnings but do not fail the exit code:
 				fmt.Println(result.GC.String())
 			}
 
+			// --- Extended capability diagnostics ---
+			cwd, err := os.Getwd()
+			if err != nil {
+				cwd = "<unknown>"
+			}
+			capResult := CollectCapabilities(ctx.Home, cwd, Version)
+			if len(capResult.Integrations) > 0 {
+				fmt.Println("\nIntegration status:")
+				for _, d := range capResult.Integrations {
+					fmt.Println(d.String())
+					if fix := d.Fix(); fix != "" {
+						fmt.Println("    Fix: " + fix)
+					}
+				}
+			}
+
+			if capResult.Watcher != nil {
+				fmt.Println("\nWatcher identity:")
+				fmt.Println("  " + capResult.Watcher.String())
+				if fix := capResult.Watcher.Fix(); fix != "" {
+					fmt.Println("    Fix: " + fix)
+				}
+			}
+
+			if capResult.Captain != nil {
+				fmt.Println("\nCaptain target:")
+				fmt.Println("  " + capResult.Captain.String())
+				if fix := capResult.Captain.Fix(); fix != "" {
+					fmt.Println("    Fix: " + fix)
+				}
+			}
+
+			if capResult.ScopeResult != nil {
+				fmt.Println("\nScope identity:")
+				fmt.Println("  " + capResult.ScopeResult.String())
+			}
+
 			// Determine hard-required tools for exit code
 			// uses shared bootstrap.IsHardRequired from the ToolSpec registry
 			missingRequired := false
@@ -168,7 +205,7 @@ func buildCommandIndex(cmd *cobra.Command) map[string]bool {
 	index := make(map[string]bool)
 	index["help"] = true // implicit cobra command
 	for _, sub := range cmd.Commands() {
-// Include hidden commands for doctor validation
+		// Include hidden commands for doctor validation
 		collectCommand(sub, strings.Fields(sub.Use)[0], index)
 	}
 	return index
@@ -177,7 +214,7 @@ func buildCommandIndex(cmd *cobra.Command) map[string]bool {
 func collectCommand(cmd *cobra.Command, name string, index map[string]bool) {
 	index[name] = true
 	for _, sub := range cmd.Commands() {
-// Include hidden commands for doctor validation
+		// Include hidden commands for doctor validation
 		subName := name + " " + strings.Fields(sub.Use)[0]
 		collectCommand(sub, subName, index)
 	}
