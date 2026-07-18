@@ -12,7 +12,9 @@ import (
 )
 
 // PRMerge runs `munsu pr-merge <id> <pr-url> [--merge|--rebase]`.
-// It merges a PR via gh-axi CLI and records the PR info in task meta.
+// It merges a PR via gh-axi CLI and validates the delivery identity
+// before performing the merge. The identity must have been captured
+// by pr-check first.
 // After merging, it also runs a best-effort fleet sync of the project clone.
 // The prURL must be a full https://github.com/<owner>/<repo>/pull/<n> URL.
 // Extra args after `--` can specify merge method: `-- --merge`, `-- --rebase`.
@@ -28,6 +30,18 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	ghURL, err := ghurl.ParseGHURL(prURL)
 	if err != nil {
 		return fmt.Errorf("invalid PR URL: %w", err)
+	}
+
+	// Validate stored delivery identity before destructive action
+	ident, err := RequireIdentity(homeDir, id)
+	if err != nil {
+		return fmt.Errorf("cannot merge without valid delivery identity: %w", err)
+	}
+
+	// Verify PR URL matches the stored identity
+	identURL := ghurl.GHURL{Owner: ident.Owner, Repo: ident.Repo, Num: ident.Number}.FullURL()
+	if identURL != prURL {
+		return fmt.Errorf("PR URL mismatch: stored identity points to %s, but merge target is %s; re-run pr-check to update", identURL, prURL)
 	}
 
 	// Verify PR is open before attempting merge
@@ -66,13 +80,23 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 		return fmt.Errorf("gh-axi pr merge: %w", err)
 	}
 
-	// Write PR info to task meta
+	// Read existing meta (preserve the full identity, don't clear pr_head)
 	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
 		meta = make(map[string]string)
 	}
+	// Ensure identity meta fields are present (they may have been set by pr-check)
+	if _, ok := meta["pr_url"]; !ok {
+		meta["pr_url"] = prURL
+	}
+	// Keep pr/pr_head for backward compatibility but never clear pr_head
 	meta["pr"] = prURL
-	meta["pr_head"] = "" // not known at merge time without an extra API call
+	// Write the captured identity again so merge doesn't lose it
+	if ident != nil {
+		for k, v := range ident.ToMeta() {
+			meta[k] = v
+		}
+	}
 	if err := task.WriteMeta(homeDir, id, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
 	}

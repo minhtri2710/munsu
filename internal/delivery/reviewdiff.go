@@ -12,7 +12,8 @@ import (
 
 // ReviewDiff runs `munsu review-diff` for the given task.
 // It compares the crewmate branch against the authoritative base and prints
-// a Markdown diff summary.
+// a Markdown diff summary. It uses the stored delivery identity when available
+// rather than reconstructing from the current branch state.
 func ReviewDiff(homeDir string, id string) error {
 	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
@@ -41,29 +42,39 @@ func ReviewDiff(homeDir string, id string) error {
 		return fmt.Errorf("detecting current branch: %w", err)
 	}
 
-	// Resolve authoritative base
+	// Resolve authoritative base using stored identity if available
 	base := ""
 
-	prURL, hasPR := meta["pr"]
-	if hasPR && prURL != "" {
-		// PR tasks: compare against PR's merge ref
-		ghURL, err := ghurl.ParseGHURL(prURL)
+	ident, _ := IdentityFromMeta(meta)
+	if ident != nil && ident.URL != "" {
+		// Use the stored identity for the base reference
+		ghURL, err := ghurl.ParseGHURL(ident.URL)
 		if err != nil {
-			return fmt.Errorf("parsing PR URL from meta: %w", err)
+			return fmt.Errorf("parsing PR URL from delivery identity: %w", err)
 		}
 		base = fmt.Sprintf("refs/pull/%d/merge", ghURL.Num)
 	} else {
-		// Use default branch
-		defaultBranch, derr := gitDefaultBranch(worktreePath)
-		if derr != nil {
-			return fmt.Errorf("cannot detect default branch: %w", derr)
-		}
-		base = defaultBranch
+		prURL, hasPR := meta["pr"]
+		if hasPR && prURL != "" {
+			// PR tasks: compare against PR's merge ref (legacy key)
+			ghURL, err := ghurl.ParseGHURL(prURL)
+			if err != nil {
+				return fmt.Errorf("parsing PR URL from meta: %w", err)
+			}
+			base = fmt.Sprintf("refs/pull/%d/merge", ghURL.Num)
+		} else {
+			// Use default branch
+			defaultBranch, derr := gitDefaultBranch(worktreePath)
+			if derr != nil {
+				return fmt.Errorf("cannot detect default branch: %w", derr)
+			}
+			base = defaultBranch
 
-		// Warn if local default branch is stale vs origin
-		warn, werr := checkDefaultBranchStale(worktreePath, defaultBranch)
-		if werr == nil && warn != "" {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+			// Warn if local default branch is stale vs origin
+			warn, werr := checkDefaultBranchStale(worktreePath, defaultBranch)
+			if werr == nil && warn != "" {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+			}
 		}
 	}
 

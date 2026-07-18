@@ -229,6 +229,8 @@ func TestValidMetaFields(t *testing.T) {
 		"window", "worktree", "project", "harness",
 		"model", "effort", "kind", "mode", "yolo",
 		"backend", "herdr_session", "herdr_workspace_id", "herdr_tab_id", "herdr_pane_id",
+		"pr_provider", "pr_owner", "pr_repo", "pr_number", "pr_url",
+		"pr_base", "pr_head_ref", "pr_head", "pr_timestamp",
 	}
 	if len(ValidMetaFields) != len(expected) {
 		t.Fatalf("ValidMetaFields length = %d, want %d", len(ValidMetaFields), len(expected))
