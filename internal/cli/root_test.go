@@ -49,6 +49,7 @@ var canonicalCommands = []struct {
 	{name: "secondmate", use: "secondmate"},
 	{name: "decision-hold", use: "decision-hold"},
 	{name: "afk", use: "afk"},
+	{name: "integrate", use: "integrate"},
 }
 
 // TestCanonicalCommandsRegistered is the root-command availability
