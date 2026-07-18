@@ -194,6 +194,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newDecisionHoldCmd())
 	root.AddCommand(newSecondmateCmd())
 	root.AddCommand(newAfkCmd())
+	root.AddCommand(newIntegrateCmd())
 
 	return root
 }

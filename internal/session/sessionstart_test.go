@@ -81,7 +81,7 @@ func TestPrintDataFile_ShowsContent(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printDataFile(tmpDir, "captain.md")
+		printDataFile(os.Stdout, tmpDir, "captain.md")
 	})
 
 	if !strings.Contains(output, "=== data/captain.md ===") {
@@ -100,7 +100,7 @@ func TestPrintDataFile_ShowsAbsent(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printDataFile(tmpDir, "captain.md")
+		printDataFile(os.Stdout, tmpDir, "captain.md")
 	})
 
 	if !strings.Contains(output, "ABSENT") || !strings.Contains(output, "captain.md") {
@@ -125,7 +125,7 @@ func TestPrintDataFile_TruncatesLongFiles(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printDataFile(tmpDir, "long.md")
+		printDataFile(os.Stdout, tmpDir, "long.md")
 	})
 
 	if !strings.Contains(output, "...(truncated)") {
@@ -147,7 +147,7 @@ func TestPrintFleetState_NoTasks(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printFleetState(tmpDir)
+		printFleetState(os.Stdout, tmpDir)
 	})
 
 	if !strings.Contains(output, "(no in-flight tasks)") {
@@ -159,7 +159,7 @@ func TestPrintFleetState_NoStateDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	output := captureStdout(func() {
-		printFleetState(tmpDir)
+		printFleetState(os.Stdout, tmpDir)
 	})
 
 	if !strings.Contains(output, "(no in-flight tasks)") {
@@ -188,7 +188,7 @@ func TestPrintFleetState_ShowsTasks(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printFleetState(tmpDir)
+		printFleetState(os.Stdout, tmpDir)
 	})
 
 	// Should show the task with status
@@ -218,7 +218,7 @@ func TestPrintFleetState_IgnoresNonMetaFiles(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printFleetState(tmpDir)
+		printFleetState(os.Stdout, tmpDir)
 	})
 
 	if !strings.Contains(output, "(no in-flight tasks)") {
@@ -241,7 +241,7 @@ func TestPrintFleetState_TaskNoStatus(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printFleetState(tmpDir)
+		printFleetState(os.Stdout, tmpDir)
 	})
 
 	if !strings.Contains(output, taskID) {
@@ -261,7 +261,7 @@ func TestSupervisionBlockHeader(t *testing.T) {
 	for _, h := range harnesses {
 		t.Run(h, func(t *testing.T) {
 			output := captureStdout(func() {
-				printSupervisionBlock(h, true)
+				printSupervisionBlock(os.Stdout, h, true)
 			})
 			if !strings.Contains(output, "primary harness: "+h) {
 				t.Errorf("expected harness name %q in header, got: %s", h, output)
@@ -278,7 +278,7 @@ func TestSupervisionBlockHeader(t *testing.T) {
 
 func TestSupervisionBlock_LockReadOnly(t *testing.T) {
 	output := captureStdout(func() {
-		printSupervisionBlock("claude", false)
+		printSupervisionBlock(os.Stdout, "claude", false)
 	})
 	if !strings.Contains(output, "read-only") {
 		t.Errorf("expected read-only lock warning, got: %s", output)
@@ -290,7 +290,7 @@ func TestSupervisionBlock_LockReadOnly(t *testing.T) {
 
 func TestSupervisionBlock_LockAcquired(t *testing.T) {
 	output := captureStdout(func() {
-		printSupervisionBlock("codex", true)
+		printSupervisionBlock(os.Stdout, "codex", true)
 	})
 	if !strings.Contains(output, "owns normal supervision") {
 		t.Errorf("expected 'owns normal supervision', got: %s", output)
@@ -301,7 +301,7 @@ func TestSupervisionBlock_UsesPersistentWatcherGuidance(t *testing.T) {
 	for _, h := range []string{"claude", "codex", "grok", "pi", "opencode", "unknown"} {
 		t.Run(h, func(t *testing.T) {
 			output := captureStdout(func() {
-				printSupervisionBlock(h, true)
+				printSupervisionBlock(os.Stdout, h, true)
 			})
 			if !strings.Contains(output, "munsu watch ensure") {
 				t.Errorf("expected watch ensure guidance, got: %s", output)

@@ -86,9 +86,9 @@ type GuardViolation struct {
 
 // Guard reports the current guard evaluation.
 type Guard struct {
-	State      string            `json:"state"` // healthy | unhealthy | indeterminate
-	Violations []GuardViolation  `json:"violations,omitempty"`
-	Conditions []string          `json:"conditions,omitempty"` // kept for backward compat
+	State      string           `json:"state"` // healthy | unhealthy | indeterminate
+	Violations []GuardViolation `json:"violations,omitempty"`
+	Conditions []string         `json:"conditions,omitempty"` // kept for backward compat
 }
 
 // WatchLeaseInfo carries identity and heartbeat metadata for a watcher lease.
@@ -101,20 +101,20 @@ type WatchLeaseInfo struct {
 
 // WatchEnsure reports the idempotent watcher-ensure result.
 type WatchEnsure struct {
-	WatchID        string         `json:"watch_id"`
-	State          string         `json:"state"` // started | attached | healthy | failed
-	Interval       string         `json:"interval,omitempty"`
-	Lease          *WatchLeaseInfo `json:"lease,omitempty"`
-	Noop           bool           `json:"noop"`
+	WatchID  string          `json:"watch_id"`
+	State    string          `json:"state"` // started | attached | healthy | failed
+	Interval string          `json:"interval,omitempty"`
+	Lease    *WatchLeaseInfo `json:"lease,omitempty"`
+	Noop     bool            `json:"noop"`
 }
 
 // WatchRun reports one watcher execution with terminal observation.
 type WatchRun struct {
-	WatchID       string `json:"watch_id"`
-	State         string `json:"state"` // completed | failed
-	WakesScanned  int    `json:"wakes_scanned"`
-	WakesEmitted  int    `json:"wakes_emitted"`
-	EventsObserved int   `json:"events_observed,omitempty"`
+	WatchID        string `json:"watch_id"`
+	State          string `json:"state"` // completed | failed
+	WakesScanned   int    `json:"wakes_scanned"`
+	WakesEmitted   int    `json:"wakes_emitted"`
+	EventsObserved int    `json:"events_observed,omitempty"`
 }
 
 // WatchStop reports the result of stopping a watcher.
@@ -123,14 +123,15 @@ type WatchStop struct {
 	PID     int    `json:"pid"`
 	State   string `json:"state"` // stopped | already-stopped
 }
+
 // WakeClaim records a leased wake claim.
 type WakeClaim struct {
-	WakeID     string `json:"wake_id"`
-	ClaimID    string `json:"claim_id"`
-	Owner      string `json:"owner"`
-	State      string `json:"state"` // claimed | replayed
-	LeaseExpires int64 `json:"lease_expires,omitempty"`
-	Reclaimed  int    `json:"reclaimed,omitempty"`
+	WakeID       string `json:"wake_id"`
+	ClaimID      string `json:"claim_id"`
+	Owner        string `json:"owner"`
+	State        string `json:"state"` // claimed | replayed
+	LeaseExpires int64  `json:"lease_expires,omitempty"`
+	Reclaimed    int    `json:"reclaimed,omitempty"`
 }
 
 // WakeAck records acknowledgement of a claimed wake.
@@ -192,6 +193,15 @@ type TruncatedResult struct {
 	FullCommand string `json:"full_command"`
 }
 
+// SessionStart is the structured session-start digest.
+type SessionStart struct {
+	Lock        string `json:"lock"`
+	Watcher     string `json:"watcher"`
+	BootstrapOK bool   `json:"bootstrap_ok"`
+	FleetSyncOK bool   `json:"fleet_sync_ok"`
+	Message     string `json:"message"`
+}
+
 // TaskEntry is one row in a task list.
 type TaskEntry struct {
 	ID      string `json:"id"`
@@ -208,6 +218,19 @@ type ProjectEntry struct {
 	Description string `json:"description,omitempty"`
 	Added       string `json:"added,omitempty"`
 	Directory   string `json:"directory,omitempty"`
+}
+
+// SafetyCheckData is the structured safety assessment result.
+// Both block and gate_refused MUST always serialize (no omitempty)
+// because the TS parseSafetyCheck helper requires typeof boolean checks.
+type SafetyCheckData struct {
+	Identity       string `json:"identity"`
+	GateCapability string `json:"gate_capability"`
+	CanonicalPath  string `json:"canonical_path,omitempty"`
+	GateRefused    bool   `json:"gate_refused"`
+	Block          bool   `json:"block"`
+	Reason         string `json:"reason,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 // DecisionHoldInfo is one row in a decision-hold list.
