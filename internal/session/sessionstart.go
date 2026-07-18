@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -16,15 +17,14 @@ import (
 	"github.com/minhtri2710/munsu/internal/scope"
 )
 
-// SessionStartResult holds the full session-start output digest.
 type SessionStartResult struct {
-	LockAcquired bool
-	Bootstrap    *bootstrap.Result
-	FleetSync    *fleet.SyncResult
-	Watcher      WatchEnsureResult
+	LockAcquired  bool
+	Bootstrap     *bootstrap.Result
+	FleetSync     *fleet.SyncResult
+	Watcher       WatchEnsureResult
+	BacklogDigest *backlog.BacklogDigest
 }
 
-// WatchEnsureResult is the session-start view of watcher ensure state.
 type WatchEnsureResult struct {
 	State string
 	Error string
@@ -71,17 +71,15 @@ func printFleetState(w io.Writer, home string) {
 	}
 }
 
-// supervisionMode returns the normal persistent watcher mode.
 func supervisionMode(string) string { return "persistent daemon" }
 
-// printSupervisionBlock prints the watcher operating contract.
 func printSupervisionBlock(w io.Writer, h string, acquired bool) {
 	fmt.Fprintf(w, "primary harness: %s\n", h)
 	fmt.Fprintf(w, "supervision mode: %s\n", supervisionMode(h))
 	if acquired {
-		fmt.Fprintln(w, "lock: acquired — this session owns normal supervision.")
+		fmt.Fprintln(w, "lock: acquired \u2014 this session owns normal supervision.")
 	} else {
-		fmt.Fprintln(w, "lock: read-only — do not drain, arm, or repair fleet state here.")
+		fmt.Fprintln(w, "lock: read-only \u2014 do not drain, arm, or repair fleet state here.")
 	}
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Daemon:  munsu watch ensure (idempotent start or attach)")
@@ -115,20 +113,16 @@ func ensureWatcherForSession(home string, acquired bool, ensure WatchEnsureFunc)
 	return ensure(home)
 }
 
-// RunSessionStart executes session-start without an injected watcher starter.
 func RunSessionStart(w io.Writer, home string) (*SessionStartResult, error) {
 	return RunSessionStartWithWatcher(w, home, nil)
 }
 
-// ScopeCheckResult holds the result of a lightweight scope check for the nudge.
 type ScopeCheckResult struct {
 	IsPrimary    bool
 	IsGateAgent  bool
 	ErrorMessage string
 }
 
-// CheckSessionScope performs a lightweight primary-scope check.
-// Returns a ScopeCheckResult describing the scope state.
 func CheckSessionScope(home string) ScopeCheckResult {
 	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
 		return ScopeCheckResult{IsGateAgent: true}
@@ -164,14 +158,12 @@ func checkSessionScope(home string) error {
 	return nil
 }
 
-// RunSessionStartWithWatcher executes the full session-start sequence.
 func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 	if err := checkSessionScope(home); err != nil {
 		return res, fmt.Errorf("session-start refused: %w", err)
 	}
 
-	// 1. Acquire lock
 	acquired, err := lifecycle.AcquireSession(home)
 	if err != nil {
 		return res, fmt.Errorf("lock acquire: %w", err)
@@ -182,14 +174,12 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "WARNING: Another session holds the lock. Operating read-only.")
 	}
 
-	// 2. Run bootstrap
 	bootRes, err := bootstrap.Run(home, acquired, nil)
 	if err != nil {
 		return res, fmt.Errorf("bootstrap: %w", err)
 	}
 	res.Bootstrap = bootRes
 
-	// 3. Print diagnostics
 	fmt.Fprintln(w, "--- Bootstrap Diagnostics ---")
 	if !acquired {
 		fmt.Fprintln(w, "(read-only mode -- mutating sweeps skipped)")
@@ -211,7 +201,6 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "Missing tools -- install with: munsu bootstrap install <tool>")
 	}
 
-	// 4. Fleet sync (mutating sweep, only when locked)
 	if acquired {
 		syncRes, err := fleet.Sync(home, "")
 		if err != nil {
@@ -252,7 +241,18 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "  Repair: munsu watch ensure")
 	}
 
-	// 5. Context section
+	res.BacklogDigest = backlog.BuildDigest(home)
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "--- Backlog Digest ---")
+	if res.BacklogDigest.Total > 0 {
+		fmt.Fprintln(w, res.BacklogDigest.String())
+		if res.BacklogDigest.HasUnfinished() {
+			fmt.Fprintln(w, "  Full task bodies are available on demand: tasks-axi show <id> --full or data/backlog.md.")
+		}
+	} else {
+		fmt.Fprintln(w, "  (backlog empty or absent)")
+	}
+
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Context ---")
 	printDataFile(w, home, "captain.md")
@@ -260,10 +260,8 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 	printDataFile(w, home, "projects.md")
 	printDataFile(w, home, "secondmates.md")
 
-	// 6. Fleet state section
 	printFleetState(w, home)
 
-	// 7. Supervision block — per-harness operating instructions
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Supervision ---")
 	h, err := harness.Crew(home)
@@ -272,7 +270,6 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 	}
 	printSupervisionBlock(w, h, acquired)
 
-	// 8. Session start complete
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Session Start Complete ---")
 	fmt.Fprintf(w, "Lock: %s\n", map[bool]string{true: "acquired", false: "refused (read-only)"}[acquired])

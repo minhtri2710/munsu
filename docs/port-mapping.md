@@ -1,9 +1,17 @@
-# Port mapping: firstmate concepts → munsu commands / Go packages
+# Port mapping: firstmate concepts -> munsu commands / Go packages
 
 This document maps firstmate scripts and concepts to their munsu equivalents.
 All commands are fully implemented unless marked otherwise.
 
-> **agy (Antigravity):** munsu detects and supports `agy` as a verified harness adapter. See `internal/harness/harness.go` entry `Agy` and `docs/skills/harness-adapters.md` for launch template.
+The table distinguishes **NOMINAL** presence (the munsu CLI has the subcommand/package)
+from **NATIVE** integration (opt-in harness hooks/artifacts installed via
+`munsu integrate install --harness <X>`). Native integration is only available
+for harnesses with a verified adapter; unverified harnesses show "planned/unsupported".
+
+> **agy (Antigravity):** munsu detects `agy` as a verified harness adapter (NOMINAL command presence).
+> See `internal/harness/harness.go` entry `Agy` and `docs/skills/harness-adapters.md` for launch template.
+> NATIVE integration (turn-end hooks, session-start hooks) is **unsupported** -- agy has no hook
+> surface (tracked in [issue #206](https://github.com/minhtri2710/munsu/issues/206)).
 >
 > **ExtraArgs shell-quoting (F10.1):** `munsu spawn` shell-quotes `ExtraArgs` values to prevent word-splitting when the harness backend (tmux/herdr) interprets the command string. This matches firstmate's `printf %q` behavior.
 
@@ -40,12 +48,14 @@ All commands are fully implemented unless marked otherwise.
 | Local merge | `munsu delivery merge-local` | `internal/delivery` | **implemented** |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/worktree` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
-| Session backend (tmux + herdr) | `--backend` flag | `internal/session` | **implemented** (future backends: experimental — see docs) |
+| Session backend (tmux + herdr) | `--backend` flag | `internal/session` | **implemented** (future backends: experimental -- see docs) |
 | Dispatch profiles | `config/crew-dispatch.json` | `internal/harness` | **implemented** |
 | Home init / init | `munsu init` | `internal/cli` | **implemented** |
-| AFK away-mode supervision | munsu afk | internal/afk | **implemented** (Go-native, full lifecycle — see `docs/skills/afk.md`) |
+| AFK away-mode supervision | munsu afk | internal/afk | **implemented** (Go-native, full lifecycle -- see `docs/skills/afk.md`) |
 | Self-update | `munsu update` | `internal/selfupdate` | **implemented** |
 | Secondmate lifecycle | `munsu secondmate seed/launch/retire/list/handoff/config-push` | `internal/secondmate` | **implemented** |
+| Native harness integration | `munsu integrate install/repair/status` | `internal/integrate` | **implemented** (Pi + Claude adapters verified; others planned/unsupported -- see gaps below) |
+
 ## Structural differences from firstmate
 
 | Aspect | firstmate | munsu |
@@ -59,20 +69,20 @@ All commands are fully implemented unless marked otherwise.
 
 ## Firstmate-only intentional gaps
 
-These firstmate capabilities are deliberately not ported to munsu — they are
+These firstmate capabilities are deliberately not ported to munsu -- they are
 firstmate-specific infrastructure that do not belong in a standalone CLI port:
 
 | Capability | firstmate scripts | Rationale |
 |---|---|---|
 | X/Twitter integration | `fm-x-*.sh` (6 scripts) | Social-media interaction; firstmate-specific, not part of crew lifecycle. |
-| Turn-end guards | `fm-turnend-guard.sh` | Push-based post-response hooks enforcing constraints at each agent turn boundary. Munsu uses pull-based watcher diagnostics instead (periodic fleet polling with structured wake reasons via `munsu watch` / `munsu wake-drain` / `munsu guard`). |
+| Turn-end guards | `fm-turnend-guard.sh` | **Munsu has NATIVE integration** (opt-in via `munsu integrate install --harness <X>`) for some harnesses:<br>  - **Pi** (verified native adapter: session-start, wake-followup, turnend-guard, pretool-check, scope-gate capabilities)<br>  - **Claude** (verified native adapter: session-start, turnend-guard, pretool-check capabilities)<br>  - **Codex, Grok, OpenCode**: planned -- adapters not yet implemented<br>  - **agy**: unsupported -- no hook surface ([#206](https://github.com/minhtri2710/munsu/issues/206))<br>Legacy pull-based watcher diagnostics remain available via `munsu watch` / `munsu wake-drain` / `munsu guard`. |
 | Composer mode | `fm-composer-lib.sh` | Multi-agent composition; munsu spawns 1:1 crewmates. |
 | Codex command policies | `fm-arm-command-policy.mjs` | Codex-specific ARM/CD gating; per-harness policies not in munsu's generic model. |
-| Classification / Gate-Refuse library | `fm-classify-lib.sh`, `fm-gate-refuse-lib.sh` | Logic is inline in munsu (`--kind`, cobra validation) — no extracted library needed. |
+| Classification / Gate-Refuse library | `fm-classify-lib.sh`, `fm-gate-refuse-lib.sh` | Logic is inline in munsu (`--kind`, cobra validation) -- no extracted library needed. |
 | Transition library | `fm-transition-lib.sh` | State transitions encoded in cobra command relationships rather than a library. |
 | Supervision instructions | `fm-supervision-instructions.sh` | Watcher emits structured wake reasons instead of instruction templates. |
 | Herdr lab | `fm-herdr-lab.sh` | Developer tooling for Herdr experimentation; not a production capability. |
-| `secondmate retire --remove-home` | `fm-teardown.sh` | Deliberate safety choice — home directory persists by default. |
+| `secondmate retire --remove-home` | `fm-teardown.sh` | Deliberate safety choice -- home directory persists by default. |
 
 > **Design principle:** Munsu ports the crew lifecycle model, not every firstmate
 > script. Capabilities that are firstmate-specific (social, Codex-only, or experimental

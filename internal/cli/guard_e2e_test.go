@@ -1,29 +1,20 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-// E2E-style tests for guard middleware using real temp home directories,
-// real beat files, and real meta files. These call guardWarnWatcher()
-// directly rather than going through cobra command execution, exercising
-// the full home.Resolve → fleet.Snapshot → lifecycle.ReadBeatStatus chain
-// with real file I/O on a temp home.
-
-// TestGuardE2E_StaleBeatWarns tests that guardWarnWatcher emits a WARNING
-// when tasks are in flight and the watcher beat is stale.
 func TestGuardE2E_StaleBeatWarns(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING on stderr for stale beat, got: %s", stderr)
 	}
@@ -35,17 +26,11 @@ func TestGuardE2E_StaleBeatWarns(t *testing.T) {
 	}
 }
 
-// TestGuardE2E_MissingBeatWarns tests that guardWarnWatcher emits a WARNING
-// when tasks are in flight but no watcher beat file exists.
 func TestGuardE2E_MissingBeatWarns(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
 	writeTaskMeta(t, tmpDir, "test-task", "scout")
-	// No beat file written — beat is missing
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING on stderr for missing beat, got: %s", stderr)
 	}
@@ -54,84 +39,57 @@ func TestGuardE2E_MissingBeatWarns(t *testing.T) {
 	}
 }
 
-// TestGuardE2E_FreshBeatSilent tests that guardWarnWatcher is silent
-// when a fresh watcher beat exists.
 func TestGuardE2E_FreshBeatSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeBeat(t, tmpDir)
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if strings.Contains(stderr, "WARNING:") {
 		t.Errorf("unexpected WARNING with healthy beat, got: %s", stderr)
 	}
 }
 
-// TestGuardE2E_SkipEnvSilent tests that guardWarnWatcher is silent
-// when MUNSU_GUARD_SKIP=1 is set, even with stale beat and in-flight tasks.
 func TestGuardE2E_SkipEnvSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
-
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if strings.Contains(stderr, "WARNING:") {
 		t.Errorf("unexpected WARNING with MUNSU_GUARD_SKIP=1, got: %s", stderr)
 	}
 }
 
-// TestGuardE2E_NoTasksSilent tests that guardWarnWatcher is silent
-// when no task meta files exist.
 func TestGuardE2E_NoTasksSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
-	// No task meta files, no beat
 	stderr := captureStderr(guardWarnWatcher)
-
 	if strings.Contains(stderr, "WARNING:") {
 		t.Errorf("unexpected WARNING with no tasks, got: %s", stderr)
 	}
 }
 
-// TestGuardE2E_NoInFlightTasksSilent tests that guardWarnWatcher is silent
-// when tasks exist but none are in-flight (kind != ship/scout).
 func TestGuardE2E_NoInFlightTasksSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
-	// Task with kind=done — not in-flight
 	meta := "kind=done\nwindow=test\n"
 	writeMeta(t, tmpDir, "register-task", meta)
 	writeStaleBeat(t, tmpDir)
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if strings.Contains(stderr, "WARNING:") {
 		t.Errorf("unexpected WARNING with no in-flight tasks, got: %s", stderr)
 	}
 }
 
-// TestGuardE2E_MultipleInFlightWarns tests that guardWarnWatcher warns
-// with the correct count when multiple tasks are in flight.
 func TestGuardE2E_MultipleInFlightWarns(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
-	// Two in-flight tasks: one ship, one scout
 	writeTaskMeta(t, tmpDir, "ship-task", "ship")
 	writeTaskMeta(t, tmpDir, "scout-task", "scout")
 	writeStaleBeat(t, tmpDir)
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING for 2 in-flight tasks with stale beat, got: %s", stderr)
 	}
@@ -140,19 +98,14 @@ func TestGuardE2E_MultipleInFlightWarns(t *testing.T) {
 	}
 }
 
-// TestGuardE2E_MixedTasksWarnsWithCorrectCount tests that guardWarnWatcher
-// correctly counts only in-flight tasks (ship/scout) when mixed with non-in-flight tasks.
 func TestGuardE2E_MixedTasksWarnsWithCorrectCount(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
 	writeTaskMeta(t, tmpDir, "ship-task", "ship")
 	writeTaskMeta(t, tmpDir, "done-task", "done")
 	writeTaskMeta(t, tmpDir, "idle-task", "idle")
 	writeStaleBeat(t, tmpDir)
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if !strings.Contains(stderr, "WARNING:") {
 		t.Errorf("expected WARNING for 1 in-flight + 2 non-in-flight tasks, got: %s", stderr)
 	}
@@ -161,20 +114,100 @@ func TestGuardE2E_MixedTasksWarnsWithCorrectCount(t *testing.T) {
 	}
 }
 
-// TestGuardE2E_FreshBeatMultiTaskSilent tests that guardWarnWatcher is silent
-// when a fresh beat exists even with multiple in-flight tasks.
 func TestGuardE2E_FreshBeatMultiTaskSilent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-
 	writeTaskMeta(t, tmpDir, "ship-task", "ship")
 	writeTaskMeta(t, tmpDir, "scout-task", "scout")
 	writeBeat(t, tmpDir)
-
 	stderr := captureStderr(guardWarnWatcher)
-
 	if strings.Contains(stderr, "WARNING:") {
 		t.Errorf("unexpected WARNING with fresh beat and 2 in-flight tasks, got: %s", stderr)
+	}
+}
+
+func TestGuardE2E_CooldownSuppressesIdenticalState(t *testing.T) {
+	original := guardCooldown
+	guardCooldown = 5 * time.Minute
+	defer func() { guardCooldown = original }()
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeStaleBeat(t, tmpDir)
+	first := captureStderr(guardWarnWatcher)
+	if !strings.Contains(first, "WARNING:") {
+		t.Errorf("first call expected WARNING, got: %s", first)
+	}
+	second := captureStderr(guardWarnWatcher)
+	if strings.Contains(second, "WARNING:") {
+		t.Errorf("second call with same state expected suppressed WARNING, got: %s", second)
+	}
+}
+
+func TestGuardE2E_CooldownExpiredReWarns(t *testing.T) {
+	original := guardCooldown
+	guardCooldown = 5 * time.Minute
+	defer func() { guardCooldown = original }()
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeStaleBeat(t, tmpDir)
+	first := captureStderr(guardWarnWatcher)
+	if !strings.Contains(first, "WARNING:") {
+		t.Errorf("first call expected WARNING, got: %s", first)
+	}
+	cdPath := guardCooldownPath(tmpDir)
+	oldTs := time.Now().Add(-6 * time.Minute).Unix()
+	_ = os.WriteFile(cdPath, []byte("stale:1\n"+fmt.Sprint(oldTs)+"\n"), 0644)
+	second := captureStderr(guardWarnWatcher)
+	if !strings.Contains(second, "WARNING:") {
+		t.Errorf("second call after cooldown expiry expected WARNING, got: %s", second)
+	}
+}
+
+func TestGuardE2E_CooldownStateChangeReWarns(t *testing.T) {
+	original := guardCooldown
+	guardCooldown = 5 * time.Minute
+	defer func() { guardCooldown = original }()
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	writeTaskMeta(t, tmpDir, "task-a", "ship")
+	writeStaleBeat(t, tmpDir)
+	first := captureStderr(guardWarnWatcher)
+	if !strings.Contains(first, "WARNING:") {
+		t.Errorf("first call expected WARNING, got: %s", first)
+	}
+	writeTaskMeta(t, tmpDir, "task-b", "scout")
+	second := captureStderr(guardWarnWatcher)
+	if !strings.Contains(second, "WARNING:") {
+		t.Errorf("second call with state change expected WARNING, got: %s", second)
+	}
+	if !strings.Contains(second, "2 task(s) in flight") {
+		t.Errorf("expected '2 task(s) in flight' after state change, got: %s", second)
+	}
+}
+
+func TestGuardE2E_HealthyTransitionClearsCooldown(t *testing.T) {
+	original := guardCooldown
+	guardCooldown = 5 * time.Minute
+	defer func() { guardCooldown = original }()
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
+	writeStaleBeat(t, tmpDir)
+	first := captureStderr(guardWarnWatcher)
+	if !strings.Contains(first, "WARNING:") {
+		t.Errorf("first call expected WARNING, got: %s", first)
+	}
+	writeBeat(t, tmpDir)
+	healthy := captureStderr(guardWarnWatcher)
+	if strings.Contains(healthy, "WARNING:") {
+		t.Errorf("healthy call unexpected WARNING, got: %s", healthy)
+	}
+	writeStaleBeat(t, tmpDir)
+	third := captureStderr(guardWarnWatcher)
+	if !strings.Contains(third, "WARNING:") {
+		t.Errorf("third call after healthy->unhealthy transition expected WARNING, got: %s", third)
 	}
 }
 
