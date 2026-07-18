@@ -84,6 +84,7 @@ func TestAssertSupportedHarness(t *testing.T) {
 	}{
 		{"pi", false},
 		{"claude", false},
+		{"grok", false},
 		{"", true},
 		{"nonexistent", true},
 	}
@@ -884,4 +885,396 @@ type testMunsuResolver struct {
 
 func (r testMunsuResolver) Resolve() (string, error) {
 	return r.path, nil
+}
+
+// -- Grok adapter tests --
+
+// TestGrokHookCommand verifies the bash -lc wrapper for Grok commands.
+func TestGrokHookCommand(t *testing.T) {
+	cmd := grokHookCommand("/usr/local/bin/munsu", "integrate", "safety-check", "--harness", "grok")
+	expected := "bash -lc 'exec \"/usr/local/bin/munsu\" integrate safety-check --harness grok'"
+	if cmd != expected {
+		t.Errorf("grokHookCommand() = %q, want %q", cmd, expected)
+	}
+}
+
+// TestGrokHookCommandSpaceInPath verifies JSON marshaling for paths with spaces.
+func TestGrokHookCommandSpaceInPath(t *testing.T) {
+	cmd := grokHookCommand("/opt/munsu v2/bin/munsu", "integrate", "sessionstart-nudge")
+	expected := "bash -lc 'exec \"/opt/munsu v2/bin/munsu\" integrate sessionstart-nudge'"
+	if cmd != expected {
+		t.Errorf("grokHookCommand with space = %q, want %q", cmd, expected)
+	}
+}
+
+// TestGrokHooksContent verifies all 4 hook files generate valid JSON with munsu commands.
+func TestGrokHooksContent(t *testing.T) {
+	binPath := "/usr/local/bin/munsu"
+	for _, name := range grokHookFileNames {
+		t.Run(name, func(t *testing.T) {
+			content := GrokHooksContent(binPath, name)
+			if content == "" {
+				t.Fatal("expected non-empty content")
+			}
+
+			// Verify valid JSON
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+				t.Fatalf("invalid JSON for %s: %v", name, err)
+			}
+
+			// Verify hooks structure
+			root := parsed.(map[string]interface{})
+			hooks, ok := root["hooks"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("missing hooks key in %s", name)
+			}
+
+			for event, matchers := range hooks {
+				matcherList, ok := matchers.([]interface{})
+				if !ok {
+					t.Errorf("hooks[%s] is not an array in %s", event, name)
+					continue
+				}
+				if len(matcherList) == 0 {
+					t.Errorf("hooks[%s] is empty in %s", event, name)
+					continue
+				}
+				for i, m := range matcherList {
+					matcher, ok := m.(map[string]interface{})
+					if !ok {
+						t.Errorf("matcher %d is not an object in %s", i, name)
+						continue
+					}
+					hookList, ok := matcher["hooks"].([]interface{})
+					if !ok {
+						t.Errorf("matcher %d hooks is not an array in %s", i, name)
+						continue
+					}
+					for j, h := range hookList {
+						hook, ok := h.(map[string]interface{})
+						if !ok {
+							t.Errorf("hook %d is not an object in %s", j, name)
+							continue
+						}
+						if hook["type"] != "command" {
+							t.Errorf("hook %d type is %q, want 'command' in %s", j, hook["type"], name)
+						}
+						if cmd, ok := hook["command"].(string); ok {
+							if !strings.Contains(cmd, binPath) {
+								t.Errorf("hook %d command %q does not contain binary path %s", j, cmd, binPath)
+							}
+							if !strings.HasPrefix(cmd, "bash -lc '") {
+								t.Errorf("hook %d command %q does not start with 'bash -lc '", j, cmd)
+							}
+						}
+						timeout, ok := hook["timeout"].(float64)
+						if !ok {
+							t.Errorf("hook %d missing timeout in %s", j, name)
+						} else if timeout <= 0 {
+							t.Errorf("hook %d timeout %v must be positive in %s", j, timeout, name)
+						}
+					}
+				}
+			}
+
+			// Verify specific event names
+			switch name {
+			case "fm-primary-sessionstart-nudge.json":
+				if _, ok := hooks["SessionStart"]; !ok {
+					t.Error("expected SessionStart event")
+				}
+				// SessionStart should not have matcher
+				if matchers, ok := hooks["SessionStart"].([]interface{}); ok && len(matchers) > 0 {
+					if m, ok := matchers[0].(map[string]interface{}); ok {
+						if _, hasMatcher := m["matcher"]; hasMatcher {
+							t.Error("SessionStart should not have a matcher")
+						}
+					}
+				}
+			case "fm-primary-pretool-check.json", "fm-primary-cd-check.json":
+				if _, ok := hooks["PreToolUse"]; !ok {
+					t.Error("expected PreToolUse event")
+				}
+				// PreToolUse should have matcher "Bash"
+				if matchers, ok := hooks["PreToolUse"].([]interface{}); ok && len(matchers) > 0 {
+					if m, ok := matchers[0].(map[string]interface{}); ok {
+						if m["matcher"] != "Bash" {
+							t.Errorf("expected matcher 'Bash', got %v", m["matcher"])
+						}
+					}
+				}
+			case "fm-primary-turnend-guard.json":
+				if _, ok := hooks["Stop"]; !ok {
+					t.Error("expected Stop event")
+				}
+			}
+		})
+	}
+}
+
+// TestGrokHooksDigest verifies SHA-256 digests are computed correctly.
+func TestGrokHooksDigest(t *testing.T) {
+	binPath := "/usr/local/bin/munsu"
+	for _, name := range grokHookFileNames {
+		t.Run(name, func(t *testing.T) {
+			digest := GrokHooksDigest(binPath, name)
+			if digest == "" {
+				t.Fatal("expected non-empty digest")
+			}
+			if len(digest) != 64 {
+				t.Errorf("expected 64-char hex digest, got %d chars: %s", len(digest), digest)
+			}
+		})
+	}
+}
+
+// TestGrokHooksTargetPath verifies target path resolution.
+func TestGrokHooksTargetPath(t *testing.T) {
+	t.Run("user scope", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		path, err := GrokHooksTargetPath(ScopeUser, "", "fm-primary-pretool-check.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := filepath.Join(home, ".grok", "hooks", "fm-primary-pretool-check.json")
+		if path != expected {
+			t.Errorf("expected %q, got %q", expected, path)
+		}
+	})
+
+	t.Run("project scope", func(t *testing.T) {
+		projDir := t.TempDir()
+		path, err := GrokHooksTargetPath(ScopeProject, projDir, "fm-primary-sessionstart-nudge.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The function uses EvalSymlinks, so use the canonical path as expected
+		canonical, resolveErr := filepath.EvalSymlinks(projDir)
+		if resolveErr != nil {
+			canonical = projDir
+		}
+		expected := filepath.Join(canonical, ".grok", "hooks", "fm-primary-sessionstart-nudge.json")
+		if path != expected {
+			t.Errorf("expected %q, got %q", expected, path)
+		}
+	})
+}
+
+// TestGrokHooksHasOwnedHooks verifies structural ownership detection.
+func TestGrokHooksHasOwnedHooks(t *testing.T) {
+	dir := t.TempDir()
+	hooksDir := filepath.Join(dir, ".grok", "hooks")
+	os.MkdirAll(hooksDir, 0755)
+
+	binPath := "/usr/local/bin/munsu"
+
+	// Write all 4 hook files
+	for _, name := range grokHookFileNames {
+		content := GrokHooksContent(binPath, name)
+		targetPath := filepath.Join(hooksDir, name)
+		if err := os.WriteFile(targetPath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Should detect all owned hooks
+	present, msg, err := GrokHooksHasOwnedHooks(hooksDir, binPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !present {
+		t.Errorf("expected all hooks present, got: %s", msg)
+	}
+
+	// Remove one file
+	os.Remove(filepath.Join(hooksDir, "fm-primary-turnend-guard.json"))
+	present, msg, err = GrokHooksHasOwnedHooks(hooksDir, binPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if present {
+		t.Errorf("expected missing hook detection, got: %s", msg)
+	}
+	if !strings.Contains(msg, "turnend-guard") {
+		t.Errorf("expected message to mention turnend-guard, got: %s", msg)
+	}
+}
+
+// TestGrokHooksHasOwnedHooks_CommandMismatch verifies detection of modified commands.
+func TestGrokHooksHasOwnedHooks_CommandMismatch(t *testing.T) {
+	dir := t.TempDir()
+	hooksDir := filepath.Join(dir, ".grok", "hooks")
+	os.MkdirAll(hooksDir, 0755)
+
+	binPath := "/usr/local/bin/munsu"
+
+	// Write a hook file with a different command
+	modifiedContent := `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'exec \"/usr/local/bin/munsu\" integrate sessionstart-nudge'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}`
+	targetPath := filepath.Join(hooksDir, "fm-primary-sessionstart-nudge.json")
+	if err := os.WriteFile(targetPath, []byte(modifiedContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only one file, all others missing - should still detect as missing
+	present, msg, err := GrokHooksHasOwnedHooks(hooksDir, binPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if present {
+		t.Errorf("expected missing hook detection with only 1 file out of 4")
+	}
+	_ = msg
+}
+
+// TestGrokHooksHasOwnedHooks_InvalidJSON verifies handling of unparseable files.
+func TestGrokHooksHasOwnedHooks_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	hooksDir := filepath.Join(dir, ".grok", "hooks")
+	os.MkdirAll(hooksDir, 0755)
+
+	binPath := "/usr/local/bin/munsu"
+
+	// Write a file with invalid JSON
+	invalidPath := filepath.Join(hooksDir, "fm-primary-sessionstart-nudge.json")
+	if err := os.WriteFile(invalidPath, []byte("not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	present, _, err := GrokHooksHasOwnedHooks(hooksDir, binPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if present {
+		t.Error("expected not present for invalid JSON")
+	}
+}
+
+// TestGrokMergeHookFile verifies read-merge preserves user hooks.
+func TestGrokMergeHookFile(t *testing.T) {
+	existing := `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "user-command",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}`
+
+	generated := `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "munsu-command",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}`
+
+	merged, err := mergeGrokHookFile(existing, generated)
+	if err != nil {
+		t.Fatalf("merge failed: %v", err)
+	}
+
+	// Verify the merged output is valid JSON
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(merged), &parsed); err != nil {
+		t.Fatalf("merged output is invalid JSON: %v", err)
+	}
+
+	hooks, ok := parsed["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing hooks in merged output")
+	}
+
+	matchers, ok := hooks["SessionStart"].([]interface{})
+	if !ok || len(matchers) == 0 {
+		t.Fatal("missing SessionStart in merged output")
+	}
+
+	// After merge, there should be 2 matchers (munsu prepended, user after)
+	if len(matchers) != 2 {
+		t.Errorf("expected 2 matchers after merge (munsu + user), got %d", len(matchers))
+	}
+
+	// First matcher should be munsu's (prepended)
+	firstMatcher := matchers[0].(map[string]interface{})
+	firstHookList, ok := firstMatcher["hooks"].([]interface{})
+	if !ok || len(firstHookList) == 0 {
+		t.Fatal("missing hooks array in first matcher")
+	}
+	firstHook := firstHookList[0].(map[string]interface{})
+	if firstHook["command"] != "munsu-command" {
+		t.Errorf("expected first matcher hook to be munsu-command, got %v", firstHook["command"])
+	}
+
+	// Second matcher should be user's
+	secondMatcher := matchers[1].(map[string]interface{})
+	secondHookList, ok := secondMatcher["hooks"].([]interface{})
+	if !ok || len(secondHookList) == 0 {
+		t.Fatal("missing hooks array in second matcher")
+	}
+	secondHook := secondHookList[0].(map[string]interface{})
+	if secondHook["command"] != "user-command" {
+		t.Errorf("expected second matcher hook to be user-command, got %v", secondHook["command"])
+	}
+}
+
+// TestGenerateGrokManifest verifies Grok manifest generation.
+func TestGenerateGrokManifest(t *testing.T) {
+	caps := []Capability{CapSessionStart, CapTurnEndGuard, CapPreToolCheck}
+	targets := []string{
+		"/home/user/.grok/hooks/fm-primary-sessionstart-nudge.json",
+		"/home/user/.grok/hooks/fm-primary-pretool-check.json",
+		"/home/user/.grok/hooks/fm-primary-cd-check.json",
+		"/home/user/.grok/hooks/fm-primary-turnend-guard.json",
+	}
+	m := generateGrokManifest("grok", "user", caps, "test-digest", targets)
+
+	if m.Harness != "grok" {
+		t.Errorf("expected harness 'grok', got %q", m.Harness)
+	}
+	if m.SchemaVersion != "munsu.integrate/v1" {
+		t.Errorf("expected schema version 'munsu.integrate/v1', got %q", m.SchemaVersion)
+	}
+	if len(m.TargetPaths) != 4 {
+		t.Errorf("expected 4 target paths, got %d", len(m.TargetPaths))
+	}
+	if m.ContentDigest != "test-digest" {
+		t.Errorf("expected digest 'test-digest', got %q", m.ContentDigest)
+	}
+	if len(m.Capabilities) != 3 {
+		t.Errorf("expected 3 capabilities, got %d", len(m.Capabilities))
+	}
+	if m.Version != "1.0.0" {
+		t.Errorf("expected version 1.0.0, got %q", m.Version)
+	}
 }
