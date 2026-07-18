@@ -26,7 +26,7 @@ func newSecondmateCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "launch <secondmate-home>",
-		Short: "Launch a secondmate in its home",
+		Short: "Launch a secondmate in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return secondmate.Launch(args[0], ctx.Home)
@@ -35,11 +35,11 @@ func newSecondmateCmd() *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "retire <secondmate-home>",
-		Short: "Retire a secondmate",
+		Short: "Retire a secondmate (session-backed)",
 		Args:  ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return secondmate.Retire(args[0], false)
-		},
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return secondmate.Retire(args[0], ctx.Home, false)
+		}),
 	})
 
 	listCmd := &cobra.Command{
@@ -60,7 +60,7 @@ func newSecondmateCmd() *cobra.Command {
 			}
 			var b strings.Builder
 			for _, m := range mates {
-				b.WriteString(fmt.Sprintf("- %s (%s)\n", m.ID, m.Home))
+				b.WriteString(fmt.Sprintf("- %s (%s; scope: %s; projects: %s; added: %s)\n", m.ID, m.Home, m.Scope, m.Project, m.Added))
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
@@ -76,7 +76,9 @@ func newSecondmateCmd() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "handoff <secondmate-home> <item-key...>",
 		Short: "Hand off backlog items to a secondmate",
-		Args:  MinimumNArgs(2),
+		Long: `Hand off queued backlog items from the parent home to a secondmate.
+All keys must be in queued state. Uses tasks-axi mv atomically.`,
+		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return secondmate.Handoff(ctx.Home, args[0], args[1:])
 		}),
@@ -90,6 +92,45 @@ func newSecondmateCmd() *cobra.Command {
 			return secondmate.ConfigPush(ctx.Home, args[0])
 		}),
 	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "validate <secondmate-home>",
+		Short: "Validate a secondmate home structure and provenance",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := secondmate.Validate(args[0], ctx.Home); err != nil {
+				return fmt.Errorf("validation failed: %w", err)
+			}
+			fmt.Println("valid")
+			return nil
+		}),
+	})
+
+	migrateCmd := &cobra.Command{
+		Use:   "migrate <secondmate-home> <id>",
+		Short: "Migrate a seeded home (write provenance marker)",
+		Args:  ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return secondmate.Migrate(args[0], args[1])
+		},
+	}
+	cmd.AddCommand(migrateCmd)
+
+	convergeCmd := &cobra.Command{
+		Use:   "converge",
+		Short: "Converge all registered secondmates",
+		Long: `Locked convergence sweep: validate registry/provenance, retry pending sends,
+safe local fast-forward, inheritance push, liveness check, and instruction
+surface tracking. State changes tracked in parent state/.secondmate-converge.lock.`,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			registered, err := secondmate.List(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("listing registered secondmates: %w", err)
+			}
+			return secondmate.Converge(ctx.Home, registered)
+		}),
+	}
+	cmd.AddCommand(convergeCmd)
 
 	return cmd
 }
