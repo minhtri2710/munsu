@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -66,6 +67,9 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	if err := r.preflightNoMistakes(); err != nil {
+		return "", err
+	}
+	if err := r.checkScopeGate(); err != nil {
 		return "", err
 	}
 	if err := r.acquireWorktree(); err != nil {
@@ -168,6 +172,14 @@ func (r *Runner) checkTangle() error {
 		return nil
 	}
 	return worktree.AssertNotTangled(r.projPath, r.args.ProjectName)
+}
+
+// checkScopeGate refuses no-mistakes gate agents before worktree allocation.
+func (r *Runner) checkScopeGate() error {
+	if err := scope.GateRefusalError(r.projPath); err != nil {
+		return fmt.Errorf("scope gate: %w", err)
+	}
+	return nil
 }
 
 func (r *Runner) preflightNoMistakes() error {

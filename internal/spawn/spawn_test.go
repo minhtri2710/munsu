@@ -14,6 +14,15 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
+func TestCheckScopeGate_YoloDoesNotBypassGate(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("NO_MISTAKES_GATE", "")
+	r := &Runner{args: Args{Yolo: true}, projPath: repo}
+	if err := r.checkScopeGate(); err == nil {
+		t.Fatal("expected gate refusal even with yolo")
+	}
+}
+
 // fakeBackend implements session.Backend for testing.
 type fakeBackend struct {
 	newWindow func(session, name string) (string, error)

@@ -11,6 +11,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/scope"
 )
 
 // SessionStartResult holds the full session-start output digest.
@@ -117,9 +119,32 @@ func RunSessionStart(home string) (*SessionStartResult, error) {
 	return RunSessionStartWithWatcher(home, nil)
 }
 
+func checkSessionScope(home string) error {
+	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
+		return fmt.Errorf("no-mistakes gate agent must not drive the fleet")
+	}
+	projects, err := project.List(home)
+	if err != nil {
+		return fmt.Errorf("scope projects: %w", err)
+	}
+	for _, registered := range projects {
+		path, err := project.ResolveRepoPath(home, registered.Name)
+		if err != nil {
+			return fmt.Errorf("scope project %s: %w", registered.Name, err)
+		}
+		if err := scope.GateRefusalError(path); err != nil {
+			return fmt.Errorf("project %s: %w", registered.Name, err)
+		}
+	}
+	return nil
+}
+
 // RunSessionStartWithWatcher executes the full session-start sequence.
 func RunSessionStartWithWatcher(home string, ensure WatchEnsureFunc) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
+	if err := checkSessionScope(home); err != nil {
+		return res, fmt.Errorf("session-start refused: %w", err)
+	}
 
 	// 1. Acquire lock
 	acquired, err := lifecycle.AcquireSession(home)
