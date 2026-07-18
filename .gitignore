@@ -16,3 +16,7 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# munsu crewmate launch artifacts
+.crew-brief.md
+.crew-launch.sh
