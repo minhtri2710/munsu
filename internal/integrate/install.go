@@ -169,6 +169,45 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 			result.Message = "no changes needed"
 		}
 
+	case harness.Codex:
+		codexAdpt := &CodexAdapter{
+			HomeDir: homeDir,
+			Cwd:     cwd,
+			Scope:   string(scope),
+			DryRun:  dryRun,
+		}
+		target, written, digest, err := codexAdpt.InstallCodexHooks()
+		if err != nil {
+			return nil, fmt.Errorf("codex hooks install: %w", err)
+		}
+		result.Message = fmt.Sprintf("codex hooks: %s", target)
+
+		if !dryRun && written {
+			manifest := generateCodexManifest(harnessName, string(scope), caps, digest, target)
+			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
+			if err := os.MkdirAll(artifactDir, 0755); err != nil {
+				return nil, fmt.Errorf("create artifact dir: %w", err)
+			}
+
+			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
+			manifestData, err := json.MarshalIndent(manifest, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("marshal manifest: %w", err)
+			}
+			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
+				return nil, fmt.Errorf("write manifest: %w", err)
+			}
+
+			result.Version = manifest.Version
+			result.InstalledAt = manifest.InstalledAt
+		} else if dryRun {
+			result.Message = fmt.Sprintf("[dry-run] would write: %s", target)
+			result.State = "fresh"
+		} else {
+			result.State = "fresh"
+			result.Message = "no changes needed"
+		}
+
 	default:
 		return &IntegrationResult{
 			Harness: harnessName,
@@ -333,6 +372,8 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		var expectedTarget string
 		if harnessName == harness.Claude {
 			expectedTarget, err = ClaudeSettingsTargetPath(scope, cwd)
+		} else if harnessName == harness.Codex {
+			expectedTarget, err = CodexHooksTargetPath(scope, cwd)
 		} else {
 			expectedTarget, err = ExpectedTargetPath(scope, cwd)
 		}
@@ -383,6 +424,19 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 				continue
 			}
 			present, _, hookErr := ClaudeSettingsHasOwnedHooks(tp, munsuBin)
+			if hookErr != nil || !present {
+				allPresent = false
+				continue
+			}
+		} else if harnessName == harness.Codex {
+			// Structural ownership check for Codex hooks.json —
+			// JSON cannot carry a first-line comment marker.
+			munsuBin, resolveErr := ResolveMunsuPathString()
+			if resolveErr != nil {
+				allPresent = false
+				continue
+			}
+			present, _, hookErr := CodexHooksHasOwnedHooks(tp, munsuBin)
 			if hookErr != nil || !present {
 				allPresent = false
 				continue

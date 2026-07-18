@@ -116,7 +116,7 @@ Results:
 
 Flags:
   --command      Command string to evaluate for blocking rules (for tool_call safety)
-  --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), or "grok" (stdout decision=deny object + exit 2)`,
+  --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), "codex" (stderr plaintext + exit 2), or "grok" (stdout decision=deny object + exit 2)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			checkPath, _ := os.Getwd()
@@ -127,7 +127,7 @@ Flags:
 		}),
 	}
 	safetyCmd.Flags().StringVar(&flags.command, "command", "", "Command to evaluate for blocking rules")
-	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, or grok")
+	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, grok, or codex")
 	configureContractCommand(safetyCmd)
 
 	sessionstartNudgeCmd := &cobra.Command{
@@ -348,7 +348,7 @@ func readStdinForCommand() (string, error) {
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, harnessFlag string) error {
 	// When --harness claude or --harness grok and no --command, try to read command from stdin
 	effectiveCommand := checkCommand
-	if (harnessFlag == "claude" || harnessFlag == "grok") && effectiveCommand == "" {
+	if (harnessFlag == "claude" || harnessFlag == "grok" || harnessFlag == "codex") && effectiveCommand == "" {
 		stdinCommand, err := readStdinForCommand()
 		if err == nil && stdinCommand != "" {
 			effectiveCommand = stdinCommand
@@ -424,6 +424,16 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 			exitWithCode(2)
 		}
 		// Grok allow: exit 0, stdout empty
+		return nil
+	}
+
+	if harnessFlag == "codex" {
+		if effectiveBlock {
+			// Codex deny: stderr PLAIN TEXT, exit 2 (NO JSON)
+			fmt.Fprint(os.Stderr, "[safety-block] "+reason)
+			exitWithCode(2)
+		}
+		// Codex allow: exit 0, both streams empty
 		return nil
 	}
 
