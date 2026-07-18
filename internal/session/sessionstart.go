@@ -120,6 +120,30 @@ func RunSessionStart(w io.Writer, home string) (*SessionStartResult, error) {
 	return RunSessionStartWithWatcher(w, home, nil)
 }
 
+// ScopeCheckResult holds the result of a lightweight scope check for the nudge.
+type ScopeCheckResult struct {
+	IsPrimary    bool
+	IsGateAgent  bool
+	ErrorMessage string
+}
+
+// CheckSessionScope performs a lightweight primary-scope check.
+// Returns a ScopeCheckResult describing the scope state.
+func CheckSessionScope(home string) ScopeCheckResult {
+	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
+		return ScopeCheckResult{IsGateAgent: true}
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ScopeCheckResult{ErrorMessage: err.Error()}
+	}
+	cls := scope.Classify(cwd)
+	if cls.Identity != scope.Primary {
+		return ScopeCheckResult{}
+	}
+	return ScopeCheckResult{IsPrimary: true}
+}
+
 func checkSessionScope(home string) error {
 	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
 		return fmt.Errorf("no-mistakes gate agent must not drive the fleet")

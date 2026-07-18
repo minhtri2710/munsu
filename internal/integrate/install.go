@@ -91,6 +91,45 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 			result.Message = "no changes needed"
 		}
 
+	case harness.Claude:
+		claudeAdpt := &ClaudeAdapter{
+			HomeDir: homeDir,
+			Cwd:     cwd,
+			Scope:   string(scope),
+			DryRun:  dryRun,
+		}
+		target, written, digest, err := claudeAdpt.InstallClaudeSettings()
+		if err != nil {
+			return nil, fmt.Errorf("claude settings install: %w", err)
+		}
+		result.Message = fmt.Sprintf("claude settings: %s", target)
+
+		if !dryRun && written {
+			manifest := generateClaudeManifest(harnessName, string(scope), caps, digest, target)
+			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
+			if err := os.MkdirAll(artifactDir, 0755); err != nil {
+				return nil, fmt.Errorf("create artifact dir: %w", err)
+			}
+
+			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
+			manifestData, err := json.MarshalIndent(manifest, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("marshal manifest: %w", err)
+			}
+			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
+				return nil, fmt.Errorf("write manifest: %w", err)
+			}
+
+			result.Version = manifest.Version
+			result.InstalledAt = manifest.InstalledAt
+		} else if dryRun {
+			result.Message = fmt.Sprintf("[dry-run] would write: %s", target)
+			result.State = "fresh"
+		} else {
+			result.State = "fresh"
+			result.Message = "no changes needed"
+		}
+
 	default:
 		return &IntegrationResult{
 			Harness: harnessName,
@@ -215,7 +254,12 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	}
 
 	// Verify that TargetPaths contains exactly the expected canonical target for this scope+cwd.
-	expectedTarget, err := ExpectedTargetPath(scope, cwd)
+	var expectedTarget string
+	if harnessName == harness.Claude {
+		expectedTarget, err = ClaudeSettingsTargetPath(scope, cwd)
+	} else {
+		expectedTarget, err = ExpectedTargetPath(scope, cwd)
+	}
 	if err != nil {
 		result.State = "drifted"
 		result.Message = fmt.Sprintf("cannot compute expected target: %v", err)

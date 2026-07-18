@@ -1,6 +1,7 @@
 package integrate
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,37 @@ func TestEnabledCapabilities_Pi(t *testing.T) {
 	}
 }
 
+// Test capabilities for Claude
+func TestEnabledCapabilities_Claude(t *testing.T) {
+	caps := EnabledCapabilities("claude")
+	if len(caps) == 0 {
+		t.Fatal("expected Claude capabilities to be non-empty")
+	}
+
+	capSet := make(map[Capability]bool)
+	for _, c := range caps {
+		capSet[c] = true
+	}
+
+	if !capSet[CapSessionStart] {
+		t.Error("expected CapSessionStart for Claude")
+	}
+	if !capSet[CapTurnEndGuard] {
+		t.Error("expected CapTurnEndGuard for Claude")
+	}
+	if !capSet[CapPreToolCheck] {
+		t.Error("expected CapPreToolCheck for Claude")
+	}
+
+	// Claude does NOT have CapWakeFollowUp or CapScopeGate
+	if capSet[CapWakeFollowUp] {
+		t.Error("Claude should NOT have CapWakeFollowUp")
+	}
+	if capSet[CapScopeGate] {
+		t.Error("Claude should NOT have CapScopeGate")
+	}
+}
+
 // Test unknown harness returns no capabilities
 func TestEnabledCapabilities_Unknown(t *testing.T) {
 	caps := EnabledCapabilities("nonexistent")
@@ -51,7 +83,7 @@ func TestAssertSupportedHarness(t *testing.T) {
 		wantErr bool
 	}{
 		{"pi", false},
-		{"claude", true},
+		{"claude", false},
 		{"", true},
 		{"nonexistent", true},
 	}
@@ -616,5 +648,94 @@ func TestPiExtensionTemplate_NumericLeaseExpiry(t *testing.T) {
 	if !strings.Contains(tmpl, "lease_expires") &&
 		!strings.Contains(tmpl, "leaseExpiry") {
 		t.Error("template must handle numeric lease_expires")
+	}
+}
+
+// Test ClaudeSettingsContent contains required hook entries
+func TestClaudeSettingsContent_Hooks(t *testing.T) {
+	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+	if content == "" {
+		t.Fatal("expected non-empty settings content")
+	}
+
+	// Must have all three hook types
+	if !strings.Contains(content, "SessionStart") {
+		t.Error("settings must contain SessionStart hooks")
+	}
+	if !strings.Contains(content, "PreToolUse") {
+		t.Error("settings must contain PreToolUse hooks")
+	}
+	if !strings.Contains(content, "Stop") {
+		t.Error("settings must contain Stop hooks")
+	}
+
+	// Must not contain BINPATH placeholder
+	if strings.Contains(content, "BINPATH") {
+		t.Error("BINPATH placeholder must be replaced")
+	}
+
+	// Must anchor commands to the munsu binary path
+	if !strings.Contains(content, "/usr/local/bin/munsu") {
+		t.Error("settings must reference the munsu binary path")
+	}
+
+	// SessionStart matcher must exclude compact
+	if strings.Contains(content, "compact") {
+		t.Error("SessionStart matcher must not include compact")
+	}
+
+	// Verify structure matches firstmate: correct hook event keys
+	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
+		t.Error("SessionStart matcher must match startup|resume|clear")
+	}
+	if !strings.Contains(content, `"matcher": "Bash"`) {
+		t.Error("PreToolUse matcher must be Bash")
+	}
+
+	// Valid JSON
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("settings content must be valid JSON: %v", err)
+	}
+
+	// Check that SessionStart does NOT have a matcher for exclusion (no matcher = all events)
+	hooks := parsed.(map[string]interface{})
+	if _, ok := hooks["hooks"]; !ok {
+		t.Fatal("settings must have hooks key")
+	}
+}
+
+// Test ClaudeSettingsContent binary substitution
+func TestClaudeSettingsContent_BinarySubstitution(t *testing.T) {
+	binPath := "/custom/path/with spaces/munsu"
+	content := ClaudeSettingsContent(binPath)
+	if strings.Contains(content, "BINPATH") {
+		t.Errorf("BINPATH still present in settings output")
+	}
+	if !strings.Contains(content, "/custom/path/with spaces/munsu") {
+		t.Errorf("expected binary path with spaces in settings output")
+	}
+
+	// Must be valid JSON
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("settings content must be valid JSON: %v", err)
+	}
+}
+
+// Test ClaudeSettingsDigest determinism
+func TestClaudeSettingsDigest_Deterministic(t *testing.T) {
+	d1 := ClaudeSettingsDigest("/usr/local/bin/munsu")
+	d2 := ClaudeSettingsDigest("/usr/local/bin/munsu")
+	if d1 == "" || len(d1) != 64 {
+		t.Fatal("expected 64-char hex digest")
+	}
+	if d1 != d2 {
+		t.Fatal("digest must be deterministic")
+	}
+
+	d3 := ClaudeSettingsDigest("/opt/bin/munsu")
+	if d1 == d3 {
+		t.Fatal("digest must differ for different binary paths")
 	}
 }
