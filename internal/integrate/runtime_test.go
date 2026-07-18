@@ -289,7 +289,7 @@ if (!cmd.description) throw new Error("Command /munsu:wake must have description
 
 // Verify there is NO agent_end handler (for claim purposes - template uses agent_settled)
 if (mock.events["agent_end"] && mock.events["agent_end"].length > 0) {
-  // agent_end may still be referenced but must not be used for claim logic
+  throw new Error("agent_end must not be registered for wake claim — use agent_settled");
 }
 
 // --- Test 1: session_start fires exactly once and invokes session-start command ---

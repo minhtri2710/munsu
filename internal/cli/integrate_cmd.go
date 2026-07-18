@@ -307,15 +307,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string) e
 		_ = nmHome
 	}
 
-	data := struct {
-		Identity       string `json:"identity"`
-		GateCapability string `json:"gate_capability"`
-		CanonicalPath  string `json:"canonical_path,omitempty"`
-		GateRefused    bool   `json:"gate_refused"`
-		Block          bool   `json:"block,omitempty"`
-		Reason         string `json:"reason,omitempty"`
-		Error          string `json:"error,omitempty"`
-	}{
+	data := contract.SafetyCheckData{
 		Identity:       result.Identity,
 		GateCapability: result.GateCapability,
 		CanonicalPath:  result.CanonicalPath,

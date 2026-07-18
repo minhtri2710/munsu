@@ -431,7 +431,7 @@ func TestSafetyCheck(t *testing.T) {
 func TestCheckPiCapability(t *testing.T) {
 	err := CheckPiCapability("/nonexistent/pi")
 	if err == nil {
-		t.Skip("unexpected: pi found at /nonexistent/pi")
+		t.Fatal("CheckPiCapability(/nonexistent/pi) must fail for nonexistent path")
 	}
 }
 
@@ -606,7 +606,7 @@ func TestPiExtensionTemplate_NewestToOldestScan(t *testing.T) {
 	tmpl := PiExtensionTemplate("/usr/local/bin/munsu")
 	if !strings.Contains(tmpl, "NEWEST-TO-OLDEST") &&
 		!strings.Contains(tmpl, "wakeEntries.length") {
-		t.Log("template should scan entries newest-to-oldest for wake restore")
+		t.Fatal("template must scan entries newest-to-oldest for wake restore")
 	}
 }
 

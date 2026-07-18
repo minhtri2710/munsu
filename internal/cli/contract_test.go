@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -321,3 +323,232 @@ func captureTaskList(t *testing.T) string {
 	return buf.String()
 }
 
+func TestSafetyCheckContractJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MUNSU_HOME", t.TempDir())
+
+	// Initialize a git repo so the path is a "primary" checkout (not "unrelated")
+	// SafetyCheck only sets gate_refused=false for non-unrelated with no gate.
+	gitCmd := exec.Command("git", "init", dir)
+	if out, err := gitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, string(out))
+	}
+
+	out, err := runContract(t, []string{"integrate", "safety-check", dir, "--output", "json"})
+	if err != nil {
+		t.Fatalf("safety-check: %v", err)
+	}
+
+	var resp struct {
+		SchemaVersion string                   `json:"schema_version"`
+		Kind          string                   `json:"kind"`
+		Status        string                   `json:"status"`
+		Data          contract.SafetyCheckData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("safety-check JSON unmarshal: %v\nOutput: %s", err, out)
+	}
+
+	// Verify envelope fields
+	if resp.SchemaVersion != "munsu.orchestration/v2" {
+		t.Errorf("schema_version = %q, want munsu.orchestration/v2", resp.SchemaVersion)
+	}
+	if resp.Kind != "integrate.safety-check" {
+		t.Errorf("kind = %q, want integrate.safety-check", resp.Kind)
+	}
+	if resp.Status != "success" {
+		t.Errorf("status = %q, want success", resp.Status)
+	}
+
+	// Block MUST always serialize, including false (TS parser requires typeof boolean)
+	if resp.Data.Block != false {
+		t.Errorf("safe safety-check block = %v, want false", resp.Data.Block)
+	}
+	if resp.Data.GateRefused != false {
+		t.Errorf("safe safety-check gate_refused = %v, want false", resp.Data.GateRefused)
+	}
+	if resp.Data.Identity == "" {
+		t.Error("identity must be non-empty even for temp dirs")
+	}
+	if resp.Data.GateCapability == "" {
+		t.Error("gate_capability must be non-empty even for temp dirs")
+	}
+
+	// Verify raw JSON key presence — structural unmarshal alone cannot distinguish
+	// omitted vs explicit false for bool fields (both decode to Go zero value).
+	rawBytes := []byte(out)
+	if !bytes.Contains(rawBytes, []byte(`"block"`)) {
+		t.Error("JSON output must contain 'block' key (not omitted)")
+	}
+	if !bytes.Contains(rawBytes, []byte(`"gate_refused"`)) {
+		t.Error("JSON output must contain 'gate_refused' key (not omitted)")
+	}
+	if bytes.Contains(rawBytes, []byte(`"block":true`)) {
+		t.Error("safe safety-check must not have block:true")
+	}
+}
+
+func TestSafetyCheckBlockTrue(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MUNSU_HOME", t.TempDir())
+
+	out, err := runContract(t, []string{"integrate", "safety-check", dir, "--command", "munsu watch arm", "--output", "json"})
+	if err != nil {
+		t.Fatalf("safety-check blocked: %v", err)
+	}
+
+	var resp struct {
+		Data contract.SafetyCheckData `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON unmarshal: %v\nOutput: %s", err, out)
+	}
+
+	if !resp.Data.Block {
+		t.Errorf("blocked command should have block=true, got block=%v", resp.Data.Block)
+	}
+	if resp.Data.Reason == "" {
+		t.Error("blocked command must have non-empty reason")
+	}
+}
+
+func TestSafetyCheckRegressionOldOmitemptyShape(t *testing.T) {
+	// Old shape WITHOUT 'block' key must be rejected by the TS parseSafetyCheck.
+	// This regression proves the omitempty fix is necessary:
+	// the TS parser requires typeof data.block === "boolean", which fails
+	// when the key is absent from JSON.
+	oldJSON := `{
+	  "schema_version": "munsu.orchestration/v2",
+	  "kind": "integrate.safety-check",
+	  "status": "success",
+	  "data": {
+	    "identity": "unrelated",
+	    "gate_capability": "gate-absent",
+	    "gate_refused": false
+	  }
+	}`
+
+	var resp struct {
+		Data struct {
+			Block *bool `json:"block"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(oldJSON), &resp); err != nil {
+		t.Fatalf("old JSON unmarshal: %v", err)
+	}
+	if resp.Data.Block != nil {
+		t.Error(`old JSON without block field should unmarshal block as nil (absent) — rejects the "old shape" assumption`)
+	}
+	t.Log(`old shape without block serializes block as nil — would fail TS typeof(block) === "boolean" check`)
+}
+
+func TestSafetyCheckProductionJSONFeedsTSRuntime(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MUNSU_HOME", t.TempDir())
+
+	// Initialize git repo so SafetyCheck classifies this as "primary" (gate_refused=false)
+	gitCmd := exec.Command("git", "init", dir)
+	if out, err := gitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, string(out))
+	}
+
+	// Capture production safety-check JSON via the actual CLI command path
+	safeOut, err := runContract(t, []string{"integrate", "safety-check", dir, "--output", "json"})
+	if err != nil {
+		t.Fatalf("safe safety-check: %v", err)
+	}
+
+	blockedOut, err := runContract(t, []string{"integrate", "safety-check", dir, "--command", "munsu watch arm", "--output", "json"})
+	if err != nil {
+		t.Fatalf("blocked safety-check: %v", err)
+	}
+
+	// Find Node.js — required for TS runtime test
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js not on PATH — skipping TS runtime fixture test")
+	}
+
+	testDir := t.TempDir()
+	safePath := filepath.Join(testDir, "safe.json")
+	blockedPath := filepath.Join(testDir, "blocked.json")
+	if err := os.WriteFile(safePath, []byte(safeOut), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blockedPath, []byte(blockedOut), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a clean TS runner that reads the fixture files
+	runner := `import * as fs from "fs";
+
+function parseSafetyCheck(raw: string):
+  { ok: true; gate_refused: boolean; block: boolean; reason?: string } |
+  { ok: false; reason: string } {
+  if (!raw || !raw.trim()) return { ok: false, reason: "empty stdout" };
+  let parsed: any;
+  try { parsed = JSON.parse(raw); } catch {
+    return { ok: false, reason: "malformed JSON" };
+  }
+  if (typeof parsed !== "object" || parsed === null)
+    return { ok: false, reason: "not a JSON object" };
+  if (parsed.schema_version !== "munsu.orchestration/v2")
+    return { ok: false, reason: "wrong schema_version: " + String(parsed.schema_version) };
+  if (parsed.kind !== "integrate.safety-check")
+    return { ok: false, reason: "wrong kind: " + String(parsed.kind) };
+  if (parsed.status !== "success")
+    return { ok: false, reason: "status is not success: " + String(parsed.status) };
+  const data = parsed.data;
+  if (!data || typeof data !== "object")
+    return { ok: false, reason: "missing or non-object data" };
+  if (typeof data.gate_refused !== "boolean")
+    return { ok: false, reason: "missing or non-boolean gate_refused" };
+  if (typeof data.block !== "boolean")
+    return { ok: false, reason: "missing or non-boolean block" };
+  return { ok: true, gate_refused: data.gate_refused, block: data.block, reason: data.reason };
+}
+
+const args = process.argv.slice(2);
+if (args.length < 2) { console.error("Usage: runner.ts <safe.json> <blocked.json>"); process.exit(1); }
+
+const safeJSON = JSON.parse(fs.readFileSync(args[0], "utf-8"));
+const blockedJSON = JSON.parse(fs.readFileSync(args[1], "utf-8"));
+
+// Test 1: production safe JSON must be accepted
+const safeResult = parseSafetyCheck(JSON.stringify(safeJSON));
+if (!safeResult.ok) throw new Error("FAIL: safe JSON rejected: " + safeResult.reason);
+if (safeResult.block !== false) throw new Error("FAIL: safe JSON block=" + safeResult.block);
+if (safeResult.gate_refused !== false) throw new Error("FAIL: safe JSON gate_refused=" + safeResult.gate_refused);
+console.log("PASS: production safe JSON accepted");
+
+// Test 2: production blocked JSON must be accepted with block:true
+const blockedResult = parseSafetyCheck(JSON.stringify(blockedJSON));
+if (!blockedResult.ok) throw new Error("FAIL: blocked JSON rejected: " + blockedResult.reason);
+if (blockedResult.block !== true) throw new Error("FAIL: blocked JSON block=" + blockedResult.block);
+console.log("PASS: production blocked JSON accepted");
+
+// Test 3: old shape without 'block' must be rejected (regression)
+const oldData = { ...safeJSON.data };
+delete oldData.block;
+const oldPayload = { ...safeJSON, data: oldData };
+const oldResult = parseSafetyCheck(JSON.stringify(oldPayload));
+if (oldResult.ok) throw new Error("FAIL: old shape without block must be rejected");
+console.log("PASS: old shape without block rejected");
+
+console.log("ALL PRODUCTION CONTRACT FIXTURE TESTS PASSED");
+`
+
+	runnerPath := filepath.Join(testDir, "runner.ts")
+	if err := os.WriteFile(runnerPath, []byte(runner), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(nodePath, "--experimental-strip-types", runnerPath, safePath, blockedPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("TS runtime test failed:\nOutput: %s\nError: %v", string(output), err)
+	}
+	if !strings.Contains(string(output), "ALL PRODUCTION CONTRACT FIXTURE TESTS PASSED") {
+		t.Fatalf("TS runtime test did not report PASSED: %s", string(output))
+	}
+}
