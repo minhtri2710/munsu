@@ -130,6 +130,45 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 			result.Message = "no changes needed"
 		}
 
+	case harness.Grok:
+		grokAdpt := &GrokAdapter{
+			HomeDir: homeDir,
+			Cwd:     cwd,
+			Scope:   string(scope),
+			DryRun:  dryRun,
+		}
+		targets, written, digest, err := grokAdpt.InstallGrokHooks()
+		if err != nil {
+			return nil, fmt.Errorf("grok hooks install: %w", err)
+		}
+		result.Message = fmt.Sprintf("grok hooks: %d files in %s", len(targets), filepath.Dir(targets[0]))
+
+		if !dryRun && written {
+			manifest := generateGrokManifest(harnessName, string(scope), caps, digest, targets)
+			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
+			if err := os.MkdirAll(artifactDir, 0755); err != nil {
+				return nil, fmt.Errorf("create artifact dir: %w", err)
+			}
+
+			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
+			manifestData, err := json.MarshalIndent(manifest, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("marshal manifest: %w", err)
+			}
+			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
+				return nil, fmt.Errorf("write manifest: %w", err)
+			}
+
+			result.Version = manifest.Version
+			result.InstalledAt = manifest.InstalledAt
+		} else if dryRun {
+			result.Message = fmt.Sprintf("[dry-run] would write: %d files to %s", len(targets), filepath.Dir(targets[0]))
+			result.State = "fresh"
+		} else {
+			result.State = "fresh"
+			result.Message = "no changes needed"
+		}
+
 	default:
 		return &IntegrationResult{
 			Harness: harnessName,
@@ -246,6 +285,9 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	// Strict validation against expected values.
 	expectedCaps := caps
 	expectedTargets := 1
+	if harnessName == harness.Grok {
+		expectedTargets = 4
+	}
 	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", expectedCaps, expectedTargets); err != nil {
 		result.State = "drifted"
 		result.Message = fmt.Sprintf("manifest validation: %v", err)
@@ -253,41 +295,76 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		return result, nil
 	}
 
-	// Verify that TargetPaths contains exactly the expected canonical target for this scope+cwd.
-	var expectedTarget string
-	if harnessName == harness.Claude {
-		expectedTarget, err = ClaudeSettingsTargetPath(scope, cwd)
+	// Verify that TargetPaths contains the expected canonical targets for this scope+cwd.
+	if harnessName == harness.Grok {
+		// For Grok, verify all 4 expected paths are present.
+		expectedPaths, err := GrokHooksAllTargetPaths(scope, cwd)
+		if err != nil {
+			result.State = "drifted"
+			result.Message = fmt.Sprintf("cannot compute grok targets: %v", err)
+			result.Drifted = true
+			return result, nil
+		}
+		for _, expected := range expectedPaths {
+			found := false
+			canonicalExpected, resolveErr := filepath.EvalSymlinks(expected)
+			if resolveErr != nil {
+				canonicalExpected = filepath.Clean(expected)
+			}
+			for _, tp := range manifest.TargetPaths {
+				canonicalTP, resolveErr := filepath.EvalSymlinks(tp)
+				if resolveErr != nil {
+					continue
+				}
+				canonicalTP = filepath.Clean(canonicalTP)
+				if canonicalTP == canonicalExpected {
+					found = true
+					break
+				}
+			}
+			if !found {
+				result.State = "drifted"
+				result.Message = fmt.Sprintf("target path mismatch: expected %q not found in manifest target paths", expected)
+				result.Drifted = true
+				return result, nil
+			}
+		}
 	} else {
-		expectedTarget, err = ExpectedTargetPath(scope, cwd)
-	}
-	if err != nil {
-		result.State = "drifted"
-		result.Message = fmt.Sprintf("cannot compute expected target: %v", err)
-		result.Drifted = true
-		return result, nil
-	}
-	targetFound := false
-	for _, tp := range manifest.TargetPaths {
-		canonicalTP, resolveErr := filepath.EvalSymlinks(tp)
-		if resolveErr != nil {
-			continue
+		var expectedTarget string
+		if harnessName == harness.Claude {
+			expectedTarget, err = ClaudeSettingsTargetPath(scope, cwd)
+		} else {
+			expectedTarget, err = ExpectedTargetPath(scope, cwd)
 		}
-		canonicalTP = filepath.Clean(canonicalTP)
-		canonicalExpected, resolveErr := filepath.EvalSymlinks(expectedTarget)
-		if resolveErr != nil {
-			continue
+		if err != nil {
+			result.State = "drifted"
+			result.Message = fmt.Sprintf("cannot compute expected target: %v", err)
+			result.Drifted = true
+			return result, nil
 		}
-		canonicalExpected = filepath.Clean(canonicalExpected)
-		if canonicalTP == canonicalExpected {
-			targetFound = true
-			break
+		targetFound := false
+		for _, tp := range manifest.TargetPaths {
+			canonicalTP, resolveErr := filepath.EvalSymlinks(tp)
+			if resolveErr != nil {
+				continue
+			}
+			canonicalTP = filepath.Clean(canonicalTP)
+			canonicalExpected, resolveErr := filepath.EvalSymlinks(expectedTarget)
+			if resolveErr != nil {
+				continue
+			}
+			canonicalExpected = filepath.Clean(canonicalExpected)
+			if canonicalTP == canonicalExpected {
+				targetFound = true
+				break
+			}
 		}
-	}
-	if !targetFound {
-		result.State = "drifted"
-		result.Message = fmt.Sprintf("target path mismatch: expected %q not found in manifest target paths", expectedTarget)
-		result.Drifted = true
-		return result, nil
+		if !targetFound {
+			result.State = "drifted"
+			result.Message = fmt.Sprintf("target path mismatch: expected %q not found in manifest target paths", expectedTarget)
+			result.Drifted = true
+			return result, nil
+		}
 	}
 
 	// Verify the target file exists, has ownership marker, and digest matches.
@@ -306,6 +383,19 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 				continue
 			}
 			present, _, hookErr := ClaudeSettingsHasOwnedHooks(tp, munsuBin)
+			if hookErr != nil || !present {
+				allPresent = false
+				continue
+			}
+		} else if harnessName == harness.Grok {
+			// Structural ownership check for Grok hook files.
+			munsuBin, resolveErr := ResolveMunsuPathString()
+			if resolveErr != nil {
+				allPresent = false
+				continue
+			}
+			hooksDir := filepath.Dir(tp)
+			present, _, hookErr := GrokHooksHasOwnedHooks(hooksDir, munsuBin)
 			if hookErr != nil || !present {
 				allPresent = false
 				continue

@@ -116,7 +116,7 @@ Results:
 
 Flags:
   --command      Command string to evaluate for blocking rules (for tool_call safety)
-  --harness      Output shape: "pi" (default, JSON contract) or "claude" (native deny exit 2 + stderr)`,
+  --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), or "grok" (stdout decision=deny object + exit 2)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			checkPath, _ := os.Getwd()
@@ -127,7 +127,7 @@ Flags:
 		}),
 	}
 	safetyCmd.Flags().StringVar(&flags.command, "command", "", "Command to evaluate for blocking rules")
-	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default) or claude")
+	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, or grok")
 	configureContractCommand(safetyCmd)
 
 	sessionstartNudgeCmd := &cobra.Command{
@@ -308,7 +308,8 @@ var exitWithCode = func(code int) {
 }
 
 // readStdinForCommand reads JSON from stdin and extracts the command field.
-// Supports both Claude shape (.tool_input.command) and plain JSON with command.
+// Supports Claude shape (.tool_input.command), Grok shape (.toolInput.command),
+// and plain JSON with command.
 func readStdinForCommand() (string, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -330,6 +331,12 @@ func readStdinForCommand() (string, error) {
 			return cmd, nil
 		}
 	}
+	// Try Grok shape: .toolInput.command (camelCase)
+	if ti, ok := payload["toolInput"].(map[string]interface{}); ok {
+		if cmd, ok := ti["command"].(string); ok && cmd != "" {
+			return cmd, nil
+		}
+	}
 	// Try non-nested "command" key
 	if cmd, ok := payload["command"].(string); ok && cmd != "" {
 		return cmd, nil
@@ -339,9 +346,9 @@ func readStdinForCommand() (string, error) {
 }
 
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, harnessFlag string) error {
-	// When --harness claude and no --command, try to read command from stdin
+	// When --harness claude or --harness grok and no --command, try to read command from stdin
 	effectiveCommand := checkCommand
-	if harnessFlag == "claude" && effectiveCommand == "" {
+	if (harnessFlag == "claude" || harnessFlag == "grok") && effectiveCommand == "" {
 		stdinCommand, err := readStdinForCommand()
 		if err == nil && stdinCommand != "" {
 			effectiveCommand = stdinCommand
@@ -403,6 +410,20 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 			exitWithCode(2)
 		}
 		// Claude allow: exit 0, both streams empty
+		return nil
+	}
+
+	if harnessFlag == "grok" {
+		if effectiveBlock {
+			// Grok deny: stdout decision=deny JSON object, exit 2
+			denyJSON, _ := json.Marshal(map[string]interface{}{
+				"decision": "deny",
+				"reason":   "[safety-block] " + reason,
+			})
+			fmt.Fprintln(os.Stdout, string(denyJSON))
+			exitWithCode(2)
+		}
+		// Grok allow: exit 0, stdout empty
 		return nil
 	}
 

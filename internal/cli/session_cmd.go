@@ -284,6 +284,9 @@ With --harness claude, this command acts as a Claude Stop hook:
 			if harnessFlag == "claude" {
 				return runGuardClaude(ctx.Home)
 			}
+			if harnessFlag == "grok" {
+				return runGuardGrok(ctx.Home)
+			}
 			waker.CheckGuard(ctx.Home)
 
 			// Check all registered projects for tangles using resolved paths
@@ -307,7 +310,7 @@ With --harness claude, this command acts as a Claude Stop hook:
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude (Stop hook exit 2 + stderr)")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude (Stop hook exit 2 + stderr) or grok (passive Stop hook)")
 	return cmd
 }
 
@@ -373,6 +376,74 @@ func runGuardClaude(homeDir string) error {
 	reason += fmt.Sprintf(" with %d in-flight task(s)", inFlight)
 
 	// Claude Stop hook block: exit 2 + stderr reason
+	fmt.Fprintln(os.Stderr, reason)
+	exitWithCode(2)
+	return nil // unreachable
+}
+
+// runGuardGrok implements the Grok Stop hook guard.
+// Grok Stop hooks are passive: exit 2 does not block the turn, but we
+// still detect blind-turn conditions and warn.
+func runGuardGrok(homeDir string) error {
+	// Read stdin JSON for loop guard
+	stopHookActive := false
+	data, err := io.ReadAll(os.Stdin)
+	if err == nil {
+		var payload map[string]interface{}
+		if json.Unmarshal([]byte(strings.TrimSpace(string(data))), &payload) == nil {
+			if active, ok := payload["stop_hook_active"].(bool); ok && active {
+				stopHookActive = true
+			}
+		}
+	}
+
+	// Loop guard: stop_hook_active means Grok has already been forced
+	// to continue one turn. Allow the stop by exiting 0.
+	if stopHookActive {
+		return nil
+	}
+
+	// Check scope: only guard primary checkouts
+	cls := scope.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != scope.Primary {
+		return nil
+	}
+
+	// Check fleet state for in-flight tasks
+	inFlight := 0
+	snap, snapErr := fleet.Snapshot(homeDir)
+	if snapErr == nil {
+		for _, ts := range snap.Tasks {
+			if ts.Kind == "ship" || ts.Kind == "scout" {
+				inFlight++
+			}
+		}
+	}
+
+	// No in-flight work -> safe to end turn
+	if inFlight == 0 {
+		return nil
+	}
+
+	// Check watcher liveness
+	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+
+	// If watcher is healthy and not stale, allow the stop
+	if status.Exists && !status.Stale {
+		return nil
+	}
+
+	// Blind turn: in-flight work + unhealthy watcher -> block the stop
+	reason := "TURN WOULD END BLIND: "
+	if !status.Exists {
+		reason += "watcher never started"
+	} else {
+		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
+	}
+	reason += fmt.Sprintf(" with %d in-flight task(s)", inFlight)
+
+	// Grok Stop hook: exit 2 + stderr reason (Grok Stop hooks are passive
+	// but we still signal so munsu can detect the condition)
 	fmt.Fprintln(os.Stderr, reason)
 	exitWithCode(2)
 	return nil // unreachable
