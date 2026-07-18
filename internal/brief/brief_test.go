@@ -310,3 +310,19 @@ func TestShipBriefModeLinePresent(t *testing.T) {
 		t.Error("should emit delivery mode line when mode is set")
 	}
 }
+
+func TestBriefsDocumentIdempotentResolvedKey(t *testing.T) {
+	for name, tmpl := range map[string]string{
+		"ship":  shipBriefTemplate("t1", "repo", "", false),
+		"scout": scoutBriefTemplate("s1", "repo", "", false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(tmpl, "resolved [key=<slug>]: {summary}") {
+				t.Fatalf("brief missing keyed resolution syntax")
+			}
+			if !strings.Contains(tmpl, "Repeating the same resolved key is safe") {
+				t.Fatalf("brief missing idempotency guidance")
+			}
+		})
+	}
+}
