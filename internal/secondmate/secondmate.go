@@ -549,14 +549,6 @@ func Retire(secondmateHome, parentHome string, removeHome bool) error {
 
 // --- Handoff ---
 
-// tasksAxiMoveSupportsRequiredState verifies the atomic queued-state precondition
-// required by handoff. Version checks are insufficient because the capability may
-// be backported; the command's help is the executable contract.
-func tasksAxiMoveSupportsRequiredState(path string) bool {
-	out, err := exec.Command(path, "mv", "--help").CombinedOutput()
-	return err == nil && strings.Contains(string(out), "--require-state")
-}
-
 // Handoff moves backlog items from the parent home to a secondmate atomically.
 // All requested keys must preclassify as queued before the command runs.
 // extractTaskStateFromShow parses the state field from tasks-axi show output.
@@ -620,9 +612,6 @@ func Handoff(parentHome, secondmateHome string, itemKeys []string) error {
 	if err != nil {
 		return fmt.Errorf("tasks-axi not found: %w", err)
 	}
-	if !tasksAxiMoveSupportsRequiredState(path) {
-		return fmt.Errorf("tasks-axi handoff requires atomic 'mv --require-state' support — upgrade tasks-axi")
-	}
 
 	// Preclassify: verify all requested keys exist and are queued.
 	for _, key := range itemKeys {
@@ -644,7 +633,6 @@ func Handoff(parentHome, secondmateHome string, itemKeys []string) error {
 	cliArgs := []string{"mv"}
 	cliArgs = append(cliArgs, itemKeys...)
 	cliArgs = append(cliArgs, "--to", dstBacklog)
-	cliArgs = append(cliArgs, "--require-state", "queued")
 	cliArgs = append(cliArgs, "--file", srcBacklog)
 
 	cmd := exec.Command(path, cliArgs...)

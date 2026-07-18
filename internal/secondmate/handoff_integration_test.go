@@ -16,9 +16,6 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Skip("tasks-axi not found")
 	}
-	if !tasksAxiMoveSupportsRequiredState(path) {
-		t.Skip("tasks-axi lacks atomic --require-state capability")
-	}
 
 	parent := t.TempDir()
 	secondmateHome := filepath.Join(parent, "secondmates", "handoff-sm")

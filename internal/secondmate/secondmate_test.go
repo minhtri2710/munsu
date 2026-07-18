@@ -1213,38 +1213,7 @@ func TestHandoff_RefusesSelfParent(t *testing.T) {
 	}
 }
 
-func TestHandoff_RefusesTasksAxiWithoutAtomicStateCapability(t *testing.T) {
-	parent := t.TempDir()
-	sm := filepath.Join(parent, "secondmates", "test-sm")
-	if err := os.MkdirAll(sm, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := SeedProvenance(sm, "test-sm"); err != nil {
-		t.Fatal(err)
-	}
-
-	origPath := lookPath
-	origBackend := isTasksAxiBackend
-	defer func() {
-		lookPath = origPath
-		isTasksAxiBackend = origBackend
-	}()
-
-	fakeTasksAxi := filepath.Join(parent, "fake-tasks-axi")
-	fakeScript := "#!/bin/sh\nif [ \"$1\" = mv ] && [ \"$2\" = --help ]; then echo 'usage: tasks-axi mv <id> --to <path>'; exit 0; fi\nexit 1\n"
-	if err := os.WriteFile(fakeTasksAxi, []byte(fakeScript), 0755); err != nil {
-		t.Fatal(err)
-	}
-	lookPath = func(name string) (string, error) { return fakeTasksAxi, nil }
-	isTasksAxiBackend = func(string) bool { return true }
-
-	err := Handoff(parent, sm, []string{"TASK-1"})
-	if err == nil || !strings.Contains(err.Error(), "--require-state") {
-		t.Fatalf("Handoff error = %v, want atomic state capability refusal", err)
-	}
-}
-
-func TestHandoffPassesAtomicQueuedPrecondition(t *testing.T) {
+func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
 	parent := t.TempDir()
 	sm := filepath.Join(parent, "secondmates", "test-sm")
 	if err := os.MkdirAll(sm, 0755); err != nil {
@@ -1266,7 +1235,7 @@ func TestHandoffPassesAtomicQueuedPrecondition(t *testing.T) {
 
 	argsPath := filepath.Join(parent, "args.txt")
 	fakeTasksAxi := filepath.Join(parent, "fake-tasks-axi")
-	fakeScript := "#!/bin/sh\nif [ \"$1\" = mv ] && [ \"$2\" = --help ]; then echo '  --require-state queued|in_flight|done'; exit 0; fi\nif [ \"$1\" = show ]; then echo 'state: queued'; exit 0; fi\nprintf '%s\\n' \"$@\" > " + shQuote(argsPath) + "\n"
+	fakeScript := "#!/bin/sh\nif [ \"$1\" = show ]; then echo 'state: queued'; exit 0; fi\nprintf '%s\\n' \"$@\" > " + shQuote(argsPath) + "\n"
 	if err := os.WriteFile(fakeTasksAxi, []byte(fakeScript), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1284,7 +1253,6 @@ func TestHandoffPassesAtomicQueuedPrecondition(t *testing.T) {
 	want := []string{
 		"mv", "TASK-1", "TASK-2",
 		"--to", filepath.Join(sm, "data", "backlog.md"),
-		"--require-state", "queued",
 		"--file", filepath.Join(parent, "data", "backlog.md"),
 	}
 	if len(args) != len(want) {
