@@ -101,9 +101,12 @@ func newBriefCmd() *cobra.Command {
 func newSessionStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "session-start",
-		Short: "Lock, bootstrap, and print session-start digest (Context, Fleet State, Supervision)",
+		Short: "Lock, bootstrap, ensure watcher for in-flight work, and print the session-start digest",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			_, err := session.RunSessionStart(ctx.Home)
+			_, err := session.RunSessionStartWithWatcher(ctx.Home, func(home string) session.WatchEnsureResult {
+				result := ensureWatcher(home, false)
+				return session.WatchEnsureResult{State: result.Data.State}
+			})
 			return err
 		}),
 	}
@@ -153,26 +156,22 @@ func newBootstrapCmd() *cobra.Command {
 func newWatchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch",
-		Short: "Run the event-driven watcher",
-		Long:  `Run the event-driven watcher loop. Exits with a wake reason when an actionable event is found. Singleton-safe (home-scoped lock).`,
+		Short: "Run the persistent watcher daemon",
+		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			reason, err := supervision.Run(ctx.Home)
 			if err != nil {
 				return err
 			}
+			message := "watcher stopped"
 			if reason != nil {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
-					Kind:          "watch",
-					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("wake: %s — %s", reason.Kind, reason.Message)},
-				})
+				message = fmt.Sprintf("stopped: %s — %s", reason.Kind, reason.Message)
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "watch",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: "no wake reason", Noop: true},
+				Data:          contract.MessageResult{Message: message},
 			})
 		}),
 	}

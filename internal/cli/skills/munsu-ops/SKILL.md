@@ -49,12 +49,12 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 ### 5. Supervise
 
-- Arm the watcher: `munsu watch-arm [--restart]`.
+- Ensure the watcher: `munsu watch ensure [--restart]`.
 - On wake: `munsu wake-drain` then `munsu crew-state <id>` (not raw status tail) as ground truth.
 - Steer as needed: `munsu send <id> "<line>"`.
 - Peek at output: `munsu peek <id> [--lines N]`.
 
-**Completion:** Actionable wakes handled; watcher re-armed if tasks are still in flight.
+**Completion:** Actionable wakes handled; persistent watcher remains healthy while tasks are in flight.
 
 **Context pointer:** If a crewmate is unresponsive or stuck, run `munsu skill show stuck-crewmate-recovery` and follow its escalation ladder (peek -> steer -> interrupt -> relaunch -> fail).
 

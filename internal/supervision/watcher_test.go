@@ -1,9 +1,11 @@
 package supervision
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -203,6 +205,26 @@ func TestResetStreak(t *testing.T) {
 func TestResetStreak_NonExistent(t *testing.T) {
 	// Should not panic
 	resetStreak("non-existent-task")
+}
+
+func TestStaleStreaks_ConcurrentAccess(t *testing.T) {
+	const workers = 32
+	const perWorker = 100
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("race-task-%d", i%4)
+			for n := 0; n < perWorker; n++ {
+				handleStale(id, "concurrent")
+				if n%3 == 0 {
+					resetStreak(id)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 // --- scanFleet integration tests ---
@@ -438,21 +460,65 @@ func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
 	}
 }
 
-func TestScanFleet_WakeQueueSignal(t *testing.T) {
+func TestRunCycle_QueuedWakeDoesNotEmitAnotherWake(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Task with alive window — but we can't guarantee pane is alive
-	// So test with a task that would be skipped (no window) to verify
-	// the wake queue path doesn't interfere when there are no actionable tasks
-
 	task.WriteMeta(tmp, "no-window-task", map[string]string{"kind": "ship"})
+	if err := lifecycle.EnqueueWake(tmp, "status", "task-1", "done: ready"); err != nil {
+		t.Fatal(err)
+	}
 
-	// No wake queue — should be nil
-	reason := ScanFleet(tmp)
-	if reason != nil {
-		t.Errorf("expected nil when no wake queue and no actionable tasks, got %v", reason)
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emitted {
+		t.Fatal("queued wakes must not cause the watcher to enqueue another wake")
+	}
+
+	records, err := lifecycle.DrainWakes(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("queue grew from one pending wake to %d records", len(records))
+	}
+}
+
+func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	task.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-watch-cycle"})
+
+	emitted, err := runCycle(tmp)
+	if err != nil || !emitted {
+		t.Fatalf("first cycle emitted=%v err=%v, want true nil", emitted, err)
+	}
+	emitted, err = runCycle(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emitted {
+		t.Fatal("unchanged condition emitted a duplicate wake")
+	}
+
+	if err := task.AppendStatus(tmp, "task-1", "failed: changed condition"); err != nil {
+		t.Fatal(err)
+	}
+	emitted, err = runCycle(tmp)
+	if err != nil || !emitted {
+		t.Fatalf("changed condition emitted=%v err=%v, want true nil", emitted, err)
+	}
+
+	records, err := lifecycle.DrainWakes(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("drained %d wakes, want one initial and one changed-condition wake", len(records))
 	}
 }
 

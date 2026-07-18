@@ -236,21 +236,88 @@ func TestValidateDeliveryMode(t *testing.T) {
 	}
 }
 
-func TestRun_ValidateFailsOnMissingBrief(t *testing.T) {
-	// Run without a brief should fail early (before worktree/treehouse is touched).
-	tmpDir := t.TempDir()
-	args := Args{
+func TestRun_NoMistakesPreflightFailsBeforeSessionAllocation(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	os.WriteFile(filepath.Join(projectDir, "AGENTS.md"), []byte("instructions"), 0644)
+	os.MkdirAll(filepath.Join(homeDir, "data", "test-task"), 0755)
+	os.WriteFile(filepath.Join(homeDir, "data", "test-task", "brief.md"), []byte("brief"), 0644)
+
+	calledNewWindow := false
+	fake := &fakeBackend{newWindow: func(session, name string) (string, error) {
+		calledNewWindow = true
+		return "", fmt.Errorf("must not allocate a session")
+	}}
+	preflightCalled := false
+	r := NewRunner(Args{
 		ID:          "test-task",
 		ProjectName: "test-project",
-		HomeDir:     tmpDir,
-		Session:     &fakeBackend{},
+		Mode:        "no-mistakes",
+		HomeDir:     homeDir,
+		Session:     fake,
+		NoMistakesPreflight: func(repoPath string) error {
+			preflightCalled = true
+			if repoPath != projectDir {
+				t.Fatalf("repoPath=%q, want %q", repoPath, projectDir)
+			}
+			return fmt.Errorf("incompatible no-mistakes gate agent")
+		},
+	})
+	r.projPath = projectDir
+	r.effectiveMode = "no-mistakes"
+
+	err := r.preflightNoMistakes()
+	if err == nil || !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("preflight error=%v", err)
 	}
-	_, err := Run(args)
-	if err == nil {
-		t.Fatal("expected error for missing brief")
+	if !preflightCalled {
+		t.Fatal("preflight was not called")
 	}
-	if !strings.Contains(err.Error(), "no brief found") {
-		t.Errorf("expected 'no brief found' error, got: %v", err)
+	if calledNewWindow {
+		t.Fatal("session allocation occurred before compatibility preflight")
+	}
+}
+
+func TestCheckNoMistakesCompatibility(t *testing.T) {
+	tests := []struct {
+		name      string
+		hasDocs   bool
+		agents    []string
+		available map[string]bool
+		wantErr   bool
+	}{
+		{name: "no instruction files", agents: []string{"pi"}},
+		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantErr: true},
+		{name: "codex compatible", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}},
+		{name: "fallback claude compatible", hasDocs: true, agents: []string{"pi", "claude"}, available: map[string]bool{"pi": true, "claude": true}},
+		{name: "neutralizer unavailable", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"pi": true}, wantErr: true},
+		{name: "codex override defeats neutralization", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantErr: true},
+		{name: "claude override defeats neutralization", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			if tc.hasDocs {
+				os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("instructions"), 0644)
+			}
+			cfg := noMistakesConfig{Agents: tc.agents}
+			switch tc.name {
+			case "codex override defeats neutralization":
+				cfg.AgentArgsOverride = map[string][]string{"codex": {"-c", "project_doc_max_bytes=4096"}}
+			case "claude override defeats neutralization":
+				cfg.AgentArgsOverride = map[string][]string{"claude": {"--setting-sources", "user,project"}}
+			}
+			err := checkNoMistakesCompatibility(repo, cfg, func(agent string) bool {
+				return tc.available[agent]
+			})
+			if tc.wantErr && err == nil {
+				t.Fatal("expected incompatibility error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 

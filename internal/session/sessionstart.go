@@ -18,7 +18,16 @@ type SessionStartResult struct {
 	LockAcquired bool
 	Bootstrap    *bootstrap.Result
 	FleetSync    *fleet.SyncResult
+	Watcher      WatchEnsureResult
 }
+
+// WatchEnsureResult is the session-start view of watcher ensure state.
+type WatchEnsureResult struct {
+	State string
+	Error string
+}
+
+type WatchEnsureFunc func(home string) WatchEnsureResult
 
 func printDataFile(home, name string) {
 	data, err := os.ReadFile(filepath.Join(home, "data", name))
@@ -59,78 +68,57 @@ func printFleetState(home string) {
 	}
 }
 
-// supervisionModes maps each harness to its supervision mode label.
-var supervisionModes = map[string]string{
-	"claude":   "background-notify",
-	"codex":    "foreground checkpoint",
-	"grok":     "background-notify",
-	"opencode": "TUI plugin background wake",
-	"pi":       "extension background wake",
-}
+// supervisionMode returns the normal persistent watcher mode.
+func supervisionMode(string) string { return "persistent daemon" }
 
-func supervisionMode(h string) string {
-	if m, ok := supervisionModes[h]; ok {
-		return m
-	}
-	return "generic fallback"
-}
-
-// printSupervisionBlock prints a per-harness supervision operating block.
+// printSupervisionBlock prints the watcher operating contract.
 func printSupervisionBlock(h string, acquired bool) {
-	mode := supervisionMode(h)
 	fmt.Printf("primary harness: %s\n", h)
-	fmt.Printf("supervision mode: %s\n", mode)
+	fmt.Printf("supervision mode: %s\n", supervisionMode(h))
 	if acquired {
 		fmt.Println("lock: acquired — this session owns normal supervision.")
 	} else {
 		fmt.Println("lock: read-only — do not drain, arm, or repair fleet state here.")
 	}
 	fmt.Println("")
+	fmt.Println("Daemon:  munsu watch ensure (idempotent start or attach)")
+	fmt.Println("Inspect: munsu watch run (one poll cycle)")
 	fmt.Println("Drain:   munsu wake-drain")
-
-	switch h {
-	case "claude":
-		fmt.Println("Arm:     munsu watch-arm (as own background tool call)")
-		fmt.Println("         Never use shell '&' for watcher supervision.")
-		fmt.Println("Re-arm:  munsu watch-arm --restart on signal/stale/check/heartbeat")
-		fmt.Println("Repair:  'watcher: FAILED - no live watcher' — fix and re-arm")
-
-	case "codex":
-		fmt.Println("Checkpoint: munsu watch run (one poll cycle — no timeout flag)")
-		fmt.Println("Re-arm:  drain, handle wake, then next checkpoint (munsu watch run)")
-		fmt.Println("Repair:  Re-run checkpoint after fixing any watcher issues")
-
-	case "grok":
-		fmt.Println("Arm:     munsu watch-arm (tracked background tool call)")
-		fmt.Println("         In Grok: run_terminal_command with background: true.")
-		fmt.Println("         Never use shell '&' for watcher supervision.")
-		fmt.Println("Re-arm:  munsu watch-arm --restart on signal/stale/check/heartbeat")
-		fmt.Println("Repair:  'watcher: FAILED ...' — fix and re-arm")
-
-	case "pi":
-		fmt.Println("Arm:     fm_watch_arm_pi tool (or 'munsu watch-arm --restart' as human fallback)")
-		fmt.Println("         Do NOT run 'munsu watch-arm' through Pi's bash tool.")
-		fmt.Println("Re-arm:  Pi extension re-arms automatically on watcher exit.")
-		fmt.Println("Repair:  Drain, inspect extension status, restart Pi with extensions loaded.")
-
-	case "opencode":
-		fmt.Println("Arm:     OpenCode TUI plugin arms after session goes idle.")
-		fmt.Println("         (.opencode/plugins/fm-primary-watch-arm.js)")
-		fmt.Println("Re-arm:  Plugin re-arms automatically on watcher exit.")
-		fmt.Println("Repair:  Drain, inspect, use 'munsu watch-arm' manually as recovery probe.")
-
-	default:
-		fmt.Println("Arm:     munsu watch ensure (idempotent start) or munsu watch run (checkpoint)")
-		fmt.Println("         Use tracked background mechanism when available.")
-		fmt.Println("         Never use shell '&' for watcher supervision.")
-		fmt.Println("Repair:  Run 'munsu guard' to diagnose, then arm with one of the above.")
-	}
-
+	fmt.Println("Repair:  munsu watch ensure")
 	fmt.Println("Guard:   munsu guard")
 }
 
-// RunSessionStart executes the full session-start sequence:
+func ensureWatcherForSession(home string, acquired bool, ensure WatchEnsureFunc) WatchEnsureResult {
+	if !acquired {
+		return WatchEnsureResult{State: "read-only"}
+	}
+	snap, err := fleet.Snapshot(home)
+	if err != nil {
+		return WatchEnsureResult{State: "failed", Error: err.Error()}
+	}
+	inFlight := false
+	for _, ts := range snap.Tasks {
+		if ts.Kind == "ship" || ts.Kind == "scout" {
+			inFlight = true
+			break
+		}
+	}
+	if !inFlight {
+		return WatchEnsureResult{State: "idle"}
+	}
+	if ensure == nil {
+		return WatchEnsureResult{State: "failed", Error: "watcher ensure unavailable"}
+	}
+	return ensure(home)
+}
+
+// RunSessionStart executes session-start without an injected watcher starter.
 func RunSessionStart(home string) (*SessionStartResult, error) {
+	return RunSessionStartWithWatcher(home, nil)
+}
+
+// RunSessionStartWithWatcher executes the full session-start sequence.
+func RunSessionStartWithWatcher(home string, ensure WatchEnsureFunc) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 
 	// 1. Acquire lock
@@ -194,6 +182,24 @@ func RunSessionStart(home string) (*SessionStartResult, error) {
 				}
 			}
 		}
+	}
+
+	res.Watcher = ensureWatcherForSession(home, acquired, ensure)
+	fmt.Println("")
+	fmt.Println("--- Watcher Ensure ---")
+	if res.Watcher.Error != "" {
+		fmt.Printf("  %s: %s\n", res.Watcher.State, res.Watcher.Error)
+	} else {
+		if res.Watcher.State == "idle" {
+			fmt.Println("  idle: no in-flight tasks; watcher not started")
+		} else {
+			fmt.Printf("  %s\n", res.Watcher.State)
+		}
+	}
+	if res.Watcher.State == "failed" {
+		fmt.Println("  Repair: munsu watch ensure")
+	} else if res.Watcher.State != "idle" && res.Watcher.State != "read-only" {
+		fmt.Println("  Repair: munsu watch ensure")
 	}
 
 	// 5. Context section

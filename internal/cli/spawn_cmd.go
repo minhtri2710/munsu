@@ -78,7 +78,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			}
 
 			if !arm {
-				fmt.Fprintln(os.Stderr, "hint: arm the watcher with 'munsu watch-arm' or 'munsu spawn --arm' to auto-detect completion")
+				fmt.Fprintln(os.Stderr, "hint: ensure supervision with 'munsu watch ensure' or use 'munsu spawn --arm'")
 			}
 			return nil
 		}),
@@ -283,7 +283,7 @@ With --force:
   - Removes data/<id>/ including report.md and brief.md
   - Use when the scout completed without a formal report or for cleanup
 `,
-		Args:  ExactArgs(1),
+		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 

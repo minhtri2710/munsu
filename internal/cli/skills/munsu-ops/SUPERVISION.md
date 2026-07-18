@@ -4,9 +4,9 @@ This document details the crewmate supervision loop. For the high-level step, se
 
 ## Watch loop (`munsu watch`)
 
-The watcher is a singleton event-driven loop. It runs in the background (armed via `munsu watch-arm`) and exits with a wake reason when an actionable event is found.
+The watcher is a singleton persistent event-driven daemon. It queues actionable wake reasons and continues polling until stopped.
 
-- **Start:** `munsu watch-arm [--restart]`
+- **Ensure:** `munsu watch ensure [--restart]`
 - **Run once:** `munsu watch` (exits with wake reason or does nothing)
 - **Singleton:** Home-scoped lock prevents multiple concurrent watchers.
 
@@ -19,10 +19,10 @@ munsu wake-drain    # process all queued wakes
 munsu crew-state <id>  # read ground truth (not raw status tail)
 ```
 
-After handling actionable wakes, re-arm if tasks are still in flight:
+After handling actionable wakes, confirm the persistent watcher remains healthy if tasks are still in flight:
 
 ```sh
-munsu watch-arm
+munsu watch ensure
 ```
 
 ## Post-action guard (`munsu guard`)
