@@ -3,7 +3,6 @@ package supervision
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -44,14 +43,20 @@ func NewIdentity(homeDir string) WatcherIdentity {
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		bv = info.Main.Version
 	}
+	executable, processStart, err := processIdentity(os.Getpid())
+	if err != nil {
+		executable = "unknown"
+		processStart = "unknown"
+	}
+	now := time.Now()
 	return WatcherIdentity{
 		Home:            homeDir,
 		PID:             os.Getpid(),
-		ProcessStart:    fmt.Sprintf("%d", time.Now().UnixNano()),
-		Executable:      resolveExecPath(),
+		ProcessStart:    processStart,
+		Executable:      executable,
 		BuildVersion:    bv,
 		ProtocolVersion: ProtocolVersion,
-		StartTime:       time.Now().Unix(),
+		StartTime:       now.Unix(),
 	}
 }
 
@@ -103,6 +108,15 @@ func ClearIdentity(homeDir string) {
 	os.Remove(identityPath(homeDir))
 }
 
+// ClearIdentityIfMatches removes only the identity written by this process generation.
+func ClearIdentityIfMatches(homeDir string, expected WatcherIdentity) {
+	current := ReadIdentity(homeDir)
+	if current == nil || current.PID != expected.PID || current.ProcessStart != expected.ProcessStart {
+		return
+	}
+	os.Remove(identityPath(homeDir))
+}
+
 // formatIdentity serialises a WatcherIdentity to a tab-delimited line.
 func formatIdentity(id WatcherIdentity) string {
 	return fmt.Sprintf("%s\t%d\t%s\t%s\t%s\t%d\t%d\n",
@@ -146,29 +160,17 @@ func ValidatePIDOwnership(homeDir string, pid int) bool {
 	if id.PID != pid {
 		return false
 	}
-	// Check that the process at pid is still alive.
-	if !isProcessAlive(pid) {
+	if id.Executable == "" || id.Executable == "unknown" || id.ProcessStart == "" || id.ProcessStart == "unknown" {
 		return false
 	}
-	// Verify the executable at this PID matches our recorded executable.
-	// Use the same resolution as resolveExecPath for consistent comparison.
-	exePath := resolveExecPath()
-	if exePath == "unknown" {
-		// Cannot verify — fail closed.
+	executable, processStart, err := processIdentity(pid)
+	if err != nil {
 		return false
 	}
-	if exePath != id.Executable {
-		// The running binary path doesn't match — could be a different install.
+	if executable != id.Executable || processStart != id.ProcessStart {
 		return false
 	}
 	return true
-}
-
-// isProcessAlive checks whether a process with the given PID is running.
-// Uses kill -0 which tests existence without sending a signal.
-func isProcessAlive(pid int) bool {
-	cmd := exec.Command("kill", "-0", fmt.Sprintf("%d", pid))
-	return cmd.Run() == nil
 }
 
 // IdentitySummary returns a human-readable summary of the watcher identity.

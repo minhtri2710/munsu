@@ -266,6 +266,44 @@ func TestValidatePIDOwnership_CurrentProcess(t *testing.T) {
 	}
 }
 
+func TestValidatePIDOwnership_ProcessStartMismatch(t *testing.T) {
+	home := t.TempDir()
+	id := NewIdentity(home)
+	id.ProcessStart = "different-generation"
+	if err := WriteIdentity(home, id); err != nil {
+		t.Fatal(err)
+	}
+	if ValidatePIDOwnership(home, os.Getpid()) {
+		t.Fatal("process start mismatch must fail ownership validation")
+	}
+}
+
+func TestValidatePIDOwnership_ExecutableMismatch(t *testing.T) {
+	home := t.TempDir()
+	id := NewIdentity(home)
+	id.Executable = filepath.Join(t.TempDir(), "other-munsu")
+	if err := WriteIdentity(home, id); err != nil {
+		t.Fatal(err)
+	}
+	if ValidatePIDOwnership(home, os.Getpid()) {
+		t.Fatal("target executable mismatch must fail ownership validation")
+	}
+}
+
+func TestClearIdentityIfMatches_PreservesNewGeneration(t *testing.T) {
+	home := t.TempDir()
+	old := NewIdentity(home)
+	current := old
+	current.ProcessStart = "new-generation"
+	if err := WriteIdentity(home, current); err != nil {
+		t.Fatal(err)
+	}
+	ClearIdentityIfMatches(home, old)
+	if got := ReadIdentity(home); got == nil || got.ProcessStart != current.ProcessStart {
+		t.Fatalf("new generation identity was cleared: %+v", got)
+	}
+}
+
 func TestValidatePIDOwnership_DeadPIDFails(t *testing.T) {
 	home := t.TempDir()
 	// Create identity with a PID that's definitely not alive (PID 0 is invalid)

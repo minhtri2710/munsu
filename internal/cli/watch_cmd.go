@@ -54,19 +54,22 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		beatStatus = lifecycle.ReadBeatStatus(homeDir, time.Now())
 	}
 
-	// If watcher is running and healthy, return attached
+	// A fresh beat is healthy only when its PID has validated ownership.
 	if beatStatus.Exists && !beatStatus.Stale {
-		return contract.Response[contract.WatchEnsure]{
-			SchemaVersion: contract.SchemaVersion,
-			Kind:          "watch.ensure",
-			Status:        "success",
-			Data: contract.WatchEnsure{
-				WatchID:  identifyWatcher(homeDir),
-				State:    "attached",
-				Interval: "5s",
-				Lease:    watcherLeaseInfo(homeDir),
-				Noop:     true,
-			},
+		_, pid, ok := lifecycle.ReadBeat(homeDir)
+		if ok && pid > 0 && supervision.ValidatePIDOwnership(homeDir, pid) {
+			return contract.Response[contract.WatchEnsure]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "watch.ensure",
+				Status:        "success",
+				Data: contract.WatchEnsure{
+					WatchID:  identifyWatcher(homeDir),
+					State:    "attached",
+					Interval: "5s",
+					Lease:    watcherLeaseInfo(homeDir),
+					Noop:     true,
+				},
+			}
 		}
 	}
 
@@ -109,8 +112,9 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	time.Sleep(200 * time.Millisecond)
 	afterStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
 
+	validated := afterStatus.Exists && supervision.ValidatePIDOwnership(homeDir, pid)
 	state := "started"
-	if afterStatus.Exists {
+	if validated {
 		state = "healthy"
 	}
 
@@ -129,7 +133,7 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	leaseInfo := &contract.WatchLeaseInfo{
 		Identity:    identityStr,
 		Heartbeat:   heartbeatAge,
-		HeartbeatOK: afterStatus.Exists && !afterStatus.Stale,
+		HeartbeatOK: validated && !afterStatus.Stale,
 	}
 
 	return contract.Response[contract.WatchEnsure]{
@@ -168,16 +172,16 @@ func watcherLeaseInfo(homeDir string) *contract.WatchLeaseInfo {
 	}
 
 	identityStr := ""
+	validated := false
 	if id := supervision.ReadIdentity(homeDir); id != nil {
 		identityStr = fmt.Sprintf("pid:%d version=%s proto=%d", id.PID, id.BuildVersion, id.ProtocolVersion)
-	} else if _, pid, ok := lifecycle.ReadBeat(homeDir); ok && pid > 0 {
-		identityStr = fmt.Sprintf("pid:%d", pid)
+		validated = supervision.ValidatePIDOwnership(homeDir, id.PID)
 	}
 
 	return &contract.WatchLeaseInfo{
 		Identity:    identityStr,
 		Heartbeat:   heartbeatAge,
-		HeartbeatOK: beatStatus.Exists && !beatStatus.Stale,
+		HeartbeatOK: validated && beatStatus.Exists && !beatStatus.Stale,
 	}
 }
 
@@ -262,9 +266,7 @@ func newWatchStopCmd() *cobra.Command {
 // when identity is available, sends SIGTERM, waits briefly, and reports the
 // result. Idempotent: no running watcher is a no-op success.
 //
-// Identity file trumps beat-only: if the identity file exists, the PID must
-// pass ownership validation. Without an identity file (pre-PR5 watcher), it
-// falls back to the old beat-only behavior for backward compatibility.
+// Ownership must be proven from the identity file; beat-only state is ambiguous.
 func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 	_, pid, ok := lifecycle.ReadBeat(homeDir)
 
@@ -284,22 +286,16 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 
 	watchID := fmt.Sprintf("watch-%d", pid)
 
-	// Check for identity. If an identity file exists, the PID must pass
-	// ownership validation (fail-closed on ambiguity). Without identity,
-	// fall back to legacy beat-only behavior.
-	if id := supervision.ReadIdentity(homeDir); id != nil {
-		if !supervision.ValidatePIDOwnership(homeDir, pid) {
-			lifecycle.ClearBeat(homeDir)
-			return contract.Response[contract.WatchStop]{
-				SchemaVersion: contract.SchemaVersion,
-				Kind:          "watch.stop",
-				Status:        "success",
-				Data: contract.WatchStop{
-					WatchID: watchID,
-					PID:     pid,
-					State:   "already-stopped",
-				},
-			}
+	if !supervision.ValidatePIDOwnership(homeDir, pid) {
+		return contract.Response[contract.WatchStop]{
+			SchemaVersion: contract.SchemaVersion,
+			Kind:          "watch.stop",
+			Status:        "success",
+			Data: contract.WatchStop{
+				WatchID: watchID,
+				PID:     pid,
+				State:   "identity-mismatch",
+			},
 		}
 	}
 

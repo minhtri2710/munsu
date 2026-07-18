@@ -56,7 +56,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	if err := WriteIdentity(homeDir, identity); err != nil {
 		return nil, fmt.Errorf("writing watcher identity: %w", err)
 	}
-	defer ClearIdentity(homeDir)
+	defer ClearIdentityIfMatches(homeDir, identity)
 
 	lifecycle.WriteBeat(homeDir)
 	ticker := newTicker(pollInterval)
@@ -114,10 +114,7 @@ func stopRunningWatcher(homeDir string) error {
 
 	// Validate that this PID belongs to our watcher before signaling.
 	if !ValidatePIDOwnership(homeDir, pid) {
-		// Beat file has a PID but identity doesn't match — stale or reused PID.
-		// Clear stale state and proceed; don't try to signal an unrelated process.
-		lifecycle.ClearBeat(homeDir)
-		return nil
+		return fmt.Errorf("watcher pid %d ownership could not be verified; refusing to signal", pid)
 	}
 
 	proc, err := os.FindProcess(pid)
