@@ -51,6 +51,13 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	}
 	defer lifecycle.ReleaseSession(homeDir)
 
+	// Write watcher identity on start and clear it on exit.
+	identity := NewIdentity(homeDir)
+	if err := WriteIdentity(homeDir, identity); err != nil {
+		return nil, fmt.Errorf("writing watcher identity: %w", err)
+	}
+	defer ClearIdentity(homeDir)
+
 	lifecycle.WriteBeat(homeDir)
 	ticker := newTicker(pollInterval)
 	defer ticker.Stop()
@@ -69,21 +76,15 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 }
 
 // ArmBackground launches the watcher as a background process.
-// If restart is true, signals any existing watcher first.
+// If restart is true, signals any existing watcher first, using identity-based
+// PID ownership validation to avoid signaling an unrelated process.
 func ArmBackground(homeDir string, restart bool) error {
 	if restart {
-		// Signal existing watcher via its beat file
-		_, pid, ok := lifecycle.ReadBeat(homeDir)
-		if ok && pid > 0 {
-			proc, err := os.FindProcess(pid)
-			if err == nil {
-				proc.Signal(syscall.SIGTERM)
-				time.Sleep(500 * time.Millisecond)
-			}
+		if err := stopRunningWatcher(homeDir); err != nil {
+			return err
 		}
 	}
 
-	// Fork a child process
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("finding munsu binary: %w", err)
@@ -100,6 +101,36 @@ func ArmBackground(homeDir string, restart bool) error {
 	}
 
 	fmt.Printf("Watcher armed (pid %d)\n", cmd.Process.Pid)
+	return nil
+}
+
+// stopRunningWatcher signals the running watcher identified by beat + identity.
+// Uses identity-based PID ownership validation to avoid signaling unrelated processes.
+func stopRunningWatcher(homeDir string) error {
+	_, pid, ok := lifecycle.ReadBeat(homeDir)
+	if !ok || pid <= 0 {
+		return nil // no watcher running
+	}
+
+	// Validate that this PID belongs to our watcher before signaling.
+	if !ValidatePIDOwnership(homeDir, pid) {
+		// Beat file has a PID but identity doesn't match — stale or reused PID.
+		// Clear stale state and proceed; don't try to signal an unrelated process.
+		lifecycle.ClearBeat(homeDir)
+		return nil
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		lifecycle.ClearBeat(homeDir)
+		return nil
+	}
+
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("signaling watcher pid %d: %w", pid, err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
 	return nil
 }
 
