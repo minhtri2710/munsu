@@ -248,7 +248,114 @@ func TestWaitForNewWatcher_OnlyBeatWithoutIdentity(t *testing.T) {
 	}
 }
 
-// --- HandshakeError.Error() format tests ---
+// --- waitForNewWatcher spoofed-identity / stale-beat tests ---
+
+func TestWaitForNewWatcher_SpoofedIdentity(t *testing.T) {
+	defer setHandshakeTimeout(50 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
+
+	home := t.TempDir()
+	snap := &WatcherSnapshot{
+		Active:           true,
+		OldVersion:       "0.1.0-dev+old",
+		OldPID:           77777,
+		InstalledVersion: "0.1.0-dev+new",
+		InstalledPath:    "/tmp/fake",
+	}
+
+	// Write identity with matching build version but dead PID.
+	spoofedID := supervision.NewIdentity(home)
+	spoofedID.PID = 99999
+	spoofedID.BuildVersion = "0.1.0-dev+new"
+	supervision.WriteIdentity(home, spoofedID)
+
+	// Write beat matching the spoofed PID with fresh timestamp.
+	beatContent := fmt.Sprintf("%d %d", time.Now().Unix(), 99999)
+	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+
+	err := waitForNewWatcher(home, snap)
+	if err == nil {
+		t.Fatal("expected timeout error for spoofed identity")
+	}
+	he, ok := err.(*HandshakeError)
+	if !ok {
+		t.Fatalf("expected *HandshakeError, got %T", err)
+	}
+	if he.OwnershipOK {
+		t.Error("OwnershipOK should be false for spoofed PID")
+	}
+}
+
+func TestWaitForNewWatcher_StaleBeat(t *testing.T) {
+	defer setHandshakeTimeout(50 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
+
+	home := t.TempDir()
+	snap := &WatcherSnapshot{
+		Active:           true,
+		OldVersion:       "0.1.0-dev+old",
+		OldPID:           77777,
+		InstalledVersion: "0.1.0-dev+new",
+		InstalledPath:    "/tmp/fake",
+	}
+
+	// Identity with real PID and matching version.
+	id := supervision.NewIdentity(home)
+	id.BuildVersion = "0.1.0-dev+new"
+	supervision.WriteIdentity(home, id)
+
+	// Beat with stale timestamp.
+	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
+	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+
+	err := waitForNewWatcher(home, snap)
+	if err == nil {
+		t.Fatal("expected timeout error for stale beat")
+	}
+	he, ok := err.(*HandshakeError)
+	if !ok {
+		t.Fatalf("expected *HandshakeError, got %T", err)
+	}
+	if he.BeatFresh {
+		t.Error("BeatFresh should be false for stale beat")
+	}
+}
+
+func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
+	defer setHandshakeTimeout(50 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
+
+	home := t.TempDir()
+	snap := &WatcherSnapshot{
+		Active:           true,
+		OldVersion:       "0.1.0-dev+old",
+		OldPID:           77777,
+		InstalledVersion: "0.1.0-dev+new",
+		InstalledPath:    "/tmp/fake",
+	}
+
+	// Identity with real PID and matching version.
+	id := supervision.NewIdentity(home)
+	id.BuildVersion = "0.1.0-dev+new"
+	supervision.WriteIdentity(home, id)
+
+	// Beat with future timestamp.
+	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
+	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+
+	err := waitForNewWatcher(home, snap)
+	if err == nil {
+		t.Fatal("expected timeout error for future beat")
+	}
+	he, ok := err.(*HandshakeError)
+	if !ok {
+		t.Fatalf("expected *HandshakeError, got %T", err)
+	}
+	if he.BeatFresh {
+		t.Error("BeatFresh should be false for future beat")
+	}
+}
+
 
 func TestHandshakeError_Format(t *testing.T) {
 	err := &HandshakeError{
@@ -353,26 +460,24 @@ func TestUpdateWithHandshake_ActiveWatcherRestarts(t *testing.T) {
 
 	// Replace doUpdate with a no-op.
 	savedUpdate := doUpdate
-	doUpdate = func() error {
-		return nil
-	}
+	doUpdate = func() error { return nil }
 	defer func() { doUpdate = savedUpdate }()
 
-	// Replace doArmBackground to simulate starting a new watcher.
+	// Start a subprocess helper to simulate a new watcher with a real PID.
+	// This is required because waitForNewWatcher now validates process
+	// ownership (ValidatePIDOwnership), which needs a real process PID.
 	savedArm := doArmBackground
 	doArmBackground = func(dir string, restart bool) error {
-		// Simulate new watcher appearing after a short delay with a new PID.
-		newPID := os.Getpid() + 1 // simulate a different PID
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			newID := supervision.NewIdentity(home)
-			newID.PID = newPID
-			newID.BuildVersion = installedVersion
-			supervision.WriteIdentity(home, newID)
-			// Write beat manually with the new PID.
-			beatContent := fmt.Sprintf("%d %d", time.Now().Unix(), newPID)
-			os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
-		}()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperNewWatcher$")
+		cmd.Env = append(os.Environ(),
+			"GO_TEST_HELPER_NEW_WATCHER=1",
+			"GO_TEST_HELPER_HOME="+home,
+			"GO_TEST_HELPER_VERSION="+installedVersion,
+		)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		t.Cleanup(func() { cmd.Process.Kill() })
 		return nil
 	}
 	defer func() { doArmBackground = savedArm }()
@@ -522,7 +627,28 @@ func TestUpdateWithHandshake_ArmBackgroundFails(t *testing.T) {
 	}
 }
 
-// TestSnapshotWatcher_WithCustomVersion tests that snapshot captures a
+// TestHelperNewWatcher is a subprocess helper that writes a valid watcher
+// identity and beat from a separate process. Used by integration tests
+// that need a real PID for ownership validation.
+func TestHelperNewWatcher(t *testing.T) {
+	if os.Getenv("GO_TEST_HELPER_NEW_WATCHER") != "1" {
+		t.Skip("not a helper invocation")
+	}
+	home := os.Getenv("GO_TEST_HELPER_HOME")
+	version := os.Getenv("GO_TEST_HELPER_VERSION")
+	if home == "" || version == "" {
+		t.Fatal("GO_TEST_HELPER_HOME and GO_TEST_HELPER_VERSION required")
+	}
+	id := supervision.NewIdentity(home)
+	id.BuildVersion = version
+	if err := supervision.WriteIdentity(home, id); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.WriteBeat(home)
+	// Stay alive to keep proc info available for ownership validation.
+	time.Sleep(10 * time.Second)
+}
+
 // custom build version written into the identity.
 func TestSnapshotWatcher_WithCustomVersion(t *testing.T) {
 	home := t.TempDir()
@@ -540,6 +666,38 @@ func TestSnapshotWatcher_WithCustomVersion(t *testing.T) {
 	}
 	if snap.OldVersion != "0.2.0-test+abc1234" {
 		t.Errorf("OldVersion = %q, want %q", snap.OldVersion, "0.2.0-test+abc1234")
+	}
+}
+
+// --- snapshotWatcher beat freshness tests ---
+
+func TestSnapshotWatcher_StaleBeat(t *testing.T) {
+	home := t.TempDir()
+	id := supervision.NewIdentity(home)
+	supervision.WriteIdentity(home, id)
+
+	// Write a beat with a stale timestamp (beyond StaleThreshold).
+	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
+	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+
+	snap := snapshotWatcher(home)
+	if snap.Active {
+		t.Error("expected Active=false for stale beat")
+	}
+}
+
+func TestSnapshotWatcher_FutureBeat(t *testing.T) {
+	home := t.TempDir()
+	id := supervision.NewIdentity(home)
+	supervision.WriteIdentity(home, id)
+
+	// Write a beat with a future timestamp (>5s skew).
+	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
+	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+
+	snap := snapshotWatcher(home)
+	if snap.Active {
+		t.Error("expected Active=false for future beat")
 	}
 }
 
@@ -584,6 +742,14 @@ func TestBuildHandshakeError(t *testing.T) {
 	if he.IdentityVersion != "0.1.0-dev+stale" {
 		t.Errorf("IdentityVersion = %q, want stale version", he.IdentityVersion)
 	}
+	// Identity matches the real current process — ownership should pass.
+	if !he.OwnershipOK {
+		t.Error("OwnershipOK should be true for identity matching current process")
+	}
+	// No beat file exists — BeatFresh must be false.
+	if he.BeatFresh {
+		t.Error("BeatFresh should be false when no beat exists")
+	}
 }
 
 // TestHandshakeError_AllFieldsSet validates that all fields are surfaced.
@@ -598,6 +764,8 @@ func TestHandshakeError_AllFieldsSet_IdentityOK(t *testing.T) {
 		BeatTimestamp:   5000000,
 		BeatOK:          true,
 		IdentityOK:      true,
+		OwnershipOK:     true,
+		BeatFresh:       true,
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "identity=ok") {
@@ -605,6 +773,12 @@ func TestHandshakeError_AllFieldsSet_IdentityOK(t *testing.T) {
 	}
 	if !strings.Contains(msg, "beat=ok") {
 		t.Errorf("should say beat=ok, got: %s", msg)
+	}
+	if strings.Contains(msg, "ownership=fail") {
+		t.Errorf("should not include ownership=fail for valid ownership, got: %s", msg)
+	}
+	if strings.Contains(msg, "beatfresh=fail") {
+		t.Errorf("should not include beatfresh=fail for fresh beat, got: %s", msg)
 	}
 }
 

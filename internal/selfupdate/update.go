@@ -176,6 +176,14 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 	if !supervision.ValidatePIDOwnership(homeDir, pid) {
 		return &WatcherSnapshot{Active: false}
 	}
+	// Reject stale or future heartbeats using canonical lifecycle staleness.
+	bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	if !bt.Exists || bt.Stale {
+		return &WatcherSnapshot{Active: false}
+	}
+	if bt.Age < -5*time.Second {
+		return &WatcherSnapshot{Active: false}
+	}
 	return &WatcherSnapshot{
 		Active:     true,
 		OldVersion: id.BuildVersion,
@@ -224,10 +232,16 @@ func waitForNewWatcher(homeDir string, snap *WatcherSnapshot) error {
 	identityOK := false
 
 	for time.Now().Before(deadline) {
-		// Check beat: watcher should be writing beats with a new PID.
+		// Check beat: watcher should be writing beats with a new PID
+		// and the beat content-timestamp must be fresh (not stale or future).
 		_, pid, ok := lifecycle.ReadBeat(homeDir)
 		if ok && pid > 0 && pid != snap.OldPID {
-			beatOK = true
+			bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+			if bt.Exists && !bt.Stale && bt.Age >= -5*time.Second {
+				beatOK = true
+			} else {
+				beatOK = false
+			}
 		} else {
 			beatOK = false
 		}
@@ -236,10 +250,16 @@ func waitForNewWatcher(homeDir string, snap *WatcherSnapshot) error {
 		if id := supervision.ReadIdentity(homeDir); id != nil {
 			if id.BuildVersion == snap.InstalledVersion && id.PID > 0 {
 				identityOK = true
-				_, beatPID, beatOK := lifecycle.ReadBeat(homeDir)
-				if beatOK && beatPID == id.PID && beatPID != snap.OldPID {
-					// Both beat and identity agree — watcher is healthy.
-					return nil
+				_, beatPID, beatOK2 := lifecycle.ReadBeat(homeDir)
+				if beatOK2 && beatPID == id.PID && beatPID != snap.OldPID {
+					// Verify beat freshness and process ownership before
+					// declaring success. This rejects spoofed identity+beat
+					// files and stale/future heartbeats.
+					bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+					if bt.Exists && !bt.Stale && bt.Age >= -5*time.Second &&
+						supervision.ValidatePIDOwnership(homeDir, id.PID) {
+						return nil
+					}
 				}
 			}
 		}
@@ -262,15 +282,20 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 	newID := supervision.ReadIdentity(homeDir)
 	newVersion := ""
 	newPID := ""
+	ownershipOK := false
 	if newID != nil {
 		newVersion = newID.BuildVersion
 		newPID = fmt.Sprintf("%d", newID.PID)
+		ownershipOK = supervision.ValidatePIDOwnership(homeDir, newID.PID)
 	}
 
 	beatTS, beatPID, beatOKLive := lifecycle.ReadBeat(homeDir)
 	beatPIDStr := ""
+	beatFresh := false
 	if beatOKLive {
 		beatPIDStr = fmt.Sprintf("%d", beatPID)
+		bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+		beatFresh = bt.Exists && !bt.Stale && bt.Age >= -5*time.Second
 	}
 
 	return &HandshakeError{
@@ -283,6 +308,8 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 		BeatTimestamp:   beatTS,
 		BeatOK:          beatOK,
 		IdentityOK:      identityOK,
+		OwnershipOK:     ownershipOK,
+		BeatFresh:       beatFresh,
 	}
 }
 
@@ -297,6 +324,8 @@ type HandshakeError struct {
 	BeatTimestamp   int64
 	BeatOK          bool
 	IdentityOK      bool
+	OwnershipOK     bool
+	BeatFresh       bool
 }
 
 func (e *HandshakeError) Error() string {
@@ -315,6 +344,12 @@ func (e *HandshakeError) Error() string {
 		b.WriteString(" beat=ok")
 	} else {
 		fmt.Fprintf(&b, " beat=%s ts=%d", e.BeatPID, e.BeatTimestamp)
+	}
+	if !e.OwnershipOK {
+		b.WriteString(" ownership=fail")
+	}
+	if !e.BeatFresh {
+		b.WriteString(" beatfresh=fail")
 	}
 	return b.String()
 }
