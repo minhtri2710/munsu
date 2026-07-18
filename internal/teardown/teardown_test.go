@@ -121,7 +121,7 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass for clean branch: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestShipSafetyCheck_Dirty(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	err := shipSafetyCheck(Options{}, meta)
+	_, err := shipSafetyCheck(Options{}, meta)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail for dirty worktree")
 	}
@@ -160,14 +160,14 @@ func TestShipSafetyCheck_NoRemoteBranch(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	err := shipSafetyCheck(Options{}, meta)
+	_, err := shipSafetyCheck(Options{}, meta)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail without remote")
 	}
 }
 
 func TestShipSafetyCheck_NoWorktreeInMeta(t *testing.T) {
-	err := shipSafetyCheck(Options{ID: "test"}, map[string]string{})
+	_, err := shipSafetyCheck(Options{ID: "test"}, map[string]string{})
 	if err == nil {
 		t.Fatal("should fail when no worktree in meta")
 	}

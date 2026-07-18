@@ -28,7 +28,8 @@ type Options struct {
 
 // TeardownResult describes the outcome of each teardown step.
 type TeardownResult struct {
-	Steps []string
+	Steps  []string
+	Proofs []string // merge-proof evidence emitted by safety checks
 }
 
 // Run performs a crewmate teardown.
@@ -48,8 +49,13 @@ func Run(opts Options) (*TeardownResult, error) {
 
 	// Safety checks (skip with --force)
 	if !opts.Force {
-		if err := safetyCheck(opts, meta, kind); err != nil {
+		proofs, err := safetyCheck(opts, meta, kind)
+		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
+		}
+		result.Proofs = append(result.Proofs, proofs...)
+		for _, p := range proofs {
+			result.Steps = append(result.Steps, "proof: "+p)
 		}
 	}
 
@@ -184,10 +190,14 @@ func Run(opts Options) (*TeardownResult, error) {
 }
 
 // safetyCheck verifies that work is landed before allowing teardown.
-func safetyCheck(opts Options, meta map[string]string, kind string) error {
+// Returns proof strings alongside any error. Proofs are only populated on success.
+func safetyCheck(opts Options, meta map[string]string, kind string) ([]string, error) {
 	switch kind {
 	case "scout":
-		return scoutSafetyCheck(opts, meta)
+		if err := scoutSafetyCheck(opts, meta); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	default:
 		return shipSafetyCheck(opts, meta)
 	}
@@ -219,10 +229,11 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 // shipSafetyCheck verifies work is landed before teardown.
 // It separates cleanliness checks (dirty worktree) from merge-proof checks
 // (topology-aware PR merge verification using delivery identity).
-func shipSafetyCheck(opts Options, meta map[string]string) error {
+// Returns proof strings emitted during merge-proof checks.
+func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 	wtPath, ok := meta["worktree"]
 	if !ok || wtPath == "" {
-		return fmt.Errorf("no worktree path in meta for %s", opts.ID)
+		return nil, fmt.Errorf("no worktree path in meta for %s", opts.ID)
 	}
 
 	// --- Cleanliness checks (always run) ---
@@ -230,9 +241,9 @@ func shipSafetyCheck(opts Options, meta map[string]string) error {
 	// Check worktree exists
 	if _, err := os.Stat(wtPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("worktree %s does not exist", wtPath)
+			return nil, fmt.Errorf("worktree %s does not exist", wtPath)
 		}
-		return fmt.Errorf("checking worktree %s: %w", wtPath, err)
+		return nil, fmt.Errorf("checking worktree %s: %w", wtPath, err)
 	}
 
 	// Check worktree is not dirty
@@ -240,10 +251,10 @@ func shipSafetyCheck(opts Options, meta map[string]string) error {
 	cmd.Dir = wtPath
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("checking git status: %w", err)
+		return nil, fmt.Errorf("checking git status: %w", err)
 	}
 	if strings.TrimSpace(string(out)) != "" {
-		return fmt.Errorf("worktree %s has uncommitted changes (use --force to override)", wtPath)
+		return nil, fmt.Errorf("worktree %s has uncommitted changes (use --force to override)", wtPath)
 	}
 
 	// --- Merge-proof checks (topology-aware) ---
@@ -252,19 +263,30 @@ func shipSafetyCheck(opts Options, meta map[string]string) error {
 	// to determine whether the work is safely landed.
 	ident, err := identityFromMeta(meta)
 	if err != nil {
-		return fmt.Errorf("reading delivery identity: %w", err)
+		return nil, fmt.Errorf("reading delivery identity: %w", err)
 	}
 
 	if ident != nil {
-		return topologyAwareMergeCheck(opts, meta, wtPath, ident)
+		// Validate identity before any provider query or fallback.
+		// Partial/corrupt identity must fail closed and never silently
+		// degrade to the legacy branch check.
+		if err := delivery.ValidateIdentity(ident); err != nil {
+			return nil, fmt.Errorf("invalid delivery identity (fail-closed, no legacy fallback): %w", err)
+		}
+
+		proof, err := topologyAwareMergeCheck(opts, meta, wtPath, ident)
+		if err != nil {
+			return nil, err
+		}
+		return []string{proof}, nil
 	}
 
 	// No delivery identity: fall back to simple remote branch check
 	if err := checkRemoteBranch(wtPath); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return nil, nil
 }
 
 // identityFromMeta attempts to reconstruct a delivery identity from task meta.
@@ -284,32 +306,32 @@ func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error
 //   - Squash/rebase merge with deleted head: accepts provider-confirmed merged PR identity
 //   - Ordinary merge: retains ancestry proof (merged branch still exists locally)
 //   - Unknown/unverifiable: refuses teardown
-func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *delivery.DeliveryIdentity) error {
+// Returns the proof string on success.
+func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *delivery.DeliveryIdentity) (string, error) {
 	ghURL, err := ghurl.ParseGHURL(ident.URL)
 	if err != nil {
-		return fmt.Errorf("invalid PR URL in delivery identity: %w", err)
+		return "", fmt.Errorf("invalid PR URL in delivery identity: %w", err)
 	}
 
 	// Query the provider for the current PR merge status
 	status, err := delivery.QueryPRMergeStatus(ghURL)
 	if err != nil {
-		return fmt.Errorf("cannot verify PR merge status: %w (use --force to override)", err)
+		return "", fmt.Errorf("cannot verify PR merge status: %w (use --force to override)", err)
 	}
 
 	// Check for refused states
 	if status.Closed && !status.Merged {
-		return fmt.Errorf("PR #%d is closed but not merged (use --force to override)", ident.Number)
+		return "", fmt.Errorf("PR #%d is closed but not merged (use --force to override)", ident.Number)
 	}
 
 	if !status.Merged && status.State == "OPEN" {
-		return fmt.Errorf("PR #%d is still open and not merged (use --force to override)", ident.Number)
+		return "", fmt.Errorf("PR #%d is still open and not merged (use --force to override)", ident.Number)
 	}
 
 	// PR is confirmed merged. Verify head SHA consistency for safety.
 	if status.Merged {
-		// Emit the exact proof used
+		// Build the exact proof used, augmented with topology details below.
 		proof := fmt.Sprintf("PR #%d merged; provider-confirmed state=merged headSHA=%s", ident.Number, status.HeadSHA)
-		_ = proof // available for log/dry-run output
 
 		// For deleted remote head (squash/rebase), confirm the PR IS merged
 		// — that's sufficient proof. The remote branch may be gone.
@@ -324,21 +346,37 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 		}
 
 		if remoteBranchExists {
-			// Remote branch still exists — confirm the head SHA still matches
-			// (ordinary merge topology: ancestry proof is available)
+			// Remote branch still exists — ordinary merge topology.
+			// Confirm the head SHA still matches, then prove the captured
+			// head SHA is an ancestor of the base/default target using
+			// git merge-base --is-ancestor.
 			if status.HeadSHA == "" {
-				return fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
+				return "", fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
 			}
 			if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
-				return fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)
+				return "", fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)
+			}
+
+			// Prove Git ancestry: the captured/verified head SHA must be
+			// an ancestor of the base target. This distinguishes a true
+			// ancestor (merged commit) from orphaned or force-pushed branches.
+			baseRef := ident.BaseRef
+			if baseRef != "" {
+				ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", status.HeadSHA, "origin/"+baseRef)
+				ancestorCmd.Dir = wtPath
+				if err := ancestorCmd.Run(); err != nil {
+					return "", fmt.Errorf("captured head SHA %s is not an ancestor of origin/%s: the merge is not proven in local git topology (use --force to override)", status.HeadSHA, baseRef)
+				}
+				proof += fmt.Sprintf("; ancestry verified: %s is ancestor of origin/%s", status.HeadSHA, baseRef)
 			}
 		}
 
-		// PR is confirmed merged by the provider — accept as landed
-		return nil
+		// PR is confirmed merged by the provider — accept as landed and
+		// return the exact proof used.
+		return proof, nil
 	}
 
-	return fmt.Errorf("PR #%d is in an unexpected state: merged=%v closed=%v (use --force to override)", ident.Number, status.Merged, status.Closed)
+	return "", fmt.Errorf("PR #%d is in an unexpected state: merged=%v closed=%v (use --force to override)", ident.Number, status.Merged, status.Closed)
 }
 
 // checkRemoteBranch verifies the worktree branch has a remote tracking branch
