@@ -291,19 +291,25 @@ func TestRun_NoMistakesPreflightFailsBeforeSessionAllocation(t *testing.T) {
 
 func TestCheckNoMistakesCompatibility(t *testing.T) {
 	tests := []struct {
-		name      string
-		hasDocs   bool
-		agents    []string
-		available map[string]bool
-		wantErr   bool
+		name                       string
+		hasDocs                    bool
+		disableProjectSettings     bool
+		disableProjectSettingsYAML string // if non-empty, write this raw yaml instead of bool helper
+		agents                     []string
+		available                  map[string]bool
+		wantErr                    bool
 	}{
 		{name: "no instruction files", agents: []string{"pi"}},
 		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantErr: true},
+		{name: "pi ok with disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}},
 		{name: "codex compatible", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}},
 		{name: "fallback claude compatible", hasDocs: true, agents: []string{"pi", "claude"}, available: map[string]bool{"pi": true, "claude": true}},
 		{name: "neutralizer unavailable", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"pi": true}, wantErr: true},
 		{name: "codex override defeats neutralization", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantErr: true},
 		{name: "claude override defeats neutralization", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantErr: true},
+		{name: "disable_project_settings overrides codex defeat", hasDocs: true, disableProjectSettings: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}},
+		{name: "malformed no-mistakes yaml still requires neutralizer", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: [", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantErr: true},
+		{name: "disable_project_settings false keeps preflight", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: false\n", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantErr: true},
 	}
 
 	for _, tc := range tests {
@@ -312,9 +318,14 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 			if tc.hasDocs {
 				os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("instructions"), 0644)
 			}
+			if tc.disableProjectSettingsYAML != "" {
+				os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte(tc.disableProjectSettingsYAML), 0644)
+			} else if tc.disableProjectSettings {
+				os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte("disable_project_settings: true\n"), 0644)
+			}
 			cfg := noMistakesConfig{Agents: tc.agents}
 			switch tc.name {
-			case "codex override defeats neutralization":
+			case "codex override defeats neutralization", "disable_project_settings overrides codex defeat":
 				cfg.AgentArgsOverride = map[string][]string{"codex": {"-c", "project_doc_max_bytes=4096"}}
 			case "claude override defeats neutralization":
 				cfg.AgentArgsOverride = map[string][]string{"claude": {"--setting-sources", "user,project"}}
@@ -329,6 +340,21 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestProjectSettingsDisabled(t *testing.T) {
+	repo := t.TempDir()
+	if projectSettingsDisabled(repo) {
+		t.Fatal("missing yaml should be false")
+	}
+	os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte("disable_project_settings: true\n"), 0644)
+	if !projectSettingsDisabled(repo) {
+		t.Fatal("expected true")
+	}
+	os.WriteFile(filepath.Join(repo, ".no-mistakes.yaml"), []byte("disable_project_settings: false\n"), 0644)
+	if projectSettingsDisabled(repo) {
+		t.Fatal("expected false")
 	}
 }
 
