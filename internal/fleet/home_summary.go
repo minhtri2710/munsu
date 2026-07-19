@@ -1,9 +1,12 @@
 package fleet
 
 import (
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
@@ -11,8 +14,9 @@ import (
 )
 
 // HomeSummary is a bounded structured view of one Captain home.
-// Schema mirrors firstmate's fm-secondmate-home-summary.v1 at a shallow depth:
-// registered home state is authoritative; parent status is separate evidence.
+// Schema aligns with firstmate fm-secondmate-home-summary.v1 depth:
+// active_children, holds, decisions_open, queued, landed, counts, omitted, valid/reason.
+// Registered home state is authoritative; parent status is separate evidence.
 type HomeSummary struct {
 	Schema         string
 	Generated      string
@@ -21,7 +25,13 @@ type HomeSummary struct {
 	Reason         string
 	State          string // no_active_work | active_child_work | captain_decision | externally_held | unknown
 	ActiveChildren []ChildBrief
+	DecisionsOpen  []DecisionBrief
+	Holds          []HoldBrief
+	Queued         []QueuedBrief
+	Landed         []LandedBrief
+	Endpoints      []EndpointBrief
 	Counts         HomeCounts
+	Omitted        []OmittedSurface
 }
 
 // ChildBrief is one active endpoint under a Captain home.
@@ -29,19 +39,81 @@ type ChildBrief struct {
 	ID     string
 	Status string
 	Kind   string
+	Doing  string
 }
 
-// HomeCounts aggregates Captain-home workload.
+// DecisionBrief is one open decision under a Captain home.
+type DecisionBrief struct {
+	ID      string
+	Key     string
+	Verb    string
+	Summary string
+	Reason  string
+	Source  string // status | backlog
+}
+
+// HoldBrief is one external hold (blocked backlog or parked/paused/blocked child).
+type HoldBrief struct {
+	ID        string
+	Title     string
+	BlockedBy string
+	Reason    string
+	Source    string // backlog | child-state
+}
+
+// QueuedBrief is one queued backlog row.
+type QueuedBrief struct {
+	ID    string
+	Title string
+	Repo  string
+	Kind  string
+}
+
+// LandedBrief is one recently completed backlog row.
+type LandedBrief struct {
+	ID    string
+	Title string
+	PRURL string
+}
+
+// EndpointBrief is one task meta endpoint under the home.
+type EndpointBrief struct {
+	ID     string
+	State  string
+	Kind   string
+	Source string
+}
+
+// HomeCounts aggregates Captain-home workload surfaces (full totals; lists may be capped).
 type HomeCounts struct {
 	ActiveChildren int
+	DecisionsOpen  int
+	Holds          int
 	Queued         int
-	InFlight       int
-	Blocked        int
-	Done           int
+	Landed         int
 	Endpoints      int
+	// Legacy workload counters retained for callers that still read them.
+	InFlight int
+	Blocked  int
+	Done     int
 }
 
-const maxActiveChildren = 20
+// OmittedSurface records a truncated list surface.
+type OmittedSurface struct {
+	Surface string
+	Count   int
+}
+
+const (
+	maxActiveChildren = 20
+	maxDecisionsOpen  = 20
+	maxQueued         = 20
+	maxHolds          = 20
+	maxLanded         = 10
+	maxEndpoints      = 20
+)
+
+var prURLRe = regexp.MustCompile(`https?://[^\s]+`)
 
 // SummarizeCaptainHome builds a bounded summary for a registered Captain home.
 func SummarizeCaptainHome(homeDir string) HomeSummary {
@@ -60,55 +132,274 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		return sum
 	}
 
-	fb := backlog.NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
-	if items, err := fb.List(backlog.StateQueued); err == nil {
-		for _, item := range items {
-			switch item.State {
-			case backlog.StateQueued:
-				sum.Counts.Queued++
-			case backlog.StateInFlight:
-				sum.Counts.InFlight++
-			case backlog.StateBlocked:
-				sum.Counts.Blocked++
-			case backlog.StateDone:
-				sum.Counts.Done++
+	backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+	_, backlogStatErr := os.Stat(backlogPath)
+	backlogPresent := backlogStatErr == nil
+
+	fb := backlog.NewFileBackend(backlogPath)
+	items, backlogErr := fb.List(backlog.StateQueued) // zero filter = all
+	if backlogErr != nil {
+		items = nil
+		backlogPresent = false
+	}
+
+	inFlightByID := map[string]backlog.Item{}
+	var queuedAll []backlog.Item
+	var landedAll []backlog.Item
+	for _, item := range items {
+		switch item.State {
+		case backlog.StateQueued:
+			sum.Counts.Queued++
+			queuedAll = append(queuedAll, item)
+		case backlog.StateInFlight:
+			sum.Counts.InFlight++
+			inFlightByID[item.ID] = item
+		case backlog.StateBlocked:
+			sum.Counts.Blocked++
+		case backlog.StateDone:
+			sum.Counts.Done++
+			if item.Kind != "captain" {
+				landedAll = append(landedAll, item)
 			}
 		}
 	}
+	sum.Counts.Landed = len(landedAll)
 
 	entries, err := task.ListMeta(homeDir)
 	if err != nil {
 		entries = nil
 	}
 	sum.Counts.Endpoints = len(entries)
+	metaByID := map[string]task.MetaEntry{}
+	for _, e := range entries {
+		metaByID[e.ID] = e
+	}
 
-	var active []ChildBrief
-	captainDecision := false
+	type childState struct {
+		id, verb, status, kind, detail string
+	}
+	var children []childState
+	var unknownChildren []string
 	for _, e := range entries {
 		status := strings.TrimSpace(e.LastStatus)
-		verb := status
-		if i := strings.Index(status, ":"); i >= 0 {
-			verb = strings.TrimSpace(status[:i])
+		verb, detail := splitStatus(status)
+		if status == "" {
+			unknownChildren = append(unknownChildren, e.ID)
+			verb = "unknown"
 		}
-		switch verb {
+		children = append(children, childState{
+			id: e.ID, verb: verb, status: status, kind: e.Kind, detail: detail,
+		})
+	}
+
+	var activeAll []ChildBrief
+	for _, c := range children {
+		switch c.verb {
 		case "working", "parked", "paused", "blocked", "needs-decision":
-			if len(active) < maxActiveChildren {
-				active = append(active, ChildBrief{ID: e.ID, Status: status, Kind: e.Kind})
+			activeAll = append(activeAll, ChildBrief{
+				ID:     trunc(c.id, 120),
+				Status: trunc(c.status, 160),
+				Kind:   trunc(c.kind, 40),
+				Doing:  trunc(c.detail, 120),
+			})
+		}
+	}
+	sum.Counts.ActiveChildren = len(activeAll)
+	sum.ActiveChildren = capSlice(activeAll, maxActiveChildren)
+
+	var decisionsAll []DecisionBrief
+	seenDecision := map[string]bool{}
+	stateDir := task.StateDir(homeDir)
+	for _, c := range children {
+		path := filepath.Join(stateDir, c.id+".status")
+		for _, d := range classify.OpenDecisions(path) {
+			key := c.id + "\x00" + d.Key + "\x00" + d.Verb
+			if seenDecision[key] {
+				continue
 			}
-			sum.Counts.ActiveChildren++
-			if classify.GeneralRelevant(status) || verb == "needs-decision" {
-				captainDecision = true
+			seenDecision[key] = true
+			decisionsAll = append(decisionsAll, DecisionBrief{
+				ID:      trunc(c.id, 120),
+				Key:     trunc(d.Key, 120),
+				Verb:    trunc(d.Verb, 40),
+				Summary: trunc(d.Summary, 160),
+				Source:  "status",
+			})
+		}
+		if c.verb == "needs-decision" {
+			key := c.id + "\x00default\x00needs-decision"
+			if !seenDecision[key] {
+				seenDecision[key] = true
+				decisionsAll = append(decisionsAll, DecisionBrief{
+					ID:      trunc(c.id, 120),
+					Key:     "default",
+					Verb:    "needs-decision",
+					Summary: trunc(c.detail, 160),
+					Source:  "status",
+				})
 			}
 		}
 	}
-	sum.ActiveChildren = active
+	sum.Counts.DecisionsOpen = len(decisionsAll)
+	sum.DecisionsOpen = capSlice(decisionsAll, maxDecisionsOpen)
+
+	var holdsAll []HoldBrief
+	for _, item := range items {
+		if item.State != backlog.StateBlocked {
+			continue
+		}
+		holdsAll = append(holdsAll, HoldBrief{
+			ID:     trunc(item.ID, 120),
+			Title:  trunc(item.Description, 90),
+			Reason: "blocked",
+			Source: "backlog",
+		})
+	}
+	for _, c := range children {
+		switch c.verb {
+		case "parked", "paused", "blocked":
+			title := c.id
+			if item, ok := inFlightByID[c.id]; ok {
+				title = item.Description
+			}
+			holdsAll = append(holdsAll, HoldBrief{
+				ID:     trunc(c.id, 120),
+				Title:  trunc(title, 90),
+				Reason: trunc(firstNonEmpty(c.detail, c.verb), 120),
+				Source: "child-state",
+			})
+		}
+	}
+	sum.Counts.Holds = len(holdsAll)
+	sum.Holds = capSlice(holdsAll, maxHolds)
+
+	for i, item := range queuedAll {
+		if i >= maxQueued {
+			break
+		}
+		sum.Queued = append(sum.Queued, QueuedBrief{
+			ID:    trunc(item.ID, 120),
+			Title: trunc(item.Description, 120),
+			Repo:  trunc(item.Repo, 120),
+			Kind:  trunc(item.Kind, 40),
+		})
+	}
+
+	// Reverse landed so later file order surfaces first (approx recent).
+	for i, j := 0, len(landedAll)-1; i < j; i, j = i+1, j-1 {
+		landedAll[i], landedAll[j] = landedAll[j], landedAll[i]
+	}
+	for i, item := range landedAll {
+		if i >= maxLanded {
+			break
+		}
+		pr := ""
+		if lines, err := task.ReadStatus(homeDir, item.ID); err == nil {
+			for k := len(lines) - 1; k >= 0; k-- {
+				if u := extractPRURL(lines[k]); u != "" {
+					pr = u
+					break
+				}
+			}
+		}
+		sum.Landed = append(sum.Landed, LandedBrief{
+			ID:    trunc(item.ID, 120),
+			Title: trunc(item.Description, 120),
+			PRURL: trunc(pr, 500),
+		})
+	}
+
+	for i, c := range children {
+		if i >= maxEndpoints {
+			break
+		}
+		sum.Endpoints = append(sum.Endpoints, EndpointBrief{
+			ID:     trunc(c.id, 120),
+			State:  trunc(firstNonEmpty(c.verb, "unknown"), 40),
+			Kind:   trunc(c.kind, 40),
+			Source: "status",
+		})
+	}
+
+	if len(activeAll) > maxActiveChildren {
+		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "active_children", Count: len(activeAll) - maxActiveChildren})
+	}
+	if len(decisionsAll) > maxDecisionsOpen {
+		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "decisions_open", Count: len(decisionsAll) - maxDecisionsOpen})
+	}
+	if len(queuedAll) > maxQueued {
+		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "queued", Count: len(queuedAll) - maxQueued})
+	}
+	if len(holdsAll) > maxHolds {
+		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "holds", Count: len(holdsAll) - maxHolds})
+	}
+	if len(entries) > maxEndpoints {
+		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "endpoints", Count: len(entries) - maxEndpoints})
+	}
+	if len(landedAll) > maxLanded {
+		sum.Omitted = append(sum.Omitted, OmittedSurface{Surface: "landed", Count: len(landedAll) - maxLanded})
+	}
+
+	var orphanInFlight []string
+	for id := range inFlightByID {
+		if _, ok := metaByID[id]; !ok {
+			orphanInFlight = append(orphanInFlight, id)
+		}
+	}
+	var terminalInFlight []string
+	for id := range inFlightByID {
+		e, ok := metaByID[id]
+		if !ok {
+			continue
+		}
+		verb, _ := splitStatus(e.LastStatus)
+		if verb == "done" || verb == "failed" {
+			terminalInFlight = append(terminalInFlight, id+"="+verb)
+		}
+	}
+	var unownedCurrent []string
+	for _, c := range children {
+		switch c.verb {
+		case "working", "parked", "paused", "blocked":
+			if _, ok := inFlightByID[c.id]; !ok {
+				unownedCurrent = append(unownedCurrent, c.id+"="+c.verb)
+			}
+		}
+	}
 
 	switch {
+	case !backlogPresent:
+		sum.Valid = false
+		sum.Reason = "missing structured backlog"
+	case len(unknownChildren) > 0:
+		sum.Valid = false
+		sum.Reason = "child current state unavailable"
+	case len(orphanInFlight) > 0:
+		sum.Valid = false
+		sum.Reason = "in-flight backlog item has no child metadata"
+	case len(unownedCurrent) > 0 && sum.Counts.InFlight > 0:
+		sum.Valid = false
+		sum.Reason = "live child state has no in-flight backlog item: " + strings.Join(unownedCurrent, ", ")
+	case len(terminalInFlight) > 0:
+		sum.Valid = false
+		sum.Reason = "in-flight backlog item has terminal child state: " + strings.Join(terminalInFlight, ", ")
+	}
+
+	captainDecision := false
+	for _, d := range decisionsAll {
+		if d.Verb == "needs-decision" || d.Verb == "captain-hold" {
+			captainDecision = true
+			break
+		}
+	}
+	switch {
+	case !sum.Valid:
+		sum.State = "unknown"
 	case captainDecision:
 		sum.State = "captain_decision"
-	case sum.Counts.ActiveChildren > 0 || sum.Counts.InFlight > 0:
+	case sum.Counts.ActiveChildren > 0:
 		sum.State = "active_child_work"
-	case sum.Counts.Blocked > 0:
+	case sum.Counts.Holds > 0:
 		sum.State = "externally_held"
 	default:
 		sum.State = "no_active_work"
@@ -123,4 +414,49 @@ func LastParentStatus(parentHome, captainID string) string {
 		return ""
 	}
 	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+func splitStatus(status string) (verb, detail string) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "", ""
+	}
+	before, after, found := strings.Cut(status, ":")
+	if idx := strings.Index(before, "[key="); idx >= 0 {
+		before = strings.TrimSpace(before[:idx])
+	}
+	verb = strings.TrimSpace(before)
+	if found {
+		return verb, strings.TrimSpace(after)
+	}
+	return verb, ""
+}
+
+func trunc(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if n <= 0 || utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:n]) + "…"
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func extractPRURL(line string) string {
+	return prURLRe.FindString(line)
+}
+
+func capSlice[T any](all []T, n int) []T {
+	if len(all) <= n {
+		return all
+	}
+	return all[:n]
 }

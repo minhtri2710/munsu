@@ -71,21 +71,60 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 				LastParentStatus: fleet.LastParentStatus(ctx.Home, m.ID),
 			}
 			sum := fleet.SummarizeCaptainHome(m.Home)
-			if sum.Valid {
+			valid := sum.Valid
+			entry.Valid = &valid
+			if sum.Valid || sum.Home != "" {
 				entry.CurrentState = sum.State
 				entry.CurrentReason = sum.Reason
-				entry.Provenance = "structured-home"
+				if sum.Valid {
+					entry.Provenance = "structured-home"
+				} else if entry.LastParentStatus != "" {
+					entry.Provenance = "parent-status-only"
+				} else if sum.Reason != "" {
+					// Home was readable enough to summarize but failed closed.
+					entry.Provenance = "structured-home"
+				} else {
+					entry.Provenance = "unavailable"
+				}
 				entry.Counts = &contract.CaptainHomeCounts{
 					ActiveChildren: sum.Counts.ActiveChildren,
+					DecisionsOpen:  sum.Counts.DecisionsOpen,
+					Holds:          sum.Counts.Holds,
 					Queued:         sum.Counts.Queued,
+					Landed:         sum.Counts.Landed,
+					Endpoints:      sum.Counts.Endpoints,
 					InFlight:       sum.Counts.InFlight,
 					Blocked:        sum.Counts.Blocked,
 					Done:           sum.Counts.Done,
-					Endpoints:      sum.Counts.Endpoints,
 				}
 				for _, c := range sum.ActiveChildren {
 					entry.ActiveChildren = append(entry.ActiveChildren, contract.CaptainChildBrief{
-						ID: c.ID, Status: c.Status, Kind: c.Kind,
+						ID: c.ID, Status: c.Status, Kind: c.Kind, Doing: c.Doing,
+					})
+				}
+				for _, d := range sum.DecisionsOpen {
+					entry.DecisionsOpen = append(entry.DecisionsOpen, contract.CaptainDecision{
+						ID: d.ID, Key: d.Key, Verb: d.Verb, Summary: d.Summary, Reason: d.Reason, Source: d.Source,
+					})
+				}
+				for _, h := range sum.Holds {
+					entry.Holds = append(entry.Holds, contract.CaptainHold{
+						ID: h.ID, Title: h.Title, BlockedBy: h.BlockedBy, Reason: h.Reason, Source: h.Source,
+					})
+				}
+				for _, q := range sum.Queued {
+					entry.Queued = append(entry.Queued, contract.CaptainQueued{
+						ID: q.ID, Title: q.Title, Repo: q.Repo, Kind: q.Kind,
+					})
+				}
+				for _, l := range sum.Landed {
+					entry.Landed = append(entry.Landed, contract.CaptainLanded{
+						ID: l.ID, Title: l.Title, PRURL: l.PRURL,
+					})
+				}
+				for _, o := range sum.Omitted {
+					entry.Omitted = append(entry.Omitted, contract.CaptainOmitted{
+						Surface: o.Surface, Count: o.Count,
 					})
 				}
 			} else if entry.LastParentStatus != "" {

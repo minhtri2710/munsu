@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,9 @@ func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := SummarizeCaptainHome(home)
+	if !sum.Valid {
+		t.Fatalf("valid=false reason=%q", sum.Reason)
+	}
 	if sum.State != "active_child_work" {
 		t.Fatalf("state=%q want active_child_work", sum.State)
 	}
@@ -29,6 +33,108 @@ func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 	}
 	if len(sum.ActiveChildren) != 1 || sum.ActiveChildren[0].ID != "t1" {
 		t.Fatalf("active=%+v", sum.ActiveChildren)
+	}
+	if sum.ActiveChildren[0].Doing != "implementing" {
+		t.Fatalf("doing=%q", sum.ActiveChildren[0].Doing)
+	}
+	if len(sum.Queued) != 1 || sum.Queued[0].ID != "t2" {
+		t.Fatalf("queued=%+v", sum.Queued)
+	}
+}
+
+func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	os.MkdirAll(filepath.Join(home, "data"), 0755)
+	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte(`# Backlog
+
+## day
+- [-] t-decision: needs input
+- [!] t-blocked: waiting dep
+- [x] t-done: shipped feature
+- [ ] t-queued: next work
+`), 0644)
+	if err := task.WriteMeta(home, "t-decision", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.AppendStatus(home, "t-decision", "needs-decision [key=approach]: pick A or B"); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.WriteMeta(home, "t-done", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.AppendStatus(home, "t-done", "done: PR https://github.com/example/repo/pull/9"); err != nil {
+		t.Fatal(err)
+	}
+
+	sum := SummarizeCaptainHome(home)
+	if !sum.Valid {
+		t.Fatalf("valid=false reason=%q", sum.Reason)
+	}
+	if sum.State != "captain_decision" {
+		t.Fatalf("state=%q want captain_decision", sum.State)
+	}
+	if sum.Counts.DecisionsOpen < 1 || len(sum.DecisionsOpen) < 1 {
+		t.Fatalf("decisions=%+v counts=%+v", sum.DecisionsOpen, sum.Counts)
+	}
+	if sum.DecisionsOpen[0].Verb != "needs-decision" {
+		t.Fatalf("decision verb=%q", sum.DecisionsOpen[0].Verb)
+	}
+	if sum.Counts.Holds < 1 {
+		t.Fatalf("holds count=%d holds=%+v", sum.Counts.Holds, sum.Holds)
+	}
+	if sum.Counts.Landed != 1 || len(sum.Landed) != 1 {
+		t.Fatalf("landed=%+v counts=%+v", sum.Landed, sum.Counts)
+	}
+	if !strings.Contains(sum.Landed[0].PRURL, "github.com/example/repo/pull/9") {
+		t.Fatalf("pr_url=%q", sum.Landed[0].PRURL)
+	}
+	if sum.Counts.Queued != 1 {
+		t.Fatalf("queued count=%d", sum.Counts.Queued)
+	}
+}
+
+func TestSummarizeCaptainHome_MissingBacklogInvalid(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	sum := SummarizeCaptainHome(home)
+	if sum.Valid {
+		t.Fatal("expected valid=false without backlog")
+	}
+	if sum.Reason != "missing structured backlog" {
+		t.Fatalf("reason=%q", sum.Reason)
+	}
+	if sum.State != "unknown" {
+		t.Fatalf("state=%q", sum.State)
+	}
+}
+
+func TestSummarizeCaptainHome_OmittedCaps(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "data"), 0755)
+
+	var b strings.Builder
+	b.WriteString("# Backlog\n\n")
+	for i := 0; i < 25; i++ {
+		fmt.Fprintf(&b, "- [ ] q%02d: queued item\n", i)
+	}
+	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte(b.String()), 0644)
+
+	sum := SummarizeCaptainHome(home)
+	if sum.Counts.Queued != 25 {
+		t.Fatalf("queued count=%d", sum.Counts.Queued)
+	}
+	if len(sum.Queued) != maxQueued {
+		t.Fatalf("queued list len=%d want %d", len(sum.Queued), maxQueued)
+	}
+	found := false
+	for _, o := range sum.Omitted {
+		if o.Surface == "queued" && o.Count == 5 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("omitted=%+v", sum.Omitted)
 	}
 }
 
