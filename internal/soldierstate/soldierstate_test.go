@@ -149,6 +149,85 @@ func TestRead_MultipleStatusLines(t *testing.T) {
 	if s.StatusLines != 4 {
 		t.Errorf("StatusLines = %d, want 4", s.StatusLines)
 	}
+	if len(s.OpenActivities) != 0 {
+		t.Errorf("OpenActivities = %+v, want empty after done", s.OpenActivities)
+	}
+}
+
+func TestRead_ResolvedIsNotCurrentState(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+	if err := task.WriteMeta(tmp, "resolved-only", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	task.AppendStatus(tmp, "resolved-only", "working: started")
+	task.AppendStatus(tmp, "resolved-only", "resolved: closed key without terminal")
+
+	s, err := Read(tmp, "resolved-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Trailing resolved closes the phase; current state falls through to pane/idle,
+	// not Status=resolved.
+	if s.Status == "resolved" {
+		t.Fatalf("status must not be resolved; got %q (%s)", s.Status, s.Description)
+	}
+	if s.Status != "idle" && s.Status != "working" && s.Status != "unknown" {
+		t.Errorf("status = %q, want idle/working/unknown after pure close", s.Status)
+	}
+	if len(s.OpenActivities) != 0 {
+		t.Errorf("OpenActivities should be closed, got %+v", s.OpenActivities)
+	}
+}
+
+func TestRead_KeyedOpenActivitiesMultiEvent(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+	if err := task.WriteMeta(tmp, "keyed-phases", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	task.AppendStatus(tmp, "keyed-phases", "working [key=phase7]: Phase 7 started")
+	task.AppendStatus(tmp, "keyed-phases", "working [key=phase6]: Phase 6 started")
+	task.AppendStatus(tmp, "keyed-phases", "done [key=phase6]: Phase 6 completed")
+	task.AppendStatus(tmp, "keyed-phases", "resolved [key=phase7]: Phase 7 done")
+	task.AppendStatus(tmp, "keyed-phases", "working [key=phase8]: Phase 8 started")
+
+	s, err := Read(tmp, "keyed-phases")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != "working" {
+		t.Errorf("status = %q, want working from last state-bearing line", s.Status)
+	}
+	if !strings.Contains(s.Description, "Phase 8") {
+		t.Errorf("description = %q, want Phase 8 note", s.Description)
+	}
+	if len(s.OpenActivities) != 1 || s.OpenActivities[0].Key != "phase8" {
+		t.Fatalf("OpenActivities = %+v, want only phase8", s.OpenActivities)
+	}
+}
+
+func TestRead_KeyedVerbBeforeColon(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+	if err := task.WriteMeta(tmp, "keyed-verb", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	task.AppendStatus(tmp, "keyed-verb", "done [key=ship]: PR https://example/1")
+
+	s, err := Read(tmp, "keyed-verb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != "done" {
+		t.Errorf("status = %q, want done (key must not pollute verb)", s.Status)
+	}
 }
 
 func TestRead_GitBranch(t *testing.T) {

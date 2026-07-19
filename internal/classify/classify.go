@@ -40,6 +40,15 @@ type Decision struct {
 	Summary string
 }
 
+// Activity represents a keyed open work phase (working/paused) in the status event log.
+// It is fold evidence about whether a parent/child event was explicitly superseded;
+// it is never authoritative current soldier state (prefer soldierstate / structured home).
+type Activity struct {
+	Key     string
+	Verb    string // "working" or paused verb
+	Summary string
+}
+
 // StatusMatch represents a status file whose last line is general-relevant.
 type StatusMatch struct {
 	Path     string
@@ -197,6 +206,51 @@ func OpenDecisions(path string) []Decision {
 	}
 
 	return decisions
+}
+
+// OpenActivities folds a status file into still-open keyed work phases.
+// working or paused opens/replaces a phase for its key; done, failed,
+// needs-decision, blocked, resolved, or captain-held with the same key closes it.
+// Bare legacy events use key "default". Matches firstmate status_open_activities.
+// Not authoritative current state — use soldierstate / home summary for that.
+func OpenActivities(path string) []Activity {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var activities []Activity
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		verb := lineVerb(line)
+		note := lineNote(line)
+		key := decisionKey(line)
+
+		switch verb {
+		case "working", PausedVerbDefault:
+			activities = removeActivityByKey(activities, key)
+			activities = append(activities, Activity{Key: key, Verb: verb, Summary: note})
+		case "done", "failed", "needs-decision", "blocked", ResolveVerbDefault, "captain-held":
+			activities = removeActivityByKey(activities, key)
+		}
+	}
+	return activities
+}
+
+// removeActivityByKey removes the first activity with the given key.
+func removeActivityByKey(activities []Activity, key string) []Activity {
+	for i, a := range activities {
+		if a.Key == key {
+			return append(activities[:i], activities[i+1:]...)
+		}
+	}
+	return activities
 }
 
 // AbsorbClass classifies why an idle task might be safely absorbed.

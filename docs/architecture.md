@@ -102,9 +102,25 @@ by `task.WriteMeta` and read by `task.ReadMeta`. Metadata keys include
 `window`, `worktree`, `project`, `harness`, `model`, `effort`, `kind`, `mode`,
 `yolo`, `pr`, `head_sha`, `created`, `updated`.
 
-Task status (`state/<id>.status`): one `state: message` line per append.
-States include `working`, `blocked`, `done`, `failed`, `needs-decision`.
-Used by `soldierstate.Read` to reconstruct the current task status.
+Task status (`state/<id>.status`): **append-only wake/event log**, one
+`verb [key=<slug>]: message` line per append. It is **not** sole current-state
+authority — prefer `soldierstate.Read` / structured fleet home summary /
+no-mistakes run-step. Last line alone can mask still-open keyed decisions or
+phases.
+
+Semantics (firstmate crew status model):
+
+- **Append-only events** — never rewrite; consumers fold the whole stream.
+- **Keyed open/close** — optional `[key=<slug>]` between verb and colon:
+  - Decisions: `needs-decision`/`blocked` open; `resolved`/`captain-held` close
+    (`classify.OpenDecisions`).
+  - Work phases: `working`/`paused` open; `done`/`failed`/`needs-decision`/
+    `blocked`/`resolved`/`captain-held` close (`classify.OpenActivities`).
+  - Bare lines use key `default` (legacy one-open-per-task).
+- **Current state** — `soldierstate` orders no-mistakes run-step > pane liveness >
+  last **state-bearing** log verb (`resolved` closes keys only, never becomes
+  Status). Parent captain status is historical/untrusted vs structured home
+  (`fleet.ReconcileParentStatus`).
 
 ### Configuration
 
