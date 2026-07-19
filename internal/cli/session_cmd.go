@@ -279,8 +279,17 @@ With --harness claude, this command acts as a Claude Stop hook:
 - Reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
 - Checks watcher health and in-flight tasks
 - On blind-turn (tasks in-flight + unhealthy watcher): exit 2 + stderr reason
-- Otherwise: exit 0`,
+- Otherwise: exit 0
+
+With --harness agy, acts as an agy Stop hook:
+- Reads stdin JSON for fullyIdle (true → allow-stop with {"decision":"allow"})
+- Checks watcher health and in-flight tasks
+- On blind-turn: stdout {"decision":"continue","reason":"..."} + exit 0
+- Otherwise: stdout {"decision":"allow"} + exit 0`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if harnessFlag == "agy" {
+				return runGuardAgy(ctx.Home)
+			}
 			if harnessFlag == "claude" {
 				return runGuardClaude(ctx.Home)
 			}
@@ -313,7 +322,7 @@ With --harness claude, this command acts as a Claude Stop hook:
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude, codex, opencode (exit 2 + stderr), or grok (passive Stop hook)")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude, codex, opencode (exit 2 + stderr), grok (passive Stop hook), or agy (stdout decision JSON)")
 	return cmd
 }
 
@@ -516,6 +525,93 @@ func runGuardGrok(homeDir string) error {
 	fmt.Fprintln(os.Stderr, reason)
 	exitWithCode(2)
 	return nil // unreachable
+}
+
+// runGuardAgy implements the agy Stop hook guard.
+// agy Stop hooks are active: stdout decision JSON gates the turn end.
+// - fullyIdle=true: allow stop with {"decision":"allow"}
+// - Blind turn: continue with {"decision":"continue","reason":"..."}
+// - Healthy: allow stop with {"decision":"allow"}
+// All paths exit 0 because agy gates on the stdout decision field, NOT exit code.
+func runGuardAgy(homeDir string) error {
+	// Read stdin JSON for fullyIdle
+	data, err := io.ReadAll(os.Stdin)
+	fullyIdle := false
+	if err == nil {
+		var payload map[string]interface{}
+		if json.Unmarshal([]byte(strings.TrimSpace(string(data))), &payload) == nil {
+			if idle, ok := payload["fullyIdle"].(bool); ok && idle {
+				fullyIdle = true
+			}
+		}
+	}
+
+	// fullyIdle means the agent says it's completely finished — allow the stop
+	if fullyIdle {
+		allowJSON, _ := json.Marshal(map[string]interface{}{
+			"decision": "allow",
+		})
+		fmt.Fprintln(os.Stdout, string(allowJSON))
+		return nil
+	}
+
+	// Check scope: only guard primary checkouts
+	cls := scope.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != scope.Primary {
+		allowJSON, _ := json.Marshal(map[string]interface{}{
+			"decision": "allow",
+		})
+		fmt.Fprintln(os.Stdout, string(allowJSON))
+		return nil
+	}
+
+	// Check fleet state for in-flight tasks
+	inFlight := 0
+	snap, snapErr := fleet.Snapshot(homeDir)
+	if snapErr == nil {
+		for _, ts := range snap.Tasks {
+			if ts.Kind == "ship" || ts.Kind == "scout" {
+				inFlight++
+			}
+		}
+	}
+
+	// No in-flight work -> safe to end turn
+	if inFlight == 0 {
+		allowJSON, _ := json.Marshal(map[string]interface{}{
+			"decision": "allow",
+		})
+		fmt.Fprintln(os.Stdout, string(allowJSON))
+		return nil
+	}
+
+	// Check watcher liveness
+	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+
+	// If watcher is healthy and not stale, allow the stop
+	if status.Exists && !status.Stale {
+		allowJSON, _ := json.Marshal(map[string]interface{}{
+			"decision": "allow",
+		})
+		fmt.Fprintln(os.Stdout, string(allowJSON))
+		return nil
+	}
+
+	// Blind turn: in-flight work + unhealthy watcher -> continue the turn
+	reason := "TURN WOULD END BLIND: "
+	if !status.Exists {
+		reason += "watcher never started"
+	} else {
+		reason += fmt.Sprintf("watcher beat stale by %v", status.Age.Round(time.Second))
+	}
+	reason += fmt.Sprintf(" with %d in-flight task(s)", inFlight)
+
+	continueJSON, _ := json.Marshal(map[string]interface{}{
+		"decision": "continue",
+		"reason":   reason,
+	})
+	fmt.Fprintln(os.Stdout, string(continueJSON))
+	return nil
 }
 
 func newAfkCmd() *cobra.Command {
