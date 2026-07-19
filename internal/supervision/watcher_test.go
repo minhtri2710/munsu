@@ -409,13 +409,18 @@ func TestScanFleet_NoMetaFiles(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Only create status files without corresponding meta files
+	// Non-captain-relevant orphan status without meta stays quiet.
 	os.WriteFile(filepath.Join(stateDir, "orphan.status"), []byte("working: stray\n"), 0644)
+	// Captain-relevant status (including Second return-channel files) must wake
+	// even without a companion .meta — parent status is the return path.
 	os.WriteFile(filepath.Join(stateDir, "another.status"), []byte("done: finished\n"), 0644)
 
 	reason := ScanFleet(tmp)
-	if reason != nil {
-		t.Errorf("expected nil for orphan status files (no meta), got %v", reason)
+	if reason == nil {
+		t.Fatal("expected signal for captain-relevant status without meta")
+	}
+	if reason.Kind != "signal" || len(reason.TaskIDs) != 1 || reason.TaskIDs[0] != "another" {
+		t.Fatalf("unexpected reason: %+v", reason)
 	}
 }
 
@@ -589,4 +594,29 @@ func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
 			t.Error("failed without run step should NOT absorb stale")
 		}
 	})
+}
+
+func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(home, "state")
+	os.MkdirAll(state, 0755)
+	// Second return-channel status without requiring dead pane.
+	os.WriteFile(filepath.Join(state, "secondmate:api.meta"), []byte("window=w1\nkind=secondmate\nbackend=tmux\n"), 0644)
+	os.WriteFile(filepath.Join(state, "secondmate:api.status"), []byte("done [key=x]: PR https://example/1\n"), 0644)
+
+	emitted, err := RunCycle(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !emitted {
+		t.Fatal("expected wake from captain-relevant parent status")
+	}
+	// Second cycle with same status must not re-emit (fingerprint dedupe).
+	emitted2, err := RunCycle(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emitted2 {
+		t.Fatal("expected status signal to be deduped on second cycle")
+	}
 }

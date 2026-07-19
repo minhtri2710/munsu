@@ -72,10 +72,36 @@ type Crewmate struct {
 }
 
 // SecondmateEntry represents one secondmate in the fleet snapshot.
+// Parent status is untrusted supplemental evidence (return channel);
+// Current/home fields are derived from the registered Second home when readable.
 type SecondmateEntry struct {
+	ID               string             `json:"id"`
+	Home             string             `json:"home,omitempty"`
+	Scope            string             `json:"scope,omitempty"`
+	Status           string             `json:"status"` // endpoint liveness: seeded|alive|dead|unknown
+	CurrentState     string             `json:"current_state,omitempty"`
+	CurrentReason    string             `json:"current_reason,omitempty"`
+	LastParentStatus string             `json:"last_parent_status,omitempty"`
+	ActiveChildren   []SecondChildBrief `json:"active_children,omitempty"`
+	Counts           *SecondHomeCounts  `json:"counts,omitempty"`
+	Provenance       string             `json:"provenance,omitempty"` // structured-home | parent-status-only | unavailable
+}
+
+// SecondChildBrief is a bounded child row under a Second home.
+type SecondChildBrief struct {
 	ID     string `json:"id"`
-	Scope  string `json:"scope,omitempty"`
-	Status string `json:"status"`
+	Status string `json:"status,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+}
+
+// SecondHomeCounts aggregates Second-home workload surfaces.
+type SecondHomeCounts struct {
+	ActiveChildren int `json:"active_children"`
+	Queued         int `json:"queued"`
+	InFlight       int `json:"in_flight"`
+	Blocked        int `json:"blocked"`
+	Done           int `json:"done"`
+	Endpoints      int `json:"endpoints"`
 }
 
 // GuardViolation is a single violation with supporting evidence.

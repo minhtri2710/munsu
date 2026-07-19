@@ -158,11 +158,26 @@ func scanFleet(homeDir string, clearResolved bool) []*WakeReason {
 	}
 
 	var reasons []*WakeReason
+	// Status-signal path: captain-relevant last lines (including Second return-channel
+	// files state/secondmate:<id>.status) wake Marshal even when the pane is alive.
+	seenStatus := map[string]bool{}
+	for _, match := range classify.ScanCaptainRelevant(filepath.Join(homeDir, "state")) {
+		seenStatus[match.TaskID] = true
+		reasons = append(reasons, &WakeReason{
+			Kind:    "signal",
+			TaskIDs: []string{match.TaskID},
+			Message: match.LastLine,
+		})
+	}
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".meta")
+		if seenStatus[id] {
+			// Status signal already actionable for this id; skip stale scan.
+			continue
+		}
 		reason := scanTask(homeDir, id)
 		if reason == nil {
 			if clearResolved {
@@ -172,7 +187,42 @@ func scanFleet(homeDir string, clearResolved bool) []*WakeReason {
 		}
 		reasons = append(reasons, reason)
 	}
+	// Clear status-only markers when last line is no longer captain-relevant
+	// (e.g. Second wrote working: after a prior done:).
+	if clearResolved {
+		for id := range collectStatusIDs(filepath.Join(homeDir, "state")) {
+			if seenStatus[id] {
+				continue
+			}
+			hasReason := false
+			for _, r := range reasons {
+				if len(r.TaskIDs) > 0 && r.TaskIDs[0] == id {
+					hasReason = true
+					break
+				}
+			}
+			if !hasReason {
+				clearWakeMarker(homeDir, id)
+			}
+		}
+	}
 	return reasons
+}
+
+func collectStatusIDs(stateDir string) map[string]struct{} {
+	out := map[string]struct{}{}
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		return out
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".status") || strings.HasPrefix(name, ".") {
+			continue
+		}
+		out[strings.TrimSuffix(name, ".status")] = struct{}{}
+	}
+	return out
 }
 
 func scanTask(homeDir, id string) *WakeReason {
