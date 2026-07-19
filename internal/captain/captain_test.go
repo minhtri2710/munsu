@@ -135,7 +135,7 @@ func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
 
 func TestSeedWithParent_WritesDefaultCharter(t *testing.T) {
 	parent := t.TempDir()
-	sm := filepath.Join(parent, "secondmates", "api")
+	sm := filepath.Join(parent, "captains", "api")
 	if err := SeedWithParent("api", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}

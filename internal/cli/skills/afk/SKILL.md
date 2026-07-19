@@ -5,7 +5,7 @@ description: Away-mode supervision daemon for munsu — start, return, and check
 
 # afk — away-mode supervision skill
 
-Mirrors the firstmate AFK protocol with munsu-native commands.
+Implements the AFK supervision protocol with munsu-native commands.
 
 ## Commands
 

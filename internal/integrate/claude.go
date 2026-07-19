@@ -1,7 +1,7 @@
 // Package integrate manages opt-in harness integration.
 //
 // Claude adapter: generates .claude/settings.json with hooks anchored to
-// the munsu binary path, mirroring firstmate's verified Claude hook contract.
+// the munsu binary path, mirroring the munsu Claude hook contract.
 
 package integrate
 

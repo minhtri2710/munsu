@@ -138,7 +138,7 @@ func readLastLine(path string) string {
 // GeneralRelevant returns true if a status line contains a general-relevant verb
 // (done:, failed:, needs-decision:, blocked:, "PR ready", "checks green",
 // "ready in branch", "merged"). Paused lines are NOT general-relevant.
-// Matches firstmate's status_is_captain_relevant.
+// Matches the munsu status_is_captain_relevant pattern.
 func GeneralRelevant(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
@@ -159,7 +159,7 @@ func GeneralRelevant(line string) bool {
 }
 
 // IsPaused returns true if a status line's leading verb is the pause verb.
-// Matches firstmate's status_is_paused.
+// Matches the munsu status_is_paused pattern.
 func IsPaused(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
@@ -172,7 +172,7 @@ func IsPaused(line string) bool {
 // Keys must be explicitly closed by "resolved:" or "captain-held:" lines
 // referencing the same key. A bare "resolved:" closes the "default" key.
 // Returns nil for missing/unreadable files or when no decisions are open.
-// Matches firstmate's status_open_decisions.
+// Matches the munsu status_open_decisions pattern.
 func OpenDecisions(path string) []Decision {
 	f, err := os.Open(path)
 	if err != nil {
@@ -211,7 +211,7 @@ func OpenDecisions(path string) []Decision {
 // OpenActivities folds a status file into still-open keyed work phases.
 // working or paused opens/replaces a phase for its key; done, failed,
 // needs-decision, blocked, resolved, or captain-held with the same key closes it.
-// Bare legacy events use key "default". Matches firstmate status_open_activities.
+// Bare legacy events use key "default". Matches the munsu status_open_activities pattern.
 // Not authoritative current state — use soldierstate / home summary for that.
 func OpenActivities(path string) []Activity {
 	f, err := os.Open(path)
@@ -260,7 +260,7 @@ func removeActivityByKey(activities []Activity, key string) []Activity {
 //   - Paused if the last line verb is the pause verb
 //   - None otherwise
 //
-// This is a pure-logic subset of firstmate's soldier_absorb_class, which also
+// This is a pure-logic subset of munsu's absorb_class logic, which also
 // consults no-mistakes run-step and pane liveness. The watcher integrates
 // classify alongside soldierstate.Read for the full picture.
 func AbsorbClass(id string, stateDir string) AbsorbResult {
@@ -282,7 +282,7 @@ func AbsorbClass(id string, stateDir string) AbsorbResult {
 
 // ScanGeneralRelevant scans stateDir/*.status for general-relevant last lines.
 // Returns a StatusMatch for each file whose last line is general-relevant.
-// Matches firstmate's scan_captain_relevant_statuses.
+// Matches the munsu scan_captain_relevant_statuses pattern.
 func ScanGeneralRelevant(stateDir string) []StatusMatch {
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {

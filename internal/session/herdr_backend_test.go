@@ -465,7 +465,7 @@ func TestTeardown_NoWorkspaceClose_WhenForeignLabel(t *testing.T) {
 
 	h := NewHerdrBackend("test-s")
 	h.TeardownWorkspaceID = "wTest"
-	h.Hometag = "firstmate" // doesn't match workspace label 'test-ws'
+	h.Hometag = "other" // doesn't match workspace label 'test-ws'
 
 	if err := h.Teardown("wTest:p1"); err != nil {
 		t.Errorf("Teardown with non-matching hometag should succeed (no workspace close): %v", err)

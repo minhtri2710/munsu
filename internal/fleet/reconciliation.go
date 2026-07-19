@@ -7,7 +7,7 @@ import (
 // ParentReconciliation is the result of comparing parent captain status
 // (append-only event log last line) against structured Captain-home summary.
 // Structured home is authoritative; parent status is historical/untrusted when
-// it conflicts (firstmate secondmate_current provenance model).
+// it conflicts (munsu captain_current provenance model).
 type ParentReconciliation struct {
 	// Provenance selected source of current state.
 	// structured-home | parent-status-only | unavailable

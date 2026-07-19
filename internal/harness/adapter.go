@@ -26,7 +26,7 @@ type CaptainLaunchContract struct {
 
 // Adapter describes a verified agent harness with detection, launch,
 // supervision facts, and state artifact cleanup. Each adapter is populated
-// from empirically verified observations (see firstmate harness-adapters skill).
+// from empirically verified observations (see the captain provisioning skill).
 type Adapter struct {
 	// Name is the harness identifier (matching the package-level constants).
 	Name string

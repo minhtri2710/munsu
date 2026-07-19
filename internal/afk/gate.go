@@ -30,7 +30,7 @@ func IsReturnSignal(line string) bool {
 }
 
 // IsClean checks whether any actionable AFK state remains in the
-// durable digest queue. Returns true when nothing needs firstmate
+// durable digest queue. Returns true when nothing needs munsu
 // attention and normal work can resume.
 //
 // Actionable state includes:

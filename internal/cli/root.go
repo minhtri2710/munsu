@@ -135,10 +135,10 @@ func NewRootCommand() *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
 	root := &cobra.Command{
 		Use:   "munsu",
-		Short: "Standalone CLI port of firstmate soldier capabilities",
+		Short: "Standalone CLI for coding-agent fleet orchestration",
 		Long: `munsu is an installable CLI that gives any coding-agent harness
-the firstmate soldier capability, usable from any project directory,
-with no requirement to live inside a firstmate checkout.`,
+soldier lifecycle capabilities — spawn, supervise, deliver — usable from any project directory,
+with no requirement to live inside a specific project checkout.`,
 		Version:            Version,
 		SilenceErrors:      true,
 		SilenceUsage:       true,

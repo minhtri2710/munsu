@@ -4,8 +4,7 @@
 //
 // All functions are pure (no I/O) and operate on plain or ANSI-styled text.
 //
-// Reference: firstmate bin/fm-composer-lib.sh (the fleet-wide owner of
-// composer-content classification).
+// Reference: the munsu composer classification pattern.
 package composer
 
 import (
@@ -183,7 +182,7 @@ func skipColorPayload(params []string, p int) int {
 
 // StripGhost removes de-emphasised runs (dim/faint SGR 2, and dark truecolor
 // foreground) from s, returning only "real typed content". This matches the
-// logic in fm_composer_strip_ghost from firstmate's bin/fm-composer-lib.sh.
+// logic in the munsu fm_composer_strip_ghost pattern.
 //
 // De-emphasis tracking:
 //   - dim (SGR 2): how claude and codex render ghost/suggestion text.

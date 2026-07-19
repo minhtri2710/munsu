@@ -14,13 +14,13 @@ import (
 // phase. It carries guidance strings so the General can steer without
 // reading child chat.
 type DrainReport struct {
-	Consumer      string              `json:"consumer"`
-	LeaseID       string              `json:"lease_id"`
-	Actionable    []DrainWake         `json:"actionable"`
-	RoutineCount  int                 `json:"routine_count"`
-	Reclaimed     int                 `json:"reclaimed"`
-	FleetPeek     *DrainFleetPeek     `json:"fleet_peek,omitempty"`
-	Guidance      []string            `json:"guidance,omitempty"`
+	Consumer     string          `json:"consumer"`
+	LeaseID      string          `json:"lease_id"`
+	Actionable   []DrainWake     `json:"actionable"`
+	RoutineCount int             `json:"routine_count"`
+	Reclaimed    int             `json:"reclaimed"`
+	FleetPeek    *DrainFleetPeek `json:"fleet_peek,omitempty"`
+	Guidance     []string        `json:"guidance,omitempty"`
 }
 
 // DrainWake is one classified wake in the drain report.
@@ -32,10 +32,10 @@ type DrainWake struct {
 
 // DrainFleetPeek is the actionable subset of the fleet snapshot.
 type DrainFleetPeek struct {
-	InFlight  int            `json:"in_flight"`
-	Alive     int            `json:"alive"`
-	Dead      int            `json:"dead"`
-	Phases    []DrainTaskRow `json:"phases,omitempty"`
+	InFlight int            `json:"in_flight"`
+	Alive    int            `json:"alive"`
+	Dead     int            `json:"dead"`
+	Phases   []DrainTaskRow `json:"phases,omitempty"`
 }
 
 // DrainTaskRow is one in-flight task row in the peek.

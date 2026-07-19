@@ -231,7 +231,7 @@ func scanTask(homeDir, id string) *WakeReason {
 	if err != nil {
 		return nil
 	}
-	// Captains are idle-by-default (firstmate secondmate skip). Parent
+	// Captains are idle-by-default. Parent
 	// supervision uses captain-relevant status signals, not pane-idle stale.
 	if meta["kind"] == "captain" {
 		resetStreak(id)

@@ -211,7 +211,7 @@ func agentAvailable(agent string) bool {
 }
 
 // projectSettingsDisabled reports whether repoPath/.no-mistakes.yaml sets
-// disable_project_settings: true (firstmate gate boundary). When true, the
+// disable_project_settings: true (gate boundary). When true, the
 // no-mistakes daemon does not load project AGENTS.md/settings into gate agents,
 // so pi (and other non-codex/claude agents) are compatible without agent-side
 // neutralization flags.
@@ -241,7 +241,7 @@ func checkNoMistakesCompatibility(repoPath string, cfg noMistakesConfig, availab
 		return nil
 	}
 
-	// Firstmate path: trusted gate config disables project instructions so the
+	// Trusted gate path: trusted gate config disables project instructions so the
 	// selected pipeline agent never adopts repo AGENTS.md identity.
 	if projectSettingsDisabled(repoPath) {
 		return nil

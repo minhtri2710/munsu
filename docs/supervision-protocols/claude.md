@@ -15,10 +15,10 @@ When this session owns supervision and away mode is not active:
 6. For a forced restart: `munsu watch-arm --restart`.
 7. Do not send idle progress while the watcher is parked.
 
-## Key differences from firstmate
+## Key supervision commands
 
-- Use `munsu watch-arm` instead of `bin/fm-watch-arm.sh`.
-- Use `munsu wake-drain` instead of `bin/fm-wake-drain.sh`.
+- Use `munsu watch-arm` to arm the watcher.
+- Use `munsu wake-drain` to drain queued wake records.
 - No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 - The primary session's own turn-end guard is the agent's responsibility per the seeded orchestrator manual.
 

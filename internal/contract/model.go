@@ -66,7 +66,7 @@ type FleetSnapshotV2 struct {
 }
 
 // CaptainGuidance is return-channel action note for renderers and bearings
-// (firstmate secondmate_guidance analog).
+// (munsu captain_guidance analog).
 type CaptainGuidance struct {
 	Note              string `json:"note"`
 	Watch             string `json:"watch,omitempty"`

@@ -132,7 +132,6 @@ func printDrainSummary(w io.Writer, home string) {
 	}
 }
 
-
 func supervisionMode(string) string { return "persistent daemon" }
 
 func printSupervisionBlock(w io.Writer, h string, acquired bool) {
@@ -364,14 +363,13 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 	printDataFile(w, home, "projects.md")
 	printDataFile(w, home, "captains.md")
 
-printFleetState(w, home)
+	printFleetState(w, home)
 
 	if acquired {
 		fmt.Fprintln(w, "")
 		fmt.Fprintln(w, "--- AFK Drain ---")
 		printDrainSummary(w, home)
 	}
-
 
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Supervision ---")

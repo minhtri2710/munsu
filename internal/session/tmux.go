@@ -49,7 +49,7 @@ func (t *TmuxBackend) ensureSession(session string) error {
 // If the session does not exist, it is created automatically.
 // It uses `tmux new-window -P -F "#{window_id}" -n <name>`.
 // The session parameter can be a tmux session selector (e.g. "mysession" or "munsu").
-// Returns "<session>:<window_id>" for firstmate compatibility.
+// Returns "<session>:<window_id>" for window handle.
 func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
 	bin, err := tmuxBin()
 	if err != nil {
@@ -68,7 +68,7 @@ func (t *TmuxBackend) NewWindow(session, name string) (string, error) {
 		}
 		return "", fmt.Errorf("tmux new-window: %w", err)
 	}
-	// Return qualified "<session>:<window_id>" for firstmate compatibility.
+	// Return qualified "<session>:<window_id>" for window handle.
 	return session + ":" + strings.TrimSpace(string(out)), nil
 }
 

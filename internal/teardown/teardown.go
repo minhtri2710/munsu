@@ -97,7 +97,7 @@ func Run(opts Options) (*TeardownResult, error) {
 	}
 
 	// 2. Return worktree to pool — fail-closed: if return fails, abort teardown
-	//    so the lease is not falsely claimed as released (firstmate contract).
+	//    so the lease is not falsely claimed as released.
 	if wtPath != "" {
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
 			if err := worktree.Return(opts.HomeDir, wtPath); err != nil {
@@ -121,8 +121,8 @@ func Run(opts Options) (*TeardownResult, error) {
 
 	// 4. Remove residual state artifacts
 	// Munsu-native artifacts are always cleaned up for any task.
-	// Legacy/firstmate artifacts are cleaned up for backward compatibility
-	// so existing firstmate homes still get a clean teardown.
+	// Legacy artifacts from previous versions are cleaned up for backward compatibility
+	// so existing homes still get a clean teardown.
 	// During the item-5 dual-read migration window, both old and new names
 	// are cleaned up. Old names (.check.sh, .turn-ended) will be removed
 	// in a future release; new names (.check, .turnend) are the canonical forms.

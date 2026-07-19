@@ -315,7 +315,7 @@ func TestRunPrune_MixedWorkspaces(t *testing.T) {
 	tag := hometag.Tag(homeDir)
 
 	// A mix of workspaces: matching+empty, matching+live, non-matching, matching+not-empty.
-	ws := `[{"label":"firstmate","workspace_id":"w1","tab_count":0,"agent_status":"none"},` +
+	ws := `[{"label":"protected-legacy","workspace_id":"w1","tab_count":0,"agent_status":"none"},` +
 		`{"label":"` + tag + `","workspace_id":"w2","tab_count":0,"agent_status":"none"},` +
 		`{"label":"` + tag + `","workspace_id":"w3","tab_count":0,"agent_status":"working"},` +
 		`{"label":"` + tag + `","workspace_id":"w4","tab_count":3,"agent_status":"none"},` +
@@ -343,7 +343,7 @@ func TestRunPrune_MixedWorkspaces(t *testing.T) {
 		actions[w.WorkspaceID] = w.Action
 	}
 
-	// w1: label "firstmate", doesn't match hometag → keep
+	// w1: label "protected-legacy", doesn't match hometag → keep
 	if a := actions["w1"]; a != "keep" {
 		t.Errorf("w1 action = %q, want keep (non-matching label)", a)
 	}
@@ -378,8 +378,9 @@ func TestDenyListedLabel(t *testing.T) {
 		label  string
 		denied bool
 	}{
-		{"firstmate", true},
-		{"firstmate-something", false}, // exact match only
+		{"default", true},
+		{"default-something", false}, // exact match only
+		{"legacy-home", false},       // not a deny-listed label
 		{"captain-abc", false},
 		{"captain-", false},
 		{"general", false}, // needs hyphen prefix
@@ -478,8 +479,8 @@ func TestRunPrune_WithSession(t *testing.T) {
 
 func TestDenyListedLabelWithMatchingTag(t *testing.T) {
 	// Test the deny list functions directly since we can't force a specific hometag.
-	if !denyListedLabel("firstmate") {
-		t.Error("denyListedLabel('firstmate') = false")
+	if !denyListedLabel("default") {
+		t.Error("denyListedLabel('default') = false")
 	}
 	if denyListedLabel("captain-anything") {
 		t.Error("denyListedLabel('captain-anything') = true; captain labels are owned+live-meta protected")

@@ -1,7 +1,7 @@
 // Package integrate manages opt-in harness integration.
 //
 // Grok adapter: generates .grok/hooks/*.json hook files anchored to the munsu
-// binary path, mirroring firstmate's verified Grok hook contract.
+// binary path, mirroring the munsu Grok hook contract.
 package integrate
 
 import (
@@ -53,7 +53,7 @@ func grokHookCommand(munsuBin string, args ...string) string {
 	return "bash -lc 'exec " + full + "'"
 }
 
-// grokHookFileNames lists the 4 Grok hook file names, matching firstmate's contract.
+// grokHookFileNames lists the 4 Grok hook file names, matching the munsu contract.
 var grokHookFileNames = []string{
 	"fm-primary-sessionstart-nudge.json",
 	"fm-primary-pretool-check.json",

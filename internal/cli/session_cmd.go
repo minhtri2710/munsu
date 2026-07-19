@@ -603,7 +603,7 @@ wakes plus guidance so the General can steer without reading child chat.
 
 Routines are counted, not enumerated, to reduce wake rot.
 Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
-		Args:  contractNoArgs,
+		Args: contractNoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if consumer == "" {
 				return usageError("invalid_argument", "Run `munsu afk drain --consumer <id>`", "--consumer is required")
@@ -668,7 +668,6 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 	cmd.Flags().BoolVar(&noPeek, "no-peek", false, "Skip the fleet peek")
 	return cmd
 }
-
 
 func newAfkReturnCmd() *cobra.Command {
 	cmd := &cobra.Command{

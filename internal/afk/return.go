@@ -20,7 +20,7 @@ type ReturnReport struct {
 }
 
 // HasActionable reports whether the return report contains any item
-// needing firstmate attention before resuming normal work.
+// needing munsu attention before resuming normal work.
 // The caller must check this before resuming normal work and re-run
 // Return until it returns clean (HasActionable == false).
 func (r *ReturnReport) HasActionable() bool {

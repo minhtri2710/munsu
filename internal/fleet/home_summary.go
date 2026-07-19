@@ -14,7 +14,7 @@ import (
 )
 
 // HomeSummary is a bounded structured view of one Captain home.
-// Schema aligns with firstmate fm-secondmate-home-summary.v1 depth:
+// Schema aligns with the munsu captain-home-summary pattern:
 // active_children, holds, decisions_open, queued, landed, counts, omitted, valid/reason.
 // Registered home state is authoritative; parent status is separate evidence.
 type HomeSummary struct {

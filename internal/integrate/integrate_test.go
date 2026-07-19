@@ -685,7 +685,7 @@ func TestClaudeSettingsContent_Hooks(t *testing.T) {
 		t.Error("SessionStart matcher must not include compact")
 	}
 
-	// Verify structure matches firstmate: correct hook event keys
+	// Verify structure matches expected: correct hook event keys
 	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
 		t.Error("SessionStart matcher must match startup|resume|clear")
 	}
