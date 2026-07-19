@@ -622,6 +622,13 @@ func Retire(captainHome, parentHome string, removeHome bool) error {
 				return fmt.Errorf("failed to teardown captain %s window: %w", markerID, tdErr)
 			}
 		}
+		// Clear parent task meta so husk prune and fleet snapshot stop treating this
+		// captain as live. Status log is retained as historical return-channel evidence.
+		metaPath := filepath.Join(parentHome, "state", taskID+".meta")
+		if rmErr := os.Remove(metaPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			return fmt.Errorf("failed to remove captain task meta %s: %w", taskID, rmErr)
+		}
+		fmt.Printf("  cleared parent meta for %s\n", taskID)
 	} else {
 		// Provenance exists but no meta — captain was never launched.
 		fmt.Printf("  captain %s has no task meta (never launched)\n", markerID)

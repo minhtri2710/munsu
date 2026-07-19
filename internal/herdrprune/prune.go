@@ -74,12 +74,12 @@ func herdrCLI(session string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// denyListedLabel returns true if the label must never be closed.
+// denyListedLabel returns true if the label must never be closed by prune.
+// Foreign orchestrators and non-munsu labels are out of scope. Live munsu
+// captain/primary workspaces are protected by live-agent and live-meta checks.
 func denyListedLabel(label string) bool {
-	if label == "firstmate" {
-		return true
-	}
-	if strings.HasPrefix(label, "captain-") {
+	switch label {
+	case "firstmate", "default":
 		return true
 	}
 	return false
@@ -153,8 +153,13 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 		session = "default"
 	}
 
-	// Step 1: Compute hometag for the munsu home.
-	tag := hometag.Tag(opts.HomeDir)
+	// Step 1: Labels owned by this home (primary tag and WorkspaceTag for captains).
+	primaryTag := hometag.Tag(opts.HomeDir)
+	ownedLabels := map[string]bool{primaryTag: true, hometag.WorkspaceTag(opts.HomeDir): true}
+	// When pruning from the general home, also own registered captain workspace labels.
+	for _, smHome := range listCaptainHomes(opts.HomeDir) {
+		ownedLabels[hometag.WorkspaceTag(smHome)] = true
+	}
 
 	// Step 2: List herdr workspaces.
 	out, err := herdrCLI(session, "workspace", "list")
@@ -183,10 +188,10 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 			AgentStatus: ws.AgentStatus,
 		}
 
-		// Safety: never close non-hometag-matching labels.
-		if ws.Label != tag {
+		// Safety: never close labels not owned by this munsu home topology.
+		if !ownedLabels[ws.Label] {
 			pw.Action = "keep"
-			pw.Reason = fmt.Sprintf("label %q does not match hometag %q", ws.Label, tag)
+			pw.Reason = fmt.Sprintf("label %q not owned by this home", ws.Label)
 			result.Workspaces = append(result.Workspaces, pw)
 			continue
 		}
@@ -240,4 +245,31 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 		result.Workspaces = append(result.Workspaces, pw)
 	}
 	return result, nil
+}
+
+// listCaptainHomes returns registered captain home paths under parentHome.
+func listCaptainHomes(parentHome string) []string {
+	reg := filepath.Join(parentHome, "data", "captains.md")
+	data, err := os.ReadFile(reg)
+	if err != nil {
+		return nil
+	}
+	var homes []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// expected: - id | home | scope | ...
+		line = strings.TrimPrefix(line, "- ")
+		parts := strings.Split(line, "|")
+		if len(parts) < 2 {
+			continue
+		}
+		home := strings.TrimSpace(parts[1])
+		if home != "" {
+			homes = append(homes, home)
+		}
+	}
+	return homes
 }
