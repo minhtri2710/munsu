@@ -16,6 +16,7 @@ Root virtue: **idempotency** (repeating the same lifecycle operation produces th
 | Retire | `munsu captain retire <captain-home>` | Kill process, optionally remove home |
 | Handoff | `munsu captain handoff <captain-home> <item-keys...>` | Two-phase atomic task handover |
 | Config-push | `munsu captain config-push <captain-home>` | Sync inheritable config from parent |
+| Recover | `munsu captain recover [captain-home]` | Probe liveness and relaunch launched-but-dead endpoints (fail-closed on unknown harness) |
 
 Source: `cmd/munsu/main.go` registers `newCaptainCmd()` which adds all verbs. Implementation in `internal/captain/captain.go`.
 

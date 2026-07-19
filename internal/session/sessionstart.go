@@ -18,11 +18,12 @@ import (
 )
 
 type SessionStartResult struct {
-	LockAcquired  bool
-	Bootstrap     *bootstrap.Result
-	FleetSync     *fleet.SyncResult
-	Watcher       WatchEnsureResult
-	BacklogDigest *backlog.BacklogDigest
+	LockAcquired    bool
+	Bootstrap       *bootstrap.Result
+	FleetSync       *fleet.SyncResult
+	Watcher         WatchEnsureResult
+	BacklogDigest   *backlog.BacklogDigest
+	CaptainLiveness *CaptainLivenessResult
 }
 
 type WatchEnsureResult struct {
@@ -31,6 +32,34 @@ type WatchEnsureResult struct {
 }
 
 type WatchEnsureFunc func(home string) WatchEnsureResult
+
+// CaptainProbe is one captain's non-mutating liveness reading surfaced at session-start.
+type CaptainProbe struct {
+	ID     string
+	Home   string
+	Status string // alive | dead | seeded | unknown
+}
+
+// CaptainRecoverSummary records the outcome of an opt-in recover sweep.
+type CaptainRecoverSummary struct {
+	Relaunched int
+	Alive      int
+	Seeded     int
+	Failed     int
+	Entries    []string // human-readable per-captain lines
+}
+
+// CaptainLivenessResult holds the captain liveness section of the session digest.
+type CaptainLivenessResult struct {
+	Probes  []CaptainProbe
+	Recover *CaptainRecoverSummary // non-nil only when recover ran
+	HasDead bool                   // any probe with Status == "dead"
+}
+
+// CaptainLivenessFunc probes captain liveness for the session digest. When recover is
+// true it also relaunches launched-but-dead endpoints (fail-closed on unknown harness).
+// Wired by the CLI layer to avoid an import cycle between session and captain.
+type CaptainLivenessFunc func(home string, recover bool) CaptainLivenessResult
 
 func printDataFile(w io.Writer, home, name string) {
 	data, err := os.ReadFile(filepath.Join(home, "data", name))
@@ -114,8 +143,47 @@ func ensureWatcherForSession(home string, acquired bool, ensure WatchEnsureFunc)
 	return ensure(home)
 }
 
+// printCaptainLiveness surfaces the captain liveness section of the digest. When the
+// seam is unwired (nil) it is a no-op. Otherwise it always probes and prints; when
+// recover is true it also relaunches launched-but-dead endpoints via the seam.
+// Read-only sessions probe but never recover.
+func printCaptainLiveness(w io.Writer, home string, acquired bool, fn CaptainLivenessFunc) *CaptainLivenessResult {
+	if fn == nil {
+		return nil
+	}
+	res := fn(home, acquired)
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "--- Captain Liveness ---")
+	if len(res.Probes) == 0 {
+		fmt.Fprintln(w, "  (no captains registered)")
+		return &res
+	}
+	for _, p := range res.Probes {
+		fmt.Fprintf(w, "  %s: %s\n", p.ID, p.Status)
+	}
+	if res.HasDead {
+		fmt.Fprintln(w, "SECOND_LIVENESS: dead captain endpoint(s) detected")
+		if !acquired {
+			fmt.Fprintln(w, "  read-only: run 'munsu captain recover' or 'munsu session-start --recover'")
+		} else if res.Recover == nil {
+			fmt.Fprintln(w, "  relaunch with: munsu captain recover  (or 'munsu session-start --recover')")
+		}
+	}
+	if res.Recover != nil {
+		r := res.Recover
+		fmt.Fprintf(w, "  recover: relaunched=%d alive=%d seeded=%d failed=%d\n", r.Relaunched, r.Alive, r.Seeded, r.Failed)
+		for _, line := range r.Entries {
+			fmt.Fprintln(w, "  "+line)
+		}
+		if r.Failed > 0 {
+			fmt.Fprintln(w, "SECOND_LIVENESS: recovery completed with failures (see above)")
+		}
+	}
+	return &res
+}
+
 func RunSessionStart(w io.Writer, home string) (*SessionStartResult, error) {
-	return RunSessionStartWithWatcher(w, home, nil)
+	return RunSessionStartWithWatcher(w, home, nil, nil)
 }
 
 type ScopeCheckResult struct {
@@ -159,7 +227,7 @@ func checkSessionScope(home string) error {
 	return nil
 }
 
-func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc) (*SessionStartResult, error) {
+func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 	if err := checkSessionScope(home); err != nil {
 		return res, fmt.Errorf("session-start refused: %w", err)
@@ -223,6 +291,8 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 			}
 		}
 	}
+
+	res.CaptainLiveness = printCaptainLiveness(w, home, acquired, captainLiveness)
 
 	res.Watcher = ensureWatcherForSession(home, acquired, ensure)
 	fmt.Fprintln(w, "")

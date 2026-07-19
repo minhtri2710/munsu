@@ -104,6 +104,7 @@ func newBriefCmd() *cobra.Command {
 }
 
 func newSessionStartCmd() *cobra.Command {
+	var recover bool
 	cmd := &cobra.Command{
 		Use:   "session-start",
 		Short: "Lock, bootstrap, ensure watcher for in-flight work, and print the session-start digest",
@@ -119,9 +120,17 @@ func newSessionStartCmd() *cobra.Command {
 				w = io.Discard
 			}
 
+			// --recover flag or MUNSU_SESSION_RECOVER env opts in captain relaunch.
+			wantRecover := recover
+			if _, ok := os.LookupEnv("MUNSU_SESSION_RECOVER"); ok {
+				wantRecover = true
+			}
+
 			result, err := session.RunSessionStartWithWatcher(w, ctx.Home, func(home string) session.WatchEnsureResult {
 				r := ensureWatcher(home, false)
 				return session.WatchEnsureResult{State: r.Data.State}
+			}, func(home string, doRecover bool) session.CaptainLivenessResult {
+				return captainLivenessForSession(home, doRecover && wantRecover)
 			})
 			if err != nil {
 				return err
@@ -152,6 +161,7 @@ func newSessionStartCmd() *cobra.Command {
 		}),
 	}
 	configureContractCommand(cmd)
+	cmd.Flags().BoolVar(&recover, "recover", false, "Relaunch launched-but-dead captain endpoints detected during the liveness probe")
 	return cmd
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -136,5 +137,96 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	}
 	cmd.AddCommand(convergeCmd)
 
+	recoverCmd := &cobra.Command{
+		Use:   "recover [captain-home]",
+		Short: "Probe captain liveness and relaunch launched-but-dead endpoints",
+		Long: `Probe registered captain endpoints and relaunch any that are launched-but-dead.
+	Fails closed on unknown/unverified harnesses (recorded per-captain, does not abort the sweep).
+	With no argument, probes every registered captain. Pass a captain home to scope to one.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			registered, err := captain.List(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("listing registered captains: %w", err)
+			}
+			if len(args) == 1 {
+				registered, err = scopeCaptainsToHome(registered, args[0])
+				if err != nil {
+					return err
+				}
+			}
+			res, err := captain.Recover(ctx.Home, registered)
+			if err != nil {
+				return err
+			}
+			fmt.Println(res.String())
+			return nil
+		}),
+	}
+	cmd.AddCommand(recoverCmd)
+
 	return cmd
+}
+
+// captainLivenessForSession backs the session-start Captain Liveness section. It always
+// probes; when recover is true it also relaunches launched-but-dead endpoints.
+func captainLivenessForSession(home string, recover bool) session.CaptainLivenessResult {
+	registered, err := captain.List(home)
+	if err != nil {
+		return session.CaptainLivenessResult{}
+	}
+	probes := captain.ProbeLiveness(home, registered)
+	res := session.CaptainLivenessResult{Probes: make([]session.CaptainProbe, 0, len(probes))}
+	for _, p := range probes {
+		res.Probes = append(res.Probes, session.CaptainProbe{ID: p.ID, Home: p.Home, Status: p.Status})
+		if p.Status == "dead" {
+			res.HasDead = true
+		}
+	}
+	if !recover {
+		return res
+	}
+	rr, _ := captain.Recover(home, registered)
+	if rr != nil {
+		res.Recover = &session.CaptainRecoverSummary{
+			Relaunched: rr.Relaunched,
+			Alive:      rr.Alive,
+			Seeded:     rr.Seeded,
+			Failed:     rr.Failed,
+		}
+		for _, e := range rr.Entries {
+			res.Recover.Entries = append(res.Recover.Entries, captainRecoverEntryLine(e))
+		}
+	}
+	return res
+}
+
+// captainRecoverEntryLine renders one RecoverEntry as a single summary line.
+func captainRecoverEntryLine(e captain.RecoverEntry) string {
+	switch e.Outcome {
+	case captain.RecoverAlive:
+		return e.ID + ": alive"
+	case captain.RecoverSeeded:
+		return e.ID + ": seeded (not launched)"
+	case captain.RecoverRelaunched:
+		return e.ID + ": relaunched"
+	case captain.RecoverFailed:
+		return e.ID + ": FAILED: " + e.Error
+	}
+	return e.ID + ": " + string(e.Outcome)
+}
+
+// scopeCaptainsToHome filters registered captains to those whose home matches the given
+// path. Returns an error if none match.
+func scopeCaptainsToHome(registered []captain.Info, home string) ([]captain.Info, error) {
+	var out []captain.Info
+	for _, m := range registered {
+		if m.Home == home {
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no registered captain matches home %q", home)
+	}
+	return out, nil
 }
