@@ -56,7 +56,7 @@ func TestAdapters_SecondmateLaunchContracts(t *testing.T) {
 				if !a.SecondmateLaunch.Supported {
 					t.Fatal("pi secondmate launch contract must be supported")
 				}
-				if !a.SecondmateLaunch.ProjectArg || !a.SecondmateLaunch.PromptArg {
+				if a.SecondmateLaunch.ProjectArg || !a.SecondmateLaunch.PromptArg || a.SecondmateLaunch.Separator != "" {
 					t.Fatalf("pi secondmate launch contract = %+v", a.SecondmateLaunch)
 				}
 				return

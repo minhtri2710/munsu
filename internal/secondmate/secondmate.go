@@ -15,6 +15,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -76,20 +77,32 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// buildLaunchScript generates a shell command line that changes to the
-// secondmate home directory and executes the binary with exact arguments.
-// The output is safe for shell evaluation via SendKeys.
+// buildLaunchScript writes a bash launch script into the secondmate home and
+// returns a fish-safe command that runs it. Herdr panes may use fish, so the
+// bash-only identity/env plumbing must not be typed directly into the pane.
 func buildLaunchScript(binPath string, args []string, cwd string) (string, error) {
 	var b strings.Builder
+	b.WriteString("#!/usr/bin/env bash\n")
+	b.WriteString("set -euo pipefail\n")
 	b.WriteString("cd ")
 	b.WriteString(shQuote(cwd))
-	b.WriteString(" && exec ")
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_HOME=")
+	b.WriteString(shQuote(cwd))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_ROLE=secondmate\n")
+	b.WriteString("exec ")
 	b.WriteString(shQuote(binPath))
 	for _, arg := range args {
 		b.WriteString(" ")
 		b.WriteString(shQuote(arg))
 	}
-	return b.String(), nil
+	b.WriteString("\n")
+	scriptPath := filepath.Join(cwd, ".secondmate-launch.sh")
+	if err := os.WriteFile(scriptPath, []byte(b.String()), 0755); err != nil {
+		return "", fmt.Errorf("writing secondmate launch script: %w", err)
+	}
+	return "bash " + shQuote(scriptPath), nil
 }
 
 // sha256Content returns the hex SHA-256 digest of data.
@@ -356,7 +369,8 @@ func List(parentHome string) ([]Info, error) {
 // --- Launch (session-backed) ---
 
 // buildLaunchArgs returns the harness binary name and argument list for a secondmate launch.
-// Preserves the PR1 contract: exact charter bytes, cwd, verified Pi-only contract.
+// Matches firstmate's verified pi secondmate shape: cwd at home + prompt bytes only.
+// No shell-expression prompt, no project-path argv, no "--" separator.
 func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(h)
 	if !ok {
@@ -366,8 +380,11 @@ func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, er
 	if !contract.Supported {
 		return "", nil, fmt.Errorf("secondmate launch: harness %q does not have a verified secondmate launch contract", h)
 	}
-	if !contract.CwdAtHome || !contract.ProjectArg || !contract.PromptArg {
+	if !contract.CwdAtHome || !contract.PromptArg {
 		return "", nil, fmt.Errorf("secondmate launch: harness %q has an incomplete secondmate launch contract", h)
+	}
+	if contract.ProjectArg {
+		return "", nil, fmt.Errorf("secondmate launch: harness %q must not pass a project path arg", h)
 	}
 
 	charter, err := os.ReadFile(filepath.Join(secondmateHome, "AGENTS.md"))
@@ -384,9 +401,25 @@ func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, er
 	if contract.Separator != "" {
 		args = append(args, contract.Separator)
 	}
-	args = append(args, secondmateHome, string(charter))
+	args = append(args, string(charter))
 
 	return adapter.Name, args, nil
+}
+
+func refuseNestedSecondmateLaunch(parentHome string) error {
+	if os.Getenv("MUNSU_ROLE") == "secondmate" {
+		return fmt.Errorf("secondmates cannot launch other secondmates; spawn crewmates in their own home instead")
+	}
+	markerPath := filepath.Join(parentHome, ProvenanceMarkerName)
+	if _, err := os.Stat(markerPath); err == nil {
+		if _, validateErr := ValidateProvenance(parentHome); validateErr != nil {
+			return fmt.Errorf("active home has invalid secondmate provenance: %w", validateErr)
+		}
+		return fmt.Errorf("secondmate home %s cannot launch another secondmate", parentHome)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking active home provenance: %w", err)
+	}
+	return nil
 }
 
 // Launch starts a secondmate using a session-backed endpoint.
@@ -394,6 +427,9 @@ func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, er
 // the session backend, sends a shell-safe launch script, then writes task
 // meta with kind=secondmate and endpoint metadata only after launch succeeds.
 func Launch(secondmateHome, parentHome string) error {
+	if err := refuseNestedSecondmateLaunch(parentHome); err != nil {
+		return err
+	}
 	if _, err := ValidateProvenance(secondmateHome); err != nil {
 		return fmt.Errorf("provenance validation failed for %s: %w", secondmateHome, err)
 	}
@@ -422,8 +458,11 @@ func Launch(secondmateHome, parentHome string) error {
 		return fmt.Errorf("canonicalizing secondmate home: %w", err)
 	}
 
-	hometag := filepath.Base(parentHome)
-	windowID, err := bk.NewWindow(hometag, markerID)
+	containerLabel := hometag.WorkspaceTag(canonicalSecondmateHome)
+	if hb, ok := bk.(*session.HerdrBackend); ok {
+		hb.Cwd = canonicalSecondmateHome
+	}
+	windowID, err := bk.NewWindow(containerLabel, "mu-secondmate-"+markerID)
 	if err != nil {
 		return fmt.Errorf("creating secondmate window: %w", err)
 	}
@@ -435,7 +474,7 @@ func Launch(secondmateHome, parentHome string) error {
 	}
 
 	// Build and send shell-safe launch script.
-	cmdLine, err := launchCmd(binPath, args, secondmateHome)
+	cmdLine, err := launchCmd(binPath, args, canonicalSecondmateHome)
 	if err != nil {
 		bk.Teardown(windowID)
 		return fmt.Errorf("building launch script: %w", err)

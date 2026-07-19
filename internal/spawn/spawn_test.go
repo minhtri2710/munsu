@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/secondmate"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -690,5 +692,194 @@ func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
 	// The spawn itself is expected to fail (no project registry)
 	if err == nil {
 		t.Error("expected error from missing project registry, got nil")
+	}
+}
+
+func TestCreateSessionUsesProjectPrefixedCrewmateTabLabel(t *testing.T) {
+	var gotName string
+	fake := &fakeBackend{newWindow: func(session, name string) (string, error) {
+		gotName = name
+		return "win-1", nil
+	}}
+	r := NewRunner(Args{
+		ID:          "W 1",
+		ProjectName: "API Platform",
+		HomeDir:     t.TempDir(),
+		Session:     fake,
+	})
+
+	if err := r.createSession(); err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+	if gotName != "mu-api-platform-w-1" {
+		t.Fatalf("tab label = %q, want %q", gotName, "mu-api-platform-w-1")
+	}
+}
+
+func TestAuthorizeSpawnRejectsRegularCrewmate(t *testing.T) {
+	err := authorizeSpawn("crewmate", t.TempDir(), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "regular crewmates cannot spawn") {
+		t.Fatalf("authorizeSpawn() error = %v, want regular-crewmate refusal", err)
+	}
+}
+
+func TestCheckSpawnAuthorityRejectsManagedHerdrCrewEvenWithoutRole(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := task.WriteMeta(homeDir, "crew-1", map[string]string{
+		"kind":          "ship",
+		"herdr_pane_id": "w1:p9",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PANE_ID", "w1:p9")
+	t.Setenv("TMUX_PANE", "")
+	t.Setenv("MUNSU_ROLE", "")
+	r := &Runner{homeDir: homeDir}
+	err := r.checkSpawnAuthority()
+	if err == nil || !strings.Contains(err.Error(), "managed crewmate endpoints cannot spawn") {
+		t.Fatalf("checkSpawnAuthority() error = %v, want managed-endpoint refusal", err)
+	}
+}
+
+func TestCurrentEndpointKindFindsSecondmateHerdrPane(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := task.WriteMeta(homeDir, "secondmate:sm-1", map[string]string{
+		"kind":          "secondmate",
+		"herdr_pane_id": "w1:p8",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PANE_ID", "w1:p8")
+	t.Setenv("TMUX_PANE", "")
+	kind, found, err := currentEndpointKind(homeDir)
+	if err != nil || !found || kind != "secondmate" {
+		t.Fatalf("currentEndpointKind() = %q, %v, %v; want secondmate, true, nil", kind, found, err)
+	}
+}
+
+func TestCurrentEndpointKindFindsTmuxWindowForPane(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := task.WriteMeta(homeDir, "crew-2", map[string]string{
+		"kind":   "ship",
+		"window": "munsu:@7",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	original := tmuxWindowForPane
+	t.Cleanup(func() { tmuxWindowForPane = original })
+	tmuxWindowForPane = func(pane string) (string, error) {
+		if pane != "%3" {
+			t.Fatalf("pane = %q, want %%3", pane)
+		}
+		return "@7", nil
+	}
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("TMUX_PANE", "%3")
+	kind, found, err := currentEndpointKind(homeDir)
+	if err != nil || !found || kind != "ship" {
+		t.Fatalf("currentEndpointKind() = %q, %v, %v; want ship, true, nil", kind, found, err)
+	}
+}
+
+func TestCurrentEndpointKindFailsClosedWhenTmuxPaneCannotResolve(t *testing.T) {
+	original := tmuxWindowForPane
+	t.Cleanup(func() { tmuxWindowForPane = original })
+	tmuxWindowForPane = func(pane string) (string, error) {
+		return "", fmt.Errorf("lookup failed")
+	}
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("TMUX_PANE", "%3")
+	if _, _, err := currentEndpointKind(t.TempDir()); err == nil || !strings.Contains(err.Error(), "lookup failed") {
+		t.Fatalf("currentEndpointKind() error = %v, want lookup failure", err)
+	}
+}
+
+func TestAuthorizeSpawnAllowsValidatedSecondmate(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := secondmate.SeedProvenance(homeDir, "sm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorizeSpawn("secondmate", homeDir, homeDir); err != nil {
+		t.Fatalf("authorizeSpawn() error = %v, want validated secondmate allowed", err)
+	}
+}
+
+func TestAuthorizeSpawnRejectsSecondmateOutsideItsHome(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := secondmate.SeedProvenance(homeDir, "sm-1"); err != nil {
+		t.Fatal(err)
+	}
+	err := authorizeSpawn("secondmate", homeDir, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "must spawn from its home") {
+		t.Fatalf("authorizeSpawn() error = %v, want secondmate cwd refusal", err)
+	}
+}
+
+func TestAuthorizeSpawnRejectsUnknownRole(t *testing.T) {
+	err := authorizeSpawn("delegate", t.TempDir(), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "unknown MUNSU_ROLE") {
+		t.Fatalf("authorizeSpawn() error = %v, want unknown-role refusal", err)
+	}
+}
+
+func TestAuthorizeSpawnRejectsLinkedWorktreeWithoutRole(t *testing.T) {
+	primary := t.TempDir()
+	runGit(t, primary, "init")
+	runGit(t, primary, "config", "user.email", "test@example.com")
+	runGit(t, primary, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(primary, "README.md"), []byte("test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, primary, "add", "README.md")
+	runGit(t, primary, "commit", "-m", "init")
+	worktreeDir := filepath.Join(t.TempDir(), "crew-worktree")
+	runGit(t, primary, "worktree", "add", worktreeDir)
+
+	err := authorizeSpawn("", t.TempDir(), worktreeDir)
+	if err == nil || !strings.Contains(err.Error(), "linked-worktree callers cannot spawn") {
+		t.Fatalf("authorizeSpawn() error = %v, want linked-worktree refusal", err)
+	}
+}
+
+func TestAuthorizeSpawnAllowsCaptainPrimaryCheckout(t *testing.T) {
+	primary := t.TempDir()
+	runGit(t, primary, "init")
+	if err := authorizeSpawn("captain", t.TempDir(), primary); err != nil {
+		t.Fatalf("authorizeSpawn() error = %v, want captain allowed", err)
+	}
+}
+
+func TestBootstrapWindowExportsCrewmateRole(t *testing.T) {
+	worktreeDir := t.TempDir()
+	var sent string
+	r := &Runner{
+		homeDir:   t.TempDir(),
+		wtPath:    worktreeDir,
+		launchCmd: "pi",
+		windowID:  "win-1",
+		bk: &fakeBackend{sendKeys: func(windowID, text string) error {
+			sent = text
+			return nil
+		}},
+	}
+	r.bootstrapWindow()
+
+	script, err := os.ReadFile(filepath.Join(worktreeDir, ".crew-launch.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), "export MUNSU_ROLE=crewmate") {
+		t.Fatalf("launch script missing crewmate role:\n%s", script)
+	}
+	if sent == "" {
+		t.Fatal("bootstrapWindow did not send launch command")
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
