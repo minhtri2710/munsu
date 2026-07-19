@@ -144,11 +144,25 @@ func newTaskObserveCmd() *cobra.Command {
 }
 
 func newContractGuardCmd() *cobra.Command {
+	var harnessFlag string
 	cmd := &cobra.Command{
 		Use:   "guard",
-		Short: "Report fleet guard conditions for agents",
+		Short: "Report fleet guard conditions, or act as a harness Stop-hook guard (--harness)",
 		Args:  contractNoArgs,
 		RunE: withHome(func(cmd *cobra.Command, _ []string, ctx Ctx) error {
+			// Harness Stop-hook guard: --harness routes to the harness-specific guard
+			// (adapter hooks call `munsu guard --harness <X>`). Omit --harness for the
+			// contract guard report below.
+			switch harnessFlag {
+			case "agy":
+				return runGuardAgy(ctx.Home)
+			case "claude":
+				return runGuardClaude(ctx.Home)
+			case "grok":
+				return runGuardGrok(ctx.Home)
+			case "codex", "opencode":
+				return runGuardCodexLike(ctx.Home)
+			}
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
@@ -259,6 +273,7 @@ func newContractGuardCmd() *cobra.Command {
 		}),
 	}
 	configureContractCommand(cmd)
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Stop-hook guard mode: agy (stdout decision JSON + exit 0), claude/codex/opencode (exit 2 + stderr), grok (passive Stop hook). Omit for the contract guard report.")
 	return cmd
 }
 
