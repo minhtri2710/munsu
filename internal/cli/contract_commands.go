@@ -35,8 +35,8 @@ func newCapabilitiesCmd() *cobra.Command {
 					ContractVersion: contract.SchemaVersion,
 					Commands: []string{
 						"capabilities", "task observe", "fleet snapshot --version 2", "guard", "watch ensure",
-						"watch run", "wake claim", "wake ack", "event append", "backend capabilities", "spawn",
-						"integrate install", "integrate repair", "integrate status",
+					"watch run", "wake claim", "wake ack", "event append", "backend capabilities", "spawn",
+					"integrate install", "integrate repair", "integrate status", "afk drain",
 					},
 					OutputFormats: []string{contract.OutputTOON, contract.OutputJSON},
 				},

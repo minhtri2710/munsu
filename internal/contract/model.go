@@ -243,6 +243,20 @@ type WakeAck struct {
 	State   string `json:"state"`
 }
 
+// DrainCycle records one General drain cycle: actionable wakes claimed,
+// routine count, fleet peek, and guidance.
+type DrainCycle struct {
+	ClaimID      string   `json:"claim_id"`
+	Consumer     string   `json:"consumer"`
+	Actionable   []string `json:"actionable,omitempty"`
+	RoutineCount int      `json:"routine_count"`
+	Reclaimed    int      `json:"reclaimed,omitempty"`
+	InFlight     int      `json:"in_flight,omitempty"`
+	Dead         int      `json:"dead,omitempty"`
+	Guidance     []string `json:"guidance,omitempty"`
+	State        string   `json:"state"` // clean | actionable
+}
+
 // EventRecord is one typed event log entry.
 type EventRecord struct {
 	EventID   uint64 `json:"event_id"`

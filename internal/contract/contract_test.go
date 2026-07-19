@@ -101,7 +101,7 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 		FleetSnapshotV2{}, Soldier{}, CaptainEntry{}, CaptainGuidance{},
 		WakeAck{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, EmptyResult{},
 		TruncatedResult{}, Guard{}, WatchEnsure{}, WatchRun{}, WatchStop{}, WakeClaim{},
-		EventRecord{}, EventAppend{},
+		EventRecord{}, EventAppend{}, DrainCycle{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		for field := range typeOf.Fields() {
