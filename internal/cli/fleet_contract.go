@@ -8,8 +8,19 @@ import (
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/spf13/cobra"
 )
+
+func init() {
+	fleet.SetPaneAliveProbe(func(parentHome string, meta map[string]string) (bool, error) {
+		bk, _, err := session.BackendForTask(parentHome, meta)
+		if err != nil {
+			return false, err
+		}
+		return bk.Alive(meta["window"]), nil
+	})
+}
 
 func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	version, _ := cmd.Flags().GetInt("version")
@@ -51,7 +62,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	var captains []contract.CaptainEntry
 	if err == nil {
 		for _, m := range matedata {
-			status := fleet.CaptainStatus(m.Home)
+			status := fleet.CaptainStatus(ctx.Home, m.ID, m.Home)
 			entry := contract.CaptainEntry{
 				ID:               m.ID,
 				Home:             m.Home,

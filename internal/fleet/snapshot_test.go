@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -196,12 +197,25 @@ func TestView_RegisteredPhase(t *testing.T) {
 	}
 }
 
+func withPaneAlive(t *testing.T, fn func(parentHome string, meta map[string]string) (bool, error)) {
+	t.Helper()
+	old := paneAliveForCaptain
+	paneAliveForCaptain = fn
+	t.Cleanup(func() { paneAliveForCaptain = old })
+}
+
 func TestCaptainStatus_Seeded(t *testing.T) {
 	tmp := t.TempDir()
+	parent := filepath.Join(tmp, "parent")
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(parent, "state"), 0755)
 
-	status := CaptainStatus(smHome)
+	// Home exists, no parent meta → seeded (lock ignored).
+	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
+
+	status := CaptainStatus(parent, "test-sm", smHome)
 	if status != "seeded" {
 		t.Errorf("CaptainStatus = %q, want %q", status, "seeded")
 	}
@@ -209,11 +223,30 @@ func TestCaptainStatus_Seeded(t *testing.T) {
 
 func TestCaptainStatus_Alive(t *testing.T) {
 	tmp := t.TempDir()
+	parent := filepath.Join(tmp, "parent")
 	smHome := filepath.Join(tmp, "captains", "test-sm")
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(parent, "state"), 0755)
 
-	status := CaptainStatus(smHome)
+	if err := task.WriteMeta(parent, "captain:test-sm", map[string]string{
+		"kind":    "captain",
+		"sm_id":   "test-sm",
+		"home":    smHome,
+		"window":  "@cap",
+		"backend": "tmux",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	withPaneAlive(t, func(parentHome string, meta map[string]string) (bool, error) {
+		if meta["window"] != "@cap" {
+			t.Errorf("window = %q, want @cap", meta["window"])
+		}
+		return true, nil
+	})
+
+	// Stale/missing lock must not matter when pane is alive.
+	status := CaptainStatus(parent, "test-sm", smHome)
 	if status != "alive" {
 		t.Errorf("CaptainStatus = %q, want %q", status, "alive")
 	}
@@ -221,11 +254,29 @@ func TestCaptainStatus_Alive(t *testing.T) {
 
 func TestCaptainStatus_Dead(t *testing.T) {
 	tmp := t.TempDir()
+	parent := filepath.Join(tmp, "parent")
 	smHome := filepath.Join(tmp, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(parent, "state"), 0755)
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("invalid\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
 
-	status := CaptainStatus(smHome)
+	if err := task.WriteMeta(parent, "captain:test-sm", map[string]string{
+		"kind":    "captain",
+		"sm_id":   "test-sm",
+		"home":    smHome,
+		"window":  "@cap",
+		"backend": "tmux",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	withPaneAlive(t, func(parentHome string, meta map[string]string) (bool, error) {
+		return false, nil
+	})
+
+	// Live lock must not override dead pane.
+	status := CaptainStatus(parent, "test-sm", smHome)
 	if status != "dead" {
 		t.Errorf("CaptainStatus = %q, want %q", status, "dead")
 	}
@@ -233,8 +284,33 @@ func TestCaptainStatus_Dead(t *testing.T) {
 
 func TestCaptainStatus_Unknown(t *testing.T) {
 	// Non-existent home should return unknown
-	status := CaptainStatus("/nonexistent/sm")
+	status := CaptainStatus("/nonexistent/parent", "sm", "/nonexistent/sm")
 	if status != "unknown" {
 		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
+	}
+}
+
+func TestCaptainStatus_BackendErrorIsDead(t *testing.T) {
+	tmp := t.TempDir()
+	parent := filepath.Join(tmp, "parent")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(parent, "state"), 0755)
+
+	if err := task.WriteMeta(parent, "captain:test-sm", map[string]string{
+		"kind":   "captain",
+		"sm_id":  "test-sm",
+		"window": "@cap",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	withPaneAlive(t, func(parentHome string, meta map[string]string) (bool, error) {
+		return false, fmt.Errorf("backend unavailable")
+	})
+
+	status := CaptainStatus(parent, "test-sm", smHome)
+	if status != "dead" {
+		t.Errorf("CaptainStatus = %q, want %q", status, "dead")
 	}
 }

@@ -171,22 +171,56 @@ func Bearings(homeDir string, projectDir string) error {
 	return nil
 }
 
-// CaptainStatus returns the status string for a captain home.
-// Checks for a state/.lock file to determine if the process is alive.
-func CaptainStatus(homeDir string) string {
-	lockFile := filepath.Join(homeDir, "state", ".lock")
-	data, err := os.ReadFile(lockFile)
-	if err != nil {
-		// No lock file means the general is seeded but not launched
-		if _, statErr := os.Stat(homeDir); statErr == nil {
-			return "seeded"
-		}
+// CaptainStatus returns endpoint/meta truth for a captain.
+// Prefer parent state/captain:<id>.meta window + backend Alive when meta exists.
+// Home presence without launch meta is seeded; missing home is unknown.
+// Captain-home state/.lock is not used for launched liveness.
+func CaptainStatus(parentHome, captainID, homeDir string) string {
+	if homeDir == "" {
 		return "unknown"
 	}
-	// Lock file exists with a PID — best-effort liveness
-	var pid int
-	if _, scanErr := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); scanErr == nil && pid > 0 {
+	if _, err := os.Stat(homeDir); err != nil {
+		return "unknown"
+	}
+	if parentHome == "" || captainID == "" {
+		return "seeded"
+	}
+
+	taskID := "captain:" + captainID
+	meta, err := task.ReadMeta(parentHome, taskID)
+	if err != nil {
+		return "seeded"
+	}
+	if kind := meta["kind"]; kind != "" && kind != "captain" {
+		return "seeded"
+	}
+	if id := meta["sm_id"]; id != "" && id != captainID {
+		return "seeded"
+	}
+	window := meta["window"]
+	if window == "" {
+		return "seeded"
+	}
+
+	if paneAliveForCaptain == nil {
+		return "dead"
+	}
+	alive, aliveErr := paneAliveForCaptain(parentHome, meta)
+	if aliveErr != nil {
+		return "dead"
+	}
+	if alive {
 		return "alive"
 	}
 	return "dead"
+}
+
+// paneAliveForCaptain probes endpoint liveness from parent meta.
+// Wired by SetPaneAliveProbe (CLI) so fleet does not import session (cycle).
+// Nil means backend cannot be resolved → dead when meta has a window.
+var paneAliveForCaptain func(parentHome string, meta map[string]string) (bool, error)
+
+// SetPaneAliveProbe installs the session-backend Alive probe used by CaptainStatus.
+func SetPaneAliveProbe(fn func(parentHome string, meta map[string]string) (bool, error)) {
+	paneAliveForCaptain = fn
 }
