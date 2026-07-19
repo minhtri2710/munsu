@@ -54,7 +54,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | AFK away-mode supervision | munsu afk | internal/afk | **implemented** (Go-native, full lifecycle -- see `docs/skills/afk.md`) |
 | Self-update | `munsu update` | `internal/selfupdate` | **implemented** |
 | Secondmate lifecycle | `munsu secondmate seed/launch/retire/list/handoff/config-push` | `internal/secondmate` | **implemented** |
-| Native harness integration | `munsu integrate install/repair/status` | `internal/integrate` | **implemented** (Pi + Claude adapters verified; others planned/unsupported -- see gaps below) |
+| Native harness integration | `munsu integrate install/repair/status` | `internal/integrate` | **implemented** (Pi, Claude, Grok, Codex, OpenCode adapters verified by contract + unit tests; agy unsupported -- [#206](https://github.com/minhtri2710/munsu/issues/206); only Pi is runtime-verifiable -- the other harnesses are not installed locally) |
 
 ## Structural differences from firstmate
 
@@ -75,7 +75,7 @@ firstmate-specific infrastructure that do not belong in a standalone CLI port:
 | Capability | firstmate scripts | Rationale |
 |---|---|---|
 | X/Twitter integration | `fm-x-*.sh` (6 scripts) | Social-media interaction; firstmate-specific, not part of crew lifecycle. |
-| Turn-end guards | `fm-turnend-guard.sh` | **Munsu has NATIVE integration** (opt-in via `munsu integrate install --harness <X>`) for some harnesses:<br>  - **Pi** (verified native adapter: session-start, wake-followup, turnend-guard, pretool-check, scope-gate capabilities)<br>  - **Claude** (verified native adapter: session-start, turnend-guard, pretool-check capabilities)<br>  - **Codex, Grok, OpenCode**: planned -- adapters not yet implemented<br>  - **agy**: unsupported -- no hook surface ([#206](https://github.com/minhtri2710/munsu/issues/206))<br>Legacy pull-based watcher diagnostics remain available via `munsu watch` / `munsu wake-drain` / `munsu guard`. |
+| Turn-end guards | `fm-turnend-guard.sh` | **Munsu has NATIVE integration** (opt-in via `munsu integrate install --harness <X>`) for five harnesses:<br>  - **Pi** (verified: in-process session-start, wake-followup, turnend-guard, pretool-check, scope-gate)<br>  - **Claude** (verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Grok** (verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Codex** (verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **OpenCode** (verified: session-start nudge, turn-end guard, pretool-check, session.idle watch-arm)<br>  - **agy**: unsupported -- no hook surface ([#206](https://github.com/minhtri2710/munsu/issues/206))<br>Claude/Grok/Codex/OpenCode are contract + unit verified (harnesses not installed locally); only Pi is runtime-verified. Legacy pull-based watcher diagnostics remain available via `munsu watch` / `munsu wake-drain` / `munsu guard`. |
 | Composer mode | `fm-composer-lib.sh` | Multi-agent composition; munsu spawns 1:1 crewmates. |
 | Codex command policies | `fm-arm-command-policy.mjs` | Codex-specific ARM/CD gating; per-harness policies not in munsu's generic model. |
 | Classification / Gate-Refuse library | `fm-classify-lib.sh`, `fm-gate-refuse-lib.sh` | Logic is inline in munsu (`--kind`, cobra validation) -- no extracted library needed. |
