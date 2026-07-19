@@ -68,7 +68,7 @@ func TestConfigGetKnownUnset(t *testing.T) {
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	root.SetArgs([]string{"config", "get", "backend"})
+	root.SetArgs([]string{"config", "get", "secondmate-harness"})
 	err := root.Execute()
 	if err != nil {
 		t.Fatalf("config get known-unset: expected success, got error: %v", err)
@@ -77,6 +77,30 @@ func TestConfigGetKnownUnset(t *testing.T) {
 	got := strings.TrimSpace(buf.String())
 	if got != "" {
 		t.Errorf("config get known-unset: expected empty output, got %q", got)
+	}
+}
+
+// TestConfigGetBackendResolvesLive verifies `config get backend` reports the
+// live runtime backend (env detection), not an empty stored value -- the init
+// hint "config get backend → Check detected backend" must be truthful.
+func TestConfigGetBackendResolvesLive(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("TMUX", "") // cleared so HERDR_ENV precedence wins
+	t.Setenv("HERDR_ENV", "1")
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{"config", "get", "backend"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("config get backend: %v", err)
+	}
+
+	if got := strings.TrimSpace(buf.String()); !strings.Contains(got, "herdr") {
+		t.Errorf("config get backend: expected resolved 'herdr', got %q", got)
 	}
 }
 
