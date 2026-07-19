@@ -287,7 +287,7 @@ With --harness claude, this command acts as a Claude Stop hook:
 			if harnessFlag == "grok" {
 				return runGuardGrok(ctx.Home)
 			}
-			if harnessFlag == "codex" {
+			if harnessFlag == "codex" || harnessFlag == "opencode" {
 				return runGuardCodexLike(ctx.Home)
 			}
 			waker.CheckGuard(ctx.Home)
@@ -313,7 +313,7 @@ With --harness claude, this command acts as a Claude Stop hook:
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude, codex (exit 2 + stderr), or grok (passive Stop hook)")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude, codex, opencode (exit 2 + stderr), or grok (passive Stop hook)")
 	return cmd
 }
 

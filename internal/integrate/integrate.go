@@ -99,6 +99,13 @@ func EnabledCapabilities(name string) []Capability {
 			CapTurnEndGuard,
 			CapPreToolCheck,
 		}
+	case harness.Opencode:
+		return []Capability{
+			CapSessionStart,
+			CapWakeFollowUp,
+			CapTurnEndGuard,
+			CapPreToolCheck,
+		}
 	default:
 		return nil
 	}
