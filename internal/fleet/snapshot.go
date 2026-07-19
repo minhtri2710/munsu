@@ -12,9 +12,9 @@ import (
 
 // FleetSnapshot represents the full fleet state.
 type FleetSnapshot struct {
-	Schema  string         `json:"schema"`
-	Time    string         `json:"time"`
-	Tasks   []TaskSnapshot `json:"tasks"`
+	Schema string         `json:"schema"`
+	Time   string         `json:"time"`
+	Tasks  []TaskSnapshot `json:"tasks"`
 }
 
 // TaskSnapshot represents one task's state.
@@ -109,7 +109,6 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 	return snap, nil
 }
 
-
 // View renders the fleet snapshot as Markdown.
 func View(homeDir string) error {
 	snap, err := Snapshot(homeDir)
@@ -172,13 +171,13 @@ func Bearings(homeDir string, projectDir string) error {
 	return nil
 }
 
-// SecondmateStatus returns the status string for a secondmate home.
+// SecondStatus returns the status string for a second home.
 // Checks for a state/.lock file to determine if the process is alive.
-func SecondmateStatus(homeDir string) string {
+func SecondStatus(homeDir string) string {
 	lockFile := filepath.Join(homeDir, "state", ".lock")
 	data, err := os.ReadFile(lockFile)
 	if err != nil {
-		// No lock file means the secondmate is seeded but not launched
+		// No lock file means the second is seeded but not launched
 		if _, statErr := os.Stat(homeDir); statErr == nil {
 			return "seeded"
 		}

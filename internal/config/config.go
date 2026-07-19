@@ -13,7 +13,7 @@ import (
 var KnownKeys = []string{
 	"backend",
 	"crew-harness",
-	"secondmate-harness",
+	"second-harness",
 	"backlog-backend",
 	"default-mode",
 	"require-no-mistakes",

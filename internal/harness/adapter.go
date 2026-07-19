@@ -1,4 +1,4 @@
-// Package harness detects the running agent harness, resolves crewmate/secondmate
+// Package harness detects the running agent harness, resolves crew/second
 // harness assignments, and provides the adapter registry for all verified harnesses.
 package harness
 
@@ -15,8 +15,8 @@ type ProcessNameMatcher struct {
 	Substr bool
 }
 
-// SecondmateLaunchContract describes a verified shell-free secondmate invocation.
-type SecondmateLaunchContract struct {
+// SecondLaunchContract describes a verified shell-free second invocation.
+type SecondLaunchContract struct {
 	Supported  bool
 	CwdAtHome  bool
 	Separator  string
@@ -61,8 +61,8 @@ type Adapter struct {
 	// LaunchTemplate contains the CLI flag conventions and defaults for spawning.
 	LaunchTemplate Template
 
-	// SecondmateLaunch is populated only when the secondmate CLI contract is verified.
-	SecondmateLaunch SecondmateLaunchContract
+	// SecondLaunch is populated only when the second CLI contract is verified.
+	SecondLaunch SecondLaunchContract
 
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	// ReadyPatterns is a list of substrings that indicate the agent is ready
@@ -177,7 +177,7 @@ var Adapters = map[string]Adapter{
 			ModelFlag:  "--model",
 			EffortFlag: "--thinking",
 		},
-		SecondmateLaunch: SecondmateLaunchContract{
+		SecondLaunch: SecondLaunchContract{
 			Supported:  true,
 			CwdAtHome:  true,
 			ProjectArg: false,

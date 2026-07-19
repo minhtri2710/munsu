@@ -314,7 +314,7 @@ func isNoMistakesActive(homeDir, id string) bool {
 	return absorbStaleSignal(s)
 }
 
-// absorbStaleSignal returns true when the crewmate state has an active
+// absorbStaleSignal returns true when the crew state has an active
 // no-mistakes run-step that should absorb a stale signal.
 func absorbStaleSignal(s *crewstate.State) bool {
 	if s == nil {

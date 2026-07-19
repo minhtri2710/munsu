@@ -21,7 +21,7 @@ When this session owns supervision and away mode is not active:
 - Use `munsu watch-arm` instead of `bin/fm-watch-arm.sh`.
 - Use `munsu wake-drain` instead of `bin/fm-wake-drain.sh`.
 - Pi extension tool `fm_watch_arm_pi` is the munsu-owned arm mechanism.
-- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for crewmates.
+- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for crews.
 
 ## Harness-specific
 

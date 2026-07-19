@@ -70,7 +70,7 @@ All successful responses have this envelope:
 
 `task.observe`: default `task_id`, `status`, and cheap state; optional expansion adds `description`, `branch`, `pane_alive`, `no_mistakes_step`. `--fields` can request only documented optional fields. `--full` is only meaningful when a response declares truncation.
 
-`fleet.snapshot`: `scope`, `count`, `total`, and `crewmates[]`. A crewmate row defaults to `task_id`, `status`, `branch`. `count` is returned rows and `total` is the definitive matching total; both are precomputed cheaply.
+`fleet.snapshot`: `scope`, `count`, `total`, and `crews[]`. A crew row defaults to `task_id`, `status`, `branch`. `count` is returned rows and `total` is the definitive matching total; both are precomputed cheaply.
 
 `guard`: `state`, `conditions[]`. `watch.ensure`: `watch_id`, `state`, `interval`, with `noop: true` when already ensured. `watch.run`: `watch_id`, `state`, `wakes_scanned`, `wakes_emitted`. `wake.claim`: `wake_id`, `claim_id`, `owner`, `state`; `wake.ack`: `wake_id`, `claim_id`, `state`. `backend.capabilities`: `backend`, `features[]`. `spawn.receipt`: `task_id`, `session_id`, `worktree`, `branch`, `state`.
 

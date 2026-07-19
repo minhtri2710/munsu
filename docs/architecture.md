@@ -13,16 +13,16 @@ internal/
   config/                  Flat key-file configuration
   project/                 Project registry (data/projects.md)
   worktree/                Treehouse worktree pool CLI wrapper
-  harness/                 Agent harness detection + crew/secondmate resolution
+  harness/                 Agent harness detection + crew/second resolution
   session/                 Session backend interface (tmux, herdr)
   task/                    Task meta read/write (state/<id>.meta + status)
   backlog/                 Task backlog via tasks-axi or manual fallback
   brief/                   Task brief scaffolding (ship/scout templates)
-  crewstate/               Crewmate state reading (meta + pane liveness)
-  teardown/                Crewmate teardown with safety checks
+  crewstate/               Crew state reading (meta + pane liveness)
+  teardown/                Crew teardown with safety checks
   delivery/                Review-diff, pr-check, pr-merge, merge-local
   fleet/                   Fleet sync, snapshot, view, bearings
-  secondmate/              Secondmate lifecycle (seed, launch, retire, handoff)
+  second/              Second lifecycle (seed, launch, retire, handoff)
   selfupdate/              Fast-forward self-update
   supervision/             Event-driven watcher loop (watch)
   waker/                   Wake queue (enqueue, drain, guard)
@@ -48,16 +48,16 @@ business logic lives in the domain packages (`internal/backlog/`,
 | `config` | Read/write flat key files under `config/`; env override fallback |
 | `project` | Parse `data/projects.md` registry; ad-hoc cwd detection |
 | `worktree` | CLI wrapper around treehouse: get, return, status, isolation assertion |
-| `harness` | Detect agent harness (env markers + process ancestry); resolve crew/secondmate adapters |
+| `harness` | Detect agent harness (env markers + process ancestry); resolve crew/second adapters |
 | `session` | `Backend` interface with tmux and herdr adapters |
 | `task` | Meta read/write (`state/<id>.meta`), status append (`state/<id>.status`) |
 | `backlog` | Task backlog via tasks-axi CLI or manual `data/backlog.md` fallback |
 | `brief` | Scaffold ship/scout brief templates at `data/<id>/brief.md` |
-| `crewstate` | Read crewmate state: meta + no-mistakes run-step + pane liveness + status log |
-| `teardown` | Crewmate teardown with dirty/remote/report safety gates |
+| `crewstate` | Read crew state: meta + no-mistakes run-step + pane liveness + status log |
+| `teardown` | Crew teardown with dirty/remote/report safety gates |
 | `delivery` | Review-diff, pr-check, pr-merge, merge-local (no-mistakes axi helpers) |
 | `fleet` | Sync, snapshot, view, bearings for project fleet |
-| `secondmate` | Full persistent-domain-supervisor lifecycle |
+| `second` | Full persistent-domain-supervisor lifecycle |
 | `selfupdate` | Fast-forward-only self-update binary |
 | `supervision` | Event-driven watcher loop with singleton lock |
 | `waker` | Durable wake queue (enqueue, drain, guard) |
@@ -89,7 +89,7 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` env or `--home` flag).
   config/                  Flat key files
     backend                Default session backend (tmux|herdr)
     crew-harness           Override for crew harness
-    secondmate-harness     Override for secondmate harness
+    second-harness     Override for second harness
     backlog-backend        Override for backlog backend (manual)
     crew-dispatch.json     Dispatch profile (model/effort per harness)
   projects/                Cloned project repositories
@@ -167,7 +167,7 @@ Other backends (zellij, cmux, orca) were evaluated but not implemented:
 4. **Launch template resolution** — maps detected harness to a model/effort
    template from `config/crew-dispatch.json`
 5. **Session creation** — resolves the backend (tmux/herdr) and opens a new
-   terminal window for the crewmate
+   terminal window for the crew
 6. **Meta write** — persists task metadata (window, worktree, harness, model,
    project, kind, mode) to `state/<id>.meta`
 
@@ -221,7 +221,7 @@ process ancestry inspection.
 
 `harness.Crew(homeDir)` — fallback chain: `crew-dispatch.json` default >
 `config/crew-harness` > detected harness.
-`harness.Secondmate(homeDir)` — fallback: `config/secondmate-harness` >
+`harness.Second(homeDir)` — fallback: `config/second-harness` >
 `config/crew-harness` > detected harness.
 
 ## Key design decisions
@@ -250,6 +250,31 @@ Key structural differences from firstmate:
 | Language | Bash (`bin/fm-*.sh`) | Go (cobra) |
 | Dispatcher | None (scripts called directly) | Single entrypoint with subcommands |
 | Runtime dep on firstmate | N/A (is firstmate) | None (standalone) |
+
+## Rank hierarchy and identity
+
+Munsu uses a battlefield rank vocabulary:
+
+| Rank | Role | CLI / identity |
+|------|------|----------------|
+| **Marshal** | Fleet orchestrator / primary home | `MUNSU_ROLE=marshal` (default for primary callers); AFK still uses `config/captain-pane` as the inject target path |
+| **Second** | Persistent domain supervisor | CLI `munsu second …`; `MUNSU_ROLE=second`; meta `kind=second`; task id `second:<id>` |
+| **Crew** | Task worker | `MUNSU_ROLE=crew`; spawn/task workers (kinds remain `ship`/`scout`) |
+
+### Labels and markers (rank-consistent scheme)
+
+| Surface | Scheme |
+|---------|--------|
+| Second home provenance marker | `.munsu-second-home` (munsu-v2: version, id, canonical-home) |
+| Herdr workspace / container label | `second-<id>-<hometag>` |
+| Session window name | `mu-second-<id>` |
+| Registry file (parent home) | `data/seconds.md` |
+| Converge lock / nudge pending | `state/.second-converge.lock`, `state/.second-nudge-pending/` |
+| Launch script (second home) | `.second-launch.sh` |
+| Config key | `config/second-harness` (env `MUNSU_SECOND_HARNESS_OVERRIDE`) |
+| Skills | `second-provisioning`, `stuck-crew-recovery` |
+
+Old `secondmate` / `crewmate` / `2ndmate-*` / `.munsu-secondmate-home` names are a clean break: reseed or migrate with `munsu second migrate <home> <id>`, rewrite meta/env/registry, and relaunch. Fail-closed spawn authority rejects unknown `MUNSU_ROLE` values.
 
 ## Build and test
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The supervision subsystem monitors crewmate sessions for lifecycle events. It
+The supervision subsystem monitors crew sessions for lifecycle events. It
 replaces the need for polling from the orchestrator — the watcher runs in the
 background, detects stale or completed tasks, and exits with a wake reason that
 the orchestrator can act on.
@@ -79,7 +79,7 @@ The waker package (`internal/waker`) provides `EnqueueWake` for producers and
 2. **Project tangle** — checks each registered project's primary checkout is not
    on a non-default branch. A tangle means the project is on a feature branch in
    the primary checkout instead of using an isolated worktree, which can cause
-   interference between crewmates.
+   interference between crews.
 
 ## AFK mode
 

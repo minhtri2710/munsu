@@ -6,7 +6,7 @@
 ## 1. Init a dedicated home
 
 A self-hosted munsu should use an isolated home, separate from the
-live secondmate home that firstmate supervises.
+live second home that firstmate supervises.
 
 ```sh
 export MUNSU_HOME=~/.munsu-selfhost
@@ -29,7 +29,7 @@ is the normal mode when running inside a Herdr-aware agent.
 
 ## 2. Arm the watcher
 
-Before spawning any crewmates, arm the event-driven watcher. The watcher
+Before spawning any crews, arm the event-driven watcher. The watcher
 runs in the background as a singleton child process, polled every 5s, and
 exits with a wake reason when an actionable event is found.
 
@@ -100,7 +100,7 @@ munsu brief <task-id> munsu                     # scaffold brief
 # fill in {TASK} placeholder in data/<task-id>/brief.md
 ```
 
-### Spawn crewmate
+### Spawn crew
 
 ```sh
 munsu spawn <task-id> munsu --arm               # spawn + arm watcher
@@ -119,9 +119,9 @@ With `--arm`, the watcher is armed automatically after spawn.
 ### Monitor and steer
 
 ```sh
-munsu peek <task-id> [--lines N]                # read crewmate output
+munsu peek <task-id> [--lines N]                # read crew output
 munsu crew-state <task-id>                      # ground truth state
-munsu send <task-id> "<instruction>"            # steer the crewmate
+munsu send <task-id> "<instruction>"            # steer the crew
 ```
 
 ### Wake handling
@@ -263,10 +263,10 @@ gates, and the return catch-up gate.
 ## 9. Safety rules for self-hosting
 
 1. **Isolated home:** Always use a dedicated home (e.g. `~/.munsu-selfhost`)
-   for self-hosting. Never share the live secondmate home that firstmate
+   for self-hosting. Never share the live second home that firstmate
    supervises.
-2. **Never flip live secondmate:** Do not run `munsu watch-arm` inside the
-   live secondmate home (`~/.munsu` if it is supervised by firstmate).
+2. **Never flip live second:** Do not run `munsu watch-arm` inside the
+   live second home (`~/.munsu` if it is supervised by firstmate).
 3. **Watcher singleton:** Only one watcher process per home. The flock lock
    at `state/.lock` enforces this.
 4. **Guard after every action:** Run `munsu guard` after spawn, teardown,

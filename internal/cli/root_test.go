@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 )
+
 // canonicalCommands is the authoritative list of all visible (non-hidden)
 // top-level commands that must always be registered on the munsu root command.
 // A new entry must be added here when a new canonical command is defined.
@@ -46,7 +47,7 @@ var canonicalCommands = []struct {
 	{name: "stow", use: "stow [text...]"},
 	{name: "ensure-agents-md", use: "ensure-agents-md <project>"},
 	{name: "update", use: "update"},
-	{name: "secondmate", use: "secondmate"},
+	{name: "second", use: "second"},
 	{name: "decision-hold", use: "decision-hold"},
 	{name: "afk", use: "afk"},
 	{name: "integrate", use: "integrate"},
@@ -233,8 +234,8 @@ func TestRootNoArgsEmptyHome(t *testing.T) {
 	}
 }
 
-// TestSecondmateListEmpty verifies secondmate list prints empty state.
-func TestSecondmateListEmpty(t *testing.T) {
+// TestSecondListEmpty verifies second list prints empty state.
+func TestSecondListEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
@@ -243,15 +244,15 @@ func TestSecondmateListEmpty(t *testing.T) {
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	root.SetArgs([]string{"secondmate", "list"})
+	root.SetArgs([]string{"second", "list"})
 	err := root.Execute()
 	if err != nil {
-		t.Fatalf("secondmate list: unexpected error: %v", err)
+		t.Fatalf("second list: unexpected error: %v", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "No secondmates registered.") {
-		t.Errorf("empty secondmate list should show 'No secondmates registered.', got: %s", output)
+	if !strings.Contains(output, "No seconds registered.") {
+		t.Errorf("empty second list should show 'No seconds registered.', got: %s", output)
 	}
 }
 

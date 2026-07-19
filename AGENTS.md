@@ -1,6 +1,6 @@
 # munsu — project agent memory
 
-This file is the conventions file for crewmates working on munsu.
+This file is the conventions file for crews working on munsu.
 (Not the orchestrator operating manual — that's scaffolded by `munsu init`.)
 
 ## Build / test / lint
@@ -32,9 +32,11 @@ installs `munsu-ops` to the chosen destination and points at embedded auxiliarie
 - `munsu doctor` in `internal/cli/doctor_cmd.go` reuses `internal/bootstrap/bootstrap.go` diagnostics; fix strings live in `internal/bootstrap/fixes.go`.
 - Delivery mode auto-selection in `internal/spawn/spawn.go` (`ResolveDeliveryMode`) — precedence: --mode flag, project registry, config/default-mode, auto (no-mistakes on PATH).
 - Init auto-detect logic lives in `internal/cli/init.go` (`autoDetectConfig`) and respects `--reconfigure` flag.
-- Secondmate launch (`internal/secondmate/secondmate.go`) resolves harness via `harness.Secondmate()` chain, looks up the adapter from the harness registry (`harness.GetAdapter`), and builds args from `adapter.LaunchTemplate` (ModelFlag, ExtraArgs). Unknown/unverified harnesses fail closed. Test launch path generation with `buildLaunchArgs` to avoid PATH dependency.
+- Second launch (`internal/second/second.go`) resolves harness via `harness.Second()` chain, looks up the adapter from the harness registry (`harness.GetAdapter`), and builds args from `adapter.LaunchTemplate` (ModelFlag, ExtraArgs). Unknown/unverified harnesses fail closed. Test launch path generation with `buildLaunchArgs` to avoid PATH dependency.
 - Delivery domain types live in `internal/delivery/domain.go` (PR, CheckRun, Review, PRStatus, ReviewState, CheckStatus) with `PR.CanMerge()` and `Review.IsApproving()` business rules. Pipeline interface and adapters (GHAxiAdapter, NoMistakesAdapter, GitLocalAdapter, CompositeAdapter) in `internal/delivery/pipeline.go`. Existing CLI function signatures are backward-compatible.
 - AFK daemon (`internal/afk/`): `Daemon.Start` runs foreground (lock→flag→clearStale→runLoop→signal→flush→cleanup); `lock.go` identity lock; `sentinel.go` inject mark; `triage.go` `OneCycle` produces `Digest` from wake queue; `digester.go` accumulates Digests over a window and flushes `state/.afk-digest` (includes `SafeTarget`/`TargetVerdict`); `wedge.go` detects stale beat and repeated-wake conditions; `stale.go` clears session-scoped `.seen-*`/`.subsuper-*` artifacts; `target.go` resolves captain pane via `config/captain-pane`; `safety.go` `IsSafeInjectTarget` captures and classifies composer row for inject safety.
+
+Rank hierarchy: Marshal (fleet orchestrator) → Second (`internal/second`, CLI `munsu second`) → Crew (task worker). Runtime: `MUNSU_ROLE=marshal|second|crew`. Labels: `second-<id>-<hometag>`, windows `mu-second-<id>`, marker `.munsu-second-home`, registry `data/seconds.md`. See `docs/architecture.md` "Rank hierarchy and identity".
 
 Go 1.26.5 (use `go 1.26` in `go.mod`).
 

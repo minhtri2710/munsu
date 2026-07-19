@@ -14,7 +14,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/secondmate"
+	"github.com/minhtri2710/munsu/internal/second"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -129,10 +129,10 @@ func (r *Runner) checkSpawnAuthority() error {
 	if endpointKind, found, err := currentEndpointKind(r.homeDir); err != nil {
 		return fmt.Errorf("spawn authority: resolving current endpoint: %w", err)
 	} else if found {
-		if endpointKind == "secondmate" {
-			return authorizeSpawn("secondmate", r.homeDir, cwd)
+		if endpointKind == "second" {
+			return authorizeSpawn("second", r.homeDir, cwd)
 		}
-		return fmt.Errorf("spawn authority: managed crewmate endpoints cannot spawn; delegate to the captain or a secondmate")
+		return fmt.Errorf("spawn authority: managed crew endpoints cannot spawn; delegate to the marshal or a second")
 	}
 	return authorizeSpawn(os.Getenv("MUNSU_ROLE"), r.homeDir, cwd)
 }
@@ -194,35 +194,35 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 
 func authorizeSpawn(role, homeDir, cwd string) error {
 	switch role {
-	case "secondmate":
-		if _, err := secondmate.ValidateProvenance(homeDir); err != nil {
-			return fmt.Errorf("spawn authority: invalid secondmate identity: %w", err)
+	case "second":
+		if _, err := second.ValidateProvenance(homeDir); err != nil {
+			return fmt.Errorf("spawn authority: invalid second identity: %w", err)
 		}
 		canonicalHome, err := canonicalExistingPath(homeDir)
 		if err != nil {
-			return fmt.Errorf("spawn authority: resolving secondmate home: %w", err)
+			return fmt.Errorf("spawn authority: resolving second home: %w", err)
 		}
 		canonicalCWD, err := canonicalExistingPath(cwd)
 		if err != nil {
-			return fmt.Errorf("spawn authority: resolving secondmate cwd: %w", err)
+			return fmt.Errorf("spawn authority: resolving second cwd: %w", err)
 		}
 		if canonicalCWD != canonicalHome {
-			return fmt.Errorf("spawn authority: secondmate must spawn from its home %s, current directory is %s", canonicalHome, canonicalCWD)
+			return fmt.Errorf("spawn authority: second must spawn from its home %s, current directory is %s", canonicalHome, canonicalCWD)
 		}
 		return nil
-	case "crewmate":
-		return fmt.Errorf("spawn authority: regular crewmates cannot spawn; delegate to the captain or a secondmate")
-	case "", "captain":
+	case "crew":
+		return fmt.Errorf("spawn authority: regular crews cannot spawn; delegate to the marshal or a second")
+	case "", "marshal":
 		identity, _, _, err := scope.ClassifyIdentity(cwd)
 		if err != nil {
 			return fmt.Errorf("spawn authority: classifying current checkout: %w", err)
 		}
 		if identity == scope.Worktree {
-			return fmt.Errorf("spawn authority: linked-worktree callers cannot spawn; delegate to the captain or a secondmate")
+			return fmt.Errorf("spawn authority: linked-worktree callers cannot spawn; delegate to the marshal or a second")
 		}
 		return nil
 	default:
-		return fmt.Errorf("spawn authority: unknown MUNSU_ROLE %q; expected captain, secondmate, or crewmate", role)
+		return fmt.Errorf("spawn authority: unknown MUNSU_ROLE %q; expected marshal, second, or crew", role)
 	}
 }
 
@@ -320,7 +320,7 @@ func (r *Runner) acquireWorktree() error {
 	return nil
 }
 
-// Phase 9: resolveHarness resolves the crewmate harness.
+// Phase 9: resolveHarness resolves the crew harness.
 func (r *Runner) resolveHarness() error {
 	if r.args.HarnessFlag != "" {
 		if err := harness.ValidateHarness(r.args.HarnessFlag); err != nil {
@@ -375,7 +375,7 @@ func labelComponent(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// Phase 11: createSession creates a session window for the crewmate.
+// Phase 11: createSession creates a session window for the crew.
 func (r *Runner) createSession() error {
 	var bk session.Backend
 	var bkName string
@@ -411,7 +411,7 @@ func (r *Runner) bootstrapWindow() {
 		return
 	}
 	launchScript := filepath.Join(r.wtPath, ".crew-launch.sh")
-	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=crewmate\n" + r.launchCmd + "\n"
+	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=crew\n" + r.launchCmd + "\n"
 	if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 	}
@@ -543,7 +543,7 @@ func (r *Runner) printEndpointInfo() {
 	if r.args.Yolo {
 		yoloVal = "on"
 	}
-	fmt.Printf("Spawned crewmate %s\n", r.args.ID)
+	fmt.Printf("Spawned crew %s\n", r.args.ID)
 	fmt.Printf("  window:   %s\n", r.windowID)
 	fmt.Printf("  worktree: %s\n", r.wtPath)
 	fmt.Printf("  projpath: %s\n", r.projPath)

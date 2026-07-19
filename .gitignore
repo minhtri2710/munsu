@@ -21,6 +21,6 @@
 __pycache__/
 *.pyc
 
-# munsu crewmate launch artifacts
+# munsu crew launch artifacts
 .crew-brief.md
 .crew-launch.sh

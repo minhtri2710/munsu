@@ -1,4 +1,4 @@
-// Package crewstate reads and reports the current state of a crewmate.
+// Package crewstate reads and reports the current state of a crew.
 package crewstate
 
 import (
@@ -11,7 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
-// State describes the current state of a crewmate.
+// State describes the current state of a crew.
 type State struct {
 	TaskID      string
 	Status      string // one of: working, done, failed, paused, blocked, needs-decision, awaiting_approval, resolved, idle, unknown
@@ -20,7 +20,7 @@ type State struct {
 	StatusLines int    // number of status log lines
 
 	// NoMistakesRunStep is the current run-step from the no-mistakes pipeline,
-	// when the crewmate's worktree has an active or recently-completed run.
+	// when the crew's worktree has an active or recently-completed run.
 	// Values: running, fixing, ci, awaiting_approval, fix_review, checks-passed,
 	// passed, failed, cancelled.
 	NoMistakesRunStep string
@@ -31,7 +31,7 @@ type State struct {
 	StatusLogSuperseded bool
 }
 
-// Read reads and synthesizes the current crewmate state.
+// Read reads and synthesizes the current crew state.
 func Read(homeDir string, id string) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 
@@ -132,7 +132,7 @@ func Read(homeDir string, id string) (*State, error) {
 	return s, nil
 }
 
-// applyNoMistakesStep maps a no-mistakes run-step to the crewmate status.
+// applyNoMistakesStep maps a no-mistakes run-step to the crew status.
 func (s *State) applyNoMistakesStep(step, outcome string) {
 	switch step {
 	case "running", "fixing", "ci":
@@ -167,7 +167,6 @@ func (s *State) runStepOverrides(logState string) bool {
 	}
 	return false
 }
-
 
 // checkNoMistakesRun reads no-mistakes run status from the worktree path, using
 // the structured nostatus package at the CLI boundary, and returns the conceptual

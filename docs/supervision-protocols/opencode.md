@@ -18,12 +18,12 @@ When this session owns supervision and away mode is not active:
 
 - Use `munsu watch-arm` instead of `bin/fm-watch-arm.sh`.
 - Use `munsu wake-drain` instead of `bin/fm-wake-drain.sh`.
-- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for crewmates.
+- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for crews.
 
 ## Harness-specific
 
 - OpenCode's persistent TUI plugin runtime is the wake mechanism.
-- The plugin applies in the main primary checkout and a secondmate's own home.
+- The plugin applies in the main primary checkout and a second's own home.
 
 ## See also
 

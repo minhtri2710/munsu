@@ -46,7 +46,7 @@ func IsSafeInjectTarget(cap PaneCapture, paneHandle string) (bool, composer.Verd
 	// Agent glyphs (❯, ›) and detected borders → bordered=true (safe for
 	// ghost-only placeholders). Shell prompt glyphs → bordered=false.
 	bordered := false
-	
+
 	// Check for visible border characters from any captured line.
 	for _, line := range lines {
 		if hasBorderChars(line) {
@@ -99,4 +99,3 @@ func isShellGlyphStart(s string) bool {
 	}
 	return false
 }
-

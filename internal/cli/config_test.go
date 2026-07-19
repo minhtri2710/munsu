@@ -68,7 +68,7 @@ func TestConfigGetKnownUnset(t *testing.T) {
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	root.SetArgs([]string{"config", "get", "secondmate-harness"})
+	root.SetArgs([]string{"config", "get", "second-harness"})
 	err := root.Execute()
 	if err != nil {
 		t.Fatalf("config get known-unset: expected success, got error: %v", err)

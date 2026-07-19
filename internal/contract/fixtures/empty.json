@@ -4,10 +4,10 @@
   "status": "success",
   "data": {
     "count": 0,
-    "context": "No crewmates found for this directory",
-    "crewmates": []
+    "context": "No crews found for this directory",
+    "crews": []
   },
   "help": [
-    "Run `munsu spawn <task-id>` to start a crewmate"
+    "Run `munsu spawn <task-id>` to start a crew"
   ]
 }

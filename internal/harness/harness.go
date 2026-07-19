@@ -1,4 +1,4 @@
-// Package harness detects the running agent harness and resolves crewmate/secondmate
+// Package harness detects the running agent harness and resolves crew/second
 // harness assignments from configuration.
 package harness
 
@@ -65,6 +65,7 @@ func Detect() (string, error) {
 func detectFromEnv() string {
 	return detectEnvFromAdapter()
 }
+
 // detectFromProcess walks the process tree upward looking for a known agent process.
 func detectFromProcess() (string, error) {
 	pid := os.Getppid()
@@ -131,6 +132,7 @@ func processInfo(pid int) (name string, ppid int, err error) {
 func matchProcessName(name string) string {
 	return matchProcessNameFromAdapter(name)
 }
+
 // Template describes the CLI flags and defaults for spawning a harness.
 type Template struct {
 	ModelFlag     string
@@ -184,7 +186,7 @@ func lookupConfig(homeDir, key string) (string, bool) {
 	return "", false
 }
 
-// Crew resolves the crewmate harness following the fallback chain:
+// Crew resolves the crew harness following the fallback chain:
 //
 //  1. Default harness from config/crew-dispatch.json
 //  2. config/crew-harness file value
@@ -213,16 +215,16 @@ func Crew(homeDir string) (string, error) {
 	return Detect()
 }
 
-// Secondmate resolves the secondmate harness following:
+// Second resolves the second harness following:
 //
-//  1. config/secondmate-harness file value
+//  1. config/second-harness file value
 //  2. config/crew-harness file value
 //  3. Detected harness from Detect()
 //
-// A value of "default" in config/secondmate-harness or config/crew-harness is treated as unset.
-func Secondmate(homeDir string) (string, error) {
-	// 1. Try config/secondmate-harness
-	if v, ok := lookupConfig(homeDir, "secondmate-harness"); ok {
+// A value of "default" in config/second-harness or config/crew-harness is treated as unset.
+func Second(homeDir string) (string, error) {
+	// 1. Try config/second-harness
+	if v, ok := lookupConfig(homeDir, "second-harness"); ok {
 		if err := ValidateHarness(v); err != nil {
 			return "", err
 		}

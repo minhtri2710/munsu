@@ -1,4 +1,4 @@
-// Package spawn implements the crewmate spawn orchestration — the full
+// Package spawn implements the crew spawn orchestration — the full
 // sequence of resolving home, validating inputs, acquiring a worktree,
 // launching the harness, and wiring the agent session.
 package spawn
@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Args holds all input parameters for spawning a crewmate.
+// Args holds all input parameters for spawning a crew.
 type Args struct {
 	ID                  string
 	ProjectName         string

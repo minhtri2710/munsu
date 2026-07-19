@@ -57,29 +57,29 @@ type BatchedEntry struct {
 // state/.afk-digest on flush. It accumulates all triage results over a window
 // and flags each entry by escalation type.
 type BatchedEscalation struct {
-	Entries       []BatchedEntry `json:"entries"`
-	RoutineCount  int            `json:"routine_count"`
-	EscalatedCount int           `json:"escalated_count"`
-	FirstAt       time.Time      `json:"first_at"`
-	LastAt        time.Time      `json:"last_at"`
-	WedgeAlarm    *WedgeAlarm    `json:"wedge_alarm,omitempty"`
-	SafeTarget    *bool          `json:"safe_target,omitempty"`
-	TargetVerdict string         `json:"target_verdict,omitempty"`
+	Entries        []BatchedEntry `json:"entries"`
+	RoutineCount   int            `json:"routine_count"`
+	EscalatedCount int            `json:"escalated_count"`
+	FirstAt        time.Time      `json:"first_at"`
+	LastAt         time.Time      `json:"last_at"`
+	WedgeAlarm     *WedgeAlarm    `json:"wedge_alarm,omitempty"`
+	SafeTarget     *bool          `json:"safe_target,omitempty"`
+	TargetVerdict  string         `json:"target_verdict,omitempty"`
 }
 
 // Digester accumulates triage Digests over a time window and flushes
 // a BatchedEscalation to durable state when the window expires.
 // Safe for concurrent use.
 type Digester struct {
-	mu            sync.Mutex
-	entries       []BatchedEntry
-	routineCount  int
+	mu             sync.Mutex
+	entries        []BatchedEntry
+	routineCount   int
 	escalatedCount int
-	firstAt       time.Time
-	lastFlush     time.Time
-	homeDir       string
-	safeTarget    *bool
-	targetVerdict string
+	firstAt        time.Time
+	lastFlush      time.Time
+	homeDir        string
+	safeTarget     *bool
+	targetVerdict  string
 }
 
 // NewDigester creates a Digester scoped to the given home directory.

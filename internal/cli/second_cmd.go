@@ -5,57 +5,57 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/secondmate"
+	"github.com/minhtri2710/munsu/internal/second"
 	"github.com/spf13/cobra"
 )
 
-func newSecondmateCmd() *cobra.Command {
+func newSecondCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "secondmate",
-		Short: "Manage persistent domain supervisors (secondmates)",
+		Use:   "second",
+		Short: "Manage persistent domain supervisors (seconds)",
 	}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "seed <id> <home-path>",
-		Short: "Seed a secondmate home with charter",
+		Short: "Seed a second home with charter",
 		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return secondmate.Seed(args[0], args[1], "# Secondmate charter\n\nPersistent domain supervisor.\n")
+			return second.Seed(args[0], args[1], "# Second charter\n\nPersistent domain supervisor.\n")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "launch <secondmate-home>",
-		Short: "Launch a secondmate in its home (session-backed)",
+		Use:   "launch <second-home>",
+		Short: "Launch a second in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return secondmate.Launch(args[0], ctx.Home)
+			return second.Launch(args[0], ctx.Home)
 		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "retire <secondmate-home>",
-		Short: "Retire a secondmate (session-backed)",
+		Use:   "retire <second-home>",
+		Short: "Retire a second (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return secondmate.Retire(args[0], ctx.Home, false)
+			return second.Retire(args[0], ctx.Home, false)
 		}),
 	})
 
 	listCmd := &cobra.Command{
 		Use:   "list",
-		Short: "List registered secondmates",
+		Short: "List registered seconds",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			mates, err := secondmate.List(ctx.Home)
+			mates, err := second.List(ctx.Home)
 			if err != nil {
 				return err
 			}
 			if len(mates) == 0 {
 				return writeContract(cmd, contract.Response[contract.EmptyResult]{
 					SchemaVersion: contract.SchemaVersion,
-					Kind:          "secondmate.list",
+					Kind:          "second.list",
 					Status:        "success",
-					Data:          contract.EmptyResult{Count: 0, Context: "No secondmates registered."},
+					Data:          contract.EmptyResult{Count: 0, Context: "No seconds registered."},
 				})
 			}
 			var b strings.Builder
@@ -64,7 +64,7 @@ func newSecondmateCmd() *cobra.Command {
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
-				Kind:          "secondmate.list",
+				Kind:          "second.list",
 				Status:        "success",
 				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
 			})
@@ -74,31 +74,31 @@ func newSecondmateCmd() *cobra.Command {
 	cmd.AddCommand(listCmd)
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "handoff <secondmate-home> <item-key...>",
-		Short: "Hand off backlog items to a secondmate",
-		Long: `Hand off queued backlog items from the parent home to a secondmate.
+		Use:   "handoff <second-home> <item-key...>",
+		Short: "Hand off backlog items to a second",
+		Long: `Hand off queued backlog items from the parent home to a second.
 All keys must be in queued state. Uses tasks-axi mv atomically.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return secondmate.Handoff(ctx.Home, args[0], args[1:])
+			return second.Handoff(ctx.Home, args[0], args[1:])
 		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "config-push <secondmate-home>",
-		Short: "Push inheritable config to a secondmate",
+		Use:   "config-push <second-home>",
+		Short: "Push inheritable config to a second",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return secondmate.ConfigPush(ctx.Home, args[0])
+			return second.ConfigPush(ctx.Home, args[0])
 		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "validate <secondmate-home>",
-		Short: "Validate a secondmate home structure and provenance",
+		Use:   "validate <second-home>",
+		Short: "Validate a second home structure and provenance",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if err := secondmate.Validate(args[0], ctx.Home); err != nil {
+			if err := second.Validate(args[0], ctx.Home); err != nil {
 				return fmt.Errorf("validation failed: %w", err)
 			}
 			fmt.Println("valid")
@@ -107,27 +107,27 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 	})
 
 	migrateCmd := &cobra.Command{
-		Use:   "migrate <secondmate-home> <id>",
+		Use:   "migrate <second-home> <id>",
 		Short: "Migrate a seeded home (write provenance marker)",
 		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return secondmate.Migrate(args[0], args[1])
+			return second.Migrate(args[0], args[1])
 		},
 	}
 	cmd.AddCommand(migrateCmd)
 
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
-		Short: "Converge all registered secondmates",
+		Short: "Converge all registered seconds",
 		Long: `Locked convergence sweep: validate registry/provenance, retry pending sends,
 safe local fast-forward, inheritance push, liveness check, and instruction
-surface tracking. State changes tracked in parent state/.secondmate-converge.lock.`,
+surface tracking. State changes tracked in parent state/.second-converge.lock.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			registered, err := secondmate.List(ctx.Home)
+			registered, err := second.List(ctx.Home)
 			if err != nil {
-				return fmt.Errorf("listing registered secondmates: %w", err)
+				return fmt.Errorf("listing registered seconds: %w", err)
 			}
-			return secondmate.Converge(ctx.Home, registered)
+			return second.Converge(ctx.Home, registered)
 		}),
 	}
 	cmd.AddCommand(convergeCmd)

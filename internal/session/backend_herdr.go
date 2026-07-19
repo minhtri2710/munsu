@@ -39,10 +39,10 @@ type HerdrBackend struct {
 
 // herdrLastCreate captures the IDs from the most recent NewWindow call.
 type herdrLastCreate struct {
-	Session      string
-	WorkspaceID  string
-	TabID        string
-	PaneID       string
+	Session     string
+	WorkspaceID string
+	TabID       string
+	PaneID      string
 }
 
 // NewHerdrBackend creates a HerdrBackend with the given session name.

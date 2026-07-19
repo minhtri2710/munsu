@@ -1,4 +1,4 @@
-// Package classify implements status classification logic for crewmate status files.
+// Package classify implements status classification logic for crew status files.
 // It is a pure-logic package (stdlib only) that replaces fm-classify-lib.sh in Go.
 // Functions are side-effect-free reads of status files or pure string predicates.
 package classify
@@ -13,7 +13,7 @@ import (
 
 // Default verb constants, matching fm-classify-lib.sh defaults.
 const (
-	PausedVerbDefault = "paused"
+	PausedVerbDefault  = "paused"
 	ResolveVerbDefault = "resolved"
 )
 
@@ -21,15 +21,15 @@ const (
 // Compiled once at package init.
 var captainReDefault = regexp.MustCompile(`(?i)(?:^|\s)(?:done|needs-decision|blocked|failed):|PR ready|checks green|ready in branch|merged`)
 
-// AbsorbResult indicates why an idle crewmate might be safely absorbed instead of surfaced.
+// AbsorbResult indicates why an idle crew might be safely absorbed instead of surfaced.
 type AbsorbResult int
 
 const (
-	// None means the crewmate cannot be safely absorbed and must surface.
+	// None means the crew cannot be safely absorbed and must surface.
 	None AbsorbResult = iota
-	// Working means the crewmate is provably still working.
+	// Working means the crew is provably still working.
 	Working
-	// Paused means the crewmate declared a deliberate external-wait pause.
+	// Paused means the crew declared a deliberate external-wait pause.
 	Paused
 )
 

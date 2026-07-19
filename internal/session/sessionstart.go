@@ -258,7 +258,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 	printDataFile(w, home, "captain.md")
 	printDataFile(w, home, "learnings.md")
 	printDataFile(w, home, "projects.md")
-	printDataFile(w, home, "secondmates.md")
+	printDataFile(w, home, "seconds.md")
 
 	printFleetState(w, home)
 

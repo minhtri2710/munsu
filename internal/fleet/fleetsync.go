@@ -13,9 +13,9 @@ import (
 
 // SyncResult holds the result of a fleet-sync operation.
 type SyncResult struct {
-	Synced   []string
-	Stuck    []string
-	Errors   []string
+	Synced []string
+	Stuck  []string
+	Errors []string
 }
 
 // Sync fast-forwards all remote-backed project clones under the given projects dir.

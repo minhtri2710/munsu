@@ -29,7 +29,7 @@ func writeFakeHerdr(t *testing.T, dir string) string {
 		`  exit 1` + "\n" +
 		`fi` + "\n" +
 		`case "$1" in` + "\n" +
-"  workspace)\\\n" +
+		"  workspace)\\\n" +
 		`    if [ "$2" = "list" ]; then` + "\n" +
 		`      cat <<'JSON'` + "\n" +
 		`{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[{"label":"test-ws","workspace_id":"wTest","tab_count":1}]}}` + "\n" +

@@ -16,8 +16,8 @@ import (
 type fakeSendKeysBackend struct {
 	mu     sync.Mutex
 	calls  []sendKeysCall
-	fail   bool            // if true, SendKeys returns an error
-	record bool            // if true, record calls
+	fail   bool // if true, SendKeys returns an error
+	record bool // if true, record calls
 }
 
 type sendKeysCall struct {
@@ -422,7 +422,7 @@ func TestFormatPayload_RoutineOnly(t *testing.T) {
 		Entries: []BatchedEntry{
 			{Kind: "check", Key: "health", Payload: "all green", Type: EscalationRoutine, At: time.Now()},
 		},
-		RoutineCount:  1,
+		RoutineCount:   1,
 		EscalatedCount: 0,
 	}
 	payload := formatPayload(be)
@@ -637,7 +637,7 @@ func TestInjectIfSafe_CooldownRespectsPerEntryDedup(t *testing.T) {
 	be2 := &BatchedEscalation{
 		Entries: []BatchedEntry{
 			{Kind: "afk", Key: "t1", Payload: "PR merged", Type: EscalationReviewReady, At: time.Now()}, // dup
-			{Kind: "afk", Key: "t3", Payload: "new event", Type: EscalationDecision, At: time.Now()},     // new
+			{Kind: "afk", Key: "t3", Payload: "new event", Type: EscalationDecision, At: time.Now()},    // new
 		},
 		EscalatedCount: 2,
 		FirstAt:        time.Now(),

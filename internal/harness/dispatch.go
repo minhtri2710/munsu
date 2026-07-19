@@ -1,4 +1,4 @@
-// Package harness detects the running agent harness and resolves crewmate/secondmate
+// Package harness detects the running agent harness and resolves crew/second
 // harness assignments from configuration.
 package harness
 

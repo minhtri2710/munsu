@@ -14,8 +14,8 @@ When the bootstrap diagnostics section of the session-start digest prints any of
 | `CREW_HARNESS_OVERRIDE: <name>` | Crew harness is set to a non-default adapter. Note for spawn decisions. |
 | `CREW_DISPATCH: active` | Dispatch profile rules are active. Consult before spawning. |
 | `FLEET_SYNC:` | Fleet clones were synced or STUCK. Review STUCK entries. |
-| `SECONDMATE_SYNC:` | Secondmate homes were fast-forwarded. |
-| `SECONDMATE_LIVENESS:` | Secondmates were probed; any dead ones were respawned. |
+| `SECOND_SYNC:` | Second homes were fast-forwarded. |
+| `SECOND_LIVENESS:` | Seconds were probed; any dead ones were respawned. |
 | `TASKS_AXI: available` | Tasks-axi is ready. Use it for backlog ops. |
 
 ## Silent bootstrap

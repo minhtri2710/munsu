@@ -71,7 +71,7 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key, value := args[0], args[1]
 			// Validate harness keys against KnownHarnesses
-			if key == "crew-harness" || key == "secondmate-harness" {
+			if key == "crew-harness" || key == "second-harness" {
 				if err := harness.ValidateHarness(value); err != nil {
 					return fmt.Errorf("config set %s: %w", key, err)
 				}
@@ -97,7 +97,7 @@ Values that are not set are shown as "<not set>".
 
 Override environment variables:
   MUNSU_BACKEND_OVERRIDE, MUNSU_CREW_HARNESS_OVERRIDE,
-  MUNSU_SECONDMATE_HARNESS_OVERRIDE, MUNSU_BACKLOG_BACKEND_OVERRIDE,
+  MUNSU_SECOND_HARNESS_OVERRIDE, MUNSU_BACKLOG_BACKEND_OVERRIDE,
   MUNSU_DEFAULT_MODE_OVERRIDE
 `,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

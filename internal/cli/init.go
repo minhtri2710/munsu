@@ -136,7 +136,6 @@ func autoDetectConfig(homeDir string) error {
 	return nil
 }
 
-
 // configFileExists returns true if the config/<key> file exists under homeDir.
 func configFileExists(homeDir, key string) bool {
 	p := filepath.Join(config.ConfigDir(homeDir), key)
@@ -185,6 +184,7 @@ func runSkillInstall(cmd *cobra.Command, homeDir string) error {
 func isStdinTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
+
 // promptSkillChoice asks the user where to install skills.
 func promptSkillChoice() string {
 	fmt.Println("\nInstall munsu skills?")
@@ -219,7 +219,7 @@ func installSkillsTo(dest string) error {
 		fmt.Printf("Skill %q kept as-is at %s\n", name, dest)
 	} else {
 		fmt.Printf("Installed skill %q to %s\n", name, dest)
-		fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, decision-hold-lifecycle, harness-adapters, munsu-update, secondmate-provisioning, stuck-crewmate-recovery")
+		fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, decision-hold-lifecycle, harness-adapters, munsu-update, second-provisioning, stuck-crew-recovery")
 		fmt.Println("  Run: munsu skill show <name>")
 	}
 	return nil

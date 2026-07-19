@@ -197,7 +197,7 @@ func TestRunKinded_MultipleItems_SomeMatch(t *testing.T) {
 	}
 	homeDir := setupTempHome(t, existing, nil)
 	res, err := RunKinded(homeDir, KindLearning, []string{
-		"Go modules",              // matches first, replaces
+		"Go modules",               // matches first, replaces
 		"Always write tests first", // no match, appends
 	})
 	if err != nil {

@@ -1,6 +1,6 @@
 # Supervision loop — watch / wake-drain / guard / afk
 
-This document details the crewmate supervision loop. For the high-level step, see `SKILL.md` step 5.
+This document details the crew supervision loop. For the high-level step, see `SKILL.md` step 5.
 
 ## Watch loop (`munsu watch`)
 
@@ -41,9 +41,9 @@ munsu afk
 
 This sets an AFK flag and polls the fleet at a reduced cadence. Only captain-relevant events (done, failed, needs-decision) are printed. Stop with SIGTERM/SIGINT; the flag is cleared on stop.
 
-## Stuck crewmate recovery
+## Stuck crew recovery
 
-If a crewmate is unresponsive, do not re-implement recovery logic here. Consult `docs/skills/stuck-crewmate-recovery.md` for the escalation ladder:
+If a crew is unresponsive, do not re-implement recovery logic here. Consult `docs/skills/stuck-crew-recovery.md` for the escalation ladder:
 
 1. `munsu peek <id>` — read last N lines.
 2. `munsu send <id> "<instruction>"` — steer.

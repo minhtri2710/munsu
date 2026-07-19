@@ -129,6 +129,7 @@ func fleetSummary(w io.Writer, homeDir string) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Next: munsu fleet bearings | munsu peek <id> | munsu --help")
 }
+
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
@@ -143,7 +144,7 @@ with no requirement to live inside a firstmate checkout.`,
 		SilenceUsage:       true,
 		DisableAutoGenTag:  true,
 		DisableSuggestions: true,
-		PersistentPreRunE:   guardWatcherPreRunE(),
+		PersistentPreRunE:  guardWatcherPreRunE(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -192,7 +193,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newEnsureAgentsMdCmd())
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newDecisionHoldCmd())
-	root.AddCommand(newSecondmateCmd())
+	root.AddCommand(newSecondCmd())
 	root.AddCommand(newAfkCmd())
 	root.AddCommand(newIntegrateCmd())
 

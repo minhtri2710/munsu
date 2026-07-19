@@ -152,4 +152,3 @@ func replaceMatching(entries []string, text string, newLine string) bool {
 	}
 	return false
 }
-

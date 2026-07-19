@@ -28,8 +28,8 @@ func newSpawnCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "spawn <id> [<project>]",
-		Short: "Spawn a crewmate agent (project inferred from cwd if omitted)",
-		Long: `Spawn a crewmate agent.
+		Short: "Spawn a crew agent (project inferred from cwd if omitted)",
+		Long: `Spawn a crew agent.
 
 Project can be omitted when the current working directory is inside a git
 repository that matches a registered project or can be ad-hoc inferred.
@@ -87,7 +87,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override crewmate harness (pi, agy, etc.)")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override crew harness (pi, agy, etc.)")
 	cmd.Flags().BoolVar(&arm, "arm", false, "Arm the watcher after spawn (warn-only on failure)")
 
 	return cmd
@@ -96,7 +96,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 func newSendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send <id> <line>",
-		Short: "Send a line to a crewmate endpoint",
+		Short: "Send a line to a crew endpoint",
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -136,7 +136,7 @@ func newPeekCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "peek <id>",
-		Short: "Peek at crewmate output",
+		Short: "Peek at crew output",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -186,7 +186,7 @@ func newPeekCmd() *cobra.Command {
 func newCrewStateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "crew-state <id>",
-		Short: "Read crewmate current state",
+		Short: "Read crew current state",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -272,8 +272,8 @@ func newTeardownCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "teardown <id>",
-		Short: "Tear down a crewmate",
-		Long: `Tear down a crewmate by its task ID.
+		Short: "Tear down a crew",
+		Long: `Tear down a crew by its task ID.
 
 Safety checks require a scout to have a report.md with no unresolved decision
 holds before teardown proceeds. Use --force to skip all safety checks.

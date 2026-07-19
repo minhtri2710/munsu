@@ -9,7 +9,7 @@ type Pipeline interface {
 	RunPRCheck(homeDir, id, prURL string) error
 	// RunNoMistakes runs the no-mistakes validation pipeline.
 	RunNoMistakes(intent string, skip []string) error
-	// MergeLocal fast-forward merges the crewmate branch into the local default branch.
+	// MergeLocal fast-forward merges the crew branch into the local default branch.
 	MergeLocal(homeDir, id string) error
 }
 

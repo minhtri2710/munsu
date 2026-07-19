@@ -1,6 +1,6 @@
 //go:build integration
 
-package secondmate
+package second
 
 import (
 	"bytes"
@@ -18,19 +18,19 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 	}
 
 	parent := t.TempDir()
-	secondmateHome := filepath.Join(parent, "secondmates", "handoff-sm")
+	secondHome := filepath.Join(parent, "seconds", "handoff-sm")
 	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(secondmateHome, "data"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(secondHome, "data"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(secondmateHome, "handoff-sm"); err != nil {
+	if err := SeedProvenance(secondHome, "handoff-sm"); err != nil {
 		t.Fatal(err)
 	}
 
 	source := filepath.Join(parent, "data", "backlog.md")
-	destination := filepath.Join(secondmateHome, "data", "backlog.md")
+	destination := filepath.Join(secondHome, "data", "backlog.md")
 	runTasksAxi := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command(path, args...)
@@ -53,7 +53,7 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = Handoff(parent, secondmateHome, []string{"blocker-a"})
+	err = Handoff(parent, secondHome, []string{"blocker-a"})
 	if err == nil {
 		t.Fatal("expected dependency-stranding handoff refusal")
 	}

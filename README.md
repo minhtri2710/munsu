@@ -96,12 +96,12 @@ agent harnesses auto-discover at session start.
 
 | Skill | Description | Trigger |
 |-------|-------------|---------|
-| **munsu-ops** | Fleet orchestration — init home, session-start, spawn/supervise crewmates, backlog management, secondmates, watcher, delivery helpers. | Running munsu, spawning crewmates, draining wakes, managing backlog. |
-| **secondmate-provisioning** | Full secondmate lifecycle — seed, launch, retire, handoff, config-push — following the idle-by-default charter contract. | Provisioning, inspecting, or retiring a persistent domain supervisor (secondmate). |
-| **munsu-update** | Self-update munsu and fast-forward secondmate homes. | Invoking `/munsu-update`, "update munsu", "pull the latest munsu". |
+| **munsu-ops** | Fleet orchestration — init home, session-start, spawn/supervise crews, backlog management, seconds, watcher, delivery helpers. | Running munsu, spawning crews, draining wakes, managing backlog. |
+| **second-provisioning** | Full second lifecycle — seed, launch, retire, handoff, config-push — following the idle-by-default charter contract. | Provisioning, inspecting, or retiring a persistent domain supervisor (second). |
+| **munsu-update** | Self-update munsu and fast-forward second homes. | Invoking `/munsu-update`, "update munsu", "pull the latest munsu". |
 | **bootstrap-diagnostics** | Handle session-start bootstrap diagnostics — toolchain readiness lines. | Session-start diagnostic output (MISSING, NEEDS_GH_AUTH, TANGLE, etc.). |
-| **harness-adapters** | Verified adapter launch templates for spawning crewmates — model flags, effort flags, harness detection, and turn-end hooks. | Spawning crewmates with harness-specific flags. |
-| **stuck-crewmate-recovery** | Escalation ladder for unresponsive or stuck crewmates — peek, steer, interrupt, relaunch, fail. | Unresponsive or stuck crewmate. |
+| **harness-adapters** | Verified adapter launch templates for spawning crews — model flags, effort flags, harness detection, and turn-end hooks. | Spawning crews with harness-specific flags. |
+| **stuck-crew-recovery** | Escalation ladder for unresponsive or stuck crews — peek, steer, interrupt, relaunch, fail. | Unresponsive or stuck crew. |
 
 ## Usage examples
 
@@ -127,7 +127,7 @@ munsu backlog start <task-id>
 munsu backlog done <task-id>
 ```
 
-### Crewmate lifecycle
+### Crew lifecycle
 
 ```sh
 munsu spawn <task-id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
@@ -143,7 +143,7 @@ munsu teardown <task-id>
 ```sh
 munsu fleet view
 munsu guard
-munsu secondmate list
+munsu second list
 ```
 
 ## Documentation
@@ -151,7 +151,7 @@ munsu secondmate list
 - `docs/architecture.md` — architecture overview, module layout, key interfaces, design decisions.
 - `docs/port-mapping.md` — mapping between firstmate concepts and munsu commands.
 - `CONTRIBUTING.md` — how to contribute.
-- `AGENTS.md` — conventions file for crewmates working on munsu.
+- `AGENTS.md` — conventions file for crews working on munsu.
 - `COMMANDS.md` — full command map grouped by lifecycle phase.
 - `SUPERVISION.md` — watch/wake-drain/guard/afk loop details.
 

@@ -88,7 +88,7 @@ func TestFleetSnapshotV2DefinitiveEmptyAndCompatibilityV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fleet snapshot v2: %v", err)
 	}
-	if !strings.Contains(v2, "kind: fleet.snapshot") || !strings.Contains(v2, "count: 0") || !strings.Contains(v2, "crewmates: []") {
+	if !strings.Contains(v2, "kind: fleet.snapshot") || !strings.Contains(v2, "count: 0") || !strings.Contains(v2, "crews: []") {
 		t.Errorf("fleet snapshot v2 empty output = %s", v2)
 	}
 
@@ -254,7 +254,7 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
 
-	// Empty snapshot: count:0, total:0, no crewmates, should still have help
+	// Empty snapshot: count:0, total:0, no crews, should still have help
 	output, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
 	if err != nil {
 		t.Fatalf("fleet snapshot v2: %v", err)
@@ -277,8 +277,8 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	if !strings.Contains(out2, "count: 1") || !strings.Contains(out2, "total: 1") {
 		t.Errorf("non-empty snapshot should have count:1 and total:1\n%s", out2)
 	}
-	if !strings.Contains(out2, "crewmates[1]") {
-		t.Errorf("non-empty snapshot should have 1 crewmate\n%s", out2)
+	if !strings.Contains(out2, "crews[1]") {
+		t.Errorf("non-empty snapshot should have 1 crew\n%s", out2)
 	}
 	if !strings.Contains(out2, "help[1]:") {
 		t.Errorf("non-empty snapshot missing help hints\n%s", out2)

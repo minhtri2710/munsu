@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	wakeLeaseDir       = "state/.wake-leases"
-	defaultLeaseGrace  = 30 * time.Second // grace period before expired leases are reclaimable
+	wakeLeaseDir      = "state/.wake-leases"
+	defaultLeaseGrace = 30 * time.Second // grace period before expired leases are reclaimable
 )
 
 // LeasePath returns the directory for wake lease files.
@@ -35,11 +35,11 @@ type ClaimedWakeRecord struct {
 
 // ClaimResult holds a set of claimed wakes and the lease that owns them.
 type ClaimResult struct {
-	LeaseID    string
-	Consumer   string
-	ExpiresAt  int64 // unix seconds
-	Wakes      []ClaimedWakeRecord
-	Reclaimed  int // count of expired-lease wakes that were reclaimed
+	LeaseID   string
+	Consumer  string
+	ExpiresAt int64 // unix seconds
+	Wakes     []ClaimedWakeRecord
+	Reclaimed int // count of expired-lease wakes that were reclaimed
 }
 
 // ClaimWakes claims up to limit wake records from the queue under a lease.

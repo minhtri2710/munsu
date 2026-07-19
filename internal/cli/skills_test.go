@@ -27,7 +27,7 @@ func TestEmbeddedSkillNames(t *testing.T) {
 		t.Errorf("expected 'munsu-ops' in embedded skills, got %v", names)
 	}
 	// Expect auxiliary skills
-	aux := []string{"bootstrap-diagnostics", "harness-adapters", "munsu-update", "secondmate-provisioning", "stuck-crewmate-recovery"}
+	aux := []string{"bootstrap-diagnostics", "harness-adapters", "munsu-update", "second-provisioning", "stuck-crew-recovery"}
 	for _, a := range aux {
 		found = false
 		for _, n := range names {

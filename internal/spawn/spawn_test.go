@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/secondmate"
+	"github.com/minhtri2710/munsu/internal/second"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -333,6 +333,8 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 }
 
 func TestRun_ValidateMode(t *testing.T) {
+	t.Setenv("MUNSU_ROLE", "marshal")
+	t.Chdir(t.TempDir())
 	args := Args{
 		ID:          "test-task",
 		ProjectName: "test-project",
@@ -577,6 +579,8 @@ func TestEffectiveModeForSpawn_ConfigDefaultMode(t *testing.T) {
 
 func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 	// A bogus mode flag should still be rejected by Run
+	t.Setenv("MUNSU_ROLE", "marshal")
+	t.Chdir(t.TempDir())
 	args := Args{
 		ID:          "test-task",
 		ProjectName: "test-project",
@@ -641,7 +645,9 @@ func TestRun_BackendPersistenceRoundtrip(t *testing.T) {
 }
 
 func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
+	t.Setenv("MUNSU_ROLE", "marshal")
 	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
 
 	// Create a minimal brief so spawn passes the preflight check
 	briefDir := filepath.Join(tmpDir, "data", "test-task")
@@ -695,7 +701,7 @@ func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
 	}
 }
 
-func TestCreateSessionUsesProjectPrefixedCrewmateTabLabel(t *testing.T) {
+func TestCreateSessionUsesProjectPrefixedCrewTabLabel(t *testing.T) {
 	var gotName string
 	fake := &fakeBackend{newWindow: func(session, name string) (string, error) {
 		gotName = name
@@ -716,10 +722,10 @@ func TestCreateSessionUsesProjectPrefixedCrewmateTabLabel(t *testing.T) {
 	}
 }
 
-func TestAuthorizeSpawnRejectsRegularCrewmate(t *testing.T) {
-	err := authorizeSpawn("crewmate", t.TempDir(), t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "regular crewmates cannot spawn") {
-		t.Fatalf("authorizeSpawn() error = %v, want regular-crewmate refusal", err)
+func TestAuthorizeSpawnRejectsRegularCrew(t *testing.T) {
+	err := authorizeSpawn("crew", t.TempDir(), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "regular crews cannot spawn") {
+		t.Fatalf("authorizeSpawn() error = %v, want regular-crew refusal", err)
 	}
 }
 
@@ -736,15 +742,15 @@ func TestCheckSpawnAuthorityRejectsManagedHerdrCrewEvenWithoutRole(t *testing.T)
 	t.Setenv("MUNSU_ROLE", "")
 	r := &Runner{homeDir: homeDir}
 	err := r.checkSpawnAuthority()
-	if err == nil || !strings.Contains(err.Error(), "managed crewmate endpoints cannot spawn") {
+	if err == nil || !strings.Contains(err.Error(), "managed crew endpoints cannot spawn") {
 		t.Fatalf("checkSpawnAuthority() error = %v, want managed-endpoint refusal", err)
 	}
 }
 
-func TestCurrentEndpointKindFindsSecondmateHerdrPane(t *testing.T) {
+func TestCurrentEndpointKindFindsSecondHerdrPane(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := task.WriteMeta(homeDir, "secondmate:sm-1", map[string]string{
-		"kind":          "secondmate",
+	if err := task.WriteMeta(homeDir, "second:sm-1", map[string]string{
+		"kind":          "second",
 		"herdr_pane_id": "w1:p8",
 	}); err != nil {
 		t.Fatal(err)
@@ -752,8 +758,8 @@ func TestCurrentEndpointKindFindsSecondmateHerdrPane(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p8")
 	t.Setenv("TMUX_PANE", "")
 	kind, found, err := currentEndpointKind(homeDir)
-	if err != nil || !found || kind != "secondmate" {
-		t.Fatalf("currentEndpointKind() = %q, %v, %v; want secondmate, true, nil", kind, found, err)
+	if err != nil || !found || kind != "second" {
+		t.Fatalf("currentEndpointKind() = %q, %v, %v; want second, true, nil", kind, found, err)
 	}
 }
 
@@ -794,24 +800,24 @@ func TestCurrentEndpointKindFailsClosedWhenTmuxPaneCannotResolve(t *testing.T) {
 	}
 }
 
-func TestAuthorizeSpawnAllowsValidatedSecondmate(t *testing.T) {
+func TestAuthorizeSpawnAllowsValidatedSecond(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := secondmate.SeedProvenance(homeDir, "sm-1"); err != nil {
+	if err := second.SeedProvenance(homeDir, "sm-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := authorizeSpawn("secondmate", homeDir, homeDir); err != nil {
-		t.Fatalf("authorizeSpawn() error = %v, want validated secondmate allowed", err)
+	if err := authorizeSpawn("second", homeDir, homeDir); err != nil {
+		t.Fatalf("authorizeSpawn() error = %v, want validated second allowed", err)
 	}
 }
 
-func TestAuthorizeSpawnRejectsSecondmateOutsideItsHome(t *testing.T) {
+func TestAuthorizeSpawnRejectsSecondOutsideItsHome(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := secondmate.SeedProvenance(homeDir, "sm-1"); err != nil {
+	if err := second.SeedProvenance(homeDir, "sm-1"); err != nil {
 		t.Fatal(err)
 	}
-	err := authorizeSpawn("secondmate", homeDir, t.TempDir())
+	err := authorizeSpawn("second", homeDir, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "must spawn from its home") {
-		t.Fatalf("authorizeSpawn() error = %v, want secondmate cwd refusal", err)
+		t.Fatalf("authorizeSpawn() error = %v, want second cwd refusal", err)
 	}
 }
 
@@ -844,12 +850,12 @@ func TestAuthorizeSpawnRejectsLinkedWorktreeWithoutRole(t *testing.T) {
 func TestAuthorizeSpawnAllowsCaptainPrimaryCheckout(t *testing.T) {
 	primary := t.TempDir()
 	runGit(t, primary, "init")
-	if err := authorizeSpawn("captain", t.TempDir(), primary); err != nil {
-		t.Fatalf("authorizeSpawn() error = %v, want captain allowed", err)
+	if err := authorizeSpawn("marshal", t.TempDir(), primary); err != nil {
+		t.Fatalf("authorizeSpawn() error = %v, want marshal allowed", err)
 	}
 }
 
-func TestBootstrapWindowExportsCrewmateRole(t *testing.T) {
+func TestBootstrapWindowExportsCrewRole(t *testing.T) {
 	worktreeDir := t.TempDir()
 	var sent string
 	r := &Runner{
@@ -868,8 +874,8 @@ func TestBootstrapWindowExportsCrewmateRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), "export MUNSU_ROLE=crewmate") {
-		t.Fatalf("launch script missing crewmate role:\n%s", script)
+	if !strings.Contains(string(script), "export MUNSU_ROLE=crew") {
+		t.Fatalf("launch script missing crew role:\n%s", script)
 	}
 	if sent == "" {
 		t.Fatal("bootstrapWindow did not send launch command")

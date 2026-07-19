@@ -97,7 +97,7 @@ func TestSetOverwrites(t *testing.T) {
 
 func TestKnownKeys(t *testing.T) {
 	known := KnownKeys
-	expected := []string{"backend", "crew-harness", "secondmate-harness", "backlog-backend", "default-mode", "require-no-mistakes"}
+	expected := []string{"backend", "crew-harness", "second-harness", "backlog-backend", "default-mode", "require-no-mistakes"}
 	if len(known) != len(expected) {
 		t.Errorf("KnownKeys length = %d, want %d", len(known), len(expected))
 	}
@@ -115,13 +115,13 @@ func TestIsKnownKey(t *testing.T) {
 	}{
 		{"backend", true},
 		{"crew-harness", true},
-		{"secondmate-harness", true},
+		{"second-harness", true},
 		{"backlog-backend", true},
 		{"default-mode", true},
 		{"unknown", false},
 		{"nonexistent", false},
 		{"", false},
-		{"BACKEND", false},  // case-sensitive
+		{"BACKEND", false}, // case-sensitive
 	}
 	for _, tt := range tests {
 		got := IsKnownKey(tt.key)

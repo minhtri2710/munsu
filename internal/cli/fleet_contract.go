@@ -7,7 +7,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/secondmate"
+	"github.com/minhtri2710/munsu/internal/second"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +31,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	if err != nil {
 		return operationError("internal", "Run `munsu fleet snapshot --version 2` again", "Unable to read fleet state")
 	}
-	crewmates := make([]contract.Crewmate, 0, len(snapshot.Tasks))
+	crews := make([]contract.Crew, 0, len(snapshot.Tasks))
 	for _, entry := range snapshot.Tasks {
 		status := entry.LastStatus
 		if index := strings.Index(status, ":"); index >= 0 {
@@ -40,19 +40,19 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		if status == "" {
 			status = fleet.PhaseFromMeta(entry.Window, entry.PaneAlive)
 		}
-		row := contract.Crewmate{TaskID: entry.ID, Status: status}
+		row := contract.Crew{TaskID: entry.ID, Status: status}
 		if fields["branch"] {
 			row.Branch = branchFor(map[string]string{"worktree": entry.Worktree})
 		}
-		crewmates = append(crewmates, row)
+		crews = append(crews, row)
 	}
-	// Collect secondmate entries
-	matedata, err := secondmate.List(ctx.Home)
-	var secondmates []contract.SecondmateEntry
+	// Collect second entries
+	matedata, err := second.List(ctx.Home)
+	var seconds []contract.SecondEntry
 	if err == nil {
 		for _, m := range matedata {
-			status := fleet.SecondmateStatus(m.Home)
-			secondmates = append(secondmates, contract.SecondmateEntry{
+			status := fleet.SecondStatus(m.Home)
+			seconds = append(seconds, contract.SecondEntry{
 				ID:     m.ID,
 				Scope:  m.Scope,
 				Status: status,
@@ -69,19 +69,19 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		}
 	}
 
-	sort.Slice(crewmates, func(i, j int) bool { return crewmates[i].TaskID < crewmates[j].TaskID })
+	sort.Slice(crews, func(i, j int) bool { return crews[i].TaskID < crews[j].TaskID })
 	return writeContract(cmd, contract.Response[contract.FleetSnapshotV2]{
 		SchemaVersion: contract.SchemaVersion,
 		Kind:          "fleet.snapshot",
 		Status:        "success",
 		Data: contract.FleetSnapshotV2{
 			Scope:           ctx.Home,
-			Count:           len(crewmates),
-			Total:           len(crewmates),
-			Crewmates:       crewmates,
-			Secondmates:     secondmates,
+			Count:           len(crews),
+			Total:           len(crews),
+			Crews:           crews,
+			Seconds:         seconds,
 			UnresolvedHolds: unresolvedHolds,
 		},
-		Help: []string{"Run `munsu task observe <task-id>` to inspect a crewmate"},
+		Help: []string{"Run `munsu task observe <task-id>` to inspect a crew"},
 	})
 }

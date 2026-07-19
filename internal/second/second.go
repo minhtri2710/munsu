@@ -1,5 +1,5 @@
-// Package secondmate manages persistent domain supervisors (secondmates).
-package secondmate
+// Package second manages persistent domain supervisors (seconds).
+package second
 
 import (
 	"bufio"
@@ -20,17 +20,17 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
-// ProvenanceMarkerName is the marker file written to a seeded secondmate home root.
-const ProvenanceMarkerName = ".munsu-secondmate-home"
+// ProvenanceMarkerName is the marker file written to a seeded second home root.
+const ProvenanceMarkerName = ".munsu-second-home"
 
 // ProvenanceVersion is the current provenance marker format version.
 const ProvenanceVersion = "munsu-v2"
 
 // ConvergeLockName is the converge-specific lock file under parent state.
-const ConvergeLockName = ".secondmate-converge.lock"
+const ConvergeLockName = ".second-converge.lock"
 
 // NudgePendingDir is the directory under parent state for pending nudge markers.
-const NudgePendingDir = ".secondmate-nudge-pending"
+const NudgePendingDir = ".second-nudge-pending"
 
 type Info struct {
 	ID      string
@@ -65,8 +65,8 @@ var gitRun = func(args ...string) (string, error) {
 
 // launchCmd builds a shell-safe command string for sending via session backend.
 // Override in tests.
-var launchCmd = func(binPath string, args []string, secondmateHome string) (string, error) {
-	return buildLaunchScript(binPath, args, secondmateHome)
+var launchCmd = func(binPath string, args []string, secondHome string) (string, error) {
+	return buildLaunchScript(binPath, args, secondHome)
 }
 
 // --- Helpers ---
@@ -77,7 +77,7 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// buildLaunchScript writes a bash launch script into the secondmate home and
+// buildLaunchScript writes a bash launch script into the second home and
 // returns a fish-safe command that runs it. Herdr panes may use fish, so the
 // bash-only identity/env plumbing must not be typed directly into the pane.
 func buildLaunchScript(binPath string, args []string, cwd string) (string, error) {
@@ -90,7 +90,7 @@ func buildLaunchScript(binPath string, args []string, cwd string) (string, error
 	b.WriteString("export MUNSU_HOME=")
 	b.WriteString(shQuote(cwd))
 	b.WriteString("\n")
-	b.WriteString("export MUNSU_ROLE=secondmate\n")
+	b.WriteString("export MUNSU_ROLE=second\n")
 	b.WriteString("exec ")
 	b.WriteString(shQuote(binPath))
 	for _, arg := range args {
@@ -98,9 +98,9 @@ func buildLaunchScript(binPath string, args []string, cwd string) (string, error
 		b.WriteString(shQuote(arg))
 	}
 	b.WriteString("\n")
-	scriptPath := filepath.Join(cwd, ".secondmate-launch.sh")
+	scriptPath := filepath.Join(cwd, ".second-launch.sh")
 	if err := os.WriteFile(scriptPath, []byte(b.String()), 0755); err != nil {
-		return "", fmt.Errorf("writing secondmate launch script: %w", err)
+		return "", fmt.Errorf("writing second launch script: %w", err)
 	}
 	return "bash " + shQuote(scriptPath), nil
 }
@@ -111,17 +111,17 @@ func sha256Content(data []byte) string {
 	return fmt.Sprintf("%x", h)
 }
 
-// taskIDForSecondmate returns the task ID used in state metadata for a secondmate.
-func taskIDForSecondmate(smID string) string {
-	return "secondmate:" + smID
+// taskIDForSecond returns the task ID used in state metadata for a second.
+func taskIDForSecond(smID string) string {
+	return "second:" + smID
 }
 
 // --- Seed / Provenance ---
 
-// Seed creates a new secondmate home with a charter brief and a provenance marker.
+// Seed creates a new second home with a charter brief and a provenance marker.
 func Seed(id, homePath, charter string) error {
 	if err := os.MkdirAll(homePath, 0755); err != nil {
-		return fmt.Errorf("creating secondmate home %s: %w", homePath, err)
+		return fmt.Errorf("creating second home %s: %w", homePath, err)
 	}
 
 	for _, dir := range []string{"state", "data", "config", "projects"} {
@@ -139,7 +139,7 @@ func Seed(id, homePath, charter string) error {
 		return fmt.Errorf("seeding provenance marker: %w", err)
 	}
 
-	fmt.Printf("Seeded secondmate %s at %s\n", id, homePath)
+	fmt.Printf("Seeded second %s at %s\n", id, homePath)
 	return nil
 }
 
@@ -157,7 +157,7 @@ func canonicalHome(homePath string) (string, error) {
 	return abs, nil
 }
 
-// SeedProvenance writes the provenance marker to a secondmate home root.
+// SeedProvenance writes the provenance marker to a second home root.
 // Fails closed if canonical home cannot be determined.
 func SeedProvenance(homePath, id string) error {
 	canonical, err := canonicalHome(homePath)
@@ -176,7 +176,7 @@ func ValidateProvenance(homePath string) (string, error) {
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("secondmate home %s has no %s marker — run 'munsu secondmate seed' or 'munsu secondmate migrate'", homePath, ProvenanceMarkerName)
+			return "", fmt.Errorf("second home %s has no %s marker — run 'munsu second seed' or 'munsu second migrate'", homePath, ProvenanceMarkerName)
 		}
 		return "", fmt.Errorf("reading provenance marker %s: %w", markerPath, err)
 	}
@@ -205,12 +205,12 @@ func ValidateProvenance(homePath string) (string, error) {
 		return "", fmt.Errorf("cannot verify canonical home for copied/move check: %w", err)
 	}
 	if actualCanon != storedHome {
-		return "", fmt.Errorf("provenance marker home %q does not match actual canonical home %q — secondmate may have been copied/moved", storedHome, actualCanon)
+		return "", fmt.Errorf("provenance marker home %q does not match actual canonical home %q — second may have been copied/moved", storedHome, actualCanon)
 	}
 	return id, nil
 }
 
-// Validate checks a secondmate home for full structural correctness:
+// Validate checks a second home for full structural correctness:
 //   - provenance marker exists and is valid
 //   - AGENTS.md exists
 //   - state/data/config dirs exist
@@ -239,25 +239,25 @@ func Validate(homePath, parentHome string) error {
 	// Refuse fake/project/primary homes using canonical path.
 	absHome, err := canonicalHome(homePath)
 	if err != nil {
-		return fmt.Errorf("resolving secondmate home path: %w", err)
+		return fmt.Errorf("resolving second home path: %w", err)
 	}
 	absParent, err := canonicalHome(parentHome)
 	if err != nil {
 		return fmt.Errorf("resolving parent home path: %w", err)
 	}
 	if absHome == absParent {
-		return fmt.Errorf("secondmate home %s is the parent home itself — refuse", homePath)
+		return fmt.Errorf("second home %s is the parent home itself — refuse", homePath)
 	}
 
 	bareName := filepath.Base(absHome)
 	if bareName == "fake" || bareName == "project" || bareName == "primary" {
-		return fmt.Errorf("secondmate home %s uses reserved name %q — refuse", homePath, bareName)
+		return fmt.Errorf("second home %s uses reserved name %q — refuse", homePath, bareName)
 	}
 
 	return nil
 }
 
-// validateStructure checks that a secondmate home has the expected directory
+// validateStructure checks that a second home has the expected directory
 // structure and AGENTS.md, WITHOUT requiring a provenance marker.
 // Used by Migrate before it writes the marker.
 func validateStructure(homePath string) error {
@@ -277,7 +277,7 @@ func validateStructure(homePath string) error {
 	return nil
 }
 
-// Migrate writes a provenance marker into an existing seeded secondmate home.
+// Migrate writes a provenance marker into an existing seeded second home.
 // It checks structural validity before writing and refuses fake/project/primary homes.
 func Migrate(homePath, id string) error {
 	refuted := filepath.Base(homePath)
@@ -292,12 +292,12 @@ func Migrate(homePath, id string) error {
 
 // --- Registry ---
 
-// RegistryPath returns the path to the authoritative secondmate registry.
+// RegistryPath returns the path to the authoritative second registry.
 func RegistryPath(parentHome string) string {
-	return filepath.Join(parentHome, "data", "secondmates.md")
+	return filepath.Join(parentHome, "data", "seconds.md")
 }
 
-// ParseRegistry parses the secondmates registry file and returns Info entries.
+// ParseRegistry parses the seconds registry file and returns Info entries.
 func ParseRegistry(registryPath string) ([]Info, error) {
 	f, err := os.Open(registryPath)
 	if err != nil {
@@ -361,35 +361,35 @@ func extractMetaValue(meta, key string) string {
 	return ""
 }
 
-// List returns all registered secondmates by reading the authoritative registry.
+// List returns all registered seconds by reading the authoritative registry.
 func List(parentHome string) ([]Info, error) {
 	return ParseRegistry(RegistryPath(parentHome))
 }
 
 // --- Launch (session-backed) ---
 
-// buildLaunchArgs returns the harness binary name and argument list for a secondmate launch.
-// Matches firstmate's verified pi secondmate shape: cwd at home + prompt bytes only.
+// buildLaunchArgs returns the harness binary name and argument list for a second launch.
+// Matches firstmate's verified pi second shape: cwd at home + prompt bytes only.
 // No shell-expression prompt, no project-path argv, no "--" separator.
-func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, error) {
+func buildLaunchArgs(secondHome, h, parentHome string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(h)
 	if !ok {
-		return "", nil, fmt.Errorf("secondmate launch: harness %q is not a verified harness", h)
+		return "", nil, fmt.Errorf("second launch: harness %q is not a verified harness", h)
 	}
-	contract := adapter.SecondmateLaunch
+	contract := adapter.SecondLaunch
 	if !contract.Supported {
-		return "", nil, fmt.Errorf("secondmate launch: harness %q does not have a verified secondmate launch contract", h)
+		return "", nil, fmt.Errorf("second launch: harness %q does not have a verified second launch contract", h)
 	}
 	if !contract.CwdAtHome || !contract.PromptArg {
-		return "", nil, fmt.Errorf("secondmate launch: harness %q has an incomplete secondmate launch contract", h)
+		return "", nil, fmt.Errorf("second launch: harness %q has an incomplete second launch contract", h)
 	}
 	if contract.ProjectArg {
-		return "", nil, fmt.Errorf("secondmate launch: harness %q must not pass a project path arg", h)
+		return "", nil, fmt.Errorf("second launch: harness %q must not pass a project path arg", h)
 	}
 
-	charter, err := os.ReadFile(filepath.Join(secondmateHome, "AGENTS.md"))
+	charter, err := os.ReadFile(filepath.Join(secondHome, "AGENTS.md"))
 	if err != nil {
-		return "", nil, fmt.Errorf("reading secondmate charter: %w", err)
+		return "", nil, fmt.Errorf("reading second charter: %w", err)
 	}
 
 	model, _ := config.Get(parentHome, "model")
@@ -406,40 +406,40 @@ func buildLaunchArgs(secondmateHome, h, parentHome string) (string, []string, er
 	return adapter.Name, args, nil
 }
 
-func refuseNestedSecondmateLaunch(parentHome string) error {
-	if os.Getenv("MUNSU_ROLE") == "secondmate" {
-		return fmt.Errorf("secondmates cannot launch other secondmates; spawn crewmates in their own home instead")
+func refuseNestedSecondLaunch(parentHome string) error {
+	if os.Getenv("MUNSU_ROLE") == "second" {
+		return fmt.Errorf("seconds cannot launch other seconds; spawn crews in their own home instead")
 	}
 	markerPath := filepath.Join(parentHome, ProvenanceMarkerName)
 	if _, err := os.Stat(markerPath); err == nil {
 		if _, validateErr := ValidateProvenance(parentHome); validateErr != nil {
-			return fmt.Errorf("active home has invalid secondmate provenance: %w", validateErr)
+			return fmt.Errorf("active home has invalid second provenance: %w", validateErr)
 		}
-		return fmt.Errorf("secondmate home %s cannot launch another secondmate", parentHome)
+		return fmt.Errorf("second home %s cannot launch another second", parentHome)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking active home provenance: %w", err)
 	}
 	return nil
 }
 
-// Launch starts a secondmate using a session-backed endpoint.
+// Launch starts a second using a session-backed endpoint.
 // It validates provenance, resolves the harness, creates a new window via
 // the session backend, sends a shell-safe launch script, then writes task
-// meta with kind=secondmate and endpoint metadata only after launch succeeds.
-func Launch(secondmateHome, parentHome string) error {
-	if err := refuseNestedSecondmateLaunch(parentHome); err != nil {
+// meta with kind=second and endpoint metadata only after launch succeeds.
+func Launch(secondHome, parentHome string) error {
+	if err := refuseNestedSecondLaunch(parentHome); err != nil {
 		return err
 	}
-	if _, err := ValidateProvenance(secondmateHome); err != nil {
-		return fmt.Errorf("provenance validation failed for %s: %w", secondmateHome, err)
+	if _, err := ValidateProvenance(secondHome); err != nil {
+		return fmt.Errorf("provenance validation failed for %s: %w", secondHome, err)
 	}
 
-	h, err := harness.Secondmate(parentHome)
+	h, err := harness.Second(parentHome)
 	if err != nil {
-		return fmt.Errorf("resolving secondmate harness: %w", err)
+		return fmt.Errorf("resolving second harness: %w", err)
 	}
 
-	binName, args, err := buildLaunchArgs(secondmateHome, h, parentHome)
+	binName, args, err := buildLaunchArgs(secondHome, h, parentHome)
 	if err != nil {
 		return err
 	}
@@ -449,22 +449,22 @@ func Launch(secondmateHome, parentHome string) error {
 		return fmt.Errorf("resolving session backend: %w", err)
 	}
 
-	markerID, err := ValidateProvenance(secondmateHome)
+	markerID, err := ValidateProvenance(secondHome)
 	if err != nil {
-		return fmt.Errorf("revalidating secondmate provenance: %w", err)
+		return fmt.Errorf("revalidating second provenance: %w", err)
 	}
-	canonicalSecondmateHome, err := canonicalHome(secondmateHome)
+	canonicalSecondHome, err := canonicalHome(secondHome)
 	if err != nil {
-		return fmt.Errorf("canonicalizing secondmate home: %w", err)
+		return fmt.Errorf("canonicalizing second home: %w", err)
 	}
 
-	containerLabel := hometag.WorkspaceTag(canonicalSecondmateHome)
+	containerLabel := hometag.WorkspaceTag(canonicalSecondHome)
 	if hb, ok := bk.(*session.HerdrBackend); ok {
-		hb.Cwd = canonicalSecondmateHome
+		hb.Cwd = canonicalSecondHome
 	}
-	windowID, err := bk.NewWindow(containerLabel, "mu-secondmate-"+markerID)
+	windowID, err := bk.NewWindow(containerLabel, "mu-second-"+markerID)
 	if err != nil {
-		return fmt.Errorf("creating secondmate window: %w", err)
+		return fmt.Errorf("creating second window: %w", err)
 	}
 
 	binPath, err := lookPath(binName)
@@ -474,7 +474,7 @@ func Launch(secondmateHome, parentHome string) error {
 	}
 
 	// Build and send shell-safe launch script.
-	cmdLine, err := launchCmd(binPath, args, canonicalSecondmateHome)
+	cmdLine, err := launchCmd(binPath, args, canonicalSecondHome)
 	if err != nil {
 		bk.Teardown(windowID)
 		return fmt.Errorf("building launch script: %w", err)
@@ -486,8 +486,8 @@ func Launch(secondmateHome, parentHome string) error {
 
 	// Persist task meta only after successful launch.
 	meta := map[string]string{
-		"kind":    "secondmate",
-		"home":    canonicalSecondmateHome,
+		"kind":    "second",
+		"home":    canonicalSecondHome,
 		"window":  windowID,
 		"backend": bkName,
 		"harness": h,
@@ -500,87 +500,87 @@ func Launch(secondmateHome, parentHome string) error {
 		}
 	}
 
-	taskID := taskIDForSecondmate(markerID)
+	taskID := taskIDForSecond(markerID)
 	if err := task.WriteMeta(parentHome, taskID, meta); err != nil {
 		bk.Teardown(windowID)
-		return fmt.Errorf("writing secondmate task meta: %w", err)
+		return fmt.Errorf("writing second task meta: %w", err)
 	}
 
-	fmt.Printf("Launched secondmate %s (window=%s, harness=%s) in %s\n",
-		markerID, windowID, binName, secondmateHome)
+	fmt.Printf("Launched second %s (window=%s, harness=%s) in %s\n",
+		markerID, windowID, binName, secondHome)
 	return nil
 }
 
 // --- Retire ---
 
-// Retire tears down a secondmate using its session-backed endpoint.
+// Retire tears down a second using its session-backed endpoint.
 // It reads task meta, validates kind/sm_id/home before any action,
 // then signals the endpoint via the session backend. Errors from backend
 // operations (SendKeys, Teardown) are returned — never silently swallowed.
-// removeHome=true removes the secondmate home directory after teardown.
-func Retire(secondmateHome, parentHome string, removeHome bool) error {
-	markerID, err := ValidateProvenance(secondmateHome)
+// removeHome=true removes the second home directory after teardown.
+func Retire(secondHome, parentHome string, removeHome bool) error {
+	markerID, err := ValidateProvenance(secondHome)
 	if err != nil {
-		return fmt.Errorf("refusing to retire unowned home %s: %w", secondmateHome, err)
+		return fmt.Errorf("refusing to retire unowned home %s: %w", secondHome, err)
 	}
-	canonicalSecondmateHome, err := canonicalHome(secondmateHome)
+	canonicalSecondHome, err := canonicalHome(secondHome)
 	if err != nil {
-		return fmt.Errorf("refusing to retire home with ambiguous identity %s: %w", secondmateHome, err)
+		return fmt.Errorf("refusing to retire home with ambiguous identity %s: %w", secondHome, err)
 	}
 
-	taskID := taskIDForSecondmate(markerID)
+	taskID := taskIDForSecond(markerID)
 	meta, metaErr := task.ReadMeta(parentHome, taskID)
 
 	if metaErr == nil {
 		// Validate meta fields before use.
-		if meta["kind"] != "secondmate" {
-			return fmt.Errorf("refusing to retire: task meta kind=%q, expected \"secondmate\"", meta["kind"])
+		if meta["kind"] != "second" {
+			return fmt.Errorf("refusing to retire: task meta kind=%q, expected \"second\"", meta["kind"])
 		}
 		if meta["sm_id"] != markerID {
-			return fmt.Errorf("refusing to retire: task meta sm_id=%q does not match secondmate marker id %q", meta["sm_id"], markerID)
+			return fmt.Errorf("refusing to retire: task meta sm_id=%q does not match second marker id %q", meta["sm_id"], markerID)
 		}
-		if meta["home"] != canonicalSecondmateHome {
-			return fmt.Errorf("refusing to retire: task meta home=%q does not match canonical secondmate home %q", meta["home"], canonicalSecondmateHome)
+		if meta["home"] != canonicalSecondHome {
+			return fmt.Errorf("refusing to retire: task meta home=%q does not match canonical second home %q", meta["home"], canonicalSecondHome)
 		}
 
 		windowID := meta["window"]
 		if windowID == "" {
-			return fmt.Errorf("refusing to retire: no window in task meta for secondmate %s", markerID)
+			return fmt.Errorf("refusing to retire: no window in task meta for second %s", markerID)
 		}
 
 		bk, _, bkErr := session.BackendForTask(parentHome, meta)
 		if bkErr != nil {
-			return fmt.Errorf("refusing to retire: cannot resolve backend for secondmate %s: %w", markerID, bkErr)
+			return fmt.Errorf("refusing to retire: cannot resolve backend for second %s: %w", markerID, bkErr)
 		}
 
 		if bk.Alive(windowID) {
 			if sendErr := bk.SendKeys(windowID, "/quit"); sendErr != nil {
-				return fmt.Errorf("failed to send /quit to secondmate %s: %w", markerID, sendErr)
+				return fmt.Errorf("failed to send /quit to second %s: %w", markerID, sendErr)
 			}
 			fmt.Printf("  sent /quit to %s\n", markerID)
 			time.Sleep(500 * time.Millisecond)
 			if bk.Alive(windowID) {
 				if tdErr := bk.Teardown(windowID); tdErr != nil {
-					return fmt.Errorf("failed to teardown secondmate %s window: %w", markerID, tdErr)
+					return fmt.Errorf("failed to teardown second %s window: %w", markerID, tdErr)
 				}
 			}
 		} else {
 			if tdErr := bk.Teardown(windowID); tdErr != nil {
-				return fmt.Errorf("failed to teardown secondmate %s window: %w", markerID, tdErr)
+				return fmt.Errorf("failed to teardown second %s window: %w", markerID, tdErr)
 			}
 		}
 	} else {
-		// Provenance exists but no meta — secondmate was never launched.
-		fmt.Printf("  secondmate %s has no task meta (never launched)\n", markerID)
+		// Provenance exists but no meta — second was never launched.
+		fmt.Printf("  second %s has no task meta (never launched)\n", markerID)
 	}
 
 	if removeHome {
-		if err := os.RemoveAll(secondmateHome); err != nil {
-			return fmt.Errorf("removing secondmate home %s: %w", secondmateHome, err)
+		if err := os.RemoveAll(secondHome); err != nil {
+			return fmt.Errorf("removing second home %s: %w", secondHome, err)
 		}
-		fmt.Printf("Retired and removed secondmate home %s\n", secondmateHome)
+		fmt.Printf("Retired and removed second home %s\n", secondHome)
 	} else {
-		fmt.Printf("Retired secondmate at %s (home retained)\n", secondmateHome)
+		fmt.Printf("Retired second at %s (home retained)\n", secondHome)
 	}
 
 	return nil
@@ -588,7 +588,7 @@ func Retire(secondmateHome, parentHome string, removeHome bool) error {
 
 // --- Handoff ---
 
-// Handoff moves backlog items from the parent home to a secondmate atomically.
+// Handoff moves backlog items from the parent home to a second atomically.
 // All requested keys must preclassify as queued before the command runs.
 // extractTaskStateFromShow parses the state field from tasks-axi show output.
 // Returns empty string if not found.
@@ -613,19 +613,19 @@ var isTasksAxiBackend = func(parentHome string) bool {
 	return val == "tasks-axi"
 }
 
-// Handoff moves backlog items from the parent home to a secondmate atomically.
+// Handoff moves backlog items from the parent home to a second atomically.
 // All requested keys must preclassify as queued before the command runs.
 // Tasks-axi mv is the only supported backend. On failure, both files remain
 // unchanged (atomic via tasks-axi mv).
-// Validates canonical secondmate destination and uses absolute --file paths.
-func Handoff(parentHome, secondmateHome string, itemKeys []string) error {
-	if _, err := ValidateProvenance(secondmateHome); err != nil {
-		return fmt.Errorf("refusing handoff to unmarked home %s: %w", secondmateHome, err)
+// Validates canonical second destination and uses absolute --file paths.
+func Handoff(parentHome, secondHome string, itemKeys []string) error {
+	if _, err := ValidateProvenance(secondHome); err != nil {
+		return fmt.Errorf("refusing handoff to unmarked home %s: %w", secondHome, err)
 	}
-	// Validate canonical secondmate home path.
-	absSM, err := filepath.Abs(secondmateHome)
+	// Validate canonical second home path.
+	absSM, err := filepath.Abs(secondHome)
 	if err != nil {
-		return fmt.Errorf("resolving secondmate home: %w", err)
+		return fmt.Errorf("resolving second home: %w", err)
 	}
 	absParent, err := filepath.Abs(parentHome)
 	if err != nil {
@@ -642,7 +642,7 @@ func Handoff(parentHome, secondmateHome string, itemKeys []string) error {
 
 	// Build absolute backlog paths.
 	srcBacklog := filepath.Join(parentHome, "data", "backlog.md")
-	dstBacklog := filepath.Join(secondmateHome, "data", "backlog.md")
+	dstBacklog := filepath.Join(secondHome, "data", "backlog.md")
 
 	// Create destination backlog directory if needed.
 	os.MkdirAll(filepath.Dir(dstBacklog), 0755)
@@ -779,10 +779,10 @@ func resolveDeepestAncestor(path string) (string, error) {
 	}
 }
 
-// isSafeConfigPath checks that dst is safely contained within secondmateHome
+// isSafeConfigPath checks that dst is safely contained within secondHome
 // and does not symlink-escape into parentHome.
-func isSafeConfigPath(dst, parentHome, secondmateHome string) bool {
-	smCanon, err := canonicalHome(secondmateHome)
+func isSafeConfigPath(dst, parentHome, secondHome string) bool {
+	smCanon, err := canonicalHome(secondHome)
 	if err != nil {
 		return false
 	}
@@ -818,16 +818,16 @@ func isSafeConfigPath(dst, parentHome, secondmateHome string) bool {
 	return true
 }
 
-func pushConfigFile(parentHome, secondmateHome, name string, logFn func(action, name string)) error {
+func pushConfigFile(parentHome, secondHome, name string, logFn func(action, name string)) error {
 	src := filepath.Join(parentHome, "config", name)
-	dst := filepath.Join(secondmateHome, "config", name)
+	dst := filepath.Join(secondHome, "config", name)
 
-	if !isSafeConfigPath(dst, parentHome, secondmateHome) {
-		return fmt.Errorf("config path %s escapes secondmate container — refuse", dst)
+	if !isSafeConfigPath(dst, parentHome, secondHome) {
+		return fmt.Errorf("config path %s escapes second container — refuse", dst)
 	}
 	// Check git tracking BEFORE write — tracked destination must remain byte-identical.
 	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-		return fmt.Errorf("inheritance destination %s is tracked in secondmate git — must be gitignored", name)
+		return fmt.Errorf("inheritance destination %s is tracked in second git — must be gitignored", name)
 	}
 
 	data, err := os.ReadFile(src)
@@ -847,16 +847,16 @@ func pushConfigFile(parentHome, secondmateHome, name string, logFn func(action, 
 	return nil
 }
 
-func pushSharedFile(parentHome, secondmateHome string, logFn func(action, name string)) error {
+func pushSharedFile(parentHome, secondHome string, logFn func(action, name string)) error {
 	src := filepath.Join(parentHome, "data", "captain-shared.md")
-	dst := filepath.Join(secondmateHome, "data", "captain-shared.md")
+	dst := filepath.Join(secondHome, "data", "captain-shared.md")
 
-	if !isSafeConfigPath(dst, parentHome, secondmateHome) {
-		return fmt.Errorf("captain-shared.md path escapes secondmate container — refuse")
+	if !isSafeConfigPath(dst, parentHome, secondHome) {
+		return fmt.Errorf("captain-shared.md path escapes second container — refuse")
 	}
 	// Check git tracking BEFORE write.
 	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-		return fmt.Errorf("captain-shared.md is tracked in secondmate git — must be gitignored")
+		return fmt.Errorf("captain-shared.md is tracked in second git — must be gitignored")
 	}
 
 	data, err := os.ReadFile(src)
@@ -881,16 +881,16 @@ func isGitTracked(dir, name string) bool {
 	return err == nil && len(out) > 0
 }
 
-// ConfigPush copies inheritable config from the parent home to the secondmate,
+// ConfigPush copies inheritable config from the parent home to the second,
 // mirrors deletions, pushes data/captain-shared.md read-only, and logs actions.
-func ConfigPush(parentHome, secondmateHome string) error {
-	if _, err := ValidateProvenance(secondmateHome); err != nil {
-		return fmt.Errorf("refusing config-push to unmarked home %s: %w", secondmateHome, err)
+func ConfigPush(parentHome, secondHome string) error {
+	if _, err := ValidateProvenance(secondHome); err != nil {
+		return fmt.Errorf("refusing config-push to unmarked home %s: %w", secondHome, err)
 	}
 
 	inheritable := getInheritableList()
 
-	logPath := filepath.Join(secondmateHome, "state", "config-push.log")
+	logPath := filepath.Join(secondHome, "state", "config-push.log")
 	os.MkdirAll(filepath.Dir(logPath), 0755)
 	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -905,9 +905,9 @@ func ConfigPush(parentHome, secondmateHome string) error {
 		fmt.Printf("  %s %s\n", action, name)
 	}
 
-	// Mirror deletions: remove inheritable files in secondmate that are absent in parent.
+	// Mirror deletions: remove inheritable files in second that are absent in parent.
 	// Validate safety BEFORE any deletion. Return error on unsafe/tracked paths.
-	configDir := filepath.Join(secondmateHome, "config")
+	configDir := filepath.Join(secondHome, "config")
 	if entries, err := os.ReadDir(configDir); err == nil {
 		for _, e := range entries {
 			name := e.Name()
@@ -917,11 +917,11 @@ func ConfigPush(parentHome, secondmateHome string) error {
 			srcPath := filepath.Join(parentHome, "config", name)
 			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
 				dstPath := filepath.Join(configDir, name)
-				if !isSafeConfigPath(dstPath, parentHome, secondmateHome) {
-					return fmt.Errorf("mirror deletion: %s path escapes secondmate container — refuse", name)
+				if !isSafeConfigPath(dstPath, parentHome, secondHome) {
+					return fmt.Errorf("mirror deletion: %s path escapes second container — refuse", name)
 				}
 				if isGitTracked(configDir, name) {
-					return fmt.Errorf("mirror deletion: %s is tracked in secondmate git — must be gitignored", name)
+					return fmt.Errorf("mirror deletion: %s is tracked in second git — must be gitignored", name)
 				}
 				if err := os.Remove(dstPath); err != nil {
 					log("delete-failed", name+" — "+err.Error())
@@ -933,14 +933,14 @@ func ConfigPush(parentHome, secondmateHome string) error {
 	}
 
 	// Mirror deletion for captain-shared.md — validate before mutation.
-	sharedDst := filepath.Join(secondmateHome, "data", "captain-shared.md")
+	sharedDst := filepath.Join(secondHome, "data", "captain-shared.md")
 	if _, err := os.Stat(filepath.Join(parentHome, "data", "captain-shared.md")); os.IsNotExist(err) {
 		if _, err := os.Stat(sharedDst); err == nil {
-			if !isSafeConfigPath(sharedDst, parentHome, secondmateHome) {
-				return fmt.Errorf("mirror deletion: captain-shared.md path escapes secondmate container — refuse")
+			if !isSafeConfigPath(sharedDst, parentHome, secondHome) {
+				return fmt.Errorf("mirror deletion: captain-shared.md path escapes second container — refuse")
 			}
 			if isGitTracked(filepath.Dir(sharedDst), filepath.Base(sharedDst)) {
-				return fmt.Errorf("mirror deletion: captain-shared.md is tracked in secondmate git — must be gitignored")
+				return fmt.Errorf("mirror deletion: captain-shared.md is tracked in second git — must be gitignored")
 			}
 			if err := os.Remove(sharedDst); err != nil {
 				log("delete-failed", "captain-shared.md — "+err.Error())
@@ -950,12 +950,12 @@ func ConfigPush(parentHome, secondmateHome string) error {
 		}
 	}
 	for _, name := range inheritable {
-		if err := pushConfigFile(parentHome, secondmateHome, name, log); err != nil {
+		if err := pushConfigFile(parentHome, secondHome, name, log); err != nil {
 			return err
 		}
 	}
 
-	if err := pushSharedFile(parentHome, secondmateHome, log); err != nil {
+	if err := pushSharedFile(parentHome, secondHome, log); err != nil {
 		return err
 	}
 
@@ -976,22 +976,22 @@ func normalizeGitRemote(remote string) string {
 	return strings.ToLower(remote)
 }
 
-// safeFF performs a LOCAL-only fast-forward of a secondmate clone to the
+// safeFF performs a LOCAL-only fast-forward of a second clone to the
 // parent's already-local default-branch commit. Verified: same canonical
 // remote origin, correct branch/detached state, clean tree (ignoring only
 // marker and local inherited paths), ancestor relationship, then git merge --ff-only.
-func safeFF(secondmateHome, parentHome string) (before, after string, err error) {
+func safeFF(secondHome, parentHome string) (before, after string, err error) {
 	// Verify same canonical remote origin (allows independent clones, HTTPS/SSH equivalence).
 	parentRemote, err := gitRun("-C", parentHome, "remote", "get-url", "origin")
 	if err != nil {
 		return "", "", fmt.Errorf("parent remote origin: %w", err)
 	}
-	smRemote, err := gitRun("-C", secondmateHome, "remote", "get-url", "origin")
+	smRemote, err := gitRun("-C", secondHome, "remote", "get-url", "origin")
 	if err != nil {
-		return "", "", fmt.Errorf("secondmate remote origin: %w", err)
+		return "", "", fmt.Errorf("second remote origin: %w", err)
 	}
 	if normalizeGitRemote(parentRemote) != normalizeGitRemote(smRemote) {
-		return "", "", fmt.Errorf("secondmate remote %q differs from parent remote %q (canonical: %q vs %q)",
+		return "", "", fmt.Errorf("second remote %q differs from parent remote %q (canonical: %q vs %q)",
 			smRemote, parentRemote, normalizeGitRemote(smRemote), normalizeGitRemote(parentRemote))
 	}
 
@@ -1019,19 +1019,19 @@ func safeFF(secondmateHome, parentHome string) (before, after string, err error)
 		return "", "", fmt.Errorf("resolving default branch commit: %w", err)
 	}
 
-	// Branch check — secondmate must be on default branch or detached HEAD.
-	smBranch, err := gitRun("-C", secondmateHome, "rev-parse", "--abbrev-ref", "HEAD")
+	// Branch check — second must be on default branch or detached HEAD.
+	smBranch, err := gitRun("-C", secondHome, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading secondmate branch: %w", err)
+		return "", "", fmt.Errorf("reading second branch: %w", err)
 	}
 	if smBranch != "HEAD" && smBranch != "" && smBranch != defaultBranch {
-		return "", "", fmt.Errorf("secondmate is on branch %q, expected %q or detached HEAD", smBranch, defaultBranch)
+		return "", "", fmt.Errorf("second is on branch %q, expected %q or detached HEAD", smBranch, defaultBranch)
 	}
 
 	// Clean check — reject ALL tracked changes; allow only gitignored untracked files.
-	statusOut, err := gitRun("-C", secondmateHome, "status", "--porcelain")
+	statusOut, err := gitRun("-C", secondHome, "status", "--porcelain")
 	if err != nil {
-		return "", "", fmt.Errorf("secondmate git status: %w", err)
+		return "", "", fmt.Errorf("second git status: %w", err)
 	}
 	if statusOut != "" {
 		for _, line := range strings.Split(statusOut, "\n") {
@@ -1043,46 +1043,46 @@ func safeFF(secondmateHome, parentHome string) (before, after string, err error)
 			if xy == "??" {
 				// Untracked — allow only if git check-ignore confirms gitignored.
 				path := strings.TrimSpace(line[2:])
-				if _, err := gitRun("-C", secondmateHome, "check-ignore", "-q", "--", path); err == nil {
+				if _, err := gitRun("-C", secondHome, "check-ignore", "-q", "--", path); err == nil {
 					continue // gitignored, OK
 				}
-				return "", "", fmt.Errorf("secondmate home %s has unignored untracked file: %s", secondmateHome, path)
+				return "", "", fmt.Errorf("second home %s has unignored untracked file: %s", secondHome, path)
 			}
 			// Any non-space character means tracked change (staged or unstaged).
 			if xy[0] != ' ' || xy[1] != ' ' {
-				return "", "", fmt.Errorf("secondmate home %s has tracked changes", secondmateHome)
+				return "", "", fmt.Errorf("second home %s has tracked changes", secondHome)
 			}
 		}
 	}
 
-	before, err = gitRun("-C", secondmateHome, "rev-parse", "HEAD")
+	before, err = gitRun("-C", secondHome, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading secondmate HEAD: %w", err)
+		return "", "", fmt.Errorf("reading second HEAD: %w", err)
 	}
 
 	// Check ancestry.
-	mergeBase, err := gitRun("-C", secondmateHome, "merge-base", before, defaultCommit)
+	mergeBase, err := gitRun("-C", secondHome, "merge-base", before, defaultCommit)
 	if err != nil {
 		return "", "", fmt.Errorf("merge-base failed: %w", err)
 	}
 	if mergeBase != before {
-		return "", "", fmt.Errorf("secondmate %s is not an ancestor of parent default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
+		return "", "", fmt.Errorf("second %s is not an ancestor of parent default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
 	}
 
 	if before == defaultCommit {
 		return before, before, nil
 	}
 
-	fmt.Printf("  %s: fast-forward %s → %s\n", filepath.Base(secondmateHome), before[:8], defaultCommit[:8])
+	fmt.Printf("  %s: fast-forward %s → %s\n", filepath.Base(secondHome), before[:8], defaultCommit[:8])
 
-	_, err = gitRun("-C", secondmateHome, "merge", "--ff-only", defaultCommit)
+	_, err = gitRun("-C", secondHome, "merge", "--ff-only", defaultCommit)
 	if err != nil {
 		return "", "", fmt.Errorf("git merge --ff-only failed: %w", err)
 	}
 
-	after, err = gitRun("-C", secondmateHome, "rev-parse", "HEAD")
+	after, err = gitRun("-C", secondHome, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading secondmate HEAD after ff: %w", err)
+		return "", "", fmt.Errorf("reading second HEAD after ff: %w", err)
 	}
 
 	return before, after, nil
@@ -1214,7 +1214,7 @@ func removeNudgeMarker(parentHome, smID string) {
 	os.Remove(nudgeMarkerPath(parentHome, smID))
 }
 
-// Converge performs a locked convergence sweep over registered secondmates.
+// Converge performs a locked convergence sweep over registered seconds.
 // Order: lock, validate registry/provenance, retry pending sends, safe ff,
 // inheritance push, ownership-backed backend Alive check, and reread nudge
 // only if instruction surface advanced.
@@ -1296,16 +1296,16 @@ func Converge(parentHome string, registered []Info) error {
 	return nil
 }
 
-// checkAliveViaBackend checks if a secondmate is alive using the session backend.
+// checkAliveViaBackend checks if a second is alive using the session backend.
 // It reads task meta, validates kind/sm_id/home before use, and uses backend.Alive.
 func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
-	taskID := taskIDForSecondmate(sm.ID)
+	taskID := taskIDForSecond(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return false, nil // not yet launched
 	}
 
-	if meta["kind"] != "secondmate" {
+	if meta["kind"] != "second" {
 		return false, nil
 	}
 	if meta["sm_id"] != sm.ID {
@@ -1313,7 +1313,7 @@ func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
 	}
 	canonSM, err := canonicalHome(sm.Home)
 	if err != nil {
-		return false, fmt.Errorf("canonicalizing secondmate home: %w", err)
+		return false, fmt.Errorf("canonicalizing second home: %w", err)
 	}
 	if meta["home"] != canonSM {
 		return false, nil
@@ -1353,21 +1353,21 @@ func hasSurfaceDiff(home, before, after string) bool {
 	return err == nil && beforeDigest != afterDigest
 }
 
-// sendNudge sends a short re-read message to a secondmate via its
+// sendNudge sends a short re-read message to a second via its
 // session-backed endpoint. It reads task meta, validates endpoint
 // identity, sends the message, removes the pending marker, and
 // updates applied instruction identity only after success.
 // On failure, the marker remains.
 func sendNudge(parentHome string, sm Info) error {
-	taskID := taskIDForSecondmate(sm.ID)
+	taskID := taskIDForSecond(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return fmt.Errorf("%s: no task meta — marker remains", sm.ID)
 	}
 
 	// Validate endpoint meta before use.
-	if meta["kind"] != "secondmate" {
-		return fmt.Errorf("%s: meta kind=%q, expected secondmate — marker remains", sm.ID, meta["kind"])
+	if meta["kind"] != "second" {
+		return fmt.Errorf("%s: meta kind=%q, expected second — marker remains", sm.ID, meta["kind"])
 	}
 	if meta["sm_id"] != sm.ID {
 		return fmt.Errorf("%s: meta sm_id=%q does not match — marker remains", sm.ID, meta["sm_id"])
@@ -1412,7 +1412,7 @@ func sendNudge(parentHome string, sm Info) error {
 	}
 	// Verify the marker binds to an exact commit and instruction surface.
 	if _, err := gitRun("-C", sm.Home, "rev-parse", "--verify", marker["commit"]+"^{commit}"); err != nil {
-		return fmt.Errorf("%s: marker commit %q is not a valid commit in secondmate repo — marker remains", sm.ID, marker["commit"])
+		return fmt.Errorf("%s: marker commit %q is not a valid commit in second repo — marker remains", sm.ID, marker["commit"])
 	}
 	expectedDigest, err := instructionSurfaceDigest(sm.Home, marker["commit"])
 	if err != nil {

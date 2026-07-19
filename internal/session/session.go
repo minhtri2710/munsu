@@ -113,6 +113,7 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 //  1. meta["herdr_session"]
 //  2. ParseWindow(meta["window"]).session
 //  3. HERDR_SESSION env or "default"
+//
 // This ensures post-spawn lifecycle (peek/send/teardown) uses the correct session,
 // not the hometag.
 func BackendForTask(homeDir string, meta map[string]string) (Backend, string, error) {

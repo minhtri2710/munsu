@@ -103,10 +103,10 @@ func TestReturn_DigestRoutineOnly(t *testing.T) {
 		Entries: []BatchedEntry{
 			{Kind: "check", Key: "health", Payload: "all green", Type: EscalationRoutine, At: time.Now()},
 		},
-		RoutineCount:    1,
-		EscalatedCount:  0,
-		FirstAt:         time.Now().Add(-1 * time.Minute),
-		LastAt:          time.Now(),
+		RoutineCount:   1,
+		EscalatedCount: 0,
+		FirstAt:        time.Now().Add(-1 * time.Minute),
+		LastAt:         time.Now(),
 	}
 	data, _ := json.Marshal(be)
 	os.WriteFile(filepath.Join(stateDir, ".afk-digest"), data, 0644)

@@ -1,12 +1,12 @@
-# Stuck-crewmate recovery — agent-only reference
+# Stuck-crew recovery — agent-only reference
 
-Playbook for unresponsive or stuck crewmates.
+Playbook for unresponsive or stuck crews.
 
 ## Escalation ladder
 
 1. **Peek** — `munsu peek <id>` to read the last N lines of pane output.
-2. **Steer** — `munsu send <id> "<one-line instruction>"` to nudge the crewmate.
-3. **Interrupt** — if the crewmate is spinning without making progress, use harness-specific interrupt:
+2. **Steer** — `munsu send <id> "<one-line instruction>"` to nudge the crew.
+3. **Interrupt** — if the crew is spinning without making progress, use harness-specific interrupt:
    - Pi: `Ctrl+C` via herdr pane send-keys or tmux send-keys
    - Claude: `Ctrl+C` same mechanism
 4. **Relaunch** — if interrupt+re-steer fails, teardown and re-spawn:
@@ -19,7 +19,7 @@ Playbook for unresponsive or stuck crewmates.
 
 | Condition | Action |
 |---|---|
-| Crewmate not writing status | Peek + steer |
+| Crew not writing status | Peek + steer |
 | Repeated same question | Steer with answer |
 | Rate limit / 429 | Paused — recheck on long cadence |
 | No output for >5 min | Peek → if idle, steer → if no response, interrupt+steer |

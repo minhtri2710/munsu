@@ -26,7 +26,7 @@ With --mkdir, create the home directory tree {state,data,config,projects}.`,
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data: contract.MessageResult{Message: ctx.Home},
+				Data:          contract.MessageResult{Message: ctx.Home},
 			})
 		}),
 	}

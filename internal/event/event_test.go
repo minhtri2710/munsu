@@ -17,7 +17,7 @@ func TestAppendAndRead(t *testing.T) {
 		t.Errorf("first ID = %d, want 1", id)
 	}
 
-	id2, err := Append(home, "task.done", "crewmate-1", "", `{"id":"task-abc"}`)
+	id2, err := Append(home, "task.done", "crew-1", "", `{"id":"task-abc"}`)
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)
 	}
@@ -36,7 +36,7 @@ func TestAppendAndRead(t *testing.T) {
 	if records[0].ID != 1 || records[0].Type != "build.complete" || records[0].Key != "key-1" {
 		t.Errorf("record 0 = %+v", records[0])
 	}
-	if records[1].ID != 2 || records[1].Type != "task.done" || records[1].Producer != "crewmate-1" {
+	if records[1].ID != 2 || records[1].Type != "task.done" || records[1].Producer != "crew-1" {
 		t.Errorf("record 1 = %+v", records[1])
 	}
 }

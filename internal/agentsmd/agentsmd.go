@@ -27,7 +27,7 @@ func Ensure(projectDir string, stage bool) (*EnsureResult, error) {
 	if !hasFile {
 		base := filepath.Base(projectDir)
 		content = fmt.Sprintf("# %s -- project agent memory\n\n", base)
-		content += "This file is the conventions file for crewmates working on this project.\n\n"
+		content += "This file is the conventions file for crews working on this project.\n\n"
 		content += "## Build / test / lint\n\n" + probeBuildCommands(projectDir) + "\n\n"
 		content += "Delivery mode: no-mistakes (push through the gate, never to origin directly).\n\n"
 	} else {

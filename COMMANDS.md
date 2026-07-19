@@ -28,35 +28,35 @@ Full command map grouped by lifecycle phase.
 |---------|-------------|
 | `munsu session-start` | Lock, bootstrap, and print session-start digest (Context, Fleet State, Supervision). |
 | `munsu harness detect` | Detect the running agent harness. |
-| `munsu harness crew` | Resolve crewmate harness (dispatch.json > config/crew-harness > detected). |
-| `munsu harness secondmate` | Resolve secondmate harness (config/secondmate-harness > config/crew-harness > detected). |
+| `munsu harness crew` | Resolve crew harness (dispatch.json > config/crew-harness > detected). |
+| `munsu harness second` | Resolve second harness (config/second-harness > config/crew-harness > detected). |
 
-## Crewmate Lifecycle
+## Crew Lifecycle
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--yolo] [--backend tmux\|herdr] [--arm]` | Spawn a crewmate agent. Project inferred from cwd if omitted. With `--arm`, start the watcher after spawn. |
-| `munsu send <id> <line>` | Send a line to a crewmate session endpoint. |
-| `munsu peek <id> [--lines N]` | Capture and print crewmate output (default 40 lines). |
-| `munsu crew-state <id>` | Read crewmate current state (status, pane liveness, no-mistakes run-step). |
+| `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--yolo] [--backend tmux\|herdr] [--arm]` | Spawn a crew agent. Project inferred from cwd if omitted. With `--arm`, start the watcher after spawn. |
+| `munsu send <id> <line>` | Send a line to a crew session endpoint. |
+| `munsu peek <id> [--lines N]` | Capture and print crew output (default 40 lines). |
+| `munsu crew-state <id>` | Read crew current state (status, pane liveness, no-mistakes run-step). |
 | `munsu brief <id> <repo> [--scout]` | Scaffold a task brief (ship or scout template). |
-| `munsu teardown <id> [--force]` | Tear down a crewmate with safety checks. |
+| `munsu teardown <id> [--force]` | Tear down a crew with safety checks. |
 | `munsu promote <id>` | Promote a scout task to ship. |
 
 ## Lifecycle (Happy Path)
 
-The recommended workflow for running a crewmate task end-to-end:
+The recommended workflow for running a crew task end-to-end:
 
 1. **`munsu backlog add <id> <desc> [--kind ship|scout] [--repo <name>] [--start]`**
    Register the intent in the backlog. Use `--start` to move it to in-flight immediately.
 2. **`munsu brief <id> <repo> [--scout]`**
-   Scaffold a task brief that the crewmate reads on startup.
+   Scaffold a task brief that the crew reads on startup.
 3. **`munsu spawn <id> [<project>] [--arm]`**
-   Spawn the crewmate — acquires a worktree, creates a session pane, writes task meta, and launches the harness. Project inferred from cwd if omitted.
+   Spawn the crew — acquires a worktree, creates a session pane, writes task meta, and launches the harness. Project inferred from cwd if omitted.
 4. **`munsu peek <id>` / `munsu send <id> <line>`**
-   Monitor and interact with the running crewmate as needed.
+   Monitor and interact with the running crew as needed.
 5. **`munsu teardown <id>`**
-   Terminate the crewmate, release the worktree, and clean up runtime state.
+   Terminate the crew, release the worktree, and clean up runtime state.
 6. **`munsu backlog done <id>`**
    Mark the item complete in the backlog (separate operator step after teardown).
 
@@ -83,19 +83,19 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 | `munsu fleet snapshot` | Emit fleet snapshot as JSON. |
 | `munsu fleet view` | Render fleet view from snapshot. |
 | `munsu fleet bearings [<project-dir>]` | Compact resume report. |
-| `munsu secondmate seed <id> <home-path>` | Seed a secondmate home with charter. |
-| `munsu secondmate launch <secondmate-home>` | Launch a secondmate in its home. |
-| `munsu secondmate retire <secondmate-home>` | Retire a secondmate. |
-| `munsu secondmate list` | List registered secondmates. |
+| `munsu second seed <id> <home-path>` | Seed a second home with charter. |
+| `munsu second launch <second-home>` | Launch a second in its home. |
+| `munsu second retire <second-home>` | Retire a second. |
+| `munsu second list` | List registered seconds. |
 
 ## Delivery
 
 | Command | Description |
 |---------|-------------|
-| `munsu delivery review-diff <id>` | Review diff between crewmate branch and base. |
+| `munsu delivery review-diff <id>` | Review diff between crew branch and base. |
 | `munsu delivery pr-check <id> <pr-url>` | Record PR URL and SHA in task meta, write check.sh to poll merge status. |
 | `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI. Default method is squash. |
-| `munsu delivery merge-local <id>` | Fast-forward merge crewmate branch to local default branch (no-remote projects only). |
+| `munsu delivery merge-local <id>` | Fast-forward merge crew branch to local default branch (no-remote projects only). |
 
 ## Backlog
 
