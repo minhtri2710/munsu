@@ -4,8 +4,9 @@
 > separation, scope refusal, delivery identity, watcher ownership, teardown
 > topology, secondmate authority/handoff, wake target resolution, doctor
 > diagnostics, reporting polish, worktree path fix, and native Pi/Claude/Grok/
-> Codex/OpenCode adapters. agy remains unsupported (no hook surface,
-> [#206](https://github.com/minhtri2710/munsu/issues/206)). The body below is
+> Codex/OpenCode/agy adapters. (agy's 'no hook surface' conclusion in #206 was
+> wrong -- agy has a full hook system; its adapter landed in #218 and #206 was
+> closed as completed.) The body below is
 > the original plan, retained for reference.
 
 ## Goal
