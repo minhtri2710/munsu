@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -195,6 +196,10 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	if parentHome != "" {
 		if err := Register(parentHome, id, homePath, "", ""); err != nil {
 			return fmt.Errorf("registering captain %s: %w", id, err)
+		}
+		// Inherit General config + project registry so soldiers need not re-add projects.
+		if err := ConfigPush(parentHome, homePath); err != nil {
+			return fmt.Errorf("seed inherit: %w", err)
 		}
 	}
 
@@ -1002,13 +1007,57 @@ func pushSharedFile(parentHome, captainHome string, logFn func(action, name stri
 	return nil
 }
 
+// pushProjectsRegistry copies the parent's data/projects.md into the captain
+// home. Entries keep absolute path descriptions so ResolveRepoPath works
+// without cloning into the captain projects/ tree (no auto-clone).
+func pushProjectsRegistry(parentHome, captainHome string, logFn func(action, name string)) error {
+	src := project.RegistryPath(parentHome)
+	dst := project.RegistryPath(captainHome)
+
+	if !isSafeConfigPath(dst, parentHome, captainHome) {
+		return fmt.Errorf("projects.md path escapes captain container — refuse")
+	}
+	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
+		return fmt.Errorf("projects.md is tracked in captain git — must be gitignored")
+	}
+
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Mirror deletion: parent has no registry → remove captain copy if present.
+			if _, stErr := os.Stat(dst); stErr == nil {
+				if err := os.Remove(dst); err != nil {
+					logFn("delete-failed", "projects.md — "+err.Error())
+					return fmt.Errorf("mirror deletion: removing projects.md: %w", err)
+				}
+				logFn("deleted", "projects.md")
+			}
+			return nil
+		}
+		logFn("skipped", "projects.md — "+err.Error())
+		return nil
+	}
+
+	// Validate parent registry before writing so captains never inherit a corrupt file.
+	if _, err := project.ListFromFile(src); err != nil {
+		return fmt.Errorf("reading parent projects.md: %w", err)
+	}
+
+	if err := atomicWriteFile(dst, data, 0644); err != nil {
+		return fmt.Errorf("writing projects.md: %w", err)
+	}
+	logFn("pushed", "projects.md")
+	return nil
+}
+
 func isGitTracked(dir, name string) bool {
 	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", name).CombinedOutput()
 	return err == nil && len(out) > 0
 }
 
-// ConfigPush copies inheritable config from the parent home to the general,
-// mirrors deletions, pushes data/general-shared.md read-only, and logs actions.
+// ConfigPush copies inheritable config from the parent home to the captain,
+// mirrors deletions, pushes data/general-shared.md and data/projects.md,
+// and logs actions.
 func ConfigPush(parentHome, captainHome string) error {
 	if _, err := ValidateProvenance(captainHome); err != nil {
 		return fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
@@ -1082,6 +1131,10 @@ func ConfigPush(parentHome, captainHome string) error {
 	}
 
 	if err := pushSharedFile(parentHome, captainHome, log); err != nil {
+		return err
+	}
+
+	if err := pushProjectsRegistry(parentHome, captainHome, log); err != nil {
 		return err
 	}
 

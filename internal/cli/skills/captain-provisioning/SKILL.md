@@ -29,8 +29,10 @@ Creates a new captain home with the standard directory tree and writes a charter
 
 1. Creates the home directory at `<home-path>`.
 2. Creates subdirectories: `state/`, `data/`, `config/`, `projects/`.
-3. Writes `AGENTS.md` (the charter — currently a minimal placeholder string).
-4. Prints confirmation: `Seeded captain <id> at <home-path>`.
+3. Writes `AGENTS.md` (default charter when empty, requiring parent home for return-channel path).
+4. Writes the provenance marker (`.munsu-captain-home`).
+5. When a parent home is known (CLI always passes General home): registers the captain and runs `ConfigPush` so inheritable config + `data/projects.md` are present immediately.
+6. Prints confirmation: `Seeded captain <id> at <home-path>`.
 
 ### Directories
 
@@ -152,7 +154,8 @@ munsu captain handoff /var/munsu/captains/my-monitor task-001 task-002
 
 ## 5. Config-push (`munsu captain config-push <captain-home>`)
 
-Syncs inheritable configuration from the parent home to the general.
+Syncs inheritable configuration from the parent (General) home to the captain.
+Also used automatically on seed (with parent) and pre-launch.
 
 ### Inheritable config list
 
@@ -166,17 +169,26 @@ backlog-backend
 
 Override via `MUNSU_INHERITABLE_CONFIG` env (colon-separated).
 
+### Also pushed (always, not env-listed)
+
+| Path | Behavior |
+|------|----------|
+| `data/general-shared.md` | Copy read-only (`0444`); mirror-delete if absent on parent |
+| `data/projects.md` | Byte-copy of General project registry; absolute path descriptions stay valid without cloning into captain `projects/`; mirror-delete if absent on parent |
+
 ### Operations
 
-1. **Mirror deletions**: for each inheritable file that exists in the general's `config/` but is absent from the parent's `config/`, delete it from the general.
-2. **Copy present files**: for each inheritable file in the parent, copy it to the general's `config/`.
-3. **Gitignore warning**: after each copy, runs `git check-ignore -q <dst>`. If the file is tracked (exit code 1), prints: `WARNING: <name> is tracked in captain git — add it to .gitignore`.
-4. **Logging**: all actions are appended to `<captain-home>/state/config-push.log` with UTC timestamps in the format `<ts>  <action>  <name>`.
+1. **Mirror deletions**: for each inheritable file that exists in the captain's `config/` but is absent from the parent's `config/`, delete it from the captain.
+2. **Copy present files**: for each inheritable file in the parent, copy it to the captain's `config/`.
+3. **Push shared + projects registry**: `data/general-shared.md` and `data/projects.md` as above.
+4. **Safety**: refuses symlink escape outside the captain home; refuses writes to git-tracked destinations.
+5. **Logging**: all actions are appended to `<captain-home>/state/config-push.log` with UTC timestamps in the format `<ts>\t<action>\t<name>`.
 
 ```sh
 munsu captain config-push /var/munsu/captains/my-monitor
 #   pushed soldier-harness
 #   pushed soldier-dispatch.json
+#   pushed projects.md
 ```
 
 ### Source references
