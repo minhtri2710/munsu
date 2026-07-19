@@ -231,6 +231,12 @@ func scanTask(homeDir, id string) *WakeReason {
 	if err != nil {
 		return nil
 	}
+	// Captains are idle-by-default (firstmate secondmate skip). Parent
+	// supervision uses captain-relevant status signals, not pane-idle stale.
+	if meta["kind"] == "captain" {
+		resetStreak(id)
+		return nil
+	}
 	windowID, hasWindow := meta["window"]
 	if !hasWindow {
 		return nil
@@ -240,11 +246,14 @@ func scanTask(homeDir, id string) *WakeReason {
 	if err != nil {
 		return nil
 	}
-	if !taskBackend.Alive(windowID) {
+	paneAlive := taskBackend.Alive(windowID)
+	if !paneAlive {
 		if isStatusGeneralRelevant(homeDir, id) {
+			// Signal path already covers general-relevant; if we still reach
+			// here (race), surface once with a stable message.
 			return handleStale(id, fmt.Sprintf("pane %s is dead (general-relevant status)", windowID))
 		}
-		if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
+		if shouldAbsorbStale(homeDir, id, false) {
 			resetStreak(id)
 			return nil
 		}
@@ -256,13 +265,14 @@ func scanTask(homeDir, id string) *WakeReason {
 		age := time.Since(fi.ModTime())
 		if age > lifecycle.StaleThreshold() {
 			if isStatusGeneralRelevant(homeDir, id) {
-				return handleStale(id, fmt.Sprintf("pane %s idle for %v (general-relevant status)", windowID, age.Round(time.Second)))
+				return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold (general-relevant status)", windowID))
 			}
-			if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
+			if shouldAbsorbStale(homeDir, id, true) {
 				resetStreak(id)
 				return nil
 			}
-			return handleStale(id, fmt.Sprintf("pane %s idle for %v", windowID, age.Round(time.Second)))
+			// Stable message (no wall-clock age) so wake fingerprints dedupe.
+			return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold", windowID))
 		}
 	}
 
@@ -373,6 +383,23 @@ func absorbStaleSignal(s *soldierstate.State) bool {
 	}
 	switch s.NoMistakesRunStep {
 	case "running", "fixing", "ci", "fix_review", "awaiting_approval":
+		return true
+	}
+	return false
+}
+
+// shouldAbsorbStale reports whether a stale condition is benign.
+// paneAlive gates status-only "working" absorb: a dead pane with a leftover
+// working: line is still actionable; an alive idle pane with working: is healthy.
+func shouldAbsorbStale(homeDir, id string, paneAlive bool) bool {
+	if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
+		return true
+	}
+	if !paneAlive {
+		return false
+	}
+	switch classify.AbsorbClass(id, filepath.Join(homeDir, "state")) {
+	case classify.Working, classify.Paused:
 		return true
 	}
 	return false

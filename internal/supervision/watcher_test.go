@@ -377,7 +377,7 @@ func TestScanFleet_StaleStatusFile(t *testing.T) {
 		t.Errorf("kind = %q, want stale", reason.Kind)
 	}
 	// The pane dead check fires before status staleness check
-	if !strings.Contains(reason.Message, "dead") && !strings.Contains(reason.Message, "idle for") {
+	if !strings.Contains(reason.Message, "dead") && !strings.Contains(reason.Message, "idle beyond threshold") {
 		t.Errorf("message should mention dead or idle, got: %q", reason.Message)
 	}
 }
@@ -715,5 +715,109 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 	if emitted2 {
 		t.Fatal("expected fingerprint dedupe on unchanged captain status")
+	}
+}
+
+func TestShouldAbsorbStale(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Dead pane + leftover working: must NOT absorb (possible finish/wedge).
+	os.WriteFile(filepath.Join(stateDir, "dead-working.status"), []byte("working: leftover\n"), 0644)
+	if shouldAbsorbStale(tmp, "dead-working", false) {
+		t.Error("dead pane with working status should not absorb")
+	}
+
+	// Alive pane + working: idle-healthy absorb.
+	if !shouldAbsorbStale(tmp, "dead-working", true) {
+		t.Error("alive pane with working status should absorb")
+	}
+
+	// Paused absorbs regardless of pane liveness.
+	os.WriteFile(filepath.Join(stateDir, "paused.status"), []byte("paused: waiting on human\n"), 0644)
+	if !shouldAbsorbStale(tmp, "paused", false) {
+		t.Error("paused should absorb even when pane is dead")
+	}
+
+	// Terminal done with no active run: do not absorb as stale (signal path surfaces).
+	os.WriteFile(filepath.Join(stateDir, "done.status"), []byte("done: finished\n"), 0644)
+	if shouldAbsorbStale(tmp, "done", true) {
+		t.Error("done should not absorb via shouldAbsorbStale")
+	}
+}
+
+func TestScanFleet_CaptainKindAbsorbsStale(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Idle captain with dead pane and non-terminal status must not flood stale.
+	task.WriteMeta(tmp, "captain:domain", map[string]string{
+		"kind":    "captain",
+		"window":  "@nonexistent-captain",
+		"backend": "tmux",
+	})
+	os.WriteFile(filepath.Join(stateDir, "captain:domain.status"), []byte("working: idle healthy\n"), 0644)
+	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
+	os.Chtimes(filepath.Join(stateDir, "captain:domain.status"), past, past)
+
+	reason := ScanFleet(tmp)
+	if reason != nil {
+		t.Fatalf("expected nil for idle captain (status-signal only), got %+v", reason)
+	}
+}
+
+func TestScanFleet_CaptainTerminalStillSignals(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	task.WriteMeta(tmp, "captain:domain", map[string]string{
+		"kind":    "captain",
+		"window":  "@nonexistent-captain",
+		"backend": "tmux",
+	})
+	os.WriteFile(filepath.Join(stateDir, "captain:domain.status"), []byte("done: handoff complete\n"), 0644)
+
+	reason := ScanFleet(tmp)
+	if reason == nil {
+		t.Fatal("expected signal for terminal captain status")
+	}
+	if reason.Kind != "signal" {
+		t.Fatalf("kind = %q, want signal", reason.Kind)
+	}
+}
+
+func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	task.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-stable"})
+	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: started\n"), 0644)
+
+	emitted, err := runCycle(tmp)
+	if err != nil || !emitted {
+		t.Fatalf("first cycle emitted=%v err=%v, want true nil", emitted, err)
+	}
+	// Second and third cycles must not re-enqueue: message no longer embeds wall-clock age.
+	for i := 0; i < 2; i++ {
+		emitted, err = runCycle(tmp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if emitted {
+			t.Fatalf("cycle %d re-emitted stale despite stable fingerprint", i+2)
+		}
+	}
+	records, err := lifecycle.DrainWakes(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("drained %d wakes, want exactly 1", len(records))
+	}
+	if strings.Contains(records[0].Payload, "idle for") {
+		t.Fatalf("stale message must not embed wall-clock age: %q", records[0].Payload)
 	}
 }
