@@ -192,6 +192,12 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 		return fmt.Errorf("seeding provenance marker: %w", err)
 	}
 
+	if parentHome != "" {
+		if err := Register(parentHome, id, homePath, "", ""); err != nil {
+			return fmt.Errorf("registering captain %s: %w", id, err)
+		}
+	}
+
 	fmt.Printf("Seeded captain %s at %s\n", id, homePath)
 	return nil
 }
@@ -350,6 +356,46 @@ func RegistryPath(parentHome string) string {
 	return filepath.Join(parentHome, "data", "captains.md")
 }
 
+// Register appends a captain to the parent registry if not already present.
+// Format matches ParseRegistry: "- <id> - (home: <path>; scope: <scope>; projects: <project>; added: <date>)".
+func Register(parentHome, id, homePath, scope, project string) error {
+	if id == "" || homePath == "" {
+		return fmt.Errorf("register requires id and home path")
+	}
+	canon, err := canonicalHome(homePath)
+	if err != nil {
+		return err
+	}
+	path := RegistryPath(parentHome)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	existing, err := ParseRegistry(path)
+	if err != nil {
+		existing = nil
+	}
+	for _, e := range existing {
+		if e.ID == id {
+			return nil // already registered
+		}
+	}
+	added := time.Now().UTC().Format("2006-01-02")
+	meta := fmt.Sprintf("home: %s; scope: %s; projects: %s; added: %s", canon, scope, project, added)
+	line := fmt.Sprintf("- %s - (%s)\n", id, meta)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if st, _ := f.Stat(); st != nil && st.Size() == 0 {
+		if _, err := f.WriteString("# Captains\n\n"); err != nil {
+			return err
+		}
+	}
+	_, err = f.WriteString(line)
+	return err
+}
+
 // ParseRegistry parses the generals registry file and returns Info entries.
 func ParseRegistry(registryPath string) ([]Info, error) {
 	f, err := os.Open(registryPath)
@@ -451,6 +497,15 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		args = append(args, adapter.LaunchTemplate.ModelFlag, model)
 	}
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
+	// Pi captain homes may carry turn-end/watch extensions (firstmate parity).
+	if adapter.Name == "pi" {
+		for _, name := range []string{"munsu-captain-turnend-guard.ts", "munsu-captain-pi-watch.ts", "fm-primary-turnend-guard.ts", "fm-primary-pi-watch.ts"} {
+			path := filepath.Join(captainHome, ".pi", "extensions", name)
+			if _, err := os.Stat(path); err == nil {
+				args = append(args, "-e", path)
+			}
+		}
+	}
 	if contract.Separator != "" {
 		args = append(args, contract.Separator)
 	}
@@ -485,6 +540,17 @@ func Launch(captainHome, parentHome string) error {
 	}
 	if _, err := ValidateProvenance(captainHome); err != nil {
 		return fmt.Errorf("provenance validation failed for %s: %w", captainHome, err)
+	}
+
+	// Pre-launch bootstrap (firstmate parity): push inherited config, then local FF.
+	if err := ConfigPush(parentHome, captainHome); err != nil {
+		return fmt.Errorf("pre-launch config-push: %w", err)
+	}
+	if _, _, err := safeFF(captainHome, parentHome); err != nil {
+		// Non-git captain homes proceed; only fail when the home is a real clone.
+		if _, stErr := os.Stat(filepath.Join(captainHome, ".git")); stErr == nil {
+			return fmt.Errorf("pre-launch fast-forward: %w", err)
+		}
 	}
 
 	h, err := harness.Captain(parentHome)
