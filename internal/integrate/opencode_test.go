@@ -517,8 +517,9 @@ func TestOpencodeExpectedFuncName(t *testing.T) {
 	}
 }
 
-// TestOpencodeSafetyCheckShape verifies that the safety-check CLI handles
-// --harness opencode with the same deny shape as codex (stderr + exit 2).
+// TestOpencodeAssertSupportedHarness verifies opencode is a registered
+// supported harness. (The --harness opencode deny shape — stderr + exit 2 —
+// is exercised by TestOpencodeSafetyCheckDeny in the cli package.)
 func TestOpencodeAssertSupportedHarness(t *testing.T) {
 	// Verify opencode is a supported harness for integration
 	if err := AssertSupportedHarness("opencode"); err != nil {

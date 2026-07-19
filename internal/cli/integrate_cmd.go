@@ -437,6 +437,16 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 		return nil
 	}
 
+	if harnessFlag == "opencode" {
+		if effectiveBlock {
+			// OpenCode deny: stderr plaintext, exit 2 — the plugin throws on exit 2.
+			fmt.Fprint(os.Stderr, "[safety-block] "+reason)
+			exitWithCode(2)
+		}
+		// OpenCode allow: exit 0
+		return nil
+	}
+
 	// Default Pi-shaped output: JSON contract on stdout
 	data := contract.SafetyCheckData{
 		Identity:       result.Identity,
