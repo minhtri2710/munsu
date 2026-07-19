@@ -11,7 +11,7 @@ import (
 )
 
 // ReturnReport summarizes the AFK daemon shutdown and digest drain.
-// Returned by Return when the captain signals they are back.
+// Returned by Return when the general signals they are back.
 type ReturnReport struct {
 	Escalations   []string `json:"escalations"`
 	WedgeAlarms   []string `json:"wedge_alarms"`

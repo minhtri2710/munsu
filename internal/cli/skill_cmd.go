@@ -54,7 +54,7 @@ func newSkillShowCmd() *cobra.Command {
 
 Read this output as the skill body when munsu-ops points you to one of the
 auxiliary skills (bootstrap-diagnostics, harness-adapters, munsu-update,
-second-provisioning, stuck-crew-recovery).`,
+captain-provisioning, stuck-soldier-recovery).`,
 		Args: ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			content, err := readEmbeddedSkill(args[0])

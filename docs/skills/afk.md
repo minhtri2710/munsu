@@ -83,7 +83,7 @@ On detection the alarm is recorded in the digest and surfaced in the return repo
 
 ### Target safety (inject gate)
 
-Before any inject, the daemon captures the last 4 lines of the captain pane and classifies the
+Before any inject, the daemon captures the last 4 lines of the general pane and classifies the
 composer row. Injection proceeds only when the composer is **Empty** (no unsubmitted typed
 content, no pending agent response). Pending and Unknown states always block injection.
 
@@ -92,7 +92,7 @@ content, no pending agent response). Pending and Unknown states always block inj
 `munsu afk return check` re-reads the digest file and exits 0 only when no actionable state
 remains. Actionable state is any non-routine escalation, wedge alarm, or blocked item.
 
-The captain runs `munsu afk return` to drain the digest, print the summary, and clear the flag.
+The general runs `munsu afk return` to drain the digest, print the summary, and clear the flag.
 After reconciling any escalations, `munsu afk return check` confirms all-clear.
 
 ### Approval authority unchanged
@@ -109,14 +109,14 @@ optionally injects summaries. It never merges, approves, or modifies delivery st
 | `state/.afk-digest` | Batched escalation digest (JSON) |
 | `state/.seen-*` | Watcher dedup markers (cleared on start) |
 | `state/.subsuper-*` | Subsupervisor artifacts (cleared on start) |
-| `config/captain-pane` | Optional: hardcoded captain pane handle |
+| `config/general-pane` | Optional: hardcoded general pane handle |
 
 ## Safety invariants
 
 1. **No inject without consent flag** — every inject path checks `state/.afk`
 2. **No inject without Empty composer** — `IsSafeInjectTarget` must return Empty
-3. **No inject without configured target** — `config/captain-pane` must be set
+3. **No inject without configured target** — `config/general-pane` must be set
 4. **No duplicate inject flood** — same entry within 60s cooldown is skipped
-5. **No live captain pane in dogfood** — phase 2.6 verified with FAKE backends only
+5. **No live general pane in dogfood** — phase 2.6 verified with FAKE backends only
 6. **Stale lock reclamation** — dead PID lock is reclaimed, never blocking a new start
 7. **Idempotent return** — multiple `munsu afk return` calls on clean state succeed

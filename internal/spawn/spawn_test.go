@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/second"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -333,7 +333,7 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 }
 
 func TestRun_ValidateMode(t *testing.T) {
-	t.Setenv("MUNSU_ROLE", "marshal")
+	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir())
 	args := Args{
 		ID:          "test-task",
@@ -579,7 +579,7 @@ func TestEffectiveModeForSpawn_ConfigDefaultMode(t *testing.T) {
 
 func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 	// A bogus mode flag should still be rejected by Run
-	t.Setenv("MUNSU_ROLE", "marshal")
+	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir())
 	args := Args{
 		ID:          "test-task",
@@ -645,7 +645,7 @@ func TestRun_BackendPersistenceRoundtrip(t *testing.T) {
 }
 
 func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
-	t.Setenv("MUNSU_ROLE", "marshal")
+	t.Setenv("MUNSU_ROLE", "general")
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
@@ -701,7 +701,7 @@ func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
 	}
 }
 
-func TestCreateSessionUsesProjectPrefixedCrewTabLabel(t *testing.T) {
+func TestCreateSessionUsesProjectPrefixedSoldierTabLabel(t *testing.T) {
 	var gotName string
 	fake := &fakeBackend{newWindow: func(session, name string) (string, error) {
 		gotName = name
@@ -722,16 +722,16 @@ func TestCreateSessionUsesProjectPrefixedCrewTabLabel(t *testing.T) {
 	}
 }
 
-func TestAuthorizeSpawnRejectsRegularCrew(t *testing.T) {
-	err := authorizeSpawn("crew", t.TempDir(), t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "regular crews cannot spawn") {
-		t.Fatalf("authorizeSpawn() error = %v, want regular-crew refusal", err)
+func TestAuthorizeSpawnRejectsRegularSoldier(t *testing.T) {
+	err := authorizeSpawn("soldier", t.TempDir(), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "regular soldiers cannot spawn") {
+		t.Fatalf("authorizeSpawn() error = %v, want regular-soldier refusal", err)
 	}
 }
 
-func TestCheckSpawnAuthorityRejectsManagedHerdrCrewEvenWithoutRole(t *testing.T) {
+func TestCheckSpawnAuthorityRejectsManagedHerdrSoldierEvenWithoutRole(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := task.WriteMeta(homeDir, "crew-1", map[string]string{
+	if err := task.WriteMeta(homeDir, "soldier-1", map[string]string{
 		"kind":          "ship",
 		"herdr_pane_id": "w1:p9",
 	}); err != nil {
@@ -742,15 +742,15 @@ func TestCheckSpawnAuthorityRejectsManagedHerdrCrewEvenWithoutRole(t *testing.T)
 	t.Setenv("MUNSU_ROLE", "")
 	r := &Runner{homeDir: homeDir}
 	err := r.checkSpawnAuthority()
-	if err == nil || !strings.Contains(err.Error(), "managed crew endpoints cannot spawn") {
+	if err == nil || !strings.Contains(err.Error(), "managed soldier endpoints cannot spawn") {
 		t.Fatalf("checkSpawnAuthority() error = %v, want managed-endpoint refusal", err)
 	}
 }
 
-func TestCurrentEndpointKindFindsSecondHerdrPane(t *testing.T) {
+func TestCurrentEndpointKindFindsCaptainHerdrPane(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := task.WriteMeta(homeDir, "second:sm-1", map[string]string{
-		"kind":          "second",
+	if err := task.WriteMeta(homeDir, "captain:sm-1", map[string]string{
+		"kind":          "captain",
 		"herdr_pane_id": "w1:p8",
 	}); err != nil {
 		t.Fatal(err)
@@ -758,14 +758,14 @@ func TestCurrentEndpointKindFindsSecondHerdrPane(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p8")
 	t.Setenv("TMUX_PANE", "")
 	kind, found, err := currentEndpointKind(homeDir)
-	if err != nil || !found || kind != "second" {
-		t.Fatalf("currentEndpointKind() = %q, %v, %v; want second, true, nil", kind, found, err)
+	if err != nil || !found || kind != "captain" {
+		t.Fatalf("currentEndpointKind() = %q, %v, %v; want captain, true, nil", kind, found, err)
 	}
 }
 
 func TestCurrentEndpointKindFindsTmuxWindowForPane(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := task.WriteMeta(homeDir, "crew-2", map[string]string{
+	if err := task.WriteMeta(homeDir, "soldier-2", map[string]string{
 		"kind":   "ship",
 		"window": "munsu:@7",
 	}); err != nil {
@@ -800,24 +800,24 @@ func TestCurrentEndpointKindFailsClosedWhenTmuxPaneCannotResolve(t *testing.T) {
 	}
 }
 
-func TestAuthorizeSpawnAllowsValidatedSecond(t *testing.T) {
+func TestAuthorizeSpawnAllowsValidatedCaptain(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := second.SeedProvenance(homeDir, "sm-1"); err != nil {
+	if err := captain.SeedProvenance(homeDir, "sm-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := authorizeSpawn("second", homeDir, homeDir); err != nil {
-		t.Fatalf("authorizeSpawn() error = %v, want validated second allowed", err)
+	if err := authorizeSpawn("captain", homeDir, homeDir); err != nil {
+		t.Fatalf("authorizeSpawn() error = %v, want validated captain allowed", err)
 	}
 }
 
-func TestAuthorizeSpawnRejectsSecondOutsideItsHome(t *testing.T) {
+func TestAuthorizeSpawnRejectsCaptainOutsideItsHome(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := second.SeedProvenance(homeDir, "sm-1"); err != nil {
+	if err := captain.SeedProvenance(homeDir, "sm-1"); err != nil {
 		t.Fatal(err)
 	}
-	err := authorizeSpawn("second", homeDir, t.TempDir())
+	err := authorizeSpawn("captain", homeDir, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "must spawn from its home") {
-		t.Fatalf("authorizeSpawn() error = %v, want second cwd refusal", err)
+		t.Fatalf("authorizeSpawn() error = %v, want captain cwd refusal", err)
 	}
 }
 
@@ -838,7 +838,7 @@ func TestAuthorizeSpawnRejectsLinkedWorktreeWithoutRole(t *testing.T) {
 	}
 	runGit(t, primary, "add", "README.md")
 	runGit(t, primary, "commit", "-m", "init")
-	worktreeDir := filepath.Join(t.TempDir(), "crew-worktree")
+	worktreeDir := filepath.Join(t.TempDir(), "soldier-worktree")
 	runGit(t, primary, "worktree", "add", worktreeDir)
 
 	err := authorizeSpawn("", t.TempDir(), worktreeDir)
@@ -850,12 +850,12 @@ func TestAuthorizeSpawnRejectsLinkedWorktreeWithoutRole(t *testing.T) {
 func TestAuthorizeSpawnAllowsCaptainPrimaryCheckout(t *testing.T) {
 	primary := t.TempDir()
 	runGit(t, primary, "init")
-	if err := authorizeSpawn("marshal", t.TempDir(), primary); err != nil {
-		t.Fatalf("authorizeSpawn() error = %v, want marshal allowed", err)
+	if err := authorizeSpawn("general", t.TempDir(), primary); err != nil {
+		t.Fatalf("authorizeSpawn() error = %v, want general allowed", err)
 	}
 }
 
-func TestBootstrapWindowExportsCrewRole(t *testing.T) {
+func TestBootstrapWindowExportsSoldierRole(t *testing.T) {
 	worktreeDir := t.TempDir()
 	var sent string
 	r := &Runner{
@@ -870,12 +870,12 @@ func TestBootstrapWindowExportsCrewRole(t *testing.T) {
 	}
 	r.bootstrapWindow()
 
-	script, err := os.ReadFile(filepath.Join(worktreeDir, ".crew-launch.sh"))
+	script, err := os.ReadFile(filepath.Join(worktreeDir, ".soldier-launch.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), "export MUNSU_ROLE=crew") {
-		t.Fatalf("launch script missing crew role:\n%s", script)
+	if !strings.Contains(string(script), "export MUNSU_ROLE=soldier") {
+		t.Fatalf("launch script missing soldier role:\n%s", script)
 	}
 	if sent == "" {
 		t.Fatal("bootstrapWindow did not send launch command")

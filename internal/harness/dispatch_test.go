@@ -183,7 +183,7 @@ func TestLoadDispatch_WithSelect(t *testing.T) {
 func TestSelectProfile_UnknownStrategy(t *testing.T) {
 	profiles := []DispatchProfile{
 		{Name: "first", Match: []string{"*"}, Harness: "codex"},
-		{Name: "second", Match: []string{"*"}, Harness: "claude"},
+		{Name: "general", Match: []string{"*"}, Harness: "claude"},
 	}
 	got := SelectProfile(profiles, "unknown-strategy")
 	if got != "codex" {
@@ -201,7 +201,7 @@ func TestSelectProfile_EmptyProfiles(t *testing.T) {
 func TestSelectProfile_QuotaBalancedNoQuotaAxi(t *testing.T) {
 	profiles := []DispatchProfile{
 		{Name: "first", Match: []string{"*"}, Harness: "codex"},
-		{Name: "second", Match: []string{"*"}, Harness: "claude"},
+		{Name: "general", Match: []string{"*"}, Harness: "claude"},
 	}
 	got := SelectProfile(profiles, "quota-balanced")
 	if got != "codex" {

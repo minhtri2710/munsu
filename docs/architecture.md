@@ -1,6 +1,6 @@
 # munsu architecture
 
-munsu is a standalone Go CLI that ports firstmate's crew orchestration
+munsu is a standalone Go CLI that ports firstmate's soldier orchestration
 capabilities to any project directory, without requiring a firstmate checkout.
 
 ## Module layout
@@ -13,23 +13,23 @@ internal/
   config/                  Flat key-file configuration
   project/                 Project registry (data/projects.md)
   worktree/                Treehouse worktree pool CLI wrapper
-  harness/                 Agent harness detection + crew/second resolution
+  harness/                 Agent harness detection + soldier/captain resolution
   session/                 Session backend interface (tmux, herdr)
   task/                    Task meta read/write (state/<id>.meta + status)
   backlog/                 Task backlog via tasks-axi or manual fallback
   brief/                   Task brief scaffolding (ship/scout templates)
-  crewstate/               Crew state reading (meta + pane liveness)
-  teardown/                Crew teardown with safety checks
+  soldierstate/               Soldier state reading (meta + pane liveness)
+  teardown/                Soldier teardown with safety checks
   delivery/                Review-diff, pr-check, pr-merge, merge-local
   fleet/                   Fleet sync, snapshot, view, bearings
-  second/              Second lifecycle (seed, launch, retire, handoff)
+  captain/              Captain lifecycle (seed, launch, retire, handoff)
   selfupdate/              Fast-forward self-update
   supervision/             Event-driven watcher loop (watch)
   waker/                   Wake queue (enqueue, drain, guard)
   lifecycle/               Timing/lock invariants (wake queue, watcher beat, lock)
   bootstrap/               Toolchain diagnostics and setup sweeps
   agentsmd/                AGENTS.md creation and update
-  stow/                    Knowledge sweep (learnings, captain preferences)
+  stow/                    Knowledge sweep (learnings, general preferences)
   afk/                     Away-mode supervision daemon
   hometag/                 Home-tag namespace isolation helpers
   ghurl/                   GitHub URL parsing utility
@@ -48,16 +48,16 @@ business logic lives in the domain packages (`internal/backlog/`,
 | `config` | Read/write flat key files under `config/`; env override fallback |
 | `project` | Parse `data/projects.md` registry; ad-hoc cwd detection |
 | `worktree` | CLI wrapper around treehouse: get, return, status, isolation assertion |
-| `harness` | Detect agent harness (env markers + process ancestry); resolve crew/second adapters |
+| `harness` | Detect agent harness (env markers + process ancestry); resolve soldier/captain adapters |
 | `session` | `Backend` interface with tmux and herdr adapters |
 | `task` | Meta read/write (`state/<id>.meta`), status append (`state/<id>.status`) |
 | `backlog` | Task backlog via tasks-axi CLI or manual `data/backlog.md` fallback |
 | `brief` | Scaffold ship/scout brief templates at `data/<id>/brief.md` |
-| `crewstate` | Read crew state: meta + no-mistakes run-step + pane liveness + status log |
-| `teardown` | Crew teardown with dirty/remote/report safety gates |
+| `soldierstate` | Read soldier state: meta + no-mistakes run-step + pane liveness + status log |
+| `teardown` | Soldier teardown with dirty/remote/report safety gates |
 | `delivery` | Review-diff, pr-check, pr-merge, merge-local (no-mistakes axi helpers) |
 | `fleet` | Sync, snapshot, view, bearings for project fleet |
-| `second` | Full persistent-domain-supervisor lifecycle |
+| `captain` | Full persistent-domain-supervisor lifecycle |
 | `selfupdate` | Fast-forward-only self-update binary |
 | `supervision` | Event-driven watcher loop with singleton lock |
 | `waker` | Durable wake queue (enqueue, drain, guard) |
@@ -88,10 +88,10 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` env or `--home` flag).
       brief.md
   config/                  Flat key files
     backend                Default session backend (tmux|herdr)
-    crew-harness           Override for crew harness
-    second-harness     Override for second harness
+    soldier-harness           Override for soldier harness
+    captain-harness     Override for captain harness
     backlog-backend        Override for backlog backend (manual)
-    crew-dispatch.json     Dispatch profile (model/effort per harness)
+    soldier-dispatch.json     Dispatch profile (model/effort per harness)
   projects/                Cloned project repositories
 ```
 
@@ -104,7 +104,7 @@ by `task.WriteMeta` and read by `task.ReadMeta`. Metadata keys include
 
 Task status (`state/<id>.status`): one `state: message` line per append.
 States include `working`, `blocked`, `done`, `failed`, `needs-decision`.
-Used by `crewstate.Read` to reconstruct the current task status.
+Used by `soldierstate.Read` to reconstruct the current task status.
 
 ### Configuration
 
@@ -149,7 +149,7 @@ Other backends (zellij, cmux, orca) were evaluated but not implemented:
 | Brief | `munsu brief` | `brief` |
 | Spawn | `munsu spawn` | `cli` (wires worktree + harness + session) |
 | Supervise | `munsu watch` (bg: `munsu watch-arm`) | `supervision` |
-| Interact | `munsu send`, `munsu peek`, `munsu crew-state` | `cli`, `crewstate` |
+| Interact | `munsu send`, `munsu peek`, `munsu soldier-state` | `cli`, `soldierstate` |
 | Promote | `munsu promote` | `task` |
 | Deliver | `munsu review-diff`, `munsu pr-check`, `munsu pr-merge`, `munsu merge-local` | `delivery` |
 | Teardown | `munsu teardown` | `teardown` |
@@ -165,15 +165,15 @@ Other backends (zellij, cmux, orca) were evaluated but not implemented:
 3. **Harness detection** — determines the calling agent harness (pi,
    claude-code, codex, etc.) via env markers and process ancestry
 4. **Launch template resolution** — maps detected harness to a model/effort
-   template from `config/crew-dispatch.json`
+   template from `config/soldier-dispatch.json`
 5. **Session creation** — resolves the backend (tmux/herdr) and opens a new
-   terminal window for the crew
+   terminal window for the soldier
 6. **Meta write** — persists task metadata (window, worktree, harness, model,
    project, kind, mode) to `state/<id>.meta`
 
 ### Supervision / watcher
 
-`munsu watch` runs an event-driven poll loop every 5 seconds:
+`munsu watch` runs an event-driven poll loop every 5 captains:
 - Touches a liveness beat at `state/.last-watcher-beat`
 - Scans all task meta files for pane liveness (via session backend) and status
   log staleness (>5 min idle)
@@ -219,10 +219,10 @@ Delivery subcommands: `munsu review-diff` (diff summary), `munsu pr-check`
 `ANTIGRAVITY_AGENT`, `ANTHROPIC_API_KEY`, etc.), then falls back to
 process ancestry inspection.
 
-`harness.Crew(homeDir)` — fallback chain: `crew-dispatch.json` default >
-`config/crew-harness` > detected harness.
-`harness.Second(homeDir)` — fallback: `config/second-harness` >
-`config/crew-harness` > detected harness.
+`harness.Soldier(homeDir)` — fallback chain: `soldier-dispatch.json` default >
+`config/soldier-harness` > detected harness.
+`harness.Captain(homeDir)` — fallback: `config/captain-harness` >
+`config/soldier-harness` > detected harness.
 
 ## Key design decisions
 
@@ -233,7 +233,7 @@ process ancestry inspection.
 - **No bash runtime** — the compiled binary has zero runtime dependencies
   on scripts or external tools beyond the agent harness.
 - **Firstmate concept port, not fork** — munsu implements the same behavioral
-  model as firstmate (crew orchestration, watcher, backlog, delivery) but as
+  model as firstmate (soldier orchestration, watcher, backlog, delivery) but as
   a standalone Go CLI with an explicit `--home` / `MUNSU_HOME` relocation
   model instead of firstmate's repo-root home.
 
@@ -257,24 +257,25 @@ Munsu uses a battlefield rank vocabulary:
 
 | Rank | Role | CLI / identity |
 |------|------|----------------|
-| **Marshal** | Fleet orchestrator / primary home | `MUNSU_ROLE=marshal` (default for primary callers); AFK still uses `config/captain-pane` as the inject target path |
-| **Second** | Persistent domain supervisor | CLI `munsu second …`; `MUNSU_ROLE=second`; meta `kind=second`; task id `second:<id>` |
-| **Crew** | Task worker | `MUNSU_ROLE=crew`; spawn/task workers (kinds remain `ship`/`scout`) |
+| **General** | Fleet orchestrator / primary home | `MUNSU_ROLE=general` (default for primary callers); AFK inject target `config/general-pane` |
+| **Captain** | Persistent domain supervisor | CLI `munsu captain …`; `MUNSU_ROLE=captain`; meta `kind=captain`; task id `captain:<id>` |
+| **Soldier** | Task worker | `MUNSU_ROLE=soldier`; spawn/task workers (kinds remain `ship`/`scout`) |
 
 ### Labels and markers (rank-consistent scheme)
 
 | Surface | Scheme |
 |---------|--------|
-| Second home provenance marker | `.munsu-second-home` (munsu-v2: version, id, canonical-home) |
-| Herdr workspace / container label | `second-<id>-<hometag>` |
-| Session window name | `mu-second-<id>` |
-| Registry file (parent home) | `data/seconds.md` |
-| Converge lock / nudge pending | `state/.second-converge.lock`, `state/.second-nudge-pending/` |
-| Launch script (second home) | `.second-launch.sh` |
-| Config key | `config/second-harness` (env `MUNSU_SECOND_HARNESS_OVERRIDE`) |
-| Skills | `second-provisioning`, `stuck-crew-recovery` |
+| Captain home provenance marker | `.munsu-captain-home` (munsu-v2: version, id, canonical-home) |
+| Herdr workspace / container label | `captain-<id>-<hometag>` |
+| Session window name | `mu-captain-<id>` |
+| Registry file (parent home) | `data/captains.md` |
+| Converge lock / nudge pending | `state/.captain-converge.lock`, `state/.captain-nudge-pending/` |
+| Launch script (captain home) | `.captain-launch.sh` |
+| Config keys | `config/captain-harness`, `config/soldier-harness`, `config/soldier-dispatch.json` |
+| Skills | `captain-provisioning`, `stuck-soldier-recovery` |
 
-Old `secondmate` / `crewmate` / `2ndmate-*` / `.munsu-secondmate-home` names are a clean break: reseed or migrate with `munsu second migrate <home> <id>`, rewrite meta/env/registry, and relaunch. Fail-closed spawn authority rejects unknown `MUNSU_ROLE` values.
+Old `secondmate`/`crewmate` and intermediate `marshal`/`second`/`crew` names are a clean break: reseed or migrate with `munsu captain migrate <home> <id>`, rewrite meta/env/registry, and relaunch. Fail-closed spawn authority rejects unknown `MUNSU_ROLE` values.
+
 
 ## Build and test
 

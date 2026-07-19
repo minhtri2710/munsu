@@ -6,7 +6,7 @@
 ## 1. Init a dedicated home
 
 A self-hosted munsu should use an isolated home, separate from the
-live second home that firstmate supervises.
+live captain home that firstmate supervises.
 
 ```sh
 export MUNSU_HOME=~/.munsu-selfhost
@@ -29,7 +29,7 @@ is the normal mode when running inside a Herdr-aware agent.
 
 ## 2. Arm the watcher
 
-Before spawning any crews, arm the event-driven watcher. The watcher
+Before spawning any soldiers, arm the event-driven watcher. The watcher
 runs in the background as a singleton child process, polled every 5s, and
 exits with a wake reason when an actionable event is found.
 
@@ -64,7 +64,7 @@ the command. Silence with `MUNSU_GUARD_SKIP=1`.
 The watcher liveness beat is stored in `state/.last-watcher-beat` with format:
 
 ```
-<unix_epoch_seconds> <pid>
+<unix_epoch_captains> <pid>
 ```
 
 - **Content-timestamp drives staleness** — `ReadBeatStatus` reads the Unix
@@ -100,7 +100,7 @@ munsu brief <task-id> munsu                     # scaffold brief
 # fill in {TASK} placeholder in data/<task-id>/brief.md
 ```
 
-### Spawn crew
+### Spawn soldier
 
 ```sh
 munsu spawn <task-id> munsu --arm               # spawn + arm watcher
@@ -110,7 +110,7 @@ The spawn flow:
 1. Tangle check (skippable with `--yolo`)
 2. Worktree acquisition via treehouse pool
 3. Harness detection (pi, claude-code, etc.)
-4. Launch template from `config/crew-dispatch.json`
+4. Launch template from `config/soldier-dispatch.json`
 5. Session window creation
 6. Meta write to `state/<task-id>.meta`
 
@@ -119,9 +119,9 @@ With `--arm`, the watcher is armed automatically after spawn.
 ### Monitor and steer
 
 ```sh
-munsu peek <task-id> [--lines N]                # read crew output
-munsu crew-state <task-id>                      # ground truth state
-munsu send <task-id> "<instruction>"            # steer the crew
+munsu peek <task-id> [--lines N]                # read soldier output
+munsu soldier-state <task-id>                      # ground truth state
+munsu send <task-id> "<instruction>"            # steer the soldier
 ```
 
 ### Wake handling
@@ -130,7 +130,7 @@ When the watcher fires, drain wakes:
 
 ```sh
 munsu wake-drain                                # process all queued wakes
-munsu crew-state <task-id>                      # read ground truth
+munsu soldier-state <task-id>                      # read ground truth
 ```
 
 If tasks are still in flight, re-arm:
@@ -164,7 +164,7 @@ With --force, all safety checks are bypassed and the data/<id>/ directory
 ## 5. Decision-hold scout gate
 
 Scout tasks (`--kind scout`) investigate a question rather than shipping
-code. When a scout finds a decision the captain must make, it records a
+code. When a scout finds a decision the general must make, it records a
 structured hold before completing.
 
 ### Recording a hold (Phase A — protocol only)
@@ -174,7 +174,7 @@ munsu task status <scout-id> "needs-decision" "<key>: <summary>"
 munsu backlog block <dependent-id> --by <scout-id>
 ```
 
-### Recording the captain's answer
+### Recording the general's answer
 
 ```sh
 munsu task status <scout-id> "resolved" "<key>: <answer>"
@@ -192,7 +192,7 @@ munsu teardown <scout-id>          # warns about unresolved holds
 munsu teardown <scout-id> --force  # bypass hold warning
 ```
 
-**Design principle:** The scout gathers evidence. The captain decides.
+**Design principle:** The scout gathers evidence. The general decides.
 Holds ensure the decision is tracked, not lost, when the scout session
 ends.
 
@@ -207,9 +207,9 @@ munsu afk                           # away-mode supervision daemon
 
 ## 7. Away-mode (AFK supervision)
 
-When the captain is away, the AFK daemon supervises the fleet autonomously. It
+When the general is away, the AFK daemon supervises the fleet autonomously. It
 triages wakes, accumulates a digest, detects wedge conditions, and optionally
-injects summaries into the configured captain pane.
+injects summaries into the configured general pane.
 
 ```sh
 munsu afk                        # start the away-mode daemon (foreground)
@@ -219,10 +219,10 @@ munsu afk                        # start the away-mode daemon (foreground)
 The daemon runs a 30s poll loop:
 1. Triage the wake queue
 2. Feed results into the digester (60s window)
-3. Check captain-pane target safety
+3. Check general-pane target safety
 4. Check wedge conditions (stale beat, missing beat, repeated wake)
 5. Flush the batched digest to `state/.afk-digest` when the window expires
-6. Optionally inject the digest into the captain pane (if configured + safe)
+6. Optionally inject the digest into the general pane (if configured + safe)
 
 On return:
 
@@ -251,7 +251,7 @@ gates, and the return catch-up gate.
                    │ wake detected
           ┌────────▼─────────┐
           │  munsu wake-drain│  read + clear wake queue
-          │  munsu crew-state│  ground truth per task
+          │  munsu soldier-state│  ground truth per task
           └────────┬─────────┘
                    │ re-arm if tasks in flight
           ┌────────▼─────────┐
@@ -263,10 +263,10 @@ gates, and the return catch-up gate.
 ## 9. Safety rules for self-hosting
 
 1. **Isolated home:** Always use a dedicated home (e.g. `~/.munsu-selfhost`)
-   for self-hosting. Never share the live second home that firstmate
+   for self-hosting. Never share the live captain home that firstmate
    supervises.
-2. **Never flip live second:** Do not run `munsu watch-arm` inside the
-   live second home (`~/.munsu` if it is supervised by firstmate).
+2. **Never flip live captain:** Do not run `munsu watch-arm` inside the
+   live captain home (`~/.munsu` if it is supervised by firstmate).
 3. **Watcher singleton:** Only one watcher process per home. The flock lock
    at `state/.lock` enforces this.
 4. **Guard after every action:** Run `munsu guard` after spawn, teardown,

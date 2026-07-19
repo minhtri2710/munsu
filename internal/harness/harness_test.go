@@ -205,112 +205,112 @@ func TestTemplates(t *testing.T) {
 	}
 }
 
-func TestCrew_HasDispatchDefault(t *testing.T) {
+func TestSoldier_HasDispatchDefault(t *testing.T) {
 	tmp := t.TempDir()
 
 	// Write a dispatch config with a default harness
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	dispatchFile := filepath.Join(configDir, "crew-dispatch.json")
+	dispatchFile := filepath.Join(configDir, "soldier-dispatch.json")
 	if err := os.WriteFile(dispatchFile, []byte(`{"defaultHarness":"codex"}`+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	h, err := Crew(tmp)
+	h, err := Soldier(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h != "codex" {
-		t.Errorf("Crew() = %q, want %q", h, "codex")
+		t.Errorf("Soldier() = %q, want %q", h, "codex")
 	}
 }
 
-func TestCrew_HasCrewHarnessFile(t *testing.T) {
+func TestSoldier_HasSoldierHarnessFile(t *testing.T) {
 	tmp := t.TempDir()
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 
-	// Write crew-harness file (no dispatch config)
-	harnessFile := filepath.Join(configDir, "crew-harness")
+	// Write soldier-harness file (no dispatch config)
+	harnessFile := filepath.Join(configDir, "soldier-harness")
 	if err := os.WriteFile(harnessFile, []byte("opencode\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	h, err := Crew(tmp)
+	h, err := Soldier(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h != "opencode" {
-		t.Errorf("Crew() = %q, want %q", h, "opencode")
+		t.Errorf("Soldier() = %q, want %q", h, "opencode")
 	}
 }
 
-func TestCrew_NoConfig(t *testing.T) {
+func TestSoldier_NoConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("CLAUDE_CODE", "1")
 
 	// No config files at all — falls back to detected harness
-	h, err := Crew(tmp)
+	h, err := Soldier(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h == "" {
-		t.Error("Crew() returned empty, expected a harness from detect")
+		t.Error("Soldier() returned empty, expected a harness from detect")
 	}
 }
 
-func TestSecond_HasSecondHarness(t *testing.T) {
+func TestCaptain_HasCaptainHarness(t *testing.T) {
 	tmp := t.TempDir()
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 
-	harnessFile := filepath.Join(configDir, "second-harness")
+	harnessFile := filepath.Join(configDir, "captain-harness")
 	if err := os.WriteFile(harnessFile, []byte("grok\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	h, err := Second(tmp)
+	h, err := Captain(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h != "grok" {
-		t.Errorf("Second() = %q, want %q", h, "grok")
+		t.Errorf("Captain() = %q, want %q", h, "grok")
 	}
 }
 
-func TestSecond_FallsBackToCrewHarness(t *testing.T) {
+func TestCaptain_FallsBackToSoldierHarness(t *testing.T) {
 	tmp := t.TempDir()
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 
-	// Only crew-harness, no second-harness
-	harnessFile := filepath.Join(configDir, "crew-harness")
+	// Only soldier-harness, no captain-harness
+	harnessFile := filepath.Join(configDir, "soldier-harness")
 	if err := os.WriteFile(harnessFile, []byte("pi\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	h, err := Second(tmp)
+	h, err := Captain(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h != "pi" {
-		t.Errorf("Second() = %q, want %q", h, "pi")
+		t.Errorf("Captain() = %q, want %q", h, "pi")
 	}
 }
 
-func TestSecond_NoConfig(t *testing.T) {
+func TestCaptain_NoConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("CLAUDE_CODE", "1")
 
-	h, err := Second(tmp)
+	h, err := Captain(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h == "" {
-		t.Error("Second() returned empty, expected a harness from detect")
+		t.Error("Captain() returned empty, expected a harness from detect")
 	}
 }
 
@@ -327,13 +327,13 @@ func TestDispatchDefaultHarness(t *testing.T) {
 	}
 }
 
-func TestCrew_CrewHarnessDefaultIgnored(t *testing.T) {
+func TestSoldier_SoldierHarnessDefaultIgnored(t *testing.T) {
 	tmp := t.TempDir()
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 
-	if err := os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("default\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("default\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -343,65 +343,65 @@ func TestCrew_CrewHarnessDefaultIgnored(t *testing.T) {
 	}
 	t.Setenv("CLAUDE_CODE", "1")
 
-	h, err := Crew(tmp)
+	h, err := Soldier(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h != Claude {
-		t.Errorf("Crew() = %q, want %q (default sentinel should fall through to Detect)", h, Claude)
+		t.Errorf("Soldier() = %q, want %q (default sentinel should fall through to Detect)", h, Claude)
 	}
 }
 
-func TestSecond_DefaultSentinelsIgnored(t *testing.T) {
+func TestCaptain_DefaultSentinelsIgnored(t *testing.T) {
 	tmp := t.TempDir()
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 
-	if err := os.WriteFile(filepath.Join(configDir, "second-harness"), []byte("default\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("default\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("default\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("default\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Setenv("MUNSU_SECOND-HARNESS_OVERRIDE", "")
+	t.Setenv("MUNSU_CAPTAIN-HARNESS_OVERRIDE", "")
 	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
 	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT"} {
 		t.Setenv(env, "")
 	}
 	t.Setenv("CLAUDE_CODE", "1")
 
-	h, err := Second(tmp)
+	h, err := Captain(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h != Claude {
-		t.Errorf("Second() = %q, want %q (default sentinels should fall through to Detect)", h, Claude)
+		t.Errorf("Captain() = %q, want %q (default sentinels should fall through to Detect)", h, Claude)
 	}
 }
 
-func TestSecond_DefaultSecondHarnessFallsToCrewHarness(t *testing.T) {
+func TestCaptain_DefaultCaptainHarnessFallsToSoldierHarness(t *testing.T) {
 	tmp := t.TempDir()
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 
-	if err := os.WriteFile(filepath.Join(configDir, "second-harness"), []byte("default\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("default\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("pi\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	os.Unsetenv("MUNSU_SECOND-HARNESS_OVERRIDE")
+	os.Unsetenv("MUNSU_CAPTAIN-HARNESS_OVERRIDE")
 	os.Unsetenv("MUNSU_CREW-HARNESS_OVERRIDE")
 
-	h, err := Second(tmp)
+	h, err := Captain(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if h != Pi {
-		t.Errorf("Second() = %q, want %q (default second sentinel should fall through to crew-harness)", h, Pi)
+		t.Errorf("Captain() = %q, want %q (default captain sentinel should fall through to soldier-harness)", h, Pi)
 	}
 }

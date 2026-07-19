@@ -55,9 +55,9 @@ func TestWatchRun_UsesRunCycleDedup(t *testing.T) {
 		t.Fatalf("queue after first run = %d, want 1", got)
 	}
 
-	second := run()
-	_ = second
+	captain := run()
+	_ = captain
 	if got := countQueuedWakes(home); got != 1 {
-		t.Fatalf("queue after second run = %d, want 1 (deduped unchanged condition)", got)
+		t.Fatalf("queue after captain run = %d, want 1 (deduped unchanged condition)", got)
 	}
 }

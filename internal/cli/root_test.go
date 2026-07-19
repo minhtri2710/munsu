@@ -31,7 +31,7 @@ var canonicalCommands = []struct {
 	{name: "spawn", use: "spawn <id> [<project>]"},
 	{name: "send", use: "send <id> <line>"},
 	{name: "peek", use: "peek <id>"},
-	{name: "crew-state", use: "crew-state <id>"},
+	{name: "soldier-state", use: "soldier-state <id>"},
 	{name: "promote", use: "promote <id>"},
 	{name: "teardown", use: "teardown <id>"},
 	{name: "delivery", use: "delivery"},
@@ -47,7 +47,7 @@ var canonicalCommands = []struct {
 	{name: "stow", use: "stow [text...]"},
 	{name: "ensure-agents-md", use: "ensure-agents-md <project>"},
 	{name: "update", use: "update"},
-	{name: "second", use: "second"},
+	{name: "captain", use: "captain"},
 	{name: "decision-hold", use: "decision-hold"},
 	{name: "afk", use: "afk"},
 	{name: "integrate", use: "integrate"},
@@ -234,8 +234,8 @@ func TestRootNoArgsEmptyHome(t *testing.T) {
 	}
 }
 
-// TestSecondListEmpty verifies second list prints empty state.
-func TestSecondListEmpty(t *testing.T) {
+// TestCaptainListEmpty verifies captain list prints empty state.
+func TestCaptainListEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
@@ -244,15 +244,15 @@ func TestSecondListEmpty(t *testing.T) {
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	root.SetArgs([]string{"second", "list"})
+	root.SetArgs([]string{"captain", "list"})
 	err := root.Execute()
 	if err != nil {
-		t.Fatalf("second list: unexpected error: %v", err)
+		t.Fatalf("captain list: unexpected error: %v", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "No seconds registered.") {
-		t.Errorf("empty second list should show 'No seconds registered.', got: %s", output)
+	if !strings.Contains(output, "No captains registered.") {
+		t.Errorf("empty captain list should show 'No captains registered.', got: %s", output)
 	}
 }
 
@@ -323,17 +323,17 @@ func TestExactArgsMissingProducesUsageError(t *testing.T) {
 	}
 }
 
-func TestCrewStateMissingArgsProducesUsageError(t *testing.T) {
-	// crew-state uses ExactArgs(1); missing should produce usageError
+func TestSoldierStateMissingArgsProducesUsageError(t *testing.T) {
+	// soldier-state uses ExactArgs(1); missing should produce usageError
 	root := NewRootCommand()
-	root.SetArgs([]string{"crew-state"}) // missing id
+	root.SetArgs([]string{"soldier-state"}) // missing id
 	err := root.Execute()
 	if err == nil {
-		t.Fatal("expected error for missing args on crew-state")
+		t.Fatal("expected error for missing args on soldier-state")
 	}
 	var buf bytes.Buffer
-	code := WriteContractError(&buf, err, []string{"crew-state"})
+	code := WriteContractError(&buf, err, []string{"soldier-state"})
 	if code != 2 {
-		t.Errorf("missing args on crew-state: exit code = %d, want 2 (usageError), err=%v", code, err)
+		t.Errorf("missing args on soldier-state: exit code = %d, want 2 (usageError), err=%v", code, err)
 	}
 }

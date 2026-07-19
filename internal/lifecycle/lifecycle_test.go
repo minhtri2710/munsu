@@ -30,7 +30,7 @@ func TestLockPathSingleSourceOfTruth(t *testing.T) {
 	}
 }
 
-// TestLockExclusivity proves the flock exclusion mechanism: a second acquire
+// TestLockExclusivity proves the flock exclusion mechanism: a captain acquire
 // in the same process is refused while the first holds the lock.
 func TestLockExclusivity(t *testing.T) {
 	home := freshHome(t)
@@ -48,10 +48,10 @@ func TestLockExclusivity(t *testing.T) {
 
 	acq2, err := AcquireSession(home)
 	if err != nil {
-		t.Fatalf("second AcquireSession error: %v", err)
+		t.Fatalf("captain AcquireSession error: %v", err)
 	}
 	if acq2 {
-		t.Fatal("second AcquireSession succeeded; expected refusal while held")
+		t.Fatal("captain AcquireSession succeeded; expected refusal while held")
 	}
 	if !IsSessionLocked(home) {
 		t.Fatal("IsSessionLocked false while held")
@@ -122,6 +122,6 @@ func TestQueueEnqueueDrainClear(t *testing.T) {
 		t.Fatal("HasQueuedWakes true after drain; queue file should be removed")
 	}
 	if again, _ := DrainWakes(home); again != nil {
-		t.Fatalf("second drain returned %d records, want nil", len(again))
+		t.Fatalf("captain drain returned %d records, want nil", len(again))
 	}
 }

@@ -1,5 +1,5 @@
 // Package decisionhold implements the decision-hold lifecycle for durable
-// unresolved captain decisions discovered during investigations or reviews.
+// unresolved general decisions discovered during investigations or reviews.
 //
 // Hold identity: <origin-id>-decision-<decision-key>
 // Operations map to the existing task status/backlog conventions:
@@ -25,7 +25,7 @@ func HoldID(originID, decisionKey string) string {
 	return originID + "-decision-" + decisionKey
 }
 
-// Decision describes a single captain decision hold.
+// Decision describes a single general decision hold.
 type Decision struct {
 	// OriginID is the task that discovered this decision.
 	OriginID string
@@ -101,7 +101,7 @@ type DecisionHold struct {
 	Reason      string
 	// Resolved is true when the answer has been recorded.
 	Resolved bool
-	// Answer is the captain's decision, empty when unresolved.
+	// Answer is the general's decision, empty when unresolved.
 	Answer string
 }
 
@@ -331,7 +331,7 @@ func listAllHolds(homeDir, originID string) ([]DecisionHold, error) {
 // Complete marks that the given decision keys for an origin task have been
 // fully processed. When keys contains a single element "--none", it is an
 // explicit semantic attestation that the reviewed surface has no unresolved
-// captain decision.
+// general decision.
 func Complete(homeDir, originID string, keys []string) error {
 	if originID == "" {
 		return fmt.Errorf("origin-id must not be empty")
@@ -383,7 +383,7 @@ func writeAnswer(homeDir, originID, decisionKey, answer string) error {
 	return nil
 }
 
-// Resolve records the captain's answer for a decision hold and unblocks
+// Resolve records the general's answer for a decision hold and unblocks
 // dependent tasks. The unblockDeps list contains task IDs that were blocked
 // on this decision and should be marked ready.
 func Resolve(homeDir, originID, decisionKey, answer string, unblockDeps []string) error {
@@ -427,7 +427,7 @@ func Resolve(homeDir, originID, decisionKey, answer string, unblockDeps []string
 	return nil
 }
 
-// ReadResolution reads the captain's answer for a resolved hold.
+// ReadResolution reads the general's answer for a resolved hold.
 // Returns nil if the hold is unresolved or does not exist.
 func ReadResolution(homeDir, originID, decisionKey string) (answer string, resolved bool, err error) {
 	hold, err := loadHold(homeDir, originID, decisionKey)

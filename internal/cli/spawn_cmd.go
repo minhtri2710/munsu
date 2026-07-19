@@ -7,9 +7,9 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/teardown"
@@ -28,8 +28,8 @@ func newSpawnCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "spawn <id> [<project>]",
-		Short: "Spawn a crew agent (project inferred from cwd if omitted)",
-		Long: `Spawn a crew agent.
+		Short: "Spawn a soldier agent (project inferred from cwd if omitted)",
+		Long: `Spawn a soldier agent.
 
 Project can be omitted when the current working directory is inside a git
 repository that matches a registered project or can be ad-hoc inferred.
@@ -87,7 +87,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override crew harness (pi, agy, etc.)")
+	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override soldier harness (pi, agy, etc.)")
 	cmd.Flags().BoolVar(&arm, "arm", false, "Arm the watcher after spawn (warn-only on failure)")
 
 	return cmd
@@ -96,7 +96,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 func newSendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send <id> <line>",
-		Short: "Send a line to a crew endpoint",
+		Short: "Send a line to a soldier endpoint",
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -136,7 +136,7 @@ func newPeekCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "peek <id>",
-		Short: "Peek at crew output",
+		Short: "Peek at soldier output",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -183,19 +183,19 @@ func newPeekCmd() *cobra.Command {
 	return cmd
 }
 
-func newCrewStateCmd() *cobra.Command {
+func newSoldierStateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "crew-state <id>",
-		Short: "Read crew current state",
+		Use:   "soldier-state <id>",
+		Short: "Read soldier current state",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			state, err := crewstate.Read(ctx.Home, id)
+			state, err := soldierstate.Read(ctx.Home, id)
 			if err != nil {
-				return operationError("internal", "Run `munsu crew-state "+id+"` again", "Unable to read crew state")
+				return operationError("internal", "Run `munsu soldier-state "+id+"` again", "Unable to read soldier state")
 			}
 			return writeContract(cmd, contract.Response[contract.TaskObserve]{
 				SchemaVersion: contract.SchemaVersion,
@@ -272,8 +272,8 @@ func newTeardownCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "teardown <id>",
-		Short: "Tear down a crew",
-		Long: `Tear down a crew by its task ID.
+		Short: "Tear down a soldier",
+		Long: `Tear down a soldier by its task ID.
 
 Safety checks require a scout to have a report.md with no unresolved decision
 holds before teardown proceeds. Use --force to skip all safety checks.

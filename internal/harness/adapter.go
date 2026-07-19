@@ -1,4 +1,4 @@
-// Package harness detects the running agent harness, resolves crew/second
+// Package harness detects the running agent harness, resolves soldier/captain
 // harness assignments, and provides the adapter registry for all verified harnesses.
 package harness
 
@@ -15,8 +15,8 @@ type ProcessNameMatcher struct {
 	Substr bool
 }
 
-// SecondLaunchContract describes a verified shell-free second invocation.
-type SecondLaunchContract struct {
+// CaptainLaunchContract describes a verified shell-free captain invocation.
+type CaptainLaunchContract struct {
 	Supported  bool
 	CwdAtHome  bool
 	Separator  string
@@ -61,8 +61,8 @@ type Adapter struct {
 	// LaunchTemplate contains the CLI flag conventions and defaults for spawning.
 	LaunchTemplate Template
 
-	// SecondLaunch is populated only when the second CLI contract is verified.
-	SecondLaunch SecondLaunchContract
+	// CaptainLaunch is populated only when the general CLI contract is verified.
+	CaptainLaunch CaptainLaunchContract
 
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	// ReadyPatterns is a list of substrings that indicate the agent is ready
@@ -177,7 +177,7 @@ var Adapters = map[string]Adapter{
 			ModelFlag:  "--model",
 			EffortFlag: "--thinking",
 		},
-		SecondLaunch: SecondLaunchContract{
+		CaptainLaunch: CaptainLaunchContract{
 			Supported:  true,
 			CwdAtHome:  true,
 			ProjectArg: false,

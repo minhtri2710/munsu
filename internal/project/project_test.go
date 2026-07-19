@@ -170,7 +170,7 @@ func TestAddIdempotent(t *testing.T) {
 	if err := Add(homeDir, "dup-proj", "/path/first", "feat", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := Add(homeDir, "dup-proj", "/path/second", "fix", false); err != nil {
+	if err := Add(homeDir, "dup-proj", "/path/captain", "fix", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,7 +183,7 @@ func TestAddIdempotent(t *testing.T) {
 		t.Fatalf("expected 1 project after duplicate add, got %d: %+v", len(projects), projects)
 	}
 
-	// Entry should have been updated to second call's values
+	// Entry should have been updated to captain call's values
 	p := projects[0]
 	if p.Name != "dup-proj" {
 		t.Errorf("Name = %q, want %q", p.Name, "dup-proj")
@@ -194,8 +194,8 @@ func TestAddIdempotent(t *testing.T) {
 	if p.Yolo {
 		t.Error("Yolo = true, want false")
 	}
-	if p.Description != "/path/second" {
-		t.Errorf("Description = %q, want %q", p.Description, "/path/second")
+	if p.Description != "/path/captain" {
+		t.Errorf("Description = %q, want %q", p.Description, "/path/captain")
 	}
 }
 
@@ -300,7 +300,7 @@ func TestRegistryFileFormat(t *testing.T) {
 	// Write entries directly to simulate real file format
 	entries := []string{
 		"- alpha feat - First project (added 2026-01-01)",
-		"- beta fix +yolo - Second project (added 2026-03-15)",
+		"- beta fix +yolo - Captain project (added 2026-03-15)",
 		"- gamma +yolo - Yolo without mode (added 2026-06-01)",
 		"- delta - No mode project (added 2026-07-01)",
 	}

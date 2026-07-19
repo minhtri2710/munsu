@@ -27,7 +27,7 @@ func TestEmbeddedSkillNames(t *testing.T) {
 		t.Errorf("expected 'munsu-ops' in embedded skills, got %v", names)
 	}
 	// Expect auxiliary skills
-	aux := []string{"bootstrap-diagnostics", "harness-adapters", "munsu-update", "second-provisioning", "stuck-crew-recovery"}
+	aux := []string{"bootstrap-diagnostics", "harness-adapters", "munsu-update", "captain-provisioning", "stuck-soldier-recovery"}
 	for _, a := range aux {
 		found = false
 		for _, n := range names {
@@ -114,13 +114,13 @@ func TestInstallOneSkill(t *testing.T) {
 		t.Fatalf("expected SKILL.md at %s", skillPath)
 	}
 
-	// Second install with overwrite=false should not install
+	// Captain install with overwrite=false should not install
 	ok, err = installOneSkill(dest, "munsu-ops", false)
 	if err != nil {
-		t.Fatalf("installOneSkill (second): %v", err)
+		t.Fatalf("installOneSkill (captain): %v", err)
 	}
 	if ok {
-		t.Error("expected false for second install without overwrite")
+		t.Error("expected false for captain install without overwrite")
 	}
 
 	// Install with overwrite=true

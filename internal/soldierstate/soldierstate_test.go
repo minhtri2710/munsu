@@ -1,4 +1,4 @@
-package crewstate
+package soldierstate
 
 import (
 	"os"

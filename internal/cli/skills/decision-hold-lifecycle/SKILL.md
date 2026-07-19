@@ -1,9 +1,9 @@
 ---
 name: decision-hold-lifecycle
 description: >-
-  Agent-only policy for completing investigations and visual reviews without losing unresolved captain decisions.
+  Agent-only policy for completing investigations and visual reviews without losing unresolved general decisions.
   Load before treating an investigation, scout report, or structured review as complete, before ending a review
-  that exposed a decision, and when recording or routing the captain's answer.
+  that exposed a decision, and when recording or routing the general's answer.
 user-invocable: false
 metadata:
   internal: true
@@ -11,11 +11,11 @@ metadata:
 
 # decision-hold-lifecycle — durable unresolved-decision lifecycle
 
-This skill is the single policy owner for unresolved captain decisions discovered during an investigation or review.
+This skill is the single policy owner for unresolved general decisions discovered during an investigation or review.
 
 ## Policy
 
-Every unresolved decision that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or review must become a structured captain-held work item in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
+Every unresolved decision that belongs to the general and is discovered while producing, reading, presenting, or ending an investigation or review must become a structured captain-held work item in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
 
 The agent performs the semantic inventory — scripts must not infer decisions from report prose, terminal output, or chat.
 
@@ -31,10 +31,10 @@ The agent performs the semantic inventory — scripts must not infer decisions f
    munsu backlog block <dependent-id> --by <blocker-id>
    ```
    When using the tasks-axi backend, `--by <blocker-id>` is required. Omitting it falls back to manual backend.
-   (The block will be cleared when the captain resolves the decision.)
-5. **Record the answer.** After the captain decides, update the originating task:
+   (The block will be cleared when the general resolves the decision.)
+5. **Record the answer.** After the general decides, update the originating task:
    ```
-   munsu task status <id> "resolved" "<key>: <captain decision summary>"
+   munsu task status <id> "resolved" "<key>: <general decision summary>"
    ```
 6. **Unblock dependent work.** When a decision clears a blocker:
    ```
@@ -45,17 +45,17 @@ The agent performs the semantic inventory — scripts must not infer decisions f
 ## Operating sequence
 
 1. Read the complete investigation result before declaring complete.
-2. Inventory only genuine unresolved choices that require the captain — do not create holds for resolved findings, recommendations that need no choice, or prose that merely sounds decision-like.
+2. Inventory only genuine unresolved choices that require the general — do not create holds for resolved findings, recommendations that need no choice, or prose that merely sounds decision-like.
 3. For each choice, choose a stable key and record it on the originating task.
-4. Relay the choices to the captain.
-5. After the captain decides, record the answer and unblock any dependent work.
+4. Relay the choices to the general.
+5. After the general decides, record the answer and unblock any dependent work.
 6. Confirm no stale `needs-decision:` holds remain.
 
 ## When to load this skill
 
 - Before treating an investigation, scout report, or structured review as complete.
 - Before ending a review that exposed an unresolved decision.
-- When recording or routing the captain's answer to a decision.
+- When recording or routing the general's answer to a decision.
 
 ## See also
 

@@ -97,7 +97,7 @@ func TestSetOverwrites(t *testing.T) {
 
 func TestKnownKeys(t *testing.T) {
 	known := KnownKeys
-	expected := []string{"backend", "crew-harness", "second-harness", "backlog-backend", "default-mode", "require-no-mistakes"}
+	expected := []string{"backend", "soldier-harness", "captain-harness", "backlog-backend", "default-mode", "require-no-mistakes"}
 	if len(known) != len(expected) {
 		t.Errorf("KnownKeys length = %d, want %d", len(known), len(expected))
 	}
@@ -114,8 +114,8 @@ func TestIsKnownKey(t *testing.T) {
 		expected bool
 	}{
 		{"backend", true},
-		{"crew-harness", true},
-		{"second-harness", true},
+		{"soldier-harness", true},
+		{"captain-harness", true},
 		{"backlog-backend", true},
 		{"default-mode", true},
 		{"unknown", false},

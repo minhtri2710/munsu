@@ -1,4 +1,4 @@
-// Package brief scaffolds task brief templates for crew agents.
+// Package brief scaffolds task brief templates for soldier agents.
 package brief
 
 import (

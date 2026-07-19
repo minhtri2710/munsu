@@ -1,4 +1,4 @@
-// Package teardown implements crew teardown safety checks and lifecycle.
+// Package teardown implements soldier teardown safety checks and lifecycle.
 package teardown
 
 import (
@@ -31,7 +31,7 @@ type TeardownResult struct {
 	Proofs []string // merge-proof evidence emitted by safety checks
 }
 
-// Run performs a crew teardown.
+// Run performs a soldier teardown.
 func Run(opts Options) (*TeardownResult, error) {
 	result := &TeardownResult{}
 

@@ -150,7 +150,7 @@ func extractValue(line, prefix string) string {
 }
 
 // ConceptualStep resolves the run into a high-level step name and outcome,
-// matching the crewstate domain contract.
+// matching the soldierstate domain contract.
 func (r *RunStatus) ConceptualStep() (step, outcome string) {
 	switch r.Status {
 	case "in_progress":

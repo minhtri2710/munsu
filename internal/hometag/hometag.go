@@ -35,15 +35,15 @@ func Tag(homeDir string) string {
 }
 
 // WorkspaceTag returns the backend container label for a munsu home. Primary
-// homes keep the legacy hash-only label; marked second homes get a readable
+// homes keep the legacy hash-only label; marked captain homes get a readable
 // prefix while retaining the hash to prevent cross-installation collisions.
 func WorkspaceTag(homeDir string) string {
 	canon := Canonical(homeDir)
 	tag := Tag(canon)
-	data, err := os.ReadFile(filepath.Join(canon, ".munsu-second-home"))
+	data, err := os.ReadFile(filepath.Join(canon, ".munsu-captain-home"))
 	if err != nil {
 		// Fall back to the caller path when the home is not yet fully resolvable.
-		data, err = os.ReadFile(filepath.Join(homeDir, ".munsu-second-home"))
+		data, err = os.ReadFile(filepath.Join(homeDir, ".munsu-captain-home"))
 		if err != nil {
 			return tag
 		}
@@ -56,7 +56,7 @@ func WorkspaceTag(homeDir string) string {
 	if id == "" {
 		return tag
 	}
-	return "second-" + id + "-" + tag
+	return "captain-" + id + "-" + tag
 }
 
 func labelComponent(value string) string {

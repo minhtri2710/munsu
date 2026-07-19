@@ -37,7 +37,7 @@ type ClaimedWakeRecord struct {
 type ClaimResult struct {
 	LeaseID   string
 	Consumer  string
-	ExpiresAt int64 // unix seconds
+	ExpiresAt int64 // unix captains
 	Wakes     []ClaimedWakeRecord
 	Reclaimed int // count of expired-lease wakes that were reclaimed
 }
@@ -45,9 +45,9 @@ type ClaimResult struct {
 // ClaimWakes claims up to limit wake records from the queue under a lease.
 // Unacked wakes that have expired leases are reclaimed (re-enqueued then claimed).
 // Returns the claim result or an error.
-func ClaimWakes(homeDir, consumer string, leaseSeconds, limit int) (*ClaimResult, error) {
-	if leaseSeconds < 0 {
-		leaseSeconds = 0
+func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResult, error) {
+	if leaseCaptains < 0 {
+		leaseCaptains = 0
 	}
 	if limit < 1 {
 		limit = 10
@@ -59,7 +59,7 @@ func ClaimWakes(homeDir, consumer string, leaseSeconds, limit int) (*ClaimResult
 	}
 
 	leaseID := fmt.Sprintf("lease-%d", time.Now().UnixNano())
-	expiresAt := time.Now().Unix() + int64(leaseSeconds)
+	expiresAt := time.Now().Unix() + int64(leaseCaptains)
 
 	// Reclaim expired leases first — re-enqueue their wakes
 	reclaimed := reclaimExpiredLeases(homeDir)

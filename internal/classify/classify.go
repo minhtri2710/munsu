@@ -1,4 +1,4 @@
-// Package classify implements status classification logic for crew status files.
+// Package classify implements status classification logic for soldier status files.
 // It is a pure-logic package (stdlib only) that replaces fm-classify-lib.sh in Go.
 // Functions are side-effect-free reads of status files or pure string predicates.
 package classify
@@ -17,30 +17,30 @@ const (
 	ResolveVerbDefault = "resolved"
 )
 
-// captainReDefault matches captain-relevant patterns in a status line.
+// captainReDefault matches general-relevant patterns in a status line.
 // Compiled once at package init.
 var captainReDefault = regexp.MustCompile(`(?i)(?:^|\s)(?:done|needs-decision|blocked|failed):|PR ready|checks green|ready in branch|merged`)
 
-// AbsorbResult indicates why an idle crew might be safely absorbed instead of surfaced.
+// AbsorbResult indicates why an idle soldier might be safely absorbed instead of surfaced.
 type AbsorbResult int
 
 const (
-	// None means the crew cannot be safely absorbed and must surface.
+	// None means the soldier cannot be safely absorbed and must surface.
 	None AbsorbResult = iota
-	// Working means the crew is provably still working.
+	// Working means the soldier is provably still working.
 	Working
-	// Paused means the crew declared a deliberate external-wait pause.
+	// Paused means the soldier declared a deliberate external-wait pause.
 	Paused
 )
 
-// Decision represents a keyed open captain decision.
+// Decision represents a keyed open general decision.
 type Decision struct {
 	Key     string
 	Verb    string // "needs-decision" or "blocked"
 	Summary string
 }
 
-// StatusMatch represents a status file whose last line is captain-relevant.
+// StatusMatch represents a status file whose last line is general-relevant.
 type StatusMatch struct {
 	Path     string
 	TaskID   string
@@ -126,20 +126,20 @@ func readLastLine(path string) string {
 
 // --- Public API ---
 
-// CaptainRelevant returns true if a status line contains a captain-relevant verb
+// GeneralRelevant returns true if a status line contains a general-relevant verb
 // (done:, failed:, needs-decision:, blocked:, "PR ready", "checks green",
-// "ready in branch", "merged"). Paused lines are NOT captain-relevant.
+// "ready in branch", "merged"). Paused lines are NOT general-relevant.
 // Matches firstmate's status_is_captain_relevant.
-func CaptainRelevant(line string) bool {
+func GeneralRelevant(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
 		return false
 	}
-	// Paused lines are never captain-relevant.
+	// Paused lines are never general-relevant.
 	if IsPaused(trimmed) {
 		return false
 	}
-	// Check exact verb match for core captain-relevant verbs.
+	// Check exact verb match for core general-relevant verbs.
 	verb := lineVerb(trimmed)
 	switch verb {
 	case "done", "needs-decision", "blocked", "failed":
@@ -206,9 +206,9 @@ func OpenDecisions(path string) []Decision {
 //   - Paused if the last line verb is the pause verb
 //   - None otherwise
 //
-// This is a pure-logic subset of firstmate's crew_absorb_class, which also
+// This is a pure-logic subset of firstmate's soldier_absorb_class, which also
 // consults no-mistakes run-step and pane liveness. The watcher integrates
-// classify alongside crewstate.Read for the full picture.
+// classify alongside soldierstate.Read for the full picture.
 func AbsorbClass(id string, stateDir string) AbsorbResult {
 	statusPath := filepath.Join(stateDir, id+".status")
 	lastLine := readLastLine(statusPath)
@@ -226,10 +226,10 @@ func AbsorbClass(id string, stateDir string) AbsorbResult {
 	return None
 }
 
-// ScanCaptainRelevant scans stateDir/*.status for captain-relevant last lines.
-// Returns a StatusMatch for each file whose last line is captain-relevant.
+// ScanGeneralRelevant scans stateDir/*.status for general-relevant last lines.
+// Returns a StatusMatch for each file whose last line is general-relevant.
 // Matches firstmate's scan_captain_relevant_statuses.
-func ScanCaptainRelevant(stateDir string) []StatusMatch {
+func ScanGeneralRelevant(stateDir string) []StatusMatch {
 	entries, err := os.ReadDir(stateDir)
 	if err != nil {
 		return nil
@@ -244,7 +244,7 @@ func ScanCaptainRelevant(stateDir string) []StatusMatch {
 
 		statusPath := filepath.Join(stateDir, name)
 		lastLine := readLastLine(statusPath)
-		if lastLine == "" || !CaptainRelevant(lastLine) {
+		if lastLine == "" || !GeneralRelevant(lastLine) {
 			continue
 		}
 

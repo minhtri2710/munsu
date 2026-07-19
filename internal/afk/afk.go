@@ -27,7 +27,7 @@ var (
 )
 
 // Start begins the afk daemon: sets the durable afk flag, then runs a
-// supervision loop that batches routine wakes and escalates captain-relevant
+// supervision loop that batches routine wakes and escalates general-relevant
 // events. Blocks until SIGTERM/SIGINT, then clears the flag.
 func Start(homeDir string) error {
 	flagPath := filepath.Join(homeDir, afkFlagFile)
@@ -64,7 +64,7 @@ func runLoop(homeDir string, stopCh chan struct{}) {
 	}
 }
 
-// scanStatusFiles checks for captain-relevant events in status files.
+// scanStatusFiles checks for general-relevant events in status files.
 func scanStatusFiles(homeDir string) {
 	stateDir := filepath.Join(homeDir, "state")
 	entries, err := os.ReadDir(stateDir)
@@ -93,7 +93,7 @@ func scanStatusFiles(homeDir string) {
 			continue
 		}
 
-		// Escalate captain-relevant states with dedup and wake-queue
+		// Escalate general-relevant states with dedup and wake-queue
 		if strings.HasPrefix(lastLine, "done:") ||
 			strings.HasPrefix(lastLine, "failed:") ||
 			strings.HasPrefix(lastLine, "needs-decision:") {

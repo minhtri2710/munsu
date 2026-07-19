@@ -171,13 +171,13 @@ func Bearings(homeDir string, projectDir string) error {
 	return nil
 }
 
-// SecondStatus returns the status string for a second home.
+// CaptainStatus returns the status string for a captain home.
 // Checks for a state/.lock file to determine if the process is alive.
-func SecondStatus(homeDir string) string {
+func CaptainStatus(homeDir string) string {
 	lockFile := filepath.Join(homeDir, "state", ".lock")
 	data, err := os.ReadFile(lockFile)
 	if err != nil {
-		// No lock file means the second is seeded but not launched
+		// No lock file means the general is seeded but not launched
 		if _, statErr := os.Stat(homeDir); statErr == nil {
 			return "seeded"
 		}

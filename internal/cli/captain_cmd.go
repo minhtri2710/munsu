@@ -4,58 +4,58 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/second"
 	"github.com/spf13/cobra"
 )
 
-func newSecondCmd() *cobra.Command {
+func newCaptainCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "second",
-		Short: "Manage persistent domain supervisors (seconds)",
+		Use:   "captain",
+		Short: "Manage persistent domain supervisors (captains)",
 	}
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "seed <id> <home-path>",
-		Short: "Seed a second home with charter",
+		Short: "Seed a captain home with charter",
 		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return second.Seed(args[0], args[1], "# Second charter\n\nPersistent domain supervisor.\n")
+			return captain.Seed(args[0], args[1], "# Captain charter\n\nPersistent domain supervisor.\n")
 		},
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "launch <second-home>",
-		Short: "Launch a second in its home (session-backed)",
+		Use:   "launch <captain-home>",
+		Short: "Launch a captain in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return second.Launch(args[0], ctx.Home)
+			return captain.Launch(args[0], ctx.Home)
 		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "retire <second-home>",
-		Short: "Retire a second (session-backed)",
+		Use:   "retire <captain-home>",
+		Short: "Retire a captain (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return second.Retire(args[0], ctx.Home, false)
+			return captain.Retire(args[0], ctx.Home, false)
 		}),
 	})
 
 	listCmd := &cobra.Command{
 		Use:   "list",
-		Short: "List registered seconds",
+		Short: "List registered captains",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			mates, err := second.List(ctx.Home)
+			mates, err := captain.List(ctx.Home)
 			if err != nil {
 				return err
 			}
 			if len(mates) == 0 {
 				return writeContract(cmd, contract.Response[contract.EmptyResult]{
 					SchemaVersion: contract.SchemaVersion,
-					Kind:          "second.list",
+					Kind:          "captain.list",
 					Status:        "success",
-					Data:          contract.EmptyResult{Count: 0, Context: "No seconds registered."},
+					Data:          contract.EmptyResult{Count: 0, Context: "No captains registered."},
 				})
 			}
 			var b strings.Builder
@@ -64,7 +64,7 @@ func newSecondCmd() *cobra.Command {
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
-				Kind:          "second.list",
+				Kind:          "captain.list",
 				Status:        "success",
 				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
 			})
@@ -74,31 +74,31 @@ func newSecondCmd() *cobra.Command {
 	cmd.AddCommand(listCmd)
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "handoff <second-home> <item-key...>",
-		Short: "Hand off backlog items to a second",
-		Long: `Hand off queued backlog items from the parent home to a second.
+		Use:   "handoff <captain-home> <item-key...>",
+		Short: "Hand off backlog items to a captain",
+		Long: `Hand off queued backlog items from the parent home to a captain.
 All keys must be in queued state. Uses tasks-axi mv atomically.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return second.Handoff(ctx.Home, args[0], args[1:])
+			return captain.Handoff(ctx.Home, args[0], args[1:])
 		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "config-push <second-home>",
-		Short: "Push inheritable config to a second",
+		Use:   "config-push <captain-home>",
+		Short: "Push inheritable config to a captain",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return second.ConfigPush(ctx.Home, args[0])
+			return captain.ConfigPush(ctx.Home, args[0])
 		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "validate <second-home>",
-		Short: "Validate a second home structure and provenance",
+		Use:   "validate <captain-home>",
+		Short: "Validate a captain home structure and provenance",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if err := second.Validate(args[0], ctx.Home); err != nil {
+			if err := captain.Validate(args[0], ctx.Home); err != nil {
 				return fmt.Errorf("validation failed: %w", err)
 			}
 			fmt.Println("valid")
@@ -107,27 +107,27 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 	})
 
 	migrateCmd := &cobra.Command{
-		Use:   "migrate <second-home> <id>",
+		Use:   "migrate <captain-home> <id>",
 		Short: "Migrate a seeded home (write provenance marker)",
 		Args:  ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return second.Migrate(args[0], args[1])
+			return captain.Migrate(args[0], args[1])
 		},
 	}
 	cmd.AddCommand(migrateCmd)
 
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
-		Short: "Converge all registered seconds",
+		Short: "Converge all registered captains",
 		Long: `Locked convergence sweep: validate registry/provenance, retry pending sends,
 safe local fast-forward, inheritance push, liveness check, and instruction
-surface tracking. State changes tracked in parent state/.second-converge.lock.`,
+surface tracking. State changes tracked in parent state/.captain-converge.lock.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			registered, err := second.List(ctx.Home)
+			registered, err := captain.List(ctx.Home)
 			if err != nil {
-				return fmt.Errorf("listing registered seconds: %w", err)
+				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			return second.Converge(ctx.Home, registered)
+			return captain.Converge(ctx.Home, registered)
 		}),
 	}
 	cmd.AddCommand(convergeCmd)

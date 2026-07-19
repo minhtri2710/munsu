@@ -161,9 +161,9 @@ func TestCollectCapabilities_ScopeClassification(t *testing.T) {
 	}
 }
 
-// TestCollectCapabilities_CaptainTarget verifies captain target resolution
+// TestCollectCapabilities_GeneralTarget verifies general target resolution
 // from a bare home (unsupported, no config or env).
-func TestCollectCapabilities_CaptainTarget(t *testing.T) {
+func TestCollectCapabilities_GeneralTarget(t *testing.T) {
 	// Clear runtime env vars so resolution must fall through to unsupported.
 	t.Setenv("TMUX_PANE", "")
 	t.Setenv("HERDR_ENV", "")
@@ -173,24 +173,24 @@ func TestCollectCapabilities_CaptainTarget(t *testing.T) {
 	home := t.TempDir()
 	capResult := CollectCapabilities(home, ".", "0.1.0")
 
-	if capResult.Captain == nil {
-		t.Fatal("expected non-nil Captain diagnostic")
+	if capResult.General == nil {
+		t.Fatal("expected non-nil General diagnostic")
 	}
 
-	// The captain target will either be Unsupported or report an error from
+	// The general target will either be Unsupported or report an error from
 	// ValidateTargetOwnership (which checks handle emptiness before source).
 	// Either way, we expect meaningful output.
-	str := capResult.Captain.String()
+	str := capResult.General.String()
 	if str == "" {
-		t.Error("expected non-empty Captain diagnostic string")
+		t.Error("expected non-empty General diagnostic string")
 	}
-	t.Logf("Captain diagnostic: %s", str)
+	t.Logf("General diagnostic: %s", str)
 
 	// If unsupported, there should be a fix hint available.
 	// If there's an ownership validation error, the fix is still relevant.
-	if capResult.Captain.Err == nil && capResult.Captain.Result.Source == afk.Unsupported {
-		if fix := capResult.Captain.Fix(); fix == "" {
-			t.Error("expected non-empty Fix for unsupported captain target")
+	if capResult.General.Err == nil && capResult.General.Result.Source == afk.Unsupported {
+		if fix := capResult.General.Fix(); fix == "" {
+			t.Error("expected non-empty Fix for unsupported general target")
 		}
 	}
 }

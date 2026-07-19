@@ -183,7 +183,7 @@ export default function (pi: ExtensionAPI) {
 
     const result = await pi.exec(MUNSU_BIN, [
       "wake", "claim", "--consumer", SESSION_CONSUMER,
-      "--lease-seconds", "120", "--limit", "1",
+      "--lease-captains", "120", "--limit", "1",
       "--output", "json",
     ]);
     if (result.code !== 0) return;
@@ -249,7 +249,7 @@ export default function (pi: ExtensionAPI) {
     // If guard found issues, try to claim a wake.
     const claimResult = await pi.exec(MUNSU_BIN, [
       "wake", "claim", "--consumer", SESSION_CONSUMER,
-      "--lease-seconds", "120", "--limit", "1",
+      "--lease-captains", "120", "--limit", "1",
       "--output", "json",
     ]);
     if (claimResult.code !== 0) return;

@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/brief"
+	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/second"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -129,10 +129,10 @@ func (r *Runner) checkSpawnAuthority() error {
 	if endpointKind, found, err := currentEndpointKind(r.homeDir); err != nil {
 		return fmt.Errorf("spawn authority: resolving current endpoint: %w", err)
 	} else if found {
-		if endpointKind == "second" {
-			return authorizeSpawn("second", r.homeDir, cwd)
+		if endpointKind == "captain" {
+			return authorizeSpawn("captain", r.homeDir, cwd)
 		}
-		return fmt.Errorf("spawn authority: managed crew endpoints cannot spawn; delegate to the marshal or a second")
+		return fmt.Errorf("spawn authority: managed soldier endpoints cannot spawn; delegate to the general or a captain")
 	}
 	return authorizeSpawn(os.Getenv("MUNSU_ROLE"), r.homeDir, cwd)
 }
@@ -194,35 +194,35 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 
 func authorizeSpawn(role, homeDir, cwd string) error {
 	switch role {
-	case "second":
-		if _, err := second.ValidateProvenance(homeDir); err != nil {
-			return fmt.Errorf("spawn authority: invalid second identity: %w", err)
+	case "captain":
+		if _, err := captain.ValidateProvenance(homeDir); err != nil {
+			return fmt.Errorf("spawn authority: invalid captain identity: %w", err)
 		}
 		canonicalHome, err := canonicalExistingPath(homeDir)
 		if err != nil {
-			return fmt.Errorf("spawn authority: resolving second home: %w", err)
+			return fmt.Errorf("spawn authority: resolving captain home: %w", err)
 		}
 		canonicalCWD, err := canonicalExistingPath(cwd)
 		if err != nil {
-			return fmt.Errorf("spawn authority: resolving second cwd: %w", err)
+			return fmt.Errorf("spawn authority: resolving captain cwd: %w", err)
 		}
 		if canonicalCWD != canonicalHome {
-			return fmt.Errorf("spawn authority: second must spawn from its home %s, current directory is %s", canonicalHome, canonicalCWD)
+			return fmt.Errorf("spawn authority: captain must spawn from its home %s, current directory is %s", canonicalHome, canonicalCWD)
 		}
 		return nil
-	case "crew":
-		return fmt.Errorf("spawn authority: regular crews cannot spawn; delegate to the marshal or a second")
-	case "", "marshal":
+	case "soldier":
+		return fmt.Errorf("spawn authority: regular soldiers cannot spawn; delegate to the general or a captain")
+	case "", "general":
 		identity, _, _, err := scope.ClassifyIdentity(cwd)
 		if err != nil {
 			return fmt.Errorf("spawn authority: classifying current checkout: %w", err)
 		}
 		if identity == scope.Worktree {
-			return fmt.Errorf("spawn authority: linked-worktree callers cannot spawn; delegate to the marshal or a second")
+			return fmt.Errorf("spawn authority: linked-worktree callers cannot spawn; delegate to the general or a captain")
 		}
 		return nil
 	default:
-		return fmt.Errorf("spawn authority: unknown MUNSU_ROLE %q; expected marshal, second, or crew", role)
+		return fmt.Errorf("spawn authority: unknown MUNSU_ROLE %q; expected general, captain, or soldier", role)
 	}
 }
 
@@ -320,7 +320,7 @@ func (r *Runner) acquireWorktree() error {
 	return nil
 }
 
-// Phase 9: resolveHarness resolves the crew harness.
+// Phase 9: resolveHarness resolves the soldier harness.
 func (r *Runner) resolveHarness() error {
 	if r.args.HarnessFlag != "" {
 		if err := harness.ValidateHarness(r.args.HarnessFlag); err != nil {
@@ -329,7 +329,7 @@ func (r *Runner) resolveHarness() error {
 		r.harness = r.args.HarnessFlag
 		return nil
 	}
-	h, err := harness.Crew(r.homeDir)
+	h, err := harness.Soldier(r.homeDir)
 	if err != nil {
 		return fmt.Errorf("resolving harness: %w", err)
 	}
@@ -353,7 +353,7 @@ func (r *Runner) resolveLaunchConfig() {
 	}
 	r.launchCmd = harness.LaunchString(r.harness, tmpl)
 }
-func crewTabLabel(projectName, taskID string) string {
+func soldierTabLabel(projectName, taskID string) string {
 	return "mu-" + labelComponent(projectName) + "-" + labelComponent(taskID)
 }
 
@@ -375,7 +375,7 @@ func labelComponent(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// Phase 11: createSession creates a session window for the crew.
+// Phase 11: createSession creates a session window for the soldier.
 func (r *Runner) createSession() error {
 	var bk session.Backend
 	var bkName string
@@ -395,7 +395,7 @@ func (r *Runner) createSession() error {
 		hb.Cwd = r.wtPath
 	}
 
-	windowID, err := bk.NewWindow(hometag.WorkspaceTag(r.homeDir), crewTabLabel(r.args.ProjectName, r.args.ID))
+	windowID, err := bk.NewWindow(hometag.WorkspaceTag(r.homeDir), soldierTabLabel(r.args.ProjectName, r.args.ID))
 	if err != nil {
 		return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
 	}
@@ -410,12 +410,12 @@ func (r *Runner) bootstrapWindow() {
 	if r.launchCmd == "" {
 		return
 	}
-	launchScript := filepath.Join(r.wtPath, ".crew-launch.sh")
-	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=crew\n" + r.launchCmd + "\n"
+	launchScript := filepath.Join(r.wtPath, ".soldier-launch.sh")
+	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=soldier\n" + r.launchCmd + "\n"
 	if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 	}
-	fullCmd := fmt.Sprintf("cd %s && bash .crew-launch.sh", r.wtPath)
+	fullCmd := fmt.Sprintf("cd %s && bash .soldier-launch.sh", r.wtPath)
 	if sendErr := r.bk.SendKeys(r.windowID, fullCmd); sendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
 	}
@@ -432,7 +432,7 @@ func (r *Runner) writeBriefToWorktree() {
 		return
 	}
 	r.briefData = data
-	briefWorktreePath := filepath.Join(r.wtPath, ".crew-brief.md")
+	briefWorktreePath := filepath.Join(r.wtPath, ".soldier-brief.md")
 	if writeErr := os.WriteFile(briefWorktreePath, data, 0644); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing brief to worktree: %v\n", writeErr)
 	}
@@ -456,8 +456,8 @@ func (r *Runner) waitAndInjectBrief() error {
 	}
 	// Brief settle: let harness present clean prompt before one-liner.
 	time.Sleep(500 * time.Millisecond)
-	// Inject brief: all harnesses use file-based .crew-brief.md.
-	_ = r.bk.SendKeys(r.windowID, "read and execute .crew-brief.md")
+	// Inject brief: all harnesses use file-based .soldier-brief.md.
+	_ = r.bk.SendKeys(r.windowID, "read and execute .soldier-brief.md")
 	return nil
 }
 
@@ -543,7 +543,7 @@ func (r *Runner) printEndpointInfo() {
 	if r.args.Yolo {
 		yoloVal = "on"
 	}
-	fmt.Printf("Spawned crew %s\n", r.args.ID)
+	fmt.Printf("Spawned soldier %s\n", r.args.ID)
 	fmt.Printf("  window:   %s\n", r.windowID)
 	fmt.Printf("  worktree: %s\n", r.wtPath)
 	fmt.Printf("  projpath: %s\n", r.projPath)

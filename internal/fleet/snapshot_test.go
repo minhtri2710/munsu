@@ -196,45 +196,45 @@ func TestView_RegisteredPhase(t *testing.T) {
 	}
 }
 
-func TestSecondStatus_Seeded(t *testing.T) {
+func TestCaptainStatus_Seeded(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "seconds", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 
-	status := SecondStatus(smHome)
+	status := CaptainStatus(smHome)
 	if status != "seeded" {
-		t.Errorf("SecondStatus = %q, want %q", status, "seeded")
+		t.Errorf("CaptainStatus = %q, want %q", status, "seeded")
 	}
 }
 
-func TestSecondStatus_Alive(t *testing.T) {
+func TestCaptainStatus_Alive(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "seconds", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
 
-	status := SecondStatus(smHome)
+	status := CaptainStatus(smHome)
 	if status != "alive" {
-		t.Errorf("SecondStatus = %q, want %q", status, "alive")
+		t.Errorf("CaptainStatus = %q, want %q", status, "alive")
 	}
 }
 
-func TestSecondStatus_Dead(t *testing.T) {
+func TestCaptainStatus_Dead(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "seconds", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("invalid\n"), 0644)
 
-	status := SecondStatus(smHome)
+	status := CaptainStatus(smHome)
 	if status != "dead" {
-		t.Errorf("SecondStatus = %q, want %q", status, "dead")
+		t.Errorf("CaptainStatus = %q, want %q", status, "dead")
 	}
 }
 
-func TestSecondStatus_Unknown(t *testing.T) {
+func TestCaptainStatus_Unknown(t *testing.T) {
 	// Non-existent home should return unknown
-	status := SecondStatus("/nonexistent/sm")
+	status := CaptainStatus("/nonexistent/sm")
 	if status != "unknown" {
-		t.Errorf("SecondStatus = %q, want %q", status, "unknown")
+		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
 	}
 }

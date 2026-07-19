@@ -17,12 +17,12 @@ func TestAppendAndRead(t *testing.T) {
 		t.Errorf("first ID = %d, want 1", id)
 	}
 
-	id2, err := Append(home, "task.done", "crew-1", "", `{"id":"task-abc"}`)
+	id2, err := Append(home, "task.done", "soldier-1", "", `{"id":"task-abc"}`)
 	if err != nil {
 		t.Fatalf("Append() error = %v", err)
 	}
 	if id2 != 2 {
-		t.Errorf("second ID = %d, want 2", id2)
+		t.Errorf("captain ID = %d, want 2", id2)
 	}
 
 	records, err := ReadAll(home)
@@ -36,7 +36,7 @@ func TestAppendAndRead(t *testing.T) {
 	if records[0].ID != 1 || records[0].Type != "build.complete" || records[0].Key != "key-1" {
 		t.Errorf("record 0 = %+v", records[0])
 	}
-	if records[1].ID != 2 || records[1].Type != "task.done" || records[1].Producer != "crew-1" {
+	if records[1].ID != 2 || records[1].Type != "task.done" || records[1].Producer != "soldier-1" {
 		t.Errorf("record 1 = %+v", records[1])
 	}
 }
@@ -61,7 +61,7 @@ func TestReadFrom(t *testing.T) {
 	home := t.TempDir()
 
 	Append(home, "a", "p", "", "first")
-	Append(home, "b", "p", "", "second")
+	Append(home, "b", "p", "", "general")
 	Append(home, "c", "p", "", "third")
 
 	records, err := ReadFrom(home, 2)

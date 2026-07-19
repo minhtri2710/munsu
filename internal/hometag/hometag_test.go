@@ -53,14 +53,14 @@ func TestWorkspaceTagPrimaryKeepsLegacyTag(t *testing.T) {
 	}
 }
 
-func TestWorkspaceTagSecondIsReadableAndScoped(t *testing.T) {
+func TestWorkspaceTagCaptainIsReadableAndScoped(t *testing.T) {
 	homeDir := t.TempDir()
 	marker := "munsu-v2\nAPI Supervisor\n" + homeDir + "\n"
-	if err := os.WriteFile(filepath.Join(homeDir, ".munsu-second-home"), []byte(marker), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(homeDir, ".munsu-captain-home"), []byte(marker), 0644); err != nil {
 		t.Fatal(err)
 	}
 	got := WorkspaceTag(homeDir)
-	wantPrefix := "second-api-supervisor-"
+	wantPrefix := "captain-api-supervisor-"
 	if !strings.HasPrefix(got, wantPrefix) {
 		t.Fatalf("WorkspaceTag() = %q, want prefix %q", got, wantPrefix)
 	}
@@ -69,9 +69,9 @@ func TestWorkspaceTagSecondIsReadableAndScoped(t *testing.T) {
 	}
 }
 
-func TestWorkspaceTagIgnoresMalformedSecondMarker(t *testing.T) {
+func TestWorkspaceTagIgnoresMalformedCaptainMarker(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(homeDir, ".munsu-second-home"), []byte("broken\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(homeDir, ".munsu-captain-home"), []byte("broken\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := WorkspaceTag(homeDir), Tag(homeDir); got != want {
@@ -92,7 +92,7 @@ func TestWorkspaceTagCollapsesTmpAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := "munsu-v2\napi-sup\n" + realHome + "\n"
-	if err := os.WriteFile(filepath.Join(realHome, ".munsu-second-home"), []byte(marker), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(realHome, ".munsu-captain-home"), []byte(marker), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := WorkspaceTag(alias), WorkspaceTag(realHome); got != want {

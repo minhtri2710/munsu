@@ -19,7 +19,7 @@ func TestResolveTargetWithSource_ConfigPrecedesRuntime(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, captainPaneConfig), []byte("lab:pane-1\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, generalPaneConfig), []byte("lab:pane-1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TMUX_PANE", "%42")
@@ -99,7 +99,7 @@ func TestResolveTargetWithSource_EmptyConfigIsUnsupported(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, captainPaneConfig), []byte(" \n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, generalPaneConfig), []byte(" \n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ResolveTargetWithSource(home)
@@ -113,7 +113,7 @@ func TestResolveTargetWithSource_EmptyConfigIsUnsupported(t *testing.T) {
 
 func TestValidateTargetOwnership_RejectsForeignHerdrSession(t *testing.T) {
 	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_SESSION", "captain")
+	t.Setenv("HERDR_SESSION", "general")
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	result := TargetResult{Source: ConfigSource, Handle: "foreign:w2:p2", Session: "foreign"}
 	if err := ValidateTargetOwnership(&result); err == nil {
@@ -123,7 +123,7 @@ func TestValidateTargetOwnership_RejectsForeignHerdrSession(t *testing.T) {
 
 func TestValidateTargetOwnership_RejectsBareHerdrHandle(t *testing.T) {
 	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_SESSION", "captain")
+	t.Setenv("HERDR_SESSION", "general")
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	result := TargetResult{Source: ConfigSource, Handle: "w2:p2"}
 	if err := ValidateTargetOwnership(&result); err == nil {

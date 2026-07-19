@@ -1,5 +1,5 @@
-// Package second manages persistent domain supervisors (seconds).
-package second
+// Package captain manages persistent domain supervisors (captains).
+package captain
 
 import (
 	"bufio"
@@ -20,17 +20,17 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
-// ProvenanceMarkerName is the marker file written to a seeded second home root.
-const ProvenanceMarkerName = ".munsu-second-home"
+// ProvenanceMarkerName is the marker file written to a seeded captain home root.
+const ProvenanceMarkerName = ".munsu-captain-home"
 
 // ProvenanceVersion is the current provenance marker format version.
 const ProvenanceVersion = "munsu-v2"
 
 // ConvergeLockName is the converge-specific lock file under parent state.
-const ConvergeLockName = ".second-converge.lock"
+const ConvergeLockName = ".captain-converge.lock"
 
 // NudgePendingDir is the directory under parent state for pending nudge markers.
-const NudgePendingDir = ".second-nudge-pending"
+const NudgePendingDir = ".captain-nudge-pending"
 
 type Info struct {
 	ID      string
@@ -65,8 +65,8 @@ var gitRun = func(args ...string) (string, error) {
 
 // launchCmd builds a shell-safe command string for sending via session backend.
 // Override in tests.
-var launchCmd = func(binPath string, args []string, secondHome string) (string, error) {
-	return buildLaunchScript(binPath, args, secondHome)
+var launchCmd = func(binPath string, args []string, captainHome string) (string, error) {
+	return buildLaunchScript(binPath, args, captainHome)
 }
 
 // --- Helpers ---
@@ -77,7 +77,7 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// buildLaunchScript writes a bash launch script into the second home and
+// buildLaunchScript writes a bash launch script into the general home and
 // returns a fish-safe command that runs it. Herdr panes may use fish, so the
 // bash-only identity/env plumbing must not be typed directly into the pane.
 func buildLaunchScript(binPath string, args []string, cwd string) (string, error) {
@@ -90,7 +90,7 @@ func buildLaunchScript(binPath string, args []string, cwd string) (string, error
 	b.WriteString("export MUNSU_HOME=")
 	b.WriteString(shQuote(cwd))
 	b.WriteString("\n")
-	b.WriteString("export MUNSU_ROLE=second\n")
+	b.WriteString("export MUNSU_ROLE=captain\n")
 	b.WriteString("exec ")
 	b.WriteString(shQuote(binPath))
 	for _, arg := range args {
@@ -98,9 +98,9 @@ func buildLaunchScript(binPath string, args []string, cwd string) (string, error
 		b.WriteString(shQuote(arg))
 	}
 	b.WriteString("\n")
-	scriptPath := filepath.Join(cwd, ".second-launch.sh")
+	scriptPath := filepath.Join(cwd, ".captain-launch.sh")
 	if err := os.WriteFile(scriptPath, []byte(b.String()), 0755); err != nil {
-		return "", fmt.Errorf("writing second launch script: %w", err)
+		return "", fmt.Errorf("writing captain launch script: %w", err)
 	}
 	return "bash " + shQuote(scriptPath), nil
 }
@@ -111,17 +111,17 @@ func sha256Content(data []byte) string {
 	return fmt.Sprintf("%x", h)
 }
 
-// taskIDForSecond returns the task ID used in state metadata for a second.
-func taskIDForSecond(smID string) string {
-	return "second:" + smID
+// taskIDForCaptain returns the task ID used in state metadata for a captain.
+func taskIDForCaptain(smID string) string {
+	return "captain:" + smID
 }
 
 // --- Seed / Provenance ---
 
-// Seed creates a new second home with a charter brief and a provenance marker.
+// Seed creates a new captain home with a charter brief and a provenance marker.
 func Seed(id, homePath, charter string) error {
 	if err := os.MkdirAll(homePath, 0755); err != nil {
-		return fmt.Errorf("creating second home %s: %w", homePath, err)
+		return fmt.Errorf("creating captain home %s: %w", homePath, err)
 	}
 
 	for _, dir := range []string{"state", "data", "config", "projects"} {
@@ -139,7 +139,7 @@ func Seed(id, homePath, charter string) error {
 		return fmt.Errorf("seeding provenance marker: %w", err)
 	}
 
-	fmt.Printf("Seeded second %s at %s\n", id, homePath)
+	fmt.Printf("Seeded captain %s at %s\n", id, homePath)
 	return nil
 }
 
@@ -157,7 +157,7 @@ func canonicalHome(homePath string) (string, error) {
 	return abs, nil
 }
 
-// SeedProvenance writes the provenance marker to a second home root.
+// SeedProvenance writes the provenance marker to a captain home root.
 // Fails closed if canonical home cannot be determined.
 func SeedProvenance(homePath, id string) error {
 	canonical, err := canonicalHome(homePath)
@@ -176,7 +176,7 @@ func ValidateProvenance(homePath string) (string, error) {
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("second home %s has no %s marker — run 'munsu second seed' or 'munsu second migrate'", homePath, ProvenanceMarkerName)
+			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed' or 'munsu captain migrate'", homePath, ProvenanceMarkerName)
 		}
 		return "", fmt.Errorf("reading provenance marker %s: %w", markerPath, err)
 	}
@@ -205,12 +205,12 @@ func ValidateProvenance(homePath string) (string, error) {
 		return "", fmt.Errorf("cannot verify canonical home for copied/move check: %w", err)
 	}
 	if actualCanon != storedHome {
-		return "", fmt.Errorf("provenance marker home %q does not match actual canonical home %q — second may have been copied/moved", storedHome, actualCanon)
+		return "", fmt.Errorf("provenance marker home %q does not match actual canonical home %q — captain may have been copied/moved", storedHome, actualCanon)
 	}
 	return id, nil
 }
 
-// Validate checks a second home for full structural correctness:
+// Validate checks a captain home for full structural correctness:
 //   - provenance marker exists and is valid
 //   - AGENTS.md exists
 //   - state/data/config dirs exist
@@ -239,25 +239,25 @@ func Validate(homePath, parentHome string) error {
 	// Refuse fake/project/primary homes using canonical path.
 	absHome, err := canonicalHome(homePath)
 	if err != nil {
-		return fmt.Errorf("resolving second home path: %w", err)
+		return fmt.Errorf("resolving captain home path: %w", err)
 	}
 	absParent, err := canonicalHome(parentHome)
 	if err != nil {
 		return fmt.Errorf("resolving parent home path: %w", err)
 	}
 	if absHome == absParent {
-		return fmt.Errorf("second home %s is the parent home itself — refuse", homePath)
+		return fmt.Errorf("captain home %s is the parent home itself — refuse", homePath)
 	}
 
 	bareName := filepath.Base(absHome)
 	if bareName == "fake" || bareName == "project" || bareName == "primary" {
-		return fmt.Errorf("second home %s uses reserved name %q — refuse", homePath, bareName)
+		return fmt.Errorf("captain home %s uses reserved name %q — refuse", homePath, bareName)
 	}
 
 	return nil
 }
 
-// validateStructure checks that a second home has the expected directory
+// validateStructure checks that a captain home has the expected directory
 // structure and AGENTS.md, WITHOUT requiring a provenance marker.
 // Used by Migrate before it writes the marker.
 func validateStructure(homePath string) error {
@@ -277,7 +277,7 @@ func validateStructure(homePath string) error {
 	return nil
 }
 
-// Migrate writes a provenance marker into an existing seeded second home.
+// Migrate writes a provenance marker into an existing seeded captain home.
 // It checks structural validity before writing and refuses fake/project/primary homes.
 func Migrate(homePath, id string) error {
 	refuted := filepath.Base(homePath)
@@ -292,12 +292,12 @@ func Migrate(homePath, id string) error {
 
 // --- Registry ---
 
-// RegistryPath returns the path to the authoritative second registry.
+// RegistryPath returns the path to the authoritative captain registry.
 func RegistryPath(parentHome string) string {
-	return filepath.Join(parentHome, "data", "seconds.md")
+	return filepath.Join(parentHome, "data", "captains.md")
 }
 
-// ParseRegistry parses the seconds registry file and returns Info entries.
+// ParseRegistry parses the generals registry file and returns Info entries.
 func ParseRegistry(registryPath string) ([]Info, error) {
 	f, err := os.Open(registryPath)
 	if err != nil {
@@ -361,35 +361,35 @@ func extractMetaValue(meta, key string) string {
 	return ""
 }
 
-// List returns all registered seconds by reading the authoritative registry.
+// List returns all registered captains by reading the authoritative registry.
 func List(parentHome string) ([]Info, error) {
 	return ParseRegistry(RegistryPath(parentHome))
 }
 
 // --- Launch (session-backed) ---
 
-// buildLaunchArgs returns the harness binary name and argument list for a second launch.
-// Matches firstmate's verified pi second shape: cwd at home + prompt bytes only.
+// buildLaunchArgs returns the harness binary name and argument list for a captain launch.
+// Matches firstmate's verified pi captain shape: cwd at home + prompt bytes only.
 // No shell-expression prompt, no project-path argv, no "--" separator.
-func buildLaunchArgs(secondHome, h, parentHome string) (string, []string, error) {
+func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(h)
 	if !ok {
-		return "", nil, fmt.Errorf("second launch: harness %q is not a verified harness", h)
+		return "", nil, fmt.Errorf("captain launch: harness %q is not a verified harness", h)
 	}
-	contract := adapter.SecondLaunch
+	contract := adapter.CaptainLaunch
 	if !contract.Supported {
-		return "", nil, fmt.Errorf("second launch: harness %q does not have a verified second launch contract", h)
+		return "", nil, fmt.Errorf("captain launch: harness %q does not have a verified captain launch contract", h)
 	}
 	if !contract.CwdAtHome || !contract.PromptArg {
-		return "", nil, fmt.Errorf("second launch: harness %q has an incomplete second launch contract", h)
+		return "", nil, fmt.Errorf("captain launch: harness %q has an incomplete captain launch contract", h)
 	}
 	if contract.ProjectArg {
-		return "", nil, fmt.Errorf("second launch: harness %q must not pass a project path arg", h)
+		return "", nil, fmt.Errorf("captain launch: harness %q must not pass a project path arg", h)
 	}
 
-	charter, err := os.ReadFile(filepath.Join(secondHome, "AGENTS.md"))
+	charter, err := os.ReadFile(filepath.Join(captainHome, "AGENTS.md"))
 	if err != nil {
-		return "", nil, fmt.Errorf("reading second charter: %w", err)
+		return "", nil, fmt.Errorf("reading captain charter: %w", err)
 	}
 
 	model, _ := config.Get(parentHome, "model")
@@ -406,40 +406,40 @@ func buildLaunchArgs(secondHome, h, parentHome string) (string, []string, error)
 	return adapter.Name, args, nil
 }
 
-func refuseNestedSecondLaunch(parentHome string) error {
-	if os.Getenv("MUNSU_ROLE") == "second" {
-		return fmt.Errorf("seconds cannot launch other seconds; spawn crews in their own home instead")
+func refuseNestedCaptainLaunch(parentHome string) error {
+	if os.Getenv("MUNSU_ROLE") == "captain" {
+		return fmt.Errorf("captains cannot launch other captains; spawn soldiers in their own home instead")
 	}
 	markerPath := filepath.Join(parentHome, ProvenanceMarkerName)
 	if _, err := os.Stat(markerPath); err == nil {
 		if _, validateErr := ValidateProvenance(parentHome); validateErr != nil {
-			return fmt.Errorf("active home has invalid second provenance: %w", validateErr)
+			return fmt.Errorf("active home has invalid captain provenance: %w", validateErr)
 		}
-		return fmt.Errorf("second home %s cannot launch another second", parentHome)
+		return fmt.Errorf("captain home %s cannot launch another captain", parentHome)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking active home provenance: %w", err)
 	}
 	return nil
 }
 
-// Launch starts a second using a session-backed endpoint.
+// Launch starts a captain using a session-backed endpoint.
 // It validates provenance, resolves the harness, creates a new window via
 // the session backend, sends a shell-safe launch script, then writes task
-// meta with kind=second and endpoint metadata only after launch succeeds.
-func Launch(secondHome, parentHome string) error {
-	if err := refuseNestedSecondLaunch(parentHome); err != nil {
+// meta with kind=captain and endpoint metadata only after launch succeeds.
+func Launch(captainHome, parentHome string) error {
+	if err := refuseNestedCaptainLaunch(parentHome); err != nil {
 		return err
 	}
-	if _, err := ValidateProvenance(secondHome); err != nil {
-		return fmt.Errorf("provenance validation failed for %s: %w", secondHome, err)
+	if _, err := ValidateProvenance(captainHome); err != nil {
+		return fmt.Errorf("provenance validation failed for %s: %w", captainHome, err)
 	}
 
-	h, err := harness.Second(parentHome)
+	h, err := harness.Captain(parentHome)
 	if err != nil {
-		return fmt.Errorf("resolving second harness: %w", err)
+		return fmt.Errorf("resolving captain harness: %w", err)
 	}
 
-	binName, args, err := buildLaunchArgs(secondHome, h, parentHome)
+	binName, args, err := buildLaunchArgs(captainHome, h, parentHome)
 	if err != nil {
 		return err
 	}
@@ -449,22 +449,22 @@ func Launch(secondHome, parentHome string) error {
 		return fmt.Errorf("resolving session backend: %w", err)
 	}
 
-	markerID, err := ValidateProvenance(secondHome)
+	markerID, err := ValidateProvenance(captainHome)
 	if err != nil {
-		return fmt.Errorf("revalidating second provenance: %w", err)
+		return fmt.Errorf("revalidating captain provenance: %w", err)
 	}
-	canonicalSecondHome, err := canonicalHome(secondHome)
+	canonicalCaptainHome, err := canonicalHome(captainHome)
 	if err != nil {
-		return fmt.Errorf("canonicalizing second home: %w", err)
+		return fmt.Errorf("canonicalizing captain home: %w", err)
 	}
 
-	containerLabel := hometag.WorkspaceTag(canonicalSecondHome)
+	containerLabel := hometag.WorkspaceTag(canonicalCaptainHome)
 	if hb, ok := bk.(*session.HerdrBackend); ok {
-		hb.Cwd = canonicalSecondHome
+		hb.Cwd = canonicalCaptainHome
 	}
-	windowID, err := bk.NewWindow(containerLabel, "mu-second-"+markerID)
+	windowID, err := bk.NewWindow(containerLabel, "mu-captain-"+markerID)
 	if err != nil {
-		return fmt.Errorf("creating second window: %w", err)
+		return fmt.Errorf("creating captain window: %w", err)
 	}
 
 	binPath, err := lookPath(binName)
@@ -474,7 +474,7 @@ func Launch(secondHome, parentHome string) error {
 	}
 
 	// Build and send shell-safe launch script.
-	cmdLine, err := launchCmd(binPath, args, canonicalSecondHome)
+	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome)
 	if err != nil {
 		bk.Teardown(windowID)
 		return fmt.Errorf("building launch script: %w", err)
@@ -486,8 +486,8 @@ func Launch(secondHome, parentHome string) error {
 
 	// Persist task meta only after successful launch.
 	meta := map[string]string{
-		"kind":    "second",
-		"home":    canonicalSecondHome,
+		"kind":    "captain",
+		"home":    canonicalCaptainHome,
 		"window":  windowID,
 		"backend": bkName,
 		"harness": h,
@@ -500,87 +500,87 @@ func Launch(secondHome, parentHome string) error {
 		}
 	}
 
-	taskID := taskIDForSecond(markerID)
+	taskID := taskIDForCaptain(markerID)
 	if err := task.WriteMeta(parentHome, taskID, meta); err != nil {
 		bk.Teardown(windowID)
-		return fmt.Errorf("writing second task meta: %w", err)
+		return fmt.Errorf("writing captain task meta: %w", err)
 	}
 
-	fmt.Printf("Launched second %s (window=%s, harness=%s) in %s\n",
-		markerID, windowID, binName, secondHome)
+	fmt.Printf("Launched captain %s (window=%s, harness=%s) in %s\n",
+		markerID, windowID, binName, captainHome)
 	return nil
 }
 
 // --- Retire ---
 
-// Retire tears down a second using its session-backed endpoint.
+// Retire tears down a captain using its session-backed endpoint.
 // It reads task meta, validates kind/sm_id/home before any action,
 // then signals the endpoint via the session backend. Errors from backend
 // operations (SendKeys, Teardown) are returned — never silently swallowed.
-// removeHome=true removes the second home directory after teardown.
-func Retire(secondHome, parentHome string, removeHome bool) error {
-	markerID, err := ValidateProvenance(secondHome)
+// removeHome=true removes the general home directory after teardown.
+func Retire(captainHome, parentHome string, removeHome bool) error {
+	markerID, err := ValidateProvenance(captainHome)
 	if err != nil {
-		return fmt.Errorf("refusing to retire unowned home %s: %w", secondHome, err)
+		return fmt.Errorf("refusing to retire unowned home %s: %w", captainHome, err)
 	}
-	canonicalSecondHome, err := canonicalHome(secondHome)
+	canonicalCaptainHome, err := canonicalHome(captainHome)
 	if err != nil {
-		return fmt.Errorf("refusing to retire home with ambiguous identity %s: %w", secondHome, err)
+		return fmt.Errorf("refusing to retire home with ambiguous identity %s: %w", captainHome, err)
 	}
 
-	taskID := taskIDForSecond(markerID)
+	taskID := taskIDForCaptain(markerID)
 	meta, metaErr := task.ReadMeta(parentHome, taskID)
 
 	if metaErr == nil {
 		// Validate meta fields before use.
-		if meta["kind"] != "second" {
-			return fmt.Errorf("refusing to retire: task meta kind=%q, expected \"second\"", meta["kind"])
+		if meta["kind"] != "captain" {
+			return fmt.Errorf("refusing to retire: task meta kind=%q, expected \"captain\"", meta["kind"])
 		}
 		if meta["sm_id"] != markerID {
-			return fmt.Errorf("refusing to retire: task meta sm_id=%q does not match second marker id %q", meta["sm_id"], markerID)
+			return fmt.Errorf("refusing to retire: task meta sm_id=%q does not match captain marker id %q", meta["sm_id"], markerID)
 		}
-		if meta["home"] != canonicalSecondHome {
-			return fmt.Errorf("refusing to retire: task meta home=%q does not match canonical second home %q", meta["home"], canonicalSecondHome)
+		if meta["home"] != canonicalCaptainHome {
+			return fmt.Errorf("refusing to retire: task meta home=%q does not match canonical captain home %q", meta["home"], canonicalCaptainHome)
 		}
 
 		windowID := meta["window"]
 		if windowID == "" {
-			return fmt.Errorf("refusing to retire: no window in task meta for second %s", markerID)
+			return fmt.Errorf("refusing to retire: no window in task meta for captain %s", markerID)
 		}
 
 		bk, _, bkErr := session.BackendForTask(parentHome, meta)
 		if bkErr != nil {
-			return fmt.Errorf("refusing to retire: cannot resolve backend for second %s: %w", markerID, bkErr)
+			return fmt.Errorf("refusing to retire: cannot resolve backend for captain %s: %w", markerID, bkErr)
 		}
 
 		if bk.Alive(windowID) {
 			if sendErr := bk.SendKeys(windowID, "/quit"); sendErr != nil {
-				return fmt.Errorf("failed to send /quit to second %s: %w", markerID, sendErr)
+				return fmt.Errorf("failed to send /quit to captain %s: %w", markerID, sendErr)
 			}
 			fmt.Printf("  sent /quit to %s\n", markerID)
 			time.Sleep(500 * time.Millisecond)
 			if bk.Alive(windowID) {
 				if tdErr := bk.Teardown(windowID); tdErr != nil {
-					return fmt.Errorf("failed to teardown second %s window: %w", markerID, tdErr)
+					return fmt.Errorf("failed to teardown captain %s window: %w", markerID, tdErr)
 				}
 			}
 		} else {
 			if tdErr := bk.Teardown(windowID); tdErr != nil {
-				return fmt.Errorf("failed to teardown second %s window: %w", markerID, tdErr)
+				return fmt.Errorf("failed to teardown captain %s window: %w", markerID, tdErr)
 			}
 		}
 	} else {
-		// Provenance exists but no meta — second was never launched.
-		fmt.Printf("  second %s has no task meta (never launched)\n", markerID)
+		// Provenance exists but no meta — captain was never launched.
+		fmt.Printf("  captain %s has no task meta (never launched)\n", markerID)
 	}
 
 	if removeHome {
-		if err := os.RemoveAll(secondHome); err != nil {
-			return fmt.Errorf("removing second home %s: %w", secondHome, err)
+		if err := os.RemoveAll(captainHome); err != nil {
+			return fmt.Errorf("removing captain home %s: %w", captainHome, err)
 		}
-		fmt.Printf("Retired and removed second home %s\n", secondHome)
+		fmt.Printf("Retired and removed captain home %s\n", captainHome)
 	} else {
-		fmt.Printf("Retired second at %s (home retained)\n", secondHome)
+		fmt.Printf("Retired captain at %s (home retained)\n", captainHome)
 	}
 
 	return nil
@@ -588,7 +588,7 @@ func Retire(secondHome, parentHome string, removeHome bool) error {
 
 // --- Handoff ---
 
-// Handoff moves backlog items from the parent home to a second atomically.
+// Handoff moves backlog items from the parent home to a captain atomically.
 // All requested keys must preclassify as queued before the command runs.
 // extractTaskStateFromShow parses the state field from tasks-axi show output.
 // Returns empty string if not found.
@@ -613,19 +613,19 @@ var isTasksAxiBackend = func(parentHome string) bool {
 	return val == "tasks-axi"
 }
 
-// Handoff moves backlog items from the parent home to a second atomically.
+// Handoff moves backlog items from the parent home to a captain atomically.
 // All requested keys must preclassify as queued before the command runs.
 // Tasks-axi mv is the only supported backend. On failure, both files remain
 // unchanged (atomic via tasks-axi mv).
-// Validates canonical second destination and uses absolute --file paths.
-func Handoff(parentHome, secondHome string, itemKeys []string) error {
-	if _, err := ValidateProvenance(secondHome); err != nil {
-		return fmt.Errorf("refusing handoff to unmarked home %s: %w", secondHome, err)
+// Validates canonical captain destination and uses absolute --file paths.
+func Handoff(parentHome, captainHome string, itemKeys []string) error {
+	if _, err := ValidateProvenance(captainHome); err != nil {
+		return fmt.Errorf("refusing handoff to unmarked home %s: %w", captainHome, err)
 	}
-	// Validate canonical second home path.
-	absSM, err := filepath.Abs(secondHome)
+	// Validate canonical captain home path.
+	absSM, err := filepath.Abs(captainHome)
 	if err != nil {
-		return fmt.Errorf("resolving second home: %w", err)
+		return fmt.Errorf("resolving captain home: %w", err)
 	}
 	absParent, err := filepath.Abs(parentHome)
 	if err != nil {
@@ -642,7 +642,7 @@ func Handoff(parentHome, secondHome string, itemKeys []string) error {
 
 	// Build absolute backlog paths.
 	srcBacklog := filepath.Join(parentHome, "data", "backlog.md")
-	dstBacklog := filepath.Join(secondHome, "data", "backlog.md")
+	dstBacklog := filepath.Join(captainHome, "data", "backlog.md")
 
 	// Create destination backlog directory if needed.
 	os.MkdirAll(filepath.Dir(dstBacklog), 0755)
@@ -694,7 +694,7 @@ func getInheritableList() []string {
 	if env != "" {
 		return strings.Split(env, ":")
 	}
-	return []string{"crew-harness", "crew-dispatch.json", "backlog-backend"}
+	return []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
 }
 
 func isInheritable(name string, list []string) bool {
@@ -779,10 +779,10 @@ func resolveDeepestAncestor(path string) (string, error) {
 	}
 }
 
-// isSafeConfigPath checks that dst is safely contained within secondHome
+// isSafeConfigPath checks that dst is safely contained within captainHome
 // and does not symlink-escape into parentHome.
-func isSafeConfigPath(dst, parentHome, secondHome string) bool {
-	smCanon, err := canonicalHome(secondHome)
+func isSafeConfigPath(dst, parentHome, captainHome string) bool {
+	smCanon, err := canonicalHome(captainHome)
 	if err != nil {
 		return false
 	}
@@ -818,16 +818,16 @@ func isSafeConfigPath(dst, parentHome, secondHome string) bool {
 	return true
 }
 
-func pushConfigFile(parentHome, secondHome, name string, logFn func(action, name string)) error {
+func pushConfigFile(parentHome, captainHome, name string, logFn func(action, name string)) error {
 	src := filepath.Join(parentHome, "config", name)
-	dst := filepath.Join(secondHome, "config", name)
+	dst := filepath.Join(captainHome, "config", name)
 
-	if !isSafeConfigPath(dst, parentHome, secondHome) {
-		return fmt.Errorf("config path %s escapes second container — refuse", dst)
+	if !isSafeConfigPath(dst, parentHome, captainHome) {
+		return fmt.Errorf("config path %s escapes captain container — refuse", dst)
 	}
 	// Check git tracking BEFORE write — tracked destination must remain byte-identical.
 	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-		return fmt.Errorf("inheritance destination %s is tracked in second git — must be gitignored", name)
+		return fmt.Errorf("inheritance destination %s is tracked in captain git — must be gitignored", name)
 	}
 
 	data, err := os.ReadFile(src)
@@ -847,16 +847,16 @@ func pushConfigFile(parentHome, secondHome, name string, logFn func(action, name
 	return nil
 }
 
-func pushSharedFile(parentHome, secondHome string, logFn func(action, name string)) error {
-	src := filepath.Join(parentHome, "data", "captain-shared.md")
-	dst := filepath.Join(secondHome, "data", "captain-shared.md")
+func pushSharedFile(parentHome, captainHome string, logFn func(action, name string)) error {
+	src := filepath.Join(parentHome, "data", "general-shared.md")
+	dst := filepath.Join(captainHome, "data", "general-shared.md")
 
-	if !isSafeConfigPath(dst, parentHome, secondHome) {
-		return fmt.Errorf("captain-shared.md path escapes second container — refuse")
+	if !isSafeConfigPath(dst, parentHome, captainHome) {
+		return fmt.Errorf("general-shared.md path escapes captain container — refuse")
 	}
 	// Check git tracking BEFORE write.
 	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-		return fmt.Errorf("captain-shared.md is tracked in second git — must be gitignored")
+		return fmt.Errorf("general-shared.md is tracked in captain git — must be gitignored")
 	}
 
 	data, err := os.ReadFile(src)
@@ -864,14 +864,14 @@ func pushSharedFile(parentHome, secondHome string, logFn func(action, name strin
 		if os.IsNotExist(err) {
 			return nil
 		}
-		logFn("skipped", "captain-shared.md — "+err.Error())
+		logFn("skipped", "general-shared.md — "+err.Error())
 		return nil
 	}
 
 	if err := atomicWriteFile(dst, data, 0444); err != nil {
-		return fmt.Errorf("writing captain-shared.md: %w", err)
+		return fmt.Errorf("writing general-shared.md: %w", err)
 	}
-	logFn("pushed", "captain-shared.md")
+	logFn("pushed", "general-shared.md")
 
 	return nil
 }
@@ -881,16 +881,16 @@ func isGitTracked(dir, name string) bool {
 	return err == nil && len(out) > 0
 }
 
-// ConfigPush copies inheritable config from the parent home to the second,
-// mirrors deletions, pushes data/captain-shared.md read-only, and logs actions.
-func ConfigPush(parentHome, secondHome string) error {
-	if _, err := ValidateProvenance(secondHome); err != nil {
-		return fmt.Errorf("refusing config-push to unmarked home %s: %w", secondHome, err)
+// ConfigPush copies inheritable config from the parent home to the general,
+// mirrors deletions, pushes data/general-shared.md read-only, and logs actions.
+func ConfigPush(parentHome, captainHome string) error {
+	if _, err := ValidateProvenance(captainHome); err != nil {
+		return fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
 	}
 
 	inheritable := getInheritableList()
 
-	logPath := filepath.Join(secondHome, "state", "config-push.log")
+	logPath := filepath.Join(captainHome, "state", "config-push.log")
 	os.MkdirAll(filepath.Dir(logPath), 0755)
 	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -905,9 +905,9 @@ func ConfigPush(parentHome, secondHome string) error {
 		fmt.Printf("  %s %s\n", action, name)
 	}
 
-	// Mirror deletions: remove inheritable files in second that are absent in parent.
+	// Mirror deletions: remove inheritable files in captain that are absent in parent.
 	// Validate safety BEFORE any deletion. Return error on unsafe/tracked paths.
-	configDir := filepath.Join(secondHome, "config")
+	configDir := filepath.Join(captainHome, "config")
 	if entries, err := os.ReadDir(configDir); err == nil {
 		for _, e := range entries {
 			name := e.Name()
@@ -917,11 +917,11 @@ func ConfigPush(parentHome, secondHome string) error {
 			srcPath := filepath.Join(parentHome, "config", name)
 			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
 				dstPath := filepath.Join(configDir, name)
-				if !isSafeConfigPath(dstPath, parentHome, secondHome) {
-					return fmt.Errorf("mirror deletion: %s path escapes second container — refuse", name)
+				if !isSafeConfigPath(dstPath, parentHome, captainHome) {
+					return fmt.Errorf("mirror deletion: %s path escapes captain container — refuse", name)
 				}
 				if isGitTracked(configDir, name) {
-					return fmt.Errorf("mirror deletion: %s is tracked in second git — must be gitignored", name)
+					return fmt.Errorf("mirror deletion: %s is tracked in captain git — must be gitignored", name)
 				}
 				if err := os.Remove(dstPath); err != nil {
 					log("delete-failed", name+" — "+err.Error())
@@ -932,30 +932,30 @@ func ConfigPush(parentHome, secondHome string) error {
 		}
 	}
 
-	// Mirror deletion for captain-shared.md — validate before mutation.
-	sharedDst := filepath.Join(secondHome, "data", "captain-shared.md")
-	if _, err := os.Stat(filepath.Join(parentHome, "data", "captain-shared.md")); os.IsNotExist(err) {
+	// Mirror deletion for general-shared.md — validate before mutation.
+	sharedDst := filepath.Join(captainHome, "data", "general-shared.md")
+	if _, err := os.Stat(filepath.Join(parentHome, "data", "general-shared.md")); os.IsNotExist(err) {
 		if _, err := os.Stat(sharedDst); err == nil {
-			if !isSafeConfigPath(sharedDst, parentHome, secondHome) {
-				return fmt.Errorf("mirror deletion: captain-shared.md path escapes second container — refuse")
+			if !isSafeConfigPath(sharedDst, parentHome, captainHome) {
+				return fmt.Errorf("mirror deletion: general-shared.md path escapes captain container — refuse")
 			}
 			if isGitTracked(filepath.Dir(sharedDst), filepath.Base(sharedDst)) {
-				return fmt.Errorf("mirror deletion: captain-shared.md is tracked in second git — must be gitignored")
+				return fmt.Errorf("mirror deletion: general-shared.md is tracked in captain git — must be gitignored")
 			}
 			if err := os.Remove(sharedDst); err != nil {
-				log("delete-failed", "captain-shared.md — "+err.Error())
-				return fmt.Errorf("mirror deletion: removing captain-shared.md: %w", err)
+				log("delete-failed", "general-shared.md — "+err.Error())
+				return fmt.Errorf("mirror deletion: removing general-shared.md: %w", err)
 			}
-			log("deleted", "captain-shared.md")
+			log("deleted", "general-shared.md")
 		}
 	}
 	for _, name := range inheritable {
-		if err := pushConfigFile(parentHome, secondHome, name, log); err != nil {
+		if err := pushConfigFile(parentHome, captainHome, name, log); err != nil {
 			return err
 		}
 	}
 
-	if err := pushSharedFile(parentHome, secondHome, log); err != nil {
+	if err := pushSharedFile(parentHome, captainHome, log); err != nil {
 		return err
 	}
 
@@ -976,22 +976,22 @@ func normalizeGitRemote(remote string) string {
 	return strings.ToLower(remote)
 }
 
-// safeFF performs a LOCAL-only fast-forward of a second clone to the
+// safeFF performs a LOCAL-only fast-forward of a captain clone to the
 // parent's already-local default-branch commit. Verified: same canonical
 // remote origin, correct branch/detached state, clean tree (ignoring only
 // marker and local inherited paths), ancestor relationship, then git merge --ff-only.
-func safeFF(secondHome, parentHome string) (before, after string, err error) {
+func safeFF(captainHome, parentHome string) (before, after string, err error) {
 	// Verify same canonical remote origin (allows independent clones, HTTPS/SSH equivalence).
 	parentRemote, err := gitRun("-C", parentHome, "remote", "get-url", "origin")
 	if err != nil {
 		return "", "", fmt.Errorf("parent remote origin: %w", err)
 	}
-	smRemote, err := gitRun("-C", secondHome, "remote", "get-url", "origin")
+	smRemote, err := gitRun("-C", captainHome, "remote", "get-url", "origin")
 	if err != nil {
-		return "", "", fmt.Errorf("second remote origin: %w", err)
+		return "", "", fmt.Errorf("captain remote origin: %w", err)
 	}
 	if normalizeGitRemote(parentRemote) != normalizeGitRemote(smRemote) {
-		return "", "", fmt.Errorf("second remote %q differs from parent remote %q (canonical: %q vs %q)",
+		return "", "", fmt.Errorf("captain remote %q differs from parent remote %q (canonical: %q vs %q)",
 			smRemote, parentRemote, normalizeGitRemote(smRemote), normalizeGitRemote(parentRemote))
 	}
 
@@ -1019,19 +1019,19 @@ func safeFF(secondHome, parentHome string) (before, after string, err error) {
 		return "", "", fmt.Errorf("resolving default branch commit: %w", err)
 	}
 
-	// Branch check — second must be on default branch or detached HEAD.
-	smBranch, err := gitRun("-C", secondHome, "rev-parse", "--abbrev-ref", "HEAD")
+	// Branch check — captain must be on default branch or detached HEAD.
+	smBranch, err := gitRun("-C", captainHome, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading second branch: %w", err)
+		return "", "", fmt.Errorf("reading captain branch: %w", err)
 	}
 	if smBranch != "HEAD" && smBranch != "" && smBranch != defaultBranch {
-		return "", "", fmt.Errorf("second is on branch %q, expected %q or detached HEAD", smBranch, defaultBranch)
+		return "", "", fmt.Errorf("captain is on branch %q, expected %q or detached HEAD", smBranch, defaultBranch)
 	}
 
 	// Clean check — reject ALL tracked changes; allow only gitignored untracked files.
-	statusOut, err := gitRun("-C", secondHome, "status", "--porcelain")
+	statusOut, err := gitRun("-C", captainHome, "status", "--porcelain")
 	if err != nil {
-		return "", "", fmt.Errorf("second git status: %w", err)
+		return "", "", fmt.Errorf("captain git status: %w", err)
 	}
 	if statusOut != "" {
 		for _, line := range strings.Split(statusOut, "\n") {
@@ -1043,46 +1043,46 @@ func safeFF(secondHome, parentHome string) (before, after string, err error) {
 			if xy == "??" {
 				// Untracked — allow only if git check-ignore confirms gitignored.
 				path := strings.TrimSpace(line[2:])
-				if _, err := gitRun("-C", secondHome, "check-ignore", "-q", "--", path); err == nil {
+				if _, err := gitRun("-C", captainHome, "check-ignore", "-q", "--", path); err == nil {
 					continue // gitignored, OK
 				}
-				return "", "", fmt.Errorf("second home %s has unignored untracked file: %s", secondHome, path)
+				return "", "", fmt.Errorf("captain home %s has unignored untracked file: %s", captainHome, path)
 			}
 			// Any non-space character means tracked change (staged or unstaged).
 			if xy[0] != ' ' || xy[1] != ' ' {
-				return "", "", fmt.Errorf("second home %s has tracked changes", secondHome)
+				return "", "", fmt.Errorf("captain home %s has tracked changes", captainHome)
 			}
 		}
 	}
 
-	before, err = gitRun("-C", secondHome, "rev-parse", "HEAD")
+	before, err = gitRun("-C", captainHome, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading second HEAD: %w", err)
+		return "", "", fmt.Errorf("reading captain HEAD: %w", err)
 	}
 
 	// Check ancestry.
-	mergeBase, err := gitRun("-C", secondHome, "merge-base", before, defaultCommit)
+	mergeBase, err := gitRun("-C", captainHome, "merge-base", before, defaultCommit)
 	if err != nil {
 		return "", "", fmt.Errorf("merge-base failed: %w", err)
 	}
 	if mergeBase != before {
-		return "", "", fmt.Errorf("second %s is not an ancestor of parent default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
+		return "", "", fmt.Errorf("captain %s is not an ancestor of parent default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
 	}
 
 	if before == defaultCommit {
 		return before, before, nil
 	}
 
-	fmt.Printf("  %s: fast-forward %s → %s\n", filepath.Base(secondHome), before[:8], defaultCommit[:8])
+	fmt.Printf("  %s: fast-forward %s → %s\n", filepath.Base(captainHome), before[:8], defaultCommit[:8])
 
-	_, err = gitRun("-C", secondHome, "merge", "--ff-only", defaultCommit)
+	_, err = gitRun("-C", captainHome, "merge", "--ff-only", defaultCommit)
 	if err != nil {
 		return "", "", fmt.Errorf("git merge --ff-only failed: %w", err)
 	}
 
-	after, err = gitRun("-C", secondHome, "rev-parse", "HEAD")
+	after, err = gitRun("-C", captainHome, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading second HEAD after ff: %w", err)
+		return "", "", fmt.Errorf("reading captain HEAD after ff: %w", err)
 	}
 
 	return before, after, nil
@@ -1214,7 +1214,7 @@ func removeNudgeMarker(parentHome, smID string) {
 	os.Remove(nudgeMarkerPath(parentHome, smID))
 }
 
-// Converge performs a locked convergence sweep over registered seconds.
+// Converge performs a locked convergence sweep over registered captains.
 // Order: lock, validate registry/provenance, retry pending sends, safe ff,
 // inheritance push, ownership-backed backend Alive check, and reread nudge
 // only if instruction surface advanced.
@@ -1296,16 +1296,16 @@ func Converge(parentHome string, registered []Info) error {
 	return nil
 }
 
-// checkAliveViaBackend checks if a second is alive using the session backend.
+// checkAliveViaBackend checks if a captain is alive using the session backend.
 // It reads task meta, validates kind/sm_id/home before use, and uses backend.Alive.
 func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
-	taskID := taskIDForSecond(sm.ID)
+	taskID := taskIDForCaptain(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return false, nil // not yet launched
 	}
 
-	if meta["kind"] != "second" {
+	if meta["kind"] != "captain" {
 		return false, nil
 	}
 	if meta["sm_id"] != sm.ID {
@@ -1313,7 +1313,7 @@ func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
 	}
 	canonSM, err := canonicalHome(sm.Home)
 	if err != nil {
-		return false, fmt.Errorf("canonicalizing second home: %w", err)
+		return false, fmt.Errorf("canonicalizing captain home: %w", err)
 	}
 	if meta["home"] != canonSM {
 		return false, nil
@@ -1353,21 +1353,21 @@ func hasSurfaceDiff(home, before, after string) bool {
 	return err == nil && beforeDigest != afterDigest
 }
 
-// sendNudge sends a short re-read message to a second via its
+// sendNudge sends a short re-read message to a captain via its
 // session-backed endpoint. It reads task meta, validates endpoint
 // identity, sends the message, removes the pending marker, and
 // updates applied instruction identity only after success.
 // On failure, the marker remains.
 func sendNudge(parentHome string, sm Info) error {
-	taskID := taskIDForSecond(sm.ID)
+	taskID := taskIDForCaptain(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return fmt.Errorf("%s: no task meta — marker remains", sm.ID)
 	}
 
 	// Validate endpoint meta before use.
-	if meta["kind"] != "second" {
-		return fmt.Errorf("%s: meta kind=%q, expected second — marker remains", sm.ID, meta["kind"])
+	if meta["kind"] != "captain" {
+		return fmt.Errorf("%s: meta kind=%q, expected captain — marker remains", sm.ID, meta["kind"])
 	}
 	if meta["sm_id"] != sm.ID {
 		return fmt.Errorf("%s: meta sm_id=%q does not match — marker remains", sm.ID, meta["sm_id"])
@@ -1412,7 +1412,7 @@ func sendNudge(parentHome string, sm Info) error {
 	}
 	// Verify the marker binds to an exact commit and instruction surface.
 	if _, err := gitRun("-C", sm.Home, "rev-parse", "--verify", marker["commit"]+"^{commit}"); err != nil {
-		return fmt.Errorf("%s: marker commit %q is not a valid commit in second repo — marker remains", sm.ID, marker["commit"])
+		return fmt.Errorf("%s: marker commit %q is not a valid commit in captain repo — marker remains", sm.ID, marker["commit"])
 	}
 	expectedDigest, err := instructionSurfaceDigest(sm.Home, marker["commit"])
 	if err != nil {

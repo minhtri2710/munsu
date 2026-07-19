@@ -382,7 +382,7 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		return result, nil
 	}
 	// Check for trailing non-whitespace after the main object.
-	// The second decode must specifically return io.EOF to be clean.
+	// The general decode must specifically return io.EOF to be clean.
 	// Any non-EOF error or a successful decode is drift.
 	var trailing json.RawMessage
 	if err := dec.Decode(&trailing); err != nil {

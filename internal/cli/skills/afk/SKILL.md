@@ -22,7 +22,7 @@ munsu afk return check       # Exit 0 when clean, non-zero when actionable state
 munsu afk
 
 # While away, the daemon triages wakes, accumulates a digest, and optionally
-# injects summaries into the captain pane (if config/captain-pane is set).
+# injects summaries into the general pane (if config/general-pane is set).
 
 # On return:
 munsu afk return

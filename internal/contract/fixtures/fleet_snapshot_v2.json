@@ -6,7 +6,7 @@
     "scope": "/workspace",
     "count": 2,
     "total": 2,
-    "crews": [
+    "soldiers": [
       {
         "task_id": "phase-0",
         "status": "working",
@@ -18,7 +18,7 @@
         "branch": "docs/cleanup"
       }
     ],
-    "seconds": [
+    "captains": [
       {
         "id": "sm-alpha",
         "scope": "domain-a",
@@ -28,6 +28,6 @@
     "unresolved_holds": 1
   },
   "help": [
-    "Run `munsu task observe <task-id>` to inspect a crew"
+    "Run `munsu task observe <task-id>` to inspect a soldier"
   ]
 }

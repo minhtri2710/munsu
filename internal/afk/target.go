@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-// captainPaneConfig is the config file path that optionally specifies a hardcoded
-// captain pane handle for inject target resolution, relative to homeDir.
-const captainPaneConfig = "config/captain-pane"
+// generalPaneConfig is the config file path that optionally specifies a hardcoded
+// general pane handle for inject target resolution, relative to homeDir.
+const generalPaneConfig = "config/general-pane"
 
-// TargetSource identifies where a captain pane target was resolved from.
+// TargetSource identifies where a general pane target was resolved from.
 type TargetSource int
 
 const (
-	// ConfigSource means the target came from config/captain-pane file.
+	// ConfigSource means the target came from config/general-pane file.
 	ConfigSource TargetSource = iota
 	// RuntimeSource means the target was detected from runtime metadata.
 	RuntimeSource
@@ -26,7 +26,7 @@ const (
 func (ts TargetSource) String() string {
 	switch ts {
 	case ConfigSource:
-		return "config/captain-pane"
+		return "config/general-pane"
 	case RuntimeSource:
 		return "runtime-metadata"
 	case Unsupported:
@@ -36,7 +36,7 @@ func (ts TargetSource) String() string {
 	}
 }
 
-// TargetResult holds the resolved captain pane handle with source provenance.
+// TargetResult holds the resolved general pane handle with source provenance.
 type TargetResult struct {
 	Source       TargetSource `json:"source"`
 	Handle       string       `json:"handle"`
@@ -73,8 +73,8 @@ func ValidateTargetOwnership(result *TargetResult) error {
 	return nil
 }
 
-// ResolveTarget resolves the captain pane handle from explicit config or runtime metadata.
-// Resolution order: config/captain-pane, TMUX_PANE, HERDR_PANE_ID, unsupported.
+// ResolveTarget resolves the general pane handle from explicit config or runtime metadata.
+// Resolution order: config/general-pane, TMUX_PANE, HERDR_PANE_ID, unsupported.
 // Returns (paneHandle, session, error). paneHandle is in "session:pane_id" format
 // for herdr, or a bare pane ID for tmux. Returns empty strings with nil error
 // when no target is configured.
@@ -86,16 +86,16 @@ func ResolveTarget(homeDir string) (string, string, error) {
 	return result.Handle, result.Session, nil
 }
 
-// ResolveTargetWithSource resolves the captain pane handle with source diagnostics.
+// ResolveTargetWithSource resolves the general pane handle with source diagnostics.
 func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
-	path := filepath.Join(homeDir, captainPaneConfig)
+	path := filepath.Join(homeDir, generalPaneConfig)
 	data, err := os.ReadFile(path)
 	if err == nil {
 		paneHandle := strings.TrimSpace(string(data))
 		if paneHandle == "" {
 			return TargetResult{
 				Source:       Unsupported,
-				SourceDetail: "captain-pane config is empty",
+				SourceDetail: "general-pane config is empty",
 			}, nil
 		}
 		session, _ := splitTargetHandle(paneHandle)
@@ -103,11 +103,11 @@ func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
 			Source:       ConfigSource,
 			Handle:       paneHandle,
 			Session:      session,
-			SourceDetail: "explicit config/captain-pane",
+			SourceDetail: "explicit config/general-pane",
 		}, nil
 	}
 	if !os.IsNotExist(err) {
-		return TargetResult{}, fmt.Errorf("reading %s: %w", captainPaneConfig, err)
+		return TargetResult{}, fmt.Errorf("reading %s: %w", generalPaneConfig, err)
 	}
 
 	if pane := strings.TrimSpace(os.Getenv("TMUX_PANE")); pane != "" {

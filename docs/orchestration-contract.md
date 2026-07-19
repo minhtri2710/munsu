@@ -17,7 +17,7 @@ A command family has one runtime owner. A package may call another package's pub
 | Contract family | Exact planned command | Runtime owner | Existing authority reused | Phase 0 status |
 |---|---|---|---|---|
 | Discovery | `munsu capabilities` | `internal/cli` | root command registration | specified only |
-| Task observation | `munsu task observe <task-id>` | `internal/cli` | `internal/crewstate` and `internal/task` | specified only |
+| Task observation | `munsu task observe <task-id>` | `internal/cli` | `internal/soldierstate` and `internal/task` | specified only |
 | Fleet state | `munsu fleet snapshot --version 2` | `internal/fleet` | fleet snapshot state | specified only |
 | Guard | `munsu guard` | `internal/cli` | guard evaluation | specified only |
 | Watch | `munsu watch ensure`, `munsu watch run` | `internal/supervision` | watcher lifecycle | specified only |
@@ -70,7 +70,7 @@ All successful responses have this envelope:
 
 `task.observe`: default `task_id`, `status`, and cheap state; optional expansion adds `description`, `branch`, `pane_alive`, `no_mistakes_step`. `--fields` can request only documented optional fields. `--full` is only meaningful when a response declares truncation.
 
-`fleet.snapshot`: `scope`, `count`, `total`, and `crews[]`. A crew row defaults to `task_id`, `status`, `branch`. `count` is returned rows and `total` is the definitive matching total; both are precomputed cheaply.
+`fleet.snapshot`: `scope`, `count`, `total`, and `soldiers[]`. A soldier row defaults to `task_id`, `status`, `branch`. `count` is returned rows and `total` is the definitive matching total; both are precomputed cheaply.
 
 `guard`: `state`, `conditions[]`. `watch.ensure`: `watch_id`, `state`, `interval`, with `noop: true` when already ensured. `watch.run`: `watch_id`, `state`, `wakes_scanned`, `wakes_emitted`. `wake.claim`: `wake_id`, `claim_id`, `owner`, `state`; `wake.ack`: `wake_id`, `claim_id`, `state`. `backend.capabilities`: `backend`, `features[]`. `spawn.receipt`: `task_id`, `session_id`, `worktree`, `branch`, `state`.
 
@@ -118,7 +118,7 @@ TOON is the default because it is compact for agents. JSON is an opt-in transpor
 
 The installed command resolves portability in this order: use `munsu` only if PATH resolves to the currently executing binary; otherwise use that binary's absolute path. `repair` rechecks and updates a stale path. Repeating `install` with identical content and path is a successful silent no-op. The ambient session context is cwd-scoped and compact: executable, one-line purpose, and only live aggregate/action state that helps the next command; it never injects full fleet or long task content.
 
-Hooks are primary where supported. The installable `munsu-ops` skill is secondary discovery for harnesses without hooks or users who prefer on-demand context. A future consistency check must compare static command guidance generated for the skill with the no-args home-view guidance after removing live state; CI must fail when that check detects drift. No skill, adapter, hook, or generated command is added by this Phase 0 PR.
+Hooks are primary where supported. The installable `munsu-ops` skill is captainary discovery for harnesses without hooks or users who prefer on-demand context. A future consistency check must compare static command guidance generated for the skill with the no-args home-view guidance after removing live state; CI must fail when that check detects drift. No skill, adapter, hook, or generated command is added by this Phase 0 PR.
 
 ## Adapter delivery contract (future)
 

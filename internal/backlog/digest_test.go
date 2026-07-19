@@ -48,7 +48,7 @@ func TestBuildDigest_MixedStates(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeBacklog(t, tmpDir, []string{
 		"- [ ] task-queued-1: first queued item",
-		"- [ ] task-queued-2: second queued item",
+		"- [ ] task-queued-2: captain queued item",
 		"- [-] task-flight-1: in flight item",
 		"- [!] task-blocked-1: blocked by something",
 		"- [x] task-done-1: done item",

@@ -4,10 +4,10 @@
   "status": "success",
   "data": {
     "count": 0,
-    "context": "No crews found for this directory",
-    "crews": []
+    "context": "No soldiers found for this directory",
+    "soldiers": []
   },
   "help": [
-    "Run `munsu spawn <task-id>` to start a crew"
+    "Run `munsu spawn <task-id>` to start a soldier"
   ]
 }

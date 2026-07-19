@@ -79,7 +79,7 @@ func denyListedLabel(label string) bool {
 	if label == "firstmate" {
 		return true
 	}
-	if strings.HasPrefix(label, "second-") {
+	if strings.HasPrefix(label, "captain-") {
 		return true
 	}
 	return false

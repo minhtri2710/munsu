@@ -67,9 +67,9 @@ func TestLockCrossProcessReleaseAtExit(t *testing.T) {
 		t.Fatalf("first holder verdict = %q, want HELD", verdict)
 	}
 
-	// While holder is alive, a second process must be refused.
+	// While holder is alive, a captain process must be refused.
 	if _, v2 := helperProc(t, home); v2 != "REFUSED" {
-		t.Fatalf("second holder verdict = %q, want REFUSED (cross-process exclusivity)", v2)
+		t.Fatalf("captain holder verdict = %q, want REFUSED (cross-process exclusivity)", v2)
 	}
 
 	// Killing the holder releases the lock (process exit closes the leaked FD).

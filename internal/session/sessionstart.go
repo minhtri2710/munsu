@@ -255,16 +255,16 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Context ---")
-	printDataFile(w, home, "captain.md")
+	printDataFile(w, home, "general.md")
 	printDataFile(w, home, "learnings.md")
 	printDataFile(w, home, "projects.md")
-	printDataFile(w, home, "seconds.md")
+	printDataFile(w, home, "captains.md")
 
 	printFleetState(w, home)
 
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Supervision ---")
-	h, err := harness.Crew(home)
+	h, err := harness.Soldier(home)
 	if err != nil {
 		h = "unknown"
 	}

@@ -20,11 +20,11 @@ func newStowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stow [text...]",
 		Short: "Sweep session for durable knowledge",
-		Long: `Capture durable learnings or captain preferences from the current session.
+		Long: `Capture durable learnings or general preferences from the current session.
 
 Flags:
-  --kind learning|captain   which file to stow (default: learning)
-  --captain                  shorthand for --kind captain
+  --kind learning|general   which file to stow (default: learning)
+  --general                  shorthand for --kind general
 
 Entries are inspect-then-update: if a new entry matches an existing
 entry (by substring), the existing entry is replaced in place rather
@@ -32,13 +32,13 @@ than appended. Non-matching entries are appended as usual.
 
 Examples:
   munsu stow "Go 1.26 uses range-over-func"
-  munsu stow --captain "Prefer simple project layouts"
-  munsu stow --kind captain "Prefer simple layouts"
+  munsu stow --general "Prefer simple project layouts"
+  munsu stow --kind general "Prefer simple layouts"
 `,
 		Args: MinimumNArgs(0),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if captain {
-				kind = stow.KindCaptain
+				kind = stow.KindGeneral
 			}
 			if kind == "" {
 				kind = stow.KindLearning
@@ -62,7 +62,7 @@ Examples:
 					SchemaVersion: contract.SchemaVersion,
 					Kind:          "stow",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed captain preferences to %s", res.DataCaptain)},
+					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed general preferences to %s", res.DataCaptain)},
 				})
 			default:
 				return writeContract(cmd, contract.Response[contract.MessageResult]{
@@ -76,8 +76,8 @@ Examples:
 	}
 
 	configureContractCommand(cmd)
-	cmd.Flags().StringVar(&kind, "kind", "", "Kind of stow entry (learning|captain)")
-	cmd.Flags().BoolVar(&captain, "captain", false, "Shorthand for --kind captain")
+	cmd.Flags().StringVar(&kind, "kind", "", "Kind of stow entry (learning|general)")
+	cmd.Flags().BoolVar(&captain, "general", false, "Shorthand for --kind general")
 	return cmd
 }
 

@@ -5,10 +5,10 @@ data:
   scope: /workspace
   count: 2
   total: 2
-  crews[2]{task_id,status,branch}:
+  soldiers[2]{task_id,status,branch}:
     phase-0,working,fm/phase-0
     docs,done,docs/cleanup
-  seconds[1]{id,scope,status}:
+  captains[1]{id,scope,status}:
     sm-alpha,domain-a,alive
   unresolved_holds: 1
-help[1]: Run `munsu task observe <task-id>` to inspect a crew
+help[1]: Run `munsu task observe <task-id>` to inspect a soldier

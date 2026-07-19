@@ -56,23 +56,23 @@ type TaskObserve struct {
 
 // FleetSnapshotV2 is the version-two fleet state with cheap aggregate counts.
 type FleetSnapshotV2 struct {
-	Scope           string        `json:"scope"`
-	Count           int           `json:"count"`
-	Total           int           `json:"total"`
-	Crews           []Crew        `json:"crews"`
-	Seconds         []SecondEntry `json:"seconds,omitempty"`
-	UnresolvedHolds int           `json:"unresolved_holds,omitempty"`
+	Scope           string         `json:"scope"`
+	Count           int            `json:"count"`
+	Total           int            `json:"total"`
+	Soldiers        []Soldier      `json:"soldiers"`
+	Captains        []CaptainEntry `json:"captains,omitempty"`
+	UnresolvedHolds int            `json:"unresolved_holds,omitempty"`
 }
 
-// Crew is the minimal row in a fleet snapshot.
-type Crew struct {
+// Soldier is the minimal row in a fleet snapshot.
+type Soldier struct {
 	TaskID string `json:"task_id"`
 	Status string `json:"status"`
 	Branch string `json:"branch,omitempty"`
 }
 
-// SecondEntry represents one second in the fleet snapshot.
-type SecondEntry struct {
+// CaptainEntry represents one captain in the fleet snapshot.
+type CaptainEntry struct {
 	ID     string `json:"id"`
 	Scope  string `json:"scope,omitempty"`
 	Status string `json:"status"`

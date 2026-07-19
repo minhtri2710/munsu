@@ -13,14 +13,14 @@ import (
 func newDecisionHoldCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "decision-hold",
-		Short: "Manage durable captain decision holds",
-		Long: `Manage the decision-hold lifecycle for unresolved captain decisions
+		Short: "Manage durable general decision holds",
+		Long: `Manage the decision-hold lifecycle for unresolved general decisions
 discovered during investigations or reviews.
 
 Subcommands: hold, complete, verify, resolve, list.
 
 Each decision gets one stable key. The hold remains open until the
-captain's answer is recorded and any dependent work is unblocked.`,
+general's answer is recorded and any dependent work is unblocked.`,
 	}
 
 	cmd.AddCommand(newDecisionHoldHoldCmd())
@@ -38,10 +38,10 @@ func newDecisionHoldHoldCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "hold <key> --reason <summary> --from <task-id>",
-		Short: "Record a new captain decision hold",
-		Long: `Record a new captain decision hold.
+		Short: "Record a new general decision hold",
+		Long: `Record a new general decision hold.
 
-Creates a durable hold that blocks dependent work until the captain
+Creates a durable hold that blocks dependent work until the general
 resolves the decision. Idempotent: running with the same key and
 origin task is a no-op.
 
@@ -95,7 +95,7 @@ func newDecisionHoldCompleteCmd() *cobra.Command {
 		Long: `Mark decisions discovered during an investigation or review as complete.
 
 Accepts one or more decision keys. Use --none to attest that the reviewed
-surface has no unresolved captain decisions.
+surface has no unresolved general decisions.
 
 Examples:
   munsu decision-hold complete scout-r2 approach db-schema
@@ -196,8 +196,8 @@ func newDecisionHoldResolveCmd() *cobra.Command {
 	var from string
 	cmd := &cobra.Command{
 		Use:   "resolve <key> --answer <text> --from <origin-id> [--unblock <dep-id>...]",
-		Short: "Record the captain's decision and unblock dependent work",
-		Long: `Record the captain's decision for a hold and unblock any dependent tasks.
+		Short: "Record the general's decision and unblock dependent work",
+		Long: `Record the general's decision for a hold and unblock any dependent tasks.
 
 The --from flag specifies the originating task ID (must match the hold's origin).
 The --unblock flag may be repeated to unblock multiple dependencies.
@@ -233,7 +233,7 @@ Examples:
 	}
 	configureContractCommand(cmd)
 
-	cmd.Flags().StringVar(&answer, "answer", "", "The captain's decision")
+	cmd.Flags().StringVar(&answer, "answer", "", "The general's decision")
 	cmd.Flags().StringVar(&from, "from", "", "Originating task ID that owns this decision hold")
 	cmd.Flags().StringArrayVar(&unblock, "unblock", nil, "Dependent task to unblock (repeatable)")
 	return cmd

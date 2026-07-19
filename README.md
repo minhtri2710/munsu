@@ -4,7 +4,7 @@
   <img src="docs/images/munsu-mascot.png" alt="Munsu — Shin Angyo Onshi / Ám Hành Ngự Sử" width="600">
 </p>
 
-Standalone CLI port of firstmate crew capabilities, usable from any project directory.
+Standalone CLI port of firstmate soldier capabilities, usable from any project directory.
 capability — spawning autonomous agents in visible session backends, supervising
 them with an event-driven zero-token watcher, and delivering finished PRs or
 investigation reports — **without requiring a firstmate checkout**.
@@ -96,12 +96,12 @@ agent harnesses auto-discover at session start.
 
 | Skill | Description | Trigger |
 |-------|-------------|---------|
-| **munsu-ops** | Fleet orchestration — init home, session-start, spawn/supervise crews, backlog management, seconds, watcher, delivery helpers. | Running munsu, spawning crews, draining wakes, managing backlog. |
-| **second-provisioning** | Full second lifecycle — seed, launch, retire, handoff, config-push — following the idle-by-default charter contract. | Provisioning, inspecting, or retiring a persistent domain supervisor (second). |
-| **munsu-update** | Self-update munsu and fast-forward second homes. | Invoking `/munsu-update`, "update munsu", "pull the latest munsu". |
+| **munsu-ops** | Fleet orchestration — init home, session-start, spawn/supervise soldiers, backlog management, captains, watcher, delivery helpers. | Running munsu, spawning soldiers, draining wakes, managing backlog. |
+| **captain-provisioning** | Full captain lifecycle — seed, launch, retire, handoff, config-push — following the idle-by-default charter contract. | Provisioning, inspecting, or retiring a persistent domain supervisor (captain). |
+| **munsu-update** | Self-update munsu and fast-forward captain homes. | Invoking `/munsu-update`, "update munsu", "pull the latest munsu". |
 | **bootstrap-diagnostics** | Handle session-start bootstrap diagnostics — toolchain readiness lines. | Session-start diagnostic output (MISSING, NEEDS_GH_AUTH, TANGLE, etc.). |
-| **harness-adapters** | Verified adapter launch templates for spawning crews — model flags, effort flags, harness detection, and turn-end hooks. | Spawning crews with harness-specific flags. |
-| **stuck-crew-recovery** | Escalation ladder for unresponsive or stuck crews — peek, steer, interrupt, relaunch, fail. | Unresponsive or stuck crew. |
+| **harness-adapters** | Verified adapter launch templates for spawning soldiers — model flags, effort flags, harness detection, and turn-end hooks. | Spawning soldiers with harness-specific flags. |
+| **stuck-soldier-recovery** | Escalation ladder for unresponsive or stuck soldiers — peek, steer, interrupt, relaunch, fail. | Unresponsive or stuck soldier. |
 
 ## Usage examples
 
@@ -127,7 +127,7 @@ munsu backlog start <task-id>
 munsu backlog done <task-id>
 ```
 
-### Crew lifecycle
+### Soldier lifecycle
 
 ```sh
 munsu spawn <task-id> [<project>] [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]  (default: auto-detect, project inferred from cwd)
@@ -143,7 +143,7 @@ munsu teardown <task-id>
 ```sh
 munsu fleet view
 munsu guard
-munsu second list
+munsu captain list
 ```
 
 ## Documentation
@@ -151,7 +151,7 @@ munsu second list
 - `docs/architecture.md` — architecture overview, module layout, key interfaces, design decisions.
 - `docs/port-mapping.md` — mapping between firstmate concepts and munsu commands.
 - `CONTRIBUTING.md` — how to contribute.
-- `AGENTS.md` — conventions file for crews working on munsu.
+- `AGENTS.md` — conventions file for soldiers working on munsu.
 - `COMMANDS.md` — full command map grouped by lifecycle phase.
 - `SUPERVISION.md` — watch/wake-drain/guard/afk loop details.
 

@@ -9,7 +9,7 @@ import (
 )
 
 // setupTempHome creates a temporary munsu home with data/learnings.md and/or
-// data/captain.md containing the given lines. Returns the home path and a
+// data/general.md containing the given lines. Returns the home path and a
 // cleanup function.
 func setupTempHome(t *testing.T, learnings, captain []string) string {
 	t.Helper()
@@ -25,7 +25,7 @@ func setupTempHome(t *testing.T, learnings, captain []string) string {
 		}
 	}
 	if len(captain) > 0 {
-		if err := os.WriteFile(filepath.Join(dataDir, "captain.md"),
+		if err := os.WriteFile(filepath.Join(dataDir, "general.md"),
 			[]byte(strings.Join(captain, "\n")+"\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -100,7 +100,7 @@ func TestRunKinded_Learning_LazyCreate(t *testing.T) {
 
 func TestRunKinded_Captain_LazyCreate(t *testing.T) {
 	homeDir := setupTempHome(t, nil, nil)
-	res, err := RunKinded(homeDir, KindCaptain, []string{"Prefer simple layouts"})
+	res, err := RunKinded(homeDir, KindGeneral, []string{"Prefer simple layouts"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestRunKinded_Learning_ReplaceIsCaseInsensitive(t *testing.T) {
 func TestRunKinded_Captain_ReplaceOnMatch(t *testing.T) {
 	existing := []string{"- 2025-01-01: Prefer simple project layouts"}
 	homeDir := setupTempHome(t, nil, existing)
-	res, err := RunKinded(homeDir, KindCaptain, []string{"simple project layouts"})
+	res, err := RunKinded(homeDir, KindGeneral, []string{"simple project layouts"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestRunKinded_Captain_ReplaceOnMatch(t *testing.T) {
 func TestRunKinded_Captain_AppendNoMatch(t *testing.T) {
 	existing := []string{"- 2025-01-01: Prefer simple project layouts"}
 	homeDir := setupTempHome(t, nil, existing)
-	res, err := RunKinded(homeDir, KindCaptain, []string{"Always write tests first"})
+	res, err := RunKinded(homeDir, KindGeneral, []string{"Always write tests first"})
 	if err != nil {
 		t.Fatal(err)
 	}

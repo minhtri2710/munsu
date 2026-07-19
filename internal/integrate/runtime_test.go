@@ -311,7 +311,7 @@ if (mock.entries.length < 1 || !mock.entries.some((e: any) => e.customType === "
   throw new Error("session_start should create munsu-session-start entry. entries: " + JSON.stringify(mock.entries));
 }
 
-// Second fire with session-start entry present should NOT add another
+// Captain fire with session-start entry present should NOT add another
 const mockCtx2: any = {
   sessionManager: {
     getEntries: () => [{ type: "custom", customType: "munsu-session-start", data: { timestamp: 1000 } }],

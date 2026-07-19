@@ -19,7 +19,7 @@ func newDoctorCmd() *cobra.Command {
 
 Hard-required tools (doctor exits non-zero if missing):
   git, session backend (tmux or herdr), and at least one coding harness
-  (pi, claude, agy, etc.) if crew-harness detection fails.
+  (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
   treehouse, no-mistakes, tasks-axi, gh-axi, gh, and GitHub auth.`,
@@ -79,10 +79,10 @@ Optional tools get warnings but do not fail the exit code:
 				}
 			}
 
-			if capResult.Captain != nil {
-				fmt.Println("\nCaptain target:")
-				fmt.Println("  " + capResult.Captain.String())
-				if fix := capResult.Captain.Fix(); fix != "" {
+			if capResult.General != nil {
+				fmt.Println("\nGeneral target:")
+				fmt.Println("  " + capResult.General.String())
+				if fix := capResult.General.Fix(); fix != "" {
 					fmt.Println("    Fix: " + fix)
 				}
 			}

@@ -45,7 +45,7 @@ func TestAdapters_AllVerifiedPresent(t *testing.T) {
 	}
 }
 
-func TestAdapters_SecondLaunchContracts(t *testing.T) {
+func TestAdapters_CaptainLaunchContracts(t *testing.T) {
 	for _, name := range []string{Claude, Codex, Opencode, Pi, Grok, Agy} {
 		t.Run(name, func(t *testing.T) {
 			a, ok := GetAdapter(name)
@@ -53,16 +53,16 @@ func TestAdapters_SecondLaunchContracts(t *testing.T) {
 				t.Fatal("missing adapter")
 			}
 			if name == Pi {
-				if !a.SecondLaunch.Supported {
-					t.Fatal("pi second launch contract must be supported")
+				if !a.CaptainLaunch.Supported {
+					t.Fatal("pi captain launch contract must be supported")
 				}
-				if a.SecondLaunch.ProjectArg || !a.SecondLaunch.PromptArg || a.SecondLaunch.Separator != "" {
-					t.Fatalf("pi second launch contract = %+v", a.SecondLaunch)
+				if a.CaptainLaunch.ProjectArg || !a.CaptainLaunch.PromptArg || a.CaptainLaunch.Separator != "" {
+					t.Fatalf("pi captain launch contract = %+v", a.CaptainLaunch)
 				}
 				return
 			}
-			if a.SecondLaunch.Supported {
-				t.Fatalf("%s second launch must fail closed until verified", name)
+			if a.CaptainLaunch.Supported {
+				t.Fatalf("%s captain launch must fail closed until verified", name)
 			}
 		})
 	}

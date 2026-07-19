@@ -91,8 +91,8 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		res.Auth = &AuthDiagnostic{Status: AuthFailed}
 	}
 
-	// 3. Check crew-harness override
-	harnessPath := filepath.Join(home, "config", "crew-harness")
+	// 3. Check soldier-harness override
+	harnessPath := filepath.Join(home, "config", "soldier-harness")
 	if data, err := os.ReadFile(harnessPath); err == nil {
 		harness := strings.TrimSpace(string(data))
 		if harness != "" && harness != "default" {
@@ -100,9 +100,9 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 		}
 	}
 
-	// 4. Check crew-dispatch profiles
+	// 4. Check soldier-dispatch profiles
 	configDir := filepath.Join(home, "config")
-	dispatchPath := filepath.Join(configDir, "crew-dispatch.json")
+	dispatchPath := filepath.Join(configDir, "soldier-dispatch.json")
 	if data, err := os.ReadFile(dispatchPath); err == nil {
 		dispatch := strings.TrimSpace(string(data))
 		lines := strings.Split(dispatch, "\n")

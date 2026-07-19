@@ -25,9 +25,9 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | `bin/fm-brief.sh` | `munsu brief` | `internal/brief` | **implemented** |
 | `bin/fm-teardown.sh` | `munsu teardown` | `internal/teardown` | **implemented** |
 | `bin/fm-peek.sh` | `munsu peek` | `internal/cli` | **implemented** |
-| `bin/fm-crew-state.sh` | `munsu crew-state` | `internal/crewstate` | **implemented** |
+| `bin/fm-soldier-state.sh` | `munsu soldier-state` | `internal/soldierstate` | **implemented** |
 | `bin/fm-promote.sh` | `munsu promote` | `internal/task` | **implemented** |
-| `bin/fm-harness.sh` | `munsu harness detect/crew/second` | `internal/harness` | **implemented** |
+| `bin/fm-harness.sh` | `munsu harness detect/soldier/captain` | `internal/harness` | **implemented** |
 | `bin/fm-project-mode.sh` | `munsu project mode` | `internal/project` | **implemented** |
 | `bin/fm-fleet-sync.sh` | `munsu fleet sync` | `internal/fleet` | **implemented** |
 | `bin/fm-fleet-snapshot.sh` | `munsu fleet snapshot` | `internal/fleet` | **implemented** |
@@ -50,11 +50,11 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/worktree` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
 | Session backend (tmux + herdr) | `--backend` flag | `internal/session` | **implemented** (future backends: experimental -- see docs) |
-| Dispatch profiles | `config/crew-dispatch.json` | `internal/harness` | **implemented** |
+| Dispatch profiles | `config/soldier-dispatch.json` | `internal/harness` | **implemented** |
 | Home init / init | `munsu init` | `internal/cli` | **implemented** |
 | AFK away-mode supervision | munsu afk | internal/afk | **implemented** (Go-native, full lifecycle -- see `docs/skills/afk.md`) |
 | Self-update | `munsu update` | `internal/selfupdate` | **implemented** |
-| Second lifecycle | `munsu second seed/launch/retire/list/handoff/config-push` | `internal/second` | **implemented** |
+| Captain lifecycle | `munsu captain seed/launch/retire/list/handoff/config-push` | `internal/captain` | **implemented** |
 | Native harness integration | `munsu integrate install/repair/status` | `internal/integrate` | **implemented** (Pi, Claude, Grok, Codex, OpenCode, agy adapters verified by contract + unit tests; only Pi is runtime-verifiable -- the other harnesses are not installed locally or headless mode does not exercise tool calls) |
 
 ## Structural differences from firstmate
@@ -75,17 +75,17 @@ firstmate-specific infrastructure that do not belong in a standalone CLI port:
 
 | Capability | firstmate scripts | Rationale |
 |---|---|---|
-| X/Twitter integration | `fm-x-*.sh` (6 scripts) | Social-media interaction; firstmate-specific, not part of crew lifecycle. |
+| X/Twitter integration | `fm-x-*.sh` (6 scripts) | Social-media interaction; firstmate-specific, not part of soldier lifecycle. |
 | Turn-end guards | `fm-turnend-guard.sh` | **Munsu has NATIVE integration** (opt-in via `munsu integrate install --harness <X>`) for six harnesses:<br>  - **Pi** (verified: in-process session-start, wake-followup, turnend-guard, pretool-check, scope-gate)<br>  - **Claude** (verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Grok** (verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Codex** (verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **OpenCode** (verified: session-start nudge, turn-end guard, pretool-check, session.idle watch-arm)<br>  - **agy** (verified: PreToolUse safety-check, turn-end Stop guard, PreInvocation nudge via `.agents/hooks.json`)<br>All non-Pi adapters are contract + unit verified (harnesses not installed locally, or headless mode does not exercise tool calls); only Pi is runtime-verified. Legacy pull-based watcher diagnostics remain available via `munsu watch` / `munsu wake-drain` / `munsu guard`. |
-| Composer mode | `fm-composer-lib.sh` | Multi-agent composition; munsu spawns 1:1 crews. |
+| Composer mode | `fm-composer-lib.sh` | Multi-agent composition; munsu spawns 1:1 soldiers. |
 | Codex command policies | `fm-arm-command-policy.mjs` | Codex-specific ARM/CD gating; per-harness policies not in munsu's generic model. |
 | Classification / Gate-Refuse library | `fm-classify-lib.sh`, `fm-gate-refuse-lib.sh` | Logic is inline in munsu (`--kind`, cobra validation) -- no extracted library needed. |
 | Transition library | `fm-transition-lib.sh` | State transitions encoded in cobra command relationships rather than a library. |
 | Supervision instructions | `fm-supervision-instructions.sh` | Watcher emits structured wake reasons instead of instruction templates. |
 | Herdr lab | `fm-herdr-lab.sh` | Developer tooling for Herdr experimentation; not a production capability. |
-| `second retire --remove-home` | `fm-teardown.sh` | Deliberate safety choice -- home directory persists by default. |
+| `captain retire --remove-home` | `fm-teardown.sh` | Deliberate safety choice -- home directory persists by default. |
 
-> **Design principle:** Munsu ports the crew lifecycle model, not every firstmate
+> **Design principle:** Munsu ports the soldier lifecycle model, not every firstmate
 > script. Capabilities that are firstmate-specific (social, Codex-only, or experimental
 > tooling) are intentionally excluded. Gaps that affect core lifecycle parity are
 > tracked in the wave roadmap.

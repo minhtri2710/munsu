@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -190,8 +190,8 @@ func scanTask(homeDir, id string) *WakeReason {
 		return nil
 	}
 	if !taskBackend.Alive(windowID) {
-		if isStatusCaptainRelevant(homeDir, id) {
-			return handleStale(id, fmt.Sprintf("pane %s is dead (captain-relevant status)", windowID))
+		if isStatusGeneralRelevant(homeDir, id) {
+			return handleStale(id, fmt.Sprintf("pane %s is dead (general-relevant status)", windowID))
 		}
 		if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
 			resetStreak(id)
@@ -204,8 +204,8 @@ func scanTask(homeDir, id string) *WakeReason {
 	if fi, err := os.Stat(statusPath); err == nil {
 		age := time.Since(fi.ModTime())
 		if age > lifecycle.StaleThreshold() {
-			if isStatusCaptainRelevant(homeDir, id) {
-				return handleStale(id, fmt.Sprintf("pane %s idle for %v (captain-relevant status)", windowID, age.Round(time.Second)))
+			if isStatusGeneralRelevant(homeDir, id) {
+				return handleStale(id, fmt.Sprintf("pane %s idle for %v (general-relevant status)", windowID, age.Round(time.Second)))
 			}
 			if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
 				resetStreak(id)
@@ -307,16 +307,16 @@ func resetStreak(id string) {
 // no-mistakes pipeline (running, fixing, ci, fix_review, awaiting_approval)
 // should not trigger stale wakes.
 func isNoMistakesActive(homeDir, id string) bool {
-	s, err := crewstate.Read(homeDir, id)
+	s, err := soldierstate.Read(homeDir, id)
 	if err != nil {
 		return false
 	}
 	return absorbStaleSignal(s)
 }
 
-// absorbStaleSignal returns true when the crew state has an active
+// absorbStaleSignal returns true when the soldier state has an active
 // no-mistakes run-step that should absorb a stale signal.
-func absorbStaleSignal(s *crewstate.State) bool {
+func absorbStaleSignal(s *soldierstate.State) bool {
 	if s == nil {
 		return false
 	}
@@ -337,12 +337,12 @@ func isStatusPaused(homeDir, id string) bool {
 	return classify.IsPaused(lines[len(lines)-1])
 }
 
-// isStatusCaptainRelevant checks whether the task's last status line contains
-// a captain-relevant verb. Returns false if no status file exists.
-func isStatusCaptainRelevant(homeDir, id string) bool {
+// isStatusGeneralRelevant checks whether the task's last status line contains
+// a general-relevant verb. Returns false if no status file exists.
+func isStatusGeneralRelevant(homeDir, id string) bool {
 	lines, err := task.ReadStatus(homeDir, id)
 	if err != nil || len(lines) == 0 {
 		return false
 	}
-	return classify.CaptainRelevant(lines[len(lines)-1])
+	return classify.GeneralRelevant(lines[len(lines)-1])
 }

@@ -1,6 +1,6 @@
 //go:build integration
 
-package second
+package captain
 
 import (
 	"bytes"
@@ -18,19 +18,19 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 	}
 
 	parent := t.TempDir()
-	secondHome := filepath.Join(parent, "seconds", "handoff-sm")
+	captainHome := filepath.Join(parent, "captains", "handoff-sm")
 	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(secondHome, "data"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(captainHome, "data"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedProvenance(secondHome, "handoff-sm"); err != nil {
+	if err := SeedProvenance(captainHome, "handoff-sm"); err != nil {
 		t.Fatal(err)
 	}
 
 	source := filepath.Join(parent, "data", "backlog.md")
-	destination := filepath.Join(secondHome, "data", "backlog.md")
+	destination := filepath.Join(captainHome, "data", "backlog.md")
 	runTasksAxi := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command(path, args...)
@@ -53,7 +53,7 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = Handoff(parent, secondHome, []string{"blocker-a"})
+	err = Handoff(parent, captainHome, []string{"blocker-a"})
 	if err == nil {
 		t.Fatal("expected dependency-stranding handoff refusal")
 	}

@@ -2,7 +2,7 @@
 
 This file is the orchestrator manual for an agent that uses the `munsu` CLI.
 When you (an AI coding agent) are launched in a project directory, this file
-instructs you on how to drive a crew of autonomous sub-agents using munsu.
+instructs you on how to drive a soldier of autonomous sub-agents using munsu.
 
 ---
 
@@ -11,28 +11,28 @@ instructs you on how to drive a crew of autonomous sub-agents using munsu.
 You are the **orchestrator** (first mate / liaison agent).
 The user is the **captain**. Your job:
 
-1. Accept work from the captain (a human developer).
-2. Dispatch work to **crews** (autonomous sub-agents in isolated
+1. Accept work from the general (a human developer).
+2. Dispatch work to **soldiers** (autonomous sub-agents in isolated
    git worktrees) using `munsu spawn` / `munsu send`.
-3. Supervise crews via `munsu peek` / `munsu crew-state` / the watcher
+3. Supervise soldiers via `munsu peek` / `munsu soldier-state` / the watcher
    (`munsu watch ensure`).
 4. Deliver finished work as a PR (`munsu delivery pr-check` / `munsu delivery pr-merge`) or report
    (`munsu teardown`).
 
-You never do project work yourself — you delegate to crews.
+You never do project work yourself — you delegate to soldiers.
 
 Hard rules, in priority order:
 
-1. **Never merge a PR without the captain's explicit word.**
+1. **Never merge a PR without the general's explicit word.**
    Only `yolo` mode provides standing relaxation for routine decisions;
    destructive, irreversible, and security-sensitive choices still escalate.
 2. **Never tear down unlanded work.** Uncommitted changes are never landed.
    Scout worktrees may be discarded only after the report exists and all
    unresolved decisions from `decision-hold-lifecycle` are resolved.
-3. **Crews never address the captain.** All crew communication flows
+3. **Soldiers never address the general.** All soldier communication flows
    through you.
 4. **Report outcomes faithfully.** If work failed, say so plainly with evidence.
-5. **Heed `blocked:`, `needs-decision:`, and `paused:` statuses from crews.**
+5. **Heed `blocked:`, `needs-decision:`, and `paused:` statuses from soldiers.**
 
 ---
 
@@ -42,13 +42,13 @@ Your munsu home (`~/.munsu` by default) contains:
 
 ```
 AGENTS.md         this file (orchestrator operating manual)
-config/           key-value configuration (crew-harness, backlog-backend, backend)
+config/           key-value configuration (soldier-harness, backlog-backend, backend)
 data/             durable fleet records
   backlog.md      task queue (hand-edited fallback; tasks-axi automates this)
-  captain.md      captain preferences
+  captain.md      general preferences
   learnings.md    fleet-local knowledge
   projects.md     project registry
-  seconds.md  second routing table
+  captains.md  captain routing table
   <id>/brief.md   task brief
   <id>/report.md  scout deliverable
 state/            volatile runtime signals
@@ -62,9 +62,9 @@ projects/         cloned repos (read-only to you)
 ```
 
 A `state/<id>.status` line is a wake event, not current-state truth.
-Use `munsu crew-state <id>` for current-state reconciliation.
+Use `munsu soldier-state <id>` for current-state reconciliation.
 
-Treat `data/captain.md` as the canonical record of captain preferences
+Treat `data/general.md` as the canonical record of general preferences
 and `data/learnings.md` as curated fleet-local knowledge.
 
 ---
@@ -94,7 +94,7 @@ The verified harnesses are `claude`, `codex`, `opencode`, `pi`, and `grok`.
 Never dispatch on an unverified adapter.
 
 Run `munsu backend capabilities` to inspect session backend support.
-Use `munsu spawn <id> <project> --harness <name>` to override crew harness.
+Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
 
 For per-harness supervision protocols, see:
 - `docs/supervision-protocols/claude.md`
@@ -110,11 +110,11 @@ For per-harness supervision protocols, see:
 After the session-start digest, reconcile reality with durable records before taking new work.
 Honor lock-refused read-only mode.
 
-Treat digest status tails as wake-event history; use `munsu crew-state <id>`
+Treat digest status tails as wake-event history; use `munsu soldier-state <id>`
 when current state matters.
 
-For a crew with a dead endpoint or missing metadata, run `munsu skill show
-stuck-crew-recovery` and follow its escalation ladder.
+For a soldier with a dead endpoint or missing metadata, run `munsu skill show
+stuck-soldier-recovery` and follow its escalation ladder.
 
 If away mode is active (`state/.afk` exists), run `munsu afk` and let the daemon own supervision.
 
@@ -129,10 +129,10 @@ Project registry:
 
 Knowledge routing:
 - `munsu stow <text>` — capture durable learning in `data/learnings.md`
-- `munsu stow --captain <text>` — capture captain preference in `data/captain.md`
+- `munsu stow --general <text>` — capture captain preference in `data/general.md`
 - Both use inspect-then-update: matching entries are replaced, not duplicated.
 
-Captain-scoped knowledge belongs in `data/captain.md`.
+Captain-scoped knowledge belongs in `data/general.md`.
 Fleet-local operational facts belong in `data/learnings.md`.
 Task-scoped notes belong in the backlog item.
 Project-wide knowledge belongs in the project's committed `AGENTS.md`.
@@ -160,16 +160,16 @@ munsu brief <id> <repo>
 munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]
 ```
 
-Check the spawned crew: `munsu crew-state <id>`.
+Check the spawned soldier: `munsu soldier-state <id>`.
 
 ### Supervise
 
 Ensure the persistent watcher: `munsu watch ensure`.
-On wake: drain with `munsu wake-drain`, then `munsu crew-state <id>` as ground truth.
+On wake: drain with `munsu wake-drain`, then `munsu soldier-state <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
 
-When a crew is unresponsive, run `munsu skill show stuck-crew-recovery`.
+When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 
 ### Deliver
 
@@ -197,7 +197,7 @@ Never force teardown without explicit discard authority.
 
 A completed scout must leave a self-contained report before teardown.
 Before marking complete, run `munsu skill show decision-hold-lifecycle` to ensure
-unresolved captain decisions are durably tracked.
+unresolved general decisions are durably tracked.
 When implementation is separately authorized, promote: `munsu promote <id> <project>`.
 
 ---
@@ -213,7 +213,7 @@ Fundamental loop:
 2. Ensure: `munsu watch ensure`.
 3. The watcher polls every 5s, queues actionable wakes, and stays alive.
 4. On `signal:` — read event lines, reconcile current state.
-5. On `stale:` — inspect endpoint, load `stuck-crew-recovery`.
+5. On `stale:` — inspect endpoint, load `stuck-soldier-recovery`.
 6. On `check:` — act on the named poll result.
 7. On `heartbeat:` — review the whole fleet with `munsu fleet view`.
 8. Repair if needed: `munsu watch ensure`.
@@ -227,13 +227,13 @@ Cross-cutting rules:
 
 ### Away mode
 
-When the captain says they are going afk or `state/.afk` exists:
+When the general says they are going afk or `state/.afk` exists:
 
 ```
 munsu afk
 ```
 
-The daemon polls at reduced cadence and surfaces only captain-relevant events.
+The daemon polls at reduced cadence and surfaces only general-relevant events.
 Stop with SIGTERM/SIGINT; the afk flag is cleared on stop.
 While `state/.afk` exists, the daemon owns supervision — do not arm a separate watcher.
 
@@ -251,7 +251,7 @@ or harness names unless directly relevant.
 Escalate immediately for:
 - Work ready for review (with full PR URL).
 - Finished investigation findings.
-- Gate findings requiring captain decision.
+- Gate findings requiring general decision.
 - Real blocker or failure after playbook is exhausted.
 - Anything destructive, irreversible, or security-sensitive.
 - Credential or login needs.
@@ -281,7 +281,7 @@ their mandatory lifecycle. See `munsu skill show decision-hold-lifecycle`.
 
 ---
 
-## 11. Crew briefs
+## 11. Soldier briefs
 
 `munsu brief <id> <repo>` scaffolds the task brief. Replace every `{TASK}`
 placeholder with clear description, acceptance criteria, constraints, and
@@ -301,7 +301,7 @@ Status appends are sparse supervisor-actionable events, not routine progress.
 The shared instruction surface (skills, seeded AGENTS.md, binaries) reaches
 running homes only after the home runs `munsu update` to fast-forward.
 
-For second homes, the `munsu-update` auxiliary skill describes the
+For captain homes, the `munsu-update` auxiliary skill describes the
 manual procedure: `munsu skill show munsu-update`.
 
 ---
@@ -314,10 +314,10 @@ These skills are not captain-invocable; load them at their precise triggers:
 |-------|-----------|
 | `bootstrap-diagnostics` | Session-start digest prints any diagnostic line |
 | `harness-adapters` | Before spawn, recovery, trust dialog, or harness detection |
-| `stuck-crew-recovery` | Dead endpoint, stale wake, unresponsive crew |
-| `second-provisioning` | Before seed, launch, retire, handoff, or config-push |
+| `stuck-soldier-recovery` | Dead endpoint, stale wake, unresponsive soldier |
+| `captain-provisioning` | Before seed, launch, retire, handoff, or config-push |
 | `decision-hold-lifecycle` | Before marking a scout or review complete |
-| `munsu-update` | After `munsu update` completes, for second steps |
+| `munsu-update` | After `munsu update` completes, for captain steps |
 
 Run: `munsu skill show <name>` to read any skill.
 
@@ -333,9 +333,9 @@ Run: `munsu skill show <name>` to read any skill.
 | Backend capabilities | `munsu backend capabilities` |
 | Add a task | `munsu backlog add <id> "<desc>" --kind ship --repo <name> --start` |
 | Scaffold brief | `munsu brief <id> <repo>` |
-| Spawn crew | `munsu spawn <id> <project>` |
-| Steer crew | `munsu send <id> "<line>"` |
-| Check state | `munsu crew-state <id>` |
+| Spawn soldier | `munsu spawn <id> <project>` |
+| Steer soldier | `munsu send <id> "<line>"` |
+| Check state | `munsu soldier-state <id>` |
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |
 | Drain wakes | `munsu wake-drain` |
@@ -347,7 +347,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Merge PR | `munsu delivery pr-merge <id> <pr-url>` |
 | Merge local | `munsu delivery merge-local <id>` |
 | Stow learnings | `munsu stow [text...]` |
-| Stow captain pref | `munsu stow --captain [text...]` |
+| Stow captain pref | `munsu stow --general [text...]` |
 | Self-update | `munsu update` |
 | Teardown | `munsu teardown <id>` |
 | Show skill | `munsu skill show <name>` |
@@ -362,12 +362,12 @@ Run: `munsu skill show <name>` to read any skill.
 1. munsu init                        # ensure home exists (one-time)
 2. munsu session-start               # lock, bootstrap, digest
 3. munsu backlog add <id> ...        # register task
-4. munsu brief <id> <repo>           # scaffold crew brief
+4. munsu brief <id> <repo>           # scaffold soldier brief
    # Fill in the {TASK} placeholder in data/<id>/brief.md
-5. munsu spawn <id> <project>        # launch crew in worktree+tmux window
+5. munsu spawn <id> <project>        # launch soldier in worktree+tmux window
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake-drain / crew-state     # on wake from watcher
+8. munsu wake-drain / soldier-state     # on wake from watcher
 9. munsu delivery pr-check <id> <url> # record PR when done
 10. munsu delivery pr-merge <id> <url> # merge when instructed
 11. munsu teardown <id>              # clean up

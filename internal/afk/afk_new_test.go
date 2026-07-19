@@ -88,7 +88,7 @@ func TestLockIdempotentSameProcess(t *testing.T) {
 	}
 	defer lock1.Release()
 
-	// Second acquire should be no-op (lock held by same process or
+	// Captain acquire should be no-op (lock held by same process or
 	// more precisely, by the PID we wrote — which is ourselves).
 	// The lock file exists and names our PID (which is alive), so
 	// it should return (nil, false, nil).
@@ -209,12 +209,12 @@ func TestTriageRoutineWake(t *testing.T) {
 	if digest.Routines[0].Payload != "all green" {
 		t.Errorf("routine payload = %q, want %q", digest.Routines[0].Payload, "all green")
 	}
-	if digest.Routines[0].IsCaptainRelevant {
-		t.Error("routine IsCaptainRelevant = true, want false")
+	if digest.Routines[0].IsGeneralRelevant {
+		t.Error("routine IsGeneralRelevant = true, want false")
 	}
 }
 
-func TestTriageCaptainRelevantWake(t *testing.T) {
+func TestTriageGeneralRelevantWake(t *testing.T) {
 	tmp := t.TempDir()
 	qPath := filepath.Join(tmp, "state", ".wake-queue")
 	os.MkdirAll(filepath.Dir(qPath), 0755)
@@ -243,8 +243,8 @@ func TestTriageCaptainRelevantWake(t *testing.T) {
 	if digest.Escalated[0].Payload != "PR merged" {
 		t.Errorf("escalated payload = %q, want %q", digest.Escalated[0].Payload, "PR merged")
 	}
-	if !digest.Escalated[0].IsCaptainRelevant {
-		t.Error("escalated IsCaptainRelevant = false, want true")
+	if !digest.Escalated[0].IsGeneralRelevant {
+		t.Error("escalated IsGeneralRelevant = false, want true")
 	}
 }
 
@@ -295,7 +295,7 @@ func TestTriageDrainsQueue(t *testing.T) {
 		t.Errorf("wake queue still exists after drain: %v", err)
 	}
 
-	// Second call should return nil (empty queue)
+	// Captain call should return nil (empty queue)
 	digest2, err := OneCycle(tmp)
 	if err != nil {
 		t.Fatalf("OneCycle #2: %v", err)
