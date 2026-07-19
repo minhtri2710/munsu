@@ -26,7 +26,7 @@ type WakeReason struct {
 	Kind                 string // signal, stale, check, heartbeat
 	TaskIDs              []string
 	Message              string
-	DemandDeepInspection bool // set after N consecutive stale polls for same task
+	DemandDeepInspection bool // set after stale-by-idle-seconds threshold for same task
 }
 
 // Run starts the persistent watcher daemon. It records actionable conditions in
@@ -133,15 +133,20 @@ func stopRunningWatcher(homeDir string) error {
 }
 
 var (
-	// staleStreaks tracks consecutive stale polls per task ID.
+	// staleFirstSeen tracks the first time a task was continuously stale.
 	// Persists across scanFleet calls within a process; protected for concurrent package use.
-	staleStreaksMu sync.Mutex
-	staleStreaks   = map[string]int{}
+	staleFirstSeenMu sync.Mutex
+	staleFirstSeen   = map[string]time.Time{}
 
-	// consecutiveStaleThreshold is the number of consecutive stale polls
-	// before demanding deep inspection (3 polls * 5s = ~15s).
-	consecutiveStaleThreshold = 3
-)
+	// staleByIdleThreshold is the wall-clock duration a task must be continuously stale
+	// before demanding deep inspection (~15 seconds, matching firstmate's idle-seconds timer).
+	staleByIdleThreshold = 15 * time.Second
+
+	// pauseResurfaceThreshold is the max duration a paused task is absorbed
+	// before it surfaces as stale. After this threshold, a paused task
+	// triggers a stale wake so the general can reassess it.
+	pauseResurfaceThreshold = 5 * time.Minute
+)	
 
 // ScanFleet checks all live tasks for the first actionable condition.
 func ScanFleet(homeDir string) *WakeReason {
@@ -332,14 +337,18 @@ func clearWakeMarker(homeDir, id string) {
 	_ = os.Remove(wakeMarkerPath(homeDir, id))
 }
 
-// handleStale creates a stale WakeReason with streak tracking.
-// After consecutiveStaleThreshold consecutive stale polls for the same task,
-// it marks the reason as demanding deep inspection.
+// handleStale creates a stale WakeReason with idle-seconds tracking.
+// After the task has been stale for staleByIdleThreshold (wall-clock time,
+// not poll count), it marks the reason as demanding deep inspection.
 func handleStale(id, msg string) *WakeReason {
-	staleStreaksMu.Lock()
-	staleStreaks[id]++
-	count := staleStreaks[id]
-	staleStreaksMu.Unlock()
+	staleFirstSeenMu.Lock()
+	first, exists := staleFirstSeen[id]
+	if !exists {
+		staleFirstSeen[id] = time.Now()
+		first = staleFirstSeen[id]
+	}
+	staleSince := time.Since(first)
+	staleFirstSeenMu.Unlock()
 
 	reason := &WakeReason{
 		Kind:    "stale",
@@ -347,7 +356,7 @@ func handleStale(id, msg string) *WakeReason {
 		Message: msg,
 	}
 
-	if count >= consecutiveStaleThreshold {
+	if staleSince >= staleByIdleThreshold {
 		reason.DemandDeepInspection = true
 		reason.Message += "; demand-deep-inspection"
 	}
@@ -355,12 +364,12 @@ func handleStale(id, msg string) *WakeReason {
 	return reason
 }
 
-// resetStreak clears the stale streak counter for a task.
+// resetStreak clears the stale-first-seen timestamp for a task.
 // Called when a task is provably working or its status changes.
 func resetStreak(id string) {
-	staleStreaksMu.Lock()
-	delete(staleStreaks, id)
-	staleStreaksMu.Unlock()
+	staleFirstSeenMu.Lock()
+	delete(staleFirstSeen, id)
+	staleFirstSeenMu.Unlock()
 }
 
 // isNoMistakesActive checks whether the task has an active no-mistakes
@@ -391,9 +400,14 @@ func absorbStaleSignal(s *soldierstate.State) bool {
 // shouldAbsorbStale reports whether a stale condition is benign.
 // paneAlive gates status-only "working" absorb: a dead pane with a leftover
 // working: line is still actionable; an alive idle pane with working: is healthy.
+// A paused task beyond the resurface threshold is NOT absorbed — it surfaces as stale.
 func shouldAbsorbStale(homeDir, id string, paneAlive bool) bool {
-	if isNoMistakesActive(homeDir, id) || isStatusPaused(homeDir, id) {
+	if isNoMistakesActive(homeDir, id) {
 		return true
+	}
+	// Check pause status: absorb only if within the resurface threshold.
+	if isStatusPaused(homeDir, id) {
+		return !isPausedBeyondResurface(homeDir, id)
 	}
 	if !paneAlive {
 		return false
@@ -413,6 +427,18 @@ func isStatusPaused(homeDir, id string) bool {
 		return false
 	}
 	return classify.IsPaused(lines[len(lines)-1])
+}
+
+// isPausedBeyondResurface reports whether a paused task has been paused
+// longer than the resurface threshold and should surface as stale.
+// Uses the status file's modification time as a proxy for pause duration.
+func isPausedBeyondResurface(homeDir, id string) bool {
+	statusPath := filepath.Join(homeDir, "state", id+".status")
+	fi, err := os.Stat(statusPath)
+	if err != nil {
+		return false
+	}
+	return time.Since(fi.ModTime()) > pauseResurfaceThreshold
 }
 
 // isStatusGeneralRelevant checks whether the task's last status line contains

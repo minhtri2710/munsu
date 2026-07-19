@@ -93,11 +93,10 @@ func TestAbsorbStaleSignal_UnknownStep(t *testing.T) {
 	}
 }
 
-// --- handleStale / resetStreak tests (pure map operations) ---
+// --- handleStale / resetStreak tests (idle-seconds timer, not poll count) ---
 
-func TestHandleStale_FirstPoll(t *testing.T) {
-	delete(staleStreaks, "test-task-1")
-	consecutiveStaleThreshold = 3
+func TestHandleStale_FirstSeen(t *testing.T) {
+	delete(staleFirstSeen, "test-task-1")
 
 	reason := handleStale("test-task-1", "pane foo is dead")
 	if reason == nil {
@@ -110,36 +109,44 @@ func TestHandleStale_FirstPoll(t *testing.T) {
 		t.Errorf("TaskIDs = %v, want [test-task-1]", reason.TaskIDs)
 	}
 	if reason.DemandDeepInspection {
-		t.Error("first stale poll should not demand deep inspection")
+		t.Error("first stale sighting should not demand deep inspection (elapsed ~0)")
 	}
-	if staleStreaks["test-task-1"] != 1 {
-		t.Errorf("streak = %d, want 1", staleStreaks["test-task-1"])
+	// Entry must exist with a recent timestamp.
+	staleFirstSeenMu.Lock()
+	ts, exists := staleFirstSeen["test-task-1"]
+	staleFirstSeenMu.Unlock()
+	if !exists {
+		t.Error("staleFirstSeen entry should exist after handleStale")
+	}
+	if time.Since(ts) > time.Second {
+		t.Errorf("staleFirstSeen timestamp too old: %v ago", time.Since(ts))
 	}
 }
 
 func TestHandleStale_UnderThreshold(t *testing.T) {
-	delete(staleStreaks, "test-task-2")
-	consecutiveStaleThreshold = 3
+	delete(staleFirstSeen, "test-task-2")
 
-	handleStale("test-task-2", "first")
-	reason := handleStale("test-task-2", "general")
-	if reason.DemandDeepInspection {
-		t.Error("captain stale poll should not demand deep inspection (threshold=3)")
+	r1 := handleStale("test-task-2", "first")
+	if r1.DemandDeepInspection {
+		t.Error("first stale sighting should not demand deep inspection")
 	}
-	if staleStreaks["test-task-2"] != 2 {
-		t.Errorf("streak = %d, want 2", staleStreaks["test-task-2"])
+
+	r2 := handleStale("test-task-2", "second")
+	if r2.DemandDeepInspection {
+		t.Error("second rapid stale sighting should not demand deep (elapsed < threshold)")
 	}
 }
 
 func TestHandleStale_AtThreshold(t *testing.T) {
-	delete(staleStreaks, "test-task-3")
-	consecutiveStaleThreshold = 3
+	delete(staleFirstSeen, "test-task-3")
+	// Inject past timestamp to simulate elapsed idle seconds.
+	staleFirstSeenMu.Lock()
+	staleFirstSeen["test-task-3"] = time.Now().Add(-30 * time.Second)
+	staleFirstSeenMu.Unlock()
 
-	handleStale("test-task-3", "first")
-	handleStale("test-task-3", "general")
-	reason := handleStale("test-task-3", "third")
+	reason := handleStale("test-task-3", "crossed threshold")
 	if !reason.DemandDeepInspection {
-		t.Error("third consecutive stale poll should demand deep inspection")
+		t.Error("stale with elapsed > threshold should demand deep inspection")
 	}
 	if !strings.Contains(reason.Message, "demand-deep-inspection") {
 		t.Errorf("message should contain demand-deep-inspection, got %q", reason.Message)
@@ -147,59 +154,68 @@ func TestHandleStale_AtThreshold(t *testing.T) {
 }
 
 func TestHandleStale_AboveThreshold(t *testing.T) {
-	delete(staleStreaks, "test-task-4")
-	consecutiveStaleThreshold = 3
+	delete(staleFirstSeen, "test-task-4")
+	// Already well past threshold.
+	staleFirstSeenMu.Lock()
+	staleFirstSeen["test-task-4"] = time.Now().Add(-60 * time.Second)
+	staleFirstSeenMu.Unlock()
 
-	handleStale("test-task-4", "first")
-	handleStale("test-task-4", "general")
-	handleStale("test-task-4", "third")
-	reason := handleStale("test-task-4", "fourth")
+	reason := handleStale("test-task-4", "way past threshold")
 	if !reason.DemandDeepInspection {
-		t.Error("fourth consecutive stale poll should demand deep inspection")
+		t.Error("stale with elapsed >> threshold should demand deep inspection")
 	}
 }
 
 func TestHandleStale_MultipleTasks(t *testing.T) {
-	delete(staleStreaks, "task-a")
-	delete(staleStreaks, "task-b")
-	consecutiveStaleThreshold = 3
+	delete(staleFirstSeen, "task-a")
+	delete(staleFirstSeen, "task-b")
 
-	handleStale("task-a", "first")
-	handleStale("task-b", "first")
-	handleStale("task-a", "general")
-
-	// task-a at 2 -> 3, should trigger
-	reasonA := handleStale("task-a", "third")
-	if !reasonA.DemandDeepInspection {
-		t.Error("task-a third poll should demand deep inspection")
+	// Both tasks just seen — neither demands deep.
+	r1 := handleStale("task-a", "first")
+	if r1.DemandDeepInspection {
+		t.Error("task-a first sighting should not demand deep")
+	}
+	r2 := handleStale("task-b", "first")
+	if r2.DemandDeepInspection {
+		t.Error("task-b first sighting should not demand deep")
 	}
 
-	// task-b at 1, should NOT trigger
-	reasonB := handleStale("task-b", "general")
-	if reasonB.DemandDeepInspection {
-		t.Error("task-b captain poll should not demand deep inspection (streak=2, thresh=3)")
+	// Simulate task-a crossing threshold.
+	staleFirstSeenMu.Lock()
+	staleFirstSeen["task-a"] = time.Now().Add(-30 * time.Second)
+	staleFirstSeenMu.Unlock()
+
+	r3 := handleStale("task-a", "crossed")
+	if !r3.DemandDeepInspection {
+		t.Error("task-a after threshold should demand deep")
+	}
+
+	// task-b still fresh.
+	r4 := handleStale("task-b", "still fresh")
+	if r4.DemandDeepInspection {
+		t.Error("task-b still fresh should not demand deep")
 	}
 }
 
 func TestResetStreak(t *testing.T) {
-	delete(staleStreaks, "test-reset")
-	consecutiveStaleThreshold = 3
+	delete(staleFirstSeen, "test-reset")
+	// Inject past timestamp.
+	staleFirstSeenMu.Lock()
+	staleFirstSeen["test-reset"] = time.Now().Add(-30 * time.Second)
+	staleFirstSeenMu.Unlock()
 
-	handleStale("test-reset", "first")
-	handleStale("test-reset", "general")
 	resetStreak("test-reset")
-
-	if _, exists := staleStreaks["test-reset"]; exists {
-		t.Error("streak should be deleted after reset")
+	staleFirstSeenMu.Lock()
+	_, exists := staleFirstSeen["test-reset"]
+	staleFirstSeenMu.Unlock()
+	if exists {
+		t.Error("staleFirstSeen should be deleted after reset")
 	}
 
-	// After reset, next stale should be count 1
+	// After reset, next stale records a fresh timestamp.
 	reason := handleStale("test-reset", "after-reset")
 	if reason.DemandDeepInspection {
 		t.Error("after reset, first stale should not demand deep inspection")
-	}
-	if staleStreaks["test-reset"] != 1 {
-		t.Errorf("streak after reset = %d, want 1", staleStreaks["test-reset"])
 	}
 }
 
@@ -208,7 +224,7 @@ func TestResetStreak_NonExistent(t *testing.T) {
 	resetStreak("non-existent-task")
 }
 
-func TestStaleStreaks_ConcurrentAccess(t *testing.T) {
+func TestStaleFirstSeen_ConcurrentAccess(t *testing.T) {
 	const workers = 32
 	const perWorker = 100
 	var wg sync.WaitGroup
@@ -302,28 +318,35 @@ func TestScanFleet_MultipleTasks_OnlyOneWithWindow(t *testing.T) {
 // 1. Absorb provably-working wakes (no-mistakes run-step absorbs stale)
 // 2. Demand-deep-inspection streak tracking after 3 consecutive stale polls
 
-func TestHandleStale_DemandDeepInspectionStreak(t *testing.T) {
-	delete(staleStreaks, "deep-test")
-	consecutiveStaleThreshold = 3
+func TestHandleStale_DemandDeepInspectionByIdleSeconds(t *testing.T) {
+	delete(staleFirstSeen, "deep-test")
 
+	// Fresh sighting — no demand deep.
 	r1 := handleStale("deep-test", "pane is dead")
 	if r1.DemandDeepInspection {
-		t.Error("poll 1 should not demand deep inspection")
+		t.Error("poll 1 should not demand deep (fresh first-seen)")
 	}
 
+	// Rapid follow-up within microseconds — still below threshold.
 	r2 := handleStale("deep-test", "pane is dead")
 	if r2.DemandDeepInspection {
-		t.Error("poll 2 should not demand deep inspection")
+		t.Error("poll 2 should not demand deep (elapsed < threshold)")
 	}
+
+	// Simulate threshold crossing via past timestamp.
+	staleFirstSeenMu.Lock()
+	staleFirstSeen["deep-test"] = time.Now().Add(-30 * time.Second)
+	staleFirstSeenMu.Unlock()
 
 	r3 := handleStale("deep-test", "pane is dead")
 	if !r3.DemandDeepInspection {
-		t.Error("poll 3 should demand deep inspection")
+		t.Error("poll 3 should demand deep (elapsed > threshold)")
 	}
 	if !strings.Contains(r3.Message, "demand-deep-inspection") {
 		t.Errorf("message should contain demand-deep-inspection, got %q", r3.Message)
 	}
 
+	// Subsequent calls still past threshold.
 	r4 := handleStale("deep-test", "pane is dead")
 	if !r4.DemandDeepInspection {
 		t.Error("poll 4 should still demand deep inspection")
@@ -530,6 +553,7 @@ func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T
 
 func TestScanFleet_StaleConsistency(t *testing.T) {
 	// Test that multiple scanFleet calls produce consistent behavior
+	// with idle-seconds timer.
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
@@ -545,22 +569,27 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 		t.Errorf("first call kind = %q, want stale", r1.Kind)
 	}
 
-	// Captain call (streak should increment)
+	// Second call (still within microseconds, no demand deep yet)
 	r2 := ScanFleet(tmp)
 	if r2 == nil {
-		t.Fatal("captain call expected stale")
+		t.Fatal("second call expected stale")
 	}
 	if r2.Kind != "stale" {
-		t.Errorf("captain call kind = %q, want stale", r2.Kind)
+		t.Errorf("second call kind = %q, want stale", r2.Kind)
 	}
 
-	// Third call - should trigger demand deep inspection
+	// Inject past timestamp to simulate elapsed idle seconds.
+	staleFirstSeenMu.Lock()
+	staleFirstSeen["consist-task"] = time.Now().Add(-30 * time.Second)
+	staleFirstSeenMu.Unlock()
+
+	// Third call — should trigger demand deep inspection
 	r3 := ScanFleet(tmp)
 	if r3 == nil {
 		t.Fatal("third call expected stale")
 	}
 	if !r3.DemandDeepInspection {
-		t.Error("third consecutive stale should demand deep inspection")
+		t.Error("stale after elapsed threshold should demand deep inspection")
 	}
 }
 
@@ -744,6 +773,100 @@ func TestShouldAbsorbStale(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "done.status"), []byte("done: finished\n"), 0644)
 	if shouldAbsorbStale(tmp, "done", true) {
 		t.Error("done should not absorb via shouldAbsorbStale")
+	}
+}
+
+// --- Pause resurface table-driven tests ---
+
+func TestShouldAbsorbStale_PauseResurface(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusLine string
+		pauseAge   time.Duration // age of status file (positive = in the past)
+		paneAlive  bool
+		wantAbsorb bool
+	}{
+		{
+			name:       "recent pause absorbs",
+			statusLine: "paused: waiting on human",
+			pauseAge:   time.Minute,
+			paneAlive:  false,
+			wantAbsorb: true,
+		},
+		{
+			name:       "pause beyond resurface threshold surfaces as stale",
+			statusLine: "paused: waiting on human",
+			pauseAge:   10 * time.Minute,
+			paneAlive:  false,
+			wantAbsorb: false,
+		},
+		{
+			name:       "pause at boundary — just under — absorbs",
+			statusLine: "paused: waiting on human",
+			pauseAge:   4*time.Minute + 59*time.Second,
+			paneAlive:  false,
+			wantAbsorb: true,
+		},
+		{
+			name:       "pause at boundary — just over — surfaces",
+			statusLine: "paused: waiting on human",
+			pauseAge:   5*time.Minute + 1*time.Second,
+			paneAlive:  false,
+			wantAbsorb: false,
+		},
+		{
+			name:       "recent pause with alive pane absorbs",
+			statusLine: "paused: waiting on review",
+			pauseAge:   time.Minute,
+			paneAlive:  true,
+			wantAbsorb: true,
+		},
+		{
+			name:       "stale pause with alive pane surfaces",
+			statusLine: "paused: waiting on review",
+			pauseAge:   10 * time.Minute,
+			paneAlive:  true,
+			wantAbsorb: false,
+		},
+		{
+			name:       "working status not affected by pause resurface",
+			statusLine: "working: still going",
+			pauseAge:   time.Minute,
+			paneAlive:  true,
+			wantAbsorb: true,
+		},
+		{
+			name:       "done status not paused — does not absorb",
+			statusLine: "done: finished",
+			pauseAge:   time.Minute,
+			paneAlive:  true,
+			wantAbsorb: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			stateDir := filepath.Join(tmp, "state")
+			os.MkdirAll(stateDir, 0755)
+
+			statusPath := filepath.Join(stateDir, "test-pause.status")
+			if err := os.WriteFile(statusPath, []byte(tt.statusLine+"\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Set mod time to simulate pause age.
+			past := time.Now().Add(-tt.pauseAge)
+			if err := os.Chtimes(statusPath, past, past); err != nil {
+				t.Fatal(err)
+			}
+
+			got := shouldAbsorbStale(tmp, "test-pause", tt.paneAlive)
+			if got != tt.wantAbsorb {
+				t.Errorf("shouldAbsorbStale = %v, want %v (pauseAge=%v, paneAlive=%v)",
+					got, tt.wantAbsorb, tt.pauseAge, tt.paneAlive)
+			}
+		})
 	}
 }
 
