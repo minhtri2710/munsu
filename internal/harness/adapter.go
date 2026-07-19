@@ -76,7 +76,6 @@ type Adapter struct {
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	TrustDialog string
 
-
 	// SupervisionProtocol identifies the supervision protocol for this harness.
 	SupervisionProtocol string
 
@@ -91,25 +90,25 @@ type Adapter struct {
 // functions derive from it.
 var Adapters = map[string]Adapter{
 	Claude: {
-		Name:        Claude,
-		EnvMarkers:  []string{"CLAUDE_CODE"},
+		Name:       Claude,
+		EnvMarkers: []string{"CLAUDE_CODE"},
 		ProcessMatchers: []ProcessNameMatcher{
 			{Name: "claude"},
 			{Name: "claude-code"},
 			{Name: "claude code"},
 		},
-		BusyPattern:       `esc to interrupt`,
-		ReadyPatterns:     []string{">", "ready"},
-		TrustPatterns:     nil,
-		ExitCommand:       `/exit`,
-		InterruptKeys:     `Escape`,
-		SkillInvocation:   `/`,
-		TurnEndHook:       `Stop hook (exit 2 + stderr); Primary-only global ~/.claude/hooks/`,
+		BusyPattern:     `esc to interrupt`,
+		ReadyPatterns:   []string{">", "ready"},
+		TrustPatterns:   nil,
+		ExitCommand:     `/exit`,
+		InterruptKeys:   `Escape`,
+		SkillInvocation: `/`,
+		TurnEndHook:     `Stop hook (exit 2 + stderr); Primary-only global ~/.claude/hooks/`,
 		LaunchTemplate: Template{
 			ModelFlag:    "--model",
 			DefaultModel: "claude-sonnet-4-20250515",
 		},
-		TrustDialog:        `Trust or bypass-permissions confirmation on first launch per worktree`,
+		TrustDialog:         `Trust or bypass-permissions confirmation on first launch per worktree`,
 		SupervisionProtocol: `claude`,
 	},
 	Codex: {
@@ -120,20 +119,20 @@ var Adapters = map[string]Adapter{
 			{Name: "codeclimb"},
 			{Name: "codex", Substr: true},
 		},
-		BusyPattern:       `esc to interrupt`,
-		ReadyPatterns:     nil,
-		TrustPatterns:     nil,
-		ExitCommand:       `/quit`,
-		InterruptKeys:     `Escape`,
-		SkillInvocation:   `$`,
-		TurnEndHook:       `Stop hook (exit 2 + stderr); Primary-only ~/.codex/hooks.json`,
+		BusyPattern:     `esc to interrupt`,
+		ReadyPatterns:   nil,
+		TrustPatterns:   nil,
+		ExitCommand:     `/quit`,
+		InterruptKeys:   `Escape`,
+		SkillInvocation: `$`,
+		TurnEndHook:     `Stop hook (exit 2 + stderr); Primary-only ~/.codex/hooks.json`,
 		LaunchTemplate: Template{
 			ModelFlag:     "--model",
 			EffortFlag:    "--effort",
 			DefaultModel:  "gpt-5.2-codex",
 			DefaultEffort: "80",
 		},
-		TrustDialog:        `Directory trust dialog on first run per repo root; accept with Enter`,
+		TrustDialog:         `Directory trust dialog on first run per repo root; accept with Enter`,
 		SupervisionProtocol: `codex`,
 	},
 	Opencode: {
@@ -143,20 +142,20 @@ var Adapters = map[string]Adapter{
 			{Name: "opencode"},
 			{Name: "opencode", Substr: true},
 		},
-		BusyPattern:       `esc interrupt`,
-		ReadyPatterns:     nil,
-		TrustPatterns:     nil,
-		ExitCommand:       `/exit`,
-		InterruptKeys:     `Escape Escape`,
-		SkillInvocation:   `/`,
-		TurnEndHook:       `Passive session.idle plugin; Primary-only .opencode/plugins/`,
+		BusyPattern:     `esc interrupt`,
+		ReadyPatterns:   nil,
+		TrustPatterns:   nil,
+		ExitCommand:     `/exit`,
+		InterruptKeys:   `Escape Escape`,
+		SkillInvocation: `/`,
+		TurnEndHook:     `Passive session.idle plugin; Primary-only .opencode/plugins/`,
 		LaunchTemplate: Template{
 			ModelFlag:     "--model",
 			EffortFlag:    "--effort",
 			DefaultModel:  "gpt-5.2-codex",
 			DefaultEffort: "80",
 		},
-		TrustDialog:        `No trust dialog`,
+		TrustDialog:         `No trust dialog`,
 		SupervisionProtocol: `opencode`,
 	},
 	Pi: {
@@ -167,13 +166,13 @@ var Adapters = map[string]Adapter{
 			{Name: "pi-coding-agent"},
 			{Name: "pi-coding", Substr: true},
 		},
-		BusyPattern:       `Working\.\.\.`,
-		ReadyPatterns:     []string{">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
-		TrustPatterns:     []string{"Trust project folder", "→ Trust", "Do not trust"},
-		ExitCommand:       `/quit`,
-		InterruptKeys:     `Escape`,
-		SkillInvocation:   `/`,
-		TurnEndHook:       `agent_settled extension with deliverAs: "followUp"; Primary-only .pi/extensions/`,
+		BusyPattern:     `Working\.\.\.`,
+		ReadyPatterns:   []string{">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
+		TrustPatterns:   []string{"Trust project folder", "→ Trust", "Do not trust"},
+		ExitCommand:     `/quit`,
+		InterruptKeys:   `Escape`,
+		SkillInvocation: `/`,
+		TurnEndHook:     `agent_settled extension with deliverAs: "followUp"; Primary-only .pi/extensions/`,
 		LaunchTemplate: Template{
 			ModelFlag:  "--model",
 			EffortFlag: "--thinking",
@@ -186,7 +185,7 @@ var Adapters = map[string]Adapter{
 			PromptArg:  true,
 		},
 		SupervisionProtocol: `pi`,
-		TrustDialog:        `Project trust dialog on first run per path; accept with Enter`,
+		TrustDialog:         `Project trust dialog on first run per path; accept with Enter`,
 		StateArtifacts:      []string{"pi-ext.ts"},
 	},
 	Grok: {
@@ -195,19 +194,19 @@ var Adapters = map[string]Adapter{
 		ProcessMatchers: []ProcessNameMatcher{
 			{Name: "grok", Substr: true},
 		},
-		BusyPattern:       `Ctrl\+c:cancel`,
-		ReadyPatterns:     nil,
-		TrustPatterns:     nil,
-		IdlePattern:       `Shift\+Tab:mode`,
-		ExitCommand:       `Ctrl+Q Ctrl+Q`,
-		InterruptKeys:     `Ctrl+C`,
-		SkillInvocation:   `/`,
-		TurnEndHook:       `Passive Stop hook (global ~/.grok/hooks/); Primary-only global hooks with workspace token`,
+		BusyPattern:     `Ctrl\+c:cancel`,
+		ReadyPatterns:   nil,
+		TrustPatterns:   nil,
+		IdlePattern:     `Shift\+Tab:mode`,
+		ExitCommand:     `Ctrl+Q Ctrl+Q`,
+		InterruptKeys:   `Ctrl+C`,
+		SkillInvocation: `/`,
+		TurnEndHook:     `Passive Stop hook (global ~/.grok/hooks/); Primary-only global hooks with workspace token`,
 		LaunchTemplate: Template{
 			ModelFlag:  "--model",
 			EffortFlag: "--reasoning-effort",
 		},
-		TrustDialog:        `No trust dialog when launched from a git repo root`,
+		TrustDialog:         `No trust dialog when launched from a git repo root`,
 		SupervisionProtocol: `grok`,
 		StateArtifacts:      []string{"grok-turnend-token"},
 	},
@@ -218,19 +217,19 @@ var Adapters = map[string]Adapter{
 			{Name: "agy"},
 			{Name: "antigravity"},
 		},
-		BusyPattern:       `Thinking\.\.\.`,
-		ReadyPatterns:     []string{"esc to cancel", "Ready for your prompt", "What would you like"},
-		TrustPatterns:     []string{"Do you trust", "Yes, I trust this folder"},
-		IdlePattern:       `Press shift\+tab to cycle modes`,
-		ExitCommand:       `Ctrl+Q Ctrl+Q`,
-		InterruptKeys:     `Ctrl+C`,
-		SkillInvocation:   `/`,
-		TurnEndHook:       `No hook support (print-mode --print-timeout for turn-end detection)`,
+		BusyPattern:     `Thinking\.\.\.`,
+		ReadyPatterns:   []string{"esc to cancel", "Ready for your prompt", "What would you like"},
+		TrustPatterns:   []string{"Do you trust", "Yes, I trust this folder"},
+		IdlePattern:     `Press shift\+tab to cycle modes`,
+		ExitCommand:     `Ctrl+Q Ctrl+Q`,
+		InterruptKeys:   `Ctrl+C`,
+		SkillInvocation: `/`,
+		TurnEndHook:     `Stop hook (stdout decision JSON); Primary-only .agents/hooks.json`,
 		LaunchTemplate: Template{
 			ModelFlag: "--model",
 			ExtraArgs: []string{"--dangerously-skip-permissions"},
 		},
-		TrustDialog:        `File/command permission dialog per session; pre-approved commands persisted in settings.json`,
+		TrustDialog:         `File/command permission dialog per session; pre-approved commands persisted in settings.json`,
 		SupervisionProtocol: `agy`,
 	},
 }
@@ -261,6 +260,7 @@ func GetAdapter(name string) (Adapter, bool) {
 	a, ok := Adapters[name]
 	return a, ok
 }
+
 // StateArtifactsForHarness returns the harness-specific state file suffixes
 // that should be cleaned up during teardown for the given harness name.
 // Returns an empty slice if the harness is unknown or has no artifacts.
@@ -274,6 +274,7 @@ func StateArtifactsForHarness(name string) []string {
 	copy(artifacts, a.StateArtifacts)
 	return artifacts
 }
+
 // detectEnvFromAdapter checks well-known environment variable markers from the
 // adapter registry. Returns the harness name or empty string.
 func detectEnvFromAdapter() string {

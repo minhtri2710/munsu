@@ -247,6 +247,45 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 			result.Message = "no changes needed"
 		}
 
+	case harness.Agy:
+		agyAdpt := &AgyAdapter{
+			HomeDir: homeDir,
+			Cwd:     cwd,
+			Scope:   string(scope),
+			DryRun:  dryRun,
+		}
+		targets, written, digest, err := agyAdpt.InstallAgyHooks()
+		if err != nil {
+			return nil, fmt.Errorf("agy hooks install: %w", err)
+		}
+		result.Message = fmt.Sprintf("agy hooks: %s", targets[0])
+
+		if !dryRun && written {
+			manifest := generateAgyManifest(harnessName, string(scope), caps, digest, targets)
+			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
+			if err := os.MkdirAll(artifactDir, 0755); err != nil {
+				return nil, fmt.Errorf("create artifact dir: %w", err)
+			}
+
+			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
+			manifestData, err := json.MarshalIndent(manifest, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("marshal manifest: %w", err)
+			}
+			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
+				return nil, fmt.Errorf("write manifest: %w", err)
+			}
+
+			result.Version = manifest.Version
+			result.InstalledAt = manifest.InstalledAt
+		} else if dryRun {
+			result.Message = fmt.Sprintf("[dry-run] would write: %s", targets[0])
+			result.State = "fresh"
+		} else {
+			result.State = "fresh"
+			result.Message = "no changes needed"
+		}
+
 	default:
 		return &IntegrationResult{
 			Harness: harnessName,
@@ -419,6 +458,8 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 			expectedTarget, err = ClaudeSettingsTargetPath(scope, cwd)
 		} else if harnessName == harness.Codex {
 			expectedTarget, err = CodexHooksTargetPath(scope, cwd)
+		} else if harnessName == harness.Agy {
+			expectedTarget, err = AgyHooksTargetPath(scope, cwd)
 		} else {
 			expectedTarget, err = ExpectedTargetPath(scope, cwd)
 		}
@@ -495,6 +536,21 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 			}
 			hooksDir := filepath.Dir(tp)
 			present, _, hookErr := GrokHooksHasOwnedHooks(hooksDir, munsuBin)
+			if hookErr != nil || !present {
+				allPresent = false
+				continue
+			}
+		} else if harnessName == harness.Agy {
+			// Structural ownership check for agy hooks.json —
+			// JSON cannot carry a first-line comment marker, so
+			// check for munsu-owned hook names with correct commands.
+			munsuBin, resolveErr := ResolveMunsuPathString()
+			if resolveErr != nil {
+				allPresent = false
+				continue
+			}
+			hooksDir := filepath.Dir(tp)
+			present, _, hookErr := AgyHooksHasOwnedHooks(hooksDir, munsuBin)
 			if hookErr != nil || !present {
 				allPresent = false
 				continue

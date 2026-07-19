@@ -116,7 +116,7 @@ Results:
 
 Flags:
   --command      Command string to evaluate for blocking rules (for tool_call safety)
-  --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), "codex" (stderr plaintext + exit 2), "grok" (stdout decision=deny object + exit 2), or "opencode" (stderr plaintext + exit 2, same as codex)`,
+  --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), "codex" (stderr plaintext + exit 2), "grok" (stdout decision=deny object + exit 2), "opencode" (stderr plaintext + exit 2, same as codex), or "agy" (stdout decision JSON + exit 0)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			checkPath, _ := os.Getwd()
@@ -127,7 +127,7 @@ Flags:
 		}),
 	}
 	safetyCmd.Flags().StringVar(&flags.command, "command", "", "Command to evaluate for blocking rules")
-	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, grok, codex, or opencode")
+	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, grok, codex, opencode, or agy")
 	configureContractCommand(safetyCmd)
 
 	sessionstartNudgeCmd := &cobra.Command{
@@ -331,6 +331,14 @@ func readStdinForCommand() (string, error) {
 			return cmd, nil
 		}
 	}
+	// Try agy shape: .toolCall.args.CommandLine (PascalCase nested)
+	if tc, ok := payload["toolCall"].(map[string]interface{}); ok {
+		if args, ok := tc["args"].(map[string]interface{}); ok {
+			if cmd, ok := args["CommandLine"].(string); ok && cmd != "" {
+				return cmd, nil
+			}
+		}
+	}
 	// Try Grok shape: .toolInput.command (camelCase)
 	if ti, ok := payload["toolInput"].(map[string]interface{}); ok {
 		if cmd, ok := ti["command"].(string); ok && cmd != "" {
@@ -348,7 +356,7 @@ func readStdinForCommand() (string, error) {
 func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, harnessFlag string) error {
 	// When --harness claude or --harness grok and no --command, try to read command from stdin
 	effectiveCommand := checkCommand
-	if (harnessFlag == "claude" || harnessFlag == "grok" || harnessFlag == "codex") && effectiveCommand == "" {
+	if (harnessFlag == "claude" || harnessFlag == "grok" || harnessFlag == "codex" || harnessFlag == "agy") && effectiveCommand == "" {
 		stdinCommand, err := readStdinForCommand()
 		if err == nil && stdinCommand != "" {
 			effectiveCommand = stdinCommand
@@ -434,6 +442,26 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 			exitWithCode(2)
 		}
 		// Codex allow: exit 0, both streams empty
+		return nil
+	}
+
+	if harnessFlag == "agy" {
+		if effectiveBlock {
+			// Agy deny: stdout JSON decision/reason + exit 0
+			// agy gates on the stdout decision field, NOT exit code.
+			denyJSON, _ := json.Marshal(map[string]interface{}{
+				"decision": "deny",
+				"reason":   "[safety-block] " + reason,
+			})
+			fmt.Fprintln(os.Stdout, string(denyJSON))
+			exitWithCode(0)
+			return nil
+		}
+		// Agy allow: stdout {"decision":"allow"}, exit 0
+		allowJSON, _ := json.Marshal(map[string]interface{}{
+			"decision": "allow",
+		})
+		fmt.Fprintln(os.Stdout, string(allowJSON))
 		return nil
 	}
 
