@@ -27,7 +27,7 @@ type InjectEvent struct {
 	Entries   int       `json:"entries"`
 }
 
-// Injector handles sending escalation payloads to the resolved captain pane.
+// Injector handles sending escalation payloads to the resolved general pane.
 // Every injection is gated by hard safety checks:
 //
 //  1. Consent flag (state/.afk) must exist
@@ -55,12 +55,12 @@ func NewInjector(backend Backend, capture PaneCapture, homeDir string) *Injector
 }
 
 // InjectIfSafe checks all safety gates and, if all pass, sends the
-// sentinel-marked escalation payload to the resolved captain pane.
+// sentinel-marked escalation payload to the resolved general pane.
 // Returns true if injection occurred, false if deferred.
 //
 // Safety gates (all must pass; first failure short-circuits):
 //  1. Consent flag (state/.afk) must exist
-//  2. Resolved captain pane handle must be non-empty
+//  2. Resolved general pane handle must be non-empty
 //  3. IsSafeInjectTarget must return (true, Empty) immediately before SendKeys
 //  4. Duplicate entries within cooldown are skipped (best-effort dedup)
 //  5. Sentinel prefix is prepended to the payload
@@ -98,9 +98,9 @@ func (inj *Injector) InjectIfSafe(escalation *BatchedEscalation) (bool, error) {
 	payload := formatPayload(escalation)
 	markedPayload := Mark(payload)
 
-	// Send to captain pane.
+	// Send to general pane.
 	if err := inj.backend.SendKeys(paneHandle, markedPayload); err != nil {
-		return false, fmt.Errorf("send-keys to captain pane %q: %w", paneHandle, err)
+		return false, fmt.Errorf("send-keys to general pane %q: %w", paneHandle, err)
 	}
 
 	// Record inject event + update dedup timestamps.

@@ -38,7 +38,7 @@ func newInitCmd() *cobra.Command {
 		Long: `Initialize the munsu home directory tree.
 
 Creates the directory structure: {state, data, config, projects}.
-Auto-detects and persists crew harness and backlog backend.
+Auto-detects and persists soldier harness and backlog backend.
 Writes starter configuration files and the orchestrator operating manual (AGENTS.md).
 Also installs the munsu skills so coding-agent harnesses can discover them.
 
@@ -103,22 +103,22 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files.`
 	return cmd
 }
 
-// autoDetectConfig detects crew harness and backlog backend,
+// autoDetectConfig detects soldier harness and backlog backend,
 // persisting them only if the config file is absent (or --reconfigure is set).
 func autoDetectConfig(homeDir string) error {
 	// Note: backend is runtime context and is NOT persisted at init time.
 
-	// 1. Auto-detect crew harness
-	if reconfigure || !configFileExists(homeDir, "crew-harness") {
+	// 1. Auto-detect soldier harness
+	if reconfigure || !configFileExists(homeDir, "soldier-harness") {
 		harnessName, err := harness.Detect()
 		if err == nil && harnessName != "" {
-			if err := config.Set(homeDir, "crew-harness", harnessName); err != nil {
-				return fmt.Errorf("setting crew-harness: %w", err)
+			if err := config.Set(homeDir, "soldier-harness", harnessName); err != nil {
+				return fmt.Errorf("setting soldier-harness: %w", err)
 			}
-			fmt.Printf("Detected and persisted crew-harness: %s\n", harnessName)
+			fmt.Printf("Detected and persisted soldier-harness: %s\n", harnessName)
 		}
 	} else {
-		fmt.Println("config/crew-harness already exists (skipped; use --reconfigure to overwrite)")
+		fmt.Println("config/soldier-harness already exists (skipped; use --reconfigure to overwrite)")
 	}
 
 	// 2. Auto-detect backlog backend
@@ -135,7 +135,6 @@ func autoDetectConfig(homeDir string) error {
 
 	return nil
 }
-
 
 // configFileExists returns true if the config/<key> file exists under homeDir.
 func configFileExists(homeDir, key string) bool {
@@ -185,6 +184,7 @@ func runSkillInstall(cmd *cobra.Command, homeDir string) error {
 func isStdinTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
+
 // promptSkillChoice asks the user where to install skills.
 func promptSkillChoice() string {
 	fmt.Println("\nInstall munsu skills?")
@@ -219,7 +219,7 @@ func installSkillsTo(dest string) error {
 		fmt.Printf("Skill %q kept as-is at %s\n", name, dest)
 	} else {
 		fmt.Printf("Installed skill %q to %s\n", name, dest)
-		fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, decision-hold-lifecycle, harness-adapters, munsu-update, secondmate-provisioning, stuck-crewmate-recovery")
+		fmt.Println("Auxiliary skills (read on demand): bootstrap-diagnostics, decision-hold-lifecycle, harness-adapters, munsu-update, captain-provisioning, stuck-soldier-recovery")
 		fmt.Println("  Run: munsu skill show <name>")
 	}
 	return nil

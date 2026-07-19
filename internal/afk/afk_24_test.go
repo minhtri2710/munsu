@@ -16,8 +16,8 @@ import (
 type fakeSendKeysBackend struct {
 	mu     sync.Mutex
 	calls  []sendKeysCall
-	fail   bool            // if true, SendKeys returns an error
-	record bool            // if true, record calls
+	fail   bool // if true, SendKeys returns an error
+	record bool // if true, record calls
 }
 
 type sendKeysCall struct {
@@ -47,7 +47,7 @@ func (f *fakeSendKeysBackend) Calls() []sendKeysCall {
 
 // --- Util to set up test fixtures ---
 
-// setupInjectorTest creates a temp home with config/captain-pane, state/.afk,
+// setupInjectorTest creates a temp home with config/general-pane, state/.afk,
 // and a fake capture that returns Empty (safe). Returns the home dir, injector,
 // fake backend, and a cleanup function.
 func setupInjectorTest(t *testing.T) (homeDir string, inj *Injector, fakeBk *fakeSendKeysBackend, cleanup func()) {
@@ -55,13 +55,13 @@ func setupInjectorTest(t *testing.T) (homeDir string, inj *Injector, fakeBk *fak
 
 	tmp := t.TempDir()
 
-	// Create config/captain-pane.
+	// Create config/general-pane.
 	configDir := filepath.Join(tmp, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("creating config dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("test-session:test-pane\n"), 0644); err != nil {
-		t.Fatalf("writing captain-pane config: %v", err)
+	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("test-session:test-pane\n"), 0644); err != nil {
+		t.Fatalf("writing general-pane config: %v", err)
 	}
 
 	// Create state/.afk consent flag.
@@ -141,7 +141,7 @@ func TestInjectIfSafe_PendingTarget_NoSendKeys(t *testing.T) {
 	tmp := t.TempDir()
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("s:p\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("s:p\n"), 0644)
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, ".afk"), []byte("now\n"), 0644)
@@ -170,7 +170,7 @@ func TestInjectIfSafe_UnknownTarget_NoSendKeys(t *testing.T) {
 	tmp := t.TempDir()
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("s:p\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("s:p\n"), 0644)
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, ".afk"), []byte("now\n"), 0644)
@@ -200,7 +200,7 @@ func TestInjectIfSafe_NoConsentFlag_NoSendKeys(t *testing.T) {
 	// Set up config but NOT the consent flag (state/.afk).
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("s:p\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("s:p\n"), 0644)
 
 	fakeBk := &fakeSendKeysBackend{record: true}
 	fakeCap := &fakePaneCapture{content: "\u276F \n"} // safe if it were checked
@@ -223,7 +223,7 @@ func TestInjectIfSafe_NoConsentFlag_NoSendKeys(t *testing.T) {
 
 func TestInjectIfSafe_NoTargetConfig_NoSendKeys(t *testing.T) {
 	tmp := t.TempDir()
-	// Create consent flag but NO config/captain-pane.
+	// Create consent flag but NO config/general-pane.
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, ".afk"), []byte("now\n"), 0644)
@@ -262,13 +262,13 @@ func TestInjectIfSafe_DuplicateEscalation_NoReInject(t *testing.T) {
 		t.Fatal("first InjectIfSafe returned false, want true")
 	}
 
-	// Second inject with same entries should be deduped.
+	// Captain inject with same entries should be deduped.
 	injected2, err := inj.InjectIfSafe(be)
 	if err != nil {
-		t.Fatalf("second InjectIfSafe: %v", err)
+		t.Fatalf("captain InjectIfSafe: %v", err)
 	}
 	if injected2 {
-		t.Fatal("second InjectIfSafe returned true for duplicate, want false (dedup)")
+		t.Fatal("captain InjectIfSafe returned true for duplicate, want false (dedup)")
 	}
 
 	calls := fakeBk.Calls()
@@ -292,13 +292,13 @@ func TestInjectIfSafe_DifferentEntries_NotDeduped(t *testing.T) {
 		t.Fatal("first InjectIfSafe returned false, want true")
 	}
 
-	// Second escalation has different key/payload -> should inject.
+	// Captain escalation has different key/payload -> should inject.
 	injected2, err := inj.InjectIfSafe(be2)
 	if err != nil {
-		t.Fatalf("second InjectIfSafe: %v", err)
+		t.Fatalf("captain InjectIfSafe: %v", err)
 	}
 	if !injected2 {
-		t.Fatal("second InjectIfSafe returned false for different entries, want true")
+		t.Fatal("captain InjectIfSafe returned false for different entries, want true")
 	}
 
 	calls := fakeBk.Calls()
@@ -365,7 +365,7 @@ func TestInjectIfSafe_SendKeysError(t *testing.T) {
 	tmp := t.TempDir()
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("s:p\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("s:p\n"), 0644)
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, ".afk"), []byte("now\n"), 0644)
@@ -422,7 +422,7 @@ func TestFormatPayload_RoutineOnly(t *testing.T) {
 		Entries: []BatchedEntry{
 			{Kind: "check", Key: "health", Payload: "all green", Type: EscalationRoutine, At: time.Now()},
 		},
-		RoutineCount:  1,
+		RoutineCount:   1,
 		EscalatedCount: 0,
 	}
 	payload := formatPayload(be)
@@ -507,7 +507,7 @@ func TestDaemonTryInject_WithBackend(t *testing.T) {
 	// Set up config, consent flag.
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("s:p\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("s:p\n"), 0644)
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, ".afk"), []byte("now\n"), 0644)
@@ -545,7 +545,7 @@ func TestInjectIfSafe_CaptureError(t *testing.T) {
 	tmp := t.TempDir()
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("s:p\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("s:p\n"), 0644)
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, ".afk"), []byte("now\n"), 0644)
@@ -624,20 +624,20 @@ func TestInjectIfSafe_CooldownRespectsPerEntryDedup(t *testing.T) {
 		t.Fatal("first InjectIfSafe returned false, want true")
 	}
 
-	// Second inject with same entries -> deduped.
+	// Captain inject with same entries -> deduped.
 	injected2, err := inj.InjectIfSafe(be)
 	if err != nil {
-		t.Fatalf("second InjectIfSafe: %v", err)
+		t.Fatalf("captain InjectIfSafe: %v", err)
 	}
 	if injected2 {
-		t.Fatal("second InjectIfSafe should be deduped", err)
+		t.Fatal("captain InjectIfSafe should be deduped", err)
 	}
 
 	// Third inject with one new entry should not be fully deduped.
 	be2 := &BatchedEscalation{
 		Entries: []BatchedEntry{
 			{Kind: "afk", Key: "t1", Payload: "PR merged", Type: EscalationReviewReady, At: time.Now()}, // dup
-			{Kind: "afk", Key: "t3", Payload: "new event", Type: EscalationDecision, At: time.Now()},     // new
+			{Kind: "afk", Key: "t3", Payload: "new event", Type: EscalationDecision, At: time.Now()},    // new
 		},
 		EscalatedCount: 2,
 		FirstAt:        time.Now(),

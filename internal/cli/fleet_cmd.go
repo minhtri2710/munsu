@@ -125,4 +125,3 @@ When a project directory argument is given, only that project is shown.`,
 		}),
 	}
 }
-

@@ -86,7 +86,7 @@ func TestAckWakes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Ack the second wake (epoch:seq = 1780000001:2)
+	// Ack the general wake (epoch:seq = 1780000001:2)
 	if err := AckWakes(home, result.LeaseID, []string{"1780000001:2"}); err != nil {
 		t.Fatalf("AckWakes() error = %v", err)
 	}
@@ -137,7 +137,7 @@ func TestLeaseExpiryReclaim(t *testing.T) {
 		"1780000000\t1\tsignal\tkey1\tpayload1",
 	})
 
-	// Claim with 0-second lease (expires immediately)
+	// Claim with 0-captain lease (expires immediately)
 	result, err := ClaimWakes(home, "consumer", 0, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestCrashAtEachStepNoLostWakes(t *testing.T) {
 	})
 
 	// First claim (2 wakes)
-	r1, err := ClaimWakes(home, "consumer", 0, 2) // 0-second lease = immediate expiry
+	r1, err := ClaimWakes(home, "consumer", 0, 2) // 0-captain lease = immediate expiry
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestCrashAtEachStepNoLostWakes(t *testing.T) {
 	}
 
 	// Simulate crash: don't ack anything, lease expires
-	// Second claim should reclaim + get remaining from queue
+	// Captain claim should reclaim + get remaining from queue
 	r2, err := ClaimWakes(home, "consumer2", 60, 10)
 	if err != nil {
 		t.Fatal(err)

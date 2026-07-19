@@ -56,46 +56,46 @@ type TaskObserve struct {
 
 // FleetSnapshotV2 is the version-two fleet state with cheap aggregate counts.
 type FleetSnapshotV2 struct {
-	Scope           string            `json:"scope"`
-	Count           int               `json:"count"`
-	Total           int               `json:"total"`
-	Crewmates       []Crewmate        `json:"crewmates"`
-	Secondmates     []SecondmateEntry `json:"secondmates,omitempty"`
-	UnresolvedHolds int               `json:"unresolved_holds,omitempty"`
+	Scope           string         `json:"scope"`
+	Count           int            `json:"count"`
+	Total           int            `json:"total"`
+	Soldiers        []Soldier      `json:"soldiers"`
+	Captains        []CaptainEntry `json:"captains,omitempty"`
+	UnresolvedHolds int            `json:"unresolved_holds,omitempty"`
 }
 
-// Crewmate is the minimal row in a fleet snapshot.
-type Crewmate struct {
+// Soldier is the minimal row in a fleet snapshot.
+type Soldier struct {
 	TaskID string `json:"task_id"`
 	Status string `json:"status"`
 	Branch string `json:"branch,omitempty"`
 }
 
-// SecondmateEntry represents one secondmate in the fleet snapshot.
+// CaptainEntry represents one captain in the fleet snapshot.
 // Parent status is untrusted supplemental evidence (return channel);
-// Current/home fields are derived from the registered Second home when readable.
-type SecondmateEntry struct {
-	ID               string             `json:"id"`
-	Home             string             `json:"home,omitempty"`
-	Scope            string             `json:"scope,omitempty"`
-	Status           string             `json:"status"` // endpoint liveness: seeded|alive|dead|unknown
-	CurrentState     string             `json:"current_state,omitempty"`
-	CurrentReason    string             `json:"current_reason,omitempty"`
-	LastParentStatus string             `json:"last_parent_status,omitempty"`
-	ActiveChildren   []SecondChildBrief `json:"active_children,omitempty"`
-	Counts           *SecondHomeCounts  `json:"counts,omitempty"`
-	Provenance       string             `json:"provenance,omitempty"` // structured-home | parent-status-only | unavailable
+// Current/home fields are derived from the registered Captain home when readable.
+type CaptainEntry struct {
+	ID               string              `json:"id"`
+	Home             string              `json:"home,omitempty"`
+	Scope            string              `json:"scope,omitempty"`
+	Status           string              `json:"status"` // endpoint liveness: seeded|alive|dead|unknown
+	CurrentState     string              `json:"current_state,omitempty"`
+	CurrentReason    string              `json:"current_reason,omitempty"`
+	LastParentStatus string              `json:"last_parent_status,omitempty"`
+	ActiveChildren   []CaptainChildBrief `json:"active_children,omitempty"`
+	Counts           *CaptainHomeCounts  `json:"counts,omitempty"`
+	Provenance       string              `json:"provenance,omitempty"` // structured-home | parent-status-only | unavailable
 }
 
-// SecondChildBrief is a bounded child row under a Second home.
-type SecondChildBrief struct {
+// CaptainChildBrief is a bounded child row under a Captain home.
+type CaptainChildBrief struct {
 	ID     string `json:"id"`
 	Status string `json:"status,omitempty"`
 	Kind   string `json:"kind,omitempty"`
 }
 
-// SecondHomeCounts aggregates Second-home workload surfaces.
-type SecondHomeCounts struct {
+// CaptainHomeCounts aggregates Captain-home workload surfaces.
+type CaptainHomeCounts struct {
 	ActiveChildren int `json:"active_children"`
 	Queued         int `json:"queued"`
 	InFlight       int `json:"in_flight"`

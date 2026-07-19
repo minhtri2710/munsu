@@ -104,7 +104,7 @@ func TestAutoDetectConfig_InitHome(t *testing.T) {
 		t.Error("autoDetectConfig should NOT write backend (runtime context, not init-time preference)")
 	}
 
-	// Should write crew-harness only if harness.Detect() succeeds
+	// Should write soldier-harness only if harness.Detect() succeeds
 	// (may or may not detect in test env — that's OK)
 	// backlog-backend should be written if tasks-axi is on PATH
 }
@@ -127,7 +127,7 @@ func TestAutoDetectConfig_Idempotent(t *testing.T) {
 	// Read what was written
 	originalBackend, _ := config.Get(tmpDir, "backend")
 
-	// Second run (without --reconfigure)
+	// Captain run (without --reconfigure)
 	if err := autoDetectConfig(tmpDir); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestAutoDetectConfig_Idempotent(t *testing.T) {
 	// Should be unchanged
 	val, _ := config.Get(tmpDir, "backend")
 	if val != originalBackend {
-		t.Errorf("second run changed backend from %q to %q", originalBackend, val)
+		t.Errorf("captain run changed backend from %q to %q", originalBackend, val)
 	}
 }
 

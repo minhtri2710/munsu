@@ -221,13 +221,13 @@ func TestPeekCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
 	}
 }
 
-func TestSendCmd_MarksSecondmateLine(t *testing.T) {
-	// Contract: Marshal→Second sends must carry the from-marshal marker so the
+func TestSendCmd_MarksCaptainLine(t *testing.T) {
+	// Contract: General→Captain sends must carry the from-general marker so the
 	// Second answers via parent status, not chat-only.
 	line := "report progress on munsu-rank-rename"
-	marked := marker.MarkFromMarshal(line)
-	if !marker.IsFromMarshal(marked) {
-		t.Fatalf("expected marker on secondmate send line")
+	marked := marker.MarkFromGeneral(line)
+	if !marker.IsFromGeneral(marked) {
+		t.Fatalf("expected marker on captain send line")
 	}
 	if marked == line {
 		t.Fatalf("expected prefix")

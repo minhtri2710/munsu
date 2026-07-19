@@ -7,100 +7,100 @@ import (
 	"testing"
 )
 
-// --- CaptainRelevant tests ---
+// --- GeneralRelevant tests ---
 
-func TestCaptainRelevant_Done(t *testing.T) {
-	if !CaptainRelevant("done: implemented feature X") {
-		t.Error("done: should be captain-relevant")
+func TestGeneralRelevant_Done(t *testing.T) {
+	if !GeneralRelevant("done: implemented feature X") {
+		t.Error("done: should be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_NeedsDecision(t *testing.T) {
-	if !CaptainRelevant("needs-decision: which approach to take") {
-		t.Error("needs-decision: should be captain-relevant")
+func TestGeneralRelevant_NeedsDecision(t *testing.T) {
+	if !GeneralRelevant("needs-decision: which approach to take") {
+		t.Error("needs-decision: should be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_Blocked(t *testing.T) {
-	if !CaptainRelevant("blocked: dependency not ready") {
-		t.Error("blocked: should be captain-relevant")
+func TestGeneralRelevant_Blocked(t *testing.T) {
+	if !GeneralRelevant("blocked: dependency not ready") {
+		t.Error("blocked: should be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_Failed(t *testing.T) {
-	if !CaptainRelevant("failed: tests not passing") {
-		t.Error("failed: should be captain-relevant")
+func TestGeneralRelevant_Failed(t *testing.T) {
+	if !GeneralRelevant("failed: tests not passing") {
+		t.Error("failed: should be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_NotPaused(t *testing.T) {
-	if CaptainRelevant("paused: waiting for upstream release") {
-		t.Error("paused: should NOT be captain-relevant")
+func TestGeneralRelevant_NotPaused(t *testing.T) {
+	if GeneralRelevant("paused: waiting for upstream release") {
+		t.Error("paused: should NOT be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_WorkingNotCaptainRelevant(t *testing.T) {
-	if CaptainRelevant("working: building feature") {
-		t.Error("working: should NOT be captain-relevant")
+func TestGeneralRelevant_WorkingNotGeneralRelevant(t *testing.T) {
+	if GeneralRelevant("working: building feature") {
+		t.Error("working: should NOT be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_ResolvedNotCaptainRelevant(t *testing.T) {
-	if CaptainRelevant("resolved: chose approach A") {
-		t.Error("resolved: should NOT be captain-relevant")
+func TestGeneralRelevant_ResolvedNotGeneralRelevant(t *testing.T) {
+	if GeneralRelevant("resolved: chose approach A") {
+		t.Error("resolved: should NOT be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_EmptyLine(t *testing.T) {
-	if CaptainRelevant("") {
-		t.Error("empty line should NOT be captain-relevant")
+func TestGeneralRelevant_EmptyLine(t *testing.T) {
+	if GeneralRelevant("") {
+		t.Error("empty line should NOT be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_BlankLine(t *testing.T) {
-	if CaptainRelevant("   ") {
-		t.Error("blank line should NOT be captain-relevant")
+func TestGeneralRelevant_BlankLine(t *testing.T) {
+	if GeneralRelevant("   ") {
+		t.Error("blank line should NOT be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_PRReady(t *testing.T) {
-	if !CaptainRelevant("working: PR ready for review") {
-		t.Error(`line containing "PR ready" should be captain-relevant`)
+func TestGeneralRelevant_PRReady(t *testing.T) {
+	if !GeneralRelevant("working: PR ready for review") {
+		t.Error(`line containing "PR ready" should be general-relevant`)
 	}
 }
 
-func TestCaptainRelevant_ChecksGreen(t *testing.T) {
-	if !CaptainRelevant("done: checks green on CI") {
-		t.Error(`line containing "checks green" should be captain-relevant`)
+func TestGeneralRelevant_ChecksGreen(t *testing.T) {
+	if !GeneralRelevant("done: checks green on CI") {
+		t.Error(`line containing "checks green" should be general-relevant`)
 	}
 }
 
-func TestCaptainRelevant_ReadyInBranch(t *testing.T) {
-	if !CaptainRelevant("ready in branch fm/feature") {
-		t.Error(`line containing "ready in branch" should be captain-relevant`)
+func TestGeneralRelevant_ReadyInBranch(t *testing.T) {
+	if !GeneralRelevant("ready in branch fm/feature") {
+		t.Error(`line containing "ready in branch" should be general-relevant`)
 	}
 }
 
-func TestCaptainRelevant_Merged(t *testing.T) {
-	if !CaptainRelevant("PR merged by captain") {
-		t.Error(`line containing "merged" should be captain-relevant`)
+func TestGeneralRelevant_Merged(t *testing.T) {
+	if !GeneralRelevant("PR merged by captain") {
+		t.Error(`line containing "merged" should be general-relevant`)
 	}
 }
 
-func TestCaptainRelevant_KeyedNeedsDecision(t *testing.T) {
-	if !CaptainRelevant("needs-decision [key=api-shape]: choose the API shape") {
-		t.Error("needs-decision with key should be captain-relevant")
+func TestGeneralRelevant_KeyedNeedsDecision(t *testing.T) {
+	if !GeneralRelevant("needs-decision [key=api-shape]: choose the API shape") {
+		t.Error("needs-decision with key should be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_KeyedBlocked(t *testing.T) {
-	if !CaptainRelevant("blocked [key=deploy]: waiting for deployment") {
-		t.Error("blocked with key should be captain-relevant")
+func TestGeneralRelevant_KeyedBlocked(t *testing.T) {
+	if !GeneralRelevant("blocked [key=deploy]: waiting for deployment") {
+		t.Error("blocked with key should be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_CaseInsensitivePRReady(t *testing.T) {
-	if !CaptainRelevant("pr ready somewhere in line") {
+func TestGeneralRelevant_CaseInsensitivePRReady(t *testing.T) {
+	if !GeneralRelevant("pr ready somewhere in line") {
 		// The regex uses (?i) so "pr ready" should match.
 		// Wait — the regex is `(?i)...|PR ready` — it requires "PR ready" with
 		// the capital PR. Let me check: the bash grep is -qiE, which is
@@ -110,21 +110,21 @@ func TestCaptainRelevant_CaseInsensitivePRReady(t *testing.T) {
 	}
 }
 
-func TestCaptainRelevant_VerbInSuffixDoesNotMatch(t *testing.T) {
-	if CaptainRelevant("working: this line mentions done somewhere") {
-		t.Error("a line with 'working' verb and 'done' in the note should NOT be captain-relevant without regex match")
+func TestGeneralRelevant_VerbInSuffixDoesNotMatch(t *testing.T) {
+	if GeneralRelevant("working: this line mentions done somewhere") {
+		t.Error("a line with 'working' verb and 'done' in the note should NOT be general-relevant without regex match")
 	}
 }
 
-func TestCaptainRelevant_DoneColonInNote(t *testing.T) {
-	if !CaptainRelevant("working: done: some work") {
-		t.Error("line with 'done:' anywhere should be captain-relevant")
+func TestGeneralRelevant_DoneColonInNote(t *testing.T) {
+	if !GeneralRelevant("working: done: some work") {
+		t.Error("line with 'done:' anywhere should be general-relevant")
 	}
 }
 
-func TestCaptainRelevant_NeedsDecisionInNote(t *testing.T) {
-	if !CaptainRelevant("working: needs-decision: still deciding") {
-		t.Error("line containing 'needs-decision:' should be captain-relevant")
+func TestGeneralRelevant_NeedsDecisionInNote(t *testing.T) {
+	if !GeneralRelevant("working: needs-decision: still deciding") {
+		t.Error("line containing 'needs-decision:' should be general-relevant")
 	}
 }
 
@@ -514,28 +514,28 @@ func TestAbsorbClass_PausedWithKey(t *testing.T) {
 	}
 }
 
-// --- ScanCaptainRelevant tests ---
+// --- ScanGeneralRelevant tests ---
 
-func TestScanCaptainRelevant_EmptyDir(t *testing.T) {
+func TestScanGeneralRelevant_EmptyDir(t *testing.T) {
 	tmp := t.TempDir()
-	matches := ScanCaptainRelevant(tmp)
+	matches := ScanGeneralRelevant(tmp)
 	if len(matches) != 0 {
 		t.Errorf("expected 0 matches for empty dir, got %d", len(matches))
 	}
 }
 
-func TestScanCaptainRelevant_NonExistentDir(t *testing.T) {
-	matches := ScanCaptainRelevant("/nonexistent")
+func TestScanGeneralRelevant_NonExistentDir(t *testing.T) {
+	matches := ScanGeneralRelevant("/nonexistent")
 	if len(matches) != 0 {
 		t.Errorf("expected 0 matches for nonexistent dir, got %d", len(matches))
 	}
 }
 
-func TestScanCaptainRelevant_OneCaptainRelevant(t *testing.T) {
+func TestScanGeneralRelevant_OneGeneralRelevant(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "task1.status"), []byte("done: implemented feature\n"), 0644)
 
-	matches := ScanCaptainRelevant(tmp)
+	matches := ScanGeneralRelevant(tmp)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %d", len(matches))
 	}
@@ -550,13 +550,13 @@ func TestScanCaptainRelevant_OneCaptainRelevant(t *testing.T) {
 	}
 }
 
-func TestScanCaptainRelevant_FiltersNonCaptain(t *testing.T) {
+func TestScanGeneralRelevant_FiltersNonCaptain(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "relevant.status"), []byte("needs-decision: choose\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "benign.status"), []byte("working: building\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "paused.status"), []byte("paused: waiting\n"), 0644)
 
-	matches := ScanCaptainRelevant(tmp)
+	matches := ScanGeneralRelevant(tmp)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match (only relevant), got %d", len(matches))
 	}
@@ -565,13 +565,13 @@ func TestScanCaptainRelevant_FiltersNonCaptain(t *testing.T) {
 	}
 }
 
-func TestScanCaptainRelevant_MultipleRelevant(t *testing.T) {
+func TestScanGeneralRelevant_MultipleRelevant(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "a.status"), []byte("done: implemented A\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "b.status"), []byte("blocked: blocked on B\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "c.status"), []byte("working: doing C\n"), 0644)
 
-	matches := ScanCaptainRelevant(tmp)
+	matches := ScanGeneralRelevant(tmp)
 	if len(matches) != 2 {
 		t.Fatalf("expected 2 matches (done + blocked), got %d", len(matches))
 	}
@@ -592,36 +592,36 @@ func TestScanCaptainRelevant_MultipleRelevant(t *testing.T) {
 	}
 }
 
-func TestScanCaptainRelevant_IgnoresNonStatusFiles(t *testing.T) {
+func TestScanGeneralRelevant_IgnoresNonStatusFiles(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "task.status"), []byte("done: done\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "task.meta"), []byte("window=@test\n"), 0644)
 	os.WriteFile(filepath.Join(tmp, "notes.txt"), []byte("some notes\n"), 0644)
 
-	matches := ScanCaptainRelevant(tmp)
+	matches := ScanGeneralRelevant(tmp)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match (only .status counted), got %d", len(matches))
 	}
 }
 
-func TestScanCaptainRelevant_EmptyFile(t *testing.T) {
+func TestScanGeneralRelevant_EmptyFile(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "empty.status"), []byte{}, 0644)
 
-	matches := ScanCaptainRelevant(tmp)
+	matches := ScanGeneralRelevant(tmp)
 	if len(matches) != 0 {
 		t.Errorf("expected 0 matches for empty status file, got %d", len(matches))
 	}
 }
 
-func TestScanCaptainRelevant_LastLineWins(t *testing.T) {
+func TestScanGeneralRelevant_LastLineWins(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "multi.status"), []byte(
 		"working: started\n"+
 			"done: finished\n",
 	), 0644)
 
-	matches := ScanCaptainRelevant(tmp)
+	matches := ScanGeneralRelevant(tmp)
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %d", len(matches))
 	}

@@ -30,13 +30,13 @@ Three independent audits—supervision/runtime, delivery lifecycle, and whole-re
 
 ## Executive result
 
-Munsu has strong parity in core fleet state, persistent watch operation, delivery pipelines, harness detection, self-update rebuilding, and basic secondmate lifecycle commands. The remaining material gaps cluster around boundaries where a compiled fleet manager must integrate with external agent harnesses or reconstruct Git/delivery state after it has changed.
+Munsu has strong parity in core fleet state, persistent watch operation, delivery pipelines, harness detection, self-update rebuilding, and basic captain lifecycle commands. The remaining material gaps cluster around boundaries where a compiled fleet manager must integrate with external agent harnesses or reconstruct Git/delivery state after it has changed.
 
 The highest-risk gaps are:
 
-1. no installed native bridge from watcher events to the captain's harness context;
+1. no installed native bridge from watcher events to the general's harness context;
 2. no guaranteed captain session-start nudge or harness turn-end seatbelt;
-3. secondmate launch passes a literal `$(cat .../AGENTS.md)` argument because `exec.Command` does not invoke a shell;
+3. captain launch passes a literal `$(cat .../AGENTS.md)` argument because `exec.Command` does not invoke a shell;
 4. no runtime gate-agent capability refusal equivalent to firstmate's scoped containment;
 5. teardown can falsely refuse a safely squash-merged branch after the remote branch is deleted;
 6. watcher updates lack executable/version ownership and restart verification;
@@ -49,21 +49,21 @@ The highest-risk gaps are:
 
 | Capability | Munsu evidence | Assessment |
 |---|---|---|
-| Persistent deduplicating watcher | `internal/supervision/watcher.go`, `internal/cli/watch_cmd.go` | Implemented and runtime-verified. Persistence independent of the captain process is intentional. |
+| Persistent deduplicating watcher | `internal/supervision/watcher.go`, `internal/cli/watch_cmd.go` | Implemented and runtime-verified. Persistence independent of the general process is intentional. |
 | Session-start fleet digest | `internal/session/sessionstart.go`, `internal/cli/session_cmd.go` | Core digest and watcher ensure exist. This is CLI parity, not native harness-injection parity. |
 | Atomic self-update rebuild | `internal/selfupdate/update.go` | Fast-forward-only update and atomic replacement already exist, including version ldflags. Earlier claims that update only ran `git pull` were false. |
 | Harness detection and launch templates | `internal/harness/adapter.go`, `internal/spawn/spawn.go` | Registry-driven support is materially broader than firstmate's original Pi path. |
 | Delivery pipeline abstraction | `internal/delivery/domain.go`, `internal/delivery/pipeline.go` | Munsu has a deeper adapter-based delivery module; lack of shell-script resemblance is not a gap. |
 | AFK injection seam | `internal/afk/injector.go`, `internal/afk/triage.go` | Existing send-key injection provides a reusable base, though target discovery is incomplete. |
 | Mode-aware briefs and no-mistakes spawn preflight | `internal/brief/brief.go`, `internal/spawn/spawn.go` | Implemented by PR #196. Preflight is not a substitute for runtime gate-agent containment. |
-| Core secondmate lifecycle surface | `internal/secondmate/secondmate.go`, `internal/cli/secondmate_cmd.go` | Seed, launch, retire, handoff, list, and config-push verbs exist; several implementations need hardening below. |
+| Core captain lifecycle surface | `internal/captain/captain.go`, `internal/cli/captain_cmd.go` | Seed, launch, retire, handoff, list, and config-push verbs exist; several implementations need hardening below. |
 | Runtime backlog path | `internal/backlog/backlog.go`, `internal/cli/backlog_cmd.go` | Munsu correctly treats `$MUNSU_HOME/data/backlog.md` as the fleet-runtime queue. This must remain distinct from repository development planning. |
 
 ### Intentional, justified divergence
 
 | Difference | Why it is not a defect |
 |---|---|
-| Watcher survives the captain process | Munsu intentionally uses a persistent watcher with lock/heartbeat state. Firstmate's shell process topology is not the required design. The real requirement is explicit ownership and version identity. |
+| Watcher survives the general process | Munsu intentionally uses a persistent watcher with lock/heartbeat state. Firstmate's shell process topology is not the required design. The real requirement is explicit ownership and version identity. |
 | Compiled adapters instead of checkout-local hook scripts | Munsu should generate/install adapters through a stable integration boundary, not copy firstmate's repository-specific files into every project. |
 | Adapter-based delivery instead of direct `gh` shell functions | The abstraction is deeper and supports multiple delivery modes. Only behavior gaps should be fixed. |
 | No unconditional harness hook installation during `munsu init` | `docs/orchestration-contract.md` correctly places this under opt-in `munsu integrate install|repair`. Repository mutation must remain explicit. |
@@ -103,7 +103,7 @@ Establish two explicit sources of truth: repo `backlog.md` for munsu engineering
 
 **Impact**
 
-A healthy watcher can write wakes while the captain receives no native follow-up. Session-start relies on the operator invoking the command, and the captain can finish a turn while actionable fleet events remain. The fleet can therefore be healthy on disk but unsupervised in the active agent context.
+A healthy watcher can write wakes while the general receives no native follow-up. Session-start relies on the operator invoking the command, and the general can finish a turn while actionable fleet events remain. The fleet can therefore be healthy on disk but unsupervised in the active agent context.
 
 **Required behavior**
 
@@ -121,31 +121,31 @@ Create an opt-in integration subsystem that:
 
 Pi should be the first complete adapter. Claude, Codex, OpenCode, and Grok should be added only from verified native hook contracts, not inferred from command names.
 
-### P0 — Secondmate launch sends a literal shell expression instead of the charter
+### P0 — Captain launch sends a literal shell expression instead of the charter
 
 **Evidence**
 
-`internal/secondmate/secondmate.go::buildLaunchArgs` appends:
+`internal/captain/captain.go::buildLaunchArgs` appends:
 
 ```go
-"$(cat "+filepath.Join(secondmateHome, "AGENTS.md")+")"
+"$(cat "+filepath.Join(captainHome, "AGENTS.md")+")"
 ```
 
 `Launch` executes this with `exec.Command`, which does not perform shell expansion. The test `TestBuildLaunchArgs_VerifiedHarnesses` only asserts that an argument contains `AGENTS.md`, so it validates the bug rather than the intended prompt content.
 
 **Impact**
 
-A secondmate may start without its charter and therefore without its supervision boundaries. The same generic argv shape is also applied to every verified harness even though prompt/path semantics differ by adapter.
+A captain may start without its charter and therefore without its supervision boundaries. The same generic argv shape is also applied to every verified harness even though prompt/path semantics differ by adapter.
 
 **Required behavior**
 
-Read `AGENTS.md` in Go, pass its content through a harness-owned secondmate launch template, and test exact argv for every supported harness. A harness without a verified noninteractive secondmate launch contract must fail closed.
+Read `AGENTS.md` in Go, pass its content through a harness-owned captain launch template, and test exact argv for every supported harness. A harness without a verified noninteractive captain launch contract must fail closed.
 
 ### P0 — Runtime no-mistakes gate containment is missing
 
 **Evidence**
 
-- Firstmate uses `bin/fm-gate-refuse-lib.sh` plus the shared primary-scope predicate in `bin/fm-primary-scope-lib.sh` to prevent gate-capable agents from acting as ordinary crewmates in the same checkout.
+- Firstmate uses `bin/fm-gate-refuse-lib.sh` plus the shared primary-scope predicate in `bin/fm-primary-scope-lib.sh` to prevent gate-capable agents from acting as ordinary soldiers in the same checkout.
 - Munsu's PR #196 adds no-mistakes preflight in `internal/spawn/spawn.go`, but there is no runtime equivalent using `NO_MISTAKES_GATE` or `.no-mistakes/repos/*.git`.
 
 **Impact**
@@ -203,19 +203,19 @@ After `munsu update`, an old watcher may continue running indefinitely while the
 
 Record PID, process start identity, executable path, build version/commit, protocol version, and home. After a successful binary swap, perform a bounded stop/restart/heartbeat handshake when a watcher is active. Consolidate startup into one implementation and make `watch-arm` a deprecated compatibility alias before removal.
 
-### P1 — Captain target discovery is incomplete
+### P1 — General target discovery is incomplete
 
 **Evidence**
 
-`internal/afk/target.go::ResolveTarget` explicitly states runtime target detection is not implemented; normal operation depends on `config/captain-pane`.
+`internal/afk/target.go::ResolveTarget` explicitly states runtime target detection is not implemented; normal operation depends on `config/general-pane`.
 
 **Impact**
 
-Harness-neutral fallback notification cannot reliably locate the captain, and stale pane configuration can silently misdirect messages.
+Harness-neutral fallback notification cannot reliably locate the general, and stale pane configuration can silently misdirect messages.
 
 **Required behavior**
 
-Define a target resolver chain with explicit config first, verified runtime/session metadata second, and a clear unsupported result. Validate target ownership before injection and expose the selected target in doctor output.
+Define a target resolver chain with explicit config first, verified runtime/session metadata captain, and a clear unsupported result. Validate target ownership before injection and expose the selected target in doctor output.
 
 ### P1 — Brief protocol omits terminal resolution records
 
@@ -231,23 +231,23 @@ Operators and agents can acknowledge a wake without durably closing its deduplic
 
 Add the terminal `resolved [key=...] <summary>` protocol to generated briefs, parser/validation tests, and supervision guidance. Preserve compatibility with existing status files.
 
-### P1 — Secondmate registry, handoff, and inheritance do not match their stated contracts
+### P1 — Captain registry, handoff, and inheritance do not match their stated contracts
 
 **Evidence**
 
-- `internal/secondmate/secondmate.go::List` scans `<parentHome>/secondmates` despite its comment saying the full implementation reads `data/secondmates.md`; it therefore omits registered homes outside that directory and loses scope/project/added metadata.
-- `Seed` creates directories and `AGENTS.md` but no provenance marker equivalent to firstmate's `.fm-secondmate-home`.
+- `internal/captain/captain.go::List` scans `<parentHome>/captains` despite its comment saying the full implementation reads `data/captains.md`; it therefore omits registered homes outside that directory and loses scope/project/added metadata.
+- `Seed` creates directories and `AGENTS.md` but no provenance marker equivalent to firstmate's `.fm-captain-home`.
 - `Handoff` copies `.meta` and `.status` runtime files rather than moving complete queued backlog items through the authoritative backlog backend. It is not atomic across a multi-item set: earlier destination writes remain if a later write fails.
-- `ConfigPush` propagates selected config but not `data/captain-shared.md`; writes are not atomic and destination path/provenance checks are weaker than firstmate's `fm-config-inherit-lib.sh`.
-- Firstmate's `fm-backlog-handoff.sh` delegates complete block moves to `tasks-axi mv`, validates a seeded secondmate home, and refuses cross-home dependency damage.
+- `ConfigPush` propagates selected config but not `data/general-shared.md`; writes are not atomic and destination path/provenance checks are weaker than firstmate's `fm-config-inherit-lib.sh`.
+- Firstmate's `fm-backlog-handoff.sh` delegates complete block moves to `tasks-axi mv`, validates a seeded captain home, and refuses cross-home dependency damage.
 
 **Impact**
 
-Registry output can be wrong, task ownership can split between homes, handoff can lose backlog semantics/dependencies, and secondmates can drift from primary-authoritative captain preferences.
+Registry output can be wrong, task ownership can split between homes, handoff can lose backlog semantics/dependencies, and captains can drift from primary-authoritative general preferences.
 
 **Required behavior**
 
-Make `data/secondmates.md` the authoritative registry, introduce a safe seeded-home marker, delegate backlog moves to the configured backend, make multi-key moves atomic, and push `captain-shared.md` read-only with atomic replacement and strict destination validation. Add a locked live-secondmate convergence sweep that validates homes, checks real agent liveness, propagates inherited material, and nudges only when the instruction surface changed.
+Make `data/captains.md` the authoritative registry, introduce a safe seeded-home marker, delegate backlog moves to the configured backend, make multi-key moves atomic, and push `general-shared.md` read-only with atomic replacement and strict destination validation. Add a locked live-captain convergence sweep that validates homes, checks real agent liveness, propagates inherited material, and nudges only when the instruction surface changed.
 
 ### P2 — Repetitive guard warnings can create alert fatigue
 
@@ -271,21 +271,21 @@ Firstmate `bin/fm-session-start.sh` prints a bounded, metadata-only backlog list
 
 **Impact**
 
-The captain starts with active fleet state but can miss dispatchable, blocked, or decision-held work unless it performs an additional backlog query.
+The general starts with active fleet state but can miss dispatchable, blocked, or decision-held work unless it performs an additional backlog query.
 
 **Required behavior**
 
 Add a bounded compact backlog section to session-start. Use the configured backlog backend, omit task bodies, preserve blocker/hold metadata, and print a pointer for targeted full reads.
 
-### P2 — Live secondmate convergence is not enforced at session start
+### P2 — Live captain convergence is not enforced at session start
 
 **Evidence**
 
-Firstmate `bin/fm-bootstrap.sh::secondmate_sync` validates live secondmate homes, fast-forwards them to the primary's local default-branch commit when safe, propagates inherited material, checks agent liveness, and sends a reread nudge only when the instruction surface changed. Munsu exposes individual secondmate commands and status helpers, but session-start/bootstrap does not orchestrate an equivalent locked convergence sweep.
+Firstmate `bin/fm-bootstrap.sh::captain_sync` validates live captain homes, fast-forwards them to the primary's local default-branch commit when safe, propagates inherited material, checks agent liveness, and sends a reread nudge only when the instruction surface changed. Munsu exposes individual captain commands and status helpers, but session-start/bootstrap does not orchestrate an equivalent locked convergence sweep.
 
 **Impact**
 
-Persistent secondmates can continue running stale instructions or inherited configuration while the primary reports a healthy session.
+Persistent captains can continue running stale instructions or inherited configuration while the primary reports a healthy session.
 
 **Required behavior**
 
@@ -310,7 +310,7 @@ Update the stale sentence when the related behavior PR lands; keep embedded skil
 **Evidence**
 
 - `docs/port-mapping.md` maps nominal commands/modules but currently implies some harness follow-up/session behavior that has no installer or runtime artifact.
-- Bootstrap/doctor output does not provide a complete integration capability matrix, artifact drift state, watcher build identity, or resolved captain target.
+- Bootstrap/doctor output does not provide a complete integration capability matrix, artifact drift state, watcher build identity, or resolved general target.
 
 **Impact**
 
@@ -318,7 +318,7 @@ Operators cannot distinguish "harness recognized" from "native integration insta
 
 **Required behavior**
 
-Doctor should report harness, adapter verification, integration installed/drifted/unsupported state, watcher CLI-versus-process version, captain target, gate-scope result, and actionable repair commands. Update port mapping only after behavior is tested.
+Doctor should report harness, adapter verification, integration installed/drifted/unsupported state, watcher CLI-versus-process version, general target, gate-scope result, and actionable repair commands. Update port mapping only after behavior is tested.
 
 ## Rejected, corrected, or downgraded audit claims
 
@@ -327,18 +327,18 @@ Doctor should report harness, adapter verification, integration installed/drifte
 3. **"Briefs do not describe paused state."** False. Paused behavior is present. The confirmed omission is terminal `resolved [key=...]` guidance.
 4. **"Harness hook files should be copied during init."** Rejected. Integration must be opt-in and ownership-safe under `munsu integrate install|repair`.
 5. **"Every firstmate script without a same-named Go file is a parity gap."** Rejected. Munsu's deeper modules and adapter boundaries are often intentional improvements.
-6. **"Secondmate launch supports only Pi."** Obsolete as a nominal claim: the current registry accepts six harnesses. However, exact secondmate argv semantics are not verified, and the literal prompt bug makes current operational support unsafe.
+6. **"Captain launch supports only Pi."** Obsolete as a nominal claim: the current registry accepts six harnesses. However, exact captain argv semantics are not verified, and the literal prompt bug makes current operational support unsafe.
 
 ## Priority order
 
 1. Establish and verify the separate development/runtime backlog contracts before any implementation work.
-2. Fix secondmate launch prompt correctness and fail-closed harness contracts.
+2. Fix captain launch prompt correctness and fail-closed harness contracts.
 3. Build the shared primary-scope/gate containment predicate.
 4. Introduce durable delivery identity and topology-aware teardown.
 5. Implement the integration framework and complete the Pi adapter end to end.
 6. Add watcher build identity and update restart handshake; consolidate watcher launch paths.
 7. Complete brief resolution and target discovery.
-8. Repair secondmate registry/handoff/inheritance semantics.
+8. Repair captain registry/handoff/inheritance semantics.
 9. Add doctor capability reporting and correct documentation claims.
 10. Add remaining harness adapters only when each native contract is verified.
 

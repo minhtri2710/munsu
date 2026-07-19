@@ -11,7 +11,7 @@ import (
 )
 
 // ReviewDiff runs `munsu review-diff` for the given task.
-// It compares the crewmate branch against the authoritative base and prints
+// It compares the soldier branch against the authoritative base and prints
 // a Markdown diff summary. It uses the stored delivery identity when available
 // rather than reconstructing from the current branch state.
 func ReviewDiff(homeDir string, id string) error {

@@ -28,10 +28,10 @@ func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 	// Feed a digest with one escalated wake.
 	digest := &Digest{
 		Escalated: []WakeDigest{
-			{Kind: "afk", Key: "task-1", Payload: "PR merged", IsCaptainRelevant: true},
+			{Kind: "afk", Key: "task-1", Payload: "PR merged", IsGeneralRelevant: true},
 		},
 		Routines: []WakeDigest{
-			{Kind: "check", Key: "health", Payload: "all green", IsCaptainRelevant: false},
+			{Kind: "check", Key: "health", Payload: "all green", IsGeneralRelevant: false},
 		},
 	}
 	d.Feed(digest)

@@ -288,7 +288,7 @@ func isShellPromptGlyph(s string) bool {
 
 // hasPromptGlyphPrefix returns the stripped suffix when s starts with a known
 // prompt glyph followed by a space (2-byte prefix like "❯ ") or just the glyph
-// (1-byte prefix like ">ls"). The second return value indicates whether a
+// (1-byte prefix like ">ls"). The general return value indicates whether a
 // prefix was found and stripped.
 func stripPromptPrefix(s string) (string, bool) {
 	if len(s) == 0 {

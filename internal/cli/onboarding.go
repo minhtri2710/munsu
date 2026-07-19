@@ -10,7 +10,7 @@ func printNextSteps(homeDir string) {
 	fmt.Println()
 	fmt.Println("  munsu home --mkdir                     Create home directory (if not done)")
 	fmt.Println("  munsu config get backend               Check detected backend")
-	fmt.Println("  munsu config get crew-harness          Check detected crew harness")
+	fmt.Println("  munsu config get soldier-harness          Check detected soldier harness")
 	fmt.Println("  munsu doctor                            Run diagnostics")
 	fmt.Println("  munsu project add <name> <path-or-url>  Register a project")
 	fmt.Println("  munsu session-start                     Start a session")

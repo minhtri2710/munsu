@@ -8,7 +8,7 @@ This doc records the mechanism and regression evidence.
 
 ## Mechanism
 
-Captain decisions discovered during investigations or visual reviews must be tracked as structured holds before the originating work may be treated as complete.
+General decisions discovered during investigations or visual reviews must be tracked as structured holds before the originating work may be treated as complete.
 
 ### Hold lifecycle (Phase A — protocol only)
 
@@ -36,6 +36,6 @@ munsu decision-hold resolve <key> --answer "<answer>" --unblock <dep-id>
 
 - Each decision gets one stable key. Retry with the same key is idempotent.
 - A completed investigation or ended visual review uses the same owner and completion command.
-- The hold remains open until the captain's answer is recorded and any dependent work is unblocked.
+- The hold remains open until the general's answer is recorded and any dependent work is unblocked.
 - Bearings reads resolved holds; it must not scrape historical reports or chat.
 - Resolved findings, recommendations needing no choice, and prose that merely sounds decision-like do not create holds.

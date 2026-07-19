@@ -83,7 +83,7 @@ func TestCreate_Validation(t *testing.T) {
 	homeDir := t.TempDir()
 
 	tests := []struct {
-		name       string
+		name               string
 		origin, kw, reason string
 	}{
 		{"empty origin", "", "k", "reason"},
@@ -311,7 +311,7 @@ func TestResolve_Validation(t *testing.T) {
 	homeDir := t.TempDir()
 
 	tests := []struct {
-		name              string
+		name               string
 		origin, kw, answer string
 	}{
 		{"empty origin", "", "k", "answer"},

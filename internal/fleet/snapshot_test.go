@@ -50,10 +50,10 @@ func TestPhaseFromMeta(t *testing.T) {
 		paneAlive bool
 		want      string
 	}{
-		{"", false, "registered"},  // pre-spawn: no window
-		{"@1", true, "alive"},      // active pane
-		{"@1", false, "dead"},       // window set but pane gone
-		{"", true, "registered"},     // window empty, paneAlive irrelevant
+		{"", false, "registered"}, // pre-spawn: no window
+		{"@1", true, "alive"},     // active pane
+		{"@1", false, "dead"},     // window set but pane gone
+		{"", true, "registered"},  // window empty, paneAlive irrelevant
 	}
 	for _, tc := range tests {
 		got := PhaseFromMeta(tc.window, tc.paneAlive)
@@ -196,45 +196,45 @@ func TestView_RegisteredPhase(t *testing.T) {
 	}
 }
 
-func TestSecondmateStatus_Seeded(t *testing.T) {
+func TestCaptainStatus_Seeded(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 
-	status := SecondmateStatus(smHome)
+	status := CaptainStatus(smHome)
 	if status != "seeded" {
-		t.Errorf("SecondmateStatus = %q, want %q", status, "seeded")
+		t.Errorf("CaptainStatus = %q, want %q", status, "seeded")
 	}
 }
 
-func TestSecondmateStatus_Alive(t *testing.T) {
+func TestCaptainStatus_Alive(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
 
-	status := SecondmateStatus(smHome)
+	status := CaptainStatus(smHome)
 	if status != "alive" {
-		t.Errorf("SecondmateStatus = %q, want %q", status, "alive")
+		t.Errorf("CaptainStatus = %q, want %q", status, "alive")
 	}
 }
 
-func TestSecondmateStatus_Dead(t *testing.T) {
+func TestCaptainStatus_Dead(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("invalid\n"), 0644)
 
-	status := SecondmateStatus(smHome)
+	status := CaptainStatus(smHome)
 	if status != "dead" {
-		t.Errorf("SecondmateStatus = %q, want %q", status, "dead")
+		t.Errorf("CaptainStatus = %q, want %q", status, "dead")
 	}
 }
 
-func TestSecondmateStatus_Unknown(t *testing.T) {
+func TestCaptainStatus_Unknown(t *testing.T) {
 	// Non-existent home should return unknown
-	status := SecondmateStatus("/nonexistent/sm")
+	status := CaptainStatus("/nonexistent/sm")
 	if status != "unknown" {
-		t.Errorf("SecondmateStatus = %q, want %q", status, "unknown")
+		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
 	}
 }

@@ -76,15 +76,15 @@ func TestPrintDataFile_ShowsContent(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "captain.md"), []byte("captain: jdoe\nfocus: refactor\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "general.md"), []byte("captain: jdoe\nfocus: refactor\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	output := captureStdout(func() {
-		printDataFile(os.Stdout, tmpDir, "captain.md")
+		printDataFile(os.Stdout, tmpDir, "general.md")
 	})
 
-	if !strings.Contains(output, "=== data/captain.md ===") {
+	if !strings.Contains(output, "=== data/general.md ===") {
 		t.Errorf("expected header, got: %s", output)
 	}
 	if !strings.Contains(output, "captain: jdoe") {
@@ -100,10 +100,10 @@ func TestPrintDataFile_ShowsAbsent(t *testing.T) {
 	}
 
 	output := captureStdout(func() {
-		printDataFile(os.Stdout, tmpDir, "captain.md")
+		printDataFile(os.Stdout, tmpDir, "general.md")
 	})
 
-	if !strings.Contains(output, "ABSENT") || !strings.Contains(output, "captain.md") {
+	if !strings.Contains(output, "ABSENT") || !strings.Contains(output, "general.md") {
 		t.Errorf("expected ABSENT marker, got: %s", output)
 	}
 }

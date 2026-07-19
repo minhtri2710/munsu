@@ -35,6 +35,7 @@ func PrintRecords(records []Record) {
 		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", r.Epoch, r.Seq, r.Kind, r.Key, r.Payload)
 	}
 }
+
 // GuardResult summarizes the shared guard evaluation for both the CLI
 // middleware and the contract guard command.
 type GuardResult struct {

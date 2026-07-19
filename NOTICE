@@ -2,5 +2,5 @@ munsu ports the verified behavior of firstmate
 (https://github.com/kunchenguid/firstmate) into a standalone Go CLI.
 
 munsu is not affiliated with or endorsed by firstmate or its maintainers.
-firstmate is the behavioral origin of munsu's crew-supervision capabilities;
+firstmate is the behavioral origin of munsu's soldier-supervision capabilities;
 munsu is a separate product built under MIT license.

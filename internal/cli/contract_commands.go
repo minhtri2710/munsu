@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/waker"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -112,7 +112,7 @@ func newTaskObserveCmd() *cobra.Command {
 			if _, err := task.ReadMeta(ctx.Home, args[0]); err != nil {
 				return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
 			}
-			state, err := crewstate.Read(ctx.Home, args[0])
+			state, err := soldierstate.Read(ctx.Home, args[0])
 			if err != nil {
 				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to observe task state")
 			}

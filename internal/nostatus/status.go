@@ -20,12 +20,12 @@ type Step struct {
 type RunStatus struct {
 	ID            string `json:"id"`
 	Branch        string `json:"branch"`
-	Status        string `json:"status"`                  // in_progress or completed
-	Head          string `json:"head,omitempty"`          // commit SHA, present on completed runs
-	PR            string `json:"pr,omitempty"`            // PR URL, present on completed runs that pushed
-	Findings      string `json:"findings,omitempty"`      // findings count or "none"
-	Outcome       string `json:"outcome,omitempty"`       // passed, failed, checks-passed, cancelled, etc.
-	Error         string `json:"error,omitempty"`         // error message when the run errored
+	Status        string `json:"status"`             // in_progress or completed
+	Head          string `json:"head,omitempty"`     // commit SHA, present on completed runs
+	PR            string `json:"pr,omitempty"`       // PR URL, present on completed runs that pushed
+	Findings      string `json:"findings,omitempty"` // findings count or "none"
+	Outcome       string `json:"outcome,omitempty"`  // passed, failed, checks-passed, cancelled, etc.
+	Error         string `json:"error,omitempty"`    // error message when the run errored
 	Steps         []Step `json:"steps,omitempty"`
 	AwaitingAgent string `json:"awaiting_agent,omitempty"` // non-empty when pipeline is parked at a gate
 }
@@ -150,7 +150,7 @@ func extractValue(line, prefix string) string {
 }
 
 // ConceptualStep resolves the run into a high-level step name and outcome,
-// matching the crewstate domain contract.
+// matching the soldierstate domain contract.
 func (r *RunStatus) ConceptualStep() (step, outcome string) {
 	switch r.Status {
 	case "in_progress":

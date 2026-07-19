@@ -1,6 +1,6 @@
 # Supervision loop — watch / wake-drain / guard / afk
 
-This document details the crewmate supervision loop. For the high-level step, see `SKILL.md` step 5.
+This document details the soldier supervision loop. For the high-level step, see `SKILL.md` step 5.
 
 ## Watch loop (`munsu watch`)
 
@@ -16,7 +16,7 @@ When the watcher fires, a wake is queued. The operator drains it:
 
 ```sh
 munsu wake-drain    # process all queued wakes
-munsu crew-state <id>  # read ground truth (not raw status tail)
+munsu soldier-state <id>  # read ground truth (not raw status tail)
 ```
 
 After handling actionable wakes, confirm the persistent watcher remains healthy if tasks are still in flight:
@@ -39,11 +39,11 @@ When stepping away from the fleet, start the away-mode daemon:
 munsu afk
 ```
 
-This sets an AFK flag and polls the fleet at a reduced cadence. Only captain-relevant events (done, failed, needs-decision) are printed. Stop with SIGTERM/SIGINT; the flag is cleared on stop.
+This sets an AFK flag and polls the fleet at a reduced cadence. Only general-relevant events (done, failed, needs-decision) are printed. Stop with SIGTERM/SIGINT; the flag is cleared on stop.
 
-## Stuck crewmate recovery
+## Stuck soldier recovery
 
-If a crewmate is unresponsive, do not re-implement recovery logic here. Consult `docs/skills/stuck-crewmate-recovery.md` for the escalation ladder:
+If a soldier is unresponsive, do not re-implement recovery logic here. Consult `docs/skills/stuck-soldier-recovery.md` for the escalation ladder:
 
 1. `munsu peek <id>` — read last N lines.
 2. `munsu send <id> "<instruction>"` — steer.

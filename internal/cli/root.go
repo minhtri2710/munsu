@@ -129,21 +129,22 @@ func fleetSummary(w io.Writer, homeDir string) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Next: munsu fleet bearings | munsu peek <id> | munsu --help")
 }
+
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
 	root := &cobra.Command{
 		Use:   "munsu",
-		Short: "Standalone CLI port of firstmate crew capabilities",
+		Short: "Standalone CLI port of firstmate soldier capabilities",
 		Long: `munsu is an installable CLI that gives any coding-agent harness
-the firstmate crew capability, usable from any project directory,
+the firstmate soldier capability, usable from any project directory,
 with no requirement to live inside a firstmate checkout.`,
 		Version:            Version,
 		SilenceErrors:      true,
 		SilenceUsage:       true,
 		DisableAutoGenTag:  true,
 		DisableSuggestions: true,
-		PersistentPreRunE:   guardWatcherPreRunE(),
+		PersistentPreRunE:  guardWatcherPreRunE(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			homeDir, err := home.Resolve(homeOverride)
 			if err != nil {
@@ -175,7 +176,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newSpawnCmd())
 	root.AddCommand(newSendCmd())
 	root.AddCommand(newPeekCmd())
-	root.AddCommand(newCrewStateCmd())
+	root.AddCommand(newSoldierStateCmd())
 	root.AddCommand(newPromoteCmd())
 	root.AddCommand(newTeardownCmd())
 	root.AddCommand(newDeliveryCmd())
@@ -192,7 +193,7 @@ with no requirement to live inside a firstmate checkout.`,
 	root.AddCommand(newEnsureAgentsMdCmd())
 	root.AddCommand(newUpdateCmd())
 	root.AddCommand(newDecisionHoldCmd())
-	root.AddCommand(newSecondmateCmd())
+	root.AddCommand(newCaptainCmd())
 	root.AddCommand(newAfkCmd())
 	root.AddCommand(newIntegrateCmd())
 

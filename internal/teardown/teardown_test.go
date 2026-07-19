@@ -269,10 +269,10 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	// Create residual artifacts: munsu-native (both old and new names) + pi adapter artifacts
 	residuals := []string{
 		"test-residual.status",
-		"test-residual.check",          // new canonical name
-		"test-residual.check.sh",       // legacy name (dual-read)
-		"test-residual.turnend",        // new canonical name
-		"test-residual.turn-ended",     // legacy name (dual-read)
+		"test-residual.check",      // new canonical name
+		"test-residual.check.sh",   // legacy name (dual-read)
+		"test-residual.turnend",    // new canonical name
+		"test-residual.turn-ended", // legacy name (dual-read)
 		"test-residual.pi-ext.ts",
 	}
 	for _, name := range residuals {
@@ -321,8 +321,8 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	// Munsu-native artifacts: new canonical names (post item-5 rename)
 	munsuNames := []string{
 		"legacy-test.status",
-		"legacy-test.check",    // new canonical name
-		"legacy-test.turnend",  // new canonical name
+		"legacy-test.check",   // new canonical name
+		"legacy-test.turnend", // new canonical name
 	}
 	// Legacy names still being cleaned up (dual-read window)
 	legacyNames := []string{

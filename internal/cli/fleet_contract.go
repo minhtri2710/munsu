@@ -4,10 +4,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/secondmate"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +31,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	if err != nil {
 		return operationError("internal", "Run `munsu fleet snapshot --version 2` again", "Unable to read fleet state")
 	}
-	crewmates := make([]contract.Crewmate, 0, len(snapshot.Tasks))
+	soldiers := make([]contract.Soldier, 0, len(snapshot.Tasks))
 	for _, entry := range snapshot.Tasks {
 		status := entry.LastStatus
 		if index := strings.Index(status, ":"); index >= 0 {
@@ -40,31 +40,31 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		if status == "" {
 			status = fleet.PhaseFromMeta(entry.Window, entry.PaneAlive)
 		}
-		row := contract.Crewmate{TaskID: entry.ID, Status: status}
+		row := contract.Soldier{TaskID: entry.ID, Status: status}
 		if fields["branch"] {
 			row.Branch = branchFor(map[string]string{"worktree": entry.Worktree})
 		}
-		crewmates = append(crewmates, row)
+		soldiers = append(soldiers, row)
 	}
-	// Collect secondmate entries with home-summary + parent return-channel status.
-	matedata, err := secondmate.List(ctx.Home)
-	var secondmates []contract.SecondmateEntry
+	// Collect captain entries with home-summary + parent return-channel status.
+	matedata, err := captain.List(ctx.Home)
+	var captains []contract.CaptainEntry
 	if err == nil {
 		for _, m := range matedata {
-			status := fleet.SecondmateStatus(m.Home)
-			entry := contract.SecondmateEntry{
+			status := fleet.CaptainStatus(m.Home)
+			entry := contract.CaptainEntry{
 				ID:               m.ID,
 				Home:             m.Home,
 				Scope:            m.Scope,
 				Status:           status,
 				LastParentStatus: fleet.LastParentStatus(ctx.Home, m.ID),
 			}
-			sum := fleet.SummarizeSecondHome(m.Home)
+			sum := fleet.SummarizeCaptainHome(m.Home)
 			if sum.Valid {
 				entry.CurrentState = sum.State
 				entry.CurrentReason = sum.Reason
 				entry.Provenance = "structured-home"
-				entry.Counts = &contract.SecondHomeCounts{
+				entry.Counts = &contract.CaptainHomeCounts{
 					ActiveChildren: sum.Counts.ActiveChildren,
 					Queued:         sum.Counts.Queued,
 					InFlight:       sum.Counts.InFlight,
@@ -73,7 +73,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 					Endpoints:      sum.Counts.Endpoints,
 				}
 				for _, c := range sum.ActiveChildren {
-					entry.ActiveChildren = append(entry.ActiveChildren, contract.SecondChildBrief{
+					entry.ActiveChildren = append(entry.ActiveChildren, contract.CaptainChildBrief{
 						ID: c.ID, Status: c.Status, Kind: c.Kind,
 					})
 				}
@@ -86,7 +86,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 				entry.CurrentState = "unknown"
 				entry.CurrentReason = sum.Reason
 			}
-			secondmates = append(secondmates, entry)
+			captains = append(captains, entry)
 		}
 	}
 
@@ -99,19 +99,19 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		}
 	}
 
-	sort.Slice(crewmates, func(i, j int) bool { return crewmates[i].TaskID < crewmates[j].TaskID })
+	sort.Slice(soldiers, func(i, j int) bool { return soldiers[i].TaskID < soldiers[j].TaskID })
 	return writeContract(cmd, contract.Response[contract.FleetSnapshotV2]{
 		SchemaVersion: contract.SchemaVersion,
 		Kind:          "fleet.snapshot",
 		Status:        "success",
 		Data: contract.FleetSnapshotV2{
 			Scope:           ctx.Home,
-			Count:           len(crewmates),
-			Total:           len(crewmates),
-			Crewmates:       crewmates,
-			Secondmates:     secondmates,
+			Count:           len(soldiers),
+			Total:           len(soldiers),
+			Soldiers:        soldiers,
+			Captains:        captains,
 			UnresolvedHolds: unresolvedHolds,
 		},
-		Help: []string{"Run `munsu task observe <task-id>` to inspect a crewmate"},
+		Help: []string{"Run `munsu task observe <task-id>` to inspect a soldier"},
 	})
 }

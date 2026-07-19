@@ -1,4 +1,4 @@
-// Package spawn implements the crewmate spawn orchestration — the full
+// Package spawn implements the soldier spawn orchestration — the full
 // sequence of resolving home, validating inputs, acquiring a worktree,
 // launching the harness, and wiring the agent session.
 package spawn
@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Args holds all input parameters for spawning a crewmate.
+// Args holds all input parameters for spawning a soldier.
 type Args struct {
 	ID                  string
 	ProjectName         string
@@ -36,7 +36,7 @@ type Args struct {
 // Run executes the full spawn orchestration sequence by delegating to Runner.
 //
 //	resolve home → validate → brief exists → project path → worktree.AssertNotTangled
-//	→ worktree.Get → resolve harness → model/effort → write .crew-launch.sh + .crew-brief.md + meta
+//	→ worktree.Get → resolve harness → model/effort → write .soldier-launch.sh + .soldier-brief.md + meta
 //	→ start session → send brief → arm watcher
 //
 // On error after worktree lease, the worktree is returned to the pool (fail-closed).

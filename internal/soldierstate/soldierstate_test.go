@@ -1,4 +1,4 @@
-package crewstate
+package soldierstate
 
 import (
 	"os"
@@ -211,7 +211,6 @@ func TestRead_LastNonTerminalStatus(t *testing.T) {
 }
 
 // --- No-mistakes run-step reconciliation tests ---
-
 
 func TestApplyNoMistakesStep_Running(t *testing.T) {
 	s := &State{}

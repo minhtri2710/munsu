@@ -10,7 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
-// HomeSummary is a bounded structured view of one Second home.
+// HomeSummary is a bounded structured view of one Captain home.
 // Schema mirrors firstmate's fm-secondmate-home-summary.v1 at a shallow depth:
 // registered home state is authoritative; parent status is separate evidence.
 type HomeSummary struct {
@@ -24,14 +24,14 @@ type HomeSummary struct {
 	Counts         HomeCounts
 }
 
-// ChildBrief is one active endpoint under a Second home.
+// ChildBrief is one active endpoint under a Captain home.
 type ChildBrief struct {
 	ID     string
 	Status string
 	Kind   string
 }
 
-// HomeCounts aggregates Second-home workload.
+// HomeCounts aggregates Captain-home workload.
 type HomeCounts struct {
 	ActiveChildren int
 	Queued         int
@@ -43,11 +43,11 @@ type HomeCounts struct {
 
 const maxActiveChildren = 20
 
-// SummarizeSecondHome builds a bounded summary for a registered Second home.
-func SummarizeSecondHome(homeDir string) HomeSummary {
+// SummarizeCaptainHome builds a bounded summary for a registered Captain home.
+func SummarizeCaptainHome(homeDir string) HomeSummary {
 	now := time.Now().UTC().Format(time.RFC3339)
 	sum := HomeSummary{
-		Schema:    "munsu-second-home-summary.v1",
+		Schema:    "munsu-captain-home-summary.v1",
 		Generated: now,
 		Home:      homeDir,
 		Valid:     true,
@@ -55,15 +55,13 @@ func SummarizeSecondHome(homeDir string) HomeSummary {
 	}
 	if homeDir == "" {
 		sum.Valid = false
-		sum.Reason = "no recorded second home"
+		sum.Reason = "no recorded captain home"
 		sum.State = "unknown"
 		return sum
 	}
 
-	// Backlog counts (manual file backend; empty if missing).
 	fb := backlog.NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
 	if items, err := fb.List(backlog.StateQueued); err == nil {
-		// List(StateQueued) returns all items by backend convention.
 		for _, item := range items {
 			switch item.State {
 			case backlog.StateQueued:
@@ -78,10 +76,8 @@ func SummarizeSecondHome(homeDir string) HomeSummary {
 		}
 	}
 
-	// Endpoint / child task scan from Second home state/*.meta
 	entries, err := task.ListMeta(homeDir)
 	if err != nil {
-		// non-fatal: home may only have backlog
 		entries = nil
 	}
 	sum.Counts.Endpoints = len(entries)
@@ -100,11 +96,9 @@ func SummarizeSecondHome(homeDir string) HomeSummary {
 				active = append(active, ChildBrief{ID: e.ID, Status: status, Kind: e.Kind})
 			}
 			sum.Counts.ActiveChildren++
-			if classify.CaptainRelevant(status) || verb == "needs-decision" {
+			if classify.GeneralRelevant(status) || verb == "needs-decision" {
 				captainDecision = true
 			}
-		case "done", "failed":
-			// terminal endpoints stay out of active_children
 		}
 	}
 	sum.ActiveChildren = active
@@ -116,17 +110,15 @@ func SummarizeSecondHome(homeDir string) HomeSummary {
 		sum.State = "active_child_work"
 	case sum.Counts.Blocked > 0:
 		sum.State = "externally_held"
-	case sum.Counts.Queued > 0:
-		sum.State = "no_active_work" // idle with queue still healthy resting? firstmate uses queued separately
 	default:
 		sum.State = "no_active_work"
 	}
 	return sum
 }
 
-// LastParentStatus returns the last line of parent state/secondmate:<id>.status.
-func LastParentStatus(parentHome, secondID string) string {
-	lines, err := task.ReadStatus(parentHome, "secondmate:"+secondID)
+// LastParentStatus returns the last line of parent state/captain:<id>.status.
+func LastParentStatus(parentHome, captainID string) string {
+	lines, err := task.ReadStatus(parentHome, "captain:"+captainID)
 	if err != nil || len(lines) == 0 {
 		return ""
 	}

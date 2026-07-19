@@ -185,7 +185,7 @@ func TestScanStatusFiles_MultipleTasks(t *testing.T) {
 	}
 	// Should NOT contain task-2 (working only)
 	if strings.Contains(output, "task-2") {
-		t.Errorf("task-2 should not appear in output (no captain-relevant events), got %q", output)
+		t.Errorf("task-2 should not appear in output (no general-relevant events), got %q", output)
 	}
 }
 
@@ -294,7 +294,7 @@ func TestDisable_Idempotent(t *testing.T) {
 	}
 	// Repeated calls should also succeed
 	if err := Disable(tmp); err != nil {
-		t.Fatalf("Disable() second call: unexpected error: %v", err)
+		t.Fatalf("Disable() captain call: unexpected error: %v", err)
 	}
 }
 
@@ -332,10 +332,10 @@ func TestScanStatusFiles_DedupSkipsRepeat(t *testing.T) {
 		t.Errorf("expected wake-queue to contain 'PR merged', got: %s", string(data))
 	}
 
-	// Second call: same content, should be suppressed
-	secondOut := captureStdout(func() { scanStatusFiles(tmp) })
-	if secondOut != "" {
-		t.Errorf("expected no output on repeat, got %q", secondOut)
+	// Captain call: same content, should be suppressed
+	captainOut := captureStdout(func() { scanStatusFiles(tmp) })
+	if captainOut != "" {
+		t.Errorf("expected no output on repeat, got %q", captainOut)
 	}
 }
 
@@ -360,10 +360,10 @@ func TestScanStatusFiles_EscalatesOnChange(t *testing.T) {
 	// Change the status line to something new
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("done: build green\nfailed: test failure\n"), 0644)
 
-	// Second call: line changed, should escalate again
-	secondOut := captureStdout(func() { scanStatusFiles(tmp) })
-	if !strings.Contains(secondOut, "failed:") {
-		t.Errorf("expected escalation on line change, got %q", secondOut)
+	// Captain call: line changed, should escalate again
+	captainOut := captureStdout(func() { scanStatusFiles(tmp) })
+	if !strings.Contains(captainOut, "failed:") {
+		t.Errorf("expected escalation on line change, got %q", captainOut)
 	}
 }
 

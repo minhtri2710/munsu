@@ -15,7 +15,7 @@ import (
 type CapabilityDiagnostics struct {
 	Integrations []IntegrationDiagnostic
 	Watcher      *WatcherDiagnostic
-	Captain      *CaptainDiagnostic
+	General      *GeneralDiagnostic
 	ScopeResult  *ScopeDiagnostic
 }
 
@@ -87,25 +87,25 @@ func (d *WatcherDiagnostic) Fix() string {
 	return ""
 }
 
-// CaptainDiagnostic reports captain target resolution status.
-type CaptainDiagnostic struct {
+// GeneralDiagnostic reports general target resolution status.
+type GeneralDiagnostic struct {
 	Result afk.TargetResult
 	Err    error
 }
 
-func (d *CaptainDiagnostic) String() string {
+func (d *GeneralDiagnostic) String() string {
 	if d.Err != nil {
-		return fmt.Sprintf("captain target: error: %v", d.Err)
+		return fmt.Sprintf("general target: error: %v", d.Err)
 	}
 	if d.Result.Source == afk.Unsupported {
-		return fmt.Sprintf("captain target: %s (%s)", d.Result.Source, d.Result.SourceDetail)
+		return fmt.Sprintf("general target: %s (%s)", d.Result.Source, d.Result.SourceDetail)
 	}
-	return fmt.Sprintf("captain target: resolved via %s → %q", d.Result.Source, d.Result.Handle)
+	return fmt.Sprintf("general target: resolved via %s → %q", d.Result.Source, d.Result.Handle)
 }
 
-func (d *CaptainDiagnostic) Fix() string {
+func (d *GeneralDiagnostic) Fix() string {
 	if d.Result.Source == afk.Unsupported {
-		return "set config/captain-pane or ensure TMUX_PANE/HERDR_ENV is active"
+		return "set config/general-pane or ensure TMUX_PANE/HERDR_ENV is active"
 	}
 	return ""
 }
@@ -137,8 +137,8 @@ func CollectCapabilities(home, cwd, version string) *CapabilityDiagnostics {
 	// 2. Watcher identity — compare identity file against CLI version
 	cd.Watcher = collectWatcherDiagnostic(home, version)
 
-	// 3. Captain target — resolve wake/captain pane handle
-	cd.Captain = collectCaptainDiagnostic(home)
+	// 3. General target — resolve wake/general pane handle
+	cd.General = collectGeneralDiagnostic(home)
 
 	// 4. Scope classification
 	cd.ScopeResult = collectScopeDiagnostic(cwd)
@@ -193,8 +193,8 @@ func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 	return d
 }
 
-func collectCaptainDiagnostic(home string) *CaptainDiagnostic {
-	d := &CaptainDiagnostic{}
+func collectGeneralDiagnostic(home string) *GeneralDiagnostic {
+	d := &GeneralDiagnostic{}
 
 	result, err := afk.ResolveTargetWithSource(home)
 	if err != nil {

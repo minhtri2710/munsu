@@ -12,8 +12,8 @@ import (
 // from unknown keys.
 var KnownKeys = []string{
 	"backend",
-	"crew-harness",
-	"secondmate-harness",
+	"soldier-harness",
+	"captain-harness",
 	"backlog-backend",
 	"default-mode",
 	"require-no-mistakes",

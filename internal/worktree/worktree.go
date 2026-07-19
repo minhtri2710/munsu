@@ -5,13 +5,13 @@
 // with a one-time stderr note.
 //
 // Lease hygiene: every worktree acquired via Get (especially with --lease)
-// MUST be returned via Return when the owning crewmate finishes. Orphaned
+// MUST be returned via Return when the owning soldier finishes. Orphaned
 // leases block the pool and must be reclaimed manually.
 // Use "munsu worktree reclaim" to detect and return orphaned leases.
 //
 // IMPORTANT: Return always passes --force to treehouse to prevent interactive
 // prompts (e.g. "Worktree has uncommitted changes. Clean and return? [Y/n]")
-// from hanging crewmates with no stdin. If treehouse still emits "Aborted" in
+// from hanging soldiers with no stdin. If treehouse still emits "Aborted" in
 // its output even with --force, Return treats that as an error even on exit 0.
 //
 // The --force flag is required: without it, treehouse prompts interactively

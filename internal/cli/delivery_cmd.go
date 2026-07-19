@@ -25,8 +25,8 @@ merge PRs, and merge branches locally.`,
 func newReviewDiffCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "review-diff <id>",
-		Short: "Review diff between crewmate branch and base",
-		Long: `Compare the crewmate branch against the authoritative base and print
+		Short: "Review diff between soldier branch and base",
+		Long: `Compare the soldier branch against the authoritative base and print
 a Markdown diff summary.
 
 For registered projects with a remote, compares against the default branch.
@@ -102,7 +102,7 @@ func newMergeLocalCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "merge-local <id>",
 		Short: "Fast-forward merge to local default branch",
-		Long: `Fast-forward merge the crewmate branch into the local default branch.
+		Long: `Fast-forward merge the soldier branch into the local default branch.
 Only works for local-only mode projects (no remote).
 Refuses if the merge is not a clean fast-forward.`,
 		Args: ExactArgs(1),

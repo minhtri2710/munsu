@@ -33,13 +33,13 @@ func newHarnessCmd() *cobra.Command {
 	configureContractCommand(detectCmd)
 	cmd.AddCommand(detectCmd)
 
-	crewCmd := &cobra.Command{
-		Use:   "crew",
-		Short: "Resolve crewmate harness",
-		Long:  `Resolve the crewmate harness. Fallback chain: crew-dispatch.json default > config/crew-harness > detected harness.`,
+	soldierCmd := &cobra.Command{
+		Use:   "soldier",
+		Short: "Resolve soldier harness",
+		Long:  `Resolve the soldier harness. Fallback chain: soldier-dispatch.json default > config/soldier-harness > detected harness.`,
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			h, err := harness.Crew(ctx.Home)
+			h, err := harness.Soldier(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -51,16 +51,16 @@ func newHarnessCmd() *cobra.Command {
 			})
 		}),
 	}
-	configureContractCommand(crewCmd)
-	cmd.AddCommand(crewCmd)
+	configureContractCommand(soldierCmd)
+	cmd.AddCommand(soldierCmd)
 
-	secondmateCmd := &cobra.Command{
-		Use:   "secondmate",
-		Short: "Resolve secondmate harness",
-		Long:  `Resolve the secondmate harness. Fallback chain: config/secondmate-harness > config/crew-harness > detected harness.`,
+	captainCmd := &cobra.Command{
+		Use:   "captain",
+		Short: "Resolve captain harness",
+		Long:  `Resolve the general harness. Fallback chain: config/captain-harness > config/soldier-harness > detected harness.`,
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			h, err := harness.Secondmate(ctx.Home)
+			h, err := harness.Captain(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -72,8 +72,8 @@ func newHarnessCmd() *cobra.Command {
 			})
 		}),
 	}
-	configureContractCommand(secondmateCmd)
-	cmd.AddCommand(secondmateCmd)
+	configureContractCommand(captainCmd)
+	cmd.AddCommand(captainCmd)
 
 	return cmd
 }

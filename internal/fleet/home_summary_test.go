@@ -9,11 +9,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
-func TestSummarizeSecondHome_ActiveChild(t *testing.T) {
+func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	// backlog: one in-flight
 	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] t1: work\n- [ ] t2: queued\n"), 0644)
 	if err := task.WriteMeta(home, "t1", map[string]string{"kind": "ship", "window": "w1"}); err != nil {
 		t.Fatal(err)
@@ -21,7 +20,7 @@ func TestSummarizeSecondHome_ActiveChild(t *testing.T) {
 	if err := task.AppendStatus(home, "t1", "working: implementing"); err != nil {
 		t.Fatal(err)
 	}
-	sum := SummarizeSecondHome(home)
+	sum := SummarizeCaptainHome(home)
 	if sum.State != "active_child_work" {
 		t.Fatalf("state=%q want active_child_work", sum.State)
 	}
@@ -36,7 +35,7 @@ func TestSummarizeSecondHome_ActiveChild(t *testing.T) {
 func TestLastParentStatus(t *testing.T) {
 	parent := t.TempDir()
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	if err := task.AppendStatus(parent, "secondmate:api", "done [key=x]: PR https://example/1"); err != nil {
+	if err := task.AppendStatus(parent, "captain:api", "done [key=x]: PR https://example/1"); err != nil {
 		t.Fatal(err)
 	}
 	got := LastParentStatus(parent, "api")

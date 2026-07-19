@@ -1,4 +1,4 @@
-// Package harness detects the running agent harness and resolves crewmate/secondmate
+// Package harness detects the running agent harness and resolves soldier/captain
 // harness assignments from configuration.
 package harness
 
@@ -32,7 +32,7 @@ type DispatchProfile struct {
 	SelectStrategy string `json:"select,omitempty"`
 }
 
-// DispatchConfig is the top-level structure for crew-dispatch.json.
+// DispatchConfig is the top-level structure for soldier-dispatch.json.
 type DispatchConfig struct {
 	// DefaultHarness is used when no profile matches.
 	DefaultHarness string `json:"defaultHarness,omitempty"`
@@ -40,7 +40,7 @@ type DispatchConfig struct {
 	Profiles []DispatchProfile `json:"profiles,omitempty"`
 }
 
-// LoadDispatch reads and parses a crew-dispatch.json file.
+// LoadDispatch reads and parses a soldier-dispatch.json file.
 func LoadDispatch(path string) (*DispatchConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

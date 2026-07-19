@@ -1,4 +1,4 @@
-// Package teardown implements crewmate teardown safety checks and lifecycle.
+// Package teardown implements soldier teardown safety checks and lifecycle.
 package teardown
 
 import (
@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
 
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/delivery"
@@ -32,7 +31,7 @@ type TeardownResult struct {
 	Proofs []string // merge-proof evidence emitted by safety checks
 }
 
-// Run performs a crewmate teardown.
+// Run performs a soldier teardown.
 func Run(opts Options) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
@@ -132,11 +131,11 @@ func Run(opts Options) (*TeardownResult, error) {
 	munsuArtifacts := []string{
 		// Munsu-native: canonical names (item-5 rename)
 		opts.ID + ".status",
-		opts.ID + ".check",          // new canonical name
-		opts.ID + ".turnend",        // new canonical name
+		opts.ID + ".check",   // new canonical name
+		opts.ID + ".turnend", // new canonical name
 		// Legacy names (dual-read, remove next release)
-		opts.ID + ".check.sh",       // legacy name (deprecated)
-		opts.ID + ".turn-ended",     // legacy name (deprecated)
+		opts.ID + ".check.sh",   // legacy name (deprecated)
+		opts.ID + ".turn-ended", // legacy name (deprecated)
 	}
 	harnessArtifacts := harness.StateArtifactsForHarness(meta["harness"])
 	for _, suffix := range harnessArtifacts {
@@ -303,6 +302,7 @@ func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error
 //   - Squash/rebase merge with deleted head: accepts provider-confirmed merged PR identity
 //   - Ordinary merge: retains ancestry proof (merged branch still exists locally)
 //   - Unknown/unverifiable: refuses teardown
+//
 // Returns the proof string on success.
 func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *delivery.DeliveryIdentity) (string, error) {
 	ghURL, err := ghurl.ParseGHURL(ident.URL)

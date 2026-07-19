@@ -657,7 +657,7 @@ func ValidateStrict(m Manifest, expectedHarness, expectedScope, expectedVersion 
 	}
 
 	// Reject unknown extra JSON fields by checking we can round-trip.
-	// Store the manifest as JSON, re-unmarshal, and check no unexpected fields.
+	// Store the manifest as JSON, re-ungeneral, and check no unexpected fields.
 	// This is done in Status via DisallowUnknownFields.
 	return nil
 }

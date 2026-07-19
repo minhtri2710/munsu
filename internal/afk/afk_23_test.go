@@ -45,7 +45,7 @@ func TestResolveTarget_FromConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	paneHandle := "my-session:my-pane-id"
-	if err := os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte(paneHandle+"\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte(paneHandle+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestResolveTarget_ConfigMissingColon(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No colon in the pane handle — session is empty.
-	if err := os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("barePane\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("barePane\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,7 +90,7 @@ func TestResolveTarget_ConfigEmpty(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "captain-pane"), []byte("  \n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("  \n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -377,7 +377,7 @@ func TestDigesterSetTargetSafetyResetsAfterFlush(t *testing.T) {
 	// After flush, safety data should be reset.
 	d.SetTargetSafety(false, "pending")
 
-	// A second flush should only contain the latest safety data.
+	// A captain flush should only contain the latest safety data.
 	d.Flush(now.Add(time.Second))
 
 	data, _ := os.ReadFile(filepath.Join(tmp, digestFile))
@@ -385,13 +385,13 @@ func TestDigesterSetTargetSafetyResetsAfterFlush(t *testing.T) {
 	json.Unmarshal(data, &be)
 
 	if be.SafeTarget == nil {
-		t.Fatal("SafeTarget is nil in second flush")
+		t.Fatal("SafeTarget is nil in captain flush")
 	}
 	if *be.SafeTarget {
-		t.Errorf("SafeTarget = true in second flush, want false")
+		t.Errorf("SafeTarget = true in captain flush, want false")
 	}
 	if be.TargetVerdict != "pending" {
-		t.Errorf("TargetVerdict = %q in second flush, want pending", be.TargetVerdict)
+		t.Errorf("TargetVerdict = %q in captain flush, want pending", be.TargetVerdict)
 	}
 }
 

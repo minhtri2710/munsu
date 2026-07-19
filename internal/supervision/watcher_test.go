@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/crewstate"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -23,70 +23,70 @@ func TestAbsorbStaleSignal_Nil(t *testing.T) {
 }
 
 func TestAbsorbStaleSignal_EmptyStep(t *testing.T) {
-	s := &crewstate.State{}
+	s := &soldierstate.State{}
 	if absorbStaleSignal(s) {
 		t.Error("absorbStaleSignal with empty step should return false")
 	}
 }
 
 func TestAbsorbStaleSignal_Running(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "running"}
+	s := &soldierstate.State{NoMistakesRunStep: "running"}
 	if !absorbStaleSignal(s) {
 		t.Error("running should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_Fixing(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "fixing"}
+	s := &soldierstate.State{NoMistakesRunStep: "fixing"}
 	if !absorbStaleSignal(s) {
 		t.Error("fixing should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_CI(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "ci"}
+	s := &soldierstate.State{NoMistakesRunStep: "ci"}
 	if !absorbStaleSignal(s) {
 		t.Error("ci should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_FixReview(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "fix_review"}
+	s := &soldierstate.State{NoMistakesRunStep: "fix_review"}
 	if !absorbStaleSignal(s) {
 		t.Error("fix_review should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_AwaitingApproval(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "awaiting_approval"}
+	s := &soldierstate.State{NoMistakesRunStep: "awaiting_approval"}
 	if !absorbStaleSignal(s) {
 		t.Error("awaiting_approval should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_Done(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "done"}
+	s := &soldierstate.State{NoMistakesRunStep: "done"}
 	if absorbStaleSignal(s) {
 		t.Error("done should NOT absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_Failed(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "failed"}
+	s := &soldierstate.State{NoMistakesRunStep: "failed"}
 	if absorbStaleSignal(s) {
 		t.Error("failed should NOT absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_ChecksPassed(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "checks-passed"}
+	s := &soldierstate.State{NoMistakesRunStep: "checks-passed"}
 	if absorbStaleSignal(s) {
 		t.Error("checks-passed should NOT absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_UnknownStep(t *testing.T) {
-	s := &crewstate.State{NoMistakesRunStep: "some-bogus-step"}
+	s := &soldierstate.State{NoMistakesRunStep: "some-bogus-step"}
 	if absorbStaleSignal(s) {
 		t.Error("unknown step should NOT absorb stale signal")
 	}
@@ -121,9 +121,9 @@ func TestHandleStale_UnderThreshold(t *testing.T) {
 	consecutiveStaleThreshold = 3
 
 	handleStale("test-task-2", "first")
-	reason := handleStale("test-task-2", "second")
+	reason := handleStale("test-task-2", "general")
 	if reason.DemandDeepInspection {
-		t.Error("second stale poll should not demand deep inspection (threshold=3)")
+		t.Error("captain stale poll should not demand deep inspection (threshold=3)")
 	}
 	if staleStreaks["test-task-2"] != 2 {
 		t.Errorf("streak = %d, want 2", staleStreaks["test-task-2"])
@@ -135,7 +135,7 @@ func TestHandleStale_AtThreshold(t *testing.T) {
 	consecutiveStaleThreshold = 3
 
 	handleStale("test-task-3", "first")
-	handleStale("test-task-3", "second")
+	handleStale("test-task-3", "general")
 	reason := handleStale("test-task-3", "third")
 	if !reason.DemandDeepInspection {
 		t.Error("third consecutive stale poll should demand deep inspection")
@@ -150,7 +150,7 @@ func TestHandleStale_AboveThreshold(t *testing.T) {
 	consecutiveStaleThreshold = 3
 
 	handleStale("test-task-4", "first")
-	handleStale("test-task-4", "second")
+	handleStale("test-task-4", "general")
 	handleStale("test-task-4", "third")
 	reason := handleStale("test-task-4", "fourth")
 	if !reason.DemandDeepInspection {
@@ -165,7 +165,7 @@ func TestHandleStale_MultipleTasks(t *testing.T) {
 
 	handleStale("task-a", "first")
 	handleStale("task-b", "first")
-	handleStale("task-a", "second")
+	handleStale("task-a", "general")
 
 	// task-a at 2 -> 3, should trigger
 	reasonA := handleStale("task-a", "third")
@@ -174,9 +174,9 @@ func TestHandleStale_MultipleTasks(t *testing.T) {
 	}
 
 	// task-b at 1, should NOT trigger
-	reasonB := handleStale("task-b", "second")
+	reasonB := handleStale("task-b", "general")
 	if reasonB.DemandDeepInspection {
-		t.Error("task-b second poll should not demand deep inspection (streak=2, thresh=3)")
+		t.Error("task-b captain poll should not demand deep inspection (streak=2, thresh=3)")
 	}
 }
 
@@ -185,7 +185,7 @@ func TestResetStreak(t *testing.T) {
 	consecutiveStaleThreshold = 3
 
 	handleStale("test-reset", "first")
-	handleStale("test-reset", "second")
+	handleStale("test-reset", "general")
 	resetStreak("test-reset")
 
 	if _, exists := staleStreaks["test-reset"]; exists {
@@ -332,7 +332,7 @@ func TestHandleStale_DemandDeepInspectionStreak(t *testing.T) {
 func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
 	absorbSteps := []string{"running", "fixing", "ci", "fix_review", "awaiting_approval"}
 	for _, step := range absorbSteps {
-		s := &crewstate.State{NoMistakesRunStep: step}
+		s := &soldierstate.State{NoMistakesRunStep: step}
 		if !absorbStaleSignal(s) {
 			t.Errorf("%s should absorb stale signal", step)
 		}
@@ -342,7 +342,7 @@ func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
 func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
 	nonAbsorbSteps := []string{"", "done", "failed", "checks-passed", "passed", "cancelled", "some-unknown-step"}
 	for _, step := range nonAbsorbSteps {
-		s := &crewstate.State{NoMistakesRunStep: step}
+		s := &soldierstate.State{NoMistakesRunStep: step}
 		if absorbStaleSignal(s) {
 			t.Errorf("%q should NOT absorb stale signal", step)
 		}
@@ -411,7 +411,7 @@ func TestScanFleet_NoMetaFiles(t *testing.T) {
 
 	// Non-captain-relevant orphan status without meta stays quiet.
 	os.WriteFile(filepath.Join(stateDir, "orphan.status"), []byte("working: stray\n"), 0644)
-	// Captain-relevant status (including Second return-channel files) must wake
+	// Captain-relevant status (including Captain return-channel files) must wake
 	// even without a companion .meta — parent status is the return path.
 	os.WriteFile(filepath.Join(stateDir, "another.status"), []byte("done: finished\n"), 0644)
 
@@ -544,13 +544,13 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 		t.Errorf("first call kind = %q, want stale", r1.Kind)
 	}
 
-	// Second call (streak should increment)
+	// Captain call (streak should increment)
 	r2 := ScanFleet(tmp)
 	if r2 == nil {
-		t.Fatal("second call expected stale")
+		t.Fatal("captain call expected stale")
 	}
 	if r2.Kind != "stale" {
-		t.Errorf("second call kind = %q, want stale", r2.Kind)
+		t.Errorf("captain call kind = %q, want stale", r2.Kind)
 	}
 
 	// Third call - should trigger demand deep inspection
@@ -566,7 +566,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
 	// Simulate a full lifecycle: working → done → no-mistakes run step active
 	t.Run("working to done with no-mistakes run", func(t *testing.T) {
-		s := &crewstate.State{
+		s := &soldierstate.State{
 			Status:            "done",
 			NoMistakesRunStep: "running",
 		}
@@ -577,7 +577,7 @@ func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
 	})
 
 	t.Run("done with checks-passed does NOT absorb stale", func(t *testing.T) {
-		s := &crewstate.State{
+		s := &soldierstate.State{
 			Status:            "done",
 			NoMistakesRunStep: "checks-passed",
 		}
@@ -587,7 +587,7 @@ func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
 	})
 
 	t.Run("failed without run step does NOT absorb", func(t *testing.T) {
-		s := &crewstate.State{
+		s := &soldierstate.State{
 			Status: "failed",
 		}
 		if absorbStaleSignal(s) {
@@ -600,9 +600,9 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 	home := t.TempDir()
 	state := filepath.Join(home, "state")
 	os.MkdirAll(state, 0755)
-	// Second return-channel status without requiring dead pane.
-	os.WriteFile(filepath.Join(state, "secondmate:api.meta"), []byte("window=w1\nkind=secondmate\nbackend=tmux\n"), 0644)
-	os.WriteFile(filepath.Join(state, "secondmate:api.status"), []byte("done [key=x]: PR https://example/1\n"), 0644)
+	// Captain return-channel status without requiring dead pane.
+	os.WriteFile(filepath.Join(state, "captain:api.meta"), []byte("window=w1\nkind=captain\nbackend=tmux\n"), 0644)
+	os.WriteFile(filepath.Join(state, "captain:api.status"), []byte("done [key=x]: PR https://example/1\n"), 0644)
 
 	emitted, err := RunCycle(home)
 	if err != nil {

@@ -281,7 +281,7 @@ func runIntegrateStatus(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 }
 
 func detectHarnessForIntegrate(homeDir string) (string, error) {
-	return harness.Crew(homeDir)
+	return harness.Soldier(homeDir)
 }
 
 type integrateResultData struct {

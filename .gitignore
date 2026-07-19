@@ -21,6 +21,6 @@
 __pycache__/
 *.pyc
 
-# munsu crewmate launch artifacts
-.crew-brief.md
-.crew-launch.sh
+# munsu soldier launch artifacts
+.soldier-brief.md
+.soldier-launch.sh

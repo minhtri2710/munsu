@@ -1,6 +1,6 @@
 # Harness adapters — agent-only reference
 
-Verified adapter launch templates for spawning crewmates.
+Verified adapter launch templates for spawning soldiers.
 
 ## Launch templates per harness
 
@@ -27,5 +27,5 @@ Fallback: check process tree for harness-specific argv patterns.
 
 ## Turn-end hooks
 
-The turn-end guard marks the end of a crewmate's turn after a status write or pane staleness.
+The turn-end guard marks the end of a soldier's turn after a status write or pane staleness.
 Installed per-spawn; removed on teardown.

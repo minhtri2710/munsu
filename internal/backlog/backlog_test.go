@@ -457,7 +457,7 @@ func TestFileBackend_Render(t *testing.T) {
 		fb := NewFileBackend(path)
 
 		items := []Item{
-			{ID: "TASK-2", Description: "Second", State: StateInFlight},
+			{ID: "TASK-2", Description: "Captain", State: StateInFlight},
 			{ID: "TASK-1", Description: "First", State: StateQueued},
 			{ID: "TASK-4", Description: "Done", State: StateDone},
 			{ID: "TASK-3", Description: "Blocked", State: StateBlocked},
@@ -481,7 +481,7 @@ func TestFileBackend_Render(t *testing.T) {
 			t.Errorf("first item should be queued TASK-1")
 		}
 		if reloaded[1].ID != "TASK-2" || reloaded[1].State != StateInFlight {
-			t.Errorf("second item should be in-flight TASK-2")
+			t.Errorf("captain item should be in-flight TASK-2")
 		}
 		if reloaded[2].ID != "TASK-3" || reloaded[2].State != StateBlocked {
 			t.Errorf("third item should be blocked TASK-3")
@@ -525,7 +525,7 @@ func TestFileBackend_Add(t *testing.T) {
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "first", "", "", false)
-		err := fb.Add("TASK-1", "second", "", "", false)
+		err := fb.Add("TASK-1", "general", "", "", false)
 		if err == nil {
 			t.Fatal("expected error for duplicate id, got nil")
 		}
@@ -852,7 +852,7 @@ func TestManualRun_Verbs(t *testing.T) {
 		if err := manualRun(homeDir, "add", []string{"TASK-1", "First task"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := manualRun(homeDir, "add", []string{"TASK-2", "Second task"}); err != nil {
+		if err := manualRun(homeDir, "add", []string{"TASK-2", "Captain task"}); err != nil {
 			t.Fatal(err)
 		}
 

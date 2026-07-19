@@ -13,7 +13,7 @@ import (
 
 const (
 	KindLearning = "learning"
-	KindCaptain  = "captain"
+	KindGeneral  = "general"
 )
 
 // SweepResult describes what was stowed.
@@ -28,7 +28,7 @@ func Run(homeDir string, learnings []string) (*SweepResult, error) {
 	return RunKinded(homeDir, KindLearning, learnings)
 }
 
-// RunKinded stows items of the given kind (learning or captain).
+// RunKinded stows items of the given kind (learning or general).
 // It reads the target file, merges each new item into existing entries
 // (replacing substring matches), then writes the file back.
 func RunKinded(homeDir string, kind string, items []string) (*SweepResult, error) {
@@ -46,15 +46,15 @@ func RunKinded(homeDir string, kind string, items []string) (*SweepResult, error
 		}
 		res.DataLearnings = path
 
-	case KindCaptain:
-		path := filepath.Join(homeDir, "data", "captain.md")
+	case KindGeneral:
+		path := filepath.Join(homeDir, "data", "general.md")
 		if err := stowFile(path, items); err != nil {
 			return res, err
 		}
 		res.DataCaptain = path
 
 	default:
-		return res, fmt.Errorf("unknown stow kind: %q (use %q or %q)", kind, KindLearning, KindCaptain)
+		return res, fmt.Errorf("unknown stow kind: %q (use %q or %q)", kind, KindLearning, KindGeneral)
 	}
 
 	return res, nil
@@ -152,4 +152,3 @@ func replaceMatching(entries []string, text string, newLine string) bool {
 	}
 	return false
 }
-

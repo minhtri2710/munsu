@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"github.com/minhtri2710/munsu/internal/config"
 )
+
 // ToolSpec defines a tool that bootstrap checks for presence.
 type ToolSpec struct {
 	Name     string

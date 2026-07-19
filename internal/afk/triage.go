@@ -6,7 +6,7 @@ import (
 )
 
 // Digest holds the result of one wake triage cycle.
-// It separates captain-relevant (escalate) wakes from routine ones.
+// It separates general-relevant (escalate) wakes from routine ones.
 type Digest struct {
 	Escalated []WakeDigest
 	Routines  []WakeDigest
@@ -17,7 +17,7 @@ type WakeDigest struct {
 	Kind              string
 	Key               string
 	Payload           string
-	IsCaptainRelevant bool
+	IsGeneralRelevant bool
 }
 
 // OneCycle drains the wake queue and classifies each entry.
@@ -43,10 +43,10 @@ func OneCycle(homeDir string) (*Digest, error) {
 			// Wake payloads from afk escalation are status-line notes
 			// ("PR merged", "build broken") and match the classify patterns
 			// for done/failed/needs-decision content.
-			IsCaptainRelevant: classify.CaptainRelevant(rec.Payload),
+			IsGeneralRelevant: classify.GeneralRelevant(rec.Payload),
 		}
 
-		if wd.IsCaptainRelevant {
+		if wd.IsGeneralRelevant {
 			d.Escalated = append(d.Escalated, wd)
 		} else {
 			d.Routines = append(d.Routines, wd)

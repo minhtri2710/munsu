@@ -1,4 +1,4 @@
-package secondmate
+package captain
 
 import (
 	"os"
@@ -17,9 +17,9 @@ import (
 
 // --- BuildLaunchArgs tests (preserved from PR1) ---
 
-func TestBuildLaunchArgs_VerifiedSecondmateHarness(t *testing.T) {
+func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	if err := os.MkdirAll(smHome, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +50,14 @@ func TestBuildLaunchArgs_VerifiedSecondmateHarness(t *testing.T) {
 	}
 }
 
-func TestBuildLaunchArgs_UnverifiedSecondmateHarnesses(t *testing.T) {
+func TestBuildLaunchArgs_UnverifiedCaptainHarnesses(t *testing.T) {
 	for _, name := range []string{harness.Claude, harness.Codex, harness.Opencode, harness.Grok, harness.Agy} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := buildLaunchArgs(t.TempDir(), name, t.TempDir())
 			if err == nil {
-				t.Fatal("expected unverified secondmate contract error")
+				t.Fatal("expected unverified captain contract error")
 			}
-			if !strings.Contains(err.Error(), "does not have a verified secondmate launch contract") {
+			if !strings.Contains(err.Error(), "does not have a verified captain launch contract") {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -69,7 +69,7 @@ func TestBuildLaunchArgs_MissingCharterFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing AGENTS.md error")
 	}
-	if !strings.Contains(err.Error(), "reading secondmate charter") {
+	if !strings.Contains(err.Error(), "reading captain charter") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -86,7 +86,7 @@ func TestBuildLaunchArgs_UnknownHarness(t *testing.T) {
 
 func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
@@ -119,10 +119,10 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
 	parent := "/tmp/marshal-home"
 	charter := DefaultCharter("api", parent)
-	if !strings.Contains(charter, marker.FromMarshalLabel) {
+	if !strings.Contains(charter, marker.FromGeneralLabel) {
 		t.Fatalf("charter missing marshal marker label")
 	}
-	status := filepath.Join(parent, "state", "secondmate:api.status")
+	status := filepath.Join(parent, "state", "captain:api.status")
 	if !strings.Contains(charter, status) {
 		t.Fatalf("charter missing status path %q", status)
 	}
@@ -141,15 +141,15 @@ func TestSeedWithParent_WritesDefaultCharter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "secondmate:api.status") {
+	if !strings.Contains(string(body), "captain:api.status") {
 		t.Fatalf("default charter missing status file path, got: %s", body)
 	}
 }
 
 func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 	tmp := t.TempDir()
-	homePath := filepath.Join(tmp, "secondmates", "test-sm")
-	charter := "# Secondmate charter\n\nPersistent domain supervisor.\n"
+	homePath := filepath.Join(tmp, "captains", "test-sm")
+	charter := "# Captain charter\n\nPersistent domain supervisor.\n"
 
 	if err := Seed("test-sm", homePath, charter); err != nil {
 		t.Fatal(err)
@@ -206,7 +206,7 @@ func TestProvenance_SeedAndValidate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing marker")
 	}
-	if !strings.Contains(err.Error(), "no .munsu-secondmate-home marker") {
+	if !strings.Contains(err.Error(), "no .munsu-captain-home marker") {
 		t.Errorf("error = %v", err)
 	}
 
@@ -248,7 +248,7 @@ func TestProvenance_WrongVersion(t *testing.T) {
 
 func TestValidate_PassesForSeededHome(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	Seed("test-sm", smHome, "# charter")
 
 	err := Validate(smHome, tmp)
@@ -297,7 +297,7 @@ func TestValidate_RefusesSelfParent(t *testing.T) {
 
 func TestValidate_RefusesMissingDirs(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	SeedProvenance(smHome, "test-sm")
 
@@ -309,7 +309,7 @@ func TestValidate_RefusesMissingDirs(t *testing.T) {
 
 func TestMigrate_WritesMarkerToSeededHome(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
@@ -359,18 +359,18 @@ func TestList_WithRegistryFile(t *testing.T) {
 	parent := t.TempDir()
 	registryDir := filepath.Join(parent, "data")
 	os.MkdirAll(registryDir, 0755)
-	registryContent := `# Secondmates
+	registryContent := `# Captains
 - sm-alpha - Some charter (home: /home/sm-alpha; scope: domain dispatch; projects: project-a; added: 2026-07-18)
 - sm-beta - Another charter (home: /home/sm-beta; scope: other domain; projects: project-b; added: 2026-07-17)
 `
-	os.WriteFile(filepath.Join(registryDir, "secondmates.md"), []byte(registryContent), 0644)
+	os.WriteFile(filepath.Join(registryDir, "captains.md"), []byte(registryContent), 0644)
 
 	mates, err := List(parent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(mates) != 2 {
-		t.Errorf("expected 2 secondmates, got %d", len(mates))
+		t.Errorf("expected 2 captains, got %d", len(mates))
 	}
 
 	found := map[string]bool{}
@@ -403,18 +403,18 @@ func TestList_SkipsCommentLines(t *testing.T) {
 	parent := t.TempDir()
 	registryDir := filepath.Join(parent, "data")
 	os.MkdirAll(registryDir, 0755)
-	registryContent := `# Secondmates
+	registryContent := `# Captains
 # This is a comment
 - valid-sm - Some charter (home: /home/valid-sm; scope: test; projects: test; added: 2026-07-18)
 `
-	os.WriteFile(filepath.Join(registryDir, "secondmates.md"), []byte(registryContent), 0644)
+	os.WriteFile(filepath.Join(registryDir, "captains.md"), []byte(registryContent), 0644)
 
 	mates, err := List(parent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(mates) != 1 {
-		t.Errorf("expected 1 secondmate, got %d", len(mates))
+		t.Errorf("expected 1 captain, got %d", len(mates))
 	}
 	if mates[0].ID != "valid-sm" {
 		t.Errorf("expected valid-sm, got %q", mates[0].ID)
@@ -423,9 +423,9 @@ func TestList_SkipsCommentLines(t *testing.T) {
 
 func TestParseRegistry_FullEntry(t *testing.T) {
 	tmp := t.TempDir()
-	registryPath := filepath.Join(tmp, "secondmates.md")
-	content := `# Secondmates
-- monitor-z - # Monitoring secondmate (home: /home/monitor-z; scope: infra monitoring; projects: monitoring; added: 2026-07-18)
+	registryPath := filepath.Join(tmp, "captains.md")
+	content := `# Captains
+- monitor-z - # Monitoring captain (home: /home/monitor-z; scope: infra monitoring; projects: monitoring; added: 2026-07-18)
 `
 	os.WriteFile(registryPath, []byte(content), 0644)
 
@@ -454,7 +454,7 @@ func TestParseRegistry_FullEntry(t *testing.T) {
 }
 
 func TestParseRegistry_MissingFile(t *testing.T) {
-	mates, err := ParseRegistry("/nonexistent/secondmates.md")
+	mates, err := ParseRegistry("/nonexistent/captains.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func TestParseRegistry_MissingFile(t *testing.T) {
 
 func TestConfigPush_RefusesUnmarkedHome(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 
@@ -475,29 +475,29 @@ func TestConfigPush_RefusesUnmarkedHome(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
-	if !strings.Contains(err.Error(), "no .munsu-secondmate-home marker") {
+	if !strings.Contains(err.Error(), "no .munsu-captain-home marker") {
 		t.Errorf("error should mention missing marker, got: %v", err)
 	}
 }
 
 func TestConfigPush_Basic(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
 	configDir := filepath.Join(parent, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "crew-harness"), []byte("pi\n"), 0644)
-	os.WriteFile(filepath.Join(configDir, "crew-dispatch.json"), []byte("{}\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "soldier-dispatch.json"), []byte("{}\n"), 0644)
 	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet\n"), 0644)
 
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"crew-harness", "crew-dispatch.json"} {
+	for _, name := range []string{"soldier-harness", "soldier-dispatch.json"} {
 		_, err := os.Stat(filepath.Join(smHome, "config", name))
 		if err != nil {
 			t.Errorf("inheritable config %q was not copied: %v", name, err)
@@ -511,36 +511,36 @@ func TestConfigPush_Basic(t *testing.T) {
 
 func TestConfigPush_MirrorDeletions(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	os.WriteFile(filepath.Join(smHome, "config", "crew-harness"), []byte("old\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "config", "soldier-harness"), []byte("old\n"), 0644)
 
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(smHome, "config", "crew-harness")); !os.IsNotExist(err) {
-		t.Error("crew-harness should have been deleted (mirror deletion)")
+	if _, err := os.Stat(filepath.Join(smHome, "config", "soldier-harness")); !os.IsNotExist(err) {
+		t.Error("soldier-harness should have been deleted (mirror deletion)")
 	}
 }
 
 func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	os.WriteFile(filepath.Join(smHome, "config", "crew-harness"), []byte("old\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "config", "soldier-harness"), []byte("old\n"), 0644)
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
 
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(smHome, "config", "crew-harness")); !os.IsNotExist(err) {
-		t.Error("inheritable crew-harness should have been deleted")
+	if _, err := os.Stat(filepath.Join(smHome, "config", "soldier-harness")); !os.IsNotExist(err) {
+		t.Error("inheritable soldier-harness should have been deleted")
 	}
 	if _, err := os.Stat(filepath.Join(smHome, "config", "model")); os.IsNotExist(err) {
 		t.Error("non-inheritable model should NOT have been deleted")
@@ -549,26 +549,26 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 
 func TestConfigPush_CaptainShared(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 	sharedContent := "# Captain shared\n\nkey: value\n"
-	os.WriteFile(filepath.Join(parent, "data", "captain-shared.md"), []byte(sharedContent), 0644)
+	os.WriteFile(filepath.Join(parent, "data", "general-shared.md"), []byte(sharedContent), 0644)
 
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	dstShared := filepath.Join(smHome, "data", "captain-shared.md")
+	dstShared := filepath.Join(smHome, "data", "general-shared.md")
 	data, err := os.ReadFile(dstShared)
 	if err != nil {
-		t.Fatalf("captain-shared.md was not pushed: %v", err)
+		t.Fatalf("general-shared.md was not pushed: %v", err)
 	}
 	if string(data) != sharedContent {
-		t.Errorf("captain-shared.md content = %q, want %q", string(data), sharedContent)
+		t.Errorf("general-shared.md content = %q, want %q", string(data), sharedContent)
 	}
 
 	info, err := os.Stat(dstShared)
@@ -576,32 +576,32 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0444 {
-		t.Errorf("captain-shared.md mode = %v, want 0444", info.Mode().Perm())
+		t.Errorf("general-shared.md mode = %v, want 0444", info.Mode().Perm())
 	}
 }
 
 func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	os.WriteFile(filepath.Join(smHome, "data", "captain-shared.md"), []byte("old\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "data", "general-shared.md"), []byte("old\n"), 0644)
 
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(smHome, "data", "captain-shared.md")); !os.IsNotExist(err) {
-		t.Error("captain-shared.md should have been deleted (mirror deletion)")
+	if _, err := os.Stat(filepath.Join(smHome, "data", "general-shared.md")); !os.IsNotExist(err) {
+		t.Error("general-shared.md should have been deleted (mirror deletion)")
 	}
 }
 
 func TestConfigPush_RejectsSymlinkEscape(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	outside := t.TempDir()
 	if err := os.MkdirAll(smHome, 0755); err != nil {
 		t.Fatal(err)
@@ -615,22 +615,22 @@ func TestConfigPush_RejectsSymlinkEscape(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "crew-harness"), []byte("pi\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	err := ConfigPush(parent, smHome)
-	if err == nil || !strings.Contains(err.Error(), "escapes secondmate container") {
+	if err == nil || !strings.Contains(err.Error(), "escapes captain container") {
 		t.Fatalf("ConfigPush error = %v, want symlink-escape refusal", err)
 	}
-	if _, err := os.Stat(filepath.Join(outside, "crew-harness")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(outside, "soldier-harness")); !os.IsNotExist(err) {
 		t.Fatalf("outside destination was mutated: %v", err)
 	}
 }
 
 func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	if err := os.MkdirAll(filepath.Join(smHome, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -640,13 +640,13 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "crew-harness"), []byte("pi\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join(smHome, "config", "crew-harness")
+	dst := filepath.Join(smHome, "config", "soldier-harness")
 	first, err := os.Stat(dst)
 	if err != nil {
 		t.Fatal(err)
@@ -655,12 +655,12 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
-	second, err := os.Stat(dst)
+	captain, err := os.Stat(dst)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.ModTime().Equal(second.ModTime()) {
-		t.Fatalf("idempotent push rewrote unchanged file: %s -> %s", first.ModTime(), second.ModTime())
+	if !first.ModTime().Equal(captain.ModTime()) {
+		t.Fatalf("idempotent push rewrote unchanged file: %s -> %s", first.ModTime(), captain.ModTime())
 	}
 }
 
@@ -669,7 +669,7 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 func TestGetInheritableList_Default(t *testing.T) {
 	os.Unsetenv("MUNSU_INHERITABLE_CONFIG")
 	list := getInheritableList()
-	expected := []string{"crew-harness", "crew-dispatch.json", "backlog-backend"}
+	expected := []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
 	if len(list) != len(expected) {
 		t.Fatalf("expected %d items, got %d: %v", len(expected), len(list), list)
 	}
@@ -681,9 +681,9 @@ func TestGetInheritableList_Default(t *testing.T) {
 }
 
 func TestGetInheritableList_EnvOverride(t *testing.T) {
-	t.Setenv("MUNSU_INHERITABLE_CONFIG", "crew-harness:model:custom-config")
+	t.Setenv("MUNSU_INHERITABLE_CONFIG", "soldier-harness:model:custom-config")
 	list := getInheritableList()
-	expected := []string{"crew-harness", "model", "custom-config"}
+	expected := []string{"soldier-harness", "model", "custom-config"}
 	if len(list) != len(expected) {
 		t.Fatalf("expected %d items, got %d: %v", len(expected), len(list), list)
 	}
@@ -697,7 +697,7 @@ func TestGetInheritableList_EnvOverride(t *testing.T) {
 func TestGetInheritableList_EmptyEnv(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "")
 	list := getInheritableList()
-	expected := []string{"crew-harness", "crew-dispatch.json", "backlog-backend"}
+	expected := []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
 	if len(list) != len(expected) {
 		t.Fatalf("expected %d items, got %d: %v", len(expected), len(list), list)
 	}
@@ -770,7 +770,7 @@ func TestBuildLaunchScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
-	scriptPath := filepath.Join(cwd, ".secondmate-launch.sh")
+	scriptPath := filepath.Join(cwd, ".captain-launch.sh")
 	if cmd != "bash "+shQuote(scriptPath) {
 		t.Fatalf("command = %q, want bash-wrapped script path", cmd)
 	}
@@ -789,7 +789,7 @@ func TestBuildLaunchScript(t *testing.T) {
 	if !strings.Contains(script, "export MUNSU_HOME="+shQuote(cwd)) {
 		t.Errorf("script should export MUNSU_HOME, got: %s", script)
 	}
-	if !strings.Contains(script, "export MUNSU_ROLE=secondmate") {
+	if !strings.Contains(script, "export MUNSU_ROLE=captain") {
 		t.Errorf("script should export MUNSU_ROLE, got: %s", script)
 	}
 	if !strings.Contains(script, "exec ") {
@@ -816,7 +816,7 @@ func TestBuildLaunchScript_SafeQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(cwd, ".secondmate-launch.sh"))
+	body, err := os.ReadFile(filepath.Join(cwd, ".captain-launch.sh"))
 	if err != nil {
 		t.Fatalf("reading launch script: %v", err)
 	}
@@ -868,7 +868,7 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 	}
 	recorded := string(data)
 
-	// Verify cwd is the secondmate home.
+	// Verify cwd is the general home.
 	if !strings.Contains(recorded, smHome) {
 		t.Errorf("recorded output should contain smHome %q, got: %s", smHome, recorded)
 	}
@@ -965,7 +965,7 @@ func (f *fakeBackend) MetaExtras() map[string]string {
 
 func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
@@ -973,23 +973,23 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
-	if !strings.Contains(err.Error(), "no .munsu-secondmate-home marker") {
+	if !strings.Contains(err.Error(), "no .munsu-captain-home marker") {
 		t.Errorf("error should mention missing marker, got: %v", err)
 	}
 }
 
-func TestLaunch_RefusesSecondmateRole(t *testing.T) {
+func TestLaunch_RefusesCaptainRole(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	Seed("test-sm", smHome, "# charter")
-	t.Setenv("MUNSU_ROLE", "secondmate")
+	t.Setenv("MUNSU_ROLE", "captain")
 	err := Launch(smHome, tmp)
-	if err == nil || !strings.Contains(err.Error(), "cannot launch other secondmates") {
-		t.Fatalf("Launch() error = %v, want nested-secondmate refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot launch other captains") {
+		t.Fatalf("Launch() error = %v, want nested-captain refusal", err)
 	}
 }
 
-func TestLaunch_RefusesFromSecondmateParentHome(t *testing.T) {
+func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 	parent := t.TempDir()
 	if err := SeedProvenance(parent, "parent-sm"); err != nil {
 		t.Fatal(err)
@@ -998,19 +998,19 @@ func TestLaunch_RefusesFromSecondmateParentHome(t *testing.T) {
 	Seed("child-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "")
 	err := Launch(smHome, parent)
-	if err == nil || !strings.Contains(err.Error(), "cannot launch another secondmate") {
-		t.Fatalf("Launch() error = %v, want parent-secondmate refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot launch another captain") {
+		t.Fatalf("Launch() error = %v, want parent-captain refusal", err)
 	}
 }
 
 func TestLaunch_FailsGracefullyOnLookPathFailure(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	Seed("test-sm", smHome, "# Test")
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("pi\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644)
 
 	origBK := newSessionBackend
 	origLP := lookPath
@@ -1048,13 +1048,13 @@ func TestLaunch_FailsGracefullyOnLookPathFailure(t *testing.T) {
 
 func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	Seed("test-sm", smHome, "# charter")
 
-	// Setup secondmate-harness config so harness resolution works.
+	// Setup captain-harness config so harness resolution works.
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("pi\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644)
 
 	// Save originals and restore in defer.
 	origBK := newSessionBackend
@@ -1071,7 +1071,7 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 		NewWindowFn: func(session, name string) (string, error) {
 			recordedSession = session
 			recordedWindowName = name
-			return "secondmate:test-window", nil
+			return "captain:test-window", nil
 		},
 		SendKeysFn: func(windowID, text string) error {
 			recordedSends = append(recordedSends, text)
@@ -1106,8 +1106,8 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 		t.Fatalf("Launch() error: %v", err)
 	}
 
-	if recordedWindowName != "mu-secondmate-test-sm" {
-		t.Errorf("secondmate window label = %q, want %q", recordedWindowName, "mu-secondmate-test-sm")
+	if recordedWindowName != "mu-captain-test-sm" {
+		t.Errorf("captain window label = %q, want %q", recordedWindowName, "mu-captain-test-sm")
 	}
 	canonicalSM, err := canonicalHome(smHome)
 	if err != nil {
@@ -1115,24 +1115,24 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 	}
 	wantSession := hometag.WorkspaceTag(canonicalSM)
 	if recordedSession != wantSession {
-		t.Errorf("secondmate workspace label = %q, want %q", recordedSession, wantSession)
+		t.Errorf("captain workspace label = %q, want %q", recordedSession, wantSession)
 	}
-	// Check that meta was written with kind=secondmate.
-	taskID := "secondmate:test-sm"
+	// Check that meta was written with kind=captain.
+	taskID := "captain:test-sm"
 	metaPath := filepath.Join(tmp, "state", taskID+".meta")
 	metaData, err := os.ReadFile(metaPath)
 	if err != nil {
 		t.Fatalf("meta file not created: %v", err)
 	}
 	metaContent := string(metaData)
-	if !strings.Contains(metaContent, "kind=secondmate") {
-		t.Errorf("meta should contain kind=secondmate, got: %s", metaContent)
+	if !strings.Contains(metaContent, "kind=captain") {
+		t.Errorf("meta should contain kind=captain, got: %s", metaContent)
 	}
 	if !strings.Contains(metaContent, "home="+canonicalSM) {
 		t.Errorf("meta should contain canonical home=%s", canonicalSM)
 	}
-	if !strings.Contains(metaContent, "window=secondmate:test-window") {
-		t.Errorf("meta should contain window=secondmate:test-window")
+	if !strings.Contains(metaContent, "window=captain:test-window") {
+		t.Errorf("meta should contain window=captain:test-window")
 	}
 	if !strings.Contains(metaContent, "backend=herdr") {
 		t.Errorf("meta should contain backend=herdr")
@@ -1152,7 +1152,7 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 	if len(recordedSends) == 0 {
 		t.Fatal("no commands were sent via SendKeys")
 	}
-	scriptPath := filepath.Join(canonicalSM, ".secondmate-launch.sh")
+	scriptPath := filepath.Join(canonicalSM, ".captain-launch.sh")
 	wantCmd := "bash " + shQuote(scriptPath)
 	if recordedSends[0] != wantCmd {
 		t.Errorf("sent command = %q, want %q", recordedSends[0], wantCmd)
@@ -1172,12 +1172,12 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 
 func TestLaunch_MetaOnlyAfterSuccess(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	Seed("test-sm", smHome, "# charter")
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "secondmate-harness"), []byte("pi\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644)
 
 	origBK := newSessionBackend
 	origLP := lookPath
@@ -1213,7 +1213,7 @@ func TestLaunch_MetaOnlyAfterSuccess(t *testing.T) {
 	}
 
 	// Meta should exist.
-	taskID := "secondmate:test-sm"
+	taskID := "captain:test-sm"
 	metaPath := filepath.Join(tmp, "state", taskID+".meta")
 	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
 		t.Fatal("meta should exist after successful launch")
@@ -1224,7 +1224,7 @@ func TestLaunch_MetaOnlyAfterSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta["kind"] != "secondmate" {
+	if meta["kind"] != "captain" {
 		t.Errorf("meta kind = %q", meta["kind"])
 	}
 	if meta["sm_id"] != "test-sm" {
@@ -1243,21 +1243,21 @@ func TestLaunch_MetaOnlyAfterSuccess(t *testing.T) {
 
 func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
 	parent := t.TempDir()
-	sm := filepath.Join(parent, "secondmates", "test-sm")
+	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
 
 	err := Handoff(parent, sm, []string{"TASK-1"})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
-	if !strings.Contains(err.Error(), "no .munsu-secondmate-home marker") {
+	if !strings.Contains(err.Error(), "no .munsu-captain-home marker") {
 		t.Errorf("error should mention missing marker, got: %v", err)
 	}
 }
 
 func TestHandoff_RequiresTasksAxi(t *testing.T) {
 	parent := t.TempDir()
-	sm := filepath.Join(parent, "secondmates", "test-sm")
+	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
 	SeedProvenance(sm, "test-sm")
 
@@ -1292,7 +1292,7 @@ func TestHandoff_RefusesSelfParent(t *testing.T) {
 
 func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
 	parent := t.TempDir()
-	sm := filepath.Join(parent, "secondmates", "test-sm")
+	sm := filepath.Join(parent, "captains", "test-sm")
 	if err := os.MkdirAll(sm, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1344,7 +1344,7 @@ func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
 
 func TestHandoff_RefusesManualBackend(t *testing.T) {
 	parent := t.TempDir()
-	sm := filepath.Join(parent, "secondmates", "test-sm")
+	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
 	SeedProvenance(sm, "test-sm")
 
@@ -1375,21 +1375,21 @@ func TestHandoff_RefusesManualBackend(t *testing.T) {
 
 func TestRetire_RefusesUnmarkedHome(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 
 	err := Retire(smHome, tmp, false)
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
-	if !strings.Contains(err.Error(), "no .munsu-secondmate-home marker") {
+	if !strings.Contains(err.Error(), "no .munsu-captain-home marker") {
 		t.Errorf("error should mention missing marker, got: %v", err)
 	}
 }
 
 func TestRetire_RefusesUnmarkedWithRemoveHome(t *testing.T) {
 	tmp := t.TempDir()
-	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
 	if err := os.MkdirAll(smHome, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1408,7 +1408,7 @@ func TestRetire_RefusesUnmarkedWithRemoveHome(t *testing.T) {
 
 func TestRetire_RemoveHome(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
@@ -1418,13 +1418,13 @@ func TestRetire_RemoveHome(t *testing.T) {
 	}
 
 	if _, err := os.Stat(smHome); !os.IsNotExist(err) {
-		t.Error("secondmate home should have been removed")
+		t.Error("captain home should have been removed")
 	}
 }
 
 func TestRetire_KeepHome(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
@@ -1434,7 +1434,7 @@ func TestRetire_KeepHome(t *testing.T) {
 	}
 
 	if _, err := os.Stat(smHome); os.IsNotExist(err) {
-		t.Error("secondmate home should have been retained")
+		t.Error("captain home should have been retained")
 	}
 }
 
@@ -1449,15 +1449,15 @@ func TestRetire_NonexistentHomeRefused(t *testing.T) {
 
 func TestRetire_RefusesWrongKindMeta(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
 	// Write bad meta.
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.WriteFile(filepath.Join(parent, "state", "secondmate:test-sm.meta"),
-		[]byte("kind=not-secondmate\nsm_id=test-sm\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
+	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
+		[]byte("kind=not-captain\nsm_id=test-sm\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
 
 	err := Retire(smHome, parent, false)
 	if err == nil {
@@ -1470,15 +1470,15 @@ func TestRetire_RefusesWrongKindMeta(t *testing.T) {
 
 func TestRetire_RefusesMismatchedID(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
 	// Write meta with different sm_id.
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.WriteFile(filepath.Join(parent, "state", "secondmate:test-sm.meta"),
-		[]byte("kind=secondmate\nsm_id=wrong-id\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
+	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
+		[]byte("kind=captain\nsm_id=wrong-id\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
 
 	err := Retire(smHome, parent, false)
 	if err == nil {
@@ -1491,15 +1491,15 @@ func TestRetire_RefusesMismatchedID(t *testing.T) {
 
 func TestRetire_RefusesMismatchedHome(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
 	// Write meta with different home.
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.WriteFile(filepath.Join(parent, "state", "secondmate:test-sm.meta"),
-		[]byte("kind=secondmate\nsm_id=test-sm\nhome=/some/other/path\nwindow=w\nbackend=tmux\n"), 0644)
+	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
+		[]byte("kind=captain\nsm_id=test-sm\nhome=/some/other/path\nwindow=w\nbackend=tmux\n"), 0644)
 
 	err := Retire(smHome, parent, false)
 	if err == nil {
@@ -1547,25 +1547,25 @@ func TestAcquireExclusiveLock_ConcurrentRefusal(t *testing.T) {
 		t.Fatalf("first acquire: %v", err)
 	}
 
-	// Second acquire with LOCK_NB should fail immediately.
+	// Captain acquire with LOCK_NB should fail immediately.
 	// Use channel + timeout to prove non-blocking behavior.
 	done := make(chan struct{})
-	var secondErr error
+	var captainErr error
 	go func() {
-		_, secondErr = acquireExclusiveLock(lockPath)
+		_, captainErr = acquireExclusiveLock(lockPath)
 		close(done)
 	}()
 
 	select {
 	case <-done:
-		if secondErr == nil {
-			t.Fatal("second concurrent lock should have failed with LOCK_NB")
+		if captainErr == nil {
+			t.Fatal("captain concurrent lock should have failed with LOCK_NB")
 		}
-		if !strings.Contains(secondErr.Error(), "held by another process") {
-			t.Logf("second lock error (expected): %v", secondErr)
+		if !strings.Contains(captainErr.Error(), "held by another process") {
+			t.Logf("captain lock error (expected): %v", captainErr)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("second lock acquisition blocked for 5s — LOCK_NB not working")
+		t.Fatal("captain lock acquisition blocked for 5s — LOCK_NB not working")
 	}
 
 	release1()
@@ -1583,7 +1583,7 @@ func TestAcquireExclusiveLock_ConcurrentRefusal(t *testing.T) {
 func TestNudgeMarkerPath(t *testing.T) {
 	parent := t.TempDir()
 	path := nudgeMarkerPath(parent, "test-sm")
-	want := filepath.Join(parent, "state", ".secondmate-nudge-pending", "test-sm.pending")
+	want := filepath.Join(parent, "state", ".captain-nudge-pending", "test-sm.pending")
 	if path != want {
 		t.Errorf("nudgeMarkerPath = %q, want %q", path, want)
 	}
@@ -1656,10 +1656,10 @@ func TestReadNudgeMarker_Nonexistent(t *testing.T) {
 // --- safeFF tests (real git repos) ---
 
 type safeFFFixture struct {
-	parent     string
-	secondmate string
-	before     string
-	after      string
+	parent  string
+	captain string
+	before  string
+	after   string
 }
 
 func gitTestRun(t *testing.T, dir string, args ...string) string {
@@ -1680,8 +1680,8 @@ func newSafeFFFixture(t *testing.T) safeFFFixture {
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
 	parent := filepath.Join(root, "parent")
-	secondmate := filepath.Join(root, "secondmate")
-	for _, dst := range []string{parent, secondmate} {
+	captain := filepath.Join(root, "captain")
+	for _, dst := range []string{parent, captain} {
 		if out, err := exec.Command("git", "clone", remote, dst).CombinedOutput(); err != nil {
 			t.Fatalf("git clone: %v\n%s", err, out)
 		}
@@ -1701,9 +1701,9 @@ func newSafeFFFixture(t *testing.T) safeFFFixture {
 	gitTestRun(t, parent, "push", "-u", "origin", "main")
 	gitTestRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
 
-	gitTestRun(t, secondmate, "fetch", "origin", "main")
-	gitTestRun(t, secondmate, "checkout", "-B", "main", before)
-	gitTestRun(t, secondmate, "remote", "set-head", "origin", "main")
+	gitTestRun(t, captain, "fetch", "origin", "main")
+	gitTestRun(t, captain, "checkout", "-B", "main", before)
+	gitTestRun(t, captain, "remote", "set-head", "origin", "main")
 	gitTestRun(t, parent, "remote", "set-head", "origin", "main")
 
 	if err := os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("new\n"), 0644); err != nil {
@@ -1712,16 +1712,16 @@ func newSafeFFFixture(t *testing.T) safeFFFixture {
 	gitTestRun(t, parent, "commit", "-am", "advance instructions")
 	after := gitTestRun(t, parent, "rev-parse", "HEAD")
 	gitTestRun(t, parent, "push", "origin", "main")
-	// Seed the already-local object without changing the secondmate checkout.
-	gitTestRun(t, secondmate, "fetch", "origin", "main")
-	gitTestRun(t, secondmate, "reset", "--hard", before)
-	return safeFFFixture{parent: parent, secondmate: secondmate, before: before, after: after}
+	// Seed the already-local object without changing the general checkout.
+	gitTestRun(t, captain, "fetch", "origin", "main")
+	gitTestRun(t, captain, "reset", "--hard", before)
+	return safeFFFixture{parent: parent, captain: captain, before: before, after: after}
 }
 
 func TestSafeFF_OffBranchRefused(t *testing.T) {
 	f := newSafeFFFixture(t)
-	gitTestRun(t, f.secondmate, "checkout", "-b", "feature")
-	if _, _, err := safeFF(f.secondmate, f.parent); err == nil || !strings.Contains(err.Error(), "expected \"main\"") {
+	gitTestRun(t, f.captain, "checkout", "-b", "feature")
+	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "expected \"main\"") {
 		t.Fatalf("safeFF error = %v, want off-default-branch refusal", err)
 	}
 }
@@ -1729,7 +1729,7 @@ func TestSafeFF_OffBranchRefused(t *testing.T) {
 func TestSafeFF_MissingOriginHEADRefused(t *testing.T) {
 	f := newSafeFFFixture(t)
 	gitTestRun(t, f.parent, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
-	if _, _, err := safeFF(f.secondmate, f.parent); err == nil || !strings.Contains(err.Error(), "origin/HEAD") {
+	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "origin/HEAD") {
 		t.Fatalf("safeFF error = %v, want missing origin/HEAD refusal", err)
 	}
 }
@@ -1755,33 +1755,33 @@ func TestAcquireExclusiveLock_OldReleasePreservesReplacement(t *testing.T) {
 
 func TestSafeFF_TrackedChangesRefused(t *testing.T) {
 	f := newSafeFFFixture(t)
-	if err := os.WriteFile(filepath.Join(f.secondmate, "AGENTS.md"), []byte("dirty\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(f.captain, "AGENTS.md"), []byte("dirty\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := safeFF(f.secondmate, f.parent); err == nil || !strings.Contains(err.Error(), "tracked changes") {
+	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "tracked changes") {
 		t.Fatalf("safeFF error = %v, want tracked-change refusal", err)
 	}
 }
 
 func TestSafeFF_UnignoredUntrackedRefused(t *testing.T) {
 	f := newSafeFFFixture(t)
-	if err := os.WriteFile(filepath.Join(f.secondmate, "rogue.txt"), []byte("rogue\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(f.captain, "rogue.txt"), []byte("rogue\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := safeFF(f.secondmate, f.parent); err == nil || !strings.Contains(err.Error(), "unignored untracked") {
+	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "unignored untracked") {
 		t.Fatalf("safeFF error = %v, want unignored-file refusal", err)
 	}
 }
 
 func TestSafeFF_GitignoredArtifactAllowed(t *testing.T) {
 	f := newSafeFFFixture(t)
-	if err := os.MkdirAll(filepath.Join(f.secondmate, "state"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(f.captain, "state"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(f.secondmate, "state", "ignored"), []byte("local\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(f.captain, "state", "ignored"), []byte("local\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	before, after, err := safeFF(f.secondmate, f.parent)
+	before, after, err := safeFF(f.captain, f.parent)
 	if err != nil {
 		t.Fatalf("safeFF: %v", err)
 	}
@@ -1798,7 +1798,7 @@ func TestSafeFF_ParentFeatureCheckoutStillTargetsDefaultBranch(t *testing.T) {
 	}
 	gitTestRun(t, f.parent, "add", "feature.txt")
 	gitTestRun(t, f.parent, "commit", "-m", "feature only")
-	_, after, err := safeFF(f.secondmate, f.parent)
+	_, after, err := safeFF(f.captain, f.parent)
 	if err != nil {
 		t.Fatalf("safeFF: %v", err)
 	}
@@ -1848,10 +1848,10 @@ func TestAcquireExclusiveLock_NoRemoveOnFailure(t *testing.T) {
 	// Write a marker so we can detect if it's removed.
 	os.WriteFile(lockPath, []byte("other-content\n"), 0644)
 
-	// Second acquire should fail (LOCK_NB) but NOT remove the file.
+	// Captain acquire should fail (LOCK_NB) but NOT remove the file.
 	_, err = acquireExclusiveLock(lockPath)
 	if err == nil {
-		t.Fatal("expected second acquire to fail")
+		t.Fatal("expected captain acquire to fail")
 	}
 
 	// The file should still exist with its original content (not removed).
@@ -1897,18 +1897,18 @@ func TestConverge_RefusesUnmarkedHome(t *testing.T) {
 func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	parent := t.TempDir()
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "crew-harness"), []byte("pi\n"), 0644)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 	os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("# Parent charter\n"), 0644)
 
-	// Create two secondmates with provenance markers.
-	sm1 := filepath.Join(parent, "secondmates", "sm-alpha")
+	// Create two captains with provenance markers.
+	sm1 := filepath.Join(parent, "captains", "sm-alpha")
 	os.MkdirAll(filepath.Join(sm1, "state"), 0755)
 	os.MkdirAll(filepath.Join(sm1, "config"), 0755)
 	os.MkdirAll(filepath.Join(sm1, "data"), 0755)
 	os.WriteFile(filepath.Join(sm1, "AGENTS.md"), []byte("# Alpha\n"), 0644)
 	SeedProvenance(sm1, "sm-alpha")
 
-	sm2 := filepath.Join(parent, "secondmates", "sm-beta")
+	sm2 := filepath.Join(parent, "captains", "sm-beta")
 	os.MkdirAll(filepath.Join(sm2, "state"), 0755)
 	os.MkdirAll(filepath.Join(sm2, "config"), 0755)
 	os.MkdirAll(filepath.Join(sm2, "data"), 0755)
@@ -1927,25 +1927,25 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	}
 
 	// But config push should have succeeded for both.
-	// Check that crew-harness was pushed.
-	data1, err := os.ReadFile(filepath.Join(sm1, "config", "crew-harness"))
+	// Check that soldier-harness was pushed.
+	data1, err := os.ReadFile(filepath.Join(sm1, "config", "soldier-harness"))
 	if err != nil {
-		t.Errorf("sm-alpha crew-harness not pushed: %v", err)
+		t.Errorf("sm-alpha soldier-harness not pushed: %v", err)
 	} else if string(data1) != "pi\n" {
-		t.Errorf("sm-alpha crew-harness content = %q", string(data1))
+		t.Errorf("sm-alpha soldier-harness content = %q", string(data1))
 	}
 
-	data2, err := os.ReadFile(filepath.Join(sm2, "config", "crew-harness"))
+	data2, err := os.ReadFile(filepath.Join(sm2, "config", "soldier-harness"))
 	if err != nil {
-		t.Errorf("sm-beta crew-harness not pushed: %v", err)
+		t.Errorf("sm-beta soldier-harness not pushed: %v", err)
 	} else if string(data2) != "pi\n" {
-		t.Errorf("sm-beta crew-harness content = %q", string(data2))
+		t.Errorf("sm-beta soldier-harness content = %q", string(data2))
 	}
 }
 
 func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	parent := t.TempDir()
-	smHome := filepath.Join(parent, "secondmates", "test-sm")
+	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
@@ -1966,11 +1966,11 @@ func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	}
 }
 
-// --- taskIDForSecondmate tests ---
+// --- taskIDForCaptain tests ---
 
-func TestTaskIDForSecondmate(t *testing.T) {
-	id := taskIDForSecondmate("test-sm")
-	if id != "secondmate:test-sm" {
-		t.Errorf("taskIDForSecondmate = %q, want %q", id, "secondmate:test-sm")
+func TestTaskIDForCaptain(t *testing.T) {
+	id := taskIDForCaptain("test-sm")
+	if id != "captain:test-sm" {
+		t.Errorf("taskIDForCaptain = %q, want %q", id, "captain:test-sm")
 	}
 }

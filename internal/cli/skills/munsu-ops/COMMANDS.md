@@ -31,10 +31,10 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only] [--backend tmux|herdr] [--yolo]` | Launch a crewmate agent in a worktree+tmux/herdr window. |
-| `munsu send <id> "<line>"` | Send a line to a crewmate endpoint. |
-| `munsu peek <id> [--lines N]` | Read last N lines of crewmate pane output (default 40). |
-| `munsu crew-state <id>` | Read crewmate current state (meta + pane liveness + status log). |
+| `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only] [--backend tmux|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
+| `munsu send <id> "<line>"` | Send a line to a soldier endpoint. |
+| `munsu peek <id> [--lines N]` | Read last N lines of soldier pane output (default 40). |
+| `munsu soldier-state <id>` | Read soldier current state (meta + pane liveness + status log). |
 
 ## Watch / Wake / Guard
 
@@ -53,26 +53,26 @@ See `SUPERVISION.md` for the full watch/wake-drain/guard/afk loop.
 |---------|-------------|
 | `munsu delivery pr-check <id> <pr-url>` | Record PR URL and head SHA in task meta; write check.sh for merge polling. |
 | `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI (default: squash). |
-| `munsu delivery merge-local <id>` | Fast-forward merge crewmate branch to local default branch (local-only mode only). |
-| `munsu delivery review-diff <id>` | Print diff summary between crewmate branch and base. |
+| `munsu delivery merge-local <id>` | Fast-forward merge soldier branch to local default branch (local-only mode only). |
+| `munsu delivery review-diff <id>` | Print diff summary between soldier branch and base. |
 | `munsu promote <id>` | Promote a scout task to ship. |
 
 ## Teardown
 
 | Command | Description |
 |---------|-------------|
-| `munsu teardown <id> [--force]` | Tear down a crewmate with dirty/remote/report safety checks. |
+| `munsu teardown <id> [--force]` | Tear down a soldier with dirty/remote/report safety checks. |
 
-## Secondmate
+## Captain
 
 | Command | Description |
 |---------|-------------|
-| `munsu secondmate launch` | Launch a secondmate in its home. |
-| `munsu secondmate seed` | Seed a secondmate home with charter. |
-| `munsu secondmate list` | List registered secondmates. |
-| `munsu secondmate handoff` | Hand off backlog items to a secondmate. |
-| `munsu secondmate config-push` | Push inheritable config to a secondmate. |
-| `munsu secondmate retire` | Retire a secondmate. |
+| `munsu captain launch` | Launch a captain in its home. |
+| `munsu captain seed` | Seed a captain home with charter. |
+| `munsu captain list` | List registered captains. |
+| `munsu captain handoff` | Hand off backlog items to a captain. |
+| `munsu captain config-push` | Push inheritable config to a captain. |
+| `munsu captain retire` | Retire a captain. |
 
 ## Fleet / Diagnostics
 
@@ -98,8 +98,8 @@ See `SUPERVISION.md` for the full watch/wake-drain/guard/afk loop.
 | Command | Description |
 |---------|-------------|
 | `munsu harness detect` | Detect the running agent harness. |
-| `munsu harness crew` | Resolve crewmate harness. |
-| `munsu harness secondmate` | Resolve secondmate harness. |
+| `munsu harness soldier` | Resolve soldier harness. |
+| `munsu harness captain` | Resolve captain harness. |
 
 ## Helpers
 

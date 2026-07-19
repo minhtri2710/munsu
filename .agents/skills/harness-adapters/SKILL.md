@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: Verified adapter launch templates for spawning crewmates — model flags, effort flags, harness detection (env markers, process ancestry), and turn-end hooks.
+description: Verified adapter launch templates for spawning soldiers — model flags, effort flags, harness detection (env markers, process ancestry), and turn-end hooks.
 user-invocable: false
 metadata:
   internal: true

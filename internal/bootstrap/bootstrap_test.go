@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 )
+
 // assertConfigContains fails t if result.Configs does not contain a ConfigDiagnostic
 // whose String() output matches want.
 func assertConfigContains(t *testing.T, configs []ConfigDiagnostic, want string) {

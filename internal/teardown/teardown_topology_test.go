@@ -425,10 +425,10 @@ func TestShipSafetyCheck_Topology_EmitProof(t *testing.T) {
 
 func TestIdentityFromMeta_WithURL(t *testing.T) {
 	meta := map[string]string{
-		"pr_url":     "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_number":  "42",
-		"pr_head":    "abc123",
-		"pr_base":    "main",
+		"pr_url":      "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_number":   "42",
+		"pr_head":     "abc123",
+		"pr_base":     "main",
 		"pr_head_ref": "fm/feature",
 	}
 	ident, err := identityFromMeta(meta)

@@ -48,4 +48,3 @@ func (d AuthDiagnostic) Fix() string {
 	}
 	return ""
 }
-

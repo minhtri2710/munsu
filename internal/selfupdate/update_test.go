@@ -356,7 +356,6 @@ func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
 	}
 }
 
-
 func TestHandshakeError_Format(t *testing.T) {
 	err := &HandshakeError{
 		OldVersion:      "0.1.0-dev+abc",

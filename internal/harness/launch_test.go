@@ -8,7 +8,7 @@ import (
 func TestBuildHarnessLaunch_Agy(t *testing.T) {
 	tmpl := Templates[Agy]
 	cmd := LaunchString(Agy, tmpl)
-	
+
 	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
 		t.Error("agy launch command should contain --dangerously-skip-permissions")
 	}

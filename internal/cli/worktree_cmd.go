@@ -67,7 +67,7 @@ referenced by any active task meta file. Use after crash recovery or
 manual cleanup to release stale leases.
 
 Leases should always be returned via "worktree return <path>" when a
-crewmate finishes. This command is a safety net for orphaned leases.`,
+soldier finishes. This command is a safety net for orphaned leases.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			// Get all active worktree paths from task meta

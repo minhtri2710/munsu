@@ -2,7 +2,7 @@
 
 ## Overview
 
-The supervision subsystem monitors crewmate sessions for lifecycle events. It
+The supervision subsystem monitors soldier sessions for lifecycle events. It
 replaces the need for polling from the orchestrator — the watcher runs in the
 background, detects stale or completed tasks, and exits with a wake reason that
 the orchestrator can act on.
@@ -51,7 +51,7 @@ beat PID before starting a new one.
 
 The watcher writes a timestamp + PID to `state/.last-watcher-beat` at every
 poll tick. Guard commands read this beat to determine if the watcher is alive.
-The stale threshold is 300 seconds (5 minutes) — if the beat is older than this,
+The stale threshold is 300 captains (5 minutes) — if the beat is older than this,
 the watcher is considered dead.
 
 ## Wake drain
@@ -79,7 +79,7 @@ The waker package (`internal/waker`) provides `EnqueueWake` for producers and
 2. **Project tangle** — checks each registered project's primary checkout is not
    on a non-default branch. A tangle means the project is on a feature branch in
    the primary checkout instead of using an isolated worktree, which can cause
-   interference between crewmates.
+   interference between soldiers.
 
 ## AFK mode
 
@@ -88,7 +88,7 @@ The waker package (`internal/waker`) provides `EnqueueWake` for producers and
 - Sets an AFK flag in the home directory (absorbed by the session-start
   bootstrap to skip heavy setup)
 - Polls the fleet at a reduced cadence
-- Prints captain-relevant events (done, failed, needs-decision)
+- Prints general-relevant events (done, failed, needs-decision)
 - Stops gracefully on SIGTERM/SIGINT (clears the AFK flag on exit)
 
 ## Key paths

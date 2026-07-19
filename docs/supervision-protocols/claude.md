@@ -19,7 +19,7 @@ When this session owns supervision and away mode is not active:
 
 - Use `munsu watch-arm` instead of `bin/fm-watch-arm.sh`.
 - Use `munsu wake-drain` instead of `bin/fm-wake-drain.sh`.
-- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for crewmates.
+- No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 - The primary session's own turn-end guard is the agent's responsibility per the seeded orchestrator manual.
 
 ## Harness-specific

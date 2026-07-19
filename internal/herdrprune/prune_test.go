@@ -380,9 +380,9 @@ func TestDenyListedLabel(t *testing.T) {
 	}{
 		{"firstmate", true},
 		{"firstmate-something", false}, // exact match only
-		{"2ndmate-abc", true},
-		{"2ndmate-", true},
-		{"2ndmate", false}, // needs hyphen prefix
+		{"captain-abc", true},
+		{"captain-", true},
+		{"general", false}, // needs hyphen prefix
 		{"other", false},
 		{"", false},
 	}
@@ -481,8 +481,8 @@ func TestDenyListedLabelWithMatchingTag(t *testing.T) {
 	if !denyListedLabel("firstmate") {
 		t.Error("denyListedLabel('firstmate') = false")
 	}
-	if !denyListedLabel("2ndmate-anything") {
-		t.Error("denyListedLabel('2ndmate-anything') = false")
+	if !denyListedLabel("captain-anything") {
+		t.Error("denyListedLabel('captain-anything') = false")
 	}
 	if denyListedLabel("some-other-label") {
 		t.Error("denyListedLabel('some-other-label') = true")

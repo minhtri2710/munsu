@@ -30,7 +30,7 @@ func (d *Daemon) SetPaneCapture(cap PaneCapture) {
 	d.maybeInitInjector()
 }
 
-// SetBackend sets the backend for sending keystrokes to the captain pane.
+// SetBackend sets the backend for sending keystrokes to the general pane.
 // Must be called before Start if inject is desired.
 func (d *Daemon) SetBackend(backend Backend) {
 	d.backend = backend
@@ -151,7 +151,7 @@ func (d *Daemon) triageCycle(now time.Time) {
 	// 2. Feed digester with triage results.
 	d.digester.Feed(digest)
 
-	// Phase 2.3/2.4: check captain-pane target safety when there are escalated entries.
+	// Phase 2.3/2.4: check general-pane target safety when there are escalated entries.
 	if digest != nil && len(digest.Escalated) > 0 && d.capture != nil {
 		target, err := ResolveTargetWithSource(d.homeDir)
 		if err != nil {
@@ -217,7 +217,7 @@ func (d *Daemon) triageCycle(now time.Time) {
 }
 
 // tryInject reads the latest digest file and attempts to inject
-// it into the captain pane through the injector. Safe only when
+// it into the general pane through the injector. Safe only when
 // the injector is configured and all safety gates pass.
 func (d *Daemon) tryInject() error {
 	path := filepath.Join(d.homeDir, digestFile)
@@ -243,6 +243,6 @@ func (d *Daemon) tryInject() error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "afk: injected %d entries into captain pane\n", len(be.Entries))
+	fmt.Fprintf(os.Stderr, "afk: injected %d entries into general pane\n", len(be.Entries))
 	return nil
 }

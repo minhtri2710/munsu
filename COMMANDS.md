@@ -7,7 +7,7 @@ Full command map grouped by lifecycle phase.
 | Command | Description |
 |---------|-------------|
 | `munsu home [--mkdir]` | Print the munsu home directory (`~/.munsu`). With `--mkdir`, create the directory tree. |
-| `munsu init` | Create home directory and seed the orchestrator operating manual. Auto-detects backend, crew harness, and backlog backend. |
+| `munsu init` | Create home directory and seed the orchestrator operating manual. Auto-detects backend, soldier harness, and backlog backend. |
 | `munsu init --reconfigure` | Re-run auto-detection and overwrite existing config files. |
 | `munsu doctor` | Run read-only diagnostics with fix commands for missing tools. |
 | `munsu config get <key>` | Read a configuration value. |
@@ -28,35 +28,35 @@ Full command map grouped by lifecycle phase.
 |---------|-------------|
 | `munsu session-start` | Lock, bootstrap, and print session-start digest (Context, Fleet State, Supervision). |
 | `munsu harness detect` | Detect the running agent harness. |
-| `munsu harness crew` | Resolve crewmate harness (dispatch.json > config/crew-harness > detected). |
-| `munsu harness secondmate` | Resolve secondmate harness (config/secondmate-harness > config/crew-harness > detected). |
+| `munsu harness soldier` | Resolve soldier harness (dispatch.json > config/soldier-harness > detected). |
+| `munsu harness captain` | Resolve captain harness (config/captain-harness > config/soldier-harness > detected). |
 
-## Crewmate Lifecycle
+## Soldier Lifecycle
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--yolo] [--backend tmux\|herdr] [--arm]` | Spawn a crewmate agent. Project inferred from cwd if omitted. With `--arm`, start the watcher after spawn. |
-| `munsu send <id> <line>` | Send a line to a crewmate session endpoint. |
-| `munsu peek <id> [--lines N]` | Capture and print crewmate output (default 40 lines). |
-| `munsu crew-state <id>` | Read crewmate current state (status, pane liveness, no-mistakes run-step). |
+| `munsu spawn <id> [<project>] [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--yolo] [--backend tmux\|herdr] [--arm]` | Spawn a soldier agent. Project inferred from cwd if omitted. With `--arm`, start the watcher after spawn. |
+| `munsu send <id> <line>` | Send a line to a soldier session endpoint. |
+| `munsu peek <id> [--lines N]` | Capture and print soldier output (default 40 lines). |
+| `munsu soldier-state <id>` | Read soldier current state (status, pane liveness, no-mistakes run-step). |
 | `munsu brief <id> <repo> [--scout]` | Scaffold a task brief (ship or scout template). |
-| `munsu teardown <id> [--force]` | Tear down a crewmate with safety checks. |
+| `munsu teardown <id> [--force]` | Tear down a soldier with safety checks. |
 | `munsu promote <id>` | Promote a scout task to ship. |
 
 ## Lifecycle (Happy Path)
 
-The recommended workflow for running a crewmate task end-to-end:
+The recommended workflow for running a soldier task end-to-end:
 
 1. **`munsu backlog add <id> <desc> [--kind ship|scout] [--repo <name>] [--start]`**
    Register the intent in the backlog. Use `--start` to move it to in-flight immediately.
 2. **`munsu brief <id> <repo> [--scout]`**
-   Scaffold a task brief that the crewmate reads on startup.
+   Scaffold a task brief that the soldier reads on startup.
 3. **`munsu spawn <id> [<project>] [--arm]`**
-   Spawn the crewmate — acquires a worktree, creates a session pane, writes task meta, and launches the harness. Project inferred from cwd if omitted.
+   Spawn the soldier — acquires a worktree, creates a session pane, writes task meta, and launches the harness. Project inferred from cwd if omitted.
 4. **`munsu peek <id>` / `munsu send <id> <line>`**
-   Monitor and interact with the running crewmate as needed.
+   Monitor and interact with the running soldier as needed.
 5. **`munsu teardown <id>`**
-   Terminate the crewmate, release the worktree, and clean up runtime state.
+   Terminate the soldier, release the worktree, and clean up runtime state.
 6. **`munsu backlog done <id>`**
    Mark the item complete in the backlog (separate operator step after teardown).
 
@@ -83,19 +83,19 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 | `munsu fleet snapshot` | Emit fleet snapshot as JSON. |
 | `munsu fleet view` | Render fleet view from snapshot. |
 | `munsu fleet bearings [<project-dir>]` | Compact resume report. |
-| `munsu secondmate seed <id> <home-path>` | Seed a secondmate home with charter. |
-| `munsu secondmate launch <secondmate-home>` | Launch a secondmate in its home. |
-| `munsu secondmate retire <secondmate-home>` | Retire a secondmate. |
-| `munsu secondmate list` | List registered secondmates. |
+| `munsu captain seed <id> <home-path>` | Seed a captain home with charter. |
+| `munsu captain launch <captain-home>` | Launch a captain in its home. |
+| `munsu captain retire <captain-home>` | Retire a captain. |
+| `munsu captain list` | List registered captains. |
 
 ## Delivery
 
 | Command | Description |
 |---------|-------------|
-| `munsu delivery review-diff <id>` | Review diff between crewmate branch and base. |
+| `munsu delivery review-diff <id>` | Review diff between soldier branch and base. |
 | `munsu delivery pr-check <id> <pr-url>` | Record PR URL and SHA in task meta, write check.sh to poll merge status. |
 | `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI. Default method is squash. |
-| `munsu delivery merge-local <id>` | Fast-forward merge crewmate branch to local default branch (no-remote projects only). |
+| `munsu delivery merge-local <id>` | Fast-forward merge soldier branch to local default branch (no-remote projects only). |
 
 ## Backlog
 
@@ -125,7 +125,7 @@ Uses `tasks-axi` CLI when available (>= 0.1.1), falling back to hand-editing `$M
 
 | Command | Description |
 |---------|-------------|
-| `munsu stow [text...] [--kind learning\|captain] [--captain]` | Sweep session for durable knowledge. Uses inspect-then-update to avoid duplicates. |
+| `munsu stow [text...] [--kind learning\|captain] [--general]` | Sweep session for durable knowledge. Uses inspect-then-update to avoid duplicates. |
 
 ## Maintenance
 
