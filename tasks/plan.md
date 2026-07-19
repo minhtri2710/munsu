@@ -1,5 +1,13 @@
 # Firstmate parity remediation plan
 
+> **Status: COMPLETE.** All planned PRs merged (#197–#216): backlog
+> separation, scope refusal, delivery identity, watcher ownership, teardown
+> topology, secondmate authority/handoff, wake target resolution, doctor
+> diagnostics, reporting polish, worktree path fix, and native Pi/Claude/Grok/
+> Codex/OpenCode adapters. agy remains unsupported (no hook surface,
+> [#206](https://github.com/minhtri2710/munsu/issues/206)). The body below is
+> the original plan, retained for reference.
+
 ## Goal
 
 Close every confirmed operational parity gap from `docs/firstmate-parity-audit-2026-07-18.md` without copying checkout-specific firstmate scripts or weakening munsu's persistent-watcher and adapter-based architecture.
