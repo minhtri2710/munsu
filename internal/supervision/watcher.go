@@ -309,6 +309,54 @@ func runCycle(homeDir string) (bool, error) {
 		}
 		emitted = true
 	}
+
+	// Discover and emit check plugin wakes (per-task .check files + global checks).
+	// These cover PR merge polls and custom checks registered under state/checks/.
+	checks, err := DiscoverAllChecks(homeDir)
+	if err != nil {
+		return emitted, err
+	}
+	for _, plugin := range checks {
+		// Validate the check artifact before surfacing
+		if err := ValidateCheck(plugin.Path); err != nil {
+			continue
+		}
+		// Migrate-or-refuse: skip if stale
+		if migrated, err := MigrateOrRefuseStale(plugin.Path); err != nil {
+			if !migrated {
+				os.Remove(plugin.Path)
+			}
+			continue
+		}
+
+		checkID := plugin.Label
+		msg := fmt.Sprintf("check ready: %s", plugin.Label)
+		if plugin.Kind == CheckPerTask {
+			// Include PR URL in message if available
+			if meta, err := task.ReadMeta(homeDir, plugin.Label); err == nil {
+				if prURL, ok := meta["pr_url"]; ok && prURL != "" {
+					msg = fmt.Sprintf("PR poll ready for task %s: %s", plugin.Label, prURL)
+				}
+			}
+		}
+
+		fingerprint := "check\n" + msg
+		marker := wakeMarkerPath(homeDir, "check:"+checkID)
+		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
+			continue
+		}
+		if err := lifecycle.EnqueueWake(homeDir, "check", checkID, msg); err != nil {
+			return emitted, fmt.Errorf("enqueue check wake: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+			return emitted, err
+		}
+		if err := os.WriteFile(marker, []byte(fingerprint), 0644); err != nil {
+			return emitted, err
+		}
+		emitted = true
+	}
+
 	return emitted, nil
 }
 
