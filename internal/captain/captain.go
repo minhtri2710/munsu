@@ -396,6 +396,49 @@ func Register(parentHome, id, homePath, scope, project string) error {
 	return err
 }
 
+// Unregister removes a captain id from the parent registry.
+// Missing registry or missing id is a no-op (idempotent cleanup).
+func Unregister(parentHome, id string) error {
+	if id == "" {
+		return fmt.Errorf("unregister requires id")
+	}
+	path := RegistryPath(parentHome)
+	existing, err := ParseRegistry(path)
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+	found := false
+	var kept []Info
+	for _, e := range existing {
+		if e.ID == id {
+			found = true
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if !found {
+		return nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("rewriting registry %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("# Captains\n\n"); err != nil {
+		return err
+	}
+	for _, e := range kept {
+		meta := fmt.Sprintf("home: %s; scope: %s; projects: %s; added: %s", e.Home, e.Scope, e.Project, e.Added)
+		if _, err := fmt.Fprintf(f, "- %s - (%s)\n", e.ID, meta); err != nil {
+			return fmt.Errorf("writing registry: %w", err)
+		}
+	}
+	return nil
+}
+
 // ParseRegistry parses the generals registry file and returns Info entries.
 func ParseRegistry(registryPath string) ([]Info, error) {
 	f, err := os.Open(registryPath)
@@ -630,14 +673,47 @@ func Launch(captainHome, parentHome string) error {
 	return nil
 }
 
+
+// inFlightSoldierIDs returns task ids in captainHome/state with kind ship|scout.
+func inFlightSoldierIDs(captainHome string) ([]string, error) {
+	stateDir := filepath.Join(captainHome, "state")
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var ids []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".meta") || strings.HasPrefix(name, ".") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".meta")
+		meta, err := task.ReadMeta(captainHome, id)
+		if err != nil {
+			continue
+		}
+		kind := meta["kind"]
+		if kind == "ship" || kind == "scout" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 // --- Retire ---
 
 // Retire tears down a captain using its session-backed endpoint.
 // It reads task meta, validates kind/sm_id/home before any action,
 // then signals the endpoint via the session backend. Errors from backend
 // operations (SendKeys, Teardown) are returned — never silently swallowed.
-// removeHome=true removes the general home directory after teardown.
-func Retire(captainHome, parentHome string, removeHome bool) error {
+// Without force, refuse when the captain home still has in-flight soldiers
+// (state/*.meta with kind ship|scout). force skips that gate.
+// removeHome=true removes the captain home directory after teardown.
+// On success, the captain is unregistered from parent data/captains.md.
+func Retire(captainHome, parentHome string, removeHome, force bool) error {
 	markerID, err := ValidateProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("refusing to retire unowned home %s: %w", captainHome, err)
@@ -645,6 +721,17 @@ func Retire(captainHome, parentHome string, removeHome bool) error {
 	canonicalCaptainHome, err := canonicalHome(captainHome)
 	if err != nil {
 		return fmt.Errorf("refusing to retire home with ambiguous identity %s: %w", captainHome, err)
+	}
+
+	if !force {
+		inFlight, err := inFlightSoldierIDs(captainHome)
+		if err != nil {
+			return fmt.Errorf("refusing to retire: cannot scan captain home for in-flight soldiers: %w", err)
+		}
+		if len(inFlight) > 0 {
+			return fmt.Errorf("refusing to retire captain %s: %d in-flight soldier(s) (%s); use --force to override",
+				markerID, len(inFlight), strings.Join(inFlight, ", "))
+		}
 	}
 
 	taskID := taskIDForCaptain(markerID)
@@ -699,6 +786,11 @@ func Retire(captainHome, parentHome string, removeHome bool) error {
 		// Provenance exists but no meta — captain was never launched.
 		fmt.Printf("  captain %s has no task meta (never launched)\n", markerID)
 	}
+
+	if err := Unregister(parentHome, markerID); err != nil {
+		return fmt.Errorf("unregistering captain %s: %w", markerID, err)
+	}
+	fmt.Printf("  unregistered %s from parent registry\n", markerID)
 
 	if removeHome {
 		if err := os.RemoveAll(captainHome); err != nil {

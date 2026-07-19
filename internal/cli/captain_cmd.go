@@ -33,14 +33,18 @@ func newCaptainCmd() *cobra.Command {
 		}),
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	var retireForce bool
+	retireCmd := &cobra.Command{
 		Use:   "retire <captain-home>",
 		Short: "Retire a captain (session-backed)",
+		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from data/captains.md. Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return captain.Retire(args[0], ctx.Home, false)
+			return captain.Retire(args[0], ctx.Home, false, retireForce)
 		}),
-	})
+	}
+	retireCmd.Flags().BoolVar(&retireForce, "force", false, "Retire even if captain home has in-flight soldiers")
+	cmd.AddCommand(retireCmd)
 
 	listCmd := &cobra.Command{
 		Use:   "list",
