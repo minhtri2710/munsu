@@ -104,6 +104,7 @@ health state.`,
 		}),
 	}
 	configureContractCommand(statusCmd)
+	statusCmd.Flags().StringVar(&flags.scope, "scope", "user", "Check this installation scope: user or project")
 
 	safetyCmd := &cobra.Command{
 		Use:   "safety-check [path]",
