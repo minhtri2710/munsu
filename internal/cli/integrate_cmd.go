@@ -67,6 +67,9 @@ currently active harness is auto-detected.`,
 		}),
 	}
 	configureContractCommand(installCmd)
+	installCmd.Flags().StringVar(&flags.harness, "harness", "", "Target harness (default: auto-detect)")
+	installCmd.Flags().StringVar(&flags.scope, "scope", "user", "Installation scope: user or project")
+	installCmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Report what would change without writing")
 
 	repairCmd := &cobra.Command{
 		Use:   "repair",
@@ -80,6 +83,9 @@ content by re-installing owned artifacts.`,
 		}),
 	}
 	configureContractCommand(repairCmd)
+	repairCmd.Flags().StringVar(&flags.harness, "harness", "", "Target harness (default: auto-detect)")
+	repairCmd.Flags().StringVar(&flags.scope, "scope", "user", "Installation scope: user or project")
+	repairCmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Report what would change without writing")
 
 	statusCmd := &cobra.Command{
 		Use:   "status [harness]",
