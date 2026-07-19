@@ -16,6 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
+	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -33,6 +34,62 @@ const ConvergeLockName = ".captain-converge.lock"
 
 // NudgePendingDir is the directory under parent state for pending nudge markers.
 const NudgePendingDir = ".captain-nudge-pending"
+
+// captainPiExtensionNames are project-local Pi extensions loaded with -e at captain launch.
+// Order matches firstmate secondmate launch: turnend guard then watch bridge, plus munsu integrate.
+var captainPiExtensionNames = []string{
+	"munsu-pi-integration.ts",
+	"munsu-captain-turnend-guard.ts",
+	"munsu-captain-pi-watch.ts",
+	"fm-primary-turnend-guard.ts",
+	"fm-primary-pi-watch.ts",
+}
+
+// EnsureCaptainPiExtensions installs project-scoped Pi extensions under captainHome/.pi/extensions
+// so Launch buildLaunchArgs can always pass -e for munsu integrate + firstmate-compat names.
+// Idempotent. Soft-skips when pi is unavailable (non-pi fleets / offline test hosts).
+func EnsureCaptainPiExtensions(captainHome string) error {
+	if _, err := ValidateProvenance(captainHome); err != nil {
+		return fmt.Errorf("refusing pi extensions on unmarked home %s: %w", captainHome, err)
+	}
+	adpt := &integrate.PiAdapter{
+		HomeDir: captainHome,
+		Cwd:     captainHome,
+		Scope:   string(integrate.ScopeProject),
+	}
+	target, _, _, err := adpt.InstallPiExtension()
+	if err != nil {
+		// Soft-skip when pi/munsu tooling is missing — captain may run a non-pi harness.
+		msg := err.Error()
+		if strings.Contains(msg, "pi not found") ||
+			strings.Contains(msg, "Install Pi") ||
+			strings.Contains(msg, "pi API capability") ||
+			strings.Contains(msg, "cannot check pi version") ||
+			strings.Contains(msg, "cannot parse pi version") ||
+			strings.Contains(msg, "pi version") ||
+			strings.Contains(msg, "cannot resolve munsu binary path") ||
+			strings.Contains(msg, "munsu not found") {
+			return nil
+		}
+		return fmt.Errorf("installing munsu-pi-integration: %w", err)
+	}
+	// Mirror integrate content under munsu-captain-* names so Launch -e matches firstmate secondmate shape.
+	content, err := os.ReadFile(target)
+	if err != nil {
+		return fmt.Errorf("reading installed pi extension: %w", err)
+	}
+	extDir := filepath.Join(captainHome, ".pi", "extensions")
+	if err := os.MkdirAll(extDir, 0755); err != nil {
+		return fmt.Errorf("creating .pi/extensions: %w", err)
+	}
+	for _, name := range []string{"munsu-captain-turnend-guard.ts", "munsu-captain-pi-watch.ts"} {
+		dst := filepath.Join(extDir, name)
+		if err := atomicWriteFile(dst, content, 0644); err != nil {
+			return fmt.Errorf("writing %s: %w", name, err)
+		}
+	}
+	return nil
+}
 
 type Info struct {
 	ID      string
@@ -201,6 +258,11 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 		if err := ConfigPush(parentHome, homePath); err != nil {
 			return fmt.Errorf("seed inherit: %w", err)
 		}
+	}
+
+	// Install project-scoped Pi captain extensions so Launch -e always has files.
+	if err := EnsureCaptainPiExtensions(homePath); err != nil {
+		return fmt.Errorf("installing captain pi extensions: %w", err)
 	}
 
 	fmt.Printf("Seeded captain %s at %s\n", id, homePath)
@@ -545,9 +607,9 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		args = append(args, adapter.LaunchTemplate.ModelFlag, model)
 	}
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
-	// Pi captain homes may carry turn-end/watch extensions (firstmate parity).
+	// Pi captain homes get project-local integrate + firstmate-compat extensions via -e.
 	if adapter.Name == "pi" {
-		for _, name := range []string{"munsu-captain-turnend-guard.ts", "munsu-captain-pi-watch.ts", "fm-primary-turnend-guard.ts", "fm-primary-pi-watch.ts"} {
+		for _, name := range captainPiExtensionNames {
 			path := filepath.Join(captainHome, ".pi", "extensions", name)
 			if _, err := os.Stat(path); err == nil {
 				args = append(args, "-e", path)
@@ -677,7 +739,6 @@ func Launch(captainHome, parentHome string) error {
 		markerID, windowID, binName, captainHome)
 	return nil
 }
-
 
 // inFlightSoldierIDs returns task ids in captainHome/state with kind ship|scout.
 func inFlightSoldierIDs(captainHome string) ([]string, error) {
@@ -1228,6 +1289,10 @@ func ConfigPush(parentHome, captainHome string) error {
 
 	if err := pushProjectsRegistry(parentHome, captainHome, log); err != nil {
 		return err
+	}
+
+	if err := EnsureCaptainPiExtensions(captainHome); err != nil {
+		return fmt.Errorf("installing captain pi extensions: %w", err)
 	}
 
 	return nil

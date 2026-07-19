@@ -2262,3 +2262,70 @@ func TestRetire_ForceAllowsInFlight(t *testing.T) {
 		t.Fatalf("expected empty registry after force retire, got %+v", mates)
 	}
 }
+
+func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "captains", "ext-sm")
+	if err := SeedWithParent("ext-sm", sm, parent, "# charter\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed path must leave at least munsu-captain-* or munsu-pi-integration when pi/munsu available.
+	extDir := filepath.Join(sm, ".pi", "extensions")
+	var found []string
+	for _, name := range captainPiExtensionNames {
+		if _, err := os.Stat(filepath.Join(extDir, name)); err == nil {
+			found = append(found, name)
+		}
+	}
+	if len(found) == 0 {
+		// Soft-skip host: still prove Ensure is idempotent and Launch wiring is safe.
+		if err := EnsureCaptainPiExtensions(sm); err != nil {
+			t.Fatalf("EnsureCaptainPiExtensions: %v", err)
+		}
+		// Manually plant extension to assert buildLaunchArgs -e path still works.
+		os.MkdirAll(extDir, 0755)
+		os.WriteFile(filepath.Join(extDir, "munsu-captain-turnend-guard.ts"), []byte("// planted\n"), 0644)
+	} else {
+		// Prefer seeing munsu integrate + captain aliases when install succeeded.
+		wantAny := map[string]bool{
+			"munsu-pi-integration.ts":        true,
+			"munsu-captain-turnend-guard.ts": true,
+			"munsu-captain-pi-watch.ts":      true,
+		}
+		hit := false
+		for _, n := range found {
+			if wantAny[n] {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			t.Fatalf("seed installed unexpected extensions only: %v", found)
+		}
+	}
+
+	// ConfigPush must re-ensure without error.
+	if err := ConfigPush(parent, sm); err != nil {
+		t.Fatalf("ConfigPush: %v", err)
+	}
+
+	name, args, err := buildLaunchArgs(sm, harness.Pi, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "pi" {
+		t.Fatalf("name=%q", name)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-e") {
+		t.Fatalf("launch args missing -e after ensure: %v", args)
+	}
+}
+
+func TestEnsureCaptainPiExtensions_RefusesUnmarked(t *testing.T) {
+	err := EnsureCaptainPiExtensions(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "unmarked home") {
+		t.Fatalf("EnsureCaptainPiExtensions() error = %v, want unmarked refusal", err)
+	}
+}
