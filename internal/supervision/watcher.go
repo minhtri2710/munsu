@@ -90,10 +90,11 @@ func ArmBackground(homeDir string, restart bool) error {
 		return fmt.Errorf("finding munsu binary: %w", err)
 	}
 
-	cmd := exec.Command(execPath, "watch")
+	cmd := exec.Command(execPath, "watch", "--home", homeDir)
 	cmd.Dir = homeDir
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	cmd.Env = append(os.Environ(), "MUNSU_HOME="+homeDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {

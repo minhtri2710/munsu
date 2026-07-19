@@ -230,9 +230,7 @@ func newContractGuardCmd() *cobra.Command {
 			// Determine state
 			state := "healthy"
 
-			if !beatStatus.Exists || (beatStatus.Stale && inFlight > 0) {
-				state = "unhealthy"
-			} else if beatStatus.Stale {
+			if !beatStatus.Exists || beatStatus.Stale {
 				state = "unhealthy"
 			} else if len(violations) > 0 {
 				state = "indeterminate"

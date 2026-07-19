@@ -88,10 +88,11 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		}
 	}
 
-	cmd := exec.Command(execPath, "watch")
+	cmd := exec.Command(execPath, "watch", "--home", homeDir)
 	cmd.Dir = homeDir
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	cmd.Env = append(os.Environ(), "MUNSU_HOME="+homeDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -108,11 +109,10 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	}
 
 	pid := cmd.Process.Pid
-	// Wait briefly for the watcher to write its beat AND identity
-	time.Sleep(200 * time.Millisecond)
-	afterStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	// Poll until beat + identity ownership land, or timeout. A single short sleep
+	// races the child process and caused false "started"/NEVER STARTED reports.
+	afterStatus, validated := waitForWatcherBeacon(homeDir, pid, 3*time.Second)
 
-	validated := afterStatus.Exists && supervision.ValidatePIDOwnership(homeDir, pid)
 	state := "started"
 	if validated {
 		state = "healthy"
@@ -136,17 +136,40 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		HeartbeatOK: validated && !afterStatus.Stale,
 	}
 
+	watchID := fmt.Sprintf("watch-%d", pid)
+	if id != nil {
+		watchID = fmt.Sprintf("watch-%d-v%s", id.PID, id.BuildVersion)
+	}
+
 	return contract.Response[contract.WatchEnsure]{
 		SchemaVersion: contract.SchemaVersion,
 		Kind:          "watch.ensure",
 		Status:        "success",
 		Data: contract.WatchEnsure{
-			WatchID:  fmt.Sprintf("watch-%d", pid),
+			WatchID:  watchID,
 			State:    state,
 			Interval: "5s",
 			Lease:    leaseInfo,
 			Noop:     false,
 		},
+	}
+}
+
+// waitForWatcherBeacon polls until the watcher beat exists and identity ownership
+// validates for pid, or until timeout. Returns the last beat status and whether
+// ownership was validated.
+func waitForWatcherBeacon(homeDir string, pid int, timeout time.Duration) (lifecycle.BeatStatus, bool) {
+	deadline := time.Now().Add(timeout)
+	var status lifecycle.BeatStatus
+	for {
+		status = lifecycle.ReadBeatStatus(homeDir, time.Now())
+		if status.Exists && !status.Stale && supervision.ValidatePIDOwnership(homeDir, pid) {
+			return status, true
+		}
+		if time.Now().After(deadline) {
+			return status, status.Exists && supervision.ValidatePIDOwnership(homeDir, pid)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -320,6 +343,7 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 	}
 
 	lifecycle.ClearBeat(homeDir)
+	supervision.ClearIdentity(homeDir)
 	return contract.Response[contract.WatchStop]{
 		SchemaVersion: contract.SchemaVersion,
 		Kind:          "watch.stop",
