@@ -7,6 +7,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/hometag"
 )
 
 // ProtocolVersion identifies the watcher protocol format.
@@ -37,7 +39,8 @@ var BuildVersion = "0.0.0-dev"
 
 // NewIdentity builds a WatcherIdentity for the current process.
 // BuildVersion is read from the package-level variable, which the CLI layer
-// sets at init time.
+// sets at init time. Home is stored in canonical form so ownership checks
+// compare equal across path aliases (symlink, relative, Abs).
 func NewIdentity(homeDir string) WatcherIdentity {
 	bv := BuildVersion
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
@@ -50,7 +53,7 @@ func NewIdentity(homeDir string) WatcherIdentity {
 	}
 	now := time.Now()
 	return WatcherIdentity{
-		Home:            homeDir,
+		Home:            hometag.Canonical(homeDir),
 		PID:             os.Getpid(),
 		ProcessStart:    processStart,
 		Executable:      executable,
@@ -148,6 +151,7 @@ func parseIdentity(data string) *WatcherIdentity {
 // ValidatePIDOwnership checks whether the given PID provably belongs to the
 // watcher that wrote the identity file. Returns true only when all of:
 //   - The identity file exists and was written by a process with the same PID
+//   - The identity home matches the home being operated on (no cross-home)
 //   - The claimed executable matches the one currently running at that PID
 //   - The process identified by the PID is still alive
 //
@@ -158,6 +162,11 @@ func ValidatePIDOwnership(homeDir string, pid int) bool {
 		return false
 	}
 	if id.PID != pid {
+		return false
+	}
+	// Identity must bind to this home. Reject copied identity files and
+	// prevent ensure/stop from treating another home's watcher as local.
+	if id.Home == "" || hometag.Canonical(id.Home) != hometag.Canonical(homeDir) {
 		return false
 	}
 	if id.Executable == "" || id.Executable == "unknown" || id.ProcessStart == "" || id.ProcessStart == "unknown" {
