@@ -15,7 +15,7 @@ When the bootstrap diagnostics section of the session-start digest prints any of
 | `CREW_DISPATCH: active` | Dispatch profile rules are active. Consult before spawning. |
 | `FLEET_SYNC:` | Fleet clones were synced or STUCK. Review STUCK entries. |
 | `SECOND_SYNC:` | Captain homes were fast-forwarded. |
-| `SECOND_LIVENESS:` | Captains were probed; any dead ones were respawned. |
+| `SECOND_LIVENESS:` | Captain liveness section (after Fleet Sync) probed endpoints and found launched-but-dead ones. Session-start reports only — relaunch with `munsu captain recover` or re-run `munsu session-start --recover`. |
 | `TASKS_AXI: available` | Tasks-axi is ready. Use it for backlog ops. |
 
 ## Silent bootstrap

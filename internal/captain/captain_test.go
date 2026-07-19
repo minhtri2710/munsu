@@ -2329,3 +2329,213 @@ func TestEnsureCaptainPiExtensions_RefusesUnmarked(t *testing.T) {
 		t.Fatalf("EnsureCaptainPiExtensions() error = %v, want unmarked refusal", err)
 	}
 }
+
+// --- Recover tests ---
+
+// seedCaptainForTest creates a captain home with provenance marker and optional AGENTS.md.
+func seedCaptainForTest(t *testing.T, parent, id string) string {
+	t.Helper()
+	smHome := filepath.Join(parent, "captains", id)
+	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# "+id+"\n"), 0644)
+	if err := SeedProvenance(smHome, id); err != nil {
+		t.Fatalf("SeedProvenance(%s): %v", id, err)
+	}
+	return smHome
+}
+
+func TestRecover_EmptyRegistry(t *testing.T) {
+	res, err := Recover(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("Recover(nil) error: %v", err)
+	}
+	if res.Relaunched != 0 || len(res.Entries) != 0 {
+		t.Errorf("expected empty result, got %+v", res)
+	}
+}
+
+func TestRecover_AliveCaptainNotRelaunched(t *testing.T) {
+	parent := t.TempDir()
+	smHome := seedCaptainForTest(t, parent, "sm-alive")
+	writeCaptainMeta(t, parent, "sm-alive", smHome, "win-1")
+
+	orig := backendForTask
+	defer func() { backendForTask = orig }()
+	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
+		return &fakeBackend{AliveFn: func(string) bool { return true }}, "herdr", nil
+	}
+
+	// Track launches: none should happen.
+	launchCalls := 0
+	origLP := lookPath
+	defer func() { lookPath = origLP }()
+	lookPath = func(string) (string, error) {
+		launchCalls++
+		return "/usr/local/bin/pi", nil
+	}
+
+	res, err := Recover(parent, []Info{{ID: "sm-alive", Home: smHome}})
+	if err != nil {
+		t.Fatalf("Recover error: %v", err)
+	}
+	if launchCalls != 0 {
+		t.Errorf("expected no launch, got %d", launchCalls)
+	}
+	if res.Alive != 1 || res.Relaunched != 0 {
+		t.Errorf("counts = %+v, want alive=1", res)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverAlive {
+		t.Errorf("entry = %+v, want RecoverAlive", res.Entries)
+	}
+}
+
+func TestRecover_SeededCaptainNotLaunched(t *testing.T) {
+	parent := t.TempDir()
+	smHome := seedCaptainForTest(t, parent, "sm-seeded")
+	// No task meta written → checkAliveViaBackend returns (false,nil) but launched=false.
+
+	res, err := Recover(parent, []Info{{ID: "sm-seeded", Home: smHome}})
+	if err != nil {
+		t.Fatalf("Recover error: %v", err)
+	}
+	if res.Seeded != 1 || res.Relaunched != 0 {
+		t.Errorf("counts = %+v, want seeded=1", res)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverSeeded {
+		t.Errorf("entry = %+v, want RecoverSeeded", res.Entries)
+	}
+}
+
+func TestRecover_DeadLaunchedRelaunches(t *testing.T) {
+	parent := t.TempDir()
+	smHome := seedCaptainForTest(t, parent, "sm-dead")
+	writeCaptainMeta(t, parent, "sm-dead", smHome, "win-dead")
+
+	// captain-harness config so Launch resolves pi.
+	configDir := filepath.Join(parent, "config")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644)
+
+	origBK := newSessionBackend
+	origLP := lookPath
+	origBF := backendForTask
+	defer func() {
+		newSessionBackend = origBK
+		lookPath = origLP
+		backendForTask = origBF
+	}()
+
+	// checkAliveViaBackend sees a dead window.
+	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
+		return &fakeBackend{AliveFn: func(string) bool { return false }}, "herdr", nil
+	}
+	// Launch uses this fresh backend (new window).
+	newSessionBackend = func(string) (session.Backend, string, error) {
+		return &fakeBackend{
+			NewWindowFn: func(_, _ string) (string, error) { return "win-new", nil },
+			AliveFn:     func(string) bool { return true },
+		}, "herdr", nil
+	}
+	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
+
+	res, err := Recover(parent, []Info{{ID: "sm-dead", Home: smHome}})
+	if err != nil {
+		t.Fatalf("Recover error: %v", err)
+	}
+	if res.Relaunched != 1 || res.Failed != 0 {
+		t.Errorf("counts = %+v, want relaunched=1", res)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverRelaunched {
+		t.Errorf("entry = %+v, want RecoverRelaunched", res.Entries)
+	}
+}
+
+func TestRecover_UnknownHarnessFailsClosed(t *testing.T) {
+	parent := t.TempDir()
+	smHome := seedCaptainForTest(t, parent, "sm-unknown")
+	writeCaptainMeta(t, parent, "sm-unknown", smHome, "win-dead")
+
+	// captain-harness pinned to an unverified harness → Launch/buildLaunchArgs fails closed.
+	configDir := filepath.Join(parent, "config")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("codex\n"), 0644)
+
+	origBF := backendForTask
+	defer func() { backendForTask = origBF }()
+	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
+		return &fakeBackend{AliveFn: func(string) bool { return false }}, "herdr", nil
+	}
+
+	res, err := Recover(parent, []Info{{ID: "sm-unknown", Home: smHome}})
+	if err != nil {
+		t.Fatalf("Recover error: %v", err)
+	}
+	if res.Failed != 1 || res.Relaunched != 0 {
+		t.Errorf("counts = %+v, want failed=1", res)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverFailed {
+		t.Errorf("entry = %+v, want RecoverFailed", res.Entries)
+	}
+	if msg := res.Entries[0].Error; !strings.Contains(msg, "verified harness") && !strings.Contains(msg, "verified captain launch contract") {
+		t.Errorf("error = %q, want fail-closed harness message", msg)
+	}
+}
+
+func TestRecover_BadProvenanceFailsEntry(t *testing.T) {
+	parent := t.TempDir()
+	// Home exists but has no provenance marker.
+	smHome := filepath.Join(parent, "captains", "sm-bad")
+	os.MkdirAll(smHome, 0755)
+
+	res, err := Recover(parent, []Info{{ID: "sm-bad", Home: smHome}})
+	if err != nil {
+		t.Fatalf("Recover error: %v", err)
+	}
+	if res.Failed != 1 {
+		t.Errorf("counts = %+v, want failed=1", res)
+	}
+}
+
+func TestRecoverResult_String(t *testing.T) {
+	res := &RecoverResult{Entries: []RecoverEntry{
+		{ID: "a", Outcome: RecoverAlive},
+		{ID: "b", Outcome: RecoverFailed, Error: "boom"},
+	}}
+	s := res.String()
+	if !strings.Contains(s, "a: alive") || !strings.Contains(s, "b: FAILED: boom") {
+		t.Errorf("String() = %q", s)
+	}
+
+	empty := (&RecoverResult{}).String()
+	if empty != "no captains registered" {
+		t.Errorf("empty String() = %q", empty)
+	}
+}
+
+// --- ProbeLiveness tests ---
+
+func TestProbeLiveness_UsesFleetCaptainStatusSeam(t *testing.T) {
+	parent := t.TempDir()
+	smHome := seedCaptainForTest(t, parent, "sm-x")
+
+	orig := fleetCaptainStatus
+	defer func() { fleetCaptainStatus = orig }()
+	fleetCaptainStatus = func(_, _, _ string) string { return "dead" }
+
+	probes := ProbeLiveness(parent, []Info{{ID: "sm-x", Home: smHome}})
+	if len(probes) != 1 || probes[0].Status != "dead" {
+		t.Errorf("probes = %+v, want one dead", probes)
+	}
+}
+
+func TestProbeLiveness_EmptyAndUnknown(t *testing.T) {
+	if ProbeLiveness(t.TempDir(), nil) != nil {
+		t.Error("expected nil for empty registry")
+	}
+	probes := ProbeLiveness(t.TempDir(), []Info{{ID: "x", Home: ""}})
+	if len(probes) != 1 || probes[0].Status != "unknown" {
+		t.Errorf("probes = %+v, want unknown for empty home", probes)
+	}
+}

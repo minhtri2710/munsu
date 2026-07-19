@@ -20,6 +20,7 @@ func init() {
 		}
 		return bk.Alive(meta["window"]), nil
 	})
+	captain.SetFleetCaptainStatus(fleet.CaptainStatus)
 }
 
 func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {

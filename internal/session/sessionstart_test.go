@@ -388,3 +388,83 @@ func TestEnsureWatcherForSession_HealthyWatcherIsReported(t *testing.T) {
 		t.Fatalf("result=%+v, want healthy", result)
 	}
 }
+
+// --- Captain Liveness section tests ---
+
+func TestPrintCaptainLiveness_NilSeamIsNoop(t *testing.T) {
+	var buf bytes.Buffer
+	res := printCaptainLiveness(&buf, t.TempDir(), true, nil)
+	if res != nil {
+		t.Errorf("expected nil result for nil seam, got %+v", res)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no output for nil seam, got %q", buf.String())
+	}
+}
+
+func TestPrintCaptainLiveness_NoCaptains(t *testing.T) {
+	var buf bytes.Buffer
+	fn := func(string, bool) CaptainLivenessResult { return CaptainLivenessResult{} }
+	printCaptainLiveness(&buf, t.TempDir(), true, fn)
+	if !strings.Contains(buf.String(), "(no captains registered)") {
+		t.Errorf("output = %q", buf.String())
+	}
+}
+
+func TestPrintCaptainLiveness_DeadSurfacesDiagnostic(t *testing.T) {
+	var buf bytes.Buffer
+	fn := func(string, bool) CaptainLivenessResult {
+		return CaptainLivenessResult{
+			Probes:  []CaptainProbe{{ID: "sm-1", Status: "alive"}, {ID: "sm-2", Status: "dead"}},
+			HasDead: true,
+		}
+	}
+	res := printCaptainLiveness(&buf, t.TempDir(), true, fn)
+	out := buf.String()
+	if !strings.Contains(out, "sm-1: alive") || !strings.Contains(out, "sm-2: dead") {
+		t.Errorf("output missing probes: %q", out)
+	}
+	if !strings.Contains(out, "SECOND_LIVENESS: dead captain endpoint(s) detected") {
+		t.Errorf("output missing SECOND_LIVENESS line: %q", out)
+	}
+	if !strings.Contains(out, "relaunch with: munsu captain recover") {
+		t.Errorf("output missing relaunch hint: %q", out)
+	}
+	if res == nil || !res.HasDead {
+		t.Errorf("result = %+v, want HasDead", res)
+	}
+}
+
+func TestPrintCaptainLiveness_ReadOnlyDoesNotHintRecover(t *testing.T) {
+	var buf bytes.Buffer
+	fn := func(string, bool) CaptainLivenessResult {
+		return CaptainLivenessResult{
+			Probes:  []CaptainProbe{{ID: "sm-1", Status: "dead"}},
+			HasDead: true,
+		}
+	}
+	printCaptainLiveness(&buf, t.TempDir(), false, fn)
+	out := buf.String()
+	if !strings.Contains(out, "read-only: run 'munsu captain recover'") {
+		t.Errorf("read-only output missing manual hint: %q", out)
+	}
+}
+
+func TestPrintCaptainLiveness_RecoverSummaryPrinted(t *testing.T) {
+	var buf bytes.Buffer
+	fn := func(string, bool) CaptainLivenessResult {
+		return CaptainLivenessResult{
+			Probes:  []CaptainProbe{{ID: "sm-1", Status: "dead"}},
+			HasDead: true,
+			Recover: &CaptainRecoverSummary{Relaunched: 1, Alive: 0, Seeded: 0, Failed: 0, Entries: []string{"sm-1: relaunched"}},
+		}
+	}
+	printCaptainLiveness(&buf, t.TempDir(), true, fn)
+	out := buf.String()
+	if !strings.Contains(out, "recover: relaunched=1") {
+		t.Errorf("output missing recover summary: %q", out)
+	}
+	if !strings.Contains(out, "sm-1: relaunched") {
+		t.Errorf("output missing recover entry line: %q", out)
+	}
+}

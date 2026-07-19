@@ -1637,6 +1637,194 @@ func Converge(parentHome string, registered []Info) error {
 	return nil
 }
 
+// --- Recover ---
+
+// RecoverOutcome is the disposition of one captain during a recover sweep.
+type RecoverOutcome string
+
+const (
+	// RecoverAlive: endpoint probed alive; no action taken.
+	RecoverAlive RecoverOutcome = "alive"
+	// RecoverSeeded: home present but never launched (no launch meta/window); no action.
+	RecoverSeeded RecoverOutcome = "seeded"
+	// RecoverRelaunched: endpoint was launched-but-dead and has been relaunched.
+	RecoverRelaunched RecoverOutcome = "relaunched"
+	// RecoverFailed: relaunch attempted and failed (e.g. unknown harness); see Error.
+	RecoverFailed RecoverOutcome = "failed"
+)
+
+// RecoverEntry describes one captain's recover result.
+type RecoverEntry struct {
+	ID      string
+	Home    string
+	Outcome RecoverOutcome
+	Error   string // non-empty when Outcome == RecoverFailed
+}
+
+// RecoverResult holds the aggregate outcome of a recover sweep.
+type RecoverResult struct {
+	Entries    []RecoverEntry
+	Relaunched int
+	Alive      int
+	Seeded     int
+	Failed     int
+}
+
+// String renders a human-readable summary for CLI output.
+func (r *RecoverResult) String() string {
+	if r == nil || len(r.Entries) == 0 {
+		return "no captains registered"
+	}
+	var b strings.Builder
+	for _, e := range r.Entries {
+		switch e.Outcome {
+		case RecoverAlive:
+			fmt.Fprintf(&b, "  %s: alive\n", e.ID)
+		case RecoverSeeded:
+			fmt.Fprintf(&b, "  %s: seeded (not launched)\n", e.ID)
+		case RecoverRelaunched:
+			fmt.Fprintf(&b, "  %s: relaunched\n", e.ID)
+		case RecoverFailed:
+			fmt.Fprintf(&b, "  %s: FAILED: %s\n", e.ID, e.Error)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// Recover probes each registered captain and relaunches launched-but-dead endpoints.
+// It fails closed on unknown/unverified harnesses (Launch returns an error which is
+// recorded on the entry) and continues with the remaining captains. Seeded-but-never-
+// launched captains are reported but not launched. The sweep holds the converge lock so
+// it does not race with an in-flight converge.
+func Recover(parentHome string, registered []Info) (*RecoverResult, error) {
+	res := &RecoverResult{}
+	if len(registered) == 0 {
+		return res, nil
+	}
+
+	release, err := convergeLockAcquire(parentHome)
+	if err != nil {
+		return res, fmt.Errorf("acquiring converge lock: %w", err)
+	}
+	defer release()
+
+	for _, sm := range registered {
+		entry := RecoverEntry{ID: sm.ID, Home: sm.Home}
+		if sm.Home == "" {
+			entry.Outcome = RecoverFailed
+			entry.Error = "missing home path"
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+
+		markerID, vErr := ValidateProvenance(sm.Home)
+		if vErr != nil {
+			entry.Outcome = RecoverFailed
+			entry.Error = fmt.Sprintf("provenance validation failed: %v", vErr)
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+		if markerID != sm.ID {
+			entry.Outcome = RecoverFailed
+			entry.Error = fmt.Sprintf("marker id %q does not match registry id %q", markerID, sm.ID)
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+
+		alive, aliveErr := checkAliveViaBackend(parentHome, sm)
+		if aliveErr != nil {
+			// Backend resolution failure: cannot prove liveness, cannot safely relaunch.
+			entry.Outcome = RecoverFailed
+			entry.Error = fmt.Sprintf("alive check failed: %v", aliveErr)
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+		if alive {
+			entry.Outcome = RecoverAlive
+			res.Alive++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+
+		// Not alive. Distinguish launched-but-dead (meta+window) from seeded-never-launched.
+		taskID := taskIDForCaptain(sm.ID)
+		meta, mErr := task.ReadMeta(parentHome, taskID)
+		launched := false
+		if mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != "" {
+			launched = true
+		}
+		if !launched {
+			entry.Outcome = RecoverSeeded
+			res.Seeded++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+
+		// Launched-but-dead: relaunch. Fail-closed on unknown harness inside Launch.
+		if lErr := Launch(sm.Home, parentHome); lErr != nil {
+			entry.Outcome = RecoverFailed
+			entry.Error = lErr.Error()
+			res.Failed++
+		} else {
+			entry.Outcome = RecoverRelaunched
+			res.Relaunched++
+		}
+		res.Entries = append(res.Entries, entry)
+	}
+	return res, nil
+}
+
+// ProbeLiveness reports each registered captain as alive/dead/seeded/unknown without
+// mutating anything. Used by session-start to surface dead endpoints. Never relaunches.
+// Returns entries in registry order.
+func ProbeLiveness(parentHome string, registered []Info) []LivenessProbe {
+	if len(registered) == 0 {
+		return nil
+	}
+	probes := make([]LivenessProbe, 0, len(registered))
+	for _, sm := range registered {
+		p := LivenessProbe{ID: sm.ID, Home: sm.Home}
+		if sm.Home == "" {
+			p.Status = "unknown"
+			probes = append(probes, p)
+			continue
+		}
+		if _, err := ValidateProvenance(sm.Home); err != nil {
+			p.Status = "unknown"
+			probes = append(probes, p)
+			continue
+		}
+		// CaptainStatus: alive | dead | seeded | unknown.
+		p.Status = fleetCaptainStatus(parentHome, sm.ID, sm.Home)
+		probes = append(probes, p)
+	}
+	return probes
+}
+
+// LivenessProbe is one captain's non-mutating liveness reading.
+type LivenessProbe struct {
+	ID     string
+	Home   string
+	Status string // alive | dead | seeded | unknown
+}
+
+// fleetCaptainStatus is a package-level seam over fleet.CaptainStatus so this file does
+// not import fleet (avoid cycles). Wired by the CLI layer via SetFleetCaptainStatus.
+// Falls back to "unknown" when unwired.
+var fleetCaptainStatus = func(parentHome, captainID, homeDir string) string {
+	return "unknown"
+}
+
+// SetFleetCaptainStatus installs the fleet.CaptainStatus probe used by ProbeLiveness.
+// Called from the CLI layer (internal/cli) to avoid an import cycle.
+func SetFleetCaptainStatus(fn func(parentHome, captainID, homeDir string) string) {
+	fleetCaptainStatus = fn
+}
+
 // checkAliveViaBackend checks if a captain is alive using the session backend.
 // It reads task meta, validates kind/sm_id/home before use, and uses backend.Alive.
 func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
@@ -1665,7 +1853,7 @@ func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
 		return false, nil
 	}
 
-	bk, _, bkErr := session.BackendForTask(parentHome, meta)
+	bk, _, bkErr := backendForTask(parentHome, meta)
 	if bkErr != nil {
 		return false, fmt.Errorf("resolving backend: %w", bkErr)
 	}
