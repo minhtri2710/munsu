@@ -10,5 +10,10 @@ data:
     docs,done,docs/cleanup
   captains[1]{id,scope,status}:
     sm-alpha,domain-a,alive
+  captain_guidance:
+    note: "For kind=captain, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
+    watch: "read status/doc return channel; do not routinely munsu peek a captain for answers"
+    send: "munsu send captain:<id> '<request>'"
+    return_channel_note: "Captain answers come back through parent state/captain:<id>.status (and optional docs) after a marked munsu send request."
   unresolved_holds: 1
 help[1]: Run `munsu task observe <task-id>` to inspect a soldier

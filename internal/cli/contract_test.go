@@ -265,6 +265,15 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	if !strings.Contains(output, "help[1]:") {
 		t.Errorf("empty snapshot missing help hints\n%s", output)
 	}
+	if !strings.Contains(output, "captain_guidance") {
+		t.Errorf("empty snapshot missing captain_guidance\n%s", output)
+	}
+	if !strings.Contains(output, "do not routinely munsu peek a captain") {
+		t.Errorf("empty snapshot missing return-channel watch guidance\n%s", output)
+	}
+	if !strings.Contains(output, "structured state from that registered home") {
+		t.Errorf("empty snapshot missing captain_guidance.note\n%s", output)
+	}
 
 	// Non-empty snapshot: add a task
 	if err := task.WriteMeta(home, "alpha", map[string]string{"description": "inspect", "worktree": home}); err != nil {
@@ -282,6 +291,49 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	}
 	if !strings.Contains(out2, "help[1]:") {
 		t.Errorf("non-empty snapshot missing help hints\n%s", out2)
+	}
+	if !strings.Contains(out2, "captain_guidance") || !strings.Contains(out2, "munsu send captain:<id>") {
+		t.Errorf("non-empty snapshot missing captain send guidance\n%s", out2)
+	}
+}
+
+func TestFleetSnapshotV2CaptainGuidanceJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+
+	out, err := runContract(t, []string{"fleet", "snapshot", "--version", "2", "--output", "json"})
+	if err != nil {
+		t.Fatalf("fleet snapshot v2 json: %v", err)
+	}
+	var resp struct {
+		Data struct {
+			CaptainGuidance struct {
+				Note              string `json:"note"`
+				Watch             string `json:"watch"`
+				Send              string `json:"send"`
+				ReturnChannelNote string `json:"return_channel_note"`
+			} `json:"captain_guidance"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, out)
+	}
+	g := resp.Data.CaptainGuidance
+	want := contract.DefaultCaptainGuidance()
+	if g.Note != want.Note {
+		t.Errorf("note = %q", g.Note)
+	}
+	if g.Watch != want.Watch {
+		t.Errorf("watch = %q", g.Watch)
+	}
+	if g.Send != want.Send {
+		t.Errorf("send = %q", g.Send)
+	}
+	if g.ReturnChannelNote != want.ReturnChannelNote {
+		t.Errorf("return_channel_note = %q", g.ReturnChannelNote)
+	}
+	if !(strings.Contains(g.Watch, "peek") && strings.Contains(strings.ToLower(g.Watch), "routinely")) {
+		t.Errorf("watch should discourage routine peek, got %q", g.Watch)
 	}
 }
 

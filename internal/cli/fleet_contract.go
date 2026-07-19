@@ -158,6 +158,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 			Total:           len(soldiers),
 			Soldiers:        soldiers,
 			Captains:        captains,
+			CaptainGuidance: contract.DefaultCaptainGuidance(),
 			UnresolvedHolds: unresolvedHolds,
 		},
 		Help: []string{"Run `munsu task observe <task-id>` to inspect a soldier"},
