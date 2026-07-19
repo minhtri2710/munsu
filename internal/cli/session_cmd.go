@@ -576,6 +576,7 @@ and runs one wake-triage cycle. It then blocks until SIGTERM/SIGINT.
 The flag and lock are cleaned up on stop.
 
 Subcommands:
+  drain      One General drain cycle: claim wakes, peek fleet, surface actionable
   return     Ordered AFK daemon shutdown with digest drain
   return check  Check if actionable AFK state remains`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -583,9 +584,91 @@ Subcommands:
 			return d.Start(ctx.Home)
 		}),
 	}
+	cmd.AddCommand(newAfkDrainCmd())
 	cmd.AddCommand(newAfkReturnCmd())
 	return cmd
 }
+
+func newAfkDrainCmd() *cobra.Command {
+	var consumer string
+	var leaseCaptains int
+	var limit int
+	var noPeek bool
+	cmd := &cobra.Command{
+		Use:   "drain",
+		Short: "One General drain cycle: claim wakes, peek fleet, surface actionable",
+		Long: `Claim signal wakes under a lease, classify each as actionable or routine,
+and optionally peek the fleet for in-flight phase. Prints only actionable
+wakes plus guidance so the General can steer without reading child chat.
+
+Routines are counted, not enumerated, to reduce wake rot.
+Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if consumer == "" {
+				return usageError("invalid_argument", "Run `munsu afk drain --consumer <id>`", "--consumer is required")
+			}
+
+			output, err := contractOutput(cmd)
+			if err != nil {
+				return err
+			}
+
+			report, err := afk.DrainCycle(afk.DrainCycleOptions{
+				HomeDir:       ctx.Home,
+				Consumer:      consumer,
+				LeaseCaptains: leaseCaptains,
+				Limit:         limit,
+				PeekFleet:     !noPeek,
+			})
+			if err != nil {
+				return operationError("internal", "Run `munsu afk drain --consumer "+consumer+"` again", err.Error())
+			}
+
+			if output == contract.OutputJSON {
+				var actionable []string
+				for _, w := range report.Actionable {
+					actionable = append(actionable, fmt.Sprintf("[%s] %s: %s", w.EventID, w.Key, w.Payload))
+				}
+				state := "clean"
+				if report.HasActionable() {
+					state = "actionable"
+				}
+				var inFlight, dead int
+				if report.FleetPeek != nil {
+					inFlight = report.FleetPeek.InFlight
+					dead = report.FleetPeek.Dead
+				}
+				return writeContract(cmd, contract.Response[contract.DrainCycle]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "afk.drain",
+					Status:        "success",
+					Data: contract.DrainCycle{
+						ClaimID:      report.LeaseID,
+						Consumer:     report.Consumer,
+						Actionable:   actionable,
+						RoutineCount: report.RoutineCount,
+						Reclaimed:    report.Reclaimed,
+						InFlight:     inFlight,
+						Dead:         dead,
+						Guidance:     report.Guidance,
+						State:        state,
+					},
+				})
+			}
+
+			cmd.Println(report.String())
+			return nil
+		}),
+	}
+	configureContractCommand(cmd)
+	cmd.Flags().StringVar(&consumer, "consumer", "", "Consumer identifier (required)")
+	cmd.Flags().IntVar(&leaseCaptains, "lease-captains", 60, "Lease duration in seconds")
+	cmd.Flags().IntVar(&limit, "limit", 10, "Maximum wakes to claim")
+	cmd.Flags().BoolVar(&noPeek, "no-peek", false, "Skip the fleet peek")
+	return cmd
+}
+
 
 func newAfkReturnCmd() *cobra.Command {
 	cmd := &cobra.Command{
