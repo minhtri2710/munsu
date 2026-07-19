@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -33,7 +34,7 @@ func TestBuildLaunchArgs_VerifiedSecondmateHarness(t *testing.T) {
 	if binName != "pi" {
 		t.Fatalf("binName = %q, want pi", binName)
 	}
-	wantArgs := []string{"--", smHome, string(charter)}
+	wantArgs := []string{string(charter)}
 	_ = wantArgs
 	if len(args) != len(wantArgs) {
 		t.Fatalf("args = %#v, want %#v", args, wantArgs)
@@ -101,7 +102,7 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 		t.Errorf("binName = %q, want %q", binName, "pi")
 	}
 
-	wantPrefix := []string{"--model", model, "--"}
+	wantPrefix := []string{"--model", model}
 	if len(args) < len(wantPrefix) {
 		t.Fatalf("args = %v, want prefix %v", args, wantPrefix)
 	}
@@ -729,32 +730,43 @@ func TestShQuote_ShellExecutableCharacters(t *testing.T) {
 }
 
 func TestBuildLaunchScript(t *testing.T) {
+	tmp := t.TempDir()
 	binPath := "/usr/local/bin/pi"
-	args := []string{"--model", "gpt-5", "--", "/home/sm", "# charter"}
-	cwd := "/home/sm"
+	args := []string{"--model", "gpt-5", "# charter"}
+	cwd := tmp
 
-	script, err := buildLaunchScript(binPath, args, cwd)
+	cmd, err := buildLaunchScript(binPath, args, cwd)
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
-
-	// Should start with cd command.
-	if !strings.HasPrefix(script, "cd ") {
-		t.Errorf("script should start with 'cd ', got: %s", script)
+	scriptPath := filepath.Join(cwd, ".secondmate-launch.sh")
+	if cmd != "bash "+shQuote(scriptPath) {
+		t.Fatalf("command = %q, want bash-wrapped script path", cmd)
 	}
-	// Should contain exec.
+	body, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("reading launch script: %v", err)
+	}
+	script := string(body)
+	if !strings.HasPrefix(script, "#!/usr/bin/env bash\n") {
+		end := 40
+		if len(script) < end {
+			end = len(script)
+		}
+		t.Errorf("script should start with bash shebang, got: %q", script[:end])
+	}
+	if !strings.Contains(script, "export MUNSU_HOME="+shQuote(cwd)) {
+		t.Errorf("script should export MUNSU_HOME, got: %s", script)
+	}
+	if !strings.Contains(script, "export MUNSU_ROLE=secondmate") {
+		t.Errorf("script should export MUNSU_ROLE, got: %s", script)
+	}
 	if !strings.Contains(script, "exec ") {
 		t.Errorf("script should contain 'exec ', got: %s", script)
 	}
-	// Should have bin path.
 	if !strings.Contains(script, binPath) {
 		t.Errorf("script should contain bin path %q, got: %s", binPath, script)
 	}
-	// Should have cwd.
-	if !strings.Contains(script, shQuote(cwd)) {
-		t.Errorf("script should contain cwd, got: %s", script)
-	}
-	// All args should be represented.
 	for _, arg := range args {
 		if !strings.Contains(script, shQuote(arg)) {
 			t.Errorf("script should contain quoted arg %q, got: %s", arg, script)
@@ -763,27 +775,26 @@ func TestBuildLaunchScript(t *testing.T) {
 }
 
 func TestBuildLaunchScript_SafeQuoting(t *testing.T) {
-	// Test with dangerous characters.
+	tmp := t.TempDir()
 	binPath := "/usr/local/bin/pi"
-	args := []string{"--prompt", "# charter with $HOME and `backticks` and $(whoami)"}
-	cwd := "/tmp/sm test"
+	args := []string{"# charter with $HOME and `backticks` and $(whoami)"}
+	cwd := filepath.Join(tmp, "sm test")
+	os.MkdirAll(cwd, 0755)
 
-	script, err := buildLaunchScript(binPath, args, cwd)
+	cmd, err := buildLaunchScript(binPath, args, cwd)
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
-
-	// The dangerous characters should be inside single quotes.
-	if strings.Contains(script, "$HOME") && !strings.Contains(script, "'$HOME'") && !strings.Contains(script, shQuote("# charter")) {
-		t.Logf("script: %s", script)
+	body, err := os.ReadFile(filepath.Join(cwd, ".secondmate-launch.sh"))
+	if err != nil {
+		t.Fatalf("reading launch script: %v", err)
 	}
-
-	// Verify the quoted form protects the special chars.
-	if strings.Contains(script, "$(whoami)") {
-		// $(whoami) should be inside quotes.
-		if !strings.Contains(script, shQuote("# charter with $HOME and `backticks` and $(whoami)")) {
-			t.Errorf("dangerous arg not properly quoted in: %s", script)
-		}
+	script := string(body)
+	if !strings.Contains(script, shQuote(args[0])) {
+		t.Errorf("dangerous arg not properly quoted in: %s", script)
+	}
+	if !strings.HasPrefix(cmd, "bash ") {
+		t.Errorf("command should be bash-wrapped, got %q", cmd)
 	}
 }
 
@@ -806,14 +817,14 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 	}
 
 	// Build a launch script with special characters.
-	args := []string{"--prompt", "# charter with $HOME and `backticks` and $(whoami)", "--", smHome}
-	script, err := buildLaunchScript(testBin, args, smHome)
+	args := []string{"# charter with $HOME and `backticks` and $(whoami)"}
+	scriptCmd, err := buildLaunchScript(testBin, args, smHome)
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
 
-	// Execute via /bin/sh -c.
-	cmd := exec.Command("/bin/sh", "-c", script)
+	// Execute via /bin/sh -c (the returned command is already bash <script>).
+	cmd := exec.Command("/bin/sh", "-c", scriptCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("shell execution failed: %v\noutput: %s", err, string(out))
@@ -936,6 +947,31 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	}
 }
 
+func TestLaunch_RefusesSecondmateRole(t *testing.T) {
+	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "secondmates", "test-sm")
+	Seed("test-sm", smHome, "# charter")
+	t.Setenv("MUNSU_ROLE", "secondmate")
+	err := Launch(smHome, tmp)
+	if err == nil || !strings.Contains(err.Error(), "cannot launch other secondmates") {
+		t.Fatalf("Launch() error = %v, want nested-secondmate refusal", err)
+	}
+}
+
+func TestLaunch_RefusesFromSecondmateParentHome(t *testing.T) {
+	parent := t.TempDir()
+	if err := SeedProvenance(parent, "parent-sm"); err != nil {
+		t.Fatal(err)
+	}
+	smHome := filepath.Join(t.TempDir(), "child-sm")
+	Seed("child-sm", smHome, "# charter")
+	t.Setenv("MUNSU_ROLE", "")
+	err := Launch(smHome, parent)
+	if err == nil || !strings.Contains(err.Error(), "cannot launch another secondmate") {
+		t.Fatalf("Launch() error = %v, want parent-secondmate refusal", err)
+	}
+}
+
 func TestLaunch_FailsGracefullyOnLookPathFailure(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "secondmates", "test-sm")
@@ -998,8 +1034,12 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 	}()
 
 	recordedSends := make([]string, 0)
+	var recordedWindowName string
+	var recordedSession string
 	fakeBK := &fakeBackend{
 		NewWindowFn: func(session, name string) (string, error) {
+			recordedSession = session
+			recordedWindowName = name
 			return "secondmate:test-window", nil
 		},
 		SendKeysFn: func(windowID, text string) error {
@@ -1035,6 +1075,17 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 		t.Fatalf("Launch() error: %v", err)
 	}
 
+	if recordedWindowName != "mu-secondmate-test-sm" {
+		t.Errorf("secondmate window label = %q, want %q", recordedWindowName, "mu-secondmate-test-sm")
+	}
+	canonicalSM, err := canonicalHome(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSession := hometag.WorkspaceTag(canonicalSM)
+	if recordedSession != wantSession {
+		t.Errorf("secondmate workspace label = %q, want %q", recordedSession, wantSession)
+	}
 	// Check that meta was written with kind=secondmate.
 	taskID := "secondmate:test-sm"
 	metaPath := filepath.Join(tmp, "state", taskID+".meta")
@@ -1045,10 +1096,6 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 	metaContent := string(metaData)
 	if !strings.Contains(metaContent, "kind=secondmate") {
 		t.Errorf("meta should contain kind=secondmate, got: %s", metaContent)
-	}
-	canonicalSM, err := canonicalHome(smHome)
-	if err != nil {
-		t.Fatal(err)
 	}
 	if !strings.Contains(metaContent, "home="+canonicalSM) {
 		t.Errorf("meta should contain canonical home=%s", canonicalSM)
@@ -1070,25 +1117,24 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 		t.Errorf("meta should contain herdr_pane_id=test-pane")
 	}
 
-	// Verify launch was sent with production buildLaunchScript quoting.
+	// Verify launch was sent with production bash-wrapped script.
 	if len(recordedSends) == 0 {
 		t.Fatal("no commands were sent via SendKeys")
 	}
-
-	// Assert recorded SendKeys matches production buildLaunchScript output.
-	expectedCmd, err := buildLaunchScript("/usr/local/bin/pi", []string{"--", smHome, "# charter"}, smHome)
+	scriptPath := filepath.Join(canonicalSM, ".secondmate-launch.sh")
+	wantCmd := "bash " + shQuote(scriptPath)
+	if recordedSends[0] != wantCmd {
+		t.Errorf("sent command = %q, want %q", recordedSends[0], wantCmd)
+	}
+	body, err := os.ReadFile(scriptPath)
 	if err != nil {
-		t.Fatalf("buildLaunchScript error: %v", err)
+		t.Fatalf("reading launch script: %v", err)
 	}
-	if recordedSends[0] != expectedCmd {
-		t.Errorf("sent command = %q, want %q", recordedSends[0], expectedCmd)
+	script := string(body)
+	if !strings.Contains(script, "export MUNSU_HOME="+shQuote(canonicalSM)) {
+		t.Errorf("script should export canonical MUNSU_HOME %q, got: %s", canonicalSM, script)
 	}
-
-	// Verify canonical cwd and charter in the script.
-	if !strings.Contains(recordedSends[0], shQuote(smHome)) {
-		t.Errorf("script should contain canonical cwd %q", smHome)
-	}
-	if !strings.Contains(recordedSends[0], shQuote("# charter")) {
+	if !strings.Contains(script, shQuote("# charter")) {
 		t.Error("script should contain charter content")
 	}
 }

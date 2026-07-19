@@ -180,8 +180,7 @@ var Adapters = map[string]Adapter{
 		SecondmateLaunch: SecondmateLaunchContract{
 			Supported:  true,
 			CwdAtHome:  true,
-			Separator:  "--",
-			ProjectArg: true,
+			ProjectArg: false,
 			PromptArg:  true,
 		},
 		SupervisionProtocol: `pi`,

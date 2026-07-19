@@ -14,6 +14,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
+	"github.com/minhtri2710/munsu/internal/secondmate"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -48,6 +49,9 @@ func NewRunner(args Args) *Runner {
 // Run executes the full spawn orchestration sequence.
 func (r *Runner) Run() (string, error) {
 	if err := r.resolveHome(); err != nil {
+		return "", err
+	}
+	if err := r.checkSpawnAuthority(); err != nil {
 		return "", err
 	}
 	if err := r.resolveMode(); err != nil {
@@ -115,6 +119,119 @@ func (r *Runner) resolveHome() error {
 	}
 	r.homeDir = h
 	return nil
+}
+
+func (r *Runner) checkSpawnAuthority() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("spawn authority: resolving current directory: %w", err)
+	}
+	if endpointKind, found, err := currentEndpointKind(r.homeDir); err != nil {
+		return fmt.Errorf("spawn authority: resolving current endpoint: %w", err)
+	} else if found {
+		if endpointKind == "secondmate" {
+			return authorizeSpawn("secondmate", r.homeDir, cwd)
+		}
+		return fmt.Errorf("spawn authority: managed crewmate endpoints cannot spawn; delegate to the captain or a secondmate")
+	}
+	return authorizeSpawn(os.Getenv("MUNSU_ROLE"), r.homeDir, cwd)
+}
+
+var tmuxWindowForPane = func(pane string) (string, error) {
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", pane, "#{window_id}").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("tmux pane %s window lookup: %s", pane, strings.TrimSpace(string(out)))
+	}
+	window := strings.TrimSpace(string(out))
+	if window == "" {
+		return "", fmt.Errorf("tmux pane %s window lookup returned empty window id", pane)
+	}
+	return window, nil
+}
+
+func currentEndpointKind(homeDir string) (string, bool, error) {
+	herdrPane := strings.TrimSpace(os.Getenv("HERDR_PANE_ID"))
+	tmuxPane := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	if herdrPane == "" && tmuxPane == "" {
+		return "", false, nil
+	}
+	tmuxWindow := ""
+	if tmuxPane != "" {
+		var err error
+		tmuxWindow, err = tmuxWindowForPane(tmuxPane)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	entries, err := os.ReadDir(task.StateDir(homeDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".meta")
+		meta, err := task.ReadMeta(homeDir, id)
+		if err != nil {
+			continue
+		}
+		if herdrPane != "" && meta["herdr_pane_id"] == herdrPane {
+			return meta["kind"], true, nil
+		}
+		if tmuxWindow != "" {
+			window := meta["window"]
+			if window == tmuxWindow || strings.HasSuffix(window, ":"+tmuxWindow) {
+				return meta["kind"], true, nil
+			}
+		}
+	}
+	return "", false, nil
+}
+
+func authorizeSpawn(role, homeDir, cwd string) error {
+	switch role {
+	case "secondmate":
+		if _, err := secondmate.ValidateProvenance(homeDir); err != nil {
+			return fmt.Errorf("spawn authority: invalid secondmate identity: %w", err)
+		}
+		canonicalHome, err := canonicalExistingPath(homeDir)
+		if err != nil {
+			return fmt.Errorf("spawn authority: resolving secondmate home: %w", err)
+		}
+		canonicalCWD, err := canonicalExistingPath(cwd)
+		if err != nil {
+			return fmt.Errorf("spawn authority: resolving secondmate cwd: %w", err)
+		}
+		if canonicalCWD != canonicalHome {
+			return fmt.Errorf("spawn authority: secondmate must spawn from its home %s, current directory is %s", canonicalHome, canonicalCWD)
+		}
+		return nil
+	case "crewmate":
+		return fmt.Errorf("spawn authority: regular crewmates cannot spawn; delegate to the captain or a secondmate")
+	case "", "captain":
+		identity, _, _, err := scope.ClassifyIdentity(cwd)
+		if err != nil {
+			return fmt.Errorf("spawn authority: classifying current checkout: %w", err)
+		}
+		if identity == scope.Worktree {
+			return fmt.Errorf("spawn authority: linked-worktree callers cannot spawn; delegate to the captain or a secondmate")
+		}
+		return nil
+	default:
+		return fmt.Errorf("spawn authority: unknown MUNSU_ROLE %q; expected captain, secondmate, or crewmate", role)
+	}
+}
+
+func canonicalExistingPath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(resolved)
 }
 
 // Phase 2: resolveMode resolves the effective delivery mode.
@@ -236,6 +353,27 @@ func (r *Runner) resolveLaunchConfig() {
 	}
 	r.launchCmd = harness.LaunchString(r.harness, tmpl)
 }
+func crewTabLabel(projectName, taskID string) string {
+	return "mu-" + labelComponent(projectName) + "-" + labelComponent(taskID)
+}
+
+func labelComponent(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(value) {
+		valid := r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-'
+		if valid {
+			b.WriteRune(r)
+			lastDash = r == '-'
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
 
 // Phase 11: createSession creates a session window for the crewmate.
 func (r *Runner) createSession() error {
@@ -257,7 +395,7 @@ func (r *Runner) createSession() error {
 		hb.Cwd = r.wtPath
 	}
 
-	windowID, err := bk.NewWindow(hometag.Tag(r.homeDir), r.args.ID)
+	windowID, err := bk.NewWindow(hometag.WorkspaceTag(r.homeDir), crewTabLabel(r.args.ProjectName, r.args.ID))
 	if err != nil {
 		return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
 	}
@@ -273,7 +411,7 @@ func (r *Runner) bootstrapWindow() {
 		return
 	}
 	launchScript := filepath.Join(r.wtPath, ".crew-launch.sh")
-	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\n" + r.launchCmd + "\n"
+	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=crewmate\n" + r.launchCmd + "\n"
 	if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 	}

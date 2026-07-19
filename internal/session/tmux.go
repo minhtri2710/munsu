@@ -8,7 +8,7 @@ import (
 
 // TmuxBackend implements Backend using the tmux CLI.
 type TmuxBackend struct {
-	// Tag is a home-scoped prefix for window names (empty = no prefix).
+	// Tag is retained for compatibility with callers that scope sessions by home.
 	Tag string
 }
 
@@ -21,12 +21,9 @@ func tmuxBin() (string, error) {
 	return path, nil
 }
 
-// windowName returns a hometag-prefixed window name.
+// windowName returns the complete caller-provided label.
 func (t *TmuxBackend) windowName(name string) string {
-	if t.Tag == "" {
-		return "fm-" + name
-	}
-	return t.Tag + "-fm-" + name
+	return name
 }
 
 // ensureSession checks whether session exists and creates it if missing.

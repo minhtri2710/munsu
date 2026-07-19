@@ -292,6 +292,12 @@ func TestResolve_Precedence(t *testing.T) {
 	})
 }
 
+func TestTmuxWindowNameUsesCompleteCallerLabel(t *testing.T) {
+	tk := &TmuxBackend{Tag: "home"}
+	if got := tk.windowName("mu-api-w1"); got != "mu-api-w1" {
+		t.Fatalf("windowName() = %q, want complete caller label", got)
+	}
+}
 func TestTmux_Alive_TmuxNotOnPath(t *testing.T) {
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
