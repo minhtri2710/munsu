@@ -73,18 +73,21 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 			sum := fleet.SummarizeCaptainHome(m.Home)
 			valid := sum.Valid
 			entry.Valid = &valid
+			rec := fleet.ReconcileParentStatus(sum, entry.LastParentStatus)
+			entry.Provenance = rec.Provenance
+			entry.Freshness = rec.Freshness
+			entry.ParentEventRole = rec.ParentEventRole
+			entry.Contradiction = rec.Contradiction
+			entry.ContradictionReason = rec.ContradictionReason
 			if sum.Valid || sum.Home != "" {
 				entry.CurrentState = sum.State
 				entry.CurrentReason = sum.Reason
-				if sum.Valid {
+				// Preserve main's fail-closed provenance nuance when home is readable
+				// but invalid and no parent status exists.
+				if !sum.Valid && entry.LastParentStatus == "" && sum.Reason != "" {
 					entry.Provenance = "structured-home"
-				} else if entry.LastParentStatus != "" {
-					entry.Provenance = "parent-status-only"
-				} else if sum.Reason != "" {
-					// Home was readable enough to summarize but failed closed.
-					entry.Provenance = "structured-home"
-				} else {
-					entry.Provenance = "unavailable"
+					entry.Freshness = "fresh"
+					entry.ParentEventRole = "historical-only"
 				}
 				entry.Counts = &contract.CaptainHomeCounts{
 					ActiveChildren: sum.Counts.ActiveChildren,
@@ -127,12 +130,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 						Surface: o.Surface, Count: o.Count,
 					})
 				}
-			} else if entry.LastParentStatus != "" {
-				entry.Provenance = "parent-status-only"
-				entry.CurrentState = "unknown"
-				entry.CurrentReason = sum.Reason
 			} else {
-				entry.Provenance = "unavailable"
 				entry.CurrentState = "unknown"
 				entry.CurrentReason = sum.Reason
 			}
