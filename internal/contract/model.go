@@ -56,12 +56,32 @@ type TaskObserve struct {
 
 // FleetSnapshotV2 is the version-two fleet state with cheap aggregate counts.
 type FleetSnapshotV2 struct {
-	Scope           string         `json:"scope"`
-	Count           int            `json:"count"`
-	Total           int            `json:"total"`
-	Soldiers        []Soldier      `json:"soldiers"`
-	Captains        []CaptainEntry `json:"captains,omitempty"`
-	UnresolvedHolds int            `json:"unresolved_holds,omitempty"`
+	Scope           string          `json:"scope"`
+	Count           int             `json:"count"`
+	Total           int             `json:"total"`
+	Soldiers        []Soldier       `json:"soldiers"`
+	Captains        []CaptainEntry  `json:"captains,omitempty"`
+	CaptainGuidance CaptainGuidance `json:"captain_guidance"`
+	UnresolvedHolds int             `json:"unresolved_holds,omitempty"`
+}
+
+// CaptainGuidance is return-channel action note for renderers and bearings
+// (firstmate secondmate_guidance analog).
+type CaptainGuidance struct {
+	Note              string `json:"note"`
+	Watch             string `json:"watch,omitempty"`
+	Send              string `json:"send,omitempty"`
+	ReturnChannelNote string `json:"return_channel_note,omitempty"`
+}
+
+// DefaultCaptainGuidance returns the static General bearings note for captains.
+func DefaultCaptainGuidance() CaptainGuidance {
+	return CaptainGuidance{
+		Note:              "For kind=captain, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority.",
+		Watch:             "read status/doc return channel; do not routinely munsu peek a captain for answers",
+		Send:              "munsu send captain:<id> '<request>'",
+		ReturnChannelNote: "Captain answers come back through parent state/captain:<id>.status (and optional docs) after a marked munsu send request.",
+	}
 }
 
 // Soldier is the minimal row in a fleet snapshot.
