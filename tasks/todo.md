@@ -3,8 +3,9 @@
 > **Status: COMPLETE.** Every item below was implemented across merged PRs
 > [#197](https://github.com/minhtri2710/munsu/pull/197)–[#216](https://github.com/minhtri2710/munsu/pull/216).
 > The unchecked boxes are the original planning checklist; do not read them as
-> open work. Sole open item: agy has no hook surface
-> ([#206](https://github.com/minhtri2710/munsu/issues/206)).
+> open work. (agy's 'no hook surface' conclusion was wrong -- agy has a full hook system;
+> its adapter landed in [#218](https://github.com/minhtri2710/munsu/pull/218) and
+> [#206](https://github.com/minhtri2710/munsu/issues/206) was closed as completed. No open items remain.)
 
 ## PR 0 — Development backlog foundation
 

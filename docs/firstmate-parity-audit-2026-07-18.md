@@ -4,7 +4,7 @@
 > [#197](https://github.com/minhtri2710/munsu/pull/197)–[#216](https://github.com/minhtri2710/munsu/pull/216)
 > (core parity + worktree fix + native Pi/Claude/Grok/Codex/OpenCode adapters).
 > The audit text below is the historical point-in-time snapshot.
-> Sole remaining open item: agy has no hook surface (tracked in [#206](https://github.com/minhtri2710/munsu/issues/206)).
+> All six harnesses now have native adapters (Pi, Claude, Grok, Codex, OpenCode, agy). The earlier 'agy has no hook surface' conclusion was wrong -- agy has a full hook system; its adapter landed in [#218](https://github.com/minhtri2710/munsu/pull/218) and [#206](https://github.com/minhtri2710/munsu/issues/206) was closed as completed. No open items remain.
 
 ## Scope and method
 
