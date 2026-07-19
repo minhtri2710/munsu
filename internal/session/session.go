@@ -145,8 +145,13 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 			if wsID := meta["herdr_workspace_id"]; wsID != "" {
 				bk.TeardownWorkspaceID = wsID
 			}
-			// Set hometag for label-safe workspace close
-			bk.Hometag = hometag.Tag(homeDir)
+			// Set workspace label for label-safe close. Prefer the task's own home
+			// (captain homes use captain-<id>-<hash>, not the parent primary tag).
+			labelHome := homeDir
+			if mh := meta["home"]; mh != "" {
+				labelHome = mh
+			}
+			bk.Hometag = hometag.WorkspaceTag(labelHome)
 		}
 		return bk, "herdr", nil
 	case "tmux":

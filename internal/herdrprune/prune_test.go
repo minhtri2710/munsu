@@ -192,8 +192,8 @@ func TestRunPrune_NonHometagLabelKept(t *testing.T) {
 	if result.Workspaces[0].Action != "keep" {
 		t.Errorf("Action = %q, want keep", result.Workspaces[0].Action)
 	}
-	if !strings.Contains(result.Workspaces[0].Reason, "does not match hometag") {
-		t.Errorf("Reason = %q, should mention hometag mismatch", result.Workspaces[0].Reason)
+	if !strings.Contains(result.Workspaces[0].Reason, "not owned by this home") {
+		t.Errorf("Reason = %q, should mention not owned", result.Workspaces[0].Reason)
 	}
 	if result.Closed != 0 {
 		t.Errorf("Closed = %d, want 0", result.Closed)
@@ -380,8 +380,8 @@ func TestDenyListedLabel(t *testing.T) {
 	}{
 		{"firstmate", true},
 		{"firstmate-something", false}, // exact match only
-		{"captain-abc", true},
-		{"captain-", true},
+		{"captain-abc", false},
+		{"captain-", false},
 		{"general", false}, // needs hyphen prefix
 		{"other", false},
 		{"", false},
@@ -481,8 +481,8 @@ func TestDenyListedLabelWithMatchingTag(t *testing.T) {
 	if !denyListedLabel("firstmate") {
 		t.Error("denyListedLabel('firstmate') = false")
 	}
-	if !denyListedLabel("captain-anything") {
-		t.Error("denyListedLabel('captain-anything') = false")
+	if denyListedLabel("captain-anything") {
+		t.Error("denyListedLabel('captain-anything') = true; captain labels are owned+live-meta protected")
 	}
 	if denyListedLabel("some-other-label") {
 		t.Error("denyListedLabel('some-other-label') = true")
