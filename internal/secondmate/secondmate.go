@@ -16,6 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
+	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -118,8 +119,53 @@ func taskIDForSecondmate(smID string) string {
 
 // --- Seed / Provenance ---
 
+// DefaultCharter returns the idle-by-default Second charter with Marshal return-channel rules.
+// parentHome must be the Marshal home whose state/secondmate:<id>.status is the escalation file.
+func DefaultCharter(id, parentHome string) string {
+	statusFile := filepath.Join(parentHome, "state", taskIDForSecondmate(id)+".status")
+	return fmt.Sprintf(`# Charter: %s (Second)
+
+## Domain
+You are a persistent domain Second under the Marshal fleet hierarchy:
+Marshal → Second → Crew.
+
+This home is yours. Operate only on work the Marshal routes to you.
+Never invent surveys, audits, or self-directed "find work" tasks.
+An empty queue is healthy.
+
+## Requests from the Marshal
+Incoming pane text may be:
+1. Marked with a leading %s followed by an invisible separator — a Marshal-routed request.
+2. Unmarked — the captain typing directly into your pane (stay conversational).
+
+When a message carries the Marshal marker:
+- Do the work.
+- Answer via the STATUS path below, never chat-only. The Marshal does not read this chat.
+- Terse result: one status line is the whole answer.
+- Detailed result: write a doc under this home's data/ and append a status line that points to it.
+
+## Escalation / return channel
+Material captain-relevant outcomes append ONE line to the Marshal status file:
+  echo "{state}: {one short line}" >> %s
+
+States: working, needs-decision, blocked, paused, done, failed, resolved.
+Key material phases with [key=<slug>] so later done/failed/resolved supersede them.
+Routine Crew supervision, heartbeats, and retries stay inside THIS home and must not touch that file.
+
+## Spawn authority
+Spawn Crew only from this Second home. Never launch another Second.
+`, id, marker.FromMarshalLabel, shQuote(statusFile))
+}
+
 // Seed creates a new secondmate home with a charter brief and a provenance marker.
+// When charter is empty, DefaultCharter(id, parentHome) is used. parentHome may be
+// empty only when an explicit charter is provided.
 func Seed(id, homePath, charter string) error {
+	return SeedWithParent(id, homePath, "", charter)
+}
+
+// SeedWithParent is Seed with an explicit Marshal parent home for default charter generation.
+func SeedWithParent(id, homePath, parentHome, charter string) error {
 	if err := os.MkdirAll(homePath, 0755); err != nil {
 		return fmt.Errorf("creating secondmate home %s: %w", homePath, err)
 	}
@@ -128,6 +174,13 @@ func Seed(id, homePath, charter string) error {
 		if err := os.MkdirAll(filepath.Join(homePath, dir), 0755); err != nil {
 			return fmt.Errorf("creating %s/%s: %w", homePath, dir, err)
 		}
+	}
+
+	if strings.TrimSpace(charter) == "" {
+		if parentHome == "" {
+			return fmt.Errorf("seeding secondmate %s: empty charter requires parent home for return-channel path", id)
+		}
+		charter = DefaultCharter(id, parentHome)
 	}
 
 	agentsPath := filepath.Join(homePath, "AGENTS.md")

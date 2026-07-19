@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/minhtri2710/munsu/internal/marker"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,5 +218,18 @@ func TestPeekCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "herdr") {
 		t.Errorf("expected error mentioning 'herdr' (from config fallback), got: %v", err)
+	}
+}
+
+func TestSendCmd_MarksSecondmateLine(t *testing.T) {
+	// Contract: Marshal→Second sends must carry the from-marshal marker so the
+	// Second answers via parent status, not chat-only.
+	line := "report progress on munsu-rank-rename"
+	marked := marker.MarkFromMarshal(line)
+	if !marker.IsFromMarshal(marked) {
+		t.Fatalf("expected marker on secondmate send line")
+	}
+	if marked == line {
+		t.Fatalf("expected prefix")
 	}
 }
