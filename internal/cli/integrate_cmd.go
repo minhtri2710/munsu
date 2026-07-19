@@ -378,9 +378,16 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 	reason := ""
 	if effectiveCommand != "" {
 		if strings.Contains(effectiveCommand, "munsu watch arm") ||
-			strings.Contains(effectiveCommand, "munsu watch ensure") {
+			strings.Contains(effectiveCommand, "munsu watch ensure") ||
+			strings.Contains(effectiveCommand, "munsu watch stop") {
 			block = true
 			reason = "Use 'munsu guard' or 'munsu watch run' for inspection; watcher lifecycle is managed automatically."
+		} else if strings.Contains(effectiveCommand, "munsu watch") &&
+			!strings.Contains(effectiveCommand, "run") &&
+			!strings.Contains(effectiveCommand, "--help") {
+			// Block bare `munsu watch` (daemon mode) but allow `munsu watch run` and --help.
+			block = true
+			reason = "Watcher lifecycle is managed automatically; use 'munsu watch run' for inspection."
 		}
 
 		if strings.Contains(effectiveCommand, "cd .no-mistakes") ||
