@@ -1,6 +1,7 @@
 package captain
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -661,6 +663,96 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	}
 	if !first.ModTime().Equal(captain.ModTime()) {
 		t.Fatalf("idempotent push rewrote unchanged file: %s -> %s", first.ModTime(), captain.ModTime())
+	}
+}
+
+func TestConfigPush_ProjectsRegistry(t *testing.T) {
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
+	SeedProvenance(smHome, "test-sm")
+
+	repo := t.TempDir()
+	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+	reg := fmt.Sprintf("- munsu - %s (added 2026-07-16)\n- toy - /tmp/toy (added 2026-07-17)\n", repo)
+	if err := os.WriteFile(filepath.Join(parent, "data", "projects.md"), []byte(reg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ConfigPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(project.RegistryPath(smHome))
+	if err != nil {
+		t.Fatalf("projects.md was not pushed: %v", err)
+	}
+	if string(got) != reg {
+		t.Errorf("projects.md = %q, want %q", string(got), reg)
+	}
+
+	projects, err := project.List(smHome)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("got %d projects, want 2", len(projects))
+	}
+	path, err := project.ResolveRepoPath(smHome, "munsu")
+	if err != nil {
+		t.Fatalf("ResolveRepoPath: %v", err)
+	}
+	if path != repo {
+		t.Errorf("ResolveRepoPath = %q, want %q", path, repo)
+	}
+}
+
+func TestConfigPush_ProjectsRegistryMirrorDeletion(t *testing.T) {
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
+	SeedProvenance(smHome, "test-sm")
+
+	if err := os.WriteFile(project.RegistryPath(smHome), []byte("- stale - /tmp/stale (added 2026-01-01)\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ConfigPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(project.RegistryPath(smHome)); !os.IsNotExist(err) {
+		t.Error("projects.md should have been deleted when parent has none")
+	}
+}
+
+func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
+	parent := t.TempDir()
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	reg := "- munsu - /Users/beowulf/Work/munsu (added 2026-07-16)\n"
+	if err := os.WriteFile(project.RegistryPath(parent), []byte(reg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sm := filepath.Join(parent, "captains", "ops")
+	if err := SeedWithParent("ops", sm, parent, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(sm, "config", "soldier-harness")); err != nil {
+		t.Fatalf("seed did not inherit soldier-harness: %v", err)
+	}
+	got, err := os.ReadFile(project.RegistryPath(sm))
+	if err != nil {
+		t.Fatalf("seed did not inherit projects.md: %v", err)
+	}
+	if string(got) != reg {
+		t.Errorf("projects.md = %q, want %q", string(got), reg)
 	}
 }
 
