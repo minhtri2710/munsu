@@ -4,8 +4,10 @@ package soldierstate
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/nostatus"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -14,7 +16,7 @@ import (
 // State describes the current state of a soldier.
 type State struct {
 	TaskID      string
-	Status      string // one of: working, done, failed, paused, blocked, needs-decision, awaiting_approval, resolved, idle, unknown
+	Status      string // one of: working, done, failed, paused, blocked, needs-decision, awaiting_approval, idle, unknown
 	Description string // human-readable detail
 	PaneAlive   bool   // whether the session pane is still alive
 	StatusLines int    // number of status log lines
@@ -29,6 +31,11 @@ type State struct {
 	// superseded by a no-mistakes run-step and should not be treated as
 	// current-state truth.
 	StatusLogSuperseded bool
+
+	// OpenActivities are still-open keyed work phases from the status event log
+	// (working/paused open; done/failed/resolved/etc. close). Evidence only —
+	// Status is the current-state authority (no-mistakes / pane / last state verb).
+	OpenActivities []classify.Activity
 }
 
 // Read reads and synthesizes the current soldier state.
@@ -75,17 +82,17 @@ func Read(homeDir string, id string) (*State, error) {
 		}
 	}
 
-	// 4. Read status log for the latest state — terminal states only when
-	//    the run-step doesn't contradict them.
+	// 4. Status file is an append-only event log. Fold open keyed activities,
+	// then map the last state-bearing line (not a pure close event like resolved).
 	statusLines, err := task.ReadStatus(homeDir, id)
 	if err == nil && len(statusLines) > 0 {
 		s.StatusLines = len(statusLines)
-		lastLine := statusLines[len(statusLines)-1]
+		statusPath := filepath.Join(task.StateDir(homeDir), id+".status")
+		s.OpenActivities = classify.OpenActivities(statusPath)
 
-		// Extract state from last status line: "state: message"
-		if colonIdx := strings.Index(lastLine, ":"); colonIdx >= 0 {
-			state := strings.TrimSpace(lastLine[:colonIdx])
-			msg := strings.TrimSpace(lastLine[colonIdx+1:])
+		lastLine := lastStateBearingLine(statusLines)
+		if lastLine != "" {
+			state, msg := statusVerbAndNote(lastLine)
 
 			if s.NoMistakesRunStep != "" {
 				// We have a run-step: the log may be superseded.
@@ -104,14 +111,12 @@ func Read(homeDir string, id string) (*State, error) {
 				return s, nil
 			}
 
-			// No run-step: existing behavior (pane-then-log).
+			// No run-step: pane-then-log, skipping pure close verbs.
 			if state == "done" || state == "failed" {
-				// Terminal states override pane check
 				s.Status = state
 				s.Description = msg
 			} else if s.Status == "unknown" || s.Status == "working" || s.Status == "idle" {
-				// Non-terminal states only override if we don't have a better source
-				if task.IsValidStatusState(state) {
+				if task.IsValidStatusState(state) && state != "resolved" {
 					s.Status = state
 					s.Description = msg
 				}
@@ -199,4 +204,47 @@ func getGitBranch(wtPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// lastStateBearingLine returns the last non-empty status line when it carries a
+// current-state verb. Pure close events (resolved, captain-held) only fold keys
+// and must not become Status or resurrect an earlier line (firstmate crew-state).
+func lastStateBearingLine(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		verb, _ := statusVerbAndNote(line)
+		switch verb {
+		case "resolved", "captain-held":
+			// Close-only event: no status-log current state.
+			return ""
+		case "working", "paused", "blocked", "needs-decision", "done", "failed", "awaiting_approval":
+			return line
+		default:
+			if task.IsValidStatusState(verb) && verb != "resolved" {
+				return line
+			}
+			if strings.Contains(line, ":") {
+				return line
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// statusVerbAndNote extracts the leading verb (optional [key=…] stripped) and note.
+func statusVerbAndNote(line string) (verb, note string) {
+	line = strings.TrimSpace(line)
+	before, after, found := strings.Cut(line, ":")
+	if idx := strings.Index(before, "[key="); idx >= 0 {
+		before = strings.TrimSpace(before[:idx])
+	}
+	verb = strings.TrimSpace(before)
+	if found {
+		return verb, strings.TrimSpace(after)
+	}
+	return verb, ""
 }

@@ -405,6 +405,83 @@ func TestOpenDecisions_MixedVerbs(t *testing.T) {
 	}
 }
 
+// --- OpenActivities tests (keyed open/close work phases) ---
+
+func TestOpenActivities_MissingFile(t *testing.T) {
+	if acts := OpenActivities("/nonexistent/path.status"); acts != nil {
+		t.Errorf("expected nil for missing file, got %+v", acts)
+	}
+}
+
+func TestOpenActivities_KeyedPhases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "activity.status")
+	if err := os.WriteFile(path, []byte(
+		"working [key=phase7]: Phase 7 started\n"+
+			"working [key=phase6]: Phase 6 started\n"+
+			"working [key=legal]: reviewing legal dependency\n"+
+			"done [key=phase6]: Phase 6 completed\n"+
+			"resolved [key=phase7]: Phase 7 completed and moved to Done\n"+
+			"paused [key=legal]: awaiting external counsel\n"+
+			"resolved [key=legal]: legal item returned to the queue\n"+
+			"working [key=phase8]: Phase 8 started\n",
+	), 0644); err != nil {
+		t.Fatal(err)
+	}
+	acts := OpenActivities(path)
+	if len(acts) != 1 {
+		t.Fatalf("expected 1 open activity, got %d (%+v)", len(acts), acts)
+	}
+	if acts[0].Key != "phase8" || acts[0].Verb != "working" || acts[0].Summary != "Phase 8 started" {
+		t.Errorf("activity = %+v, want phase8/working/Phase 8 started", acts[0])
+	}
+}
+
+func TestOpenActivities_LegacyDefaultClosedByDone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.status")
+	if err := os.WriteFile(path, []byte("working: legacy start\ndone: legacy completion\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if acts := OpenActivities(path); len(acts) != 0 {
+		t.Fatalf("expected legacy done to close default phase, got %+v", acts)
+	}
+}
+
+func TestOpenActivities_MultiEventOpenKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "multi.status")
+	if err := os.WriteFile(path, []byte(
+		"working [key=a]: start a\n"+
+			"working [key=b]: start b\n"+
+			"done [key=a]: finish a\n"+
+			"paused [key=c]: wait c\n",
+	), 0644); err != nil {
+		t.Fatal(err)
+	}
+	acts := OpenActivities(path)
+	if len(acts) != 2 {
+		t.Fatalf("expected 2 open activities, got %d (%+v)", len(acts), acts)
+	}
+	if acts[0].Key != "b" || acts[0].Verb != "working" {
+		t.Errorf("first open = %+v, want b/working", acts[0])
+	}
+	if acts[1].Key != "c" || acts[1].Verb != "paused" {
+		t.Errorf("second open = %+v, want c/paused", acts[1])
+	}
+}
+
+func TestOpenActivities_UnrelatedTerminalDoesNotCloseOtherKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cross.status")
+	if err := os.WriteFile(path, []byte(
+		"working [key=phase1]: doing phase1\n"+
+			"done [key=other]: unrelated terminal\n",
+	), 0644); err != nil {
+		t.Fatal(err)
+	}
+	acts := OpenActivities(path)
+	if len(acts) != 1 || acts[0].Key != "phase1" {
+		t.Fatalf("expected phase1 still open, got %+v", acts)
+	}
+}
+
 // --- AbsorbClass tests ---
 
 func TestAbsorbClass_MissingStatusFile(t *testing.T) {

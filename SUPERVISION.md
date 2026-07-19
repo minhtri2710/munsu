@@ -133,4 +133,4 @@ All paths are relative to `$MUNSU_HOME` (default `~/.munsu`).
 | `state/.last-watcher-beat` | Liveness timestamp + PID |
 | `state/.wake-queue` | Durable wake event queue |
 | `state/<id>.meta` | Per-task metadata |
-| `state/<id>.status` | Per-task status log |
+| `state/<id>.status` | Per-task append-only event log (not sole current state; use `soldier-state`) |
