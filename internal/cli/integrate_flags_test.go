@@ -32,4 +32,13 @@ func TestIntegrateSubcommandFlagsRegistered(t *testing.T) {
 	if sc.Flags().Lookup("harness") == nil {
 		t.Error("integrate safety-check must register --harness")
 	}
+	// status must register --scope so project-scope installs can be inspected
+	// (without it, `integrate status` after `install --scope project` reports absent).
+	st, _, err := root.Find([]string{"integrate", "status"})
+	if err != nil {
+		t.Fatalf("Find(integrate status): %v", err)
+	}
+	if st.Flags().Lookup("scope") == nil {
+		t.Error("integrate status must register --scope")
+	}
 }
