@@ -25,6 +25,8 @@ func newSpawnCmd() *cobra.Command {
 		yolo        bool
 		backend     string
 		harnessFlag string
+		modelFlag   string
+		effortFlag  string
 		arm         bool
 	)
 
@@ -72,6 +74,8 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				Yolo:        yolo,
 				Backend:     backend,
 				HarnessFlag: harnessFlag,
+				ModelFlag:   modelFlag,
+				EffortFlag:  effortFlag,
 				HomeDir:     homeOverride,
 				Arm:         arm,
 			})
@@ -90,6 +94,8 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override soldier harness (pi, agy, etc.)")
+	cmd.Flags().StringVar(&modelFlag, "model", "", "Override model for the soldier harness")
+	cmd.Flags().StringVar(&effortFlag, "effort", "", "Override effort/thinking level (harness-specific)")
 	cmd.Flags().BoolVar(&arm, "arm", false, "Arm the watcher after spawn (warn-only on failure)")
 
 	return cmd

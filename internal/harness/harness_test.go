@@ -405,3 +405,97 @@ func TestCaptain_DefaultCaptainHarnessFallsToSoldierHarness(t *testing.T) {
 		t.Errorf("Captain() = %q, want %q (default captain sentinel should fall through to soldier-harness)", h, Pi)
 	}
 }
+
+func TestParseHarnessLine(t *testing.T) {
+	tests := []struct {
+		in      string
+		harness string
+		model   string
+		effort  string
+	}{
+		{"pi", "pi", "", ""},
+		{"pi cliproxyapi/grok-4.5 low", "pi", "cliproxyapi/grok-4.5", "low"},
+		{"  codex gpt-5.2-codex high  ", "codex", "gpt-5.2-codex", "high"},
+		{"default", "", "", ""},
+		{"# comment", "", "", ""},
+		{"", "", "", ""},
+	}
+	for _, tt := range tests {
+		got := ParseHarnessLine(tt.in)
+		if got.Harness != tt.harness || got.Model != tt.model || got.Effort != tt.effort {
+			t.Errorf("ParseHarnessLine(%q) = %+v, want harness=%q model=%q effort=%q",
+				tt.in, got, tt.harness, tt.model, tt.effort)
+		}
+	}
+}
+
+func TestCaptainProfileFromHome_MultiToken(t *testing.T) {
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, "config")
+	os.MkdirAll(configDir, 0755)
+	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"),
+		[]byte("pi cliproxyapi/grok-4.5 low\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// legacy model file should NOT override multi-token model
+	if err := os.WriteFile(filepath.Join(configDir, "model"), []byte("ignored-model\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prof, err := CaptainProfileFromHome(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prof.Harness != "pi" || prof.Model != "cliproxyapi/grok-4.5" || prof.Effort != "low" {
+		t.Errorf("profile = %+v", prof)
+	}
+	h, err := Captain(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h != "pi" {
+		t.Errorf("Captain() = %q, want pi", h)
+	}
+}
+
+func TestCaptainProfileFromHome_SoldierFallback(t *testing.T) {
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, "config")
+	os.MkdirAll(configDir, 0755)
+	// no captain-harness; soldier-harness bare name only
+	if err := os.WriteFile(filepath.Join(configDir, "soldier-harness"),
+		[]byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "model"),
+		[]byte("opencode-go/deepseek-v4-flash\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	prof, err := CaptainProfileFromHome(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prof.Harness != "pi" || prof.Model != "opencode-go/deepseek-v4-flash" {
+		t.Errorf("profile = %+v", prof)
+	}
+}
+
+
+func TestCaptainProfileFromHome_ModelFileFallback(t *testing.T) {
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, "config")
+	os.MkdirAll(configDir, 0755)
+	if err := os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "model"), []byte("opencode-go/deepseek-v4-flash\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	prof, err := CaptainProfileFromHome(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prof.Harness != "pi" || prof.Model != "opencode-go/deepseek-v4-flash" || prof.Effort != "" {
+		t.Errorf("profile = %+v", prof)
+	}
+}

@@ -91,7 +91,7 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` env or `--home` flag).
     soldier-harness           Override for soldier harness
     captain-harness     Override for captain harness
     backlog-backend        Override for backlog backend (manual)
-    soldier-dispatch.json     Dispatch profile (model/effort per harness)
+    soldier-dispatch.json     Dispatch profile (harness/model/effort; managed via munsu config dispatch)
   projects/                Cloned project repositories
 ```
 
@@ -180,8 +180,9 @@ Other backends (zellij, cmux, orca) were evaluated but not implemented:
    treehouse pool worktree
 3. **Harness detection** — determines the calling agent harness (pi,
    claude-code, codex, etc.) via env markers and process ancestry
-4. **Launch template resolution** — maps detected harness to a model/effort
-   template from `config/soldier-dispatch.json`
+4. **Launch template resolution** — resolves harness/model/effort from
+   `config/soldier-dispatch.json` (profile match + defaults), then adapter template defaults;
+   CLI `--model`/`--effort` override
 5. **Session creation** — resolves the backend (tmux/herdr) and opens a new
    terminal window for the soldier
 6. **Meta write** — persists task metadata (window, worktree, harness, model,

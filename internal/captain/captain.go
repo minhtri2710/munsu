@@ -601,10 +601,14 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		return "", nil, fmt.Errorf("reading captain charter: %w", err)
 	}
 
-	model, _ := config.Get(parentHome, "model")
+	// Model/effort: config/captain-harness multi-token line, then config/model.
+	prof, _ := harness.CaptainProfileFromHome(parentHome)
 	args := []string{}
-	if model != "" && adapter.LaunchTemplate.ModelFlag != "" {
-		args = append(args, adapter.LaunchTemplate.ModelFlag, model)
+	if prof.Model != "" && adapter.LaunchTemplate.ModelFlag != "" {
+		args = append(args, adapter.LaunchTemplate.ModelFlag, prof.Model)
+	}
+	if prof.Effort != "" && adapter.LaunchTemplate.EffortFlag != "" {
+		args = append(args, adapter.LaunchTemplate.EffortFlag, prof.Effort)
 	}
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
 	// Pi captain homes get project-local integrate + firstmate-compat extensions via -e.

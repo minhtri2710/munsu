@@ -11,8 +11,8 @@ When the bootstrap diagnostics section of the session-start digest prints any of
 | `MISSING: <tool>` | Tool is missing from PATH. Suggest install command if known. |
 | `NEEDS_GH_AUTH` | `gh auth login` is needed. |
 | `TANGLE:` | Primary checkout has a non-default branch checked out. Restore with `git checkout <default>`. |
-| `CREW_HARNESS_OVERRIDE: <name>` | Soldier harness is set to a non-default adapter. Note for spawn decisions. |
-| `CREW_DISPATCH: active` | Dispatch profile rules are active. Consult before spawning. |
+| `SOLDIER_HARNESS: <name>` | Soldier harness is set to a non-default adapter. Note for spawn decisions. |
+| `SOLDIER_DISPATCH: active` | Dispatch profile rules are active. Consult before spawning. |
 | `FLEET_SYNC:` | Fleet clones were synced or STUCK. Review STUCK entries. |
 | `SECOND_SYNC:` | Captain homes were fast-forwarded. |
 | `SECOND_LIVENESS:` | Captain liveness section (after Fleet Sync) probed endpoints and found launched-but-dead ones. Session-start reports only — relaunch with `munsu captain recover` or re-run `munsu session-start --recover`. |

@@ -215,30 +215,116 @@ func Soldier(homeDir string) (string, error) {
 	return Detect()
 }
 
+// CaptainProfile is the resolved captain launch profile: harness plus optional model/effort tokens.
+type CaptainProfile struct {
+	Harness string
+	Model   string
+	Effort  string
+}
+
+// ParseHarnessLine parses multi-token harness config lines:
+//
+//	"<harness> [<model>] [<effort>]"
+//
+// Blank/comment lines are ignored by callers; this parses one concrete line.
+// The harness token "default" is treated as unset (empty Harness).
+func ParseHarnessLine(line string) CaptainProfile {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return CaptainProfile{}
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return CaptainProfile{}
+	}
+	p := CaptainProfile{Harness: fields[0]}
+	if p.Harness == "default" {
+		p.Harness = ""
+		return p
+	}
+	if len(fields) >= 2 {
+		p.Model = fields[1]
+	}
+	if len(fields) >= 3 {
+		p.Effort = fields[2]
+	}
+	return p
+}
+
 // Captain resolves the general harness following:
 //
-//  1. config/captain-harness file value
+//  1. config/captain-harness file value (first token)
 //  2. config/soldier-harness file value
 //  3. Detected harness from Detect()
 //
-// A value of "default" in config/captain-harness or config/soldier-harness is treated as unset.
+// A value of "default" in any pin file is treated as unset.
+// For model/effort tokens use CaptainProfileFromHome.
 func Captain(homeDir string) (string, error) {
-	// 1. Try config/captain-harness
-	if v, ok := lookupConfig(homeDir, "captain-harness"); ok {
-		if err := ValidateHarness(v); err != nil {
-			return "", err
-		}
-		return v, nil
+	prof, err := CaptainProfileFromHome(homeDir)
+	if err != nil {
+		return "", err
 	}
-
-	// 2. Try config/soldier-harness
-	if v, ok := lookupConfig(homeDir, "soldier-harness"); ok {
-		if err := ValidateHarness(v); err != nil {
-			return "", err
-		}
-		return v, nil
+	if prof.Harness != "" {
+		return prof.Harness, nil
 	}
-
-	// 3. Fall back to detected harness
 	return Detect()
+}
+
+// CaptainProfileFromHome resolves harness + optional model/effort for captain launch.
+//
+// Precedence for harness (first token):
+//  1. config/captain-harness (multi-token: "<harness> [<model>] [<effort>]")
+//  2. config/soldier-harness (bare harness only; model/effort ignored)
+//
+// Model/effort tokens:
+//  1. Tokens 2–3 on the winning multi-token captain-harness pin
+//  2. Else config/model (single-key model pin; effort not available here)
+//
+// Model/effort come only from the captain pin line, not from soldier-harness
+// (which stays a bare adapter name).
+func CaptainProfileFromHome(homeDir string) (CaptainProfile, error) {
+	// 1. captain-harness multi-token
+	if raw, ok := lookupConfig(homeDir, "captain-harness"); ok {
+		p := ParseHarnessLine(raw)
+		if p.Harness != "" {
+			if err := ValidateHarness(p.Harness); err != nil {
+				return CaptainProfile{}, err
+			}
+			return fillCaptainModelFallback(homeDir, p), nil
+		}
+	}
+
+	// 2. soldier-harness bare name only
+	if v, ok := lookupConfig(homeDir, "soldier-harness"); ok {
+		// Only first token counts; ignore accidental model tokens on soldier pin.
+		p := ParseHarnessLine(v)
+		if p.Harness != "" {
+			if err := ValidateHarness(p.Harness); err != nil {
+				return CaptainProfile{}, err
+			}
+			// soldier pin never supplies model/effort — only config/model fallback.
+			return fillCaptainModelFallback(homeDir, CaptainProfile{Harness: p.Harness}), nil
+		}
+	}
+
+	// No harness pin — still surface config/model for callers that only need model.
+	return fillCaptainModelFallback(homeDir, CaptainProfile{}), nil
+}
+
+// fillCaptainModelFallback applies config/model when the profile has no model token.
+func fillCaptainModelFallback(homeDir string, p CaptainProfile) CaptainProfile {
+	if p.Model != "" {
+		return p
+	}
+	if m, err := config.Get(homeDir, "model"); err == nil {
+		m = strings.TrimSpace(m)
+		if m != "" && m != "default" {
+			// config/model may itself be multi-token historically; take first field only.
+			fields := strings.Fields(m)
+			if len(fields) > 0 {
+				p.Model = fields[0]
+			}
+		}
+	}
+	return p
 }
