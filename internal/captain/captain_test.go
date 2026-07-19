@@ -1378,7 +1378,7 @@ func TestRetire_RefusesUnmarkedHome(t *testing.T) {
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 
-	err := Retire(smHome, tmp, false)
+	err := Retire(smHome, tmp, false, false)
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -1397,7 +1397,7 @@ func TestRetire_RefusesUnmarkedWithRemoveHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := Retire(smHome, tmp, true)
+	err := Retire(smHome, tmp, true, false)
 	if err == nil {
 		t.Fatal("expected ownership refusal for unmarked destructive retire")
 	}
@@ -1413,7 +1413,7 @@ func TestRetire_RemoveHome(t *testing.T) {
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := Retire(smHome, parent, true); err != nil {
+	if err := Retire(smHome, parent, true, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1429,7 +1429,7 @@ func TestRetire_KeepHome(t *testing.T) {
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := Retire(smHome, parent, false); err != nil {
+	if err := Retire(smHome, parent, false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1440,7 +1440,7 @@ func TestRetire_KeepHome(t *testing.T) {
 
 func TestRetire_NonexistentHomeRefused(t *testing.T) {
 	parent := t.TempDir()
-	if err := Retire("/nonexistent/sm", parent, true); err == nil {
+	if err := Retire("/nonexistent/sm", parent, true, false); err == nil {
 		t.Fatal("expected nonexistent unowned home refusal")
 	}
 }
@@ -1459,7 +1459,7 @@ func TestRetire_RefusesWrongKindMeta(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
 		[]byte("kind=not-captain\nsm_id=test-sm\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
 
-	err := Retire(smHome, parent, false)
+	err := Retire(smHome, parent, false, false)
 	if err == nil {
 		t.Fatal("expected error for wrong meta kind")
 	}
@@ -1480,7 +1480,7 @@ func TestRetire_RefusesMismatchedID(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
 		[]byte("kind=captain\nsm_id=wrong-id\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
 
-	err := Retire(smHome, parent, false)
+	err := Retire(smHome, parent, false, false)
 	if err == nil {
 		t.Fatal("expected error for mismatched sm_id")
 	}
@@ -1501,7 +1501,7 @@ func TestRetire_RefusesMismatchedHome(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
 		[]byte("kind=captain\nsm_id=test-sm\nhome=/some/other/path\nwindow=w\nbackend=tmux\n"), 0644)
 
-	err := Retire(smHome, parent, false)
+	err := Retire(smHome, parent, false, false)
 	if err == nil {
 		t.Fatal("expected error for mismatched home")
 	}
@@ -2028,5 +2028,145 @@ func TestBuildLaunchArgs_PiIncludesExistingExtensions(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-e") || !strings.Contains(joined, "munsu-captain-turnend-guard.ts") {
 		t.Fatalf("args missing extension: %v", args)
+	}
+}
+
+func TestUnregister_RemovesEntry(t *testing.T) {
+	parent := t.TempDir()
+	smA := filepath.Join(parent, "captains", "alpha")
+	smB := filepath.Join(parent, "captains", "beta")
+	os.MkdirAll(smA, 0755)
+	os.MkdirAll(smB, 0755)
+	if err := SeedProvenance(smA, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(smB, "beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "alpha", smA, "scope-a", "proj-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "beta", smB, "scope-b", "proj-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Unregister(parent, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	mates, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mates) != 1 || mates[0].ID != "beta" {
+		t.Fatalf("mates=%+v", mates)
+	}
+}
+
+func TestUnregister_MissingIDIdempotent(t *testing.T) {
+	parent := t.TempDir()
+	if err := Unregister(parent, "ghost"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInFlightSoldierIDs(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	os.WriteFile(filepath.Join(home, "state", "TASK-1.meta"), []byte("kind=ship\nwindow=w1\n"), 0644)
+	os.WriteFile(filepath.Join(home, "state", "TASK-2.meta"), []byte("kind=scout\nwindow=w2\n"), 0644)
+	os.WriteFile(filepath.Join(home, "state", "TASK-3.meta"), []byte("kind=captain\nwindow=w3\n"), 0644)
+	os.WriteFile(filepath.Join(home, "state", "TASK-4.meta"), []byte("kind=other\n"), 0644)
+
+	ids, err := inFlightSoldierIDs(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("ids=%v", ids)
+	}
+	got := map[string]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got["TASK-1"] || !got["TASK-2"] {
+		t.Fatalf("ids=%v", ids)
+	}
+}
+
+func TestRetire_UnregistersFromRegistry(t *testing.T) {
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
+	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Retire(smHome, parent, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	mates, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mates) != 0 {
+		t.Fatalf("expected empty registry after retire, got %+v", mates)
+	}
+}
+
+func TestRetire_RefusesInFlightWithoutForce(t *testing.T) {
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
+	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("kind=ship\nwindow=w\n"), 0644)
+
+	err := Retire(smHome, parent, false, false)
+	if err == nil {
+		t.Fatal("expected refuse for in-flight soldiers")
+	}
+	if !strings.Contains(err.Error(), "in-flight") {
+		t.Fatalf("error=%v", err)
+	}
+	mates, listErr := List(parent)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(mates) != 1 {
+		t.Fatalf("registry should be unchanged on refuse, got %+v", mates)
+	}
+}
+
+func TestRetire_ForceAllowsInFlight(t *testing.T) {
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
+	if err := SeedProvenance(smHome, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "scope", "proj"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("kind=ship\nwindow=w\n"), 0644)
+
+	if err := Retire(smHome, parent, false, true); err != nil {
+		t.Fatal(err)
+	}
+	mates, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mates) != 0 {
+		t.Fatalf("expected empty registry after force retire, got %+v", mates)
 	}
 }
