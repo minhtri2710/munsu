@@ -208,6 +208,45 @@ func Install(homeDir, cwd, harnessName string, scope Scope, dryRun bool) (*Integ
 			result.Message = "no changes needed"
 		}
 
+	case harness.Opencode:
+		opencodeAdpt := &OpencodeAdapter{
+			HomeDir: homeDir,
+			Cwd:     cwd,
+			Scope:   string(scope),
+			DryRun:  dryRun,
+		}
+		targets, written, digest, err := opencodeAdpt.InstallOpencodePlugins()
+		if err != nil {
+			return nil, fmt.Errorf("opencode plugins install: %w", err)
+		}
+		result.Message = fmt.Sprintf("opencode plugins: %d files in %s", len(targets), filepath.Dir(targets[0]))
+
+		if !dryRun && written {
+			manifest := generateOpencodeManifest(harnessName, string(scope), caps, digest, targets)
+			artifactDir := homePathForScope(homeDir, harnessName, scope, cwd)
+			if err := os.MkdirAll(artifactDir, 0755); err != nil {
+				return nil, fmt.Errorf("create artifact dir: %w", err)
+			}
+
+			manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
+			manifestData, err := json.MarshalIndent(manifest, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("marshal manifest: %w", err)
+			}
+			if err := writeAtomic(manifestPath, string(manifestData), 0644); err != nil {
+				return nil, fmt.Errorf("write manifest: %w", err)
+			}
+
+			result.Version = manifest.Version
+			result.InstalledAt = manifest.InstalledAt
+		} else if dryRun {
+			result.Message = fmt.Sprintf("[dry-run] would write: %d files to %s", len(targets), filepath.Dir(targets[0]))
+			result.State = "fresh"
+		} else {
+			result.State = "fresh"
+			result.Message = "no changes needed"
+		}
+
 	default:
 		return &IntegrationResult{
 			Harness: harnessName,
@@ -324,7 +363,7 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	// Strict validation against expected values.
 	expectedCaps := caps
 	expectedTargets := 1
-	if harnessName == harness.Grok {
+	if harnessName == harness.Grok || harnessName == harness.Opencode {
 		expectedTargets = 4
 	}
 	if err := ValidateStrict(manifest, harnessName, string(scope), "1.0.0", expectedCaps, expectedTargets); err != nil {
@@ -335,12 +374,18 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	}
 
 	// Verify that TargetPaths contains the expected canonical targets for this scope+cwd.
-	if harnessName == harness.Grok {
-		// For Grok, verify all 4 expected paths are present.
-		expectedPaths, err := GrokHooksAllTargetPaths(scope, cwd)
-		if err != nil {
+	if harnessName == harness.Grok || harnessName == harness.Opencode {
+		// For Grok and OpenCode, verify all 4 expected paths are present.
+		var expectedPaths []string
+		var pathErr error
+		if harnessName == harness.Grok {
+			expectedPaths, pathErr = GrokHooksAllTargetPaths(scope, cwd)
+		} else {
+			expectedPaths, pathErr = OpencodePluginsAllTargetPaths(scope, cwd)
+		}
+		if pathErr != nil {
 			result.State = "drifted"
-			result.Message = fmt.Sprintf("cannot compute grok targets: %v", err)
+			result.Message = fmt.Sprintf("cannot compute %s targets: %v", harnessName, pathErr)
 			result.Drifted = true
 			return result, nil
 		}
@@ -450,6 +495,22 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 			}
 			hooksDir := filepath.Dir(tp)
 			present, _, hookErr := GrokHooksHasOwnedHooks(hooksDir, munsuBin)
+			if hookErr != nil || !present {
+				allPresent = false
+				continue
+			}
+		} else if harnessName == harness.Opencode {
+			// Structural ownership check for OpenCode plugin files.
+			// JS files cannot carry a reliable first-line marker, so
+			// check content for the munsu binary path and expected
+			// export function names.
+			munsuBin, resolveErr := ResolveMunsuPathString()
+			if resolveErr != nil {
+				allPresent = false
+				continue
+			}
+			pluginsDir := filepath.Dir(tp)
+			present, _, hookErr := OpencodePluginsHasOwnedHooks(pluginsDir, munsuBin)
 			if hookErr != nil || !present {
 				allPresent = false
 				continue

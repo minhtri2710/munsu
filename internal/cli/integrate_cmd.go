@@ -116,7 +116,7 @@ Results:
 
 Flags:
   --command      Command string to evaluate for blocking rules (for tool_call safety)
-  --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), "codex" (stderr plaintext + exit 2), or "grok" (stdout decision=deny object + exit 2)`,
+  --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), "codex" (stderr plaintext + exit 2), "grok" (stdout decision=deny object + exit 2), or "opencode" (stderr plaintext + exit 2, same as codex)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			checkPath, _ := os.Getwd()
@@ -127,7 +127,7 @@ Flags:
 		}),
 	}
 	safetyCmd.Flags().StringVar(&flags.command, "command", "", "Command to evaluate for blocking rules")
-	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, grok, or codex")
+	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, grok, codex, or opencode")
 	configureContractCommand(safetyCmd)
 
 	sessionstartNudgeCmd := &cobra.Command{
