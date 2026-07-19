@@ -20,7 +20,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 |---|---|---|---|
 | `FM_HOME` / `~/.firstmate` | `munsu home` | `internal/home` | **implemented** |
 | Task meta + status protocol (append-only event log; keyed open/close) | `munsu task add/show/status`; current via `soldier-state` | `internal/task`, `internal/classify` (`OpenDecisions`/`OpenActivities`), `internal/soldierstate` | **implemented** (list: delegated to tasks-axi) |
-| `bin/fm-send.sh` | `munsu send` | `internal/cli` | **implemented** |
+| `bin/fm-send.sh` | `munsu send` | `internal/cli`, `internal/captain` (send outbox) | **implemented** (kind=captain: dead pane queues `state/.captain-send-outbox/<id>/`; flush on `munsu captain converge`) |
 | `bin/fm-spawn.sh` | `munsu spawn` | `internal/cli` | **implemented** |
 | `bin/fm-brief.sh` | `munsu brief` | `internal/brief` | **implemented** |
 | `bin/fm-teardown.sh` | `munsu teardown` | `internal/teardown` | **implemented** |

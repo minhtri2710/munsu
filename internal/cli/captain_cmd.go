@@ -123,9 +123,9 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
 		Short: "Converge all registered captains",
-		Long: `Locked convergence sweep: validate registry/provenance, retry pending sends,
-safe local fast-forward, inheritance push, liveness check, and instruction
-surface tracking. State changes tracked in parent state/.captain-converge.lock.`,
+		Long: `Locked convergence sweep: validate registry/provenance, flush send outbox,
+retry pending nudges, safe local fast-forward, inheritance push, liveness check, and instruction
+surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			registered, err := captain.List(ctx.Home)
 			if err != nil {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/brief"
+	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
@@ -97,7 +98,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 func newSendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send <id> <line>",
-		Short: "Send a line to a soldier endpoint",
+		Short: "Send a line to a soldier/captain endpoint (captain dead pane → outbox + fail closed)",
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -118,10 +119,25 @@ func newSendCmd() *cobra.Command {
 				return err
 			}
 			sendLine := line
-			if meta["kind"] == "captain" {
+			isCaptain := meta["kind"] == "captain"
+			if isCaptain {
 				sendLine = marker.MarkFromGeneral(line)
 			}
+			if isCaptain && !bk.Alive(windowID) {
+				smID := captain.CaptainIDFromTask(id, meta)
+				if qErr := captain.EnqueueSendOutbox(ctx.Home, smID, sendLine); qErr != nil {
+					return fmt.Errorf("captain %s pane dead and outbox enqueue failed: %w", id, qErr)
+				}
+				return fmt.Errorf("captain %s pane dead: marked send queued under state/%s/%s; relaunch captain then munsu captain converge", id, captain.SendOutboxDir, smID)
+			}
 			if err := bk.SendKeys(windowID, sendLine); err != nil {
+				if isCaptain {
+					smID := captain.CaptainIDFromTask(id, meta)
+					if qErr := captain.EnqueueSendOutbox(ctx.Home, smID, sendLine); qErr != nil {
+						return fmt.Errorf("sending to %s: %v; outbox enqueue also failed: %w", id, err, qErr)
+					}
+					return fmt.Errorf("sending to %s: %v; marked send queued under state/%s/%s for converge retry", id, err, captain.SendOutboxDir, smID)
+				}
 				return fmt.Errorf("sending to %s: %w", id, err)
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{

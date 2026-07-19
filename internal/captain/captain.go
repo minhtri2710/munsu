@@ -1551,9 +1551,9 @@ func removeNudgeMarker(parentHome, smID string) {
 }
 
 // Converge performs a locked convergence sweep over registered captains.
-// Order: lock, validate registry/provenance, retry pending sends, safe ff,
-// inheritance push, ownership-backed backend Alive check, and reread nudge
-// only if instruction surface advanced.
+// Order: lock, validate registry/provenance, flush send outbox, retry pending
+// nudges, safe ff, inheritance push, ownership-backed backend Alive check, and
+// reread nudge only if instruction surface advanced.
 func Converge(parentHome string, registered []Info) error {
 	release, err := convergeLockAcquire(parentHome)
 	if err != nil {
@@ -1580,6 +1580,11 @@ func Converge(parentHome string, registered []Info) error {
 		if markerID != sm.ID {
 			errs = append(errs, fmt.Sprintf("%s: marker id %q does not match registry id %q", sm.ID, markerID, sm.ID))
 			continue
+		}
+
+		// Deliver durable marked sends queued while the pane was dead.
+		if flushErr := FlushSendOutbox(parentHome, sm); flushErr != nil {
+			errs = append(errs, flushErr.Error())
 		}
 
 		// Retry existing nudge markers even without a new FF.
