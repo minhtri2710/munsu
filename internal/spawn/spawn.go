@@ -208,6 +208,25 @@ func agentAvailable(agent string) bool {
 	return err == nil
 }
 
+// projectSettingsDisabled reports whether repoPath/.no-mistakes.yaml sets
+// disable_project_settings: true (firstmate gate boundary). When true, the
+// no-mistakes daemon does not load project AGENTS.md/settings into gate agents,
+// so pi (and other non-codex/claude agents) are compatible without agent-side
+// neutralization flags.
+func projectSettingsDisabled(repoPath string) bool {
+	data, err := os.ReadFile(filepath.Join(repoPath, ".no-mistakes.yaml"))
+	if err != nil {
+		return false
+	}
+	var raw struct {
+		DisableProjectSettings bool `yaml:"disable_project_settings"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	return raw.DisableProjectSettings
+}
+
 func checkNoMistakesCompatibility(repoPath string, cfg noMistakesConfig, available func(string) bool) error {
 	hasInstructions := false
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
@@ -217,6 +236,12 @@ func checkNoMistakesCompatibility(repoPath string, cfg noMistakesConfig, availab
 		}
 	}
 	if !hasInstructions {
+		return nil
+	}
+
+	// Firstmate path: trusted gate config disables project instructions so the
+	// selected pipeline agent never adopts repo AGENTS.md identity.
+	if projectSettingsDisabled(repoPath) {
 		return nil
 	}
 
@@ -242,7 +267,7 @@ func checkNoMistakesCompatibility(repoPath string, cfg noMistakesConfig, availab
 			}
 		}
 	}
-	return fmt.Errorf("delivery mode 'no-mistakes' is incompatible with this repository's AGENTS.md/CLAUDE.md because no verified neutralization-capable gate agent is selected and available; use '--mode direct-PR' or install/select codex or claude in ~/.no-mistakes/config.yaml")
+	return fmt.Errorf("delivery mode 'no-mistakes' is incompatible with this repository's AGENTS.md/CLAUDE.md because no verified neutralization-capable gate agent is selected and available, and .no-mistakes.yaml does not set disable_project_settings: true; use '--mode direct-PR', install/select codex or claude in ~/.no-mistakes/config.yaml, or enable disable_project_settings in .no-mistakes.yaml")
 }
 
 func codexNeutralizationPreserved(args []string) bool {
