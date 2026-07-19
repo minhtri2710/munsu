@@ -58,3 +58,120 @@ func TestEnsureWatcher_ReturnsContract(t *testing.T) {
 	}
 	_ = stopWatcher(home)
 }
+
+// plantLocalWatcherBeacon writes a fresh beat + identity for the current
+// process under homeDir. Used to simulate an already-running watcher without
+// spawning a daemon (os.Executable is the test binary under go test).
+func plantLocalWatcherBeacon(t *testing.T, homeDir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	if err := os.WriteFile(lifecycle.BeatPath(homeDir), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	id := supervision.NewIdentity(homeDir)
+	id.PID = pid
+	if err := supervision.WriteIdentity(homeDir, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEnsureWatcher_CaptainHomeAttach proves ensure attaches on a non-default
+// (captain-style) home when beat+identity ownership match that home.
+func TestEnsureWatcher_CaptainHomeAttach(t *testing.T) {
+	captainHome := t.TempDir()
+	plantLocalWatcherBeacon(t, captainHome)
+
+	resp := ensureWatcher(captainHome, false)
+	if resp.Kind != "watch.ensure" {
+		t.Fatalf("kind=%q", resp.Kind)
+	}
+	if resp.Data.State != "attached" {
+		t.Fatalf("expected attached on captain home, got %q", resp.Data.State)
+	}
+	if !resp.Data.Noop {
+		t.Fatal("attached ensure should be noop")
+	}
+	if resp.Data.WatchID == "" {
+		t.Fatal("expected non-empty watch id")
+	}
+	if resp.Data.Lease == nil || !resp.Data.Lease.HeartbeatOK {
+		t.Fatal("expected healthy lease heartbeat on attach")
+	}
+	id := supervision.ReadIdentity(captainHome)
+	if id == nil || id.Home == "" {
+		t.Fatal("identity must remain bound to captain home")
+	}
+}
+
+// TestEnsureWatcher_CrossHomeDoesNotAttach rejects a planted foreign identity
+// so one home cannot attach to another home's watcher PID.
+func TestEnsureWatcher_CrossHomeDoesNotAttach(t *testing.T) {
+	general := t.TempDir()
+	captain := t.TempDir()
+	os.MkdirAll(filepath.Join(general, "state"), 0755)
+	os.MkdirAll(filepath.Join(captain, "state"), 0755)
+
+	pid := os.Getpid()
+	// Captain home has a fresh beat for this PID, but identity claims general home.
+	os.WriteFile(lifecycle.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	id := supervision.NewIdentity(general)
+	id.PID = pid
+	if err := supervision.WriteIdentity(captain, id); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := ensureWatcher(captain, false)
+	if resp.Data.State == "attached" {
+		t.Fatal("must not attach using foreign-home identity")
+	}
+	// Ensure may attempt to start a new watcher for captain; clean best-effort.
+	// Do not require healthy start: under go test, Executable is the test binary.
+	_ = stopWatcher(captain)
+}
+
+// TestStopWatcher_CrossHomeIdentityMismatch refuses to signal a PID whose
+// identity is bound to a different home (no cross-home kill).
+func TestStopWatcher_CrossHomeIdentityMismatch(t *testing.T) {
+	general := t.TempDir()
+	captain := t.TempDir()
+	os.MkdirAll(filepath.Join(general, "state"), 0755)
+	os.MkdirAll(filepath.Join(captain, "state"), 0755)
+
+	pid := os.Getpid()
+	// Plant beat on captain pointing at this process.
+	os.WriteFile(lifecycle.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	// Identity under captain still names the general home.
+	id := supervision.NewIdentity(general)
+	id.PID = pid
+	if err := supervision.WriteIdentity(captain, id); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := stopWatcher(captain)
+	if resp.Data.State != "identity-mismatch" {
+		t.Fatalf("state=%q, want identity-mismatch", resp.Data.State)
+	}
+	// Beat and identity must remain (refuse, do not clear foreign claim).
+	if _, gotPID, ok := lifecycle.ReadBeat(captain); !ok || gotPID != pid {
+		t.Fatal("beat should remain after refused stop")
+	}
+	if supervision.ReadIdentity(captain) == nil {
+		t.Fatal("identity should remain after refused stop")
+	}
+}
+
+// TestStopWatcher_CaptainHomeIdentityMismatchWithoutIdentity refuses beat-only
+// stop on a captain home path (ownership must be proven).
+func TestStopWatcher_CaptainHomeBeatOnly(t *testing.T) {
+	captain := t.TempDir()
+	os.MkdirAll(filepath.Join(captain, "state"), 0755)
+	os.WriteFile(lifecycle.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), os.Getpid())), 0644)
+
+	resp := stopWatcher(captain)
+	if resp.Data.State != "identity-mismatch" {
+		t.Fatalf("state=%q, want identity-mismatch", resp.Data.State)
+	}
+}

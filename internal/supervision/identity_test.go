@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/hometag"
 )
 
 // --- NewIdentity tests ---
@@ -39,8 +41,9 @@ func TestNewIdentity_HasAllFields(t *testing.T) {
 func TestNewIdentity_HomeIsSet(t *testing.T) {
 	home := t.TempDir()
 	id := NewIdentity(home)
-	if id.Home != home {
-		t.Errorf("Home = %q, want %q", id.Home, home)
+	want := hometag.Canonical(home)
+	if id.Home != want {
+		t.Errorf("Home = %q, want %q", id.Home, want)
 	}
 }
 
@@ -316,6 +319,42 @@ func TestValidatePIDOwnership_DeadPIDFails(t *testing.T) {
 	}
 }
 
+func TestValidatePIDOwnership_HomeMismatch(t *testing.T) {
+	homeA := t.TempDir()
+	homeB := t.TempDir()
+	os.MkdirAll(filepath.Join(homeA, "state"), 0755)
+	os.MkdirAll(filepath.Join(homeB, "state"), 0755)
+
+	// Identity written for homeA, then planted under homeB's state.
+	id := NewIdentity(homeA)
+	if err := WriteIdentity(homeB, id); err != nil {
+		t.Fatal(err)
+	}
+	if ValidatePIDOwnership(homeB, os.Getpid()) {
+		t.Fatal("identity home must match operated home")
+	}
+	// Same identity under the home it was minted for still validates.
+	if err := WriteIdentity(homeA, id); err != nil {
+		t.Fatal(err)
+	}
+	if !ValidatePIDOwnership(homeA, os.Getpid()) {
+		t.Fatal("matching home should validate ownership")
+	}
+}
+
+func TestValidatePIDOwnership_HomeAliasOK(t *testing.T) {
+	home := t.TempDir()
+	id := NewIdentity(home)
+	if err := WriteIdentity(home, id); err != nil {
+		t.Fatal(err)
+	}
+	// Relative or non-canonical path to the same home must still pass.
+	alias := filepath.Join(home, ".", "")
+	if !ValidatePIDOwnership(alias, os.Getpid()) {
+		t.Fatalf("canonical-equivalent home path should validate: home=%q alias=%q id.Home=%q", home, alias, id.Home)
+	}
+}
+
 // --- IdentitySummary tests ---
 
 func TestIdentitySummary_Nil(t *testing.T) {
@@ -454,8 +493,9 @@ func TestBeatAndIdentityConsistency(t *testing.T) {
 	if read == nil {
 		t.Fatal("ReadIdentity returned nil")
 	}
-	if read.Home != home {
-		t.Errorf("Home = %q, want %q", read.Home, home)
+	want := hometag.Canonical(home)
+	if read.Home != want {
+		t.Errorf("Home = %q, want %q", read.Home, want)
 	}
 }
 
