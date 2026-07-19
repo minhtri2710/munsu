@@ -81,8 +81,14 @@ type CaptainEntry struct {
 	Status           string              `json:"status"` // endpoint liveness: seeded|alive|dead|unknown
 	CurrentState     string              `json:"current_state,omitempty"`
 	CurrentReason    string              `json:"current_reason,omitempty"`
+	Valid            *bool               `json:"valid,omitempty"`
 	LastParentStatus string              `json:"last_parent_status,omitempty"`
 	ActiveChildren   []CaptainChildBrief `json:"active_children,omitempty"`
+	DecisionsOpen    []CaptainDecision   `json:"decisions_open,omitempty"`
+	Holds            []CaptainHold       `json:"holds,omitempty"`
+	Queued           []CaptainQueued     `json:"queued,omitempty"`
+	Landed           []CaptainLanded     `json:"landed,omitempty"`
+	Omitted          []CaptainOmitted    `json:"omitted,omitempty"`
 	Counts           *CaptainHomeCounts  `json:"counts,omitempty"`
 	Provenance       string              `json:"provenance,omitempty"` // structured-home | parent-status-only | unavailable
 }
@@ -92,16 +98,60 @@ type CaptainChildBrief struct {
 	ID     string `json:"id"`
 	Status string `json:"status,omitempty"`
 	Kind   string `json:"kind,omitempty"`
+	Doing  string `json:"doing,omitempty"`
+}
+
+// CaptainDecision is one open decision under a Captain home.
+type CaptainDecision struct {
+	ID      string `json:"id"`
+	Key     string `json:"key,omitempty"`
+	Verb    string `json:"verb,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Source  string `json:"source,omitempty"`
+}
+
+// CaptainHold is one external hold under a Captain home.
+type CaptainHold struct {
+	ID        string `json:"id"`
+	Title     string `json:"title,omitempty"`
+	BlockedBy string `json:"blocked_by,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Source    string `json:"source,omitempty"`
+}
+
+// CaptainQueued is one queued backlog row under a Captain home.
+type CaptainQueued struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	Repo  string `json:"repo,omitempty"`
+	Kind  string `json:"kind,omitempty"`
+}
+
+// CaptainLanded is one recently completed backlog row under a Captain home.
+type CaptainLanded struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	PRURL string `json:"pr_url,omitempty"`
+}
+
+// CaptainOmitted discloses a truncated home-summary surface.
+type CaptainOmitted struct {
+	Surface string `json:"surface"`
+	Count   int    `json:"count"`
 }
 
 // CaptainHomeCounts aggregates Captain-home workload surfaces.
 type CaptainHomeCounts struct {
 	ActiveChildren int `json:"active_children"`
+	DecisionsOpen  int `json:"decisions_open"`
+	Holds          int `json:"holds"`
 	Queued         int `json:"queued"`
+	Landed         int `json:"landed"`
+	Endpoints      int `json:"endpoints"`
 	InFlight       int `json:"in_flight"`
 	Blocked        int `json:"blocked"`
 	Done           int `json:"done"`
-	Endpoints      int `json:"endpoints"`
 }
 
 // GuardViolation is a single violation with supporting evidence.
