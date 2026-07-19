@@ -2539,3 +2539,42 @@ func TestProbeLiveness_EmptyAndUnknown(t *testing.T) {
 		t.Errorf("probes = %+v, want unknown for empty home", probes)
 	}
 }
+
+func TestBuildLaunchArgs_CaptainHarnessMultiToken(t *testing.T) {
+	tmp := t.TempDir()
+	smHome := filepath.Join(tmp, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
+
+	configDir := filepath.Join(tmp, "config")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi cliproxyapi/grok-4.5 low\n"), 0644)
+	// legacy model must not win over multi-token
+	os.WriteFile(filepath.Join(configDir, "model"), []byte("should-not-use\n"), 0644)
+
+	_, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	if err != nil {
+		t.Fatalf("buildLaunchArgs: %v", err)
+	}
+	// Expect --model cliproxyapi/grok-4.5 and --thinking low (pi effort flag)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "cliproxyapi/grok-4.5") {
+		t.Errorf("args missing multi-token model: %v", args)
+	}
+	if strings.Contains(joined, "should-not-use") {
+		t.Errorf("legacy model should not apply: %v", args)
+	}
+	// pi EffortFlag is --thinking
+	foundThinking := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--thinking" && args[i+1] == "low" {
+			foundThinking = true
+		}
+		if args[i] == "--model" && args[i+1] != "cliproxyapi/grok-4.5" {
+			t.Errorf("unexpected model arg: %v", args)
+		}
+	}
+	if !foundThinking {
+		t.Errorf("expected --thinking low in args: %v", args)
+	}
+}

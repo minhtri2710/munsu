@@ -27,7 +27,7 @@ Run `munsu session-start` to lock, bootstrap, and print the session-start digest
 5. **Supervision** — wake-handling reminder block.
 **Completion:** Digest understood; lock status known. Do not re-bulk-read what the digest already printed.
 
-**Context pointer:** Bootstrap diagnostics lines (`MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECOND_SYNC:`, `SECOND_LIVENESS:`, `TASKS_AXI:`) are handled by the auxiliary skill — run `munsu skill show bootstrap-diagnostics`. Review the Context and Fleet State sections — they replace reading those files by hand.
+**Context pointer:** Bootstrap diagnostics lines (`MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, `SOLDIER_HARNESS:`, `SOLDIER_DISPATCH:`, `FLEET_SYNC:`, `SECOND_SYNC:`, `SECOND_LIVENESS:`, `TASKS_AXI:`) are handled by the auxiliary skill — run `munsu skill show bootstrap-diagnostics`. Review the Context and Fleet State sections — they replace reading those files by hand.
 
 ### 3. Classify work
 

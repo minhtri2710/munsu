@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -529,5 +530,136 @@ func TestSplitWords(t *testing.T) {
 				t.Errorf("splitWords(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
 			}
 		}
+	}
+}
+
+func TestLoadDispatch_FirstmateShape(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := tmpDir + "/crew-dispatch.json"
+	jsonContent := `{
+  "rules": [
+    {
+      "when": "Trivial mechanical edit such as a rote rename",
+      "use": [
+        { "harness": "pi", "model": "opencode-go/deepseek-v4-flash", "effort": "low" }
+      ],
+      "why": "cheap"
+    },
+    {
+      "when": "Ordinary mid-size work",
+      "use": [
+        { "harness": "pi", "model": "cline-pass/deepseek-v4-flash", "effort": "medium" }
+      ]
+    }
+  ],
+  "default": { "harness": "pi", "model": "opencode-go/deepseek-v4-flash", "effort": "low" }
+}`
+	if err := writeFile(path, jsonContent); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadDispatch(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultHarness != "pi" {
+		t.Errorf("DefaultHarness = %q, want pi", cfg.DefaultHarness)
+	}
+	if cfg.DefaultModel != "opencode-go/deepseek-v4-flash" {
+		t.Errorf("DefaultModel = %q", cfg.DefaultModel)
+	}
+	if cfg.DefaultEffort != "low" {
+		t.Errorf("DefaultEffort = %q", cfg.DefaultEffort)
+	}
+	if len(cfg.Profiles) != 2 {
+		t.Fatalf("Profiles len = %d, want 2", len(cfg.Profiles))
+	}
+	if cfg.Profiles[0].Harness != "pi" {
+		t.Errorf("Profiles[0].Harness = %q, want pi", cfg.Profiles[0].Harness)
+	}
+	if cfg.Profiles[0].Model != "opencode-go/deepseek-v4-flash" {
+		t.Errorf("Profiles[0].Model = %q", cfg.Profiles[0].Model)
+	}
+	if cfg.Profiles[0].Effort != "low" {
+		t.Errorf("Profiles[0].Effort = %q", cfg.Profiles[0].Effort)
+	}
+}
+
+func TestResolveDispatchSelection_ModelEffort(t *testing.T) {
+	cfg := &DispatchConfig{
+		DefaultHarness: "pi",
+		DefaultModel:   "default-model",
+		DefaultEffort:  "low",
+		Profiles: []DispatchProfile{
+			{
+				Name:    "review",
+				Match:   []string{"review"},
+				Harness: "codex",
+				Model:   "gpt-5.2-codex",
+				Effort:  "high",
+			},
+			{
+				Name:    "all",
+				Match:   []string{"*"},
+				Harness: "pi",
+				Model:   "opencode-go/deepseek-v4-flash",
+				Effort:  "medium",
+			},
+		},
+	}
+	cfg.normalize()
+
+	got := ResolveDispatchSelection(cfg, "review this PR")
+	if got.Harness != "codex" || got.Model != "gpt-5.2-codex" || got.Effort != "high" {
+		t.Errorf("review selection = %+v", got)
+	}
+
+	got = ResolveDispatchSelection(cfg, "implement feature")
+	if got.Harness != "pi" || got.Model != "opencode-go/deepseek-v4-flash" || got.Effort != "medium" {
+		t.Errorf("catchall selection = %+v", got)
+	}
+
+	got = ResolveDispatchSelection(cfg, "")
+	if got.Harness != "pi" || got.Model != "default-model" || got.Effort != "low" {
+		t.Errorf("empty desc selection = %+v", got)
+	}
+}
+
+func TestResolveDispatchSelection_FirstmateWhenProse(t *testing.T) {
+	cfg := &DispatchConfig{
+		Default: &DispatchCandidate{Harness: "pi", Model: "flash", Effort: "low"},
+		Rules: []DispatchProfile{
+			{
+				When: "Extremely hard work only: deep architectural redesign",
+				Use: []DispatchCandidate{
+					{Harness: "pi", Model: "glm", Effort: "high"},
+				},
+			},
+		},
+	}
+	cfg.normalize()
+	got := ResolveDispatchSelection(cfg, "please do deep architectural redesign of the module")
+	if got.Harness != "pi" || got.Model != "glm" || got.Effort != "high" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestLaunchStringWith_Overrides(t *testing.T) {
+	tmpl := Templates[Pi]
+	cmd := LaunchStringWith(Pi, tmpl, "opencode-go/deepseek-v4-flash", "medium")
+	if !strings.Contains(cmd, "--model") || !strings.Contains(cmd, "opencode-go/deepseek-v4-flash") {
+		t.Errorf("missing model in %q", cmd)
+	}
+	if !strings.Contains(cmd, "--thinking") || !strings.Contains(cmd, "medium") {
+		t.Errorf("missing effort in %q", cmd)
+	}
+	// empty keeps no flags
+	cmd = LaunchStringWith(Pi, tmpl, "", "")
+	if strings.Contains(cmd, "--model") || strings.Contains(cmd, "--thinking") {
+		t.Errorf("empty overrides should omit flags: %q", cmd)
+	}
+	// default sentinel omitted
+	cmd = LaunchStringWith(Pi, tmpl, "default", "default")
+	if strings.Contains(cmd, "--model") || strings.Contains(cmd, "--thinking") {
+		t.Errorf("default sentinel should omit flags: %q", cmd)
 	}
 }

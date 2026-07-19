@@ -26,6 +26,8 @@ type Args struct {
 	Yolo                bool
 	Backend             string          // --backend flag value; empty = auto-detect
 	HarnessFlag         string          // --harness flag value; empty = resolve from config
+	ModelFlag           string          // --model flag; empty = dispatch/template default
+	EffortFlag          string          // --effort flag; empty = dispatch/template default
 	HomeDir             string          // if empty, resolved via home.Resolve
 	Session             session.Backend // injectable session backend; nil = resolve at runtime
 	Arm                 bool

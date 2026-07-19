@@ -14,6 +14,7 @@ var KnownKeys = []string{
 	"backend",
 	"soldier-harness",
 	"captain-harness",
+	"model",
 	"backlog-backend",
 	"default-mode",
 	"require-no-mistakes",

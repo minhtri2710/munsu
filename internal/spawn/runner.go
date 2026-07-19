@@ -321,12 +321,22 @@ func (r *Runner) acquireWorktree() error {
 }
 
 // Phase 9: resolveHarness resolves the soldier harness.
+// Precedence: --harness flag > dispatch profile match on brief > Soldier() chain.
+// When soldier-dispatch.json is active and no --harness is set, prefer
+// ResolveDispatchSelection over the bare DefaultHarness shortcut in Soldier().
 func (r *Runner) resolveHarness() error {
 	if r.args.HarnessFlag != "" {
 		if err := harness.ValidateHarness(r.args.HarnessFlag); err != nil {
 			return fmt.Errorf("--harness: %w", err)
 		}
 		r.harness = r.args.HarnessFlag
+		return nil
+	}
+	if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
+		if err := harness.ValidateHarness(sel.Harness); err != nil {
+			return fmt.Errorf("dispatch harness: %w", err)
+		}
+		r.harness = sel.Harness
 		return nil
 	}
 	h, err := harness.Soldier(r.homeDir)
@@ -337,21 +347,61 @@ func (r *Runner) resolveHarness() error {
 	return nil
 }
 
-// Phase 10: resolveLaunchConfig resolves model, effort, and launch command
-// from the harness adapter template.
+// dispatchSelection loads soldier-dispatch.json and matches against the brief body.
+func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
+	path := harness.DispatchPath(r.homeDir)
+	cfg, err := harness.LoadDispatch(path)
+	if err != nil {
+		return harness.DispatchSelection{}, false
+	}
+	desc := r.taskDescription()
+	return harness.ResolveDispatchSelection(cfg, desc), true
+}
+
+// taskDescription returns text used to match dispatch profiles (brief body or id).
+func (r *Runner) taskDescription() string {
+	briefPath := brief.Path(r.homeDir, r.args.ID)
+	if data, err := os.ReadFile(briefPath); err == nil {
+		s := strings.TrimSpace(string(data))
+		if s != "" {
+			return s
+		}
+	}
+	return r.args.ID
+}
+
+// Phase 10: resolveLaunchConfig resolves model, effort, and launch command.
+// Precedence: CLI --model/--effort > dispatch profile > adapter template defaults.
 func (r *Runner) resolveLaunchConfig() {
 	adapter, ok := harness.GetAdapter(r.harness)
 	if !ok {
 		return
 	}
 	tmpl := adapter.LaunchTemplate
-	if tmpl.DefaultModel != "" {
-		r.model = tmpl.DefaultModel
+
+	// Template defaults first.
+	r.model = tmpl.DefaultModel
+	r.effort = tmpl.DefaultEffort
+
+	// Dispatch profile overrides template defaults (when present).
+	if sel, ok := r.dispatchSelection(); ok {
+		if sel.Model != "" {
+			r.model = sel.Model
+		}
+		if sel.Effort != "" {
+			r.effort = sel.Effort
+		}
 	}
-	if tmpl.DefaultEffort != "" {
-		r.effort = tmpl.DefaultEffort
+
+	// Explicit CLI flags win.
+	if r.args.ModelFlag != "" {
+		r.model = r.args.ModelFlag
 	}
-	r.launchCmd = harness.LaunchString(r.harness, tmpl)
+	if r.args.EffortFlag != "" {
+		r.effort = r.args.EffortFlag
+	}
+
+	r.launchCmd = harness.LaunchStringWith(r.harness, tmpl, r.model, r.effort)
 }
 func soldierTabLabel(projectName, taskID string) string {
 	return "mu-" + labelComponent(projectName) + "-" + labelComponent(taskID)

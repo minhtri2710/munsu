@@ -70,10 +70,25 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key, value := args[0], args[1]
-			// Validate harness keys against KnownHarnesses
-			if key == "soldier-harness" || key == "captain-harness" {
+			// Validate harness pins. captain-harness accepts multi-token
+			// lines: "<harness> [<model>] [<effort>]". soldier-harness is bare name only.
+			switch key {
+			case "soldier-harness":
 				if err := harness.ValidateHarness(value); err != nil {
 					return fmt.Errorf("config set %s: %w", key, err)
+				}
+			case "captain-harness":
+				prof := harness.ParseHarnessLine(value)
+				if prof.Harness == "" && strings.TrimSpace(value) != "" && strings.TrimSpace(value) != "default" {
+					// bare "default" is allowed (unset sentinel)
+					if !strings.HasPrefix(strings.TrimSpace(value), "#") {
+						return fmt.Errorf("config set %s: empty harness token in %q (want \"<harness> [<model>] [<effort>]\")", key, value)
+					}
+				}
+				if prof.Harness != "" {
+					if err := harness.ValidateHarness(prof.Harness); err != nil {
+						return fmt.Errorf("config set %s: %w", key, err)
+					}
 				}
 			}
 			return config.Set(ctx.Home, key, value)
@@ -81,6 +96,7 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 	}
 	cmd.AddCommand(setCmd)
 	cmd.AddCommand(newConfigShowCmd())
+	cmd.AddCommand(newConfigDispatchCmd())
 	return cmd
 }
 

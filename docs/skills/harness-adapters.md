@@ -29,3 +29,13 @@ Fallback: check process tree for harness-specific argv patterns.
 
 The turn-end guard marks the end of a soldier's turn after a status write or pane staleness.
 Installed per-spawn; removed on teardown.
+
+## Dispatch profiles (`config/soldier-dispatch.json`)
+
+Supports `defaultHarness`/`defaultModel`/`defaultEffort` + `profiles` (`match`/`when`, `harness`/`model`/`effort`, optional `use[]`),
+and the alternate `default` + `rules` shape.
+
+Manage via `munsu config dispatch show|set-default|add|rm|path`.
+
+Spawn precedence: CLI `--harness`/`--model`/`--effort` > matched dispatch profile > adapter template defaults.
+

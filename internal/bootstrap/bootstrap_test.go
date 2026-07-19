@@ -113,7 +113,7 @@ func TestRun_BackendDiagnostics_ExplicitConfigTmux(t *testing.T) {
 }
 
 func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
-	// Verify that other Configs entries (like CREW_HARNESS, CREW_DISPATCH)
+	// Verify that other Configs entries (like SOLDIER_HARNESS, SOLDIER_DISPATCH)
 	// are not broken by the backend changes.
 	home := t.TempDir()
 	t.Setenv("TMUX", "/tmp/tmux-xxx")
@@ -125,7 +125,7 @@ func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
 	}
 
 	// Should not have any backend-unrelated Configs in a bare home
-	// (CREW_HARNESS and CREW_DISPATCH require specific files).
+	// (SOLDIER_HARNESS and SOLDIER_DISPATCH require specific files).
 	for _, c := range result.Configs {
 		if strings.HasPrefix(c.String(), "BACKEND_") {
 			continue
