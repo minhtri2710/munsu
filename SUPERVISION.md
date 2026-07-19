@@ -14,13 +14,15 @@ the orchestrator can act on.
 ```
 watcher loop (every 5s):
   1. Touch liveness beat at state/.last-watcher-beat
-  2. Scan all tasks in state/<id>.meta
-  3. For each task, check:
+  2. Scan state/*.status for general-relevant last lines (done/failed/blocked/...)
+     including Captain return-channel files state/captain:<id>.status
+     → enqueue Kind=signal (even while the captain pane is alive)
+  3. Scan all tasks in state/<id>.meta not already signaled
+  4. For each remaining task, check:
      a. Pane liveness via session backend (tmux/herdr)
      b. Status log staleness (> 5 min idle)
-  4. On first stale detection → emit a "stale" wake
-  5. After 3 consecutive stale polls (~15s) → demand deep inspection
-  6. If wake queue exists → emit a "signal" wake
+  5. On first stale detection → emit a "stale" wake
+  6. After 3 consecutive stale polls (~15s) → demand deep inspection
 ```
 
 The watcher is singleton-safe via a home-scoped `flock` lock at `state/.lock`.
@@ -54,10 +56,40 @@ poll tick. Guard commands read this beat to determine if the watcher is alive.
 The stale threshold is 300 captains (5 minutes) — if the beat is older than this,
 the watcher is considered dead.
 
-## Wake drain
+## Return channel closed loop
 
-`munsu wake-drain` reads and removes all entries from the durable wake queue at
-`state/.wake-queue`. Each record contains:
+General does not read Captain chat. The operable path is:
+
+1. **Marked send** — `munsu send <captain-id> "..."` prefixes `[mu-from-general]` + U+2063 for `kind=captain`.
+2. **Captain status** — Captain appends one line to General home `state/captain:<id>.status` (charter return channel).
+3. **Signal wake** — watcher `RunCycle` / `munsu watch run` enqueues `kind=signal` for general-relevant last lines.
+4. **Claim** — General leases wakes with `munsu wake claim --consumer <id>` (prefer over legacy drain).
+
+Hermetic proof: `TestReturnChannelClosedLoop` in `internal/supervision` (no live pane required).
+
+Operator checklist (live home):
+
+```sh
+# 1) Send (marks automatically when meta kind=captain)
+munsu send captain:munsu "report status on <task>"
+
+# 2) Captain (or operator) appends parent status
+echo "done [key=<task>]: one short line" >> "$MUNSU_HOME/state/captain:munsu.status"
+
+# 3) One watcher cycle (daemon does this every 5s)
+munsu watch run
+
+# 4) Lease the signal
+munsu wake claim --consumer general --output json
+```
+
+## Wake drain / claim
+
+`munsu wake claim --consumer <id>` leases entries from the durable wake queue at
+`state/.wake-queue` without destroying unacked ownership semantics.
+
+`munsu wake-drain` (legacy) reads and removes all entries from that queue.
+Each record contains:
 
 | Field   | Description                    |
 |---------|--------------------------------|
@@ -67,8 +99,8 @@ the watcher is considered dead.
 | Key     | Task or context identifier     |
 | Payload | Arbitrary message              |
 
-The waker package (`internal/waker`) provides `EnqueueWake` for producers and
-`Drain` for consumers.
+The lifecycle package provides `EnqueueWake` for producers and
+`ClaimWakes` / `DrainWakes` for consumers. `internal/waker` wraps drain helpers.
 
 ## Guard
 

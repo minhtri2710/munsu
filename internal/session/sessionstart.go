@@ -84,7 +84,8 @@ func printSupervisionBlock(w io.Writer, h string, acquired bool) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Daemon:  munsu watch ensure (idempotent start or attach)")
 	fmt.Fprintln(w, "Inspect: munsu watch run (one poll cycle)")
-	fmt.Fprintln(w, "Drain:   munsu wake-drain")
+	fmt.Fprintln(w, "Claim:   munsu wake claim --consumer <id>  (lease signal wakes from return channel)")
+	fmt.Fprintln(w, "Drain:   munsu wake-drain  (legacy full drain; prefer claim)")
 	fmt.Fprintln(w, "Repair:  munsu watch ensure")
 	fmt.Fprintln(w, "Guard:   munsu guard")
 }

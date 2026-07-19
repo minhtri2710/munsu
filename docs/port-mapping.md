@@ -38,7 +38,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | `bin/fm-session-start.sh` | `munsu session-start` | `internal/session` | **implemented** |
 | `bin/fm-watch.sh` | `munsu watch` | `internal/supervision` | **implemented** |
 | `bin/fm-watch-arm.sh` | `munsu watch-arm` | `internal/cli` | **implemented** |
-| `bin/fm-wake-drain.sh` | `munsu wake-drain` | `internal/waker` | **implemented** |
+| `bin/fm-wake-drain.sh` | `munsu wake claim` / `munsu wake-drain` | `internal/lifecycle`, `internal/waker` | **implemented** (prefer claim; drain is legacy) |
 | `bin/fm-guard.sh` | `munsu guard` | `internal/cli` | **implemented** |
 | Stow skill (`.agents/skills/stow`) | `munsu stow` | `internal/stow` | **implemented** |
 | `bin/fm-ensure-agents-md.sh` | `munsu ensure-agents-md` | `internal/agentsmd` | **implemented** |
