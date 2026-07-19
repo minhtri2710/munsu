@@ -1974,3 +1974,59 @@ func TestTaskIDForCaptain(t *testing.T) {
 		t.Errorf("taskIDForCaptain = %q, want %q", id, "captain:test-sm")
 	}
 }
+
+func TestRegister_Idempotent(t *testing.T) {
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "captains", "api")
+	os.MkdirAll(sm, 0755)
+	if err := SeedProvenance(sm, "api"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "api", sm, "scope", "proj"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "api", sm, "scope", "proj"); err != nil {
+		t.Fatal(err)
+	}
+	mates, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mates) != 1 || mates[0].ID != "api" {
+		t.Fatalf("mates=%+v", mates)
+	}
+}
+
+func TestSeedWithParent_Registers(t *testing.T) {
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "captains", "ops")
+	if err := SeedWithParent("ops", sm, parent, ""); err != nil {
+		t.Fatal(err)
+	}
+	mates, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mates) != 1 || mates[0].ID != "ops" {
+		t.Fatalf("mates=%+v", mates)
+	}
+}
+
+func TestBuildLaunchArgs_PiIncludesExistingExtensions(t *testing.T) {
+	parent := t.TempDir()
+	sm := t.TempDir()
+	os.MkdirAll(filepath.Join(sm, ".pi", "extensions"), 0755)
+	os.WriteFile(filepath.Join(sm, "AGENTS.md"), []byte("# charter\n"), 0644)
+	os.WriteFile(filepath.Join(sm, ".pi", "extensions", "munsu-captain-turnend-guard.ts"), []byte("//x\n"), 0644)
+	name, args, err := buildLaunchArgs(sm, "pi", parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "pi" {
+		t.Fatalf("name=%q", name)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-e") || !strings.Contains(joined, "munsu-captain-turnend-guard.ts") {
+		t.Fatalf("args missing extension: %v", args)
+	}
+}
