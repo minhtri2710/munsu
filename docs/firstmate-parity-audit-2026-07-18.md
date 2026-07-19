@@ -1,5 +1,11 @@
 # Firstmate parity audit — 2026-07-18
 
+> **Status (resolved):** All confirmed gaps below were closed in PRs
+> [#197](https://github.com/minhtri2710/munsu/pull/197)–[#216](https://github.com/minhtri2710/munsu/pull/216)
+> (core parity + worktree fix + native Pi/Claude/Grok/Codex/OpenCode adapters).
+> The audit text below is the historical point-in-time snapshot.
+> Sole remaining open item: agy has no hook surface (tracked in [#206](https://github.com/minhtri2710/munsu/issues/206)).
+
 ## Scope and method
 
 This audit compares the authoritative checkouts:

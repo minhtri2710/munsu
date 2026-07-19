@@ -1,5 +1,11 @@
 # Firstmate parity remediation checklist
 
+> **Status: COMPLETE.** Every item below was implemented across merged PRs
+> [#197](https://github.com/minhtri2710/munsu/pull/197)–[#216](https://github.com/minhtri2710/munsu/pull/216).
+> The unchecked boxes are the original planning checklist; do not read them as
+> open work. Sole open item: agy has no hook surface
+> ([#206](https://github.com/minhtri2710/munsu/issues/206)).
+
 ## PR 0 — Development backlog foundation
 
 - [ ] Keep repo `backlog.md` as the development-work source of truth.
