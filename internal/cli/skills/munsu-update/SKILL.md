@@ -45,11 +45,30 @@ This runs the built-in `selfupdate.Update()` which:
 **Prerequisite:** `git` must be on PATH. The install root must be a git clone
 of the munsu repo.
 
-### 2. Update each captain home (manual procedure)
+### 2. Update each captain home and nudge
 
-`munsu update` only updates the munsu install root — it does not automatically
-update captain homes. After the install root is updated, the operator should
-manually fast-forward each registered captain home.
+#### One-shot: `munsu update --captains`
+
+After the self-update succeeds, `--captains` fast-forwards every registered
+captain home to the parent default-branch commit and nudges each captain whose
+instruction surface (`AGENTS.md`, `bin/`, `.agents/skills/`) advanced to re-read
+its charter. This reuses the same locked convergence sweep as `munsu captain
+converge`: same-remote check, default-branch fast-forward, fail-closed on
+dirty/diverged/offline, and a durable nudge marker delivered via the captain's
+session endpoint (`/re-read-agents`).
+
+```sh
+munsu update --captains
+```
+
+Per-captain errors (dirty, diverged, offline) are reported but never abort the
+self-update or the remaining captains. A captain with no live endpoint keeps
+its nudge marker; the next `munsu captain converge` retries delivery.
+
+#### Manual procedure (fallback)
+
+If `--captains` is not used, the operator must fast-forward each registered
+captain home manually after the self-update.
 
 #### List registered captains
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/agentsmd"
+	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/selfupdate"
@@ -130,12 +131,19 @@ or an absolute path to a project directory.`,
 }
 
 func newUpdateCmd() *cobra.Command {
-	return &cobra.Command{
+	var captains bool
+	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Self-update munsu with watcher handshake",
 		Long: `Pull latest munsu sources, rebuild, and atomically install the binary.
 If a watcher is currently running, gracefully restart it and wait for
-heartbeat confirmation with the new build version.`,
+heartbeat confirmation with the new build version.
+
+With --captains, after the self-update succeeds, fast-forward every
+registered captain home to the parent default branch and nudge each
+captain whose instruction surface (AGENTS.md, bin/, .agents/skills/)
+advanced to re-read its charter. Fail-closed per captain: dirty,
+diverged, or offline homes are skipped and reported, never forced.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			snap, err := selfupdate.UpdateWithHandshake(ctx.Home)
 			if err != nil {
@@ -148,7 +156,28 @@ heartbeat confirmation with the new build version.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "Updated munsu to %s (no active watcher)\n",
 					snap.InstalledVersion)
 			}
+
+			if !captains {
+				return nil
+			}
+
+			registered, err := captain.List(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("listing registered captains: %w", err)
+			}
+			if len(registered) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No captains registered — nothing to fast-forward.")
+				return nil
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Fast-forwarding captains and nudging...")
+			if err := captain.Converge(ctx.Home, registered); err != nil {
+				// Self-update already succeeded; converge errors are reported, not fatal.
+				fmt.Fprintf(cmd.OutOrStdout(), "%v\n", err)
+			}
 			return nil
 		}),
 	}
+	cmd.Flags().BoolVar(&captains, "captains", false,
+		"Fast-forward all registered captain homes and nudge updated captains to re-read charter")
+	return cmd
 }
