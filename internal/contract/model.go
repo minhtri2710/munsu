@@ -74,23 +74,29 @@ type Soldier struct {
 // CaptainEntry represents one captain in the fleet snapshot.
 // Parent status is untrusted supplemental evidence (return channel);
 // Current/home fields are derived from the registered Captain home when readable.
+// When parent last_status disagrees with structured home, Contradiction is set and
+// Provenance remains structured-home (home is authoritative).
 type CaptainEntry struct {
-	ID               string              `json:"id"`
-	Home             string              `json:"home,omitempty"`
-	Scope            string              `json:"scope,omitempty"`
-	Status           string              `json:"status"` // endpoint liveness: seeded|alive|dead|unknown
-	CurrentState     string              `json:"current_state,omitempty"`
-	CurrentReason    string              `json:"current_reason,omitempty"`
-	Valid            *bool               `json:"valid,omitempty"`
-	LastParentStatus string              `json:"last_parent_status,omitempty"`
-	ActiveChildren   []CaptainChildBrief `json:"active_children,omitempty"`
-	DecisionsOpen    []CaptainDecision   `json:"decisions_open,omitempty"`
-	Holds            []CaptainHold       `json:"holds,omitempty"`
-	Queued           []CaptainQueued     `json:"queued,omitempty"`
-	Landed           []CaptainLanded     `json:"landed,omitempty"`
-	Omitted          []CaptainOmitted    `json:"omitted,omitempty"`
-	Counts           *CaptainHomeCounts  `json:"counts,omitempty"`
-	Provenance       string              `json:"provenance,omitempty"` // structured-home | parent-status-only | unavailable
+	ID                  string              `json:"id"`
+	Home                string              `json:"home,omitempty"`
+	Scope               string              `json:"scope,omitempty"`
+	Status              string              `json:"status"` // endpoint liveness: seeded|alive|dead|unknown
+	CurrentState        string              `json:"current_state,omitempty"`
+	CurrentReason       string              `json:"current_reason,omitempty"`
+	Valid               *bool               `json:"valid,omitempty"`
+	LastParentStatus    string              `json:"last_parent_status,omitempty"`
+	ActiveChildren      []CaptainChildBrief `json:"active_children,omitempty"`
+	DecisionsOpen       []CaptainDecision   `json:"decisions_open,omitempty"`
+	Holds               []CaptainHold       `json:"holds,omitempty"`
+	Queued              []CaptainQueued     `json:"queued,omitempty"`
+	Landed              []CaptainLanded     `json:"landed,omitempty"`
+	Omitted             []CaptainOmitted    `json:"omitted,omitempty"`
+	Counts              *CaptainHomeCounts  `json:"counts,omitempty"`
+	Provenance          string              `json:"provenance,omitempty"`        // structured-home | parent-status-only | unavailable
+	Freshness           string              `json:"freshness,omitempty"`         // fresh | historical-event | unknown
+	ParentEventRole     string              `json:"parent_event_role,omitempty"` // historical-only | fallback-only-not-current | none
+	Contradiction       bool                `json:"contradiction,omitempty"`
+	ContradictionReason string              `json:"contradiction_reason,omitempty"`
 }
 
 // CaptainChildBrief is a bounded child row under a Captain home.

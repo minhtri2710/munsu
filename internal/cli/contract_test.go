@@ -285,6 +285,59 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	}
 }
 
+func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
+	home := t.TempDir()
+	captainHome := filepath.Join(home, "captains", "domain-alpha")
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	os.MkdirAll(filepath.Join(home, "data"), 0755)
+	// Idle captain home (no active children).
+	os.WriteFile(filepath.Join(captainHome, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] hold: external\n"), 0644)
+	// Registry entry for the captain.
+	line := fmt.Sprintf("- domain-alpha - (home: %s; scope: domain; projects: sample; added: 2026-07-19)\n", captainHome)
+	os.WriteFile(filepath.Join(home, "data", "captains.md"), []byte("# Captains\n\n"+line), 0644)
+	// Stale parent event claims working while home is idle.
+	if err := task.AppendStatus(home, "captain:domain-alpha", "working [key=phase7]: Sample rollout Phase 7"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", home)
+
+	out, err := runContract(t, []string{"fleet", "snapshot", "--version", "2", "--output", "json"})
+	if err != nil {
+		t.Fatalf("fleet snapshot v2: %v", err)
+	}
+	var resp contract.Response[contract.FleetSnapshotV2]
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	if len(resp.Data.Captains) != 1 {
+		t.Fatalf("captains=%d want 1: %+v", len(resp.Data.Captains), resp.Data.Captains)
+	}
+	c := resp.Data.Captains[0]
+	if c.Provenance != "structured-home" {
+		t.Errorf("provenance=%q want structured-home", c.Provenance)
+	}
+	if c.Freshness != "fresh" {
+		t.Errorf("freshness=%q want fresh", c.Freshness)
+	}
+	if c.ParentEventRole != "historical-only" {
+		t.Errorf("parent_event_role=%q", c.ParentEventRole)
+	}
+	if !c.Contradiction {
+		t.Errorf("expected contradiction; last_parent_status=%q current_state=%q reason=%q", c.LastParentStatus, c.CurrentState, c.ContradictionReason)
+	}
+	if c.CurrentState == "" || c.CurrentState == "unknown" && c.Provenance == "structured-home" {
+		// structured-home must expose home state, not promote parent working to current.
+		if c.CurrentState == "" {
+			t.Errorf("current_state empty")
+		}
+	}
+	if strings.Contains(c.CurrentState, "working") {
+		t.Errorf("current_state must not be derived from parent working: %q", c.CurrentState)
+	}
+}
+
 func TestTaskListShowsAggregateCount(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
