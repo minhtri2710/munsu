@@ -36,7 +36,7 @@ const ConvergeLockName = ".captain-converge.lock"
 const NudgePendingDir = ".captain-nudge-pending"
 
 // captainPiExtensionNames are project-local Pi extensions loaded with -e at captain launch.
-// Order matches firstmate secondmate launch: turnend guard then watch bridge, plus munsu integrate.
+// Order matches captain launch: turnend guard then watch bridge, plus munsu integrate.
 var captainPiExtensionNames = []string{
 	"munsu-pi-integration.ts",
 	"munsu-captain-turnend-guard.ts",
@@ -46,7 +46,7 @@ var captainPiExtensionNames = []string{
 }
 
 // EnsureCaptainPiExtensions installs project-scoped Pi extensions under captainHome/.pi/extensions
-// so Launch buildLaunchArgs can always pass -e for munsu integrate + firstmate-compat names.
+// so Launch buildLaunchArgs can always pass -e for munsu integrate + captain-compat names.
 // Idempotent. Soft-skips when pi is unavailable (non-pi fleets / offline test hosts).
 func EnsureCaptainPiExtensions(captainHome string) error {
 	if _, err := ValidateProvenance(captainHome); err != nil {
@@ -73,7 +73,7 @@ func EnsureCaptainPiExtensions(captainHome string) error {
 		}
 		return fmt.Errorf("installing munsu-pi-integration: %w", err)
 	}
-	// Mirror integrate content under munsu-captain-* names so Launch -e matches firstmate secondmate shape.
+	// Mirror integrate content under munsu-captain-* names so Launch -e matches captain shape.
 	content, err := os.ReadFile(target)
 	if err != nil {
 		return fmt.Errorf("reading installed pi extension: %w", err)
@@ -578,7 +578,7 @@ func List(parentHome string) ([]Info, error) {
 // --- Launch (session-backed) ---
 
 // buildLaunchArgs returns the harness binary name and argument list for a captain launch.
-// Matches firstmate's verified pi captain shape: cwd at home + prompt bytes only.
+// Matches the verified pi captain shape: cwd at home + prompt bytes only.
 // No shell-expression prompt, no project-path argv, no "--" separator.
 func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(h)
@@ -611,7 +611,7 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		args = append(args, adapter.LaunchTemplate.EffortFlag, prof.Effort)
 	}
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
-	// Pi captain homes get project-local integrate + firstmate-compat extensions via -e.
+	// Pi captain homes get project-local integrate + captain-compat extensions via -e.
 	if adapter.Name == "pi" {
 		for _, name := range captainPiExtensionNames {
 			path := filepath.Join(captainHome, ".pi", "extensions", name)
@@ -656,7 +656,7 @@ func Launch(captainHome, parentHome string) error {
 		return fmt.Errorf("provenance validation failed for %s: %w", captainHome, err)
 	}
 
-	// Pre-launch bootstrap (firstmate parity): push inherited config, then local FF.
+	// Pre-launch bootstrap: push inherited config, then local FF.
 	if err := ConfigPush(parentHome, captainHome); err != nil {
 		return fmt.Errorf("pre-launch config-push: %w", err)
 	}

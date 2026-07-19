@@ -1,12 +1,11 @@
 # Self-Hosting: running munsu as its own orchestrator
 
 > How to use munsu to manage munsu itself — init, arm, supervise, and
-> deliver PRs without firstmate.
+> deliver PRs.
 
 ## 1. Init a dedicated home
 
-A self-hosted munsu should use an isolated home, separate from the
-live captain home that firstmate supervises.
+A self-hosted munsu should use an isolated home, separate from
 
 ```sh
 export MUNSU_HOME=~/.munsu-selfhost
@@ -263,10 +262,9 @@ gates, and the return catch-up gate.
 ## 9. Safety rules for self-hosting
 
 1. **Isolated home:** Always use a dedicated home (e.g. `~/.munsu-selfhost`)
-   for self-hosting. Never share the live captain home that firstmate
-   supervises.
+   for self-hosting. Never share the live captain home.
 2. **Never flip live captain:** Do not run `munsu watch-arm` inside the
-   live captain home (`~/.munsu` if it is supervised by firstmate).
+   live captain home (`~/.munsu`).
 3. **Watcher singleton:** Only one watcher process per home. The flock lock
    at `state/.lock` enforces this.
 4. **Guard after every action:** Run `munsu guard` after spawn, teardown,

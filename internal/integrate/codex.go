@@ -1,7 +1,7 @@
 // Package integrate manages opt-in harness integration.
 //
 // Codex adapter: generates .codex/hooks.json with hooks anchored to the munsu
-// binary path, mirroring firstmate's verified Codex hook contract.
+// binary path, mirroring the munsu Codex hook contract.
 
 package integrate
 

@@ -8,8 +8,8 @@ import (
 )
 
 // ClearStaleArtifacts removes session-scoped stale artifact files from the
-// given home's state directory. It mirrors firstmate's
-// fm_afk_clear_stale_artifacts which runs on a fresh away-session entry.
+// given home's state directory. It mirrors the
+// fm_afk_clear_stale_artifacts pattern which runs on a fresh away-session entry.
 //
 // Removed artifacts:
 //   - state/.seen-*             — watcher dedup markers from a prior session

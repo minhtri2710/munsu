@@ -5,14 +5,13 @@
 </p>
 
 Standalone CLI port of firstmate soldier capabilities, usable from any project directory.
-capability — spawning autonomous agents in visible session backends, supervising
+provides the capability — spawning autonomous agents in visible session backends, supervising
 them with an event-driven zero-token watcher, and delivering finished PRs or
-investigation reports — **without requiring a firstmate checkout**.
+investigation reports — without requiring a specific project checkout.
 
 ## What it is
 
-Think of it as the firstmate toolbelt + state model, ported into a compiled Go CLI
-with a relocated home (`~/.munsu`) and usable from any git repo directory.
+A compiled Go CLI with a relocated home (`~/.munsu`) and usable from any git repo directory.
 
 ## Install
 
@@ -55,8 +54,7 @@ munsu home --mkdir       # create ~/.munsu/{state,data,config,projects}
 
 ### no-mistakes init (for delivery pipelines)
 
-> **Note:** `no-mistakes` is an external delivery pipeline tool (part of firstmate's
-> infrastructure), not owned by munsu. The commands below work only when the
+> **Note:** `no-mistakes` is an external delivery pipeline tool, not owned by munsu. The commands below work only when the
 > no-mistakes daemon is installed and configured on the host.
 
 ```sh
@@ -149,7 +147,7 @@ munsu captain list
 ## Documentation
 
 - `docs/architecture.md` — architecture overview, module layout, key interfaces, design decisions.
-- `docs/port-mapping.md` — mapping between firstmate concepts and munsu commands.
+- `docs/port-mapping.md` — full command reference grouped by domain.
 - `CONTRIBUTING.md` — how to contribute.
 - `AGENTS.md` — conventions file for soldiers working on munsu.
 - `COMMANDS.md` — full command map grouped by lifecycle phase.
@@ -157,4 +155,4 @@ munsu captain list
 
 ## License
 
-MIT — see LICENSE. NOTICE acknowledges firstmate as the behavioral origin of munsu's capabilities.
+MIT — see LICENSE and NOTICE for attribution.

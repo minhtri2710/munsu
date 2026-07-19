@@ -197,7 +197,7 @@ type herdrWorkspaceCreateResponse struct {
 // NewWindow creates a new tab in the herdr workspace identified by session.
 // The session parameter is the workspace label (e.g., derived from MUNSU_HOME).
 // The name parameter is the tab label (e.g., the task ID).
-// Returns the window handle in "<session>:<pane_id>" format for firstmate compatibility.
+// Returns the window handle in "<session>:<pane_id>" format.
 func (h *HerdrBackend) NewWindow(session, name string) (string, error) {
 	wsName := session
 	if wsName == "" {
@@ -238,11 +238,11 @@ func (h *HerdrBackend) NewWindow(session, name string) (string, error) {
 		PaneID:      paneID,
 	}
 
-	// Return "<session>:<pane_id>" for firstmate-compatible window handle.
+	// Return "<session>:<pane_id>" for window handle.
 	return h.Session + ":" + paneID, nil
 }
 
-// ParseWindow splits a firstmate-compatible window handle ("session:pane_id") on the first colon.
+// ParseWindow splits a window handle ("session:pane_id") on the first colon.
 // Returns the session name and the pane ID. If no colon is found, returns "" and the full string.
 func ParseWindow(handle string) (session, paneID string) {
 	idx := strings.Index(handle, ":")

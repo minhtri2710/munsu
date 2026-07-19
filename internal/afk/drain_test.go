@@ -9,7 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
-
 func TestDrainCycle_NoConsumer(t *testing.T) {
 	_, err := DrainCycle(DrainCycleOptions{HomeDir: t.TempDir()})
 	if err == nil {

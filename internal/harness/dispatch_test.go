@@ -533,7 +533,7 @@ func TestSplitWords(t *testing.T) {
 	}
 }
 
-func TestLoadDispatch_FirstmateShape(t *testing.T) {
+func TestLoadDispatch_LegacyShape(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := tmpDir + "/crew-dispatch.json"
 	jsonContent := `{
@@ -624,7 +624,7 @@ func TestResolveDispatchSelection_ModelEffort(t *testing.T) {
 	}
 }
 
-func TestResolveDispatchSelection_FirstmateWhenProse(t *testing.T) {
+func TestResolveDispatchSelection_LegacyWhenProse(t *testing.T) {
 	cfg := &DispatchConfig{
 		Default: &DispatchCandidate{Harness: "pi", Model: "flash", Effort: "low"},
 		Rules: []DispatchProfile{

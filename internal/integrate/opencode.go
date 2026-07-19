@@ -1,7 +1,7 @@
 // Package integrate manages opt-in harness integration.
 //
 // OpenCode adapter: generates .opencode/plugins/*.js plugin files anchored to
-// the munsu binary path, mirroring firstmate's verified OpenCode plugin contract.
+// the munsu binary path, mirroring the munsu OpenCode plugin contract.
 //
 // OpenCode plugin model: JS files in .opencode/plugins/*.js. Each exports an
 // async function that returns hook/event handlers. The plugin runtime is the
@@ -82,7 +82,7 @@ func opencodePluginContent(munsuBin, pluginName string) string {
 
 // opencodePretoolCheckPlugin generates the pre-tool check plugin JS.
 //
-// Mirrors firstmate's fm-primary-pretool-check.js contract:
+// Mirrors the munsu pretool-check plugin contract:
 // - `tool.execute.before` handler checks input?.tool !== "bash"
 // - Gets command from output?.args?.command (OpenCode uses --command arg, not stdin JSON)
 // - Spawns checker with ["--command", command]
@@ -138,7 +138,7 @@ export const MunsuPretoolCheck = async ({ directory, worktree }) => {
 
 // opencodeSessionstartNudgePlugin generates the session-start nudge plugin JS.
 //
-// Mirrors firstmate's fm-primary-sessionstart-nudge.js contract:
+// Mirrors the munsu sessionstart-nudge plugin contract:
 // - `event` handler checks event.type === "session.created"
 // - exactly-once per session via handledSessions Set
 // - spawns munsu integrate sessionstart-nudge
@@ -185,7 +185,7 @@ export const MunsuSessionstartNudge = async ({ client, directory, worktree }) =>
 
 // opencodeTurnendGuardPlugin generates the turn-end guard plugin JS.
 //
-// Mirrors firstmate's fm-primary-turnend-guard.js contract:
+// Mirrors the munsu turnend-guard plugin contract:
 // - `event` handler checks event.type === "session.idle"
 // - Spawns munsu guard --harness opencode with stdin stdinJSON
 // - If exit code 2, sends promptAsync with blocking reason
@@ -261,7 +261,7 @@ export const MunsuTurnendGuard = async ({ client, directory, worktree }) => {
 
 // opencodeWatchArmPlugin generates the watcher arm plugin JS.
 //
-// Mirrors firstmate's fm-primary-watch-arm.js contract:
+// Mirrors the munsu watch-arm plugin contract:
 // - Registers a global coordinator for cross-plugin coordination
 // - On session.idle, spawns munsu watch ensure to arm the watcher
 // - Reports arm status via the coordinator for the turnend-guard to check

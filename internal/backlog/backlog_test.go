@@ -1024,7 +1024,7 @@ func TestFileBackend_RenderWithMetadata(t *testing.T) {
 		fb := NewFileBackend(path)
 
 		items := []Item{
-			{ID: "TASK-1", Description: "My task", State: StateInFlight, Kind: "ship", Repo: "firstmate"},
+			{ID: "TASK-1", Description: "My task", State: StateInFlight, Kind: "ship", Repo: "munsu"},
 			{ID: "TASK-2", Description: "Other task", State: StateQueued, Kind: "scout", Repo: "munsu"},
 			{ID: "TASK-3", Description: "No meta", State: StateDone},
 		}
@@ -1046,8 +1046,8 @@ func TestFileBackend_RenderWithMetadata(t *testing.T) {
 		if reloaded[0].Kind != "scout" || reloaded[0].Repo != "munsu" {
 			t.Errorf("TASK-2: expected kind=scout repo=munsu, got kind=%q repo=%q", reloaded[0].Kind, reloaded[0].Repo)
 		}
-		if reloaded[1].Kind != "ship" || reloaded[1].Repo != "firstmate" {
-			t.Errorf("TASK-1: expected kind=ship repo=firstmate, got kind=%q repo=%q", reloaded[1].Kind, reloaded[1].Repo)
+		if reloaded[1].Kind != "ship" || reloaded[1].Repo != "munsu" {
+			t.Errorf("TASK-1: expected kind=ship repo=munsu, got kind=%q repo=%q", reloaded[1].Kind, reloaded[1].Repo)
 		}
 		if reloaded[2].Kind != "" || reloaded[2].Repo != "" {
 			t.Errorf("TASK-3: expected no metadata, got kind=%q repo=%q", reloaded[2].Kind, reloaded[2].Repo)

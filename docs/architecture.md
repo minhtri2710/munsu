@@ -1,7 +1,7 @@
 # munsu architecture
 
-munsu is a standalone Go CLI that ports firstmate's soldier orchestration
-capabilities to any project directory, without requiring a firstmate checkout.
+munsu is a standalone Go CLI for soldier orchestration
+capabilities, usable from any project directory without requiring a specific checkout.
 
 ## Module layout
 
@@ -108,7 +108,7 @@ authority — prefer `soldierstate.Read` / structured fleet home summary /
 no-mistakes run-step. Last line alone can mask still-open keyed decisions or
 phases.
 
-Semantics (firstmate crew status model):
+Semantics (status model):
 
 - **Append-only events** — never rewrite; consumers fold the whole stream.
 - **Keyed open/close** — optional `[key=<slug>]` between verb and colon:
@@ -155,7 +155,7 @@ and its display name, then uses the adapter for all session operations.
 Other backends (zellij, cmux, orca) were evaluated but not implemented:
 - **zellij** — stable CLI but high implementation cost. Niche terminal multiplexer.
 - **cmux** — requires running macOS GUI app and socket control setup. macOS-only, niche.
-- **orca** — firstmate-specific terminal app.
+- **orca** — experimental terminal app (not implemented).
 
 ### Task lifecycle
 
@@ -249,24 +249,23 @@ process ancestry inspection.
   Go dependency. This keeps the binary small and upgrades trivial.
 - **No bash runtime** — the compiled binary has zero runtime dependencies
   on scripts or external tools beyond the agent harness.
-- **Firstmate concept port, not fork** — munsu implements the same behavioral
-  model as firstmate (soldier orchestration, watcher, backlog, delivery) but as
-  a standalone Go CLI with an explicit `--home` / `MUNSU_HOME` relocation
-  model instead of firstmate's repo-root home.
+- **Standalone CLI, not a fork** — munsu implements the soldier orchestration, watcher, backlog, and delivery
+  model as a standalone Go CLI with an explicit `--home` / `MUNSU_HOME` relocation
+  model.
 
-## Mapping to firstmate
+## Architecture comparison
 
-See `docs/port-mapping.md` for the full command-by-command mapping.
+See `docs/port-mapping.md` for the full command reference.
 
-Key structural differences from firstmate:
+Key architectural characteristics:
 
-| Aspect | firstmate | munsu |
+| Aspect | Munsu |
 |--------|-----------|-------|
-| Entrypoint | Agent harness reads `AGENTS.md` in clone | `munsu` CLI binary on `PATH` |
-| Home | Repo root (default) or `FM_HOME` | `~/.munsu` or `MUNSU_HOME` / `--home` |
-| Language | Bash (`bin/fm-*.sh`) | Go (cobra) |
-| Dispatcher | None (scripts called directly) | Single entrypoint with subcommands |
-| Runtime dep on firstmate | N/A (is firstmate) | None (standalone) |
+| Entrypoint | `munsu` CLI binary on `PATH` |
+| Home | `~/.munsu` or `MUNSU_HOME` / `--home` |
+| Language | Go (cobra) |
+| Dispatcher | Single entrypoint with subcommands |
+| Runtime dependencies | None (standalone binary) |
 
 ## Rank hierarchy and identity
 
@@ -291,7 +290,7 @@ Munsu uses a battlefield rank vocabulary:
 | Config keys | `config/captain-harness`, `config/soldier-harness`, `config/soldier-dispatch.json` |
 | Skills | `captain-provisioning`, `stuck-soldier-recovery` |
 
-Old `secondmate`/`crewmate` and intermediate `marshal`/`second`/`crew` names are a clean break: reseed or migrate with `munsu captain migrate <home> <id>`, rewrite meta/env/registry, and relaunch. Fail-closed spawn authority rejects unknown `MUNSU_ROLE` values.
+Intermediate `marshal`/`second`/`crew` names from earlier development are a clean break: reseed or migrate with `munsu captain migrate <home> <id>`, rewrite meta/env/registry, and relaunch. Fail-closed spawn authority rejects unknown `MUNSU_ROLE` values.
 
 
 ## Build and test

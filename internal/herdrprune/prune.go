@@ -79,7 +79,7 @@ func herdrCLI(session string, args ...string) (string, error) {
 // captain/primary workspaces are protected by live-agent and live-meta checks.
 func denyListedLabel(label string) bool {
 	switch label {
-	case "firstmate", "default":
+	case "default":
 		return true
 	}
 	return false

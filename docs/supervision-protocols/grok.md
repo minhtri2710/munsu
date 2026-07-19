@@ -20,10 +20,10 @@ When this session owns supervision and away mode is not active:
 7. Waiting is silent; do not send idle progress.
 8. Do not invent a wake from an attach-status line alone.
 
-## Key differences from firstmate
+## Key supervision commands
 
-- Use `munsu watch-arm` instead of `bin/fm-watch-arm.sh`.
-- Use `munsu wake-drain` instead of `bin/fm-wake-drain.sh`.
+- Use `munsu watch-arm` to arm the watcher.
+- Use `munsu wake-drain` to drain queued wake records.
 - No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 
 ## Harness-specific

@@ -152,7 +152,7 @@ which were left untouched on purpose.
 
 - `.agents/skills/munsu-ops/SKILL.md` — fleet orchestration operator skill
   (spawn, supervise, teardown, full lifecycle).
-- `.agents/skills/updatefirstmate/SKILL.md` — analogous firstmate self-update
+- `.agents/skills/self-update/SKILL.md` — analogous self-update
   skill (reference pattern for update mechanics and safety rules).
 - `internal/selfupdate/update.go` — authoritative Go implementation of the
   `munsu update` command.

@@ -208,7 +208,7 @@ func getGitBranch(wtPath string) string {
 
 // lastStateBearingLine returns the last non-empty status line when it carries a
 // current-state verb. Pure close events (resolved, captain-held) only fold keys
-// and must not become Status or resurrect an earlier line (firstmate crew-state).
+// and must not become Status or resurrect an earlier line.
 func lastStateBearingLine(lines []string) string {
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])

@@ -32,7 +32,7 @@ Safety invariants (always enforced):
   - Never closes workspaces whose label does not match a known munsu hometag.
   - Never closes workspaces with any live agent.
   - Never closes workspaces referenced by live task meta (herdr_workspace_id).
-  - Never closes workspaces with deny-listed labels (firstmate, captain-*).
+  - Never closes workspaces with deny-listed labels (legacy-protected, captain-*).
   - --apply with no matching workspaces is a no-op (not an error).`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

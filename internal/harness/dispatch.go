@@ -27,7 +27,7 @@ type DispatchProfile struct {
 	// Match is a list of natural-language patterns. The first profile whose
 	// match list contains words from the task description wins.
 	// A single "*" wildcard matches everything.
-	// Firstmate "when" prose is stored as a single match entry (substring).
+	// Legacy "when" prose is stored as a single match entry (substring).
 	Match []string `json:"match,omitempty"`
 	// When is free-form prose retained for display; also used as match text when Match is empty.
 	When string `json:"when,omitempty"`

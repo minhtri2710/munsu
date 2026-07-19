@@ -124,7 +124,7 @@ Antigravity CLI requires permission to read, edit, and execute files here.
 
 // Fixture: r7 transcript capture of pi trust prompt.
 const piTrustCapture = `Trust project folder?
-/Users/beowulf/.treehouse/firstmate-8bf1b0/4/firstmate
+/Users/beowulf/.treehouse/test-worktree/munsu
 → Trust
   Trust parent folder (...)
   Trust (this session only)
