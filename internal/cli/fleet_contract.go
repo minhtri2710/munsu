@@ -46,17 +46,47 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		}
 		crewmates = append(crewmates, row)
 	}
-	// Collect secondmate entries
+	// Collect secondmate entries with home-summary + parent return-channel status.
 	matedata, err := secondmate.List(ctx.Home)
 	var secondmates []contract.SecondmateEntry
 	if err == nil {
 		for _, m := range matedata {
 			status := fleet.SecondmateStatus(m.Home)
-			secondmates = append(secondmates, contract.SecondmateEntry{
-				ID:     m.ID,
-				Scope:  m.Scope,
-				Status: status,
-			})
+			entry := contract.SecondmateEntry{
+				ID:               m.ID,
+				Home:             m.Home,
+				Scope:            m.Scope,
+				Status:           status,
+				LastParentStatus: fleet.LastParentStatus(ctx.Home, m.ID),
+			}
+			sum := fleet.SummarizeSecondHome(m.Home)
+			if sum.Valid {
+				entry.CurrentState = sum.State
+				entry.CurrentReason = sum.Reason
+				entry.Provenance = "structured-home"
+				entry.Counts = &contract.SecondHomeCounts{
+					ActiveChildren: sum.Counts.ActiveChildren,
+					Queued:         sum.Counts.Queued,
+					InFlight:       sum.Counts.InFlight,
+					Blocked:        sum.Counts.Blocked,
+					Done:           sum.Counts.Done,
+					Endpoints:      sum.Counts.Endpoints,
+				}
+				for _, c := range sum.ActiveChildren {
+					entry.ActiveChildren = append(entry.ActiveChildren, contract.SecondChildBrief{
+						ID: c.ID, Status: c.Status, Kind: c.Kind,
+					})
+				}
+			} else if entry.LastParentStatus != "" {
+				entry.Provenance = "parent-status-only"
+				entry.CurrentState = "unknown"
+				entry.CurrentReason = sum.Reason
+			} else {
+				entry.Provenance = "unavailable"
+				entry.CurrentState = "unknown"
+				entry.CurrentReason = sum.Reason
+			}
+			secondmates = append(secondmates, entry)
 		}
 	}
 
