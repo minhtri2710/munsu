@@ -72,10 +72,36 @@ type Soldier struct {
 }
 
 // CaptainEntry represents one captain in the fleet snapshot.
+// Parent status is untrusted supplemental evidence (return channel);
+// Current/home fields are derived from the registered Captain home when readable.
 type CaptainEntry struct {
+	ID               string              `json:"id"`
+	Home             string              `json:"home,omitempty"`
+	Scope            string              `json:"scope,omitempty"`
+	Status           string              `json:"status"` // endpoint liveness: seeded|alive|dead|unknown
+	CurrentState     string              `json:"current_state,omitempty"`
+	CurrentReason    string              `json:"current_reason,omitempty"`
+	LastParentStatus string              `json:"last_parent_status,omitempty"`
+	ActiveChildren   []CaptainChildBrief `json:"active_children,omitempty"`
+	Counts           *CaptainHomeCounts  `json:"counts,omitempty"`
+	Provenance       string              `json:"provenance,omitempty"` // structured-home | parent-status-only | unavailable
+}
+
+// CaptainChildBrief is a bounded child row under a Captain home.
+type CaptainChildBrief struct {
 	ID     string `json:"id"`
-	Scope  string `json:"scope,omitempty"`
-	Status string `json:"status"`
+	Status string `json:"status,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+}
+
+// CaptainHomeCounts aggregates Captain-home workload surfaces.
+type CaptainHomeCounts struct {
+	ActiveChildren int `json:"active_children"`
+	Queued         int `json:"queued"`
+	InFlight       int `json:"in_flight"`
+	Blocked        int `json:"blocked"`
+	Done           int `json:"done"`
+	Endpoints      int `json:"endpoints"`
 }
 
 // GuardViolation is a single violation with supporting evidence.

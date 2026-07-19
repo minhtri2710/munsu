@@ -16,6 +16,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
+	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -118,8 +119,53 @@ func taskIDForCaptain(smID string) string {
 
 // --- Seed / Provenance ---
 
+// DefaultCharter returns the idle-by-default Captain charter with General return-channel rules.
+// parentHome must be the General home whose state/captain:<id>.status is the escalation file.
+func DefaultCharter(id, parentHome string) string {
+	statusFile := filepath.Join(parentHome, "state", taskIDForCaptain(id)+".status")
+	return fmt.Sprintf(`# Charter: %s (Captain)
+
+## Domain
+You are a persistent domain Captain under the General fleet hierarchy:
+General → Captain → Soldier.
+
+This home is yours. Operate only on work the General routes to you.
+Never invent surveys, audits, or self-directed "find work" tasks.
+An empty queue is healthy.
+
+## Requests from the General
+Incoming pane text may be:
+1. Marked with a leading %s followed by an invisible separator — a General-routed request.
+2. Unmarked — the human captain typing directly into your pane (stay conversational).
+
+When a message carries the General marker:
+- Do the work.
+- Answer via the STATUS path below, never chat-only. The General does not read this chat.
+- Terse result: one status line is the whole answer.
+- Detailed result: write a doc under this home's data/ and append a status line that points to it.
+
+## Escalation / return channel
+Material captain-relevant outcomes append ONE line to the General status file:
+  echo "{state}: {one short line}" >> %s
+
+States: working, needs-decision, blocked, paused, done, failed, resolved.
+Key material phases with [key=<slug>] so later done/failed/resolved supersede them.
+Routine Soldier supervision, heartbeats, and retries stay inside THIS home and must not touch that file.
+
+## Spawn authority
+Spawn Soldier only from this Captain home. Never launch another Captain.
+`, id, marker.FromGeneralLabel, shQuote(statusFile))
+}
+
 // Seed creates a new captain home with a charter brief and a provenance marker.
+// When charter is empty, DefaultCharter(id, parentHome) is used. parentHome may be
+// empty only when an explicit charter is provided.
 func Seed(id, homePath, charter string) error {
+	return SeedWithParent(id, homePath, "", charter)
+}
+
+// SeedWithParent is Seed with an explicit General parent home for default charter generation.
+func SeedWithParent(id, homePath, parentHome, charter string) error {
 	if err := os.MkdirAll(homePath, 0755); err != nil {
 		return fmt.Errorf("creating captain home %s: %w", homePath, err)
 	}
@@ -128,6 +174,13 @@ func Seed(id, homePath, charter string) error {
 		if err := os.MkdirAll(filepath.Join(homePath, dir), 0755); err != nil {
 			return fmt.Errorf("creating %s/%s: %w", homePath, dir, err)
 		}
+	}
+
+	if strings.TrimSpace(charter) == "" {
+		if parentHome == "" {
+			return fmt.Errorf("seeding captain %s: empty charter requires parent home for return-channel path", id)
+		}
+		charter = DefaultCharter(id, parentHome)
 	}
 
 	agentsPath := filepath.Join(homePath, "AGENTS.md")

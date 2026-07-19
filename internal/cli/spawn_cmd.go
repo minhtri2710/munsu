@@ -7,6 +7,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
@@ -116,7 +117,11 @@ func newSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := bk.SendKeys(windowID, line); err != nil {
+			sendLine := line
+			if meta["kind"] == "captain" {
+				sendLine = marker.MarkFromGeneral(line)
+			}
+			if err := bk.SendKeys(windowID, sendLine); err != nil {
 				return fmt.Errorf("sending to %s: %w", id, err)
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{

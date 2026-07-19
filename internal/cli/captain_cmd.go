@@ -19,9 +19,9 @@ func newCaptainCmd() *cobra.Command {
 		Use:   "seed <id> <home-path>",
 		Short: "Seed a captain home with charter",
 		Args:  ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return captain.Seed(args[0], args[1], "# Captain charter\n\nPersistent domain supervisor.\n")
-		},
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return captain.SeedWithParent(args[0], args[1], ctx.Home, "")
+		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{
