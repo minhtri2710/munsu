@@ -89,3 +89,19 @@ firstmate-specific infrastructure that do not belong in a standalone CLI port:
 > script. Capabilities that are firstmate-specific (social, Codex-only, or experimental
 > tooling) are intentionally excluded. Gaps that affect core lifecycle parity are
 > tracked in the wave roadmap.
+
+
+## Live harness validation (2026-07-19)
+
+Environment probe (PATH):
+
+| Binary | Present | Live spawn/hook runtime | Status |
+|--------|---------|-------------------------|--------|
+| pi | yes | yes (prior lifecycle + spawn ready) | **live-verified** |
+| agy | yes | nested-pane ready patterns often absent without pre-auth; fail-closed after 60s | **installed; live spawn deferred** (contract/unit verified) |
+| claude | no | n/a | **deferred — not installed** |
+| codex | no | n/a | **deferred — not installed** |
+| grok | no | n/a | **deferred — not installed** |
+| opencode | no | n/a | **deferred — not installed** |
+
+Policy: do not claim live-verified without a real pane reaching harness-ready and completing a munsu lifecycle step.
