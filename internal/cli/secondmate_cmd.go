@@ -19,9 +19,9 @@ func newSecondmateCmd() *cobra.Command {
 		Use:   "seed <id> <home-path>",
 		Short: "Seed a secondmate home with charter",
 		Args:  ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return secondmate.Seed(args[0], args[1], "# Secondmate charter\n\nPersistent domain supervisor.\n")
-		},
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return secondmate.SeedWithParent(args[0], args[1], ctx.Home, "")
+		}),
 	})
 
 	cmd.AddCommand(&cobra.Command{

@@ -10,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
+	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -114,6 +115,36 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 }
 
 // --- Seed tests ---
+
+func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
+	parent := "/tmp/marshal-home"
+	charter := DefaultCharter("api", parent)
+	if !strings.Contains(charter, marker.FromMarshalLabel) {
+		t.Fatalf("charter missing marshal marker label")
+	}
+	status := filepath.Join(parent, "state", "secondmate:api.status")
+	if !strings.Contains(charter, status) {
+		t.Fatalf("charter missing status path %q", status)
+	}
+	if !strings.Contains(charter, "never chat-only") && !strings.Contains(charter, "never only in this chat") && !strings.Contains(charter, "STATUS path") {
+		t.Fatalf("charter missing return-channel instruction")
+	}
+}
+
+func TestSeedWithParent_WritesDefaultCharter(t *testing.T) {
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "secondmates", "api")
+	if err := SeedWithParent("api", sm, parent, ""); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(sm, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "secondmate:api.status") {
+		t.Fatalf("default charter missing status file path, got: %s", body)
+	}
+}
 
 func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 	tmp := t.TempDir()
