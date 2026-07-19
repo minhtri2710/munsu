@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -31,6 +32,20 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key := args[0]
+			// backend is runtime-resolved (env detection), not persisted, so report the live backend.
+			if key == "backend" {
+				pin, _ := config.Get(ctx.Home, key)
+				resolved, _ := bootstrap.ResolveBackend(pin)
+				if resolved == "" {
+					resolved = "none"
+				}
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "message",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: resolved},
+				})
+			}
 			val, err := config.Get(ctx.Home, key)
 			if err != nil {
 				if config.IsKnownKey(key) {

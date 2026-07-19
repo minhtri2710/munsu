@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 )
+
 // ToolStatus represents whether a tool was found during bootstrap.
 type ToolStatus int
 
@@ -57,12 +58,12 @@ type GCDiagnostic struct {
 
 // Result holds the full bootstrap diagnostic output.
 type Result struct {
-	LockAcquired  bool
-	Tools         []ToolDiagnostic
-	Auth          *AuthDiagnostic
-	Configs       []ConfigDiagnostic
-	GC            *GCDiagnostic
-	MissingTools  []string
+	LockAcquired bool
+	Tools        []ToolDiagnostic
+	Auth         *AuthDiagnostic
+	Configs      []ConfigDiagnostic
+	GC           *GCDiagnostic
+	MissingTools []string
 }
 
 // Run executes bootstrap diagnostics for the given munsu home.
@@ -135,20 +136,7 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 	res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_CONFIG", Value: configDisplay})
 
 	// BACKEND_RESOLVED: shows the currently resolved runtime backend and its source
-	var resolved, source string
-	if configuredPin != "" && configuredPin != "auto" {
-		resolved = configuredPin
-		source = "config pin"
-	} else if tmuxEnv := os.Getenv("TMUX"); tmuxEnv != "" {
-		resolved = "tmux"
-		source = "active TMUX"
-	} else if herdrEnv := os.Getenv("HERDR_ENV"); herdrEnv != "" {
-		resolved = "herdr"
-		source = "active HERDR_ENV"
-	} else if _, err := exec.LookPath("tmux"); err == nil {
-		resolved = "tmux"
-		source = "cold-start"
-	}
+	resolved, source := ResolveBackend(configuredPin)
 
 	if resolved != "" {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: resolved, Source: source})
@@ -182,6 +170,26 @@ func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
 // ghAuth checks whether gh is authenticated.
 // Uses exit code only: gh auth status exits 0 when authenticated,
 // regardless of whether it prints to stdout or stderr.
+// ResolveBackend resolves the active runtime backend given a configured pin.
+// Precedence: explicit pin (non-"auto") > active TMUX env > active HERDR_ENV env
+// > tmux on PATH (cold-start). Returns ("", "") if nothing resolves. Extracted
+// from Diagnostics so `config get backend` can report the live backend.
+func ResolveBackend(configuredPin string) (resolved, source string) {
+	if configuredPin != "" && configuredPin != "auto" {
+		return configuredPin, "config pin"
+	}
+	if tmuxEnv := os.Getenv("TMUX"); tmuxEnv != "" {
+		return "tmux", "active TMUX"
+	}
+	if herdrEnv := os.Getenv("HERDR_ENV"); herdrEnv != "" {
+		return "herdr", "active HERDR_ENV"
+	}
+	if _, err := exec.LookPath("tmux"); err == nil {
+		return "tmux", "cold-start"
+	}
+	return "", ""
+}
+
 func ghAuth() bool {
 	cmd := exec.Command("gh", "auth", "status")
 	// Capture both stdout and stderr to suppress output

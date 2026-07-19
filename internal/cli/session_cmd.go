@@ -21,7 +21,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/waker"
-	"github.com/minhtri2710/munsu/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
@@ -266,64 +265,6 @@ func newWakeDrainCmd() *cobra.Command {
 			return nil
 		}),
 	}
-}
-
-func newGuardCmd() *cobra.Command {
-	var harnessFlag string
-	cmd := &cobra.Command{
-		Use:   "guard",
-		Short: "Warn on tangle or stale watcher",
-		Long: `Check fleet state and watcher liveness.
-
-With --harness claude, this command acts as a Claude Stop hook:
-- Reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
-- Checks watcher health and in-flight tasks
-- On blind-turn (tasks in-flight + unhealthy watcher): exit 2 + stderr reason
-- Otherwise: exit 0
-
-With --harness agy, acts as an agy Stop hook:
-- Reads stdin JSON for fullyIdle (true → allow-stop with {"decision":"allow"})
-- Checks watcher health and in-flight tasks
-- On blind-turn: stdout {"decision":"continue","reason":"..."} + exit 0
-- Otherwise: stdout {"decision":"allow"} + exit 0`,
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if harnessFlag == "agy" {
-				return runGuardAgy(ctx.Home)
-			}
-			if harnessFlag == "claude" {
-				return runGuardClaude(ctx.Home)
-			}
-			if harnessFlag == "grok" {
-				return runGuardGrok(ctx.Home)
-			}
-			if harnessFlag == "codex" || harnessFlag == "opencode" {
-				return runGuardCodexLike(ctx.Home)
-			}
-			waker.CheckGuard(ctx.Home)
-
-			// Check all registered projects for tangles using resolved paths
-			projects, err := project.List(ctx.Home)
-			if err == nil {
-				for _, p := range projects {
-					projDir, resolveErr := project.ResolveRepoPath(ctx.Home, p.Name)
-					if resolveErr != nil {
-						continue // skip unresolvable projects
-					}
-					if err := worktree.AssertNotTangled(projDir, p.Name); err != nil {
-						w := err.Error()
-						border := strings.Repeat("●", len(w)+4)
-						fmt.Println(border)
-						fmt.Println("● " + w + " ●")
-						fmt.Println(border)
-					}
-				}
-			}
-
-			return nil
-		}),
-	}
-	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Output shape: claude, codex, opencode (exit 2 + stderr), grok (passive Stop hook), or agy (stdout decision JSON)")
-	return cmd
 }
 
 // runGuardClaude implements the Claude Stop hook guard.
