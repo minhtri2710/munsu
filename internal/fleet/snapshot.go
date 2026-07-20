@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -30,7 +31,74 @@ type TaskSnapshot struct {
 	Worktree   string `json:"worktree"`
 	PaneAlive  bool   `json:"pane_alive"`
 	LastStatus string `json:"last_status,omitempty"`
+
+	// Resolved current-state projection (populated when a resolver is wired).
+	CurrentState        string              `json:"current_state,omitempty"`
+	CurrentDescription  string              `json:"current_description,omitempty"`
+	NoMistakesRunStep   string              `json:"no_mistakes_run_step,omitempty"`
+	StatusLogSuperseded bool                `json:"status_log_superseded"`
+	OpenActivities      []classify.Activity `json:"open_activities,omitempty"`
 }
+
+// CurrentStateInfo carries the resolved current-state projection for a task.
+type CurrentStateInfo struct {
+	State               string              `json:"state"`
+	Description         string              `json:"description"`
+	NoMistakesRunStep   string              `json:"no_mistakes_run_step,omitempty"`
+	StatusLogSuperseded bool                `json:"status_log_superseded"`
+	OpenActivities      []classify.Activity `json:"open_activities,omitempty"`
+}
+
+// resolveCurrentState is a function pointer wired from CLI to use soldierstate.Read().
+// When nil, Snapshot falls back to simple meta+status logic.
+var resolveCurrentState func(homeDir, id string) (*CurrentStateInfo, error)
+
+// SetCurrentStateResolver installs the current-state resolver used by Snapshot.
+func SetCurrentStateResolver(fn func(homeDir, id string) (*CurrentStateInfo, error)) {
+	resolveCurrentState = fn
+}
+
+// CurrentState computes the resolved current-state projection for a task.
+// Priority when probe is wired: run-step > native backend state > verified pane > folded status.
+// Fallback: meta window presence + status log folding.
+func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo {
+	if resolveCurrentState != nil {
+		info, err := resolveCurrentState(homeDir, id)
+		if err == nil && info != nil {
+			return info
+		}
+	}
+
+	// Fallback: meta window presence + last status line.
+	paneAlive := meta["window"] != ""
+	info := &CurrentStateInfo{
+		State: PhaseFromMeta(meta["window"], paneAlive),
+	}
+
+	statusPath := filepath.Join(task.StateDir(homeDir), id+".status")
+	info.OpenActivities = classify.OpenActivities(statusPath)
+
+	if data, err := os.ReadFile(statusPath); err == nil {
+		lines := strings.TrimSpace(string(data))
+		if lines != "" {
+			parts := strings.Split(lines, "\n")
+			lastLine := strings.TrimSpace(parts[len(parts)-1])
+			if lastLine != "" {
+				verb := statusVerb(lastLine)
+				_, note, _ := strings.Cut(lastLine, ":")
+				note = strings.TrimSpace(note)
+				switch verb {
+				case "working", "done", "failed", "blocked", "paused", "needs-decision", "awaiting_approval":
+					info.State = verb
+					info.Description = note
+				}
+			}
+		}
+	}
+
+	return info
+}
+
 
 // PhaseFromMeta returns the display phase for a task from meta-only facts.
 // window empty → registered; window non-empty → alive if paneAlive else dead.
@@ -45,7 +113,17 @@ func PhaseFromMeta(window string, paneAlive bool) string {
 	}
 }
 
+// PhaseFromProjection returns the display phase using resolved current-state info.
+// When CurrentState is set and non-empty it takes precedence over the meta-only phase.
+func PhaseFromProjection(ts TaskSnapshot) string {
+	if ts.CurrentState != "" {
+		return ts.CurrentState
+	}
+	return PhaseFromMeta(ts.Window, ts.PaneAlive)
+}
+
 // Snapshot builds a fleet snapshot by scanning state/*.meta and state/*.status.
+// Each task gets a resolved current-state projection when the resolver is wired.
 func Snapshot(homeDir string) (*FleetSnapshot, error) {
 	snap := &FleetSnapshot{
 		Schema: "munsu-fleet-snapshot.v1",
@@ -103,6 +181,14 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 			}
 		}
 
+		// Resolve current-state projection when resolver is wired.
+		info := CurrentState(homeDir, id, meta)
+		ts.CurrentState = info.State
+		ts.CurrentDescription = info.Description
+		ts.NoMistakesRunStep = info.NoMistakesRunStep
+		ts.StatusLogSuperseded = info.StatusLogSuperseded
+		ts.OpenActivities = info.OpenActivities
+
 		snap.Tasks = append(snap.Tasks, ts)
 	}
 
@@ -120,7 +206,7 @@ func View(homeDir string) error {
 	fmt.Printf("Tasks: %d\n\n", len(snap.Tasks))
 
 	for _, ts := range snap.Tasks {
-		phase := PhaseFromMeta(ts.Window, ts.PaneAlive)
+		phase := PhaseFromProjection(ts)
 
 		fmt.Printf("- **%s** (repo: %s)\n", ts.ID, ts.Project)
 		fmt.Printf("  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
@@ -135,9 +221,15 @@ func View(homeDir string) error {
 		if len(modelEffortParts) > 0 {
 			fmt.Printf("  %s\n", strings.Join(modelEffortParts, " | "))
 		}
+
+		// Show current state description when available, else status.
+		displayStatus := ts.CurrentDescription
+		if displayStatus == "" {
+			displayStatus = ts.LastStatus
+		}
 		fmt.Printf("  pane: %s (%s)\n", ts.Window, phase)
-		if ts.LastStatus != "" {
-			fmt.Printf("  status: %s\n", ts.LastStatus)
+		if displayStatus != "" {
+			fmt.Printf("  status: %s\n", displayStatus)
 		}
 		fmt.Println()
 	}
@@ -158,9 +250,13 @@ func Bearings(homeDir string, projectDir string) error {
 	for _, ts := range snap.Tasks {
 		if ts.Kind == "ship" || ts.Kind == "scout" {
 			inFlight++
-			phase := PhaseFromMeta(ts.Window, ts.PaneAlive)
+			phase := PhaseFromProjection(ts)
 
-			fmt.Printf("- **%s** (%s) — %s [%s]\n", ts.ID, ts.Project, ts.LastStatus, phase)
+			displayStatus := ts.CurrentDescription
+			if displayStatus == "" {
+				displayStatus = ts.LastStatus
+			}
+			fmt.Printf("- **%s** (%s) — %s [%s]\n", ts.ID, ts.Project, displayStatus, phase)
 		}
 	}
 

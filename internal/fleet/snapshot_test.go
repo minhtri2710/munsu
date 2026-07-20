@@ -314,3 +314,147 @@ func TestCaptainStatus_BackendErrorIsDead(t *testing.T) {
 		t.Errorf("CaptainStatus = %q, want %q", status, "dead")
 	}
 }
+
+// withResolver wraps resolveCurrentState for testing.
+func withResolver(t *testing.T, fn func(homeDir, id string) (*CurrentStateInfo, error)) {
+	t.Helper()
+	old := resolveCurrentState
+	resolveCurrentState = fn
+	t.Cleanup(func() { resolveCurrentState = old })
+}
+
+func TestCurrentState_PaneAliveOverDone(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create meta with window (pane assumed alive)
+	if err := task.WriteMeta(tmp, "t1", map[string]string{
+		"window":   "@win",
+		"worktree": "/tmp/wt",
+		"project":  "munsu",
+		"kind":     "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	// Status says 'done' but we wire a resolver that reports pane alive.
+	if err := task.AppendStatus(tmp, "t1", "done: build complete"); err != nil {
+		t.Fatalf("AppendStatus: %v", err)
+	}
+
+	withResolver(t, func(homeDir, id string) (*CurrentStateInfo, error) {
+		return &CurrentStateInfo{
+			State:       "alive",
+			Description: "pane is alive",
+		}, nil
+	})
+
+	snap, err := Snapshot(tmp)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	ts := snap.Tasks[0]
+	if ts.CurrentState != "alive" {
+		t.Errorf("CurrentState = %q, want 'alive' (pane alive overrides stale done status)", ts.CurrentState)
+	}
+	if ts.CurrentDescription != "pane is alive" {
+		t.Errorf("CurrentDescription = %q, want 'pane is alive'", ts.CurrentDescription)
+	}
+}
+
+func TestCurrentState_NoMistakesOverridesBlocked(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create meta with window and worktree
+	if err := task.WriteMeta(tmp, "t1", map[string]string{
+		"window":   "@win",
+		"worktree": "/tmp/wt",
+		"project":  "munsu",
+		"kind":     "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	// Status says 'blocked' but no-mistakes run-step is active.
+	if err := task.AppendStatus(tmp, "t1", "blocked: waiting for review"); err != nil {
+		t.Fatalf("AppendStatus: %v", err)
+	}
+
+	withResolver(t, func(homeDir, id string) (*CurrentStateInfo, error) {
+		return &CurrentStateInfo{
+			State:               "working",
+			Description:         "no-mistakes: fixing",
+			NoMistakesRunStep:   "fixing",
+			StatusLogSuperseded: true,
+		}, nil
+	})
+
+	snap, err := Snapshot(tmp)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	ts := snap.Tasks[0]
+	if ts.CurrentState != "working" {
+		t.Errorf("CurrentState = %q, want 'working' (no-mistakes run-step overrides blocked status)", ts.CurrentState)
+	}
+	if ts.NoMistakesRunStep != "fixing" {
+		t.Errorf("NoMistakesRunStep = %q, want 'fixing'", ts.NoMistakesRunStep)
+	}
+	if !ts.StatusLogSuperseded {
+		t.Errorf("StatusLogSuperseded = false, want true")
+	}
+}
+
+func TestCurrentState_ResolvedNotCurrentStatus(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create meta with window
+	if err := task.WriteMeta(tmp, "t1", map[string]string{
+		"window":   "@win",
+		"worktree": "/tmp/wt",
+		"project":  "munsu",
+		"kind":     "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	// Last line is 'resolved' which must not appear as current state.
+	if err := task.AppendStatus(tmp, "t1", "working [key=phase1]: initial work"); err != nil {
+		t.Fatalf("AppendStatus: %v", err)
+	}
+	if err := task.AppendStatus(tmp, "t1", "resolved [key=phase1]: initial work complete"); err != nil {
+		t.Fatalf("AppendStatus: %v", err)
+	}
+
+	// No resolver wired — uses fallback CurrentState().
+	snap, err := Snapshot(tmp)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	ts := snap.Tasks[0]
+
+	// 'resolved' is not a recognized current-state verb, so fallback should keep
+	// the meta-derived phase (alive) rather than showing 'resolved'.
+	if ts.CurrentState == "resolved" {
+		t.Errorf("CurrentState = 'resolved', want something else (resolved is not current state)")
+	}
+
+	// OpenActivities should have no open activities since resolved closed the key.
+	if len(ts.OpenActivities) != 0 {
+		t.Errorf("OpenActivities = %d entries, want 0 (resolved closed the key)", len(ts.OpenActivities))
+	}
+}
