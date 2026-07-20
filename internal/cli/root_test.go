@@ -51,6 +51,7 @@ var canonicalCommands = []struct {
 	{name: "decision-hold", use: "decision-hold"},
 	{name: "afk", use: "afk"},
 	{name: "integrate", use: "integrate"},
+	{name: "manual", use: "manual"},
 }
 
 // TestCanonicalCommandsRegistered is the root-command availability
