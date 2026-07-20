@@ -36,6 +36,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | `munsu fleet view` | See the full fleet. |
 | `munsu fleet bearings` | Compact resume report (snapshot + captain table). |
 | `munsu home [--mkdir]` | Print or create the munsu home directory. |
+| `munsu inbox` | Show actionable wakes and last captain status lines (General convenience view). |
 
 ## Spawn / Send / Peek
 

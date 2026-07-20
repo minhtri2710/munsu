@@ -307,7 +307,9 @@ Communication with soldiers and captains follows a strict direction policy:
   task .status file, the typed event log, and enqueues a wake for material
   states (done, failed, needs-decision, blocked).
 - **notify** --- alias for `munsu report`.
-
+- **inbox** --- preview view: `munsu inbox` lists pending wakes and last captain status lines side by side.
+  Use before `munsu wake claim` or `munsu wake-drain` to preview what needs attention.
+  Rank-aware: shows captain:* status lines from the General's state directory.
 Rank-aware routing via MUNSU_ROLE:
   - soldier appends to its own task .status in the current home
   - captain appends to General home state/captain:<id>.status
@@ -415,7 +417,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Show skill | `munsu skill show <name>` |
 | Show available skills | `munsu skill list` |
 | Doctor | `munsu doctor` |
-
+| Inbox view | `munsu inbox` |
 ---
 
 ## Full lifecycle (ship task)
