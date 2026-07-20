@@ -515,3 +515,102 @@ func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
 		t.Fatal("expected captain:munsu from primary")
 	}
 }
+
+func TestSnapshot_PaneAliveProbeTrue(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	if err := task.WriteMeta(tmp, "t1", map[string]string{
+		"window":   "@win",
+		"worktree": "/tmp/wt",
+		"project":  "munsu",
+		"kind":     "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	withPaneAlive(t, func(parentHome string, meta map[string]string) (bool, error) {
+		return true, nil
+	})
+
+	snap, err := Snapshot(tmp)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	ts := snap.Tasks[0]
+	if !ts.PaneAlive {
+		t.Errorf("PaneAlive = false, want true")
+	}
+	if ts.PaneAliveUnknown {
+		t.Errorf("PaneAliveUnknown = true, want false")
+	}
+}
+
+func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	if err := task.WriteMeta(tmp, "t1", map[string]string{
+		"window":   "@win",
+		"worktree": "/tmp/wt",
+		"project":  "munsu",
+		"kind":     "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	withPaneAlive(t, func(parentHome string, meta map[string]string) (bool, error) {
+		return false, nil
+	})
+
+	snap, err := Snapshot(tmp)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	ts := snap.Tasks[0]
+	if ts.PaneAlive {
+		t.Errorf("PaneAlive = true, want false")
+	}
+	if ts.PaneAliveUnknown {
+		t.Errorf("PaneAliveUnknown = true, want false")
+	}
+}
+
+func TestSnapshot_PaneAliveUnknownWhenNoProbe(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	if err := task.WriteMeta(tmp, "t1", map[string]string{
+		"window":   "@win",
+		"worktree": "/tmp/wt",
+		"project":  "munsu",
+		"kind":     "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	// No probe wired — paneAliveForCaptain is nil
+	snap, err := Snapshot(tmp)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(snap.Tasks))
+	}
+	ts := snap.Tasks[0]
+	if !ts.PaneAliveUnknown {
+		t.Errorf("PaneAliveUnknown = false, want true (no probe wired)")
+	}
+	if ts.PaneAlive {
+		t.Errorf("PaneAlive = true, want false (no probe)")
+	}
+}
