@@ -29,7 +29,7 @@ type BackendMetaExtras interface {
 	MetaExtras() map[string]string
 }
 
-// Select returns the named backend. Supported: "tmux", "herdr".
+// Select returns the named backend. Supported: "tmux", "herdr", "zellij".
 // Returns an error for unknown backend names.
 func Select(name string) (Backend, error) {
 	switch name {
@@ -37,8 +37,10 @@ func Select(name string) (Backend, error) {
 		return NewHerdrBackend(""), nil
 	case "tmux":
 		return &TmuxBackend{}, nil
+	case "zellij":
+		return NewZellijBackend(""), nil
 	default:
-		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr)", name)
+		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij)", name)
 	}
 }
 
@@ -80,7 +82,7 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	if name == "" || name == "auto" {
 		bk := Default()
 		if bk == nil {
-			return nil, "", fmt.Errorf("no session backend detected: set $TMUX, set $HERDR_ENV, or ensure tmux/herdr is on PATH")
+			return nil, "", fmt.Errorf("no session backend detected: set $TMUX, set $HERDR_ENV, or ensure tmux/herdr/zellij is on PATH")
 		}
 		switch bk.(type) {
 		case *HerdrBackend:
@@ -99,8 +101,10 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 		// passed separately by spawn to NewWindow. The Herdr session is the server
 		// name (HERDR_SESSION or "default").
 		return NewHerdrBackend(""), "herdr", nil
+	case "zellij":
+		return NewZellijBackend(""), "zellij", nil
 	default:
-		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr)", name)
+		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij)", name)
 	}
 }
 
@@ -157,6 +161,9 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 	case "tmux":
 		bk, err := Select("tmux")
 		return bk, "tmux", err
+	case "zellij":
+		bk, err := Select("zellij")
+		return bk, "zellij", err
 	default:
 		// Unknown backend in meta: fall through to Resolve.
 		return Resolve(homeDir, "")

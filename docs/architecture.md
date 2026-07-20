@@ -143,7 +143,8 @@ type Backend interface {
 }
 ```
 
-Two implementations: `tmux` (default) and `herdr` (enabled via `HERDR_ENV=1`).
+Three implementations: `tmux` (default), `herdr` (enabled via `HERDR_ENV=1`),
+and `zellij` (experimental, enabled via `config/backend=zellij` or `--backend zellij`).
 The backend is selected through a resolution chain: `--backend` flag >
 `config/backend` file > `HERDR_ENV` env var > `tmux` default. Unknown
 backend names are rejected at `session.Resolve` time with a clear error.
@@ -152,8 +153,7 @@ Backend resolution: `session.Resolve(homeDir, backendOverride)` returns a
 `(Backend, name, error)` tuple. The caller receives the resolved adapter
 and its display name, then uses the adapter for all session operations.
 
-Other backends (zellij, cmux, orca) were evaluated but not implemented:
-- **zellij** — stable CLI but high implementation cost. Niche terminal multiplexer.
+Other backends (cmux, orca) were evaluated but not implemented:
 - **cmux** — requires running macOS GUI app and socket control setup. macOS-only, niche.
 - **orca** — experimental terminal app (not implemented).
 
