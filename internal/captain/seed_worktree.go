@@ -43,90 +43,153 @@ var worktreeGitignoreContent = []string{
 //
 // repoPath must be the root of a local git clone (typically a project repo).
 // The default branch is resolved from origin/HEAD.
-func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string) error {
-	// Idempotency check — already managed worktree with matching provenance.
-	managed, err := isManagedWorktree(homePath)
+func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force bool, ref string) (err error) {
+	var absRepo string
+	absRepo, err = filepath.Abs(repoPath)
 	if err != nil {
-		return fmt.Errorf("checking if %s is already managed: %w", homePath, err)
+		err = fmt.Errorf("resolving repo path: %w", err)
+		return
 	}
-	if managed {
+
+	// Verify sourceRepo is a git repo.
+	if _, stErr := os.Stat(filepath.Join(absRepo, ".git")); stErr != nil {
+		err = fmt.Errorf("source repo %s is not a git repository: %w", absRepo, stErr)
+		return
+	}
+
+	// Abs home path.
+	var absHome string
+	absHome, err = filepath.Abs(homePath)
+	if err != nil {
+		err = fmt.Errorf("resolving home path: %w", err)
+		return
+	}
+
+	// Track created artifacts for rollback.
+	var worktreeCreated bool
+	var registered bool
+	defer func() {
+		if err != nil {
+			rollbackWorktree(worktreeCreated, absHome, absRepo, registered, parentHome, id)
+		}
+	}()
+
+	// Idempotency check — already managed worktree with matching provenance.
+	managed, mErr := isManagedWorktree(absHome)
+	if mErr != nil {
+		err = fmt.Errorf("checking if %s is already managed: %w", absHome, mErr)
+		return
+	}
+	if managed && !force {
+		// Already managed — safe no-op.
 		return nil
 	}
 
-	// Reject existing state-only captain homes.
-	if isStateOnlyHome(homePath) {
-		return fmt.Errorf("path %s is an existing state-only captain home; use 'munsu captain seed' (without --repo) or migrate manually", homePath)
+	// Reject existing state-only captain homes (cannot be --force replaced).
+	if isStateOnlyHome(absHome) {
+		err = fmt.Errorf("path %s is an existing state-only captain home; use 'munsu captain seed' (without --repo) or migrate manually", absHome)
+		return
 	}
 
-	// Resolve default branch from repo.
-	defaultBranch, err := resolveDefaultBranch(repoPath)
-	if err != nil {
-		return fmt.Errorf("resolving default branch for %s: %w", repoPath, err)
-	}
-	remoteRef := "origin/" + defaultBranch
-
-	// Verify the remote tracking ref exists.
-	if _, err := gitRun("-C", repoPath, "rev-parse", "--verify", remoteRef); err != nil {
-		return fmt.Errorf("remote tracking ref %q does not exist in %s — fetch origin first", remoteRef, repoPath)
+	// Remote validation: verify source repo remote matches parent remote.
+	if parentHome != "" {
+		if err = validateWorktreeRemote(absRepo, parentHome); err != nil {
+			return
+		}
 	}
 
-	// Create the worktree — git worktree add --detach <homePath> origin/<branch>.
-	// Use --force to allow the target path (git creates the dir).
-	if _, err := gitRun("-C", repoPath, "worktree", "add", "--detach", "--force", homePath, remoteRef); err != nil {
-		return fmt.Errorf("creating git worktree at %s: %w", homePath, err)
+	// Determine target ref (default branch or explicit --ref).
+	checkoutRef := ref
+	if checkoutRef == "" {
+		var defaultBranch string
+		defaultBranch, err = resolveDefaultBranch(absRepo)
+		if err != nil {
+			err = fmt.Errorf("resolving default branch for %s: %w", absRepo, err)
+			return
+		}
+		checkoutRef = "origin/" + defaultBranch
 	}
+
+	// Verify the tracking ref exists (for branch refs, not raw commits).
+	if ref == "" {
+		if _, verr := gitRun("-C", absRepo, "rev-parse", "--verify", checkoutRef); verr != nil {
+			err = fmt.Errorf("remote tracking ref %q does not exist in %s — fetch origin first", checkoutRef, absRepo)
+			return
+		}
+	}
+
+	// If force, remove existing worktree before recreating.
+	if force {
+		removeExistingWorktree(absHome, absRepo)
+	}
+
+	// Create the worktree — git worktree add --detach <homePath> <ref>.
+	if _, wtErr := gitRun("-C", absRepo, "worktree", "add", "--detach", "--force", absHome, checkoutRef); wtErr != nil {
+		err = fmt.Errorf("creating git worktree at %s: %w", absHome, wtErr)
+		return
+	}
+	worktreeCreated = true
 
 	// Write .gitignore for operational dirs.
-	if err := writeWorktreeGitignore(homePath); err != nil {
-		return fmt.Errorf("writing worktree .gitignore: %w", err)
+	if err = writeWorktreeGitignore(absHome); err != nil {
+		err = fmt.Errorf("writing worktree .gitignore: %w", err)
+		return
 	}
 
 	// Write provenance metadata.
-	if err := writeCaptainProvenance(homePath, repoPath); err != nil {
-		return fmt.Errorf("writing captain provenance: %w", err)
+	if err = writeCaptainProvenance(absHome, absRepo); err != nil {
+		err = fmt.Errorf("writing captain provenance: %w", err)
+		return
 	}
 
 	// Create required captain home directories.
 	for _, dir := range []string{"state", "data", "config", "projects"} {
-		if err := os.MkdirAll(filepath.Join(homePath, dir), 0755); err != nil {
-			return fmt.Errorf("creating %s/%s: %w", homePath, dir, err)
+		if err = os.MkdirAll(filepath.Join(absHome, dir), 0755); err != nil {
+			err = fmt.Errorf("creating %s/%s: %w", absHome, dir, err)
+			return
 		}
 	}
 
 	// Write charter / AGENTS.md.
 	if strings.TrimSpace(charter) == "" {
 		if parentHome == "" {
-			return fmt.Errorf("seeding captain %s: empty charter requires parent home for return-channel path", id)
+			err = fmt.Errorf("seeding captain %s: empty charter requires parent home for return-channel path", id)
+			return
 		}
 		charter = DefaultCharter(id, parentHome)
 	}
-	agentsPath := filepath.Join(homePath, "AGENTS.md")
-	if err := os.WriteFile(agentsPath, []byte(charter), 0644); err != nil {
-		return fmt.Errorf("writing AGENTS.md: %w", err)
+	if err = os.WriteFile(filepath.Join(absHome, "AGENTS.md"), []byte(charter), 0644); err != nil {
+		err = fmt.Errorf("writing AGENTS.md: %w", err)
+		return
 	}
 
 	// Write the .munsu-captain-home provenance marker (same as regular seed).
-	if err := SeedProvenance(homePath, id); err != nil {
-		return fmt.Errorf("seeding provenance marker: %w", err)
+	if err = SeedProvenance(absHome, id); err != nil {
+		err = fmt.Errorf("seeding provenance marker: %w", err)
+		return
 	}
 
 	// Register with parent home.
 	if parentHome != "" {
-		if err := Register(parentHome, id, homePath, "", ""); err != nil {
-			return fmt.Errorf("registering captain %s: %w", id, err)
+		if err = Register(parentHome, id, absHome, "", ""); err != nil {
+			err = fmt.Errorf("registering captain %s: %w", id, err)
+			return
 		}
-		if err := ConfigPush(parentHome, homePath); err != nil {
-			return fmt.Errorf("seed inherit: %w", err)
+		registered = true
+		if err = ConfigPush(parentHome, absHome); err != nil {
+			err = fmt.Errorf("seed inherit: %w", err)
+			return
 		}
 	}
 
 	// Install Pi extensions.
-	if err := EnsureCaptainPiExtensions(homePath); err != nil {
-		return fmt.Errorf("installing captain pi extensions: %w", err)
+	if err = EnsureCaptainPiExtensions(absHome); err != nil {
+		err = fmt.Errorf("installing captain pi extensions: %w", err)
+		return
 	}
 
-	fmt.Printf("Seeded worktree captain %s at %s (from %s, %s)\n", id, homePath, repoPath, remoteRef)
-	return nil
+	fmt.Printf("Seeded worktree captain %s at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)
+	return
 }
 
 // isManagedWorktree checks whether homePath is a managed git-worktree
@@ -235,8 +298,15 @@ func resolveDefaultBranch(repoPath string) (string, error) {
 		if _, fallbackErr := gitRun("-C", repoPath, "rev-parse", "--verify", "origin/master"); fallbackErr == nil {
 			return "master", nil
 		}
+		// Fallback: try local main/master branches.
+		for _, candidate := range []string{"main", "master"} {
+			if _, fbErr := gitRun("-C", repoPath, "rev-parse", "--verify", candidate); fbErr == nil {
+				return candidate, nil
+			}
+		}
 		return "", fmt.Errorf("cannot resolve default branch — set origin/HEAD or ensure origin/main exists: %w", err)
 	}
+
 	parts := strings.SplitN(symRef, "/", 4)
 	if len(parts) < 4 || parts[0] != "refs" || parts[1] != "remotes" || parts[2] != "origin" {
 		return "", fmt.Errorf("unexpected origin/HEAD format: %q", symRef)

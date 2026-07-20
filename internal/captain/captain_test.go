@@ -204,8 +204,328 @@ func TestSeed_InvalidPath(t *testing.T) {
 	}
 }
 
-// --- Provenance tests ---
+// --- SeedWorktree tests ---
 
+// initTestRepo creates a minimal git repo in dir with an initial commit
+// on the default branch (main). The origin remote is set to parentRemote.
+func initTestRepo(t *testing.T, dir, parentRemote string) {
+	t.Helper()
+	cmds := [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@test"},
+		{"config", "user.name", "Test"},
+		{"remote", "add", "origin", parentRemote},
+		{"commit", "--allow-empty", "-m", "initial"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s", args, strings.TrimSpace(string(out)))
+		}
+	}
+	// Create origin/main tracking ref and origin/HEAD so resolveDefaultBranch finds them.
+	if _, err := exec.Command("git", "-C", dir, "update-ref", "refs/remotes/origin/main", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("creating origin/main: %v", err)
+	}
+	if _, err := exec.Command("git", "-C", dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main").CombinedOutput(); err != nil {
+		t.Fatalf("setting origin/HEAD: %v", err)
+	}
+}
+
+func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
+	parent := t.TempDir()
+	// If parent is a git repo with an origin, it needs one for remote validation.
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify it's a git worktree.
+	if _, err := os.Stat(filepath.Join(homePath, ".git")); err != nil {
+		t.Fatal("worktree .git file not found")
+	}
+
+	// Verify directory structure.
+	for _, dir := range []string{"state", "data", "config", "projects"} {
+		p := filepath.Join(homePath, dir)
+		if fi, err := os.Stat(p); err != nil {
+			t.Errorf("subdirectory %s not created: %v", dir, err)
+		} else if !fi.IsDir() {
+			t.Errorf("%s exists but is not a directory", p)
+		}
+	}
+
+	// Verify AGENTS.md.
+	if _, err := os.Stat(filepath.Join(homePath, "AGENTS.md")); err != nil {
+		t.Errorf("AGENTS.md not created: %v", err)
+	}
+
+	// Verify provenance marker.
+	if _, err := os.Stat(filepath.Join(homePath, ProvenanceMarkerName)); err != nil {
+		t.Errorf("provenance marker not created: %v", err)
+	}
+
+	// Verify .gitignore.
+	if _, err := os.Stat(filepath.Join(homePath, ".gitignore")); err != nil {
+		t.Errorf(".gitignore not created: %v", err)
+	}
+
+	// Verify registered in parent.
+	mates, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range mates {
+		if m.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("captain %s not registered in parent", id)
+	}
+}
+
+func TestSeedWorktree_NonGitSource(t *testing.T) {
+	parent := t.TempDir()
+	repo := t.TempDir() // not a git repo
+
+	err := SeedFromWorktree("test", "", repo, parent, "", false, "")
+	if err == nil {
+		t.Fatal("expected error for non-git source repo")
+	}
+	if !strings.Contains(err.Error(), "is not a git repository") {
+		t.Errorf("error = %v, want 'not a git repository'", err)
+	}
+}
+
+func TestSeedWorktree_Idempotent(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// First seed succeeds.
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second seed without force is idempotent no-op.
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSeedWorktree_ForceReplaces(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// First seed succeeds.
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second seed with --force replaces.
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", true, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Worktree still exists and is valid.
+	if _, err := os.Stat(filepath.Join(homePath, ".git")); err != nil {
+		t.Fatal("worktree removed after force seed")
+	}
+	if _, err := os.Stat(filepath.Join(homePath, "AGENTS.md")); err != nil {
+		t.Error("AGENTS.md missing after force seed")
+	}
+}
+
+func TestSeedWorktree_RemoteMismatch(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/parent/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/different/repo.git")
+
+	err := SeedFromWorktree("test", "", repo, parent, "", false, "")
+	if err == nil {
+		t.Fatal("expected error for mismatched remote")
+	}
+	if !strings.Contains(err.Error(), "does not match parent remote") {
+		t.Errorf("error = %v, want remote mismatch", err)
+	}
+}
+
+func TestSeedWorktree_ExplicitRef(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	// Create a second branch in the repo.
+	if _, err := exec.Command("git", "-C", repo, "checkout", "-b", "feature-branch").CombinedOutput(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.Command("git", "-C", repo, "commit", "--allow-empty", "-m", "feature").CombinedOutput(); err != nil {
+		t.Fatal(err)
+	}
+	// Switch back to main for stable origin/HEAD.
+	if _, err := exec.Command("git", "-C", repo, "checkout", "main").CombinedOutput(); err != nil {
+		t.Fatal(err)
+	}
+
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, repo, parent, "", false, "feature-branch"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify on feature-branch (detached HEAD at feature-branch commit).
+	branch, err := exec.Command("git", "-C", homePath, "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(branch)) == "main" {
+		t.Error("worktree is on main, expected feature-branch")
+	}
+}
+
+func TestSeedWorktree_RollbackOnFailure(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// Seed with a non-existent parent home for the charter path (will fail).
+	// The worktree should be cleaned up.
+	err := SeedFromWorktree(id, homePath, repo, "/nonexistent/parent", "", false, "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// Worktree should not exist.
+	if _, err := os.Stat(homePath); !os.IsNotExist(err) {
+		t.Error("worktree should have been rolled back on failure")
+	}
+}
+
+func TestSeedWorktree_RollbackUnregisterOnFailure(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// SeedWorktree with a non-existent parent config dir to fail ConfigPush.
+	// The worktree should be created, registered, then rolled back.
+	err := SeedFromWorktree(id, homePath, repo, parent, "", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now corrupt the config-push by removing parent config dir.
+	// A second force seed should succeed.
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", true, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSeedWorktree_ParentHomeCharter(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify default charter was written.
+	body, err := os.ReadFile(filepath.Join(homePath, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "captain:test-captain.status") {
+		t.Errorf("charter missing captain status path, got: %s", body)
+	}
+}
+
+func TestIsManagedWorktree_ExistingPathNotWorktree(t *testing.T) {
+	// Create a non-worktree directory at the target path.
+	target := t.TempDir()
+
+	managed, err := isManagedWorktree(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed {
+		t.Error("expected false for non-worktree path")
+	}
+}
+
+func TestResolveDefaultBranch_UsesOriginHead(t *testing.T) {
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	// Rename default to main via -b main in init, confirm origin/HEAD exists.
+	// initTestRepo uses -b main and adds origin remote, so origin/HEAD is set.
+	branch, err := resolveDefaultBranch(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "main" {
+		t.Errorf("expected main, got %q", branch)
+	}
+}
+
+func TestSeedWorktree_GitignoreContent(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	homePath := filepath.Join(parent, "captains", "test")
+	if err := SeedFromWorktree("test", homePath, repo, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homePath, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "state/") {
+		t.Error(".gitignore missing state/ entry")
+	}
+	if !strings.Contains(content, CaptainProvenanceName) {
+		t.Errorf(".gitignore missing %s entry", CaptainProvenanceName)
+	}
+}
+
+// --- Provenance tests ---
 func TestProvenance_SeedAndValidate(t *testing.T) {
 	tmp := t.TempDir()
 	os.MkdirAll(tmp, 0755)
@@ -2619,7 +2939,7 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 	parent := t.TempDir()
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2721,12 +3041,12 @@ func TestSeedFromWorktree_Idempotent(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	// First call: creates the worktree.
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second call: must be a no-op.
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal("second seed should be no-op:", err)
 	}
 }
@@ -2743,7 +3063,7 @@ func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 	project := newWorktreeFixture(t)
 
 	// Worktree seed on an existing state-only home must fail.
-	if err := SeedFromWorktree("existing-sm", homePath, project, parent, ""); err == nil {
+	if err := SeedFromWorktree("existing-sm", homePath, project, parent, "", false, ""); err == nil {
 		t.Fatal("expected error for state-only home, got nil")
 	}
 }
@@ -2784,7 +3104,7 @@ func TestIsManagedWorktree(t *testing.T) {
 		project := newWorktreeFixture(t)
 		parent := t.TempDir()
 		homePath := filepath.Join(parent, "captains", "test-captain")
-		if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+		if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
 			t.Fatal(err)
 		}
 		managed, err := isManagedWorktree(homePath)
