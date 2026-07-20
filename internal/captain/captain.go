@@ -211,8 +211,9 @@ When a message carries the General marker:
 - Detailed result: write a doc under this home's data/ and append a status line that points to it.
 
 ## Escalation / return channel
-Material captain-relevant outcomes append ONE line to the General status file.
-  Preferred: 'munsu report <state> <msg> [--key <slug>]' (rank-aware uplink).
+Report UP to the General via `+"`"+`munsu report`+"`"+`. `+"`"+`munsu report`+"`"+` is the PRIMARY status path.
+  Use: 'munsu report <state> "<msg>" [--key <slug>]'
+  `+"`"+`munsu send`+"`"+` is downlink only. send fails closed for parent-targeted status.
   Fallback:  echo "{state}: {one short line}" >> %s
 
 States: working, needs-decision, blocked, paused, done, failed, resolved.
@@ -221,6 +222,14 @@ Routine Soldier supervision, heartbeats, and retries stay inside THIS home and m
 
 ## Spawn authority
 Spawn Soldier only from this Captain home. Never launch another Captain.
+
+## Landed cleanup (soldiers)
+Merge does not remove soldier panes or worktrees. After a ship PR is merged
+(General merge notice, pr-poll merged wake, or provider shows MERGED) run:
+  munsu teardown <soldier-id>
+in THIS captain home (MUNSU_HOME). Do not leave pane_alive soldiers after land.
+General may also run: munsu delivery pr-merge <id> <url> --teardown
+Never use bare gh pr merge without munsu delivery when meta lives here.
 `, id, marker.FromGeneralLabel, shQuote(statusFile))
 }
 

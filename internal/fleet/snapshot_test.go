@@ -74,7 +74,7 @@ func TestBearings_Idle(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out, "No in-flight tasks. Fleet is idle.") {
+	if !strings.Contains(out, "No in-flight ship/scout tasks. Fleet is idle.") {
 		t.Errorf("expected idle message, got: %q", out)
 	}
 }
@@ -456,5 +456,62 @@ func TestCurrentState_ResolvedNotCurrentStatus(t *testing.T) {
 	// OpenActivities should have no open activities since resolved closed the key.
 	if len(ts.OpenActivities) != 0 {
 		t.Errorf("OpenActivities = %d entries, want 0 (resolved closed the key)", len(ts.OpenActivities))
+	}
+}
+
+func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
+	parent := t.TempDir()
+	os.MkdirAll(filepath.Join(parent, "state"), 0755)
+	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+
+	// primary captain meta only
+	if err := task.WriteMeta(parent, "captain:munsu", map[string]string{
+		"kind": "captain", "window": "w1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	capHome := filepath.Join(parent, "captains", "munsu")
+	os.MkdirAll(filepath.Join(capHome, "state"), 0755)
+	if err := task.WriteMeta(capHome, "ship-child", map[string]string{
+		"kind": "ship", "project": "munsu", "window": "w-child",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reg := "- munsu - (home: " + capHome + "; scope: ; projects: ; added: 2026-07-20)\n"
+	if err := os.WriteFile(filepath.Join(parent, "data", "captains.md"), []byte(reg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := Snapshot(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundChild, foundCaptain bool
+	for _, ts := range snap.Tasks {
+		if ts.ID == "ship-child" {
+			foundChild = true
+			if ts.Source != "captain:munsu" {
+				t.Fatalf("child source = %q", ts.Source)
+			}
+			if ts.Home != capHome {
+				t.Fatalf("child home = %q", ts.Home)
+			}
+			if ts.Kind != "ship" {
+				t.Fatalf("kind = %q", ts.Kind)
+			}
+		}
+		if ts.ID == "captain:munsu" {
+			foundCaptain = true
+			if ts.Source != "primary" {
+				t.Fatalf("captain source = %q", ts.Source)
+			}
+		}
+	}
+	if !foundChild {
+		t.Fatal("expected ship-child from captain home in snapshot")
+	}
+	if !foundCaptain {
+		t.Fatal("expected captain:munsu from primary")
 	}
 }

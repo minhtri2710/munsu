@@ -29,7 +29,7 @@ type BackendMetaExtras interface {
 	MetaExtras() map[string]string
 }
 
-// Select returns the named backend. Supported: "tmux", "herdr", "zellij", "cmux" (experimental).
+// Select returns the named backend. Supported: "tmux", "herdr", "zellij", "cmux", "orca" (experimental).
 // Returns an error for unknown backend names.
 func Select(name string) (Backend, error) {
 	switch name {
@@ -41,8 +41,10 @@ func Select(name string) (Backend, error) {
 		return NewZellijBackend(""), nil
 	case "cmux":
 		return newCmuxBackend(), nil
+	case "orca":
+		return NewOrcaBackend(), nil
 	default:
-		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux)", name)
+		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", name)
 	}
 }
 
@@ -107,8 +109,10 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 		return NewZellijBackend(""), "zellij", nil
 	case "cmux":
 		return newCmuxBackend(), "cmux", nil
+	case "orca":
+		return NewOrcaBackend(), "orca", nil
 	default:
-		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux)", name)
+		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", name)
 	}
 }
 // BackendForTask resolves the session backend for a task using its metadata.
@@ -170,6 +174,9 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 	case "cmux":
 		bk, err := Select("cmux")
 		return bk, "cmux", err
+	case "orca":
+		bk, err := Select("orca")
+		return bk, "orca", err
 	default:
 		// Unknown backend in meta: fall through to Resolve.
 		return Resolve(homeDir, "")

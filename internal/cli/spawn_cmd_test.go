@@ -235,9 +235,8 @@ func TestSendCmd_MarksCaptainLine(t *testing.T) {
 }
 
 func TestSendCmd_CaptainDeadPaneQueuesOutbox(t *testing.T) {
-	// Captain send is now blocked by uplink guard — send captain:x fails closed
-	// with "uplink use munsu report" before any meta lookup or outbox.
-	// The outbox path is tested by captain outbox unit tests.
+	// General sending to a captain whose pane is dead must queue to the outbox,
+	// not be blocked. Only 'send general' (uplink to fleet top) is blocked.
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(stateDir, 0755)
@@ -248,9 +247,9 @@ func TestSendCmd_CaptainDeadPaneQueuesOutbox(t *testing.T) {
 	root.SetArgs([]string{"send", "captain:munsu", "report status", "--home", tmpDir})
 	err := root.Execute()
 	if err == nil {
-		t.Fatal("expected fail-closed error for captain send (uplink guard)")
+		return // outbox enqueue success is acceptable
 	}
-	if !strings.Contains(err.Error(), "uplink use munsu report") {
-		t.Errorf("expected 'uplink use munsu report' error, got: %v", err)
+	if strings.Contains(err.Error(), "uplink use munsu report") {
+		t.Fatalf("send to captain:<id> must not be blocked by uplink guard: %v", err)
 	}
 }

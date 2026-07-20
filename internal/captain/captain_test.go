@@ -128,8 +128,14 @@ func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
 	if !strings.Contains(charter, status) {
 		t.Fatalf("charter missing status path %q", status)
 	}
-	if !strings.Contains(charter, "never chat-only") && !strings.Contains(charter, "never only in this chat") && !strings.Contains(charter, "STATUS path") {
-		t.Fatalf("charter missing return-channel instruction")
+	if !strings.Contains(charter, "PRIMARY status path") {
+		t.Fatalf("charter missing PRIMARY status path doctrine")
+	}
+	if !strings.Contains(charter, "Landed cleanup") || !strings.Contains(charter, "munsu teardown") {
+		t.Fatalf("charter missing landed cleanup / teardown duty")
+	}
+	if !strings.Contains(charter, "downlink only") {
+		t.Fatalf("charter missing send-is-downlink-only doctrine")
 	}
 }
 
