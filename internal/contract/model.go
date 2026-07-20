@@ -182,6 +182,7 @@ type CaptainHomeCounts struct {
 
 // GuardViolation is a single violation with supporting evidence.
 type GuardViolation struct {
+	Code      string   `json:"code,omitempty"`  // stable machine-readable condition code
 	Condition string   `json:"condition"`
 	Evidence  []string `json:"evidence"`
 }

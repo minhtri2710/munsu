@@ -181,29 +181,29 @@ func newContractGuardCmd() *cobra.Command {
 			// Use shared guard evaluation (same as middleware)
 			result := waker.EvaluateGuard(ctx.Home, inFlight, time.Now())
 			beatStatus := result.BeatStatus
-			conditions := result.Conditions
-			var warnings []string
+
+			// Build structured conditions with stable codes
+			var allConditions []waker.ConditionInfo
 			if !beatStatus.Exists {
-				warnings = append(warnings, "WATCHER NEVER STARTED - no liveness beacon")
+				allConditions = append(allConditions, waker.ConditionInfo{
+					Code:    waker.ConditionWatcherAbsent,
+					Message: "WATCHER NEVER STARTED - no liveness beacon",
+				})
 			} else if beatStatus.Stale {
-				warnings = append(warnings, fmt.Sprintf(
-					"WATCHER BEACON STALE - last beat %v ago (grace %v)",
-					beatStatus.Age.Round(time.Second), lifecycle.StaleThreshold()))
+				allConditions = append(allConditions, waker.ConditionInfo{
+					Code:    waker.ConditionWatcherStale,
+					Message: fmt.Sprintf(
+						"WATCHER BEACON STALE - last beat %v ago (grace %v)",
+						beatStatus.Age.Round(time.Second), lifecycle.StaleThreshold()),
+				})
 			}
+			allConditions = append(allConditions, result.Conditions...)
 
 			var violations []contract.GuardViolation
-
-			// Collect warnings as violations with evidence
-			for _, c := range warnings {
+			for _, c := range allConditions {
 				v := contract.GuardViolation{
-					Condition: c,
-					Evidence:  []string{"munsu guard", "state/.wake-queue"},
-				}
-				violations = append(violations, v)
-			}
-			for _, c := range conditions {
-				v := contract.GuardViolation{
-					Condition: c,
+					Code:      string(c.Code),
+					Condition: c.Message,
 					Evidence:  []string{"munsu guard", "state/.wake-queue"},
 				}
 				violations = append(violations, v)
@@ -229,7 +229,6 @@ func newContractGuardCmd() *cobra.Command {
 
 			// Determine state
 			state := "healthy"
-
 			if !beatStatus.Exists || beatStatus.Stale {
 				state = "unhealthy"
 			} else if len(violations) > 0 {
@@ -253,9 +252,11 @@ func newContractGuardCmd() *cobra.Command {
 				guardHelp = []string{"Run `munsu fleet snapshot --version 2` to inspect fleet state"}
 			}
 
-			// Merge conditions for backward compat
-			allConditions := append([]string{}, warnings...)
-			allConditions = append(allConditions, conditions...)
+			// Merge condition messages for backward compat
+			var backwardCompatConditions []string
+			for _, c := range allConditions {
+				backwardCompatConditions = append(backwardCompatConditions, c.Message)
+			}
 
 			return writeContract(cmd, contract.Response[contract.Guard]{
 				SchemaVersion: contract.SchemaVersion,
@@ -264,7 +265,7 @@ func newContractGuardCmd() *cobra.Command {
 				Data: contract.Guard{
 					State:      state,
 					Violations: violations,
-					Conditions: allConditions,
+					Conditions: backwardCompatConditions,
 				},
 				Help: guardHelp,
 			})

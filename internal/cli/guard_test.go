@@ -201,3 +201,95 @@ func TestGuardSilenceNoInFlightTasks(t *testing.T) {
 		t.Errorf("unexpected WARNING with no in-flight tasks, got: %s", stderr)
 	}
 }
+
+// captureStdout runs f and returns everything written to os.Stdout during f.
+func captureStdout(f func()) string {
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+
+	f()
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+// writeWakeQueue writes wake queue entries to the home state dir.
+func writeWakeQueue(t *testing.T, homeDir string, lines []string) {
+	t.Helper()
+	data := strings.Join(lines, "\n")
+	stateDir := filepath.Join(homeDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatalf("creating state dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, ".wake-queue"), []byte(data), 0644); err != nil {
+		t.Fatalf("writing wake queue: %v", err)
+	}
+}
+
+// TestGuardContractOutput_StableCodes verifies the contract guard command emits stable condition codes.
+func TestGuardContractOutput_StableCodes(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	t.Run("watcher_absent_code", func(t *testing.T) {
+		// No beat file — should emit watcher_absent code
+		out := captureStdout(func() {
+			root := NewRootCommand()
+			root.SetArgs([]string{"guard"})
+			if err := root.Execute(); err != nil {
+				t.Errorf("guard: unexpected error: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "watcher_absent") {
+			t.Errorf("expected 'watcher_absent' code in output, got: %s", out)
+		}
+		if !strings.Contains(out, "WATCHER NEVER STARTED") {
+			t.Errorf("expected human-readable message in output, got: %s", out)
+		}
+	})
+
+	t.Run("watcher_stale_code", func(t *testing.T) {
+		writeStaleBeat(t, tmpDir)
+
+		out := captureStdout(func() {
+			root := NewRootCommand()
+			root.SetArgs([]string{"guard"})
+			if err := root.Execute(); err != nil {
+				t.Errorf("guard: unexpected error: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "watcher_stale") {
+			t.Errorf("expected 'watcher_stale' code in output, got: %s", out)
+		}
+		if !strings.Contains(out, "WATCHER BEACON STALE") {
+			t.Errorf("expected human-readable message in output, got: %s", out)
+		}
+	})
+
+	t.Run("queued_wakes_pending_code", func(t *testing.T) {
+		writeBeat(t, tmpDir)
+		writeWakeQueue(t, tmpDir, []string{"1780000000\t1\tsignal\tkey\tpayload"})
+
+		out := captureStdout(func() {
+			root := NewRootCommand()
+			root.SetArgs([]string{"guard"})
+			if err := root.Execute(); err != nil {
+				t.Errorf("guard: unexpected error: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "queued_wakes_pending") {
+			t.Errorf("expected 'queued_wakes_pending' code in output, got: %s", out)
+		}
+		if !strings.Contains(out, "QUEUED WAKES PENDING") {
+			t.Errorf("expected human-readable message in output, got: %s", out)
+		}
+	})
+}
