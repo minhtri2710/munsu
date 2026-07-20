@@ -132,7 +132,17 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			return captain.Converge(ctx.Home, registered)
+			result, convergeErr := captain.Converge(ctx.Home, registered)
+			if result != nil {
+				for _, step := range result.Steps {
+					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
+					if step.Detail != "" && step.Detail != "ok" {
+						fmt.Printf("  %-50s %s\n", "", step.Detail)
+					}
+				}
+				fmt.Printf("  Overall: %s\n", result.OverallStatus())
+			}
+			return convergeErr
 		}),
 	}
 	cmd.AddCommand(convergeCmd)
