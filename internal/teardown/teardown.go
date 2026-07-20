@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/scope"
@@ -126,14 +128,16 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
+
+	// 3.5. Terminal event: close any open keyed phases before removing the status file.
+	// This ensures the append-only log has proper terminal events for each
+	// open keyed phase (working/paused), preventing stale working/blocked status
+	// from appearing as the current reconciled state after teardown.
+	// Appending to both the status file (before cleanup) and the typed event log
+	// (for permanent durability) follows the current-state precedence pattern.
+	closeTerminalPhases(opts, result)
+
 	// 4. Remove residual state artifacts
-	// Munsu-native artifacts are always cleaned up for any task.
-	// Legacy artifacts from previous versions are cleaned up for backward compatibility
-	// so existing homes still get a clean teardown.
-	// During the item-5 dual-read migration window, both old and new names
-	// are cleaned up. Old names (.check.sh, .turn-ended) will be removed
-	// in a future release; new names (.check, .turnend) are the canonical forms.
-	// Harness-specific artifacts are driven by the adapter registry.
 	stateDir := filepath.Join(opts.HomeDir, "state")
 	munsuArtifacts := []string{
 		// Munsu-native: canonical names (item-5 rename)
@@ -479,4 +483,35 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
 		}
 	}
 	return refs
+}
+
+// closeTerminalPhases reads the status file for the task being torn down,
+// finds any open keyed phases (working/paused), and appends a "resolved"
+// terminal event for each open phase. This prevents stale working/blocked
+// status from remaining as the current reconciled state after teardown.
+// It writes to both the status file (before cleanup) and the typed event
+// log (for permanent durability). Idempotent: already-closed keys are not
+// returned by OpenActivities, so repeating the same resolved key is safe.
+func closeTerminalPhases(opts Options, result *TeardownResult) {
+	statusPath := filepath.Join(opts.HomeDir, "state", opts.ID+".status")
+	openActs := classify.OpenActivities(statusPath)
+	if len(openActs) == 0 {
+		return
+	}
+	for _, act := range openActs {
+		closeLine := fmt.Sprintf("resolved [key=%s]: soldier torn down", act.Key)
+		// Append to the status file before cleanup so any concurrent reader
+		// sees the proper close event (even though teardown removes it shortly).
+		if err := task.AppendStatus(opts.HomeDir, opts.ID, closeLine); err != nil {
+			result.Steps = append(result.Steps, fmt.Sprintf("warning: close phase %s: %v", act.Key, err))
+			continue
+		}
+		result.Steps = append(result.Steps, fmt.Sprintf("closed keyed phase [key=%s]", act.Key))
+
+		// Also write to the typed event log for permanent durability beyond teardown.
+		syntheticID := event.SyntheticEventID()
+		if err := event.AppendWithID(opts.HomeDir, syntheticID, "task.status", opts.ID, act.Key, closeLine); err != nil {
+			result.Steps = append(result.Steps, fmt.Sprintf("warning: event log: %v", err))
+		}
+	}
 }
