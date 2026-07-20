@@ -281,8 +281,11 @@ func TestScaffoldCreatesDir(t *testing.T) {
 
 func TestShipBriefContainsStatusReporting(t *testing.T) {
 	tmpl := shipBriefTemplate("t1", "repo", "", false)
-	if !strings.Contains(tmpl, "munsu task status") {
-		t.Error("ship brief should reference munsu task status command")
+	if !strings.Contains(tmpl, "munsu report") {
+		t.Error("ship brief should reference munsu report command")
+	}
+	if strings.Contains(tmpl, "munsu task status") {
+		t.Error("ship brief should not reference munsu task status command")
 	}
 }
 
