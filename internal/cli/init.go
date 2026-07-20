@@ -42,7 +42,7 @@ Auto-detects and persists soldier harness and backlog backend.
 Writes starter configuration files and the orchestrator operating manual (AGENTS.md).
 Also installs the munsu skills so coding-agent harnesses can discover them.
 
-Use --reconfigure to re-run auto-detection and overwrite existing config files.`,
+Use --reconfigure to re-run auto-detection and overwrite existing config files and the orchestrator operating manual (AGENTS.md).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if err := home.EnsureDirTree(ctx.Home); err != nil {
 				return fmt.Errorf("creating home tree: %w", err)
@@ -53,15 +53,15 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files.`
 				fmt.Fprintf(os.Stderr, "warning: auto-detect config: %v\n", err)
 			}
 
-			// Write orchestrator AGENTS.md
+			// Write orchestrator AGENTS.md (always on fresh install, or with --reconfigure)
 			agentsPath := filepath.Join(ctx.Home, "AGENTS.md")
-			if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
+			if reconfigure || func() bool { _, err := os.Stat(agentsPath); return os.IsNotExist(err) }() {
 				if err := os.WriteFile(agentsPath, []byte(orchestratorManual), 0644); err != nil {
 					return fmt.Errorf("writing orchestrator manual: %w", err)
 				}
 				fmt.Printf("Wrote orchestrator manual to %s\n", agentsPath)
 			} else {
-				fmt.Printf("AGENTS.md already exists at %s (skipped)\n", agentsPath)
+				fmt.Printf("AGENTS.md already exists at %s (skipped; use --reconfigure to overwrite)\n", agentsPath)
 			}
 
 			fmt.Printf("Initialized munsu home at %s\n", ctx.Home)

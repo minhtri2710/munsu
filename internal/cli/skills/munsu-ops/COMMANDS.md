@@ -42,8 +42,10 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 |---------|-------------|
 | `munsu watch` | Run the persistent watcher daemon (singleton-safe, home-scoped lock). Queues actionable wakes until stopped. |
 | `munsu watch ensure [--restart]` | Ensure the watcher daemon is healthy (home-scoped, idempotent). |
-| `munsu wake-drain` | Drain queued wakes. |
-| `munsu guard` | Warn on tangle or stale watcher. |
+| `munsu wake-drain` | Drain queued wakes (legacy pull-based).
+| `munsu wake claim <consumer-id>` | Claim a batch of pending wakes with lease management (preferred API).
+| `munsu wake ack <lease-id> <event-id...>` | Acknowledge a processed wake to release its lease.
+| `munsu guard` | Warn on tangle or stale watcher.
 
 See `SUPERVISION.md` for the full watch/wake-drain/guard/afk loop.
 
@@ -67,12 +69,13 @@ See `SUPERVISION.md` for the full watch/wake-drain/guard/afk loop.
 
 | Command | Description |
 |---------|-------------|
-| `munsu captain launch` | Launch a captain in its home. |
-| `munsu captain seed` | Seed a captain home with charter. |
-| `munsu captain list` | List registered captains. |
-| `munsu captain handoff` | Hand off backlog items to a captain. |
-| `munsu captain config-push` | Push inheritable config to a captain. |
-| `munsu captain retire` | Retire a captain. |
+| `munsu captain launch <captain-home>` | Launch a captain in its home.
+| `munsu captain list` | List registered captains.
+| `munsu captain handoff <captain-home> <item-key...>` | Hand off backlog items to a captain.
+| `munsu captain config-push <captain-home>` | Push inheritable config to a captain.
+| `munsu captain converge` | Converge all registered captains (flush outbox, retry nudges, liveness).
+| `munsu captain recover [captain-home]` | Probe liveness and relaunch launched-but-dead endpoints.
+| `munsu captain retire [--force] <captain-home>` | Retire a captain.
 
 ## Fleet / Diagnostics
 

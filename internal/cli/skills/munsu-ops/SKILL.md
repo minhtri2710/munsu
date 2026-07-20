@@ -51,7 +51,9 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 ### 5. Supervise
 
 - Ensure the watcher: `munsu watch ensure [--restart]`.
-- On wake: `munsu wake-drain` then `munsu soldier-state <id>` (not raw status tail) as ground truth.
+- On wake: prefer `munsu wake claim <consumer-id>` with lease management;
+  `munsu wake-drain` is the simpler legacy alternative that drains all pending wakes.
+- Ground truth: `munsu soldier-state <id>` (not raw status tail).
 - Steer as needed: `munsu send <id> "<line>"`.
 - Peek at output: `munsu peek <id> [--lines N]`.
 
@@ -84,6 +86,7 @@ munsu teardown <id> [--force]
 ### Fleet-wide checks
 
 - `munsu fleet view` — see the full fleet.
+- `munsu captain converge` — flush send outbox after captain lifecycle changes
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
 - `munsu fleet bearings` — compact resume report.
 - `munsu stow <text...>` — capture durable learnings (data/learnings.md); inspect-then-update: matching entries are replaced, not duplicated.
