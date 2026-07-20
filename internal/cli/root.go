@@ -163,6 +163,7 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newBootstrapCmd())
 	root.AddCommand(newSkillCmd())
+	root.AddCommand(newManualCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newProjectCmd())
 	root.AddCommand(newWorktreeCmd())

@@ -18,6 +18,10 @@ var KnownKeys = []string{
 	"backlog-backend",
 	"default-mode",
 	"require-no-mistakes",
+	"afk-digest-window",
+	"afk-wedge-stale-beat",
+	"afk-wedge-max-repeat",
+	"afk-max-defer",
 }
 
 // IsKnownKey returns true if key is a well-known config key.

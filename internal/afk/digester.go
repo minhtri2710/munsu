@@ -12,8 +12,9 @@ import (
 
 // Durable digest constants.
 const (
-	digestFile   = "state/.afk-digest"
-	digestWindow = 60 * time.Second // batch window before flushing routine wakes
+	digestFile      = "state/.afk-digest"
+	defaultWindow   = 60 * time.Second // default batch window before flushing routine wakes
+	maxDeferDefault = 5 * time.Minute  // default max defer before alarm if digest stuck
 )
 
 // EscalationType classifies a batched wake entry for escalation routing.
@@ -71,20 +72,62 @@ type BatchedEscalation struct {
 // a BatchedEscalation to durable state when the window expires.
 // Safe for concurrent use.
 type Digester struct {
-	mu             sync.Mutex
-	entries        []BatchedEntry
-	routineCount   int
-	escalatedCount int
-	firstAt        time.Time
-	lastFlush      time.Time
-	homeDir        string
-	safeTarget     *bool
-	targetVerdict  string
+	mu              sync.Mutex
+	entries         []BatchedEntry
+	routineCount    int
+	escalatedCount  int
+	firstAt         time.Time
+	lastFlush       time.Time
+	homeDir         string
+	safeTarget      *bool
+	targetVerdict   string
+	window          time.Duration // batch window, defaults to defaultWindow
+	maxDefer        time.Duration // max time before emitting defer alarm
 }
 
 // NewDigester creates a Digester scoped to the given home directory.
 func NewDigester(homeDir string) *Digester {
-	return &Digester{homeDir: homeDir}
+	return &Digester{
+		homeDir:  homeDir,
+		window:   defaultWindow,
+		maxDefer: maxDeferDefault,
+	}
+}
+
+// SetWindow overrides the default batch window duration.
+// Must be called before Start if a non-default window is desired.
+func (d *Digester) SetWindow(window time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.window = window
+}
+
+// SetMaxDefer overrides the default max-defer threshold.
+func (d *Digester) SetMaxDefer(maxDefer time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.maxDefer = maxDefer
+}
+
+// FirstAt returns the timestamp of the first unflushed entry, or zero if empty.
+func (d *Digester) FirstAt() time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.firstAt
+}
+
+// EntryCount returns the total number of unflushed entries.
+func (d *Digester) EntryCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.entries)
+}
+
+// MaxDeferDuration returns the max-defer threshold.
+func (d *Digester) MaxDeferDuration() time.Duration {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.maxDefer
 }
 
 // SetTargetSafety records the general-pane safety verdict for inclusion
@@ -166,11 +209,17 @@ func (d *Digester) ShouldFlush(now time.Time) bool {
 	if reference.IsZero() {
 		reference = d.firstAt
 	}
-	return now.Sub(reference) >= digestWindow
+	return now.Sub(reference) >= d.window
 }
 
 // Flush writes the BatchedEscalation to state/.afk-digest and resets the
 // accumulator. Returns nil if the accumulator is empty.
+//
+// Self-handle logic: when the target is safe (composer Empty) and ALL entries
+// are routine (no escalations), the routines are self-handled and no digest
+// is written — the General is never disturbed for routine status updates.
+// When safe and there are some escalations, routine entries are still
+// self-handled (filtered out) and only escalations are written.
 func (d *Digester) Flush(now time.Time) error {
 	d.mu.Lock()
 	entries := d.entries
@@ -193,6 +242,30 @@ func (d *Digester) Flush(now time.Time) error {
 		return nil
 	}
 
+	// Self-handle routine entries when the target is safe.
+	// When safe and only routines, discard entirely (no General overhead).
+	// When safe with some escalations, filter routines out.
+	// Wedge alarms are NEVER self-handled — they always reach the General.
+	// No-entries-with-safety verdict is an info-only digest, NOT self-handle.
+	var selfHandledRoutines int
+	if safeTarget != nil && *safeTarget && len(entries) > 0 {
+		filtered := make([]BatchedEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.Type != EscalationRoutine {
+				filtered = append(filtered, e)
+			}
+		}
+		selfHandledRoutines = len(entries) - len(filtered)
+		entries = filtered
+		routineCount = 0 // routines self-handled, not in digest
+		escalatedCount = len(entries)
+
+		// If nothing remains after self-handle, return early — no General needed.
+		if len(entries) == 0 {
+			fmt.Fprintf(os.Stderr, "afk: self-handled %d routine wake(s), target safe\n", selfHandledRoutines)
+			return nil
+		}
+	}
 	be := BatchedEscalation{
 		Entries:        entries,
 		RoutineCount:   routineCount,
