@@ -1690,6 +1690,7 @@ type RecoverResult struct {
 	Alive      int
 	Seeded     int
 	Failed     int
+	Steps      []StepResult
 }
 
 // String renders a human-readable summary for CLI output.
@@ -1708,6 +1709,25 @@ func (r *RecoverResult) String() string {
 			fmt.Fprintf(&b, "  %s: relaunched\n", e.ID)
 		case RecoverFailed:
 			fmt.Fprintf(&b, "  %s: FAILED: %s\n", e.ID, e.Error)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// StepsString renders a human-readable per-step summary for the transaction CLI output.
+func (r *RecoverResult) StepsString() string {
+	if r == nil || len(r.Steps) == 0 {
+		return "no recovery steps"
+	}
+	var b strings.Builder
+	for _, s := range r.Steps {
+		switch s.State {
+		case StepOk:
+			fmt.Fprintf(&b, "  %s: ok (%s)\n", s.Name, s.Detail)
+		case StepFailed:
+			fmt.Fprintf(&b, "  %s: FAILED (%s)\n", s.Name, s.Detail)
+		case StepSkipped:
+			fmt.Fprintf(&b, "  %s: skipped (%s)\n", s.Name, s.Detail)
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
