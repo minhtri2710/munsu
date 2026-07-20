@@ -15,6 +15,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
 
@@ -148,6 +149,14 @@ func Run(opts Options) (*TeardownResult, error) {
 		} else {
 			result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", name))
 		}
+	}
+
+	// 4.5. Clear turn-end obligation records for the soldier role
+	// Aligns with teardown cleanup of turnend markers.
+	if err := turnend.ClearCompleted(opts.HomeDir, turnend.RoleSoldier); err != nil {
+		result.Steps = append(result.Steps, fmt.Sprintf("clear obligations: %v", err))
+	} else {
+		result.Steps = append(result.Steps, "completed obligations cleared")
 	}
 
 	// 5. Clean up data directory
