@@ -22,6 +22,8 @@ func FixCommand(tool string) string {
 		return "Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"
 	case "herdr":
 		return "Install herdr from the herdr repository, or set HERDR_ENV=1 if already installed"
+	case "zellij":
+		return "Install zellij: brew install zellij  |  see https://zellij.dev/documentation/installation" + "\n\tExperimental: set config/backend=zellij or --backend zellij. Not auto-detected."
 	default:
 		return ""
 	}

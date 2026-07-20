@@ -17,6 +17,7 @@ func TestIsHardRequired(t *testing.T) {
 		{"gh-axi", false},
 		{"gh", false},
 		{"herdr", false},
+		{"zellij", false},
 		{"unknown-tool", false},
 		{"", false},
 	}
@@ -39,7 +40,7 @@ func TestCheckedToolsRegistry(t *testing.T) {
 		seen[spec.Name] = true
 	}
 
-	expectedTools := []string{"git", "tmux", "treehouse", "no-mistakes", "tasks-axi", "gh-axi", "gh"}
+	expectedTools := []string{"git", "tmux", "treehouse", "zellij", "no-mistakes", "tasks-axi", "gh-axi", "gh"}
 	for _, name := range expectedTools {
 		if !seen[name] {
 			t.Errorf("expected tool %q not found in checkedTools", name)

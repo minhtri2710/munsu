@@ -53,7 +53,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Local merge | `munsu delivery merge-local` | `internal/delivery` | **implemented** |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/worktree` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
-| Session backend (tmux + herdr) | `--backend` flag | `internal/session` | **implemented** (future backends: experimental -- see docs) |
+| Session backend (tmux + herdr + zellij) | `--backend` flag | `internal/session` | **implemented** (zellij experimental) |
 | Dispatch profiles | `config/soldier-dispatch.json` | `internal/harness` | **implemented** |
 | Home init | `munsu init` | `internal/cli` | **implemented** |
 | AFK away-mode supervision | munsu afk | internal/afk | **implemented** (Go-native, full lifecycle -- see `docs/skills/afk.md`) |
