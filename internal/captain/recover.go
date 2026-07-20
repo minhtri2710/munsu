@@ -3,16 +3,11 @@ package captain
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -73,7 +68,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	res.Steps = append(res.Steps, tx.stepRelaunch(parentHome, sm))
 
 	// Step f: watcher ensure — only when config is OK
-	res.Steps = append(res.Steps, tx.stepWatcherEnsure(parentHome, configOk))
+	res.Steps = append(res.Steps, tx.stepWatcherEnsure(sm, configOk))
 
 	// Step g: outbox flush — only when config is OK
 	res.Steps = append(res.Steps, tx.stepOutboxFlush(parentHome, sm, configOk))
@@ -207,38 +202,40 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 	return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "relaunched successfully"}
 }
 
-func (tx *RecoverTransaction) stepWatcherEnsure(parentHome string, configOk bool) StepResult {
+func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResult {
 	if !configOk {
 		return StepResult{Name: "watcher-ensure", State: StepSkipped,
 			Detail: "skipped: config validation failed"}
 	}
-	beatStatus := lifecycle.ReadBeatStatus(parentHome, time.Now())
-	if beatStatus.Exists && !beatStatus.Stale {
-		_, pid, ok := lifecycle.ReadBeat(parentHome)
-		if ok && pid > 0 && supervision.ValidatePIDOwnership(parentHome, pid) {
+
+	hasChildWork := inFlightSoldierPath(sm.Home)
+	status := WatcherStatusSummary(sm.Home)
+
+	if hasChildWork {
+		if status == WatcherRunning {
 			return StepResult{Name: "watcher-ensure", State: StepOk,
-				Detail: "watcher already running"}
+				Detail: "watcher already running (child work in flight)"}
 		}
+		if err := EnsureWatcher(sm.Home, true); err != nil {
+			return StepResult{Name: "watcher-ensure", State: StepFailed,
+				Detail: fmt.Sprintf("starting watcher: %v", err)}
+		}
+		return StepResult{Name: "watcher-ensure", State: StepOk,
+			Detail: "watcher started (child work in flight)"}
 	}
 
-	// Start the watcher.
-	execPath, err := os.Executable()
-	if err != nil {
-		return StepResult{Name: "watcher-ensure", State: StepFailed,
-			Detail: fmt.Sprintf("cannot resolve executable: %v", err)}
+	// No child work — idle policy: stop watcher if running.
+	if status == WatcherRunning {
+		if err := EnsureWatcher(sm.Home, false); err != nil {
+			return StepResult{Name: "watcher-ensure", State: StepFailed,
+				Detail: fmt.Sprintf("stopping watcher: %v", err)}
+		}
+		return StepResult{Name: "watcher-ensure", State: StepOk,
+			Detail: "watcher stopped (no child work)"}
 	}
-	cmd := exec.Command(execPath, "watch", "--home", parentHome)
-	cmd.Dir = parentHome
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Env = append(os.Environ(), "MUNSU_HOME="+parentHome)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return StepResult{Name: "watcher-ensure", State: StepFailed,
-			Detail: fmt.Sprintf("starting watcher failed: %v", err)}
-	}
+
 	return StepResult{Name: "watcher-ensure", State: StepOk,
-		Detail: fmt.Sprintf("watcher started (pid=%d)", cmd.Process.Pid)}
+		Detail: "watcher not needed (no child work)"}
 }
 
 func (tx *RecoverTransaction) stepOutboxFlush(parentHome string, sm Info, configOk bool) StepResult {
