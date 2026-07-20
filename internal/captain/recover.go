@@ -22,9 +22,18 @@ const (
 
 // StepResult describes one step's outcome.
 type StepResult struct {
-	Name   string    `json:"name"`
-	State  StepState `json:"state"`
-	Detail string    `json:"detail"`
+	Name        string             `json:"name"`
+	State       StepState          `json:"state"`
+	Detail      string             `json:"detail"`
+	Diagnostics []ConfigDiagnostic `json:"diagnostics,omitempty"`
+}
+
+// ConfigDiagnostic describes the result of checking one config item.
+type ConfigDiagnostic struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Required bool   `json:"required"`
+	Present  bool   `json:"present"`
 }
 
 // RecoverTransaction sequences a structured captain recovery for one captain.
@@ -53,8 +62,8 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 		return res
 	}
 
-	// Step b: config validation
-	b := tx.stepConfigValidation(sm)
+	// Step b: config validation (parent-home registry + required/optional)
+	b := tx.stepConfigValidation(parentHome, sm)
 	res.Steps = append(res.Steps, b)
 	configOk := b.State == StepOk
 
@@ -94,27 +103,44 @@ func (tx *RecoverTransaction) stepProvenance(sm Info) StepResult {
 	return StepResult{Name: "provenance", State: StepOk, Detail: fmt.Sprintf("valid provenance for %s", markerID)}
 }
 
-func (tx *RecoverTransaction) stepConfigValidation(sm Info) StepResult {
-	// Check key config files exist under captain home.
+func (tx *RecoverTransaction) stepConfigValidation(parentHome string, sm Info) StepResult {
+	// Check key config files. Registry is checked from the parent (General) home, not the captain home.
+	// All items are optional — harness.Captain() handles the full fallback chain (captain-harness →
+	// soldier-harness → Detect()). Missing items produce diagnostics but don't block watcher/outbox.
 	checks := []struct {
 		path string
 		desc string
 	}{
 		{filepath.Join(sm.Home, "config", "captain-harness"), "captain-harness config"},
 		{filepath.Join(sm.Home, "config", "soldier-harness"), "soldier-harness config"},
-		{filepath.Join(sm.Home, "data", "captains.md"), "captains.md registry"},
+		{RegistryPath(parentHome), "parent captains.md registry"},
+	}
+	var diags []ConfigDiagnostic
+	for _, c := range checks {
+		_, err := os.Stat(c.path)
+		diags = append(diags, ConfigDiagnostic{
+			Name: c.desc,
+			Path: c.path,
+			Required: false,
+			Present:  err == nil,
+		})
 	}
 	var missing []string
-	for _, c := range checks {
-		if _, err := os.Stat(c.path); err != nil {
-			missing = append(missing, c.desc)
+	for _, d := range diags {
+		if !d.Present {
+			missing = append(missing, d.Name)
 		}
 	}
+	detail := "all config files present"
 	if len(missing) > 0 {
-		return StepResult{Name: "config-validation", State: StepFailed,
-			Detail: fmt.Sprintf("missing: %s", strings.Join(missing, ", "))}
+		detail = fmt.Sprintf("missing (optional): %s", strings.Join(missing, ", "))
 	}
-	return StepResult{Name: "config-validation", State: StepOk, Detail: "all config files present"}
+	return StepResult{
+		Name:        "config-validation",
+		State:       StepOk,
+		Detail:      detail,
+		Diagnostics: diags,
+	}
 }
 
 func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
