@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -19,7 +20,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
-
 // Runner orchestrates the full spawn sequence through private phase methods.
 // It encapsulates all intermediate state so the public Run function is a thin
 // delegate call.
@@ -39,6 +39,7 @@ type Runner struct {
 	bkName        string
 	briefData     []byte
 	windowID      string
+	spawnRole     string
 }
 
 // NewRunner creates a Runner for the given Args.
@@ -52,6 +53,9 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	if err := r.checkSpawnAuthority(); err != nil {
+		return "", err
+	}
+	if err := r.checkCaptainBacklogAuthority(); err != nil {
 		return "", err
 	}
 	if err := r.resolveMode(); err != nil {
@@ -132,15 +136,20 @@ func (r *Runner) checkSpawnAuthority() error {
 	if err != nil {
 		return fmt.Errorf("spawn authority: resolving current directory: %w", err)
 	}
+	var role string
 	if endpointKind, found, err := currentEndpointKind(r.homeDir); err != nil {
 		return fmt.Errorf("spawn authority: resolving current endpoint: %w", err)
 	} else if found {
 		if endpointKind == "captain" {
-			return authorizeSpawn("captain", r.homeDir, cwd)
+			role = "captain"
+		} else {
+			return fmt.Errorf("spawn authority: managed soldier endpoints cannot spawn; delegate to the general or a captain")
 		}
-		return fmt.Errorf("spawn authority: managed soldier endpoints cannot spawn; delegate to the general or a captain")
+	} else {
+		role = os.Getenv("MUNSU_ROLE")
 	}
-	return authorizeSpawn(os.Getenv("MUNSU_ROLE"), r.homeDir, cwd)
+	r.spawnRole = role
+	return authorizeSpawn(role, r.homeDir, cwd)
 }
 
 var tmuxWindowForPane = func(pane string) (string, error) {
@@ -238,6 +247,95 @@ func canonicalExistingPath(path string) (string, error) {
 		return "", err
 	}
 	return filepath.Abs(resolved)
+}
+
+// checkCaptainBacklogAuthority validates that when the spawner role is captain,
+// the task ID exists exactly once in the backlog as ready (queued, not blocked,
+// not done, not already in-flight). Skipped when --force is set.
+func (r *Runner) checkCaptainBacklogAuthority() error {
+	if r.args.Force {
+		return nil
+	}
+	if r.spawnRole != "captain" {
+		return nil
+	}
+
+	// Check if there's already a live task with this ID (inflight from meta).
+	if meta, err := task.ReadMeta(r.homeDir, r.args.ID); err == nil {
+		if kind := meta["kind"]; kind == "ship" || kind == "scout" {
+			return fmt.Errorf("captain backlog authority: task %s is already in-flight (kind=%s)", r.args.ID, kind)
+		}
+	}
+
+	// Check backlog state via tasks-axi or file backend.
+	backlogPath := filepath.Join(r.homeDir, "data", "backlog.md")
+	state, blocked, found, err := readBacklogTaskState(backlogPath, r.args.ID)
+	if err != nil {
+		// If backlog doesn't exist or can't be read, allow through but warn.
+		fmt.Fprintf(os.Stderr, "warning: cannot read backlog for captain authority check: %v\n", err)
+		return nil
+	}
+	if !found {
+		return fmt.Errorf("captain backlog authority: task %s not found in backlog; register it with 'backlog add %s \"<description>\"'", r.args.ID, r.args.ID)
+	}
+	switch state {
+	case "in-flight":
+		return fmt.Errorf("captain backlog authority: task %s is already in-flight in backlog", r.args.ID)
+	case "done":
+		return fmt.Errorf("captain backlog authority: task %s is already done; reopen requires General instruction", r.args.ID)
+	case "blocked":
+		return fmt.Errorf("captain backlog authority: task %s is blocked (blocked-by: %s); resolve dependencies before dispatch", r.args.ID, blocked)
+	case "queued":
+		if blocked != "" {
+			return fmt.Errorf("captain backlog authority: task %s is blocked-by %s; resolve dependencies before dispatch", r.args.ID, blocked)
+		}
+		return nil
+	default:
+		return fmt.Errorf("captain backlog authority: task %s has unexpected state %q", r.args.ID, state)
+	}
+}
+
+// readBacklogTaskState reads the backlog file and returns the task state,
+// blocked-by value, whether found, and any error.
+// It tries tasks-axi first, then falls back to the file backend.
+var readBacklogTaskState = func(backlogPath, id string) (string, string, bool, error) {
+	// Try tasks-axi first.
+	if path, err := exec.LookPath("tasks-axi"); err == nil {
+		cmd := exec.Command(path, "show", id, "--file", backlogPath)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			state, blocked := parseTasksAxiShow(string(out))
+			if state != "" {
+				return state, blocked, true, nil
+			}
+		}
+	}
+
+	// Fallback to file backend.
+	fb := backlog.NewFileBackend(backlogPath)
+	item, ok := fb.Show(id)
+	if !ok {
+		return "", "", false, nil
+	}
+	return item.State.String(), "", true, nil
+}
+
+// parseTasksAxiShow extracts state and blocked-by from tasks-axi show output.
+func parseTasksAxiShow(output string) (state string, blocked string) {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "state:") {
+			state = strings.TrimSpace(strings.TrimPrefix(line, "state:"))
+		}
+		if strings.HasPrefix(line, "blocked_by:") {
+			blocked = strings.TrimSpace(strings.TrimPrefix(line, "blocked_by:"))
+			if blocked == "none" {
+				blocked = ""
+			}
+		}
+	}
+	return state, blocked
 }
 
 // Phase 2: resolveMode resolves the effective delivery mode.
