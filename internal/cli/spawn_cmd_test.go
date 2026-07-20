@@ -1,11 +1,13 @@
 package cli
 
 import (
-	"github.com/minhtri2710/munsu/internal/marker"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/marker"
 )
 
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
@@ -251,5 +253,163 @@ func TestSendCmd_CaptainDeadPaneQueuesOutbox(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "uplink use munsu report") {
 		t.Fatalf("send to captain:<id> must not be blocked by uplink guard: %v", err)
+	}
+}
+
+// --- Gate refusal tests for send and teardown ---
+
+// runCmd is a test helper that runs a command in a directory.
+func runCmd(t *testing.T, dir, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...); cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cmd %s %v failed (dir=%s): %v\n%s", name, args, dir, err, string(out))
+	}
+}
+
+// initGateCheckout creates a temp no-mistakes gate checkout at a temp dir and
+// returns its path. The checkout's git-common-dir is under
+// <nmHome>/repos/<id>.git, matching the no-mistakes gate topology.
+// Caller should os.Chdir into the returned checkout path before running a command.
+func initGateCheckout(t *testing.T) string {
+	t.Helper()
+	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
+	commonDir := filepath.Join(nmHome, "repos", "gate.git")
+	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runCmd(t, filepath.Dir(commonDir), "git", "init", "--bare", commonDir)
+	checkout := t.TempDir()
+	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NM_HOME", nmHome)
+	return checkout
+}
+
+func TestSendCmd_GateRefusesEnvMarker(t *testing.T) {
+	t.Setenv("NO_MISTAKES_GATE", "1")
+	root := NewRootCommand()
+	root.SetArgs([]string{"send", "any-task", "hello"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected gate refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "send refused") {
+		t.Errorf("expected 'send refused', got: %v", err)
+	}
+}
+
+func TestSendCmd_GateRefusesEnvEmptyMarker(t *testing.T) {
+	t.Setenv("NO_MISTAKES_GATE", "")
+	root := NewRootCommand()
+	root.SetArgs([]string{"send", "any-task", "hello"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected gate refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "send refused") {
+		t.Errorf("expected 'send refused', got: %v", err)
+	}
+}
+
+func TestSendCmd_GateRefusesGateCheckoutPath(t *testing.T) {
+	checkout := initGateCheckout(t)
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(checkout); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	root := NewRootCommand()
+	root.SetArgs([]string{"send", "any-task", "hello"})
+	err = root.Execute()
+	if err == nil {
+		t.Fatal("expected gate refusal from gate checkout, got nil")
+	}
+	if !strings.Contains(err.Error(), "send refused") {
+		t.Errorf("expected 'send refused', got: %v", err)
+	}
+}
+
+func TestSendCmd_GateNormalNoMarker(t *testing.T) {
+	// Without NO_MISTAKES_GATE and in a non-gate cwd, the send command should
+	// proceed past the gate check and fail later on "no state" (no task meta).
+	root := NewRootCommand()
+	root.SetArgs([]string{"send", "nonexistent-task", "hello"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error about missing task, got nil")
+	}
+	// The error should NOT mention gate refusal — normal path.
+	if strings.Contains(err.Error(), "send refused") {
+		t.Errorf("normal send must not produce gate refusal, got: %v", err)
+	}
+}
+
+func TestTeardownCmd_GateRefusesEnvMarker(t *testing.T) {
+	t.Setenv("NO_MISTAKES_GATE", "1")
+	root := NewRootCommand()
+	root.SetArgs([]string{"teardown", "any-task"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected gate refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "teardown refused") {
+		t.Errorf("expected 'teardown refused', got: %v", err)
+	}
+}
+
+func TestTeardownCmd_GateRefusesEnvEmptyMarker(t *testing.T) {
+	t.Setenv("NO_MISTAKES_GATE", "")
+	root := NewRootCommand()
+	root.SetArgs([]string{"teardown", "any-task"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected gate refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "teardown refused") {
+		t.Errorf("expected 'teardown refused', got: %v", err)
+	}
+}
+
+func TestTeardownCmd_GateRefusesGateCheckoutPath(t *testing.T) {
+	checkout := initGateCheckout(t)
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(checkout); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	root := NewRootCommand()
+	root.SetArgs([]string{"teardown", "any-task"})
+	err = root.Execute()
+	if err == nil {
+		t.Fatal("expected gate refusal from gate checkout, got nil")
+	}
+	if !strings.Contains(err.Error(), "teardown refused") {
+		t.Errorf("expected 'teardown refused', got: %v", err)
+	}
+}
+
+func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
+	// Without NO_MISTAKES_GATE and in a non-gate cwd, the teardown command should
+	// proceed past the gate check and fail later on "no state" (no task meta).
+	root := NewRootCommand()
+	root.SetArgs([]string{"teardown", "nonexistent-task"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error about missing task, got nil")
+	}
+	// The error should NOT mention gate refusal — normal path.
+	if strings.Contains(err.Error(), "teardown refused") {
+		t.Errorf("normal teardown must not produce gate refusal, got: %v", err)
 	}
 }

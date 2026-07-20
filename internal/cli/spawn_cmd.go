@@ -10,6 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/spawn"
@@ -116,6 +117,11 @@ func newSendCmd() *cobra.Command {
 			// General home uses 'munsu report', not send.
 			if id == "general" {
 				return fmt.Errorf("error: uplink use munsu report; send is downlink only")
+			}
+
+			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
+			if err := scope.GateRefuseFromCWD(); err != nil {
+				return fmt.Errorf("send refused: %w", err)
 			}
 
 			// Read meta to resolve window
@@ -322,8 +328,12 @@ With --force:
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 
+			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
+			if err := scope.GateRefuseFromCWD(); err != nil {
+				return fmt.Errorf("teardown refused: %w", err)
+			}
+
 			opts := teardown.Options{
-				HomeDir: ctx.Home,
 				ID:      id,
 				Force:   force,
 			}

@@ -223,6 +223,40 @@ func GateRefusalError(path string) error {
 	return Classify(path).GateRefusalError()
 }
 
+// GateRefuseFromCWD checks the current working directory for gate agent signals.
+// Returns nil (no error) when this is a normal session — neither the
+// NO_MISTAKES_GATE env marker nor a gate checkout path is detected.
+// When either signal is present, returns a non-nil error formatted for
+// direct display to the user, mirroring firstmate's fm-refuse-if-gate-agent.
+func GateRefuseFromCWD() error {
+	// 1. Env marker check: NO_MISTAKES_GATE present (even empty) → immediate refuse.
+	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("gate agent refused: NO_MISTAKES_GATE set (env)")
+		}
+		return GateRefusalError(cwd)
+	}
+
+	// 2. Path check: try to detect gate checkout from cwd.
+	// When git is unavailable or the classification fails, pass through
+	// (not a gate agent) rather than refusing — matching firstmate's
+	// fail-safe behavior where an absent git means no gate checkout.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	res := Classify(cwd)
+	if res.Err != nil {
+		// git unavailable → not a gate agent
+		return nil
+	}
+	if res.GateCap == GatePresent {
+		return fmt.Errorf("gate agent refused for %s (%s)", res.CanonicalPath, res.GateSource)
+	}
+	return nil
+}
+
 func IsGateAgentActive(path string) bool {
 	return Classify(path).IsGateRefusal()
 }
