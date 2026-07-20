@@ -110,8 +110,11 @@ func newSendCmd() *cobra.Command {
 			id := args[0]
 			line := args[1]
 
-			// BREAKING: uplink targets fail closed — use munsu report for parent communication
-			if strings.HasPrefix(id, "captain:") || id == "general" {
+			// BREAKING: uplink to the General (fleet top) fails closed — use munsu report.
+			// Note: 'captain:<id>' task ids are legit downlink targets for the General
+			// dispatching work, so they are NOT blocked here. A Captain reporting to its
+			// General home uses 'munsu report', not send.
+			if id == "general" {
 				return fmt.Errorf("error: uplink use munsu report; send is downlink only")
 			}
 
