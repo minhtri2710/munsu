@@ -20,6 +20,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
+
 // Runner orchestrates the full spawn sequence through private phase methods.
 // It encapsulates all intermediate state so the public Run function is a thin
 // delegate call.
@@ -67,7 +68,9 @@ func (r *Runner) Run() (string, error) {
 	if err := r.preflightBrief(); err != nil {
 		return "", err
 	}
-	r.warnMissingBacklog()
+	if err := r.checkBacklogAuthority(); err != nil {
+		return "", err
+	}
 	if err := r.resolveProject(); err != nil {
 		return "", err
 	}
@@ -250,8 +253,10 @@ func canonicalExistingPath(path string) (string, error) {
 }
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
-// the task ID exists exactly once in the backlog as ready (queued, not blocked,
-// not done, not already in-flight). Skipped when --force is set.
+// the task is present and dispatchable. Normal Captain flow is:
+//   tasks-axi start <id>  →  munsu spawn <id>
+// Backlog in_flight without live meta/window MUST allow spawn without --force.
+// Refuse only duplicate live execution (meta window/pane). --force is emergency bypass only.
 func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.args.Force {
 		return nil
@@ -260,10 +265,14 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 		return nil
 	}
 
-	// Check if there's already a live task with this ID (inflight from meta).
+	// Already-live = meta proves a soldier was spawned (window or pane id).
+	// Kind-only meta (e.g. task add) is NOT live execution.
 	if meta, err := task.ReadMeta(r.homeDir, r.args.ID); err == nil {
-		if kind := meta["kind"]; kind == "ship" || kind == "scout" {
-			return fmt.Errorf("captain backlog authority: task %s is already in-flight (kind=%s)", r.args.ID, kind)
+		if win := meta["window"]; win != "" {
+			return fmt.Errorf("captain backlog authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
+		}
+		if pane := meta["herdr_pane_id"]; pane != "" {
+			return fmt.Errorf("captain backlog authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", r.args.ID, pane)
 		}
 	}
 
@@ -278,9 +287,10 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if !found {
 		return fmt.Errorf("captain backlog authority: task %s not found in backlog; register it with 'backlog add %s \"<description>\"'", r.args.ID, r.args.ID)
 	}
-	switch state {
+	switch normalizeBacklogState(state) {
 	case "in-flight":
-		return fmt.Errorf("captain backlog authority: task %s is already in-flight in backlog", r.args.ID)
+		// start→spawn: backlog In flight without live window/pane is allowed.
+		return nil
 	case "done":
 		return fmt.Errorf("captain backlog authority: task %s is already done; reopen requires General instruction", r.args.ID)
 	case "blocked":
@@ -292,6 +302,16 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 		return nil
 	default:
 		return fmt.Errorf("captain backlog authority: task %s has unexpected state %q", r.args.ID, state)
+	}
+}
+
+// normalizeBacklogState maps tasks-axi (in_flight) and file-backend (in-flight).
+func normalizeBacklogState(state string) string {
+	switch strings.TrimSpace(state) {
+	case "in_flight", "in-flight", "inflight":
+		return "in-flight"
+	default:
+		return strings.TrimSpace(state)
 	}
 }
 
@@ -365,16 +385,54 @@ func (r *Runner) preflightBrief() error {
 	return nil
 }
 
-// Phase 5: warnMissingBacklog warns if tasks-axi is available but no backlog row exists.
-func (r *Runner) warnMissingBacklog() {
-	if _, err := exec.LookPath("tasks-axi"); err != nil {
-		return
+// Phase 5: checkBacklogAuthority verifies the task is uniquely queued+ready in the backlog.
+// Fail closed unless the task is uniquely present and ready, or --reopen is used.
+func (r *Runner) checkBacklogAuthority() error {
+	item, found, err := backlog.GetItem(r.homeDir, r.args.ID)
+	if err != nil {
+		return fmt.Errorf("lifecycle guard: reading backlog: %w", err)
 	}
-	chk := exec.Command("tasks-axi", "show", r.args.ID)
-	if out, err := chk.CombinedOutput(); err != nil || strings.Contains(string(out), "not found") {
-		fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row; register it with 'backlog add %s \"<description>\" --kind %s' to track lifecycle\n",
-			r.args.ID, r.args.ID, r.args.Kind)
+	if !found {
+		return fmt.Errorf("lifecycle guard: task %q not found in backlog; register it with 'backlog add %q \"<description>\" --kind %s' before spawning", r.args.ID, r.args.ID, r.args.Kind)
 	}
+
+	// Check for duplicate IDs in backlog
+	dup, err := backlog.HasDuplicate(r.homeDir, r.args.ID)
+	if err != nil {
+		return fmt.Errorf("lifecycle guard: checking for duplicates: %w", err)
+	}
+	if dup {
+		return fmt.Errorf("lifecycle guard: task %q has duplicate entries in backlog; resolve duplicates before spawning", r.args.ID)
+	}
+
+	// Check already-live: existing meta with window means a soldier session exists
+	meta, metaErr := task.ReadMeta(r.homeDir, r.args.ID)
+	metaExists := metaErr == nil && meta["window"] != ""
+
+	// State-based checks. Backlog In flight without live meta is start→spawn — allow.
+	switch item.State {
+	case backlog.StateBlocked:
+		if !r.args.Reopen {
+			return fmt.Errorf("lifecycle guard: task %q is blocked; use --reopen to force dispatch or clear the blocker first", r.args.ID)
+		}
+	case backlog.StateDone:
+		if !r.args.Reopen {
+			return fmt.Errorf("lifecycle guard: task %q is done; use --reopen to reopen", r.args.ID)
+		}
+	case backlog.StateInFlight:
+		// Allow when no live session; refuse only duplicate live execution.
+		if metaExists && !r.args.Reopen {
+			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
+		}
+		return nil
+	}
+
+	// Live session without matching state still refuses (stale meta after teardown failure).
+	if metaExists && !r.args.Reopen {
+		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
+	}
+
+	return nil
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.

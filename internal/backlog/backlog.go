@@ -136,6 +136,36 @@ func AddItem(homeDir, id, desc, kind, repo string, start bool) error {
 	return fb.Add(id, desc, kind, repo, start)
 }
 
+// GetItem reads a backlog item by ID from the home-scoped backlog file.
+// Returns the item, whether it was found, and any error.
+func GetItem(homeDir, id string) (Item, bool, error) {
+	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	item, ok := fb.Show(id)
+	if !ok {
+		return Item{}, false, nil
+	}
+	return item, true, nil
+}
+
+// HasDuplicate checks whether the backlog contains multiple items with the same ID.
+func HasDuplicate(homeDir, id string) (bool, error) {
+	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	items, err := fb.List(StateQueued) // unfiltered returns all
+	if err != nil {
+		return false, err
+	}
+	count := 0
+	for _, item := range items {
+		if item.ID == id {
+			count++
+			if count > 1 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // AddItemDispatch adds a backlog item using the unified dispatcher.
 // Routes to tasks-axi when available and not forced to manual.
 func AddItemDispatch(homeDir, id, desc, kind, repo string, start bool) error {
