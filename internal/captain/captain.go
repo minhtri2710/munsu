@@ -678,7 +678,7 @@ func Launch(captainHome, parentHome string) error {
 	if err := ConfigPush(parentHome, captainHome); err != nil {
 		return fmt.Errorf("pre-launch config-push: %w", err)
 	}
-	if _, _, err := safeFF(captainHome, parentHome); err != nil {
+	if _, _, _, err := safeFF(captainHome, parentHome); err != nil {
 		// Non-git captain homes proceed; only fail when the home is a real clone.
 		if _, stErr := os.Stat(filepath.Join(captainHome, ".git")); stErr == nil {
 			return fmt.Errorf("pre-launch fast-forward: %w", err)
@@ -1338,58 +1338,58 @@ func normalizeGitRemote(remote string) string {
 // parent's already-local default-branch commit. Verified: same canonical
 // remote origin, correct branch/detached state, clean tree (ignoring only
 // marker and local inherited paths), ancestor relationship, then git merge --ff-only.
-func safeFF(captainHome, parentHome string) (before, after string, err error) {
+func safeFF(captainHome, parentHome string) (before, after string, reason SafeFFReason, err error) {
 	// Verify same canonical remote origin (allows independent clones, HTTPS/SSH equivalence).
 	parentRemote, err := gitRun("-C", parentHome, "remote", "get-url", "origin")
 	if err != nil {
-		return "", "", fmt.Errorf("parent remote origin: %w", err)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("parent remote origin: %w", err)
 	}
 	smRemote, err := gitRun("-C", captainHome, "remote", "get-url", "origin")
 	if err != nil {
-		return "", "", fmt.Errorf("captain remote origin: %w", err)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("captain remote origin: %w", err)
 	}
 	if normalizeGitRemote(parentRemote) != normalizeGitRemote(smRemote) {
-		return "", "", fmt.Errorf("captain remote %q differs from parent remote %q (canonical: %q vs %q)",
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("captain remote %q differs from parent remote %q (canonical: %q vs %q)",
 			smRemote, parentRemote, normalizeGitRemote(smRemote), normalizeGitRemote(parentRemote))
 	}
 
 	// Resolve default branch via origin/HEAD symbolic ref. No fallback.
 	symRef, err := gitRun("-C", parentHome, "symbolic-ref", "refs/remotes/origin/HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("parent origin/HEAD symbolic ref missing — no default branch detected: %w", err)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("parent origin/HEAD symbolic ref missing — no default branch detected: %w", err)
 	}
 	// symRef looks like "refs/remotes/origin/main" — extract branch name.
 	remoteRefParts := strings.SplitN(symRef, "/", 4)
 	if len(remoteRefParts) < 4 || remoteRefParts[0] != "refs" || remoteRefParts[1] != "remotes" || remoteRefParts[2] != "origin" {
-		return "", "", fmt.Errorf("unexpected origin/HEAD symbolic ref format: %q", symRef)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("unexpected origin/HEAD symbolic ref format: %q", symRef)
 	}
 	defaultBranch := remoteRefParts[3]
 
 	// Verify the local branch ref exists.
 	localRef := "refs/heads/" + defaultBranch
 	if _, err := gitRun("-C", parentHome, "rev-parse", "--verify", localRef); err != nil {
-		return "", "", fmt.Errorf("default branch %q (%s) does not exist locally", defaultBranch, localRef)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("default branch %q (%s) does not exist locally", defaultBranch, localRef)
 	}
 
 	// Resolve the commit that the local default branch points to.
 	defaultCommit, err := gitRun("-C", parentHome, "rev-parse", localRef)
 	if err != nil {
-		return "", "", fmt.Errorf("resolving default branch commit: %w", err)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("resolving default branch commit: %w", err)
 	}
 
 	// Branch check — captain must be on default branch or detached HEAD.
 	smBranch, err := gitRun("-C", captainHome, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading captain branch: %w", err)
+		return "", "", SafeFFError, fmt.Errorf("reading captain branch: %w", err)
 	}
 	if smBranch != "HEAD" && smBranch != "" && smBranch != defaultBranch {
-		return "", "", fmt.Errorf("captain is on branch %q, expected %q or detached HEAD", smBranch, defaultBranch)
+		return "", "", SafeFFOffBranch, fmt.Errorf("captain is on branch %q, expected %q or detached HEAD", smBranch, defaultBranch)
 	}
 
 	// Clean check — reject ALL tracked changes; allow only gitignored untracked files.
 	statusOut, err := gitRun("-C", captainHome, "status", "--porcelain")
 	if err != nil {
-		return "", "", fmt.Errorf("captain git status: %w", err)
+		return "", "", SafeFFError, fmt.Errorf("captain git status: %w", err)
 	}
 	if statusOut != "" {
 		for _, line := range strings.Split(statusOut, "\n") {
@@ -1404,50 +1404,107 @@ func safeFF(captainHome, parentHome string) (before, after string, err error) {
 				if _, err := gitRun("-C", captainHome, "check-ignore", "-q", "--", path); err == nil {
 					continue // gitignored, OK
 				}
-				return "", "", fmt.Errorf("captain home %s has unignored untracked file: %s", captainHome, path)
+				return "", "", SafeFFChangesTracked, fmt.Errorf("captain home %s has unignored untracked file: %s", captainHome, path)
 			}
 			// Any non-space character means tracked change (staged or unstaged).
 			if xy[0] != ' ' || xy[1] != ' ' {
-				return "", "", fmt.Errorf("captain home %s has tracked changes", captainHome)
+				return "", "", SafeFFChangesTracked, fmt.Errorf("captain home %s has tracked changes", captainHome)
 			}
 		}
 	}
 
 	before, err = gitRun("-C", captainHome, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading captain HEAD: %w", err)
+		return "", "", SafeFFError, fmt.Errorf("reading captain HEAD: %w", err)
 	}
 
 	// Check ancestry.
 	mergeBase, err := gitRun("-C", captainHome, "merge-base", before, defaultCommit)
 	if err != nil {
-		return "", "", fmt.Errorf("merge-base failed: %w", err)
+		return "", "", SafeFFError, fmt.Errorf("merge-base failed: %w", err)
 	}
 	if mergeBase != before {
-		return "", "", fmt.Errorf("captain %s is not an ancestor of parent default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
+		return "", "", SafeFFError, fmt.Errorf("captain %s is not an ancestor of parent default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
 	}
 
 	if before == defaultCommit {
-		return before, before, nil
+		return before, before, SafeFFAlreadyCurrent, nil
 	}
 
 	fmt.Printf("  %s: fast-forward %s → %s\n", filepath.Base(captainHome), before[:8], defaultCommit[:8])
 
 	_, err = gitRun("-C", captainHome, "merge", "--ff-only", defaultCommit)
 	if err != nil {
-		return "", "", fmt.Errorf("git merge --ff-only failed: %w", err)
+		return "", "", SafeFFError, fmt.Errorf("git merge --ff-only failed: %w", err)
 	}
 
 	after, err = gitRun("-C", captainHome, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("reading captain HEAD after ff: %w", err)
+		return "", "", SafeFFError, fmt.Errorf("reading captain HEAD after ff: %w", err)
 	}
 
-	return before, after, nil
+	return before, after, SafeFFSuccess, nil
+}
+
+// SafeFFReason categorises the outcome of a local safe fast-forward.
+type SafeFFReason string
+
+const (
+	SafeFFOffBranch      SafeFFReason = "off-branch"
+	SafeFFMissingOrigin  SafeFFReason = "missing-origin"
+	SafeFFChangesTracked SafeFFReason = "changes-tracked"
+	SafeFFAlreadyCurrent SafeFFReason = "already-current"
+	SafeFFSuccess        SafeFFReason = "success"
+	SafeFFError          SafeFFReason = "error"
+)
+
+// StepStatus is the disposition of one converge step.
+type ConvergeStepStatus string
+
+const (
+	ConvergeOK      ConvergeStepStatus = "ok"
+	ConvergeSkipped ConvergeStepStatus = "skipped"
+	ConvergeFailed  ConvergeStepStatus = "failed"
+)
+
+// StepResult captures one converge step outcome.
+type ConvergeStepResult struct {
+	Name   string
+	Status ConvergeStepStatus
+	Detail string
+}
+
+// ConvergeResult holds the per-step outcomes for a converge sweep.
+type ConvergeResult struct {
+	Steps []ConvergeStepResult
+}
+
+// OverallStatus computes the overall converge status from per-step outcomes.
+func (cr *ConvergeResult) OverallStatus() string {
+	if cr == nil || len(cr.Steps) == 0 {
+		return "ok"
+	}
+	var okCount, failCount, skipCount int
+	for _, s := range cr.Steps {
+		switch s.Status {
+		case ConvergeOK:
+			okCount++
+		case ConvergeFailed:
+			failCount++
+		case ConvergeSkipped:
+			skipCount++
+		}
+	}
+	if failCount > 0 && okCount > 0 {
+		return "partial"
+	}
+	if failCount > 0 {
+		return "failed"
+	}
+	return "ok"
 }
 
 // --- Converge ---
-
 // ConvergeLockPath returns the path to the converge lock.
 func ConvergeLockPath(parentHome string) string {
 	return filepath.Join(parentHome, "state", ConvergeLockName)
@@ -1576,81 +1633,115 @@ func removeNudgeMarker(parentHome, smID string) {
 // Order: lock, validate registry/provenance, flush send outbox, retry pending
 // nudges, safe ff, inheritance push, ownership-backed backend Alive check,
 // watcher status check, and reread nudge only if instruction surface advanced.
-func Converge(parentHome string, registered []Info) error {
+func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 	release, err := convergeLockAcquire(parentHome)
 	if err != nil {
-		return fmt.Errorf("acquiring converge lock: %w", err)
+		return nil, fmt.Errorf("acquiring converge lock: %w", err)
 	}
 	defer release()
 
 	if len(registered) == 0 {
-		return nil
+		return &ConvergeResult{}, nil
 	}
 
+	var result ConvergeResult
 	var errs []string
+
 	for _, sm := range registered {
 		if sm.Home == "" {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeSkipped, Detail: "missing home path"})
 			errs = append(errs, fmt.Sprintf("%s: missing home path", sm.ID))
 			continue
 		}
 
-		markerID, err := ValidateProvenance(sm.Home)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: provenance validation failed: %v", sm.ID, err))
+		// a. Registry validation.
+		markerID, valErr := ValidateProvenance(sm.Home)
+		if valErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeFailed, Detail: fmt.Sprintf("provenance validation failed: %v", valErr)})
+			errs = append(errs, fmt.Sprintf("%s: provenance validation failed: %v", sm.ID, valErr))
 			continue
 		}
 		if markerID != sm.ID {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeFailed, Detail: fmt.Sprintf("marker id %q does not match registry id %q", markerID, sm.ID)})
 			errs = append(errs, fmt.Sprintf("%s: marker id %q does not match registry id %q", sm.ID, markerID, sm.ID))
 			continue
 		}
+		result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeOK, Detail: "valid"})
 
-		// Deliver durable marked sends queued while the pane was dead.
+		// b. Send outbox flush.
 		if flushErr := FlushSendOutbox(parentHome, sm); flushErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": send outbox flush", Status: ConvergeFailed, Detail: flushErr.Error()})
 			errs = append(errs, flushErr.Error())
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": send outbox flush", Status: ConvergeOK, Detail: "ok"})
 		}
 
-		// Retry existing nudge markers even without a new FF.
+		// c. Nudge retry.
 		if nudgeErr := retryNudge(parentHome, sm); nudgeErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": nudge retry", Status: ConvergeFailed, Detail: nudgeErr.Error()})
 			errs = append(errs, nudgeErr.Error())
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": nudge retry", Status: ConvergeOK, Detail: "ok"})
 		}
 
-		// Safe local fast-forward.
-		before, after, ffErr := safeFF(sm.Home, parentHome)
+		// d. Safe local fast-forward.
+		before, after, ffReason, ffErr := safeFF(sm.Home, parentHome)
 		if ffErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeFailed, Detail: ffErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: safe ff failed: %v", sm.ID, ffErr))
-		} else if before != after {
-			fmt.Printf("  %s: fast-forwarded %s → %s\n", sm.ID, before[:8], after[:8])
+		} else if ffReason == SafeFFAlreadyCurrent {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeSkipped, Detail: "already-current"})
+		} else if ffReason == SafeFFSuccess {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeOK, Detail: fmt.Sprintf("fast-forwarded %s → %s", before[:8], after[:8])})
+
+			// g. Instruction surface tracking (only on FF).
 			if hasSurfaceDiff(sm.Home, before, after) {
 				printGitContentDiff(sm.Home, before, after)
 				digest, digestErr := instructionSurfaceDigest(sm.Home, after)
 				if digestErr != nil {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeFailed, Detail: digestErr.Error()})
 					errs = append(errs, fmt.Sprintf("%s: computing instruction digest: %v", sm.ID, digestErr))
 					continue
 				}
 				msg := fmt.Sprintf("instruction surface changed in %s", after[:8])
 				if wErr := writeNudgeMarker(parentHome, sm.ID, sm.Home, after, digest, msg); wErr != nil {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeFailed, Detail: wErr.Error()})
 					errs = append(errs, fmt.Sprintf("%s: writing nudge marker: %v", sm.ID, wErr))
 				} else {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeOK, Detail: "nudge written"})
 					// If alive, immediately send.
 					if err := sendNudge(parentHome, sm); err != nil {
 						errs = append(errs, err.Error())
 					}
 				}
+			} else {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeSkipped, Detail: "no surface change"})
 			}
+		} else {
+			// Should not happen: safeFF returned no error but unknown reason.
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeOK, Detail: "no change"})
 		}
 
-		// Inheritance push.
+		// e. Inheritance push.
 		if err := ConfigPush(parentHome, sm.Home); err != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeFailed, Detail: err.Error()})
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: "ok"})
 		}
 
-		// Ownership-backed backend Alive check.
+		// f. Liveness check.
 		alive, aliveErr := checkAliveViaBackend(parentHome, sm)
 		if aliveErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: aliveErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, aliveErr))
 			continue
 		}
-		_ = alive
+		if alive {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent"})
+		}
 
 		// Watcher status check and reporting.
 		ws := WatcherStatusSummary(sm.Home)
@@ -1665,9 +1756,9 @@ func Converge(parentHome string, registered []Info) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("converge completed with %d error(s):\n  %s", len(errs), strings.Join(errs, "\n  "))
+		return &result, fmt.Errorf("converge completed with %d error(s):\n  %s", len(errs), strings.Join(errs, "\n  "))
 	}
-	return nil
+	return &result, nil
 }
 
 // --- Recover ---

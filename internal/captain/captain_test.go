@@ -1819,7 +1819,7 @@ func newSafeFFFixture(t *testing.T) safeFFFixture {
 func TestSafeFF_OffBranchRefused(t *testing.T) {
 	f := newSafeFFFixture(t)
 	gitTestRun(t, f.captain, "checkout", "-b", "feature")
-	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "expected \"main\"") {
+	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "expected \"main\"") {
 		t.Fatalf("safeFF error = %v, want off-default-branch refusal", err)
 	}
 }
@@ -1827,7 +1827,7 @@ func TestSafeFF_OffBranchRefused(t *testing.T) {
 func TestSafeFF_MissingOriginHEADRefused(t *testing.T) {
 	f := newSafeFFFixture(t)
 	gitTestRun(t, f.parent, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
-	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "origin/HEAD") {
+	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "origin/HEAD") {
 		t.Fatalf("safeFF error = %v, want missing origin/HEAD refusal", err)
 	}
 }
@@ -1856,7 +1856,7 @@ func TestSafeFF_TrackedChangesRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.captain, "AGENTS.md"), []byte("dirty\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "tracked changes") {
+	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "tracked changes") {
 		t.Fatalf("safeFF error = %v, want tracked-change refusal", err)
 	}
 }
@@ -1866,7 +1866,7 @@ func TestSafeFF_UnignoredUntrackedRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.captain, "rogue.txt"), []byte("rogue\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "unignored untracked") {
+	if _, _, _, err := safeFF(f.captain, f.parent); err == nil || !strings.Contains(err.Error(), "unignored untracked") {
 		t.Fatalf("safeFF error = %v, want unignored-file refusal", err)
 	}
 }
@@ -1879,7 +1879,7 @@ func TestSafeFF_GitignoredArtifactAllowed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.captain, "state", "ignored"), []byte("local\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	before, after, err := safeFF(f.captain, f.parent)
+	before, after, _, err := safeFF(f.captain, f.parent)
 	if err != nil {
 		t.Fatalf("safeFF: %v", err)
 	}
@@ -1896,7 +1896,7 @@ func TestSafeFF_ParentFeatureCheckoutStillTargetsDefaultBranch(t *testing.T) {
 	}
 	gitTestRun(t, f.parent, "add", "feature.txt")
 	gitTestRun(t, f.parent, "commit", "-m", "feature only")
-	_, after, err := safeFF(f.captain, f.parent)
+	_, after, _, err := safeFF(f.captain, f.parent)
 	if err != nil {
 		t.Fatalf("safeFF: %v", err)
 	}
@@ -1968,11 +1968,11 @@ func TestAcquireExclusiveLock_NoRemoveOnFailure(t *testing.T) {
 
 func TestConverge_EmptyRegistry(t *testing.T) {
 	parent := t.TempDir()
-	err := Converge(parent, nil)
+	_, err := Converge(parent, nil)
 	if err != nil {
 		t.Fatalf("Converge(nil) error: %v", err)
 	}
-	err = Converge(parent, []Info{})
+	_, err = Converge(parent, []Info{})
 	if err != nil {
 		t.Fatalf("Converge(empty) error: %v", err)
 	}
@@ -1981,7 +1981,7 @@ func TestConverge_EmptyRegistry(t *testing.T) {
 func TestConverge_RefusesUnmarkedHome(t *testing.T) {
 	parent := t.TempDir()
 
-	err := Converge(parent, []Info{
+	_, err := Converge(parent, []Info{
 		{ID: "test-sm", Home: "/nonexistent"},
 	})
 	if err == nil {
@@ -2014,7 +2014,7 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	SeedProvenance(sm2, "sm-beta")
 
 	// Run converge.
-	err := Converge(parent, []Info{
+	_, err := Converge(parent, []Info{
 		{ID: "sm-alpha", Home: sm1},
 		{ID: "sm-beta", Home: sm2},
 	})
@@ -2053,7 +2053,7 @@ func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	SeedProvenance(smHome, "actual-id")
 
 	// But registry says "wrong-id".
-	err := Converge(parent, []Info{
+	_, err := Converge(parent, []Info{
 		{ID: "wrong-id", Home: smHome},
 	})
 	if err == nil {

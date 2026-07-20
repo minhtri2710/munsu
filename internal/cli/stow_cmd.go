@@ -170,9 +170,19 @@ diverged, or offline homes are skipped and reported, never forced.`,
 				return nil
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Fast-forwarding captains and nudging...")
-			if err := captain.Converge(ctx.Home, registered); err != nil {
+			result, convergeErr := captain.Converge(ctx.Home, registered)
+			if result != nil {
+				for _, step := range result.Steps {
+					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
+					if step.Detail != "" && step.Detail != "ok" {
+						fmt.Printf("  %-50s %s\n", "", step.Detail)
+					}
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "  Overall: %s\n", result.OverallStatus())
+			}
+			if convergeErr != nil {
 				// Self-update already succeeded; converge errors are reported, not fatal.
-				fmt.Fprintf(cmd.OutOrStdout(), "%v\n", err)
+				fmt.Fprintf(cmd.OutOrStdout(), "%v\n", convergeErr)
 			}
 			return nil
 		}),
