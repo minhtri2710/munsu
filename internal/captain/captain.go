@@ -222,6 +222,14 @@ Routine Soldier supervision, heartbeats, and retries stay inside THIS home and m
 
 ## Spawn authority
 Spawn Soldier only from this Captain home. Never launch another Captain.
+
+## Landed cleanup (soldiers)
+Merge does not remove soldier panes or worktrees. After a ship PR is merged
+(General merge notice, pr-poll merged wake, or provider shows MERGED) run:
+  munsu teardown <soldier-id>
+in THIS captain home (MUNSU_HOME). Do not leave pane_alive soldiers after land.
+General may also run: munsu delivery pr-merge <id> <url> --teardown
+Never use bare gh pr merge without munsu delivery when meta lives here.
 `, id, marker.FromGeneralLabel, shQuote(statusFile))
 }
 

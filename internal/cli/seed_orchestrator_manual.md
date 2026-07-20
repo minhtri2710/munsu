@@ -182,7 +182,7 @@ When a soldier is unresponsive, run `munsu skill show stuck-soldier-recovery`.
 | `local-only` | Clean branch ready for local merge | ready for `munsu delivery merge-local` |
 
 Record the PR: `munsu delivery pr-check <id> <pr-url>`.
-Merge when instructed: `munsu delivery pr-merge <id> <pr-url>`.
+Merge when instructed: `munsu delivery pr-merge <id> <pr-url>` (prefer `--teardown` to clean soldier pane/worktree after land; never bare `gh pr merge` when task meta lives in a captain home). Meta resolves primary then captain homes.
 
 ### Teardown
 
@@ -408,7 +408,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Fleet bearings | `munsu fleet bearings` |
 | Fleet sync | `munsu fleet sync [<project>]` |
 | Record PR | `munsu delivery pr-check <id> <pr-url>` |
-| Merge PR | `munsu delivery pr-merge <id> <pr-url>` |
+| Merge PR | `munsu delivery pr-merge <id> <pr-url> [--teardown]` |
 | Merge local | `munsu delivery merge-local <id>` |
 | Stow learnings | `munsu stow [text...]` |
 | Stow captain pref | `munsu stow --general [text...]` |
@@ -433,9 +433,9 @@ Run: `munsu skill show <name>` to read any skill.
 7. munsu send <id> "<msg>"           # steer as needed
 8. munsu wake-drain / soldier-state  # on wake from watcher; or munsu wake claim
 9. munsu delivery pr-check <id> <url> # record PR when done
-10. munsu delivery pr-merge <id> <url> # merge when instructed
+10. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
 11. munsu captain converge           # flush send outbox after captain lifecycle
-12. munsu teardown <id>              # clean up
+12. munsu teardown <id>              # clean up if merge was without --teardown
 ```
 
 ---

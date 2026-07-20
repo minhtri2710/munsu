@@ -131,6 +131,9 @@ func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
 	if !strings.Contains(charter, "PRIMARY status path") {
 		t.Fatalf("charter missing PRIMARY status path doctrine")
 	}
+	if !strings.Contains(charter, "Landed cleanup") || !strings.Contains(charter, "munsu teardown") {
+		t.Fatalf("charter missing landed cleanup / teardown duty")
+	}
 	if !strings.Contains(charter, "downlink only") {
 		t.Fatalf("charter missing send-is-downlink-only doctrine")
 	}
