@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 )
 
@@ -458,5 +459,120 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 	if len(result.Steps) == 0 {
 		t.Error("expected teardown steps")
+	}
+	if len(result.Steps) == 0 {
+		t.Error("expected teardown steps")
+	}
+}
+
+func TestCloseTerminalPhases_ClosesOpenKeyedPhases(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create a status file with open keyed phases
+	statusPath := filepath.Join(stateDir, "test-task.status")
+	statusContent := `working [key=phase1]: Phase 1 started
+working [key=phase2]: Phase 2 started
+done [key=phase1]: Phase 1 completed
+working [key=phase3]: Phase 3 in progress`
+	if err := os.WriteFile(statusPath, []byte(statusContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify open phases before close
+	openActs := classify.OpenActivities(statusPath)
+	if len(openActs) != 2 {
+		t.Fatalf("expected 2 open phases, got %d", len(openActs))
+	}
+
+	// Create a minimal meta file so Run can read it
+	metaContent := "kind=ship\nwindow=@1\n"
+	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run teardown with --force to skip safety checks and reach cleanup
+	result, err := Run(Options{HomeDir: tmp, ID: "test-task", Force: true})
+	if err != nil {
+		t.Fatalf("teardown should not fail: %v", err)
+	}
+
+	// Verify steps mention phase closing
+	foundClose := false
+	for _, step := range result.Steps {
+		if strings.Contains(step, "closed keyed phase") {
+			foundClose = true
+			break
+		}
+	}
+	if !foundClose {
+		t.Errorf("expected teardown steps to mention keyed phase closing, got: %v", result.Steps)
+	}
+}
+
+func TestCloseTerminalPhases_Idempotent(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create a status file where all phases are already closed
+	statusPath := filepath.Join(stateDir, "test-task.status")
+	statusContent := `working [key=phase1]: Phase 1 started
+done [key=phase1]: Phase 1 completed
+working [key=phase2]: Phase 2 started
+resolved [key=phase2]: Phase 2 done`
+	if err := os.WriteFile(statusPath, []byte(statusContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify no open phases before close (already closed)
+	openActs := classify.OpenActivities(statusPath)
+	if len(openActs) != 0 {
+		t.Fatalf("expected 0 open phases, got %d", len(openActs))
+	}
+
+	// Create minimal meta
+	metaContent := "kind=ship\nwindow=@1\n"
+	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run teardown -- should not emit any close events
+	result, err := Run(Options{HomeDir: tmp, ID: "test-task", Force: true})
+	if err != nil {
+		t.Fatalf("teardown should not fail: %v", err)
+	}
+
+	// Verify no "closed keyed phase" steps appeared (idempotent = no-op)
+	for _, step := range result.Steps {
+		if strings.Contains(step, "closed keyed phase") {
+			t.Errorf("unexpected phase close for already-closed phases: %s", step)
+		}
+	}
+}
+
+func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create minimal meta but NO status file
+	metaContent := "kind=ship\nwindow=@1\n"
+	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run teardown -- should not error on missing status file
+	result, err := Run(Options{HomeDir: tmp, ID: "test-task", Force: true})
+	if err != nil {
+		t.Fatalf("teardown should not fail: %v", err)
+	}
+
+	// Verify no close steps (no status file to read)
+	for _, step := range result.Steps {
+		if strings.Contains(step, "closed keyed phase") {
+			t.Errorf("unexpected phase close with no status file: %s", step)
+		}
 	}
 }
