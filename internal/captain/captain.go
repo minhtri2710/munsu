@@ -1459,24 +1459,24 @@ const (
 )
 
 // StepStatus is the disposition of one converge step.
-type StepStatus string
+type ConvergeStepStatus string
 
 const (
-	StepOK      StepStatus = "ok"
-	StepSkipped StepStatus = "skipped"
-	StepFailed  StepStatus = "failed"
+	ConvergeOK      ConvergeStepStatus = "ok"
+	ConvergeSkipped ConvergeStepStatus = "skipped"
+	ConvergeFailed  ConvergeStepStatus = "failed"
 )
 
 // StepResult captures one converge step outcome.
-type StepResult struct {
+type ConvergeStepResult struct {
 	Name   string
-	Status StepStatus
+	Status ConvergeStepStatus
 	Detail string
 }
 
 // ConvergeResult holds the per-step outcomes for a converge sweep.
 type ConvergeResult struct {
-	Steps []StepResult
+	Steps []ConvergeStepResult
 }
 
 // OverallStatus computes the overall converge status from per-step outcomes.
@@ -1487,11 +1487,11 @@ func (cr *ConvergeResult) OverallStatus() string {
 	var okCount, failCount, skipCount int
 	for _, s := range cr.Steps {
 		switch s.Status {
-		case StepOK:
+		case ConvergeOK:
 			okCount++
-		case StepFailed:
+		case ConvergeFailed:
 			failCount++
-		case StepSkipped:
+		case ConvergeSkipped:
 			skipCount++
 		}
 	}
@@ -1649,7 +1649,7 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 
 	for _, sm := range registered {
 		if sm.Home == "" {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": registry validation", Status: StepSkipped, Detail: "missing home path"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeSkipped, Detail: "missing home path"})
 			errs = append(errs, fmt.Sprintf("%s: missing home path", sm.ID))
 			continue
 		}
@@ -1657,90 +1657,90 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		// a. Registry validation.
 		markerID, valErr := ValidateProvenance(sm.Home)
 		if valErr != nil {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": registry validation", Status: StepFailed, Detail: fmt.Sprintf("provenance validation failed: %v", valErr)})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeFailed, Detail: fmt.Sprintf("provenance validation failed: %v", valErr)})
 			errs = append(errs, fmt.Sprintf("%s: provenance validation failed: %v", sm.ID, valErr))
 			continue
 		}
 		if markerID != sm.ID {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": registry validation", Status: StepFailed, Detail: fmt.Sprintf("marker id %q does not match registry id %q", markerID, sm.ID)})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeFailed, Detail: fmt.Sprintf("marker id %q does not match registry id %q", markerID, sm.ID)})
 			errs = append(errs, fmt.Sprintf("%s: marker id %q does not match registry id %q", sm.ID, markerID, sm.ID))
 			continue
 		}
-		result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": registry validation", Status: StepOK, Detail: "valid"})
+		result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeOK, Detail: "valid"})
 
 		// b. Send outbox flush.
 		if flushErr := FlushSendOutbox(parentHome, sm); flushErr != nil {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": send outbox flush", Status: StepFailed, Detail: flushErr.Error()})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": send outbox flush", Status: ConvergeFailed, Detail: flushErr.Error()})
 			errs = append(errs, flushErr.Error())
 		} else {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": send outbox flush", Status: StepOK, Detail: "ok"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": send outbox flush", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// c. Nudge retry.
 		if nudgeErr := retryNudge(parentHome, sm); nudgeErr != nil {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": nudge retry", Status: StepFailed, Detail: nudgeErr.Error()})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": nudge retry", Status: ConvergeFailed, Detail: nudgeErr.Error()})
 			errs = append(errs, nudgeErr.Error())
 		} else {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": nudge retry", Status: StepOK, Detail: "ok"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": nudge retry", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// d. Safe local fast-forward.
 		before, after, ffReason, ffErr := safeFF(sm.Home, parentHome)
 		if ffErr != nil {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": safe fast-forward", Status: StepFailed, Detail: ffErr.Error()})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeFailed, Detail: ffErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: safe ff failed: %v", sm.ID, ffErr))
 		} else if ffReason == SafeFFAlreadyCurrent {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": safe fast-forward", Status: StepSkipped, Detail: "already-current"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeSkipped, Detail: "already-current"})
 		} else if ffReason == SafeFFSuccess {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": safe fast-forward", Status: StepOK, Detail: fmt.Sprintf("fast-forwarded %s → %s", before[:8], after[:8])})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeOK, Detail: fmt.Sprintf("fast-forwarded %s → %s", before[:8], after[:8])})
 
 			// g. Instruction surface tracking (only on FF).
 			if hasSurfaceDiff(sm.Home, before, after) {
 				printGitContentDiff(sm.Home, before, after)
 				digest, digestErr := instructionSurfaceDigest(sm.Home, after)
 				if digestErr != nil {
-					result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": instruction surface tracking", Status: StepFailed, Detail: digestErr.Error()})
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeFailed, Detail: digestErr.Error()})
 					errs = append(errs, fmt.Sprintf("%s: computing instruction digest: %v", sm.ID, digestErr))
 					continue
 				}
 				msg := fmt.Sprintf("instruction surface changed in %s", after[:8])
 				if wErr := writeNudgeMarker(parentHome, sm.ID, sm.Home, after, digest, msg); wErr != nil {
-					result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": instruction surface tracking", Status: StepFailed, Detail: wErr.Error()})
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeFailed, Detail: wErr.Error()})
 					errs = append(errs, fmt.Sprintf("%s: writing nudge marker: %v", sm.ID, wErr))
 				} else {
-					result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": instruction surface tracking", Status: StepOK, Detail: "nudge written"})
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeOK, Detail: "nudge written"})
 					// If alive, immediately send.
 					if err := sendNudge(parentHome, sm); err != nil {
 						errs = append(errs, err.Error())
 					}
 				}
 			} else {
-				result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": instruction surface tracking", Status: StepSkipped, Detail: "no surface change"})
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeSkipped, Detail: "no surface change"})
 			}
 		} else {
 			// Should not happen: safeFF returned no error but unknown reason.
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": safe fast-forward", Status: StepOK, Detail: "no change"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeOK, Detail: "no change"})
 		}
 
 		// e. Inheritance push.
 		if err := ConfigPush(parentHome, sm.Home); err != nil {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": inheritance push", Status: StepFailed, Detail: err.Error()})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeFailed, Detail: err.Error()})
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
 		} else {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": inheritance push", Status: StepOK, Detail: "ok"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// f. Liveness check.
 		alive, aliveErr := checkAliveViaBackend(parentHome, sm)
 		if aliveErr != nil {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": liveness check", Status: StepFailed, Detail: aliveErr.Error()})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: aliveErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, aliveErr))
 			continue
 		}
 		if alive {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": liveness check", Status: StepOK, Detail: "alive"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
 		} else {
-			result.Steps = append(result.Steps, StepResult{Name: sm.ID + ": liveness check", Status: StepSkipped, Detail: "absent"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent"})
 		}
 
 		// Watcher status check and reporting.
