@@ -625,7 +625,8 @@ func TestShipSafetyCheck_Topology_ProofReturnedOrdinaryMerge(t *testing.T) {
 func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 	// When the remote branch exists but the provider-reported head is NOT an
 	// ancestor of the base target (e.g., force-pushed, orphaned commit),
-	// the ancestry check should fail closed.
+	// the ancestry check is not a blocker — provider-confirmed MERGED is
+	// sufficient proof.
 	tmp := t.TempDir()
 	wt, _ := setupTopologyRepo(t, tmp)
 
@@ -662,7 +663,7 @@ func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 	}
 	orphanSHA := strings.TrimSpace(string(origShaOut))
 
-	// Go back to main branch so we can set up the identity
+	// Go back to feature branch so we can set up the identity
 	checkoutCmd := exec.Command("git", "checkout", "fm/feature-branch")
 	checkoutCmd.Dir = wt
 	checkoutCmd.Env = gitEnv
@@ -681,12 +682,124 @@ func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 	}, nil)
 	defer cleanup()
 
-	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
-	if err == nil {
-		t.Fatal("orphan head should fail ancestry check")
+	// Ancestry check is not a blocker — provider MERGED + head SHA match
+	// are sufficient proof. Teardown should succeed even though ancestry fails.
+	proofs, err := shipSafetyCheck(Options{ID: "test"}, meta)
+	if err != nil {
+		t.Fatalf("orphan head should not block teardown: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not an ancestor") {
-		t.Errorf("expected ancestry error, got: %v", err)
+	if len(proofs) != 1 {
+		t.Fatalf("expected 1 proof, got %d: %v", len(proofs), proofs)
+	}
+	if !strings.Contains(proofs[0], "ancestry check inconclusive") {
+		t.Errorf("expected ancestry check inconclusive in proof, got: %s", proofs[0])
+	}
+}
+
+func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
+	// Squash/rebase merge: provider confirms MERGED with different MergedSHA vs HeadSHA.
+	// Remote branch still exists. HeadSHA is NOT an ancestor of main,
+	// but MergedSHA (the merge commit) IS an ancestor. Teardown should succeed.
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	// Get the feature branch head SHA
+	gitEnv := topologyGitEnv(wt)
+	headSHACmd := exec.Command("git", "rev-parse", "HEAD")
+	headSHACmd.Dir = wt
+	headSHACmd.Env = gitEnv
+	headSHAOut, err := headSHACmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(headSHAOut))
+
+	// Simulate squash merge: create a new commit on main that represents
+	// the squashed merge result, then push main to origin.
+	checkoutCmd := exec.Command("git", "checkout", "main")
+	checkoutCmd.Dir = wt
+	checkoutCmd.Env = gitEnv
+	if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		t.Fatalf("checkout main: %s", out)
+	}
+
+	squashFile := filepath.Join(wt, "squash-result.txt")
+	os.WriteFile(squashFile, []byte("squashed content"), 0644)
+	addCmd := exec.Command("git", "add", "squash-result.txt")
+	addCmd.Dir = wt
+	addCmd.Env = gitEnv
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %s", out)
+	}
+	commitCmd := exec.Command("git", "commit", "-m", "squash merge result (simulated)")
+	commitCmd.Dir = wt
+	commitCmd.Env = gitEnv
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %s", out)
+	}
+
+	// Get the squash commit SHA — this IS an ancestor of origin/main
+	squashSHACmd := exec.Command("git", "rev-parse", "HEAD")
+	squashSHACmd.Dir = wt
+	squashSHACmd.Env = gitEnv
+	squashSHAOut, err := squashSHACmd.Output()
+	if err != nil {
+		t.Fatalf("getting squash SHA: %v", err)
+	}
+	squashSHA := strings.TrimSpace(string(squashSHAOut))
+
+	// Push main to origin so origin/main references the squash commit
+	pushCmd := exec.Command("git", "push", "origin", "main")
+	pushCmd.Dir = wt
+	pushCmd.Env = gitEnv
+	if out, err := pushCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push main: %s", out)
+	}
+
+	// Fetch to update origin/main ref in the local repo
+	fetchCmd := exec.Command("git", "fetch", "origin", "main")
+	fetchCmd.Dir = wt
+	fetchCmd.Env = gitEnv
+	if out, err := fetchCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git fetch: %s", out)
+	}
+
+	// Go back to feature branch
+	checkoutFeatureCmd := exec.Command("git", "checkout", "fm/feature-branch")
+	checkoutFeatureCmd.Dir = wt
+	checkoutFeatureCmd.Env = gitEnv
+	if out, err := checkoutFeatureCmd.CombinedOutput(); err != nil {
+		t.Fatalf("checkout feature branch: %s", out)
+	}
+
+	// Now headSHA is NOT an ancestor of origin/main (the new squash commit
+	// on main is unrelated to the feature branch head).
+	// squashSHA IS an ancestor of origin/main.
+
+	meta := fixtureMeta(wt, true)
+	meta["pr_head"] = headSHA
+
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:    true,
+		MergedSHA: squashSHA,
+		HeadSHA:   headSHA,
+		State:     "MERGED",
+	}, nil)
+	defer cleanup()
+
+	// Provider MERGED + head SHA match + MergedSHA ancestry verified
+	proofs, err := shipSafetyCheck(Options{ID: "test"}, meta)
+	if err != nil {
+		t.Fatalf("squash merge should pass: %v", err)
+	}
+	if len(proofs) != 1 {
+		t.Fatalf("expected 1 proof, got %d: %v", len(proofs), proofs)
+	}
+	if !strings.Contains(proofs[0], "ancestry verified") {
+		t.Errorf("squash merge proof should include ancestry verification, got: %s", proofs[0])
+	}
+	if !strings.Contains(proofs[0], squashSHA) {
+		t.Errorf("proof should reference MergedSHA %s, got: %s", squashSHA, proofs[0])
 	}
 }
 
