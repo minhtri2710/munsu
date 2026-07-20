@@ -54,7 +54,9 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 - On wake: prefer `munsu wake claim <consumer-id>` with lease management;
   `munsu wake-drain` is the simpler legacy alternative that drains all pending wakes.
 - Ground truth: `munsu soldier-state <id>` (not raw status tail).
-- Steer as needed: `munsu send <id> "<line>"`.
+- Steer as needed: `munsu send <id> "<line>"` (downlink only -- fails on captain:*/general).
+- Uplink status: `munsu report <state> "<msg>"` reports up the hierarchy (soldier/captain/general).
+  Use `munsu notify` as an alias.
 - Peek at output: `munsu peek <id> [--lines N]`.
 
 **Completion:** Actionable wakes handled; persistent watcher remains healthy while tasks are in flight.

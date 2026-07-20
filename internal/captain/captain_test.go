@@ -858,7 +858,7 @@ func TestBuildLaunchScript(t *testing.T) {
 	args := []string{"--model", "gpt-5", "# charter"}
 	cwd := tmp
 
-	cmd, err := buildLaunchScript(binPath, args, cwd)
+	cmd, err := buildLaunchScript(binPath, args, cwd, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
@@ -904,7 +904,7 @@ func TestBuildLaunchScript_SafeQuoting(t *testing.T) {
 	cwd := filepath.Join(tmp, "sm test")
 	os.MkdirAll(cwd, 0755)
 
-	cmd, err := buildLaunchScript(binPath, args, cwd)
+	cmd, err := buildLaunchScript(binPath, args, cwd, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}
@@ -941,7 +941,7 @@ func TestBuildLaunchScript_ShellExecution(t *testing.T) {
 
 	// Build a launch script with special characters.
 	args := []string{"# charter with $HOME and `backticks` and $(whoami)"}
-	scriptCmd, err := buildLaunchScript(testBin, args, smHome)
+	scriptCmd, err := buildLaunchScript(testBin, args, smHome, smHome)
 	if err != nil {
 		t.Fatalf("buildLaunchScript error: %v", err)
 	}

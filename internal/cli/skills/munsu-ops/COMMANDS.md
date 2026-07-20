@@ -1,38 +1,50 @@
-# munsu command map — grouped by lifecycle phase
+# munsu-ops — command map
 
-Command names match `munsu --help` output verbatim. All commands accept `--home` to override the home directory.
+Command names match `munsu --help` output verbatim. All commands accept `--home` (or `MUNSU_HOME`).
 
 ---
 
-## Home / Init
+## Init / Config
 
 | Command | Description |
 |---------|-------------|
-| `munsu home [--mkdir]` | Print or create the munsu home directory. Resolution: `--home` > `MUNSU_HOME` > `~/.munsu`. |
-| `munsu init` | Create home tree and seed orchestrator operating manual. |
-| `munsu update` | Self-update munsu. |
+| `munsu init` | Create a munsu home directory. |
+| `munsu config <key>` | Get or set a config value. |
+| `munsu bootstrap` | Detect toolchain and run setup sweeps. |
+| `munsu doctor` | Toolchain diagnostics with actionable fix suggestions. |
 
-## Session lifecycle
-
-| Command | Description |
-|---------|-------------|
-| `munsu session-start` | Lock, bootstrap, print session-start digest (Context, Fleet State, Supervision). |
-| `munsu afk` | Enter away-mode sub-supervisor daemon (reduced polling cadence). |
-
-## Task / Backlog
+## Project / Worktree / Harness
 
 | Command | Description |
 |---------|-------------|
-| `munsu backlog <verb> [args...]` | Manage task backlog (verbs: add, start, done, list, show, block, unblock, ready, hold, update, render). Backend: tasks-axi when available, fallback to `$MUNSU_HOME/data/backlog.md`. |
-| `munsu task <verb> [args...]` | Manage task lifecycle (verbs: add, list, show, status). |
-| `munsu brief <id> <repo> [--scout]` | Scaffold a task brief (`--scout` for scout tasks). |
+| `munsu project add <name> [--repo <url>]` | Register a project. |
+| `munsu project list` | List registered projects. |
+| `munsu project mode <name> [--kind ship\|scout]` | Show or resolve delivery mode. |
+| `munsu worktree add <path>` | Add and track an existing worktree. |
+| `munsu worktree list` | List tracked worktrees. |
+| `munsu worktree release <path>` | Release a worktree. |
+| `munsu harness detect` | Detect your current coding-agent harness. |
+| `munsu harness list` | List known adapters. |
+
+## Session / Fleet
+
+| Command | Description |
+|---------|-------------|
+| `munsu session-start` | Lock, bootstrap, ensure watcher for in-flight work, and print the session-start digest. |
+| `munsu fleet snapshot --version 2` | Compact fleet state snapshot with aggregate counts. |
+| `munsu fleet sync [<project>]` | Clone or pull project repos. |
+| `munsu fleet view` | See the full fleet. |
+| `munsu fleet bearings` | Compact resume report (snapshot + captain table). |
+| `munsu home [--mkdir]` | Print or create the munsu home directory. |
 
 ## Spawn / Send / Peek
 
 | Command | Description |
 |---------|-------------|
-| `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only] [--backend tmux|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
-| `munsu send <id> "<line>"` | Send a line to a soldier endpoint. |
+| `munsu spawn <id> <project> [--kind ship\|scout] [--mode no-mistakes\|direct-PR\|local-only] [--backend tmux\|herdr] [--yolo]` | Launch a soldier agent in a worktree+tmux/herdr window. |
+| `munsu send <id> "<line>"` | Send a line to a soldier endpoint (downlink only). |
+| `munsu report <state> "<msg>" [--key <slug>]` | Report status up the hierarchy (rank-aware uplink). |
+| `munsu notify <state> "<msg>"` | Alias for 'munsu report'. |
 | `munsu peek <id> [--lines N]` | Read last N lines of soldier pane output (default 40). |
 | `munsu soldier-state <id>` | Read soldier current state (meta + pane liveness + status log). |
 
@@ -40,74 +52,96 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu watch` | Run the persistent watcher daemon (singleton-safe, home-scoped lock). Queues actionable wakes until stopped. |
-| `munsu watch ensure [--restart]` | Ensure the watcher daemon is healthy (home-scoped, idempotent). |
-| `munsu wake-drain` | Drain queued wakes (legacy pull-based).
-| `munsu wake claim <consumer-id>` | Claim a batch of pending wakes with lease management (preferred API).
-| `munsu wake ack <lease-id> <event-id...>` | Acknowledge a processed wake to release its lease.
-| `munsu guard` | Warn on tangle or stale watcher.
-
-See `SUPERVISION.md` for the full watch/wake-drain/guard/afk loop.
-
-## Delivery
-
-| Command | Description |
-|---------|-------------|
-| `munsu delivery pr-check <id> <pr-url>` | Record PR URL and head SHA in task meta; write check.sh for merge polling. |
-| `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI (default: squash). |
-| `munsu delivery merge-local <id>` | Fast-forward merge soldier branch to local default branch (local-only mode only). |
-| `munsu delivery review-diff <id>` | Print diff summary between soldier branch and base. |
-| `munsu promote <id>` | Promote a scout task to ship. |
-
-## Teardown
-
-| Command | Description |
-|---------|-------------|
-| `munsu teardown <id> [--force]` | Tear down a soldier with dirty/remote/report safety checks. |
+| `munsu watch` | Run the persistent watcher daemon. |
+| `munsu watch ensure [--restart]` | Start or restart the persistent watcher. |
+| `munsu watch run` | Run one diagnostic cycle. |
+| `munsu watch stop` | Stopping the watcher (SIGTERM). |
+| `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. |
+| `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
+| `munsu wake-drain` | Drain all pending wakes (legacy, no lease management). |
+| `munsu guard` | Report fleet guard conditions, or act as a harness Stop-hook guard. |
 
 ## Captain
 
 | Command | Description |
 |---------|-------------|
-| `munsu captain launch <captain-home>` | Launch a captain in its home.
-| `munsu captain list` | List registered captains.
-| `munsu captain handoff <captain-home> <item-key...>` | Hand off backlog items to a captain.
-| `munsu captain config-push <captain-home>` | Push inheritable config to a captain.
-| `munsu captain converge` | Converge all registered captains (flush outbox, retry nudges, liveness).
-| `munsu captain recover [captain-home]` | Probe liveness and relaunch launched-but-dead endpoints.
-| `munsu captain retire [--force] <captain-home>` | Retire a captain.
+| `munsu captain list` | List registered captains. |
+| `munsu captain seed <id> <home> [--charter <text>]` | Create a new captain home with charter and provenance marker. |
+| `munsu captain launch <id>` | Launch a seeded captain in a new pane. |
+| `munsu captain retire <id>` | Retire a captain (teardown pane, remove marker). |
+| `munsu captain converge` | Flush send outboxes, retry nudges, push config. |
+| `munsu captain handoff <id> <new-home>` | Hand off a captain to a different home. |
+| `munsu captain config-push <id>` | Push inherited config from parent to one captain. |
 
-## Fleet / Diagnostics
-
-| Command | Description |
-|---------|-------------|
-| `munsu fleet view` | Render fleet view from snapshot. |
-| `munsu fleet snapshot` | Emit fleet snapshot JSON. |
-| `munsu fleet sync` | Fast-forward refresh project clones. |
-| `munsu fleet bearings` | Compact resume report of fleet state. |
-| `munsu stow <learning...>` | Capture durable learnings from the current session. |
-| `munsu bootstrap [install <tools>...]` | Detect toolchain and run setup sweeps. |
-
-## Project / Config / Worktree
+## Task / Brief / Backlog
 
 | Command | Description |
 |---------|-------------|
-| `munsu project add\|list\|mode\|rm\|show` | Manage the project registry. |
-| `munsu config get\|set` | Read/write munsu configuration. |
-| `munsu worktree get\|return\|status` | Manage pooled git worktrees. |
+| `munsu backlog add <id> "<desc>" [--kind ship\|scout\|task] [--repo <name>] [--start]` | Register a task. |
+| `munsu backlog list` | List all backlog entries. |
+| `munsu backlog show <id>` | Show a backlog entry. |
+| `munsu backlog block <id>` | Block a task on a dependency. |
+| `munsu backlog ready <id>` | Mark a blocked task as ready again. |
+| `munsu backlog done <id>` | Mark a task as done in backlog. |
+| `munsu task observe <id> [--fields description,branch,pane_alive,no_mistakes_step]` | Observe one task using the orchestration contract. |
+| `munsu brief <id> <repo> [--scout]` | Scaffold a task brief. |
+| `munsu soldier-state <id>` | Read soldier current state. |
+| `munsu promote <id>` | Promote a scout task to ship. |
+| `munsu teardown <id> [--force]` | Tear down a soldier by its task ID. |
 
-## Harness
+## Delivery
 
 | Command | Description |
 |---------|-------------|
-| `munsu harness detect` | Detect the running agent harness. |
-| `munsu harness soldier` | Resolve soldier harness. |
-| `munsu harness captain` | Resolve captain harness. |
+| `munsu delivery pr-check <id> <pr-url>` | Record a PR URL for a task. |
+| `munsu delivery pr-merge <id> <pr-url>` | Merge a PR when instructed. |
+| `munsu delivery merge-local <id>` | Fast-forward merge a task branch to the local default branch. |
 
-## Helpers
+## Event / Stow / Decision Hold
 
 | Command | Description |
 |---------|-------------|
-| `munsu ensure-agents-md <project>` | Ensure project AGENTS.md / CLAUDE.md symlink and self-governance section. |
-| `munsu completion <shell>` | Generate shell autocompletion script. |
-| `munsu help [command]` | Help about any command. |
+| `munsu event append <event-id> --type <type> [--producer <id>] [--key <slug>] [--json <payload>]` | Append a typed event to the event log. |
+| `munsu stow [text...]` | Capture durable learnings. |
+| `munsu stow --general [text...]` | Capture captain preference. |
+| `munsu stow --kind general [text...]` | Same as --general. |
+| `munsu decision-hold list [--task <id>]` | List decision holds. |
+| `munsu decision-hold resolve <hold-id> [rationale...]` | Resolve a decision hold. |
+
+## Integrate / Update / Skill
+
+| Command | Description |
+|---------|-------------|
+| `munsu integrate install [--harness <name>]` | Install munsu integrate extension for a harness. |
+| `munsu integrate repair [--harness <name>]` | Check or repair a munsu integrate installation. |
+| `munsu integrate status [--harness <name>]` | Show integration state for a harness. |
+| `munsu update` | Fast-forward the munsu install root from origin. |
+| `munsu skill list` | Show available skill names. |
+| `munsu skill show <name>` | Display a skill's SKILL.md content. |
+
+## AFK (Away Mode)
+
+| Command | Description |
+|---------|-------------|
+| `munsu afk` | Enter away-mode supervision. |
+| `munsu afk drain --consumer <id>` | One General drain cycle. |
+| `munsu afk return` | Perform ordered AFK daemon shutdown. |
+| `munsu afk return check` | Check if actionable AFK state remains. |
+
+## Capabilities / Backend
+
+| Command | Description |
+|---------|-------------|
+| `munsu capabilities` | Show agent-facing orchestration capabilities. |
+| `munsu backend capabilities [--backend tmux\|herdr]` | Show supported operations for one session backend. |
+
+## Orchestration contract
+
+| Command | Description |
+|---------|-------------|
+| `munsu capabilities` | Show agent-facing orchestration capabilities (contract. |
+| `munsu task observe <id>` | Observe one task using the orchestration contract. |
+| `munsu fleet snapshot --version 2` | Compact fleet state snapshot with aggregate counts. |
+| `munsu guard` | Report fleet guard conditions. |
+| `munsu event append` | Append a typed event to the event log. |
+| `munsu backend capabilities` | Show supported operations for one session backend. |

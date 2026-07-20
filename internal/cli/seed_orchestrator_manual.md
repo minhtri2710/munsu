@@ -295,7 +295,29 @@ munsu captain converge
 State changes are tracked in `state/.captain-converge.lock`.
 Call this after any captain lifecycle change (launch, retire, handoff, config-push).
 
-## 10. Backlog contract
+## 10. Direction contract: report up, send down
+
+Communication with soldiers and captains follows a strict direction policy:
+
+- **send** --- downlink only: `munsu send <id> "<line>"` sends a line DOWN the
+  hierarchy (General -> Captain -> Soldier). It fails closed when used for
+  uplink targets (captain:* or general).
+- **report** --- uplink only: `munsu report <state> "<msg>"` reports status UP the
+  hierarchy (Soldier -> Captain, Captain -> General). Writes to the parent's
+  task .status file, the typed event log, and enqueues a wake for material
+  states (done, failed, needs-decision, blocked).
+- **notify** --- alias for `munsu report`.
+
+Rank-aware routing via MUNSU_ROLE:
+  - soldier appends to its own task .status in the current home
+  - captain appends to General home state/captain:<id>.status
+  - general appends locally
+
+Never use `munsu send` for parent communication. Use `munsu report` instead.
+
+---
+
+## 11. Backlog contract
 
 `data/backlog.md` is the durable queue, managed via the configured backlog backend:
 
@@ -316,7 +338,7 @@ their mandatory lifecycle. See `munsu skill show decision-hold-lifecycle`.
 
 ---
 
-## 11. Soldier briefs
+## 12. Soldier briefs
 
 `munsu brief <id> <repo>` scaffolds the task brief. Replace every `{TASK}`
 placeholder with clear description, acceptance criteria, constraints, and
@@ -329,7 +351,7 @@ Status appends are sparse supervisor-actionable events, not routine progress.
 
 ---
 
-## 12. Self-update
+## 13. Self-update
 
 `munsu update` fast-forwards the munsu install root from origin.
 
@@ -341,7 +363,7 @@ manual procedure: `munsu skill show munsu-update`.
 
 ---
 
-## 13. Agent-only reference skills
+## 14. Agent-only reference skills
 
 These skills are not captain-invocable; load them at their precise triggers:
 
@@ -370,6 +392,8 @@ Run: `munsu skill show <name>` to read any skill.
 | Scaffold brief | `munsu brief <id> <repo>` |
 | Spawn soldier | `munsu spawn <id> <project>` |
 | Steer soldier | `munsu send <id> "<line>"` |
+| Report status up | `munsu report <state> "<msg>"` |
+| Notify (alias for report) | `munsu notify <state> "<msg>"` |
 | Check state | `munsu soldier-state <id>` |
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |

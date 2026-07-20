@@ -110,6 +110,11 @@ func newSendCmd() *cobra.Command {
 			id := args[0]
 			line := args[1]
 
+			// BREAKING: uplink targets fail closed — use munsu report for parent communication
+			if strings.HasPrefix(id, "captain:") || id == "general" {
+				return fmt.Errorf("error: uplink use munsu report; send is downlink only")
+			}
+
 			// Read meta to resolve window
 			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
