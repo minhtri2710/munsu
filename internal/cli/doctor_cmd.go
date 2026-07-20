@@ -8,10 +8,12 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
+	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/spf13/cobra"
 )
 
 func newDoctorCmd() *cobra.Command {
+	var role string
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Read-only diagnostics with fix commands",
@@ -22,11 +24,32 @@ Hard-required tools (doctor exits non-zero if missing):
   (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
-  treehouse, no-mistakes, tasks-axi, gh-axi, gh, and GitHub auth.`,
+  treehouse, no-mistakes, tasks-axi, gh-axi, gh, and GitHub auth.
+
+Use --role for role-specific integration matrix:
+  --role general   Harness adapter, session backend, gh auth, go toolchain
+  --role captain   Watcher integration, config, captain homes, converge readiness
+  --role soldier   Worktree state, pipeline readiness, soldier brief`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			checkInstructions, _ := cmd.Flags().GetBool("check-instructions")
 			if checkInstructions {
 				return runCheckInstructions(ctx.Home)
+			}
+
+			// Role-specific doctor scan
+			if role != "" {
+				r, err := integrate.Doctor(ctx.Home, integrate.Role(role))
+				if err != nil {
+					return fmt.Errorf("doctor: %w", err)
+				}
+				fmt.Printf("Integration matrix for role: %s\n", r.Role)
+				for _, e := range r.Entries {
+					fmt.Println(e.String())
+					if e.RepairCmd != "" {
+						fmt.Println("    Fix: " + e.RepairCmd)
+					}
+				}
+				return nil
 			}
 
 			result, err := bootstrap.Run(ctx.Home, false, nil)
@@ -131,6 +154,7 @@ Optional tools get warnings but do not fail the exit code:
 		}),
 	}
 	cmd.Flags().Bool("check-instructions", false, "Verify AGENTS.md/orchestrator manual references against real commands")
+	cmd.Flags().StringVar(&role, "role", "", "Role-specific scan: general, captain, or soldier")
 	return cmd
 }
 

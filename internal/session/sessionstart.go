@@ -13,10 +13,12 @@ import (
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 )
+
 
 type SessionStartResult struct {
 	LockAcquired    bool
@@ -259,6 +261,23 @@ func checkSessionScope(home string) error {
 	return nil
 }
 
+// printIntegrationMatrix prints the role-aware integration summary for the
+// current role (determined by MUNSU_ROLE env, defaulting to "general").
+func printIntegrationMatrix(w io.Writer, home string) {
+	role := os.Getenv("MUNSU_ROLE")
+	if role == "" {
+		role = "general"
+	}
+	r, err := integrate.Doctor(home, integrate.Role(role))
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "\n--- Integration Matrix (role: %s) ---\n", r.Role)
+	for _, e := range r.Entries {
+		fmt.Fprintln(w, "  "+e.String())
+	}
+}
+
 func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
 	if err := checkSessionScope(home); err != nil {
@@ -301,6 +320,8 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "")
 		fmt.Fprintln(w, "Missing tools -- install with: munsu bootstrap install <tool>")
 	}
+
+	printIntegrationMatrix(w, home)
 
 	if acquired {
 		syncRes, err := fleet.Sync(home, "")
