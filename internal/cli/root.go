@@ -107,12 +107,15 @@ func fleetSummary(w io.Writer, homeDir string) {
 	if snapErr == nil && snap != nil && len(snap.Tasks) > 0 {
 		fmt.Fprintln(w)
 		for _, ts := range snap.Tasks {
-			phase := fleet.PhaseFromMeta(ts.Window, ts.PaneAlive)
+			phase := fleet.PhaseFromProjection(ts)
 			project := ts.Project
 			if project == "" {
 				project = "-"
 			}
-			status := ts.LastStatus
+			status := ts.CurrentDescription
+			if status == "" {
+				status = ts.LastStatus
+			}
 			if status == "" {
 				status = phase
 			}

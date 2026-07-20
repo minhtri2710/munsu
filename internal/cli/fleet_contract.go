@@ -9,6 +9,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +22,19 @@ func init() {
 		return bk.Alive(meta["window"]), nil
 	})
 	captain.SetFleetCaptainStatus(fleet.CaptainStatus)
+	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
+		st, err := soldierstate.Read(homeDir, id)
+		if err != nil {
+			return nil, err
+		}
+		return &fleet.CurrentStateInfo{
+			State:               st.Status,
+			Description:         st.Description,
+			NoMistakesRunStep:   st.NoMistakesRunStep,
+			StatusLogSuperseded: st.StatusLogSuperseded,
+			OpenActivities:      st.OpenActivities,
+		}, nil
+	})
 }
 
 func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
