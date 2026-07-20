@@ -254,6 +254,31 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSele
 	return sel
 }
 
+// ResolveDispatchSelectionWithPreflight resolves dispatch and runs preflight readiness
+// checks on the selected harness. Returns the selection on success, or a structured
+// error when a known preflight check fails (adapter unknown, binary absent, auth missing).
+// Unknown-level preflight results pass through without error.
+func ResolveDispatchSelectionWithPreflight(cfg *DispatchConfig, taskDesc string) (DispatchSelection, error) {
+	sel := ResolveDispatchSelection(cfg, taskDesc)
+	if sel.Harness == "" {
+		return sel, nil
+	}
+	result, err := Preflight(sel.Harness)
+	if err != nil {
+		return sel, err
+	}
+	if result.AdapterKnown == PreflightAbsent {
+		return sel, &PreflightError{Harness: sel.Harness, Reason: "adapter-unknown"}
+	}
+	if result.BinaryOnPath == PreflightAbsent {
+		return sel, &PreflightError{Harness: sel.Harness, Reason: "binary-absent"}
+	}
+	if result.AuthConfigured == PreflightAbsent {
+		return sel, &PreflightError{Harness: sel.Harness, Reason: "auth-absent"}
+	}
+	return sel, nil
+}
+
 // matchesProfile checks if the profile's match rules apply to the task.
 func matchesProfile(rules []string, taskLower string, taskWords []string) bool {
 	for _, rule := range rules {
