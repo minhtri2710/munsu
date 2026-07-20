@@ -25,6 +25,7 @@ type Args struct {
 	Mode                string // --mode flag value; empty=auto-detect
 	ProjectMode         string // project registry mode (raw, not defaulted); empty = resolve from registry
 	Yolo                bool
+	Force               bool   // --force flag; bypass captain backlog authority checks
 	Backend             string          // --backend flag value; empty = auto-detect
 	HarnessFlag         string          // --harness flag value; empty = resolve from config
 	ModelFlag           string          // --model flag; empty = dispatch/template default

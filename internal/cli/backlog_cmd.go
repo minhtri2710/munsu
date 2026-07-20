@@ -53,6 +53,9 @@ Example:
 `,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseCaptainBacklogMutation(); err != nil {
+				return err
+			}
 			id := args[0]
 			desc := args[1]
 
@@ -174,6 +177,9 @@ func newBacklogReadyCmd() *cobra.Command {
 		Short: "Unblock a backlog item (mark ready)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseCaptainBacklogMutation(); err != nil {
+				return err
+			}
 			if isDefaultHome(ctx.Home) {
 				return backlog.Run(ctx.Home, "ready", args)
 			}
@@ -188,6 +194,9 @@ func newBacklogUnblockCmd() *cobra.Command {
 		Short: "Alias for ready (unblock a backlog item)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseCaptainBacklogMutation(); err != nil {
+				return err
+			}
 			if isDefaultHome(ctx.Home) {
 				return backlog.Run(ctx.Home, "unblock", args)
 			}
@@ -219,4 +228,13 @@ func newBacklogPathsCmd() *cobra.Command {
 			return nil
 		}),
 	}
+}
+
+// refuseCaptainBacklogMutation returns an error when run inside a captain context.
+// The Captain must not add, ready, or unblock backlog items without General instruction.
+func refuseCaptainBacklogMutation() error {
+	if os.Getenv("MUNSU_ROLE") == "captain" {
+		return fmt.Errorf("captain backlog authority: captains may not modify the backlog without General instruction; use 'munsu send captain:<id> <task-add|unblock|ready> ...' from the General home")
+	}
+	return nil
 }

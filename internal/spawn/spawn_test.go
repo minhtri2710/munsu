@@ -1053,3 +1053,150 @@ func TestWaitAndInjectBrief_FailurePatternTearsDown(t *testing.T) {
 		t.Errorf("failure evidence file not written: %v", statErr)
 	}
 }
+
+func TestCheckCaptainBacklogAuthority_SkippedWhenForceSet(t *testing.T) {
+	r := &Runner{
+		args:      Args{Force: true},
+		spawnRole: "captain",
+	}
+	if err := r.checkCaptainBacklogAuthority(); err != nil {
+		t.Fatalf("expected no error when --force is set, got: %v", err)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_SkippedWhenNotCaptain(t *testing.T) {
+	r := &Runner{
+		args:      Args{},
+		spawnRole: "general",
+	}
+	if err := r.checkCaptainBacklogAuthority(); err != nil {
+		t.Fatalf("expected no error when role is not captain, got: %v", err)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_RefusesAbsentTask(t *testing.T) {
+	homeDir := t.TempDir()
+	restore := mockReadBacklogTaskState("", "", false, nil)
+	defer restore()
+	r := &Runner{
+		args:      Args{ID: "absent-task"},
+		spawnRole: "captain",
+		homeDir:   homeDir,
+	}
+	err := r.checkCaptainBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for absent task, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found in backlog") {
+		t.Errorf("error should mention not found, got: %v", err)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_RefusesBlockedTask(t *testing.T) {
+	restore := mockReadBacklogTaskState("queued", "some-dependency", true, nil)
+	defer restore()
+	r := &Runner{
+		args:      Args{ID: "blocked-task"},
+		spawnRole: "captain",
+	}
+	err := r.checkCaptainBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for blocked task, got nil")
+	}
+	if !strings.Contains(err.Error(), "blocked-by") {
+		t.Errorf("error should mention blocked-by, got: %v", err)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_RefusesDoneTask(t *testing.T) {
+	restore := mockReadBacklogTaskState("done", "", true, nil)
+	defer restore()
+	r := &Runner{
+		args:      Args{ID: "done-task"},
+		spawnRole: "captain",
+	}
+	err := r.checkCaptainBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for done task, got nil")
+	}
+	if !strings.Contains(err.Error(), "done") {
+		t.Errorf("error should mention done, got: %v", err)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_RefusesInFlightTaskFromMeta(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = task.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship"})
+	r := &Runner{
+		args:      Args{ID: "live-task"},
+		spawnRole: "captain",
+		homeDir:   homeDir,
+	}
+	err := r.checkCaptainBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for in-flight task from meta, got nil")
+	}
+	if !strings.Contains(err.Error(), "already in-flight") {
+		t.Errorf("error should mention in-flight, got: %v", err)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_AllowsReadyTask(t *testing.T) {
+	restore := mockReadBacklogTaskState("queued", "", true, nil)
+	defer restore()
+	r := &Runner{
+		args:      Args{ID: "ready-task"},
+		spawnRole: "captain",
+	}
+	if err := r.checkCaptainBacklogAuthority(); err != nil {
+		t.Fatalf("expected no error for queued task, got: %v", err)
+	}
+}
+
+func TestParseTasksAxiShow_ExtractsState(t *testing.T) {
+	output := "task:\n  id: test\n  title: Test task\n  state: queued\n  blocked: no\n  blocked_by: none\n"
+	state, blocked := parseTasksAxiShow(output)
+	if state != "queued" {
+		t.Errorf("state = %q, want queued", state)
+	}
+	if blocked != "" {
+		t.Errorf("blocked = %q, want empty", blocked)
+	}
+}
+
+func TestParseTasksAxiShow_ExtractsBlocked(t *testing.T) {
+	output := "task:\n  id: test\n  title: Test task\n  state: queued\n  blocked: yes\n  blocked_by: dep-1\n"
+	state, blocked := parseTasksAxiShow(output)
+	if state != "queued" {
+		t.Errorf("state = %q, want queued", state)
+	}
+	if blocked != "dep-1" {
+		t.Errorf("blocked = %q, want dep-1", blocked)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_RefusesInFlightInBacklog(t *testing.T) {
+	restore := mockReadBacklogTaskState("in-flight", "", true, nil)
+	defer restore()
+	r := &Runner{
+		args:      Args{ID: "in-flight-task"},
+		spawnRole: "captain",
+	}
+	err := r.checkCaptainBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for in-flight task in backlog, got nil")
+	}
+	if !strings.Contains(err.Error(), "in-flight") {
+		t.Errorf("error should mention in-flight, got: %v", err)
+	}
+}
+
+// mockReadBacklogTaskState replaces readBacklogTaskState for testing
+// and returns a restore function.
+func mockReadBacklogTaskState(state, blocked string, found bool, err error) func() {
+	original := readBacklogTaskState
+	readBacklogTaskState = func(backlogPath, id string) (string, string, bool, error) {
+		return state, blocked, found, err
+	}
+	return func() { readBacklogTaskState = original }
+}

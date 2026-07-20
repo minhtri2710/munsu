@@ -24,6 +24,7 @@ func newSpawnCmd() *cobra.Command {
 		kind        string
 		mode        string
 		yolo        bool
+		force       bool
 		backend     string
 		harnessFlag string
 		modelFlag   string
@@ -73,6 +74,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				Mode:        mode,        // raw flag value; resolution happens inside Run
 				ProjectMode: projectMode, // raw project mode; resolution happens inside Run
 				Yolo:        yolo,
+				Force:       force,
 				Backend:     backend,
 				HarnessFlag: harnessFlag,
 				ModelFlag:   modelFlag,
@@ -93,12 +95,12 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
+	cmd.Flags().BoolVar(&force, "force", false, "Bypass captain backlog authority checks")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override soldier harness (pi, agy, etc.)")
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Override model for the soldier harness")
 	cmd.Flags().StringVar(&effortFlag, "effort", "", "Override effort/thinking level (harness-specific)")
 	cmd.Flags().BoolVar(&arm, "arm", false, "Arm the watcher after spawn (warn-only on failure)")
-
 	return cmd
 }
 
