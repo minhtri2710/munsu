@@ -45,11 +45,13 @@ func TestRead_NoWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// No window and no status — status should be "unknown"
+	// (no pane-derived "idle")
 	if s.Status != "unknown" {
 		t.Errorf("status = %q, want unknown", s.Status)
 	}
-	if !strings.Contains(s.Description, "no window") {
-		t.Errorf("description should mention no window, got %q", s.Description)
+	if s.PaneAlive {
+		t.Error("PaneAlive should be false when no window in meta")
 	}
 }
 
@@ -68,9 +70,14 @@ func TestRead_WithWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Window doesn't exist, so pane is gone
-	if s.PaneAlive {
-		t.Error("pane should not be alive for fake window")
+	// Window exists in meta — PaneAlive is diagnostic true (window present).
+	// Status is not derived from pane liveness.
+	if !s.PaneAlive {
+		t.Error("PaneAlive should be true when window exists in meta")
+	}
+	// No status file — status remains unknown
+	if s.Status != "unknown" {
+		t.Errorf("status = %q, want unknown (no status file)", s.Status)
 	}
 }
 
@@ -169,13 +176,14 @@ func TestRead_ResolvedIsNotCurrentState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Trailing resolved closes the phase; current state falls through to pane/idle,
-	// not Status=resolved.
+	// Trailing resolved closes the phase; lastStateBearingLine returns ""
+	// because resolved is a pure close event. No higher-precedence source exists,
+	// so status falls through to unknown.
 	if s.Status == "resolved" {
 		t.Fatalf("status must not be resolved; got %q (%s)", s.Status, s.Description)
 	}
-	if s.Status != "idle" && s.Status != "working" && s.Status != "unknown" {
-		t.Errorf("status = %q, want idle/working/unknown after pure close", s.Status)
+	if s.Status != "unknown" {
+		t.Errorf("status = %q, want unknown after pure close", s.Status)
 	}
 	if len(s.OpenActivities) != 0 {
 		t.Errorf("OpenActivities should be closed, got %+v", s.OpenActivities)
@@ -259,9 +267,9 @@ func TestRead_GitBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Status should be idle (pane gone) or unknown
-	if s.Status != "unknown" && s.Status != "idle" {
-		t.Errorf("unexpected status %q", s.Status)
+	// No status file and pane-derived 'idle' is removed. Status should be unknown.
+	if s.Status != "unknown" {
+		t.Errorf("unexpected status %q, want unknown (pane prose is not truth)", s.Status)
 	}
 }
 
@@ -282,8 +290,7 @@ func TestRead_LastNonTerminalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Last line is "blocked", non-terminal, so status should be "blocked"
-	// But pane is gone so pane check says "idle" which gets overridden by blocked
+	// Last line is "blocked", non-terminal — status resolves to "blocked" at tier 2.
 	if s.Status != "blocked" {
 		t.Errorf("status = %q, want blocked", s.Status)
 	}
@@ -366,66 +373,198 @@ func TestApplyNoMistakesStep_Cancelled(t *testing.T) {
 	}
 }
 
-func TestRunStepOverrides_ActiveStepOverridesDone(t *testing.T) {
-	s := &State{NoMistakesRunStep: "running"}
-	if !s.runStepOverrides("done") {
-		t.Error("running should override done log")
+func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	// Create meta with window
+	if err := task.WriteMeta(tmp, "backlog-test", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a stale "working" status line
+	if err := task.AppendStatus(tmp, "backlog-test", "working: stale work"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a backlog file with "done" for this task
+	backlogDir := filepath.Join(tmp, "data")
+	if err := os.MkdirAll(backlogDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	backlogContent := `# Backlog
+
+	## 2025-01-01
+	- [x] backlog-test: completed task
+`
+	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read(tmp, "backlog-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Backlog "done" (tier 1) overrides stale "working" (tier 5)
+	if s.Status != "done" {
+		t.Errorf("status = %q, want done (backlog overrides stale working)", s.Status)
+	}
+	if s.BacklogState != "done" {
+		t.Errorf("BacklogState = %q, want done", s.BacklogState)
+	}
+	if !s.StatusLogSuperseded {
+		t.Errorf("StatusLogSuperseded should be true when backlog overrides")
 	}
 }
 
-func TestRunStepOverrides_ActiveStepOverridesFailed(t *testing.T) {
-	s := &State{NoMistakesRunStep: "running"}
-	if !s.runStepOverrides("failed") {
-		t.Error("running should override failed log")
+func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta(tmp, "blocked-test", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a stale "working" status line
+	if err := task.AppendStatus(tmp, "blocked-test", "working: active work"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a backlog file with "blocked"
+	backlogDir := filepath.Join(tmp, "data")
+	if err := os.MkdirAll(backlogDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	backlogContent := `# Backlog
+
+	## 2025-01-01
+	- [!] blocked-test: blocked task
+`
+	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read(tmp, "blocked-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Status != "blocked" {
+		t.Errorf("status = %q, want blocked (backlog overrides status)", s.Status)
+	}
+	if s.BacklogState != "blocked" {
+		t.Errorf("BacklogState = %q, want blocked", s.BacklogState)
 	}
 }
 
-func TestRunStepOverrides_PassedDoesNotOverrideDone(t *testing.T) {
-	s := &State{NoMistakesRunStep: "passed"}
-	if s.runStepOverrides("done") {
-		t.Error("passed should not override done log")
+func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	// Create meta with window
+	if err := task.WriteMeta(tmp, "in-flight-test", map[string]string{
+		"window": "@nonexistent99",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a "blocked" status line
+	if err := task.AppendStatus(tmp, "in-flight-test", "blocked: waiting for dep"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Backlog says in-flight (falls through to tier 2)
+	backlogDir := filepath.Join(tmp, "data")
+	if err := os.MkdirAll(backlogDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	backlogContent := `# Backlog
+
+	## 2025-01-01
+	- [-] in-flight-test: in progress
+`
+	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read(tmp, "in-flight-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Backlog in-flight doesn't override — status from tier 2 (blocked) wins
+	if s.Status != "blocked" {
+		t.Errorf("status = %q, want blocked (in-flight falls through)", s.Status)
+	}
+	if s.BacklogState != "in-flight" {
+		t.Errorf("BacklogState = %q, want in-flight", s.BacklogState)
 	}
 }
 
-func TestRunStepOverrides_PassedOverridesFailed(t *testing.T) {
-	s := &State{NoMistakesRunStep: "passed"}
-	if !s.runStepOverrides("failed") {
-		t.Error("passed should override failed log")
+func TestRead_BacklogQueuedWhenUnknown(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	// Create meta only (no status file, no window)
+	if err := task.WriteMeta(tmp, "queued-test", map[string]string{
+		"kind": "ship",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Backlog says queued
+	backlogDir := filepath.Join(tmp, "data")
+	if err := os.MkdirAll(backlogDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	backlogContent := `# Backlog
+
+	## 2025-01-01
+	- [ ] queued-test: not started
+`
+	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Read(tmp, "queued-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Queued state appears when status is unknown
+	if s.Status != "queued" {
+		t.Errorf("status = %q, want queued", s.Status)
+	}
+	if s.BacklogState != "queued" {
+		t.Errorf("BacklogState = %q, want queued", s.BacklogState)
 	}
 }
 
-func TestRunStepOverrides_FailedDoesNotOverrideFailed(t *testing.T) {
-	s := &State{NoMistakesRunStep: "failed"}
-	if s.runStepOverrides("failed") {
-		t.Error("failed should not override failed log")
-	}
-}
+func TestRead_NoBacklogItemFallsThrough(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
 
-func TestRunStepOverrides_FailedOverridesDone(t *testing.T) {
-	s := &State{NoMistakesRunStep: "failed"}
-	if !s.runStepOverrides("done") {
-		t.Error("failed should override done log")
+	// Create meta with a "done" status
+	if err := task.WriteMeta(tmp, "no-backlog-item", map[string]string{
+		"kind": "ship",
+	}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRunStepOverrides_CancelledOverridesDone(t *testing.T) {
-	s := &State{NoMistakesRunStep: "cancelled"}
-	if !s.runStepOverrides("done") {
-		t.Error("cancelled should override done log")
+	if err := task.AppendStatus(tmp, "no-backlog-item", "done: completed without backlog"); err != nil {
+		t.Fatal(err)
 	}
-}
 
-func TestRunStepOverrides_AwaitingApprovalOverridesDone(t *testing.T) {
-	s := &State{NoMistakesRunStep: "awaiting_approval"}
-	if !s.runStepOverrides("done") {
-		t.Error("awaiting_approval should override done log")
+	// No backlog file at all — should fall through to tier 2
+	s, err := Read(tmp, "no-backlog-item")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRunStepOverrides_EmptyDoesNotOverride(t *testing.T) {
-	s := &State{}
-	if s.runStepOverrides("done") {
-		t.Error("empty run-step should not override")
+	if s.Status != "done" {
+		t.Errorf("status = %q, want done from status file", s.Status)
+	}
+	if s.BacklogState != "" {
+		t.Errorf("BacklogState = %q, want empty (no backlog item)", s.BacklogState)
 	}
 }
 
