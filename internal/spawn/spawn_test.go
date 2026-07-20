@@ -1,9 +1,7 @@
 package spawn
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -670,12 +668,13 @@ func TestRun_BackendPersistenceRoundtrip(t *testing.T) {
 	}
 }
 
-func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
-	t.Setenv("MUNSU_ROLE", "general")
+func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_ROLE", "general")
 
-	// Create a minimal brief so spawn passes the preflight check
+	// Create brief file so preflightBrief passes
 	briefDir := filepath.Join(tmpDir, "data", "test-task")
 	if err := os.MkdirAll(briefDir, 0755); err != nil {
 		t.Fatal(err)
@@ -684,21 +683,6 @@ func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create a fake tasks-axi that returns "not found" for any task
-	binDir := filepath.Join(tmpDir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(binDir, "tasks-axi"), []byte("#!/bin/sh\necho 'not found: test-task'\nexit 1\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
-
-	// Capture stderr while running spawn (will fail on project resolution)
-	r, w, _ := os.Pipe()
-	oldStderr := os.Stderr
-	os.Stderr = w
-
 	_, err := Run(Args{
 		ID:          "test-task",
 		ProjectName: "test-project",
@@ -706,24 +690,152 @@ func TestRun_BacklogWarningContainsDescriptionPlaceholder(t *testing.T) {
 		Session:     &fakeBackend{},
 	})
 
-	w.Close()
-	os.Stderr = oldStderr
-	var buf bytes.Buffer
-	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
-		t.Fatal(copyErr)
-	}
-	r.Close()
-	stderr := buf.String()
-
-	// Must contain the warning with the required description placeholder
-	want := `backlog add test-task "<description>" --kind`
-	if !strings.Contains(stderr, want) {
-		t.Errorf("stderr should contain suggested command with description placeholder\\n got: %s\\n want substring: %s", stderr, want)
-	}
-
-	// The spawn itself is expected to fail (no project registry)
 	if err == nil {
-		t.Error("expected error from missing project registry, got nil")
+		t.Fatal("expected error from lifecycle guard for absent backlog task, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found in backlog") {
+		t.Errorf("error should mention backlog absence\n got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_RefusesBlockedTask(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create backlog with a blocked item
+	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [!] lifecycle-e2e: End-to-end lifecycle test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{args: Args{ID: "lifecycle-e2e"}, homeDir: tmpDir}
+	err := r.checkBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for blocked task, got nil")
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("error should mention blocked state\n got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create backlog with a done item
+	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [x] done-task: This task is done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{args: Args{ID: "done-task"}, homeDir: tmpDir}
+	err := r.checkBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for done task, got nil")
+	}
+	if !strings.Contains(err.Error(), "done") {
+		t.Errorf("error should mention done state\n got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create backlog with a done item
+	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [x] done-task: This task is done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{args: Args{ID: "done-task", Reopen: true}, homeDir: tmpDir}
+	err := r.checkBacklogAuthority()
+	if err != nil {
+		t.Fatalf("expected no error with --reopen for done task, got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_RefusesInFlight(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create backlog with an in-flight item
+	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [-] live-task: Currently in-flight\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{args: Args{ID: "live-task"}, homeDir: tmpDir}
+	err := r.checkBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for in-flight task, got nil")
+	}
+	if !strings.Contains(err.Error(), "in-flight") {
+		t.Errorf("error should mention in-flight state\n got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_RefusesAlreadyLiveMeta(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create backlog with a queued item
+	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [ ] queued-task: Ready to go\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create meta file simulating already-live soldier session
+	if err := task.WriteMeta(tmpDir, "queued-task", map[string]string{"window": "@1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{args: Args{ID: "queued-task"}, homeDir: tmpDir}
+	err := r.checkBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for already-live task, got nil")
+	}
+	if !strings.Contains(err.Error(), "live soldier session") {
+		t.Errorf("error should mention live session\n got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_RefusesDuplicateID(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Create backlog with duplicate IDs
+	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data := "# Backlog\n\n## 2025-01-01\n- [ ] dup-task: First entry\n- [ ] dup-task: Duplicate entry\n"
+	if err := os.WriteFile(backlogPath, []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{args: Args{ID: "dup-task"}, homeDir: tmpDir}
+	err := r.checkBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for duplicate ID, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error should mention duplicate entries\n got: %v", err)
 	}
 }
 

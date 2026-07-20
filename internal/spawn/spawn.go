@@ -32,8 +32,9 @@ type Args struct {
 	EffortFlag          string          // --effort flag; empty = dispatch/template default
 	HomeDir             string          // if empty, resolved via home.Resolve
 	Session             session.Backend // injectable session backend; nil = resolve at runtime
-	Arm                 bool
-	ArmFunc             func(homeDir string) error // injectable arm function; nil = no auto-arm
+	Arm                bool
+	Reopen             bool   // allow spawning a done/blocked/already-live task
+	ArmFunc            func(homeDir string) error // injectable arm function; nil = no auto-arm
 	NoMistakesPreflight func(repoPath string) error
 }
 

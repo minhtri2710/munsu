@@ -18,6 +18,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
 // Runner orchestrates the full spawn sequence through private phase methods.
@@ -67,7 +68,9 @@ func (r *Runner) Run() (string, error) {
 	if err := r.preflightBrief(); err != nil {
 		return "", err
 	}
-	r.warnMissingBacklog()
+	if err := r.checkBacklogAuthority(); err != nil {
+		return "", err
+	}
 	if err := r.resolveProject(); err != nil {
 		return "", err
 	}
@@ -365,16 +368,55 @@ func (r *Runner) preflightBrief() error {
 	return nil
 }
 
-// Phase 5: warnMissingBacklog warns if tasks-axi is available but no backlog row exists.
-func (r *Runner) warnMissingBacklog() {
-	if _, err := exec.LookPath("tasks-axi"); err != nil {
-		return
+// Phase 5: checkBacklogAuthority verifies the task is uniquely queued+ready in the backlog.
+// Fail closed unless the task is uniquely present and ready, or --reopen is used.
+func (r *Runner) checkBacklogAuthority() error {
+	item, found, err := backlog.GetItem(r.homeDir, r.args.ID)
+	if err != nil {
+		return fmt.Errorf("lifecycle guard: reading backlog: %w", err)
 	}
-	chk := exec.Command("tasks-axi", "show", r.args.ID)
-	if out, err := chk.CombinedOutput(); err != nil || strings.Contains(string(out), "not found") {
-		fmt.Fprintf(os.Stderr, "warning: task %s has no backlog row; register it with 'backlog add %s \"<description>\" --kind %s' to track lifecycle\n",
-			r.args.ID, r.args.ID, r.args.Kind)
+	if !found {
+		return fmt.Errorf("lifecycle guard: task %q not found in backlog; register it with 'backlog add %q \"<description>\" --kind %s' before spawning", r.args.ID, r.args.ID, r.args.Kind)
 	}
+
+	// Check for duplicate IDs in backlog
+	dup, err := backlog.HasDuplicate(r.homeDir, r.args.ID)
+	if err != nil {
+		return fmt.Errorf("lifecycle guard: checking for duplicates: %w", err)
+	}
+	if dup {
+		return fmt.Errorf("lifecycle guard: task %q has duplicate entries in backlog; resolve duplicates before spawning", r.args.ID)
+	}
+
+	// Check already-live: existing meta with window means a soldier session exists
+	meta, metaErr := task.ReadMeta(r.homeDir, r.args.ID)
+	metaExists := metaErr == nil && meta["window"] != ""
+
+	// State-based checks
+	switch item.State {
+	case backlog.StateBlocked:
+		if !r.args.Reopen {
+			return fmt.Errorf("lifecycle guard: task %q is blocked; use --reopen to force dispatch or clear the blocker first", r.args.ID)
+		}
+	case backlog.StateDone:
+		if !r.args.Reopen {
+			return fmt.Errorf("lifecycle guard: task %q is done; use --reopen to reopen", r.args.ID)
+		}
+	case backlog.StateInFlight:
+		if !r.args.Reopen {
+			if metaExists {
+				return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; use --reopen to re-attach", r.args.ID)
+			}
+			return fmt.Errorf("lifecycle guard: task %q is already in-flight; use --reopen to re-attach", r.args.ID)
+		}
+	}
+
+	// If meta exists with window but we're not reopening, refuse
+	if metaExists && !r.args.Reopen {
+		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; use --reopen to re-attach", r.args.ID)
+	}
+
+	return nil
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.
