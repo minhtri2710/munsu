@@ -42,14 +42,14 @@ func signalChannel() <-chan os.Signal {
 }
 
 func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal) (*WakeReason, error) {
-	acquired, err := lifecycle.AcquireSession(homeDir)
+	acquired, err := lifecycle.AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
 	}
 	if !acquired {
 		return nil, fmt.Errorf("another watcher is already running")
 	}
-	defer lifecycle.ReleaseSession(homeDir)
+	defer lifecycle.ReleaseWatch(homeDir)
 
 	// Write watcher identity on start and clear it on exit.
 	identity := NewIdentity(homeDir)

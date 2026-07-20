@@ -21,6 +21,7 @@ const (
 	wakeQueueFile   = "state/.wake-queue"
 	watcherBeatFile = "state/.last-watcher-beat"
 	lockFile        = "state/.lock"
+	watchLockFile   = "state/.watch.lock"
 	staleThreshold  = 300 * time.Second // 5 min watcher grace period
 )
 
@@ -52,6 +53,9 @@ func QueuePath(homeDir string) string { return filepath.Join(homeDir, wakeQueueF
 // LockPath returns the full path to the session lock file.
 func LockPath(homeDir string) string { return filepath.Join(homeDir, lockFile) }
 
+// WatchPath returns the full path to the watch lock file.
+func WatchPath(homeDir string) string { return filepath.Join(homeDir, watchLockFile) }
+
 // --- Lock operations ---
 
 // AcquireSession attempts to acquire an exclusive file lock for the given home.
@@ -65,10 +69,14 @@ func AcquireSession(homeDir string) (bool, error) {
 		return false, fmt.Errorf("creating lock directory %s: %w", dir, err)
 	}
 
-	// Stale lock recovery: if lock file contains a dead PID, clear it
+	// Stale lock recovery: if lock file contains a dead PID, or a PID
+	// whose process is a munsu watch (legacy shared lock), clear it.
 	if pid := readLockPID(path); pid > 0 {
 		if !isProcessAlive(pid) {
 			fmt.Fprintf(os.Stderr, "WARNING: stale session lock from dead PID %d — clearing\n", pid)
+			os.Remove(path)
+		} else if isWatchProcess(pid) {
+			fmt.Fprintf(os.Stderr, "WARNING: session lock held by watcher PID %d — clearing (legacy .lock, use .watch.lock)\n", pid)
 			os.Remove(path)
 		}
 	}
@@ -138,6 +146,97 @@ func IsSessionLocked(homeDir string) bool {
 	}
 	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return false
+}
+
+// --- Watch lock operations ---
+
+// AcquireWatch attempts to acquire an exclusive file lock (flock) on the
+// watch lock file (state/.watch.lock). Returns true if acquired, false if
+// another process holds the lock.
+func AcquireWatch(homeDir string) (bool, error) {
+	path := WatchPath(homeDir)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return false, fmt.Errorf("creating watch lock directory %s: %w", dir, err)
+	}
+
+	// Stale lock recovery: if lock file contains a dead PID, clear it
+	if pid := readLockPID(path); pid > 0 {
+		if !isProcessAlive(pid) {
+			fmt.Fprintf(os.Stderr, "WARNING: stale watch lock from dead PID %d — clearing\n", pid)
+			os.Remove(path)
+		}
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return false, fmt.Errorf("opening watch lock file %s: %w", path, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return false, nil
+	}
+	fmt.Fprintf(f, "%d\n", os.Getpid())
+	// Leak the FD intentionally — held for the lifetime.
+	// ReleaseWatch closes it via a separate OpenFile + unlock.
+	return true, nil
+}
+
+// ReleaseWatch releases the exclusive file lock for the watch daemon.
+func ReleaseWatch(homeDir string) error {
+	path := WatchPath(homeDir)
+	f, err := os.OpenFile(path, os.O_RDWR, 0644)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("opening watch lock file %s: %w", path, err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		return fmt.Errorf("unlocking %s: %w", path, err)
+	}
+	return nil
+}
+
+// IsWatchLocked checks whether the watch lock is held by another process.
+func IsWatchLocked(homeDir string) bool {
+	path := WatchPath(homeDir)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return true // someone else holds it
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}
+
+// isWatchProcess checks whether the given PID is a munsu watch process.
+// Reads /proc/PID/cmdline on Linux (NUL-separated args) and falls back to
+// `ps -o command=` on macOS/BSD.
+func isWatchProcess(pid int) bool {
+	// Linux: read /proc/PID/cmdline (NUL-separated args)
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err == nil {
+		args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+		for _, arg := range args {
+			if arg == "watch" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// macOS/BSD fallback: ps shows the full command
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return false
+	}
+	line := strings.TrimSpace(string(out))
+	return strings.Contains(line, "munsu watch") || strings.HasSuffix(line, " watch")
 }
 
 // --- Beat operations ---
