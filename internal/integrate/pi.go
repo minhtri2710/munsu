@@ -241,10 +241,19 @@ export default function (pi: ExtensionAPI) {
     ]);
     if (safetyCheck.code !== 0) return;
     const safety = parseSafetyCheck(safetyCheck.stdout);
-    if (!safety.ok || safety.gate_refused) return;
+
+    // 3a. MUNSU_ROLE nudge: remind captain/soldier to report material outcomes.
+    //     NEVER auto-fabricate a status line from chat content.
+    const munsuRole = process.env.MUNSU_ROLE || "";
+    if (munsuRole === "captain" || munsuRole === "soldier") {
+      ctx.ui.notify(
+        "munsu: " + (munsuRole === "captain" ? "Captain" : "Soldier") +
+        " — report material outcomes via: munsu report <state> \"<msg>\" [--key <slug>]",
+        "info"
+      );
+    }
 
     const guardResult = await pi.exec(MUNSU_BIN, ["guard", "--output", "json"]);
-    if (guardResult.code !== 0) return;
 
     // If guard found issues, try to claim a wake.
     const claimResult = await pi.exec(MUNSU_BIN, [

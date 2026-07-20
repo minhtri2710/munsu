@@ -211,8 +211,9 @@ When a message carries the General marker:
 - Detailed result: write a doc under this home's data/ and append a status line that points to it.
 
 ## Escalation / return channel
-Material captain-relevant outcomes append ONE line to the General status file.
-  Preferred: 'munsu report <state> <msg> [--key <slug>]' (rank-aware uplink).
+Report UP to the General via `+"`"+`munsu report`+"`"+`. `+"`"+`munsu report`+"`"+` is the PRIMARY status path.
+  Use: 'munsu report <state> "<msg>" [--key <slug>]'
+  `+"`"+`munsu send`+"`"+` is downlink only. send fails closed for parent-targeted status.
   Fallback:  echo "{state}: {one short line}" >> %s
 
 States: working, needs-decision, blocked, paused, done, failed, resolved.
