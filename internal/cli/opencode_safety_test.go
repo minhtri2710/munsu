@@ -84,3 +84,34 @@ func TestOpencodeSafetyCheckAllow(t *testing.T) {
 		t.Errorf("expected exit 0 for opencode allow, got %d", exitCode)
 	}
 }
+
+// TestOpencodeSafetyCheckGateRefused verifies opencode safety-check blocks
+// when gate is active (gate_refused) — produces exit 2, stderr plaintext.
+func TestOpencodeSafetyCheckGateRefused(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("NO_MISTAKES_GATE", "1")
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	stdout, stderr := captureBoth(func() {
+		runSafetyCheck(cmd, tmpDir, "echo hello", "opencode")
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 for gate-refused opencode, got %d", exitCode)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("expected empty stdout, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "safety-block") {
+		t.Errorf("expected safety-block in stderr for gate-refused opencode, got: %s", stderr)
+	}
+}
