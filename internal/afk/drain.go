@@ -180,7 +180,7 @@ func peekFleet(homeDir string) (*DrainFleetPeek, error) {
 		if ts.Kind != "ship" && ts.Kind != "scout" {
 			continue
 		}
-		phase := fleet.PhaseFromMeta(ts.Window, ts.PaneAlive)
+		phase := fleet.PhaseFromProjection(ts)
 		peek.InFlight++
 		if phase == "alive" {
 			peek.Alive++
