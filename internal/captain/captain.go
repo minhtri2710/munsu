@@ -1574,8 +1574,8 @@ func removeNudgeMarker(parentHome, smID string) {
 
 // Converge performs a locked convergence sweep over registered captains.
 // Order: lock, validate registry/provenance, flush send outbox, retry pending
-// nudges, safe ff, inheritance push, ownership-backed backend Alive check, and
-// reread nudge only if instruction surface advanced.
+// nudges, safe ff, inheritance push, ownership-backed backend Alive check,
+// watcher status check, and reread nudge only if instruction surface advanced.
 func Converge(parentHome string, registered []Info) error {
 	release, err := convergeLockAcquire(parentHome)
 	if err != nil {
@@ -1651,6 +1651,17 @@ func Converge(parentHome string, registered []Info) error {
 			continue
 		}
 		_ = alive
+
+		// Watcher status check and reporting.
+		ws := WatcherStatusSummary(sm.Home)
+		switch ws {
+		case WatcherRunning:
+			fmt.Printf("  %s: watcher running\n", sm.ID)
+		case WatcherStopped:
+			fmt.Printf("  %s: watcher stopped (beat stale)\n", sm.ID)
+		case WatcherAbsent:
+			fmt.Printf("  %s: watcher absent\n", sm.ID)
+		}
 	}
 
 	if len(errs) > 0 {

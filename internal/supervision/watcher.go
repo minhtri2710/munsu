@@ -132,6 +132,13 @@ func stopRunningWatcher(homeDir string) error {
 	return nil
 }
 
+// Stop signals the running watcher for the given home and clears its beat.
+// Uses identity-based PID ownership validation to avoid signaling unrelated processes.
+// Idempotent: returns nil when no watcher is running.
+func Stop(homeDir string) error {
+	return stopRunningWatcher(homeDir)
+}
+
 var (
 	// staleFirstSeen tracks the first time a task was continuously stale.
 	// Persists across scanFleet calls within a process; protected for concurrent package use.
