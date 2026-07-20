@@ -124,8 +124,8 @@ var gitRun = func(args ...string) (string, error) {
 
 // launchCmd builds a shell-safe command string for sending via session backend.
 // Override in tests.
-var launchCmd = func(binPath string, args []string, captainHome string) (string, error) {
-	return buildLaunchScript(binPath, args, captainHome)
+var launchCmd = func(binPath string, args []string, captainHome string, parentHome string) (string, error) {
+	return buildLaunchScript(binPath, args, captainHome, parentHome)
 }
 
 // --- Helpers ---
@@ -139,7 +139,7 @@ func shQuote(s string) string {
 // buildLaunchScript writes a bash launch script into the general home and
 // returns a fish-safe command that runs it. Herdr panes may use fish, so the
 // bash-only identity/env plumbing must not be typed directly into the pane.
-func buildLaunchScript(binPath string, args []string, cwd string) (string, error) {
+func buildLaunchScript(binPath string, args []string, cwd string, parentHome string) (string, error) {
 	var b strings.Builder
 	b.WriteString("#!/usr/bin/env bash\n")
 	b.WriteString("set -euo pipefail\n")
@@ -150,6 +150,14 @@ func buildLaunchScript(binPath string, args []string, cwd string) (string, error
 	b.WriteString(shQuote(cwd))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_ROLE=captain\n")
+	// Identity and parent routing for rank-aware uplink reporting.
+	taskID := "captain:" + filepath.Base(cwd)
+	b.WriteString("export MUNSU_TASK_ID=")
+	b.WriteString(shQuote(taskID))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_PARENT_STATUS=")
+	b.WriteString(shQuote(parentHome))
+	b.WriteString("\n")
 	b.WriteString("exec ")
 	b.WriteString(shQuote(binPath))
 	for _, arg := range args {
@@ -203,8 +211,9 @@ When a message carries the General marker:
 - Detailed result: write a doc under this home's data/ and append a status line that points to it.
 
 ## Escalation / return channel
-Material captain-relevant outcomes append ONE line to the General status file:
-  echo "{state}: {one short line}" >> %s
+Material captain-relevant outcomes append ONE line to the General status file.
+  Preferred: 'munsu report <state> <msg> [--key <slug>]' (rank-aware uplink).
+  Fallback:  echo "{state}: {one short line}" >> %s
 
 States: working, needs-decision, blocked, paused, done, failed, resolved.
 Key material phases with [key=<slug>] so later done/failed/resolved supersede them.
@@ -707,7 +716,7 @@ func Launch(captainHome, parentHome string) error {
 	}
 
 	// Build and send shell-safe launch script.
-	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome)
+	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome, parentHome)
 	if err != nil {
 		bk.Teardown(windowID)
 		return fmt.Errorf("building launch script: %w", err)

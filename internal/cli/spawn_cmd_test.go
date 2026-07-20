@@ -235,60 +235,22 @@ func TestSendCmd_MarksCaptainLine(t *testing.T) {
 }
 
 func TestSendCmd_CaptainDeadPaneQueuesOutbox(t *testing.T) {
-	// Dead captain pane must not drop marked sends: queue outbox and fail closed.
+	// Captain send is now blocked by uplink guard — send captain:x fails closed
+	// with "uplink use munsu report" before any meta lookup or outbox.
+	// The outbox path is tested by captain outbox unit tests.
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	// herdr backend constructs without PATH; Alive is false when herdr missing.
+	os.MkdirAll(stateDir, 0755)
 	metaContent := "window=@dead\nbackend=herdr\nkind=captain\nsm_id=munsu\nhome=/tmp/captain-home\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "captain:munsu.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", "/dev/null")
-	defer os.Setenv("PATH", oldPath)
+	os.WriteFile(filepath.Join(stateDir, "captain:munsu.meta"), []byte(metaContent), 0644)
 
 	root := NewRootCommand()
 	root.SetArgs([]string{"send", "captain:munsu", "report status", "--home", tmpDir})
 	err := root.Execute()
 	if err == nil {
-		t.Fatal("expected fail-closed error for dead captain pane")
+		t.Fatal("expected fail-closed error for captain send (uplink guard)")
 	}
-	if !strings.Contains(err.Error(), "pane dead") {
-		t.Errorf("expected 'pane dead' in error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), ".captain-send-outbox") {
-		t.Errorf("expected outbox path hint, got: %v", err)
-	}
-
-	outboxDir := filepath.Join(stateDir, ".captain-send-outbox", "munsu")
-	entries, listErr := os.ReadDir(outboxDir)
-	if listErr != nil {
-		t.Fatalf("outbox dir missing: %v", listErr)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("outbox entries=%d want 1", len(entries))
-	}
-	data, readErr := os.ReadFile(filepath.Join(outboxDir, entries[0].Name()))
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	body := string(data)
-	if !strings.Contains(body, "message=") {
-		t.Fatalf("outbox entry missing message: %s", body)
-	}
-	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "message=") {
-			msg := strings.TrimPrefix(line, "message=")
-			if !marker.IsFromGeneral(msg) {
-				t.Errorf("queued message not marked: %q", msg)
-			}
-			if !strings.Contains(msg, "report status") {
-				t.Errorf("queued message missing body: %q", msg)
-			}
-		}
+	if !strings.Contains(err.Error(), "uplink use munsu report") {
+		t.Errorf("expected 'uplink use munsu report' error, got: %v", err)
 	}
 }

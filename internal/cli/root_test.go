@@ -30,6 +30,8 @@ var canonicalCommands = []struct {
 	{name: "brief", use: "brief <id> <repo>"},
 	{name: "spawn", use: "spawn <id> [<project>]"},
 	{name: "send", use: "send <id> <line>"},
+	{name: "report", use: "report <state> <msg>"},
+	{name: "notify", use: "notify <state> <msg>"},
 	{name: "peek", use: "peek <id>"},
 	{name: "soldier-state", use: "soldier-state <id>"},
 	{name: "promote", use: "promote <id>"},
@@ -51,7 +53,6 @@ var canonicalCommands = []struct {
 	{name: "decision-hold", use: "decision-hold"},
 	{name: "afk", use: "afk"},
 	{name: "integrate", use: "integrate"},
-	{name: "manual", use: "manual"},
 }
 
 // TestCanonicalCommandsRegistered is the root-command availability

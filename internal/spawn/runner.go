@@ -461,7 +461,7 @@ func (r *Runner) bootstrapWindow() {
 		return
 	}
 	launchScript := filepath.Join(r.wtPath, ".soldier-launch.sh")
-	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=soldier\n" + r.launchCmd + "\n"
+	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=soldier\nexport MUNSU_TASK_ID=" + fmt.Sprintf("%q", r.args.ID) + "\nexport MUNSU_PARENT_STATUS=" + fmt.Sprintf("%q", r.homeDir) + "\n" + r.launchCmd + "\n"
 	if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 	}
