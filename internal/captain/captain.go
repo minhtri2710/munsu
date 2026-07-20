@@ -1871,6 +1871,14 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": send outbox flush", Status: ConvergeOK, Detail: "ok"})
 		}
 
+		// b2. Envelope delivery (durable command envelopes).
+		if envErr := FlushEnvelopeSend(parentHome, sm); envErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": envelope delivery", Status: ConvergeFailed, Detail: envErr.Error()})
+			errs = append(errs, envErr.Error())
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": envelope delivery", Status: ConvergeOK, Detail: "ok"})
+		}
+
 		// c. Nudge retry.
 		if nudgeErr := retryNudge(parentHome, sm); nudgeErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": nudge retry", Status: ConvergeFailed, Detail: nudgeErr.Error()})
