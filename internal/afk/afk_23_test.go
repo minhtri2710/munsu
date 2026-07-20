@@ -312,7 +312,7 @@ func TestDigesterSetTargetSafety(t *testing.T) {
 	// Set safety before flush — should appear in output.
 	d.SetTargetSafety(true, "empty")
 
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestDigesterSetTargetSafetyUnsafe(t *testing.T) {
 	// Unsafe target (dead shell).
 	d.SetTargetSafety(false, "unknown")
 
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestDigesterSetTargetSafetyResetsAfterFlush(t *testing.T) {
 	d := NewDigester(tmp)
 
 	d.SetTargetSafety(true, "empty")
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	d.Flush(now)
 
 	// After flush, safety data should be reset.
@@ -404,7 +404,7 @@ func TestDigesterNoTargetSafetyInDigestWhenNotSet(t *testing.T) {
 		Routines: []WakeDigest{{Kind: "check", Key: "health", Payload: "ok"}},
 	})
 
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestDigesterSetTargetSafetyWithEscalation(t *testing.T) {
 	d.SetTargetSafety(false, "unknown")
 
 	// Last SetTargetSafety wins.
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	d.Flush(now)
 
 	data, _ := os.ReadFile(filepath.Join(tmp, digestFile))

@@ -43,7 +43,7 @@ func TestDigesterAccumulatesAndFlushes(t *testing.T) {
 	}
 
 	// Force flush by advancing the clock past the window.
-	future := now.Add(digestWindow + time.Second)
+	future := now.Add(defaultWindow + time.Second)
 	if !d.ShouldFlush(future) {
 		t.Error("ShouldFlush = false after window elapsed, want true")
 	}
@@ -116,7 +116,7 @@ func TestDigesterMultipleDigests(t *testing.T) {
 		Routines: []WakeDigest{{Kind: "check", Key: "t2", Payload: "ok"}},
 	})
 
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestDigesterFlushResetsAccumulator(t *testing.T) {
 		Routines: []WakeDigest{{Kind: "check", Key: "t1", Payload: "ok"}},
 	})
 
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	d.Flush(now)
 
 	// After flush, ShouldFlush should be false again.
@@ -174,7 +174,7 @@ func TestDigesterConcurrentSafe(t *testing.T) {
 	<-done1
 	<-done2
 
-	now := time.Now().Add(digestWindow + time.Second)
+	now := time.Now().Add(defaultWindow + time.Second)
 	if err := d.Flush(now); err != nil {
 		t.Fatalf("Flush after concurrent feeds: %v", err)
 	}
