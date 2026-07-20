@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -52,16 +51,13 @@ PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 			id := args[0]
 			prURL := args[1]
 
-			// Preflight: verify task meta exists with kind=ship
-			meta, err := task.ReadMeta(ctx.Home, id)
+			// Resolve meta in primary home or a registered captain home (handoff).
+			taskHome, _, err := delivery.RequireShipMeta(ctx.Home, id)
 			if err != nil {
-				return fmt.Errorf("reading meta for %s: %w", id, err)
-			}
-			if meta["kind"] != "ship" {
-				return fmt.Errorf("task %s has kind=%q, pr-check requires kind=ship (promote scout tasks before checking PRs)", id, meta["kind"])
+				return fmt.Errorf("pr-check %s: %w", id, err)
 			}
 
-			return delivery.PRCheck(ctx.Home, id, prURL)
+			return delivery.PRCheck(taskHome, id, prURL)
 		}),
 	}
 }
@@ -76,23 +72,23 @@ Default merge method is squash.
 Use -- --merge or -- --rebase to override the merge method.
 The --repo/-R flag is not allowed (repository comes from the URL).
 
-PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
+PR URL format: https://github.com/<owner>/<repo>/pull/<n>
+
+Task meta is resolved from the current home first, then each registered
+captain home (so general can merge after captain handoff + spawn).`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			prURL := args[1]
 			extra := args[2:]
 
-			// Preflight: verify task meta exists with kind=ship
-			meta, err := task.ReadMeta(ctx.Home, id)
+			// Resolve meta in primary home or a registered captain home (handoff).
+			taskHome, _, err := delivery.RequireShipMeta(ctx.Home, id)
 			if err != nil {
-				return fmt.Errorf("reading meta for %s: %w", id, err)
-			}
-			if meta["kind"] != "ship" {
-				return fmt.Errorf("task %s has kind=%q, pr-merge requires kind=ship (promote scout tasks before merging)", id, meta["kind"])
+				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}
 
-			return delivery.PRMerge(ctx.Home, id, prURL, extra)
+			return delivery.PRMerge(taskHome, id, prURL, extra)
 		}),
 	}
 	return cmd
