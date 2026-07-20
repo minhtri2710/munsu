@@ -16,14 +16,27 @@ func newCaptainCmd() *cobra.Command {
 		Short: "Manage persistent domain supervisors (captains)",
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	var seedRepo string
+	seedCmd := &cobra.Command{
 		Use:   "seed <id> <home-path>",
 		Short: "Seed a captain home with charter",
+		Long: `Seed a captain home with charter and optional managed git worktree.
+
+Without --repo, creates a state-only captain home (legacy format).
+With --repo <path>, provisions a managed git-worktree captain home:
+a detached worktree at <home-path> from the specified project repo,
+with gitignore and provenance metadata.
+`,
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if seedRepo != "" {
+				return captain.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "")
+			}
 			return captain.SeedWithParent(args[0], args[1], ctx.Home, "")
 		}),
-	})
+	}
+	seedCmd.Flags().StringVar(&seedRepo, "repo", "", "Path to the project git repo for managed worktree captain home")
+	cmd.AddCommand(seedCmd)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "launch <captain-home>",
