@@ -90,8 +90,10 @@ diagnostic line prints, run `munsu skill show bootstrap-diagnostics` and follow 
 Run `munsu skill show harness-adapters` before every spawn or recovery.
 
 Detect your harness: `munsu harness detect`.
-The verified harnesses are `claude`, `codex`, `opencode`, `pi`, and `grok`.
-Never dispatch on an unverified adapter.
+The harnesses with adapters are `pi`, `claude`, `codex`, `opencode`, `grok`, and `agy`.
+Pi is live-verified (runtime-tested locally); all others are contract + unit verified (deferred until installed locally).
+Never dispatch on a harness without a known adapter.
+Run `munsu integrate status --harness <name>` to check integration state before relying on turn-end guards.
 
 Run `munsu backend capabilities` to inspect session backend support.
 Use `munsu spawn <id> <project> --harness <name>` to override soldier harness.
@@ -225,6 +227,24 @@ Cross-cutting rules:
 - A declared `paused:` event means a bounded external wait.
 - `blocked:` means action is needed.
 
+### Wake claim (preferred)
+
+The `munsu wake claim` API supersedes the legacy pull-based `munsu wake-drain` for new deployments:
+
+```
+munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]
+munsu wake ack <lease-id> <event-id...>
+```
+
+Flow:
+1. Call `munsu wake claim $CONSUMER_ID` to claim a batch of pending wakes.
+2. For each wake, check `munsu soldier-state <id>` for ground truth.
+3. Act on the wake (steer, recover, or note the signal).
+4. Call `munsu wake ack <lease-id> <event-id>` to release each processed wake.
+5. Renew the lease before expiry with a new claim, or let it expire.
+
+`munsu wake-drain` remains available as a simpler alternative that drains all pending wakes without lease management.
+
 ### Away mode
 
 When the general says they are going afk or `state/.afk` exists:
@@ -258,7 +278,22 @@ Escalate immediately for:
 
 Do not surface automatic fixes, retries, routine progress, or internal mechanics.
 
----
+### Captain converge
+
+When send-outbox messages accumulate (e.g. after a captain pane was dead and has been relaunched),
+flush them with `munsu captain converge`. This:
+- Validates registry and provenance for all registered captains
+- Flushes the send outbox (`state/.captain-send-outbox/<id>/`)
+- Retries pending nudges
+- Performs safe local fast-forward and inheritance push
+- Checks liveness and updates instruction surface tracking
+
+```
+munsu captain converge
+```
+
+State changes are tracked in `state/.captain-converge.lock`.
+Call this after any captain lifecycle change (launch, retire, handoff, config-push).
 
 ## 10. Backlog contract
 
@@ -338,9 +373,12 @@ Run: `munsu skill show <name>` to read any skill.
 | Check state | `munsu soldier-state <id>` |
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |
-| Drain wakes | `munsu wake-drain` |
-| Guard check | `munsu guard` |
-| Fleet view | `munsu fleet view` |
+| Drain wakes | `munsu wake-drain`
+| Claim wakes | `munsu wake claim <consumer-id>`
+| Acknowledge wakes | `munsu wake ack <lease-id> <event-id...>`
+| Guard check | `munsu guard`
+| Fleet view | `munsu fleet view`
+| Captain converge | `munsu captain converge`
 | Fleet bearings | `munsu fleet bearings` |
 | Fleet sync | `munsu fleet sync [<project>]` |
 | Record PR | `munsu delivery pr-check <id> <pr-url>` |
@@ -367,10 +405,11 @@ Run: `munsu skill show <name>` to read any skill.
 5. munsu spawn <id> <project>        # launch soldier in worktree+tmux window
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake-drain / soldier-state     # on wake from watcher
+8. munsu wake-drain / soldier-state  # on wake from watcher; or munsu wake claim
 9. munsu delivery pr-check <id> <url> # record PR when done
 10. munsu delivery pr-merge <id> <url> # merge when instructed
-11. munsu teardown <id>              # clean up
+11. munsu captain converge           # flush send outbox after captain lifecycle
+12. munsu teardown <id>              # clean up
 ```
 
 ---

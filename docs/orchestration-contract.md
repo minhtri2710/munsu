@@ -24,7 +24,7 @@ A command family has one runtime owner. A package may call another package's pub
 | Wake | `munsu wake claim <wake-id> --owner <owner>`, `munsu wake ack <wake-id> --claim <claim-id>` | `internal/waker` | wake records and drain state | specified only |
 | Backend discovery | `munsu backend capabilities [--backend <name>]` | `internal/session` | backend selection | specified only |
 | Spawn receipt | `munsu spawn <task-id> ...` | `internal/spawn` | spawn lifecycle | specified only |
-| Integration | `munsu integrate install`, `munsu integrate repair` | future `internal/integrate` | no owner exists today | specified only |
+| Integration | `munsu integrate install`, `munsu integrate repair` | `internal/integrate` | `internal/integrate` (post embed-ops) | implemented |
 
 A later implementation may add an output-boundary package, but it must not move domain ownership or alter the above commands' domain authority. Existing commands retain their behavior until a separately approved implementation phase.
 
@@ -112,9 +112,9 @@ Strings and quoted keys escape backslash, quotation mark, LF, CR, and tab as `\\
 
 TOON is the default because it is compact for agents. JSON is an opt-in transport with the same schema version, keys, values, nullability, ordering intent, and error shape; it must never be a looser or richer schema. The paired fixtures are golden equivalence examples, not a promise that JSON object textual ordering is semantically meaningful to a general JSON decoder.
 
-## Integration concept (future, opt-in)
+## Integration concept (opt-in, post embed-ops)
 
-`munsu integrate install|repair` is intentionally only specified in Phase 0. It must be explicit opt-in; normal commands may never install hooks or plugins. It will install or repair supported session hooks/adapters for the selected harness and `project` or `user` directory scope.
+`munsu integrate install|repair` is an opt-in command (post embed-ops #257). Normal commands may never install hooks or plugins. It installs or repairs supported session hooks/adapters for the selected harness and `project` or `user` directory scope.
 
 The installed command resolves portability in this order: use `munsu` only if PATH resolves to the currently executing binary; otherwise use that binary's absolute path. `repair` rechecks and updates a stale path. Repeating `install` with identical content and path is a successful silent no-op. The ambient session context is cwd-scoped and compact: executable, one-line purpose, and only live aggregate/action state that helps the next command; it never injects full fleet or long task content.
 
