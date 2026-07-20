@@ -29,7 +29,7 @@ type BackendMetaExtras interface {
 	MetaExtras() map[string]string
 }
 
-// Select returns the named backend. Supported: "tmux", "herdr", "zellij".
+// Select returns the named backend. Supported: "tmux", "herdr", "zellij", "cmux" (experimental).
 // Returns an error for unknown backend names.
 func Select(name string) (Backend, error) {
 	switch name {
@@ -39,8 +39,10 @@ func Select(name string) (Backend, error) {
 		return &TmuxBackend{}, nil
 	case "zellij":
 		return NewZellijBackend(""), nil
+	case "cmux":
+		return newCmuxBackend(), nil
 	default:
-		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij)", name)
+		return nil, fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux)", name)
 	}
 }
 
@@ -82,7 +84,7 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 	if name == "" || name == "auto" {
 		bk := Default()
 		if bk == nil {
-			return nil, "", fmt.Errorf("no session backend detected: set $TMUX, set $HERDR_ENV, or ensure tmux/herdr/zellij is on PATH")
+			return nil, "", fmt.Errorf("no session backend detected: set $TMUX, set $HERDR_ENV, or ensure tmux/herdr/zellij/cmux is on PATH")
 		}
 		switch bk.(type) {
 		case *HerdrBackend:
@@ -103,11 +105,12 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 		return NewHerdrBackend(""), "herdr", nil
 	case "zellij":
 		return NewZellijBackend(""), "zellij", nil
+	case "cmux":
+		return newCmuxBackend(), "cmux", nil
 	default:
-		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij)", name)
+		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux)", name)
 	}
 }
-
 // BackendForTask resolves the session backend for a task using its metadata.
 // When the task metadata has a non-empty "backend" field, it is used as the
 // exact backend name. Otherwise, resolution falls through to the config file
@@ -164,12 +167,14 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 	case "zellij":
 		bk, err := Select("zellij")
 		return bk, "zellij", err
+	case "cmux":
+		bk, err := Select("cmux")
+		return bk, "cmux", err
 	default:
 		// Unknown backend in meta: fall through to Resolve.
 		return Resolve(homeDir, "")
 	}
 }
-
 func readConfigBackend(homeDir string) string {
 	data, err := os.ReadFile(filepath.Join(homeDir, "config", "backend"))
 	if err != nil {
