@@ -2019,9 +2019,9 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 		{ID: "sm-beta", Home: sm2},
 	})
 
-	// Since these are not git repos, safeFF will fail. Accept that.
-	if err == nil {
-		t.Fatal("expected converge errors (no git repos)")
+	// State-only homes skip safeFF gracefully; converge should succeed.
+	if err != nil {
+		t.Fatalf("converge should succeed for state-only homes: %v", err)
 	}
 
 	// But config push should have succeeded for both.

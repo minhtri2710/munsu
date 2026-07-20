@@ -1811,8 +1811,14 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		// d. Safe local fast-forward.
 		before, after, ffReason, ffErr := safeFF(sm.Home, parentHome)
 		if ffErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeFailed, Detail: ffErr.Error()})
-			errs = append(errs, fmt.Sprintf("%s: safe ff failed: %v", sm.ID, ffErr))
+			// State-only home (no git worktree): skip FF and log diagnostic.
+			if _, stErr := os.Stat(filepath.Join(sm.Home, ".git")); os.IsNotExist(stErr) {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeSkipped, Detail: "state-only-home"})
+				fmt.Printf("  %s: git fast-forward skipped (state-only home)\n", sm.ID)
+			} else {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeFailed, Detail: ffErr.Error()})
+				errs = append(errs, fmt.Sprintf("%s: safe ff failed: %v", sm.ID, ffErr))
+			}
 		} else if ffReason == SafeFFAlreadyCurrent {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeSkipped, Detail: "already-current"})
 		} else if ffReason == SafeFFSuccess {
