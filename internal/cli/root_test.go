@@ -53,9 +53,8 @@ var canonicalCommands = []struct {
 	{name: "decision-hold", use: "decision-hold"},
 	{name: "afk", use: "afk"},
 	{name: "integrate", use: "integrate"},
+	{name: "inbox", use: "inbox"},
 }
-
-// TestCanonicalCommandsRegistered is the root-command availability
 // regression gate. It fails whenever a canonical command is missing,
 // has the wrong Use string, or is incorrectly marked hidden.
 func TestCanonicalCommandsRegistered(t *testing.T) {

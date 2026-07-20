@@ -57,7 +57,8 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 - Steer as needed: `munsu send <id> "<line>"` (downlink only -- fails on captain:*/general).
 - Uplink status: `munsu report <state> "<msg>"` reports up the hierarchy (soldier/captain/general).
   Use `munsu notify` as an alias.
-- Peek at output: `munsu peek <id> [--lines N]`.
+- **inbox** — preview: `munsu inbox` lists pending wakes and last captain status lines side by side.
+  Use before `munsu wake claim` or `munsu wake-drain` to preview what needs attention.
 
 **Completion:** Actionable wakes handled; persistent watcher remains healthy while tasks are in flight.
 
@@ -91,7 +92,7 @@ munsu teardown <id> [--force]
 - `munsu captain converge` — flush send outbox after captain lifecycle changes
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
 - `munsu fleet bearings` — compact resume report.
-- `munsu stow <text...>` — capture durable learnings (data/learnings.md); inspect-then-update: matching entries are replaced, not duplicated.
+- `munsu inbox` — preview pending wakes and captain status lines in one view.
 - `munsu stow --general <text...>` — capture general preferences (data/learnings.md); created lazily if absent.
 - `munsu stow --kind general <text...>` — same as --general.
 
