@@ -181,3 +181,31 @@ func formatPayload(be *BatchedEscalation) string {
 	}
 	return summary
 }
+
+// DirectInject sends a sentinel-marked message directly to a terminal pane
+// after verifying the composer is safe (empty). Used by report_cmd for
+// immediate parent pane injection of material state changes.
+//
+// Unlike InjectIfSafe (which resolves the target internally from config),
+// DirectInject takes an explicit parentTarget pane handle.
+// Returns an error if the composer is not empty (Pending/Unknown) or if
+// SendKeys fails. Callers should treat errors as non-fatal since the wake
+// queue remains the primary escalation mechanism.
+func DirectInject(backend Backend, capture PaneCapture, parentTarget, msg, eventID string) error {
+	// Check composer safety.
+	safe, verdict, err := IsSafeInjectTarget(capture, parentTarget)
+	if err != nil {
+		return fmt.Errorf("checking inject target: %w", err)
+	}
+	if !safe {
+		return fmt.Errorf("composer not empty: verdict=%s", verdict)
+	}
+
+	// Build payload with sentinel prefix and optional event ID.
+	payload := Mark(msg)
+	if eventID != "" {
+		payload = fmt.Sprintf("%s [event=%s]", payload, eventID)
+	}
+
+	return backend.SendKeys(parentTarget, payload)
+}
