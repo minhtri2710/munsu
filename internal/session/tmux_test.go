@@ -99,7 +99,7 @@ func TestDefault_ColdStartPrefersTmux(t *testing.T) {
 }
 
 func TestSelect_RejectsUnknownNames(t *testing.T) {
-	unknown := []string{"cmux", "orca", "foobar", ""}
+	unknown := []string{"orca", "foobar", ""}
 	for _, name := range unknown {
 		_, err := Select(name)
 		if err == nil {
@@ -110,7 +110,7 @@ func TestSelect_RejectsUnknownNames(t *testing.T) {
 	}
 }
 func TestSelect_ReturnsKnownBackends(t *testing.T) {
-	known := []string{"tmux", "herdr", "zellij"}
+	known := []string{"tmux", "herdr", "zellij", "cmux"}
 	for _, name := range known {
 		bk, err := Select(name)
 		if err != nil {
@@ -128,7 +128,7 @@ func TestResolve_ErrorsOnUnknownBackendConfig(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("cmux\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("nonexistent\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
