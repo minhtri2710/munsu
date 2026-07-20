@@ -536,13 +536,13 @@ func (r *Runner) waitAndInjectBrief() error {
 	}
 	if err := r.waitForHarnessReady(60); err != nil {
 		capture, _ := r.bk.Capture(r.windowID, 60)
-		_ = task.AppendStatus(r.homeDir, r.args.ID, "failed: harness not ready")
+		_ = task.AppendStatus(r.homeDir, r.args.ID, "failed: harness handshake")
 		dataDir := filepath.Join(r.homeDir, "data", r.args.ID)
 		_ = os.MkdirAll(dataDir, 0755)
 		failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", r.harness, err, capture)
 		_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
 		_ = r.bk.Teardown(r.windowID)
-		return fmt.Errorf("harness %q not ready within timeout: %w", r.harness, err)
+		return fmt.Errorf("harness %q handshake failed: %w", r.harness, err)
 	}
 	// Brief settle: let harness present clean prompt before one-liner.
 	time.Sleep(500 * time.Millisecond)
@@ -578,6 +578,10 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 				_ = r.bk.SendKeys(r.windowID, "")
 				trustHandled = true
 				continue
+			}
+			// Check for failure patterns and abort early when detected.
+			if harness.HasFailurePattern(capture, r.harness) {
+				return fmt.Errorf("harness %q detected launch failure: %q", r.harness, capture)
 			}
 			if harness.HasReadyPattern(capture, r.harness) {
 				return nil

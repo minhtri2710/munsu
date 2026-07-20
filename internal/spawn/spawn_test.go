@@ -915,3 +915,98 @@ func runGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
+
+func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
+	fake := &fakeBackend{
+		capture: func(windowID string, lines int) (string, error) {
+			return "Auth required: please set ANTHROPIC_API_KEY", nil
+		},
+	}
+	r := &Runner{
+		harness:  "claude",
+		bk:       fake,
+		windowID: "win-1",
+	}
+	err := r.waitForHarnessReady(5)
+	if err == nil {
+		t.Fatal("expected failure pattern error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Auth required") {
+		t.Errorf("error should contain failure pattern, got: %v", err)
+	}
+}
+
+func TestWaitForHarnessReady_ReadyPatternSuccess(t *testing.T) {
+	fake := &fakeBackend{
+		capture: func(windowID string, lines int) (string, error) {
+			return "> ready", nil
+		},
+	}
+	r := &Runner{
+		harness:  "pi",
+		bk:       fake,
+		windowID: "win-1",
+	}
+	if err := r.waitForHarnessReady(5); err != nil {
+		t.Fatalf("expected ready success, got: %v", err)
+	}
+}
+
+func TestWaitForHarnessReady_Timeout(t *testing.T) {
+	fake := &fakeBackend{
+		capture: func(windowID string, lines int) (string, error) {
+			return "Starting...", nil // never shows ready or failure pattern
+		},
+	}
+	r := &Runner{
+		harness:  "pi",
+		bk:       fake,
+		windowID: "win-1",
+	}
+	err := r.waitForHarnessReady(2)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not ready after") {
+		t.Errorf("expected timeout error, got: %v", err)
+	}
+}
+
+func TestWaitAndInjectBrief_FailurePatternTearsDown(t *testing.T) {
+	teardownCalled := false
+	homeDir := t.TempDir()
+	fake := &fakeBackend{
+		capture: func(windowID string, lines int) (string, error) {
+			return "AuthenticationError: model `gpt-5.2-codex` not found", nil
+		},
+		teardown: func(windowID string) error {
+			teardownCalled = true
+			return nil
+		},
+	}
+	dataDir := filepath.Join(homeDir, "data", "handshake-test")
+	_ = os.MkdirAll(dataDir, 0755)
+	r := &Runner{
+		homeDir:  homeDir,
+		harness:  "codex",
+		bk:       fake,
+		windowID: "win-1",
+		briefData: []byte("# test brief"),
+	}
+	r.args.ID = "handshake-test"
+	err := r.waitAndInjectBrief()
+	if err == nil {
+		t.Fatal("expected handshake failure error, got nil")
+	}
+	if !strings.Contains(err.Error(), "handshake failed") {
+		t.Errorf("expected handshake failure error, got: %v", err)
+	}
+	if !teardownCalled {
+		t.Error("teardown was not called after failure pattern detection")
+	}
+	// Verify failure evidence was persisted
+	failPath := filepath.Join(dataDir, "ready-fail.txt")
+	if _, statErr := os.Stat(failPath); statErr != nil {
+		t.Errorf("failure evidence file not written: %v", statErr)
+	}
+}

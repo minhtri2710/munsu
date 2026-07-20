@@ -73,6 +73,11 @@ type Adapter struct {
 	// dialog that should be auto-dismissed.
 	TrustPatterns []string
 
+	// FailurePatterns is a list of substrings that indicate a launch failure
+	// (auth errors, model unavailable, etc.) so the handshake can abort early
+	// instead of waiting for the full ready timeout.
+	FailurePatterns []string
+
 	// TrustDialog describes the trust/permission dialog behavior on first launch.
 	TrustDialog string
 
@@ -100,6 +105,7 @@ var Adapters = map[string]Adapter{
 		BusyPattern:     `esc to interrupt`,
 		ReadyPatterns:   []string{">", "ready"},
 		TrustPatterns:   nil,
+		FailurePatterns:   []string{"Auth required", "not authenticated"},
 		ExitCommand:     `/exit`,
 		InterruptKeys:   `Escape`,
 		SkillInvocation: `/`,
@@ -122,6 +128,7 @@ var Adapters = map[string]Adapter{
 		BusyPattern:     `esc to interrupt`,
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
+		FailurePatterns:   []string{"AuthenticationError", "Incorrect API key"},
 		ExitCommand:     `/quit`,
 		InterruptKeys:   `Escape`,
 		SkillInvocation: `$`,
@@ -145,6 +152,7 @@ var Adapters = map[string]Adapter{
 		BusyPattern:     `esc interrupt`,
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
+		FailurePatterns:   []string{"AuthenticationError", "Incorrect API key"},
 		ExitCommand:     `/exit`,
 		InterruptKeys:   `Escape Escape`,
 		SkillInvocation: `/`,
@@ -169,6 +177,7 @@ var Adapters = map[string]Adapter{
 		BusyPattern:     `Working\.\.\.`,
 		ReadyPatterns:   []string{">", "Agent:", "What would you like", "checkpoint", "thinking off", "◆"},
 		TrustPatterns:   []string{"Trust project folder", "→ Trust", "Do not trust"},
+		FailurePatterns:   []string{"OPENAI_API_KEY", "AuthenticationError"},
 		ExitCommand:     `/quit`,
 		InterruptKeys:   `Escape`,
 		SkillInvocation: `/`,
@@ -196,6 +205,7 @@ var Adapters = map[string]Adapter{
 		BusyPattern:     `Ctrl\+c:cancel`,
 		ReadyPatterns:   nil,
 		TrustPatterns:   nil,
+		FailurePatterns:   []string{"Invalid API key"},
 		IdlePattern:     `Shift\+Tab:mode`,
 		ExitCommand:     `Ctrl+Q Ctrl+Q`,
 		InterruptKeys:   `Ctrl+C`,
@@ -219,6 +229,7 @@ var Adapters = map[string]Adapter{
 		BusyPattern:     `Thinking\.\.\.`,
 		ReadyPatterns:   []string{"esc to cancel", "Ready for your prompt", "What would you like"},
 		TrustPatterns:   []string{"Do you trust", "Yes, I trust this folder"},
+		FailurePatterns:   []string{"Failed to authenticate"},
 		IdlePattern:     `Press shift\+tab to cycle modes`,
 		ExitCommand:     `Ctrl+Q Ctrl+Q`,
 		InterruptKeys:   `Ctrl+C`,
@@ -320,6 +331,28 @@ func GetReadyPatterns(harnessName string) []string {
 // the given harness. Returns false for unknown harnesses.
 func HasReadyPattern(capture, harnessName string) bool {
 	patterns := GetReadyPatterns(harnessName)
+	for _, p := range patterns {
+		if strings.Contains(capture, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetFailurePatterns returns the failure patterns for a given harness, or nil
+// when the harness has no specific failure patterns set.
+func GetFailurePatterns(harnessName string) []string {
+	a, ok := GetAdapter(harnessName)
+	if !ok {
+		return nil
+	}
+	return a.FailurePatterns
+}
+
+// HasFailurePattern reports whether capture contains any failure pattern for
+// the given harness. Returns false for unknown harnesses.
+func HasFailurePattern(capture, harnessName string) bool {
+	patterns := GetFailurePatterns(harnessName)
 	for _, p := range patterns {
 		if strings.Contains(capture, p) {
 			return true
