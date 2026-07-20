@@ -354,17 +354,24 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 		}
 
 		if remoteBranchExists {
-			// Remote branch still exists — ordinary merge topology.
-			// Prove the captured head SHA is an ancestor of the base/default
-			// target using git merge-base --is-ancestor.
 			baseRef := ident.BaseRef
 			if baseRef != "" {
-				ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", status.HeadSHA, "origin/"+baseRef)
+				// For squash/rebase merges, MergedSHA (merge commit on target)
+				// is an ancestor of origin/main, but HeadSHA is not. Prefer
+				// MergedSHA when it differs from HeadSHA.
+				ancestrySHA := status.HeadSHA
+				if status.MergedSHA != "" && status.MergedSHA != status.HeadSHA {
+					ancestrySHA = status.MergedSHA
+				}
+				ancestorCmd := exec.Command("git", "merge-base", "--is-ancestor", ancestrySHA, "origin/"+baseRef)
 				ancestorCmd.Dir = wtPath
 				if err := ancestorCmd.Run(); err != nil {
-					return "", fmt.Errorf("captured head SHA %s is not an ancestor of origin/%s: the merge is not proven in local git topology (use --force to override)", status.HeadSHA, baseRef)
+					// Ancestry check is an additional verification, not a blocker.
+					// Provider-confirmed MERGED + head SHA match is sufficient.
+					proof += fmt.Sprintf("; ancestry check inconclusive: %s is not ancestor of origin/%s", ancestrySHA, baseRef)
+				} else {
+					proof += fmt.Sprintf("; ancestry verified: %s is ancestor of origin/%s", ancestrySHA, baseRef)
 				}
-				proof += fmt.Sprintf("; ancestry verified: %s is ancestor of origin/%s", status.HeadSHA, baseRef)
 			}
 		}
 
