@@ -2584,3 +2584,253 @@ func TestBuildLaunchArgs_CaptainHarnessMultiToken(t *testing.T) {
 		t.Errorf("expected --thinking low in args: %v", args)
 	}
 }
+
+// newWorktreeFixture creates a remote, a project clone on main with one
+// commit, pushes, sets origin/HEAD, and returns the project repo path.
+func newWorktreeFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	project := filepath.Join(root, "project")
+	if out, err := exec.Command("git", "clone", remote, project).CombinedOutput(); err != nil {
+		t.Fatalf("git clone: %v\n%s", err, out)
+	}
+	gitTestRun(t, project, "config", "user.name", "Munsu Test")
+	gitTestRun(t, project, "config", "user.email", "munsu@example.invalid")
+	gitTestRun(t, project, "checkout", "-b", "main")
+	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Project\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, project, "add", "README.md")
+	gitTestRun(t, project, "commit", "-m", "initial")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+	gitTestRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitTestRun(t, project, "remote", "set-head", "origin", "main")
+	// Re-fetch so origin/HEAD resolves.
+	gitTestRun(t, project, "fetch", "origin")
+	return project
+}
+
+func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	homePath := filepath.Join(parent, "captains", "test-captain")
+
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Home directory exists.
+	if _, err := os.Stat(homePath); os.IsNotExist(err) {
+		t.Fatal("home directory was not created")
+	}
+
+	// .git is a file (worktree marker), not a directory.
+	gitFi, err := os.Stat(filepath.Join(homePath, ".git"))
+	if err != nil {
+		t.Fatal(".git marker missing:", err)
+	}
+	if gitFi.IsDir() {
+		t.Fatal(".git is a directory, expected worktree file marker")
+	}
+
+	// HEAD is detached at origin/main.
+	head := gitTestRun(t, homePath, "rev-parse", "HEAD")
+	if head == "" {
+		t.Fatal("empty HEAD")
+	}
+	expected := gitTestRun(t, project, "rev-parse", "origin/main")
+	if head != expected {
+		t.Errorf("HEAD = %s, want %s (origin/main)", head, expected)
+	}
+
+	// .captain-provenance exists.
+	provPath := filepath.Join(homePath, CaptainProvenanceName)
+	if _, err := os.Stat(provPath); err != nil {
+		t.Fatal("provenance file missing:", err)
+	}
+	provData, err := os.ReadFile(provPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(provData), "source-repo:") {
+		t.Errorf("provenance missing source-repo, got: %s", provData)
+	}
+	if !strings.Contains(string(provData), "commit:") {
+		t.Errorf("provenance missing commit, got: %s", provData)
+	}
+	if !strings.Contains(string(provData), "created:") {
+		t.Errorf("provenance missing created, got: %s", provData)
+	}
+
+	// .gitignore exists and covers operational dirs.
+	gitignorePath := filepath.Join(homePath, WorktreeGitignoreName)
+	gitignoreData, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range worktreeGitignoreContent {
+		if !strings.Contains(string(gitignoreData), entry) {
+			t.Errorf(".gitignore missing entry %q, got: %s", entry, gitignoreData)
+		}
+	}
+
+	// Standard captain home dirs exist.
+	for _, dir := range []string{"state", "data", "config", "projects"} {
+		p := filepath.Join(homePath, dir)
+		if fi, err := os.Stat(p); err != nil {
+			t.Errorf("subdirectory %s not created: %v", dir, err)
+		} else if !fi.IsDir() {
+			t.Errorf("%s exists but is not a directory", p)
+		}
+	}
+
+	// AGENTS.md exists.
+	if _, err := os.Stat(filepath.Join(homePath, "AGENTS.md")); err != nil {
+		t.Errorf("AGENTS.md missing: %v", err)
+	}
+
+	// .munsu-captain-home exists.
+	if _, err := os.Stat(filepath.Join(homePath, ProvenanceMarkerName)); err != nil {
+		t.Errorf("provenance marker missing: %v", err)
+	}
+
+	// Registered in parent.
+	registered, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range registered {
+		if r.ID == "test-captain" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("captain not registered in parent home")
+	}
+}
+
+func TestSeedFromWorktree_Idempotent(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	homePath := filepath.Join(parent, "captains", "test-captain")
+
+	// First call: creates the worktree.
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second call: must be a no-op.
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+		t.Fatal("second seed should be no-op:", err)
+	}
+}
+
+func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
+	parent := t.TempDir()
+	homePath := filepath.Join(parent, "captains", "existing-sm")
+
+	// Create a state-only captain home first.
+	if err := SeedWithParent("existing-sm", homePath, parent, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	project := newWorktreeFixture(t)
+
+	// Worktree seed on an existing state-only home must fail.
+	if err := SeedFromWorktree("existing-sm", homePath, project, parent, ""); err == nil {
+		t.Fatal("expected error for state-only home, got nil")
+	}
+}
+
+func TestIsManagedWorktree(t *testing.T) {
+	t.Run("returns false for non-existent path", func(t *testing.T) {
+		managed, err := isManagedWorktree(filepath.Join(t.TempDir(), "nonexistent"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if managed {
+			t.Error("expected false for non-existent path")
+		}
+	})
+
+	t.Run("returns false for bare directory", func(t *testing.T) {
+		managed, err := isManagedWorktree(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if managed {
+			t.Error("expected false for bare dir")
+		}
+	})
+
+	t.Run("returns false for regular git clone", func(t *testing.T) {
+		project := newWorktreeFixture(t)
+		managed, err := isManagedWorktree(project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if managed {
+			t.Error("expected false for regular clone")
+		}
+	})
+
+	t.Run("returns true for seeded worktree captain home", func(t *testing.T) {
+		project := newWorktreeFixture(t)
+		parent := t.TempDir()
+		homePath := filepath.Join(parent, "captains", "test-captain")
+		if err := SeedFromWorktree("test-captain", homePath, project, parent, ""); err != nil {
+			t.Fatal(err)
+		}
+		managed, err := isManagedWorktree(homePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !managed {
+			t.Error("expected true for seeded worktree")
+		}
+	})
+}
+
+func TestDefaultBranch_WithOriginHEAD(t *testing.T) {
+	project := newWorktreeFixture(t)
+	branch, err := resolveDefaultBranch(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "main" {
+		t.Errorf("branch = %q, want %q", branch, "main")
+	}
+}
+
+func TestDefaultBranch_FallbackToMain(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	exec.Command("git", "init", "--bare", remote).Run()
+	project := filepath.Join(root, "project")
+	exec.Command("git", "clone", remote, project).Run()
+	gitTestRun(t, project, "config", "user.name", "Munsu Test")
+	gitTestRun(t, project, "config", "user.email", "munsu@example.invalid")
+	gitTestRun(t, project, "checkout", "-b", "main")
+	os.WriteFile(filepath.Join(project, "file"), []byte("x"), 0644)
+	gitTestRun(t, project, "add", "file")
+	gitTestRun(t, project, "commit", "-m", "init")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+
+	// Remove origin/HEAD symbolic ref to test fallback.
+	// Remove origin/HEAD to test fallback.
+	gitTestRun(t, project, "remote", "set-head", "origin", "--delete")
+
+	branch, err := resolveDefaultBranch(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "main" {
+		t.Errorf("branch = %q, want %q", branch, "main")
+	}
+}
