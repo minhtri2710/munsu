@@ -3143,7 +3143,6 @@ func TestDefaultBranch_FallbackToMain(t *testing.T) {
 	gitTestRun(t, project, "push", "-u", "origin", "main")
 
 	// Remove origin/HEAD symbolic ref to test fallback.
-	// Remove origin/HEAD to test fallback.
 	gitTestRun(t, project, "remote", "set-head", "origin", "--delete")
 
 	branch, err := resolveDefaultBranch(project)
@@ -3154,3 +3153,198 @@ func TestDefaultBranch_FallbackToMain(t *testing.T) {
 		t.Errorf("branch = %q, want %q", branch, "main")
 	}
 }
+
+// --- MigrateToWorktree tests ---
+
+// stateOnlyHomeFixture creates a state-only captain home in parent and returns its path.
+func stateOnlyHomeFixture(t *testing.T, parent, id string) string {
+	t.Helper()
+	smHome := filepath.Join(parent, "captains", id)
+	if err := Seed(id, smHome, "# charter for "+id); err != nil {
+		t.Fatalf("Seed(%s): %v", id, err)
+	}
+	return smHome
+}
+
+func TestMigrateToWorktree_SuccessPath(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	id := "test-captain"
+	smHome := stateOnlyHomeFixture(t, parent, id)
+
+	// Write some operational state.
+	os.MkdirAll(filepath.Join(smHome, "state", "sub"), 0755)
+	os.WriteFile(filepath.Join(smHome, "state", "sub", "data.txt"), []byte("runtime\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "config", "custom.cfg"), []byte("setting=1\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "data", "notes.md"), []byte("# notes\n"), 0644)
+
+	// Migrate to managed worktree.
+	if err := MigrateToWorktree(smHome, project, id, parent); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Home is now a managed worktree.
+	managed, err := isManagedWorktree(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managed {
+		t.Error("home should be a managed worktree after migration")
+	}
+
+	// 2. .munsu-captain-home marker exists.
+	if _, err := os.Stat(filepath.Join(smHome, ProvenanceMarkerName)); err != nil {
+		t.Errorf("provenance marker missing: %v", err)
+	}
+
+	// 3. .captain-provenance exists.
+	if _, err := os.Stat(filepath.Join(smHome, CaptainProvenanceName)); err != nil {
+		t.Errorf("captain provenance missing: %v", err)
+	}
+
+	// 4. .gitignore exists.
+	if _, err := os.Stat(filepath.Join(smHome, WorktreeGitignoreName)); err != nil {
+		t.Errorf(".gitignore missing: %v", err)
+	}
+
+	// 5. AGENTS.md preserved.
+	if _, err := os.Stat(filepath.Join(smHome, "AGENTS.md")); err != nil {
+		t.Errorf("AGENTS.md missing: %v", err)
+	}
+
+	// 6. Operational dirs preserved with content.
+	data, err := os.ReadFile(filepath.Join(smHome, "state", "sub", "data.txt"))
+	if err != nil {
+		t.Errorf("state/sub/data.txt not preserved: %v", err)
+	} else if string(data) != "runtime\n" {
+		t.Errorf("state/sub/data.txt content = %q", string(data))
+	}
+
+	data, err = os.ReadFile(filepath.Join(smHome, "config", "custom.cfg"))
+	if err != nil {
+		t.Errorf("config/custom.cfg not preserved: %v", err)
+	} else if string(data) != "setting=1\n" {
+		t.Errorf("config/custom.cfg content = %q", string(data))
+	}
+
+	data, err = os.ReadFile(filepath.Join(smHome, "data", "notes.md"))
+	if err != nil {
+		t.Errorf("data/notes.md not preserved: %v", err)
+	} else if string(data) != "# notes\n" {
+		t.Errorf("data/notes.md content = %q", string(data))
+	}
+
+	// 7. Backup directory exists.
+	backupGlob, _ := filepath.Glob(smHome + ".backup-*")
+	if len(backupGlob) == 0 {
+		t.Error("backup directory not found")
+	}
+
+	// 8. Registered in parent.
+	found := false
+	mates, err := List(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range mates {
+		if m.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("captain %s not registered in parent", id)
+	}
+
+	// 9. Git is detached (worktree state).
+	head := gitTestRun(t, smHome, "rev-parse", "HEAD")
+	if head == "" {
+		t.Error("empty HEAD in worktree")
+	}
+	gitFi, err := os.Stat(filepath.Join(smHome, ".git"))
+	if err != nil {
+		t.Fatal(".git marker missing:", err)
+	}
+	if gitFi.IsDir() {
+		t.Error(".git is a directory, expected worktree file marker")
+	}
+}
+
+func TestMigrateToWorktree_RefusesManagedWorktree(t *testing.T) {
+	parent := t.TempDir()
+	project := newWorktreeFixture(t)
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+	if err := SeedFromWorktree(id, homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Attempt migration on already-managed worktree.
+	err := MigrateToWorktree(homePath, project, id, parent)
+	if err == nil {
+		t.Fatal("expected error for already-managed worktree")
+	}
+	if !strings.Contains(err.Error(), "already a managed worktree") {
+		t.Errorf("error = %v, want 'already a managed worktree'", err)
+	}
+}
+
+func TestMigrateToWorktree_RefusesNonStateOnly(t *testing.T) {
+	parent := t.TempDir()
+	project := newWorktreeFixture(t)
+
+	// Create a bare directory with no captain structure.
+	bareDir := filepath.Join(t.TempDir(), "bare")
+	os.MkdirAll(bareDir, 0755)
+
+	err := MigrateToWorktree(bareDir, project, "test", parent)
+	if err == nil {
+		t.Fatal("expected error for non-state-only path")
+	}
+	if !strings.Contains(err.Error(), "not a state-only home") {
+		t.Errorf("error = %v, want refusal of non-state-only", err)
+	}
+}
+
+func TestMigrateToWorktree_RollbackOnWorktreeFailure(t *testing.T) {
+	parent := t.TempDir()
+	id := "test-captain"
+	smHome := stateOnlyHomeFixture(t, parent, id)
+
+	// Use a non-existent repo path to cause worktree creation to fail.
+	nonExistentRepo := filepath.Join(t.TempDir(), "nonexistent")
+
+	err := MigrateToWorktree(smHome, nonExistentRepo, id, parent)
+	if err == nil {
+		t.Fatal("expected error for non-existent repo")
+	}
+
+	// Original home should still be intact.
+	if _, stErr := os.Stat(filepath.Join(smHome, "AGENTS.md")); stErr != nil {
+		t.Errorf("original home was damaged: AGENTS.md missing: %v", stErr)
+	}
+	if !isStateOnlyHome(smHome) {
+		t.Error("home should still be a state-only home after failed migration")
+	}
+}
+
+func TestMigrateToWorktree_RemoteMismatchRefused(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/parent/repo.git")
+	id := "test-captain"
+	smHome := stateOnlyHomeFixture(t, parent, id)
+
+	// Repo with different remote.
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/different/repo.git")
+
+	err := MigrateToWorktree(smHome, repo, id, parent)
+	if err == nil {
+		t.Fatal("expected error for mismatched remote")
+	}
+	if !strings.Contains(err.Error(), "does not match parent remote") {
+		t.Errorf("error = %v, want remote mismatch", err)
+	}
+}
+

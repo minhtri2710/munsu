@@ -132,14 +132,28 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 		}),
 	})
 
+	migrateRepo := ""
 	migrateCmd := &cobra.Command{
 		Use:   "migrate <captain-home> <id>",
-		Short: "Migrate a seeded home (write provenance marker)",
+		Short: "Migrate a seeded home to managed worktree",
+		Long: `Migrate a captain home to a managed git worktree.
+
+Without --repo, writes a provenance marker to a legacy state-only home (simple).
+With --repo <path>, performs a transactional migration from state-only home to
+managed git worktree, preserving operational dirs (state/, config/, data/, etc.).
+
+In worktree mode, the migration is atomic: on failure the original home is
+restored and a rollback marker (.migration-rollback) is written. On success,
+the old home is backed up at <home-path>.backup-<timestamp>.`,
 		Args:  ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if migrateRepo != "" {
+				return captain.MigrateToWorktree(args[0], migrateRepo, args[1], ctx.Home)
+			}
 			return captain.Migrate(args[0], args[1])
-		},
+		}),
 	}
+	migrateCmd.Flags().StringVar(&migrateRepo, "repo", "", "Path to the project git repo for managed worktree migration")
 	cmd.AddCommand(migrateCmd)
 
 	updateCmd := &cobra.Command{
