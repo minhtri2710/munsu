@@ -76,6 +76,9 @@ func (r *Runner) Run() (string, error) {
 	if err := r.checkScopeGate(); err != nil {
 		return "", err
 	}
+	if err := r.preflightHarness(); err != nil {
+		return "", err
+	}
 	if err := r.acquireWorktree(); err != nil {
 		return "", err
 	}
@@ -320,11 +323,48 @@ func (r *Runner) acquireWorktree() error {
 	return nil
 }
 
+// preflightHarness resolves the harness name early and runs readiness preflight.
+// This happens before worktree acquisition so known errors fail before allocating
+// any resources. Unknown-level preflight results pass through without error.
+func (r *Runner) preflightHarness() error {
+	harnessName := r.args.HarnessFlag
+	if harnessName == "" {
+		if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
+			harnessName = sel.Harness
+		} else {
+			h, err := harness.Soldier(r.homeDir)
+			if err != nil {
+				return fmt.Errorf("resolving harness for preflight: %w", err)
+			}
+			harnessName = h
+		}
+	}
+
+	result, err := harness.Preflight(harnessName)
+	if err != nil {
+		return err
+	}
+	if result.AdapterKnown == harness.PreflightAbsent {
+		return &harness.PreflightError{Harness: harnessName, Reason: "adapter-unknown"}
+	}
+	if result.BinaryOnPath == harness.PreflightAbsent {
+		return &harness.PreflightError{Harness: harnessName, Reason: "binary-absent"}
+	}
+	if result.AuthConfigured == harness.PreflightAbsent {
+		return &harness.PreflightError{Harness: harnessName, Reason: "auth-absent"}
+	}
+	r.harness = harnessName
+	return nil
+}
+
 // Phase 9: resolveHarness resolves the soldier harness.
 // Precedence: --harness flag > dispatch profile match on brief > Soldier() chain.
 // When soldier-dispatch.json is active and no --harness is set, prefer
 // ResolveDispatchSelection over the bare DefaultHarness shortcut in Soldier().
 func (r *Runner) resolveHarness() error {
+	if r.harness != "" {
+		return nil // already resolved by preflightHarness
+	}
 	if r.args.HarnessFlag != "" {
 		if err := harness.ValidateHarness(r.args.HarnessFlag); err != nil {
 			return fmt.Errorf("--harness: %w", err)
