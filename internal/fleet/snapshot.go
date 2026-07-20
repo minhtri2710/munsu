@@ -30,6 +30,7 @@ type TaskSnapshot struct {
 	Window     string `json:"window"`
 	Worktree   string `json:"worktree"`
 	PaneAlive  bool   `json:"pane_alive"`
+	PaneAliveUnknown bool `json:"pane_alive_unknown,omitempty"`
 	LastStatus string `json:"last_status,omitempty"`
 
 	// Home is the munsu home that owns this task meta (primary or captain).
@@ -124,6 +125,9 @@ func PhaseFromProjection(ts TaskSnapshot) string {
 	if ts.CurrentState != "" {
 		return ts.CurrentState
 	}
+	if ts.PaneAliveUnknown {
+		return "unknown"
+	}
 	return PhaseFromMeta(ts.Window, ts.PaneAlive)
 }
 
@@ -196,9 +200,12 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			Home:     homeLabel,
 			Source:   source,
 		}
-		// Pane check skipped here to avoid import cycle with session package.
 		if w := meta["window"]; w != "" {
-			ts.PaneAlive = true
+			if paneAliveForCaptain != nil {
+				ts.PaneAlive, _ = paneAliveForCaptain(taskHome, meta)
+			} else {
+				ts.PaneAliveUnknown = true
+			}
 		}
 		statusPath := filepath.Join(taskHome, "state", id+".status")
 		if data, err := os.ReadFile(statusPath); err == nil {
@@ -334,7 +341,7 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 	}
 
 	if paneAliveForCaptain == nil {
-		return "dead"
+		return "unknown"
 	}
 	alive, aliveErr := paneAliveForCaptain(parentHome, meta)
 	if aliveErr != nil {
@@ -348,7 +355,7 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 
 // paneAliveForCaptain probes endpoint liveness from parent meta.
 // Wired by SetPaneAliveProbe (CLI) so fleet does not import session (cycle).
-// Nil means backend cannot be resolved → dead when meta has a window.
+// Nil means no probe is wired → unknown when meta has a window.
 var paneAliveForCaptain func(parentHome string, meta map[string]string) (bool, error)
 
 // SetPaneAliveProbe installs the session-backend Alive probe used by CaptainStatus.

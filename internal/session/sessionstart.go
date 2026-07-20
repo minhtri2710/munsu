@@ -94,7 +94,7 @@ func printFleetState(w io.Writer, home string) {
 		return
 	}
 	for _, ts := range snap.Tasks {
-		phase := fleet.PhaseFromMeta(ts.Window, ts.PaneAlive)
+		phase := fleet.PhaseFromProjection(ts)
 		statusDisplay := ts.LastStatus
 		if statusDisplay == "" {
 			statusDisplay = "no status"

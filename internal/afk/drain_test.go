@@ -116,8 +116,8 @@ func TestDrainCycle_DrainsQueue(t *testing.T) {
 
 func TestDrainCycle_PeekFleet(t *testing.T) {
 	home := t.TempDir()
-	// Create an in-flight task. Snapshot assumes pane alive when window is set
-	// unless a liveness probe is wired — so Dead will be 0 here.
+	// Create an in-flight task with a window but no liveness probe wired.
+
 	meta := []byte("id = task-ship\nproject = demo\nkind = ship\nwindow = @9999\n")
 	stateDir := filepath.Join(home, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
@@ -142,7 +142,7 @@ func TestDrainCycle_PeekFleet(t *testing.T) {
 		t.Errorf("InFlight = %d, want 1", report.FleetPeek.InFlight)
 	}
 	if report.FleetPeek.Alive != 1 {
-		t.Errorf("Alive = %d, want 1 (Snapshot assumes alive with window)", report.FleetPeek.Alive)
+		t.Errorf("Alive = %d, want 1 (task has window, CurrentState reports alive)", report.FleetPeek.Alive)
 	}
 	// HasActionable is wake-gated, not fleet-gated.
 	if report.HasActionable() {
