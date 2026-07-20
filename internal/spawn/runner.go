@@ -73,6 +73,9 @@ func (r *Runner) Run() (string, error) {
 	if err := r.preflightNoMistakes(); err != nil {
 		return "", err
 	}
+	if err := r.preflightDelivery(); err != nil {
+		return "", err
+	}
 	if err := r.checkScopeGate(); err != nil {
 		return "", err
 	}
