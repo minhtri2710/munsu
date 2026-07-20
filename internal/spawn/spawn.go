@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"gopkg.in/yaml.v3"
@@ -313,6 +314,37 @@ func defaultNoMistakesPreflight(repoPath string) error {
 		return fmt.Errorf("reading no-mistakes config: %w", err)
 	}
 	return checkNoMistakesCompatibility(repoPath, cfg, agentAvailable)
+}
+
+// preflightDelivery runs the delivery-level mode preflight before
+// worktree acquisition. It verifies environmental readiness for the
+// resolved delivery mode (e.g. gh auth, remotes).
+func (r *Runner) preflightDelivery() error {
+	result, err := delivery.Preflight(r.effectiveMode, r.projPath)
+	if err != nil {
+		return fmt.Errorf("delivery preflight: %w", err)
+	}
+	if !result.Feasible {
+		return fmt.Errorf("delivery preflight for %q blocked: %s", r.effectiveMode, formatPreflightFailures(result.Checks))
+	}
+	return nil
+}
+
+func formatPreflightFailures(checks []delivery.Check) string {
+	var b strings.Builder
+	for _, c := range checks {
+		if !c.OK {
+			if b.Len() > 0 {
+				b.WriteString("; ")
+			}
+			b.WriteString(c.Name)
+			if c.Detail != "" {
+				b.WriteString(": ")
+				b.WriteString(c.Detail)
+			}
+		}
+	}
+	return b.String()
 }
 
 // effectiveModeForSpawn resolves the effective delivery mode for a spawn operation.

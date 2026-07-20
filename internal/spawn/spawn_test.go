@@ -908,6 +908,49 @@ func TestBootstrapWindowExportsSoldierRole(t *testing.T) {
 	}
 }
 
+func TestPreflightDelivery_BlocksOnDirectPRWithoutGhAuth(t *testing.T) {
+	// direct-PR preflight should fail when gh is not on PATH
+	t.Setenv("PATH", t.TempDir())
+	r := &Runner{
+		effectiveMode: "direct-PR",
+		projPath:      "",
+	}
+	err := r.preflightDelivery()
+	if err == nil {
+		t.Fatal("expected preflight error for direct-PR without gh auth")
+	}
+	if !strings.Contains(err.Error(), "gh-auth") {
+		t.Errorf("error should mention gh-auth, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("error should say blocked, got: %v", err)
+	}
+}
+
+func TestPreflightDelivery_LocalOnlyAlwaysPasses(t *testing.T) {
+	r := &Runner{
+		effectiveMode: "local-only",
+	}
+	err := r.preflightDelivery()
+	if err != nil {
+		t.Errorf("local-only should always pass, got: %v", err)
+	}
+}
+
+func TestPreflightDelivery_UnknownModeError(t *testing.T) {
+	r := &Runner{
+		effectiveMode: "bogus-mode",
+	}
+	err := r.preflightDelivery()
+	if err == nil {
+		t.Fatal("expected error for unknown mode")
+	}
+	if !strings.Contains(err.Error(), "unknown delivery mode") {
+		t.Errorf("error should mention unknown delivery mode, got: %v", err)
+	}
+}
+
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
