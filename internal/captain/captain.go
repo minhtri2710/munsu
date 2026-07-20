@@ -370,6 +370,77 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	return nil
 }
 
+
+
+// removeExistingWorktree removes a managed worktree at homePath if it exists.
+// Errors are logged but not returned — best-effort cleanup before replacement.
+func removeExistingWorktree(homePath, repoPath string) {
+	// Check if it's a git worktree by looking for .git file.
+	if _, err := os.Stat(filepath.Join(homePath, ".git")); err != nil {
+		// Not a worktree — remove as regular directory if empty-ish.
+		os.RemoveAll(homePath)
+		return
+	}
+
+	// Read .git file to find owning repo.
+	data, err := os.ReadFile(filepath.Join(homePath, ".git"))
+	if err != nil {
+		os.RemoveAll(homePath)
+		return
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir: ") {
+		os.RemoveAll(homePath)
+		return
+	}
+	gitDir := strings.TrimPrefix(line, "gitdir: ")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(filepath.Dir(homePath), gitDir)
+	}
+	repoDir := filepath.Dir(filepath.Dir(filepath.Dir(gitDir)))
+	// Try git worktree remove first; fall back to os.RemoveAll.
+	if err := exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", homePath).Run(); err != nil {
+		os.RemoveAll(homePath)
+	}
+}
+
+// validateWorktreeRemote verifies that the source repo's origin remote matches
+// the parent home's origin remote (canonical comparison).
+func validateWorktreeRemote(repoPath, parentHome string) error {
+	parentRemote, err := gitRun("-C", parentHome, "remote", "get-url", "origin")
+	if err != nil {
+		// Parent may not be a git repo (state-only home). Skip remote validation.
+		return nil
+	}
+
+	repoRemote, err := gitRun("-C", repoPath, "remote", "get-url", "origin")
+	if err != nil {
+		return fmt.Errorf("source repo has no remote origin: %w", err)
+	}
+
+	if normalizeGitRemote(parentRemote) != normalizeGitRemote(repoRemote) {
+		return fmt.Errorf("source repo remote %q does not match parent remote %q (canonical: %q vs %q)",
+			repoRemote, parentRemote, normalizeGitRemote(repoRemote), normalizeGitRemote(parentRemote))
+	}
+
+	return nil
+}
+
+
+// rollbackWorktree cleans up partial provisioning artifacts on failure.
+// Removes the worktree if created, and unregisters if registered.
+func rollbackWorktree(worktreeCreated bool, absHome, absRepo string, registered bool, parentHome, id string) {
+	if worktreeCreated {
+		// Try git worktree remove first; fall back to os.RemoveAll.
+		removeExistingWorktree(absHome, absRepo)
+		fmt.Fprintf(os.Stderr, "munsu: rolled back worktree at %s\n", absHome)
+	}
+	if registered && parentHome != "" {
+		if urErr := Unregister(parentHome, id); urErr != nil {
+			fmt.Fprintf(os.Stderr, "munsu: warning: failed to unregister captain %s during rollback: %v\n", id, urErr)
+		}
+	}
+}
 // canonicalHome returns the fully-resolved, absolute path for homePath.
 // Fails closed: any resolution error returns an error — no raw fallback.
 func canonicalHome(homePath string) (string, error) {

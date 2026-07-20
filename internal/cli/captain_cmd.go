@@ -17,6 +17,8 @@ func newCaptainCmd() *cobra.Command {
 	}
 
 	var seedRepo string
+	var seedForce bool
+	var seedRef string
 	seedCmd := &cobra.Command{
 		Use:   "seed <id> <home-path>",
 		Short: "Seed a captain home with charter",
@@ -26,16 +28,22 @@ Without --repo, creates a state-only captain home (legacy format).
 With --repo <path>, provisions a managed git-worktree captain home:
 a detached worktree at <home-path> from the specified project repo,
 with gitignore and provenance metadata.
+
+Flags for worktree provisioning:
+  --force  Replace existing managed worktree
+  --ref    Explicit branch/ref (default: repo's default branch)
 `,
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if seedRepo != "" {
-				return captain.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "")
+				return captain.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "", seedForce, seedRef)
 			}
 			return captain.SeedWithParent(args[0], args[1], ctx.Home, "")
 		}),
 	}
 	seedCmd.Flags().StringVar(&seedRepo, "repo", "", "Path to the project git repo for managed worktree captain home")
+	seedCmd.Flags().BoolVar(&seedForce, "force", false, "Replace existing managed worktree")
+	seedCmd.Flags().StringVar(&seedRef, "ref", "", "Explicit branch/ref (default: repo's default branch)")
 	cmd.AddCommand(seedCmd)
 
 	cmd.AddCommand(&cobra.Command{
