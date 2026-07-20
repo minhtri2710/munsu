@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -34,6 +35,11 @@ type TeardownResult struct {
 // Run performs a soldier teardown.
 func Run(opts Options) (*TeardownResult, error) {
 	result := &TeardownResult{}
+
+	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
+	if err := scope.GateRefuseFromCWD(); err != nil {
+		return nil, fmt.Errorf("teardown refused: %w", err)
+	}
 
 	// Read task meta
 	meta, err := task.ReadMeta(opts.HomeDir, opts.ID)
