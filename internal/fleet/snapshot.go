@@ -65,8 +65,8 @@ func SetCurrentStateResolver(fn func(homeDir, id string) (*CurrentStateInfo, err
 }
 
 // CurrentState computes the resolved current-state projection for a task.
-// Priority when probe is wired: run-step > native backend state > verified pane > folded status.
-// Fallback: meta window presence + status log folding.
+// When a resolver is wired (via SetCurrentStateResolver), it takes precedence.
+// Fallback: meta window presence + last status line (display-only, not state truth).
 func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo {
 	if resolveCurrentState != nil {
 		info, err := resolveCurrentState(homeDir, id)
@@ -75,7 +75,8 @@ func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo 
 		}
 	}
 
-	// Fallback: meta window presence + last status line.
+	// Fallback (no resolver wired): derive display phase from meta,
+	// then let a terminal status verb override. This is display-only.
 	paneAlive := meta["window"] != ""
 	info := &CurrentStateInfo{
 		State: PhaseFromMeta(meta["window"], paneAlive),

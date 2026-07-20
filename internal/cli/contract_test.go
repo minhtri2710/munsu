@@ -58,7 +58,7 @@ func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expanded task observe: %v", err)
 	}
-	if !strings.Contains(expanded, "description: no window in meta") || !strings.Contains(expanded, "branch: branch-name") {
+	if !strings.Contains(expanded, "branch: branch-name") || !strings.Contains(expanded, "status: unknown") {
 		t.Errorf("expanded task observe = %s", expanded)
 	}
 }
