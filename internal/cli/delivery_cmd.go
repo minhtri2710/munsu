@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/teardown"
 	"github.com/spf13/cobra"
 )
 
@@ -45,13 +46,15 @@ func newPRCheckCmd() *cobra.Command {
 		Long: `Parse a full GitHub PR URL, record the PR and head SHA in task meta,
 and write a check.sh script to poll the PR merge status via gh CLI.
 
-PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
+PR URL format: https://github.com/<owner>/<repo>/pull/<n>
+
+Task meta is resolved from the current home first, then each registered
+captain home (so general can arm checks after captain handoff + spawn).`,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			prURL := args[1]
 
-			// Resolve meta in primary home or a registered captain home (handoff).
 			taskHome, _, err := delivery.RequireShipMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-check %s: %w", id, err)
@@ -63,6 +66,7 @@ PR URL format: https://github.com/<owner>/<repo>/pull/<n>`,
 }
 
 func newPRMergeCmd() *cobra.Command {
+	var doTeardown bool
 	cmd := &cobra.Command{
 		Use:   "pr-merge <id> <pr-url> [-- --merge|--rebase]",
 		Short: "Merge a PR via gh-axi",
@@ -75,22 +79,44 @@ The --repo/-R flag is not allowed (repository comes from the URL).
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>
 
 Task meta is resolved from the current home first, then each registered
-captain home (so general can merge after captain handoff + spawn).`,
+captain home (so general can merge after captain handoff + spawn).
+
+Merge does not remove soldier panes or worktrees. Pass --teardown to run
+munsu teardown on the task home after a successful merge (landed cleanup).
+Without --teardown, the command prints the exact teardown invocation to run next.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
 			prURL := args[1]
 			extra := args[2:]
 
-			// Resolve meta in primary home or a registered captain home (handoff).
 			taskHome, _, err := delivery.RequireShipMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}
 
-			return delivery.PRMerge(taskHome, id, prURL, extra)
+			if err := delivery.PRMerge(taskHome, id, prURL, extra); err != nil {
+				return err
+			}
+			if !doTeardown {
+				return nil
+			}
+			fmt.Printf("Running teardown for %s in %s after merge...\n", id, taskHome)
+			result, err := teardown.Run(teardown.Options{
+				HomeDir: taskHome,
+				ID:      id,
+				Force:   false,
+			})
+			if err != nil {
+				return fmt.Errorf("post-merge teardown %s: %w", id, err)
+			}
+			for _, step := range result.Steps {
+				fmt.Println(step)
+			}
+			return nil
 		}),
 	}
+	cmd.Flags().BoolVar(&doTeardown, "teardown", false, "after successful merge, teardown the soldier (pane+worktree+meta) in the task home")
 	return cmd
 }
 

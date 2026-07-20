@@ -123,6 +123,9 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	fmt.Printf("PR merged: %s (%s method)\n", ghURL.FormatPRRef(), method)
+	// Always print the cleanup next step — merge does not teardown panes/worktrees.
+	fmt.Printf("Next: munsu teardown %s --home %s\n", id, homeDir)
+	fmt.Printf("  (or re-run pr-merge with --teardown to merge+cleanup in one step)\n")
 
 	// Best-effort fleet-sync the project clone
 	if project := meta["project"]; project != "" {

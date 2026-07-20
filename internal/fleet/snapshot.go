@@ -30,6 +30,10 @@ type TaskSnapshot struct {
 	Worktree   string `json:"worktree"`
 	PaneAlive  bool   `json:"pane_alive"`
 	LastStatus string `json:"last_status,omitempty"`
+	// Home is the munsu home that owns this task meta (primary or captain).
+	Home string `json:"home,omitempty"`
+	// Source labels where the task was discovered: "primary" or "captain:<id>".
+	Source string `json:"source,omitempty"`
 }
 
 // PhaseFromMeta returns the display phase for a task from meta-only facts.
@@ -45,32 +49,58 @@ func PhaseFromMeta(window string, paneAlive bool) string {
 	}
 }
 
-// Snapshot builds a fleet snapshot by scanning state/*.meta and state/*.status.
+// Snapshot builds a fleet snapshot by scanning state/*.meta in the primary
+// home and each registered captain home. Captain-owned soldiers remain visible
+// to the general after handoff (meta never lives on the parent home).
 func Snapshot(homeDir string) (*FleetSnapshot, error) {
 	snap := &FleetSnapshot{
 		Schema: "munsu-fleet-snapshot.v1",
 		Time:   time.Now().UTC().Format(time.RFC3339),
 	}
 
-	metasDir := filepath.Join(homeDir, "state")
-	entries, err := os.ReadDir(metasDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return snap, nil
-		}
+	if err := appendHomeTasks(snap, homeDir, "primary", ""); err != nil {
 		return nil, err
 	}
 
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".meta") {
-			continue
+	// Captain homes live under <home>/captains/<id>/ (handoff spawn target).
+	// Scan the directory tree so general fleet view sees child soldiers without
+	// importing the captain package (avoids import cycles).
+	capRoot := filepath.Join(homeDir, "captains")
+	if entries, err := os.ReadDir(capRoot); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
+				continue
+			}
+			ch := filepath.Join(capRoot, e.Name())
+			src := "captain:" + e.Name()
+			if err := appendHomeTasks(snap, ch, src, ch); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, fmt.Errorf("scanning captain home %s: %w", ch, err)
+			}
 		}
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
+	}
 
+	return snap, nil
+}
+
+func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) error {
+	metasDir := filepath.Join(taskHome, "state")
+	entries, err := os.ReadDir(metasDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
 		id := strings.TrimSuffix(entry.Name(), ".meta")
-		meta, err := task.ReadMeta(homeDir, id)
+		meta, err := task.ReadMeta(taskHome, id)
 		if err != nil {
 			continue
 		}
@@ -85,16 +115,14 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 			Yolo:     meta["yolo"],
 			Window:   meta["window"],
 			Worktree: meta["worktree"],
+			Home:     homeLabel,
+			Source:   source,
 		}
-
-		// Check pane liveness by looking for the window in meta
-		// (pane check skipped to avoid import cycle with session package)
+		// Pane check skipped here to avoid import cycle with session package.
 		if w := meta["window"]; w != "" {
-			ts.PaneAlive = true // assumed alive if meta has window
+			ts.PaneAlive = true
 		}
-
-		// Read last status line
-		statusPath := filepath.Join(homeDir, "state", id+".status")
+		statusPath := filepath.Join(taskHome, "state", id+".status")
 		if data, err := os.ReadFile(statusPath); err == nil {
 			lines := strings.TrimSpace(string(data))
 			if lines != "" {
@@ -102,11 +130,9 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 				ts.LastStatus = strings.TrimSpace(parts[len(parts)-1])
 			}
 		}
-
 		snap.Tasks = append(snap.Tasks, ts)
 	}
-
-	return snap, nil
+	return nil
 }
 
 // View renders the fleet snapshot as Markdown.
@@ -122,7 +148,11 @@ func View(homeDir string) error {
 	for _, ts := range snap.Tasks {
 		phase := PhaseFromMeta(ts.Window, ts.PaneAlive)
 
-		fmt.Printf("- **%s** (repo: %s)\n", ts.ID, ts.Project)
+		src := ts.Source
+		if src == "" {
+			src = "primary"
+		}
+		fmt.Printf("- **%s** (repo: %s) [%s]\n", ts.ID, ts.Project, src)
 		fmt.Printf("  kind: %s | mode: %s | yolo: %s\n", ts.Kind, ts.Mode, ts.Yolo)
 		// Only show harness line; omit empty model/effort
 		var modelEffortParts []string
@@ -156,16 +186,20 @@ func Bearings(homeDir string, projectDir string) error {
 
 	inFlight := 0
 	for _, ts := range snap.Tasks {
-		if ts.Kind == "ship" || ts.Kind == "scout" {
-			inFlight++
-			phase := PhaseFromMeta(ts.Window, ts.PaneAlive)
-
-			fmt.Printf("- **%s** (%s) — %s [%s]\n", ts.ID, ts.Project, ts.LastStatus, phase)
+		if ts.Kind != "ship" && ts.Kind != "scout" {
+			continue
 		}
+		inFlight++
+		phase := PhaseFromMeta(ts.Window, ts.PaneAlive)
+		src := ts.Source
+		if src == "" {
+			src = "primary"
+		}
+		fmt.Printf("- **%s** (%s) [%s] — %s [%s]\n", ts.ID, ts.Project, src, ts.LastStatus, phase)
 	}
 
 	if inFlight == 0 {
-		fmt.Println("No in-flight tasks. Fleet is idle.")
+		fmt.Println("No in-flight ship/scout tasks. Fleet is idle.")
 	}
 
 	return nil

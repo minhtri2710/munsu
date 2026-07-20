@@ -26,13 +26,15 @@ type PRMergeStatus struct {
 // When the provider is unreachable or ambiguous, it returns an error so callers
 // can fail closed.
 //
-// Uses `gh pr view --json state,merged,headRefOid,mergedSha` under the hood.
+// Uses `gh pr view --json state,headRefOid,mergeCommit` under the hood.
+// Note: GitHub CLI does not expose a boolean "merged" field; MERGED is
+// conveyed via state=MERGED (and optional mergeCommit.oid).
 var QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
 	args := []string{
 		"pr", "view",
 		fmt.Sprintf("%d", ghURL.Num),
 		"--repo", fmt.Sprintf("%s/%s", ghURL.Owner, ghURL.Repo),
-		"--json", "state,merged,headRefOid,mergedSha",
+		"--json", "state,headRefOid,mergeCommit",
 	}
 	cmd := exec.Command("gh", args...)
 	out, err := cmd.Output()
@@ -43,21 +45,41 @@ var QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
 
-	var status PRMergeStatus
-	if err := json.Unmarshal(out, &status); err != nil {
+	var raw struct {
+		State       string `json:"state"`
+		HeadRefOid  string `json:"headRefOid"`
+		MergeCommit *struct {
+			Oid string `json:"oid"`
+		} `json:"mergeCommit"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
 	}
 
+	status := &PRMergeStatus{
+		State:   raw.State,
+		HeadSHA: raw.HeadRefOid,
+	}
+	if raw.MergeCommit != nil {
+		status.MergedSHA = raw.MergeCommit.Oid
+	}
 	switch status.State {
 	case "OPEN":
 		status.Closed = false
+		status.Merged = false
 	case "MERGED":
 		status.Closed = false
 		status.Merged = true
+		// Prefer merge commit oid as merged SHA when present.
+		if status.MergedSHA == "" {
+			status.MergedSHA = status.HeadSHA
+		}
 	case "CLOSED":
 		status.Closed = true
 		status.Merged = false
+	default:
+		// leave flags false; callers treat unexpected carefully
 	}
 
-	return &status, nil
+	return status, nil
 }

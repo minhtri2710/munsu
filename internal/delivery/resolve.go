@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -14,7 +13,7 @@ import (
 //
 // Lookup order:
 //  1. primary homeDir (general or current MUNSU_HOME)
-//  2. each registered captain home under homeDir/data/captains.md
+//  2. each subdirectory of homeDir/captains/* (captain homes after handoff)
 //
 // This lets the general run delivery pr-check/pr-merge for soldiers that were
 // spawned only inside a captain home after backlog handoff (meta never
@@ -32,16 +31,9 @@ func ResolveTaskHome(homeDir, id string) (taskHome string, meta map[string]strin
 		return homeDir, meta, nil
 	}
 
-	registry := filepath.Join(homeDir, "data", "captains.md")
-	mates, regErr := captain.ParseRegistry(registry)
-	if regErr != nil {
-		return "", nil, fmt.Errorf("reading captains registry: %w", regErr)
-	}
-
 	searched := []string{homeDir}
-	for _, m := range mates {
-		ch := m.Home
-		if ch == "" || ch == homeDir {
+	for _, ch := range captainHomes(homeDir) {
+		if ch == homeDir {
 			continue
 		}
 		searched = append(searched, ch)
@@ -51,11 +43,27 @@ func ResolveTaskHome(homeDir, id string) (taskHome string, meta map[string]strin
 		}
 	}
 
-	// Prefer a clear not-found when the primary miss is absence.
 	if errors.Is(primaryErr, os.ErrNotExist) || isNotExist(primaryErr) {
 		return "", nil, fmt.Errorf("task meta %s not found in primary home or captain homes (searched: %v)", id, searched)
 	}
 	return "", nil, fmt.Errorf("task meta %s not found in primary home or captain homes (searched: %v): %w", id, searched, primaryErr)
+}
+
+// captainHomes lists immediate child dirs of <home>/captains.
+func captainHomes(homeDir string) []string {
+	root := filepath.Join(homeDir, "captains")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
+			continue
+		}
+		out = append(out, filepath.Join(root, e.Name()))
+	}
+	return out
 }
 
 func isNotExist(err error) bool {
@@ -65,7 +73,6 @@ func isNotExist(err error) bool {
 	if errors.Is(err, os.ErrNotExist) {
 		return true
 	}
-	// task.ReadMeta wraps: "reading task meta %s: %w"
 	var pe *os.PathError
 	if errors.As(err, &pe) {
 		return errors.Is(pe.Err, os.ErrNotExist) || os.IsNotExist(pe)
