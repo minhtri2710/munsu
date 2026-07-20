@@ -182,3 +182,71 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	return buf.String()
 }
+
+// TestEvaluateGuard_QueuedWakesPendingHasCode verifies queued wakes condition has a stable code.
+func TestEvaluateGuard_QueuedWakesPendingHasCode(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+	writeWakeQueue(t, home, []string{"1780000000\t1\tsignal\tkey\tpayload"})
+
+	result := EvaluateGuard(home, 0, time.Now())
+
+	if len(result.Conditions) == 0 {
+		t.Fatal("expected conditions, got none")
+	}
+
+	found := false
+	for _, c := range result.Conditions {
+		if c.Code == ConditionQueuedWakesPending {
+			found = true
+			if !strings.Contains(c.Message, "QUEUED WAKES PENDING") {
+				t.Errorf("message should mention QUEUED WAKES PENDING, got: %s", c.Message)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected condition code %q, got codes: %v", ConditionQueuedWakesPending, result.Conditions)
+	}
+}
+
+// TestEvaluateGuard_CodesAreStable verifies condition codes are stable string constants.
+func TestEvaluateGuard_CodesAreStable(t *testing.T) {
+	// Verify codes are not ad-hoc sprintf strings — they're typed constants
+	if string(ConditionQueuedWakesPending) != "queued_wakes_pending" {
+		t.Errorf("ConditionQueuedWakesPending should be 'queued_wakes_pending', got %q", ConditionQueuedWakesPending)
+	}
+	if string(ConditionWatcherAbsent) != "watcher_absent" {
+		t.Errorf("ConditionWatcherAbsent should be 'watcher_absent', got %q", ConditionWatcherAbsent)
+	}
+	if string(ConditionWatcherStale) != "watcher_stale" {
+		t.Errorf("ConditionWatcherStale should be 'watcher_stale', got %q", ConditionWatcherStale)
+	}
+}
+
+// TestEvaluateGuard_UnknownExplicit verifies conditions are explicit, even when empty.
+func TestEvaluateGuard_UnknownExplicit(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+
+	result := EvaluateGuard(home, 0, time.Now())
+
+	// All clear should have no conditions, not a sentinel value
+	if len(result.Conditions) != 0 {
+		t.Errorf("expected no conditions for all-clear, got %d", len(result.Conditions))
+	}
+}
+
+// TestEvaluateGuard_WatcherAbsentNotInEvaluateGuard verifies EvaluateGuard doesn't emit watcher codes.
+func TestEvaluateGuard_WatcherAbsentNotInEvaluateGuard(t *testing.T) {
+	home := t.TempDir()
+	// No beat file written
+
+	result := EvaluateGuard(home, 1, time.Now())
+
+	// EvaluateGuard only produces queued_wakes_pending; watcher_absent comes from the CLI layer
+	for _, c := range result.Conditions {
+		if c.Code == ConditionWatcherAbsent || c.Code == ConditionWatcherStale {
+			t.Errorf("EvaluateGuard should not emit watcher codes (those come from the CLI layer), got %q", c.Code)
+		}
+	}
+}

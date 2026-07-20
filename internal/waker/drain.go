@@ -12,6 +12,21 @@ import (
 // Record is a single wake queue entry, imported from lifecycle.
 type Record lifecycle.WakeRecord
 
+// ConditionCode is a stable machine-readable code for a guard condition.
+type ConditionCode string
+
+const (
+	ConditionQueuedWakesPending ConditionCode = "queued_wakes_pending"
+	ConditionWatcherAbsent      ConditionCode = "watcher_absent"
+	ConditionWatcherStale       ConditionCode = "watcher_stale"
+)
+
+// ConditionInfo pairs a stable condition code with its human-readable message.
+type ConditionInfo struct {
+	Code    ConditionCode
+	Message string
+}
+
 // Drain reads and clears the wake queue.
 func Drain(homeDir string) ([]Record, error) {
 	records, err := lifecycle.DrainWakes(homeDir)
@@ -41,7 +56,7 @@ func PrintRecords(records []Record) {
 type GuardResult struct {
 	BeatStatus lifecycle.BeatStatus
 	InFlight   int
-	Conditions []string
+	Conditions []ConditionInfo
 }
 
 // EvaluateGuard returns the current guard state combining beat liveness,
@@ -56,7 +71,10 @@ func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
 	result.BeatStatus = lifecycle.ReadBeatStatus(homeDir, now)
 
 	if lifecycle.HasQueuedWakes(homeDir) {
-		result.Conditions = append(result.Conditions, "QUEUED WAKES PENDING - drain with munsu wake-drain")
+		result.Conditions = append(result.Conditions, ConditionInfo{
+			Code:    ConditionQueuedWakesPending,
+			Message: "QUEUED WAKES PENDING - drain with munsu wake-drain",
+		})
 	}
 
 	return result
