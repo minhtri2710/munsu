@@ -138,28 +138,30 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	cmd.AddCommand(convergeCmd)
 
 	recoverCmd := &cobra.Command{
-		Use:   "recover [captain-home]",
-		Short: "Probe captain liveness and relaunch launched-but-dead endpoints",
-		Long: `Probe registered captain endpoints and relaunch any that are launched-but-dead.
-	Fails closed on unknown/unverified harnesses (recorded per-captain, does not abort the sweep).
-	With no argument, probes every registered captain. Pass a captain home to scope to one.`,
-		Args: cobra.MaximumNArgs(1),
+		Use:   "recover <captain-id>",
+		Short: "Run structured recovery transaction for a captain",
+		Long: `Run the full recovery transaction for one captain: provenance → config → integration → launch readiness → relaunch pane → watcher ensure → outbox flush → nudge retry.
+	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
+		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			registered, err := captain.List(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			if len(args) == 1 {
-				registered, err = scopeCaptainsToHome(registered, args[0])
-				if err != nil {
-					return err
+			var target *captain.Info
+			for _, m := range registered {
+				if m.ID == args[0] {
+					m2 := m
+					target = &m2
+					break
 				}
 			}
-			res, err := captain.Recover(ctx.Home, registered)
-			if err != nil {
-				return err
+			if target == nil {
+				return fmt.Errorf("no registered captain with id %q", args[0])
 			}
-			fmt.Println(res.String())
+			tx := &captain.RecoverTransaction{}
+			res := tx.Recover(ctx.Home, *target)
+			fmt.Println(res.StepsString())
 			return nil
 		}),
 	}
@@ -216,17 +218,3 @@ func captainRecoverEntryLine(e captain.RecoverEntry) string {
 	return e.ID + ": " + string(e.Outcome)
 }
 
-// scopeCaptainsToHome filters registered captains to those whose home matches the given
-// path. Returns an error if none match.
-func scopeCaptainsToHome(registered []captain.Info, home string) ([]captain.Info, error) {
-	var out []captain.Info
-	for _, m := range registered {
-		if m.Home == home {
-			out = append(out, m)
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("no registered captain matches home %q", home)
-	}
-	return out, nil
-}

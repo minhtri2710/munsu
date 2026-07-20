@@ -1,0 +1,266 @@
+package captain
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/task"
+)
+
+// StepState is the outcome of one recovery step.
+type StepState string
+
+const (
+	StepOk      StepState = "ok"
+	StepFailed  StepState = "failed"
+	StepSkipped StepState = "skipped"
+)
+
+// StepResult describes one step's outcome.
+type StepResult struct {
+	Name   string    `json:"name"`
+	State  StepState `json:"state"`
+	Detail string    `json:"detail"`
+}
+
+// RecoverTransaction sequences a structured captain recovery for one captain.
+// Each step runs in order and produces a StepResult with ok/failed/skipped,
+// so partial failures never block the entire recovery.
+type RecoverTransaction struct{}
+
+// Recover runs the full recovery transaction for a single captain.
+func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult {
+	res := &RecoverResult{}
+
+	// Step a: provenance check
+	res.Steps = append(res.Steps, tx.stepProvenance(sm))
+
+	// If provenance failed, all subsequent steps are skipped.
+	if res.Steps[0].State == StepFailed {
+		res.Steps = append(res.Steps,
+			StepResult{Name: "config-validation", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "integration-status", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "outbox-flush", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "nudge-retry", State: StepSkipped, Detail: "skipped: provenance failed"},
+		)
+		return res
+	}
+
+	// Step b: config validation
+	b := tx.stepConfigValidation(sm)
+	res.Steps = append(res.Steps, b)
+	configOk := b.State == StepOk
+
+	// Step c: integration status
+	res.Steps = append(res.Steps, tx.stepIntegrationStatus(sm))
+
+	// Step d: launch readiness
+	res.Steps = append(res.Steps, tx.stepLaunchReadiness(sm))
+
+	// Step e: relaunch pane if needed
+	res.Steps = append(res.Steps, tx.stepRelaunch(parentHome, sm))
+
+	// Step f: watcher ensure — only when config is OK
+	res.Steps = append(res.Steps, tx.stepWatcherEnsure(parentHome, configOk))
+
+	// Step g: outbox flush — only when config is OK
+	res.Steps = append(res.Steps, tx.stepOutboxFlush(parentHome, sm, configOk))
+
+	// Step h: nudge retry — only when config is OK
+	res.Steps = append(res.Steps, tx.stepNudgeRetry(parentHome, sm, configOk))
+
+	return res
+}
+
+func (tx *RecoverTransaction) stepProvenance(sm Info) StepResult {
+	if sm.Home == "" {
+		return StepResult{Name: "provenance", State: StepFailed, Detail: "missing home path"}
+	}
+	markerID, err := ValidateProvenance(sm.Home)
+	if err != nil {
+		return StepResult{Name: "provenance", State: StepFailed, Detail: err.Error()}
+	}
+	if markerID != sm.ID {
+		return StepResult{Name: "provenance", State: StepFailed,
+			Detail: fmt.Sprintf("marker id %q does not match registry id %q", markerID, sm.ID)}
+	}
+	return StepResult{Name: "provenance", State: StepOk, Detail: fmt.Sprintf("valid provenance for %s", markerID)}
+}
+
+func (tx *RecoverTransaction) stepConfigValidation(sm Info) StepResult {
+	// Check key config files exist under captain home.
+	checks := []struct {
+		path string
+		desc string
+	}{
+		{filepath.Join(sm.Home, "config", "captain-harness"), "captain-harness config"},
+		{filepath.Join(sm.Home, "config", "soldier-harness"), "soldier-harness config"},
+		{filepath.Join(sm.Home, "data", "captains.md"), "captains.md registry"},
+	}
+	var missing []string
+	for _, c := range checks {
+		if _, err := os.Stat(c.path); err != nil {
+			missing = append(missing, c.desc)
+		}
+	}
+	if len(missing) > 0 {
+		return StepResult{Name: "config-validation", State: StepFailed,
+			Detail: fmt.Sprintf("missing: %s", strings.Join(missing, ", "))}
+	}
+	return StepResult{Name: "config-validation", State: StepOk, Detail: "all config files present"}
+}
+
+func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
+	h, err := harness.Captain(sm.Home)
+	if err != nil || h == "" {
+		return StepResult{Name: "integration-status", State: StepFailed,
+			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
+	}
+	result, err := integrate.Status(sm.Home, sm.Home, h, integrate.ScopeProject)
+	if err != nil {
+		return StepResult{Name: "integration-status", State: StepFailed,
+			Detail: fmt.Sprintf("integration check error: %v", err)}
+	}
+	switch result.State {
+	case "installed":
+		return StepResult{Name: "integration-status", State: StepOk,
+			Detail: fmt.Sprintf("integrated with %s (%s)", result.Harness, result.Scope)}
+	case "absent":
+		return StepResult{Name: "integration-status", State: StepSkipped,
+			Detail: fmt.Sprintf("integration absent for %s", result.Harness)}
+	case "drifted":
+		return StepResult{Name: "integration-status", State: StepFailed,
+			Detail: fmt.Sprintf("integration drifted for %s: %s", result.Harness, result.Message)}
+	default:
+		return StepResult{Name: "integration-status", State: StepFailed,
+			Detail: fmt.Sprintf("integration state %q", result.State)}
+	}
+}
+
+func (tx *RecoverTransaction) stepLaunchReadiness(sm Info) StepResult {
+	h, err := harness.Captain(sm.Home)
+	if err != nil || h == "" {
+		return StepResult{Name: "launch-readiness", State: StepFailed,
+			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
+	}
+	a, ok := harness.GetAdapter(h)
+	if !ok {
+		return StepResult{Name: "launch-readiness", State: StepFailed,
+			Detail: fmt.Sprintf("harness %q not in adapter registry", h)}
+	}
+	// Check harness binary on PATH.
+	binPath, err := lookPath(a.Name)
+	if err != nil {
+		return StepResult{Name: "launch-readiness", State: StepFailed,
+			Detail: fmt.Sprintf("harness binary %q not found on PATH: %v", a.Name, err)}
+	}
+	// Check model config.
+	modelPath := filepath.Join(sm.Home, "config", "model")
+	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+		// Model is optional — harness may have a default.
+		return StepResult{Name: "launch-readiness", State: StepOk,
+			Detail: fmt.Sprintf("harness %q ready at %s (no model override)", h, binPath)}
+	}
+	return StepResult{Name: "launch-readiness", State: StepOk,
+		Detail: fmt.Sprintf("harness %q ready at %s (model configured)", h, binPath)}
+}
+
+func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResult {
+	alive, aliveErr := checkAliveViaBackend(parentHome, sm)
+	if aliveErr != nil {
+		return StepResult{Name: "relaunch-pane", State: StepFailed,
+			Detail: fmt.Sprintf("alive check failed: %v", aliveErr)}
+	}
+	if alive {
+		return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "endpoint alive, no action needed"}
+	}
+
+	// Not alive. Distinguish launched-but-dead from seeded-never-launched.
+	taskID := taskIDForCaptain(sm.ID)
+	meta, mErr := task.ReadMeta(parentHome, taskID)
+	launched := false
+	if mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != "" {
+		launched = true
+	}
+	if !launched {
+		return StepResult{Name: "relaunch-pane", State: StepSkipped,
+			Detail: "seeded but not launched"}
+	}
+
+	// Launched-but-dead: relaunch.
+	if lErr := Launch(sm.Home, parentHome); lErr != nil {
+		return StepResult{Name: "relaunch-pane", State: StepFailed,
+			Detail: fmt.Sprintf("relaunch failed: %v", lErr)}
+	}
+	return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "relaunched successfully"}
+}
+
+func (tx *RecoverTransaction) stepWatcherEnsure(parentHome string, configOk bool) StepResult {
+	if !configOk {
+		return StepResult{Name: "watcher-ensure", State: StepSkipped,
+			Detail: "skipped: config validation failed"}
+	}
+	beatStatus := lifecycle.ReadBeatStatus(parentHome, time.Now())
+	if beatStatus.Exists && !beatStatus.Stale {
+		_, pid, ok := lifecycle.ReadBeat(parentHome)
+		if ok && pid > 0 && supervision.ValidatePIDOwnership(parentHome, pid) {
+			return StepResult{Name: "watcher-ensure", State: StepOk,
+				Detail: "watcher already running"}
+		}
+	}
+
+	// Start the watcher.
+	execPath, err := os.Executable()
+	if err != nil {
+		return StepResult{Name: "watcher-ensure", State: StepFailed,
+			Detail: fmt.Sprintf("cannot resolve executable: %v", err)}
+	}
+	cmd := exec.Command(execPath, "watch", "--home", parentHome)
+	cmd.Dir = parentHome
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Env = append(os.Environ(), "MUNSU_HOME="+parentHome)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return StepResult{Name: "watcher-ensure", State: StepFailed,
+			Detail: fmt.Sprintf("starting watcher failed: %v", err)}
+	}
+	return StepResult{Name: "watcher-ensure", State: StepOk,
+		Detail: fmt.Sprintf("watcher started (pid=%d)", cmd.Process.Pid)}
+}
+
+func (tx *RecoverTransaction) stepOutboxFlush(parentHome string, sm Info, configOk bool) StepResult {
+	if !configOk {
+		return StepResult{Name: "outbox-flush", State: StepSkipped,
+			Detail: "skipped: config validation failed"}
+	}
+	if err := FlushSendOutbox(parentHome, sm); err != nil {
+		return StepResult{Name: "outbox-flush", State: StepFailed,
+			Detail: err.Error()}
+	}
+	return StepResult{Name: "outbox-flush", State: StepOk, Detail: "outbox flushed or empty"}
+}
+
+func (tx *RecoverTransaction) stepNudgeRetry(parentHome string, sm Info, configOk bool) StepResult {
+	if !configOk {
+		return StepResult{Name: "nudge-retry", State: StepSkipped,
+			Detail: "skipped: config validation failed"}
+	}
+	if err := retryNudge(parentHome, sm); err != nil {
+		return StepResult{Name: "nudge-retry", State: StepFailed,
+			Detail: err.Error()}
+	}
+	return StepResult{Name: "nudge-retry", State: StepOk, Detail: "nudge sent or no pending"}
+}
