@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // Daemon is the Go-native AFK sub-supervisor daemon.
@@ -86,10 +89,12 @@ func (d *Daemon) Start(homeDir string) error {
 		fmt.Fprintf(os.Stderr, "afk: stale artifact clear error (non-fatal): %v\n", err)
 	}
 
-	// Initialize digester and wedge detector.
+// Initialize digester and wedge detector.
 	d.digester = NewDigester(homeDir)
 	d.wedge = NewWedgeDetector(homeDir)
 
+	// Load optional AFK config (digest window, wedge thresholds).
+	loadAfkConfig(homeDir, d.digester, d.wedge)
 	// 4. Start the runLoop goroutine.
 	stopCh := make(chan struct{})
 	go d.runLoop(stopCh)
@@ -115,6 +120,36 @@ func (d *Daemon) Start(homeDir string) error {
 	return nil
 }
 
+// loadAfkConfig reads optional AFK config files and applies them to the
+// digester and wedge detector. Missing or invalid config values are silently
+// ignored — defaults apply.
+func loadAfkConfig(homeDir string, dig *Digester, wdg *WedgeDetector) {
+	if val, err := config.Get(homeDir, "afk-digest-window"); err == nil {
+		if d, err := time.ParseDuration(val); err == nil {
+			dig.SetWindow(d)
+			fmt.Fprintf(os.Stderr, "afk: digest window set to %s from config\n", d)
+		}
+	}
+	if val, err := config.Get(homeDir, "afk-max-defer"); err == nil {
+		if d, err := time.ParseDuration(val); err == nil {
+			dig.SetMaxDefer(d)
+			fmt.Fprintf(os.Stderr, "afk: max-defer set to %s from config\n", d)
+		}
+	}
+	if val, err := config.Get(homeDir, "afk-wedge-stale-beat"); err == nil {
+		if d, err := time.ParseDuration(val); err == nil {
+			wdg.SetStaleThreshold(d)
+			fmt.Fprintf(os.Stderr, "afk: wedge stale-beat set to %s from config\n", d)
+		}
+	}
+	if val, err := config.Get(homeDir, "afk-wedge-max-repeat"); err == nil {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			wdg.SetWakeCountMax(n)
+			fmt.Fprintf(os.Stderr, "afk: wedge max-repeat set to %d from config\n", n)
+		}
+	}
+}
+
 // runLoop is the main supervision loop:
 //
 //	triage → feed digester → check wedge → clear stale → flush if window expired.
@@ -136,7 +171,7 @@ func (d *Daemon) runLoop(stopCh chan struct{}) {
 
 // triageCycle performs one iteration:
 //
-//	triage → feed digester → check target safety → feed wedge → check wedge → clear stale → flush.
+//	triage → feed digester → check target safety → feed wedge → check wedge (beat/repeat/max-defer) → clear stale → flush.
 func (d *Daemon) triageCycle(now time.Time) {
 	// Track whether we need to attempt injection after flush.
 	var lastSafe bool
@@ -151,8 +186,10 @@ func (d *Daemon) triageCycle(now time.Time) {
 	// 2. Feed digester with triage results.
 	d.digester.Feed(digest)
 
-	// Phase 2.3/2.4: check general-pane target safety when there are escalated entries.
-	if digest != nil && len(digest.Escalated) > 0 && d.capture != nil {
+	// Check general-pane target safety when there are entries AND capture is configured.
+	// Safety is checked even for routine-only cycles so self-handle can avoid
+	// writing routine entries to the digest when the composer is empty.
+	if digest != nil && (len(digest.Escalated) > 0 || len(digest.Routines) > 0) && d.capture != nil {
 		target, err := ResolveTargetWithSource(d.homeDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "afk: target resolution error (non-fatal): %v\n", err)
@@ -188,10 +225,19 @@ func (d *Daemon) triageCycle(now time.Time) {
 		d.wedge.ResetWake()
 	}
 
-	// 4. Check for wedge conditions and feed into digester.
+	// 4. Check for wedge conditions (beat stale, repeat, max-defer) and feed into digester.
 	if alarm := d.wedge.Check(now); alarm != nil {
 		fmt.Fprintf(os.Stderr, "afk: wedge alarm: %s\n", alarm.Reason)
 		d.digester.FeedWedge(alarm)
+	}
+
+	// 4b. Max-defer alarm: check if entries have been stuck in the digester too long.
+	if firstAt := d.digester.FirstAt(); !firstAt.IsZero() {
+		maxDefer := d.digester.MaxDeferDuration()
+		if alarm := d.wedge.CheckDigestStuck(firstAt, maxDefer, now); alarm != nil {
+			fmt.Fprintf(os.Stderr, "afk: max-defer alarm: %s\n", alarm.Reason)
+			d.digester.FeedWedge(alarm)
+		}
 	}
 
 	// 5. Clear stale check markers (session-scoped per-cycle artifacts).
