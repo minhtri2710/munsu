@@ -198,6 +198,7 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newCaptainCmd())
 	root.AddCommand(newAfkCmd())
 	root.AddCommand(newIntegrateCmd())
+	root.AddCommand(newManualCmd())
 	root.AddCommand(newInboxCmd())
 
 	return root
