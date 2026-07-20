@@ -18,9 +18,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
+
 // Runner orchestrates the full spawn sequence through private phase methods.
 // It encapsulates all intermediate state so the public Run function is a thin
 // delegate call.
@@ -253,8 +253,10 @@ func canonicalExistingPath(path string) (string, error) {
 }
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
-// the task ID exists exactly once in the backlog as ready (queued, not blocked,
-// not done, not already in-flight). Skipped when --force is set.
+// the task is present and dispatchable. Normal Captain flow is:
+//   tasks-axi start <id>  →  munsu spawn <id>
+// Backlog in_flight without live meta/window MUST allow spawn without --force.
+// Refuse only duplicate live execution (meta window/pane). --force is emergency bypass only.
 func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.args.Force {
 		return nil
@@ -263,10 +265,14 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 		return nil
 	}
 
-	// Check if there's already a live task with this ID (inflight from meta).
+	// Already-live = meta proves a soldier was spawned (window or pane id).
+	// Kind-only meta (e.g. task add) is NOT live execution.
 	if meta, err := task.ReadMeta(r.homeDir, r.args.ID); err == nil {
-		if kind := meta["kind"]; kind == "ship" || kind == "scout" {
-			return fmt.Errorf("captain backlog authority: task %s is already in-flight (kind=%s)", r.args.ID, kind)
+		if win := meta["window"]; win != "" {
+			return fmt.Errorf("captain backlog authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
+		}
+		if pane := meta["herdr_pane_id"]; pane != "" {
+			return fmt.Errorf("captain backlog authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", r.args.ID, pane)
 		}
 	}
 
@@ -281,9 +287,10 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	if !found {
 		return fmt.Errorf("captain backlog authority: task %s not found in backlog; register it with 'backlog add %s \"<description>\"'", r.args.ID, r.args.ID)
 	}
-	switch state {
+	switch normalizeBacklogState(state) {
 	case "in-flight":
-		return fmt.Errorf("captain backlog authority: task %s is already in-flight in backlog", r.args.ID)
+		// start→spawn: backlog In flight without live window/pane is allowed.
+		return nil
 	case "done":
 		return fmt.Errorf("captain backlog authority: task %s is already done; reopen requires General instruction", r.args.ID)
 	case "blocked":
@@ -295,6 +302,16 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 		return nil
 	default:
 		return fmt.Errorf("captain backlog authority: task %s has unexpected state %q", r.args.ID, state)
+	}
+}
+
+// normalizeBacklogState maps tasks-axi (in_flight) and file-backend (in-flight).
+func normalizeBacklogState(state string) string {
+	switch strings.TrimSpace(state) {
+	case "in_flight", "in-flight", "inflight":
+		return "in-flight"
+	default:
+		return strings.TrimSpace(state)
 	}
 }
 
@@ -392,7 +409,7 @@ func (r *Runner) checkBacklogAuthority() error {
 	meta, metaErr := task.ReadMeta(r.homeDir, r.args.ID)
 	metaExists := metaErr == nil && meta["window"] != ""
 
-	// State-based checks
+	// State-based checks. Backlog In flight without live meta is start→spawn — allow.
 	switch item.State {
 	case backlog.StateBlocked:
 		if !r.args.Reopen {
@@ -403,17 +420,16 @@ func (r *Runner) checkBacklogAuthority() error {
 			return fmt.Errorf("lifecycle guard: task %q is done; use --reopen to reopen", r.args.ID)
 		}
 	case backlog.StateInFlight:
-		if !r.args.Reopen {
-			if metaExists {
-				return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; use --reopen to re-attach", r.args.ID)
-			}
-			return fmt.Errorf("lifecycle guard: task %q is already in-flight; use --reopen to re-attach", r.args.ID)
+		// Allow when no live session; refuse only duplicate live execution.
+		if metaExists && !r.args.Reopen {
+			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
 		}
+		return nil
 	}
 
-	// If meta exists with window but we're not reopening, refuse
+	// Live session without matching state still refuses (stale meta after teardown failure).
 	if metaExists && !r.args.Reopen {
-		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; use --reopen to re-attach", r.args.ID)
+		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
 	}
 
 	return nil

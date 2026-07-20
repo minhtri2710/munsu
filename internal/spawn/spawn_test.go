@@ -764,11 +764,11 @@ func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
 	}
 }
 
-func TestCheckBacklogAuthority_RefusesInFlight(t *testing.T) {
+func TestCheckBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
-	// Create backlog with an in-flight item
+	// Create backlog with an in-flight item and no meta/window (tasks-axi start before spawn).
 	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
 	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
 		t.Fatal(err)
@@ -778,12 +778,33 @@ func TestCheckBacklogAuthority_RefusesInFlight(t *testing.T) {
 	}
 
 	r := &Runner{args: Args{ID: "live-task"}, homeDir: tmpDir}
+	if err := r.checkBacklogAuthority(); err != nil {
+		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_RefusesInFlightWithLiveMeta(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [-] live-task: Currently in-flight\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.WriteMeta(tmpDir, "live-task", map[string]string{"window": "@1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{args: Args{ID: "live-task"}, homeDir: tmpDir}
 	err := r.checkBacklogAuthority()
 	if err == nil {
-		t.Fatal("expected error for in-flight task, got nil")
+		t.Fatal("expected error for in-flight with live meta, got nil")
 	}
-	if !strings.Contains(err.Error(), "in-flight") {
-		t.Errorf("error should mention in-flight state\n got: %v", err)
+	if !strings.Contains(err.Error(), "live session") && !strings.Contains(err.Error(), "live soldier") {
+		t.Errorf("error should mention live session\n got: %v", err)
 	}
 }
 
@@ -1236,9 +1257,9 @@ func TestCheckCaptainBacklogAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_RefusesInFlightTaskFromMeta(t *testing.T) {
+func TestCheckCaptainBacklogAuthority_RefusesLiveSessionWithWindow(t *testing.T) {
 	homeDir := t.TempDir()
-	_ = task.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship"})
+	_ = task.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})
 	r := &Runner{
 		args:      Args{ID: "live-task"},
 		spawnRole: "captain",
@@ -1246,10 +1267,25 @@ func TestCheckCaptainBacklogAuthority_RefusesInFlightTaskFromMeta(t *testing.T) 
 	}
 	err := r.checkCaptainBacklogAuthority()
 	if err == nil {
-		t.Fatal("expected error for in-flight task from meta, got nil")
+		t.Fatal("expected error for live session with window, got nil")
 	}
-	if !strings.Contains(err.Error(), "already in-flight") {
-		t.Errorf("error should mention in-flight, got: %v", err)
+	if !strings.Contains(err.Error(), "live soldier session") {
+		t.Errorf("error should mention live soldier session, got: %v", err)
+	}
+}
+
+func TestCheckCaptainBacklogAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = task.WriteMeta(homeDir, "pre-spawn", map[string]string{"kind": "ship"})
+	restore := mockReadBacklogTaskState("in_flight", "", true, nil)
+	defer restore()
+	r := &Runner{
+		args:      Args{ID: "pre-spawn"},
+		spawnRole: "captain",
+		homeDir:   homeDir,
+	}
+	if err := r.checkCaptainBacklogAuthority(); err != nil {
+		t.Fatalf("kind-only meta without window must ALLOW start→spawn, got: %v", err)
 	}
 }
 
@@ -1287,19 +1323,27 @@ func TestParseTasksAxiShow_ExtractsBlocked(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_RefusesInFlightInBacklog(t *testing.T) {
+func TestCheckCaptainBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 	restore := mockReadBacklogTaskState("in-flight", "", true, nil)
 	defer restore()
 	r := &Runner{
 		args:      Args{ID: "in-flight-task"},
 		spawnRole: "captain",
 	}
-	err := r.checkCaptainBacklogAuthority()
-	if err == nil {
-		t.Fatal("expected error for in-flight task in backlog, got nil")
+	if err := r.checkCaptainBacklogAuthority(); err != nil {
+		t.Fatalf("in-flight backlog without live meta must ALLOW spawn, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "in-flight") {
-		t.Errorf("error should mention in-flight, got: %v", err)
+}
+
+func TestCheckCaptainBacklogAuthority_AllowsTasksAxiInFlightUnderscore(t *testing.T) {
+	restore := mockReadBacklogTaskState("in_flight", "", true, nil)
+	defer restore()
+	r := &Runner{
+		args:      Args{ID: "started-task"},
+		spawnRole: "captain",
+	}
+	if err := r.checkCaptainBacklogAuthority(); err != nil {
+		t.Fatalf("tasks-axi in_flight without live meta must ALLOW spawn, got: %v", err)
 	}
 }
 
