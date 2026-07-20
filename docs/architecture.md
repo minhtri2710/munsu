@@ -143,8 +143,8 @@ type Backend interface {
 }
 ```
 
-Four implementations: `tmux` (default), `herdr` (enabled via `HERDR_ENV=1`),
-`zellij` (experimental), and `cmux` (experimental, macOS-only).
+Five implementations: `tmux` (default), `herdr` (enabled via `HERDR_ENV=1`),
+`zellij` (experimental), `cmux` (experimental, macOS-only), and `orca` (experimental).
 The backend is selected through a resolution chain: `--backend` flag >
 `config/backend` file > `HERDR_ENV` env var > `tmux` default. Unknown
 backend names are rejected at `session.Resolve` time with a clear error.
@@ -153,8 +153,8 @@ Backend resolution: `session.Resolve(homeDir, backendOverride)` returns a
 `(Backend, name, error)` tuple. The caller receives the resolved adapter
 and its display name, then uses the adapter for all session operations.
 
-Other backends (orca) were evaluated but not implemented:
-- **orca** — experimental terminal app (not implemented).
+Experimental backends:
+- **orca** — experimental terminal app with terminal + worktree ownership. Opt-in only via `config/backend=orca` or `--backend orca`; never auto-detected.
 
 ### Task lifecycle
 

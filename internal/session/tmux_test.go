@@ -99,7 +99,7 @@ func TestDefault_ColdStartPrefersTmux(t *testing.T) {
 }
 
 func TestSelect_RejectsUnknownNames(t *testing.T) {
-	unknown := []string{"orca", "foobar", ""}
+	unknown := []string{"foobar", ""}
 	for _, name := range unknown {
 		_, err := Select(name)
 		if err == nil {
@@ -110,7 +110,7 @@ func TestSelect_RejectsUnknownNames(t *testing.T) {
 	}
 }
 func TestSelect_ReturnsKnownBackends(t *testing.T) {
-	known := []string{"tmux", "herdr", "zellij", "cmux"}
+	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
 	for _, name := range known {
 		bk, err := Select(name)
 		if err != nil {
