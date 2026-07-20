@@ -134,6 +134,31 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 	}
 	cmd.AddCommand(migrateCmd)
 
+	updateCmd := &cobra.Command{
+		Use:   "update <captain-home>",
+		Short: "Update a captain home (safe FF) and return typed outcome",
+		Long: `Update performs a safe local fast-forward of a captain clone, returning a typed outcome:
+already-current, fast-forwarded, state-only-skipped, dirty, diverged, offline,
+wrong-remote, wrong-branch, or invalid-provenance.
+State-only homes (no git worktree) return state-only-skipped rather than failing.`,
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			res := captain.Update(args[0], ctx.Home)
+			fmt.Printf("outcome: %s\n", res.Outcome)
+			if res.Outcome == captain.FastForwarded {
+				fmt.Printf("  %s → %s\n", res.Before[:8], res.After[:8])
+			}
+			if res.Err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "detail: %s\n", res.Err)
+			}
+			if res.Outcome.IsFailure() {
+				return fmt.Errorf("update failed: %s", res.Outcome)
+			}
+			return nil
+		}),
+	}
+	cmd.AddCommand(updateCmd)
+
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
 		Short: "Converge all registered captains",

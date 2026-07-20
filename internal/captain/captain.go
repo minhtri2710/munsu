@@ -45,7 +45,90 @@ var captainPiExtensionNames = []string{
 	"fm-primary-pi-watch.ts",
 }
 
-// EnsureCaptainPiExtensions installs project-scoped Pi extensions under captainHome/.pi/extensions
+// UpdateOutcome is the typed result of a single captain update operation.
+type UpdateOutcome string
+
+const (
+	AlreadyCurrent    UpdateOutcome = "already-current"
+	FastForwarded     UpdateOutcome = "fast-forwarded"
+	StateOnlySkipped  UpdateOutcome = "state-only-skipped"
+	Dirty             UpdateOutcome = "dirty"
+	Diverged          UpdateOutcome = "diverged"
+	Offline           UpdateOutcome = "offline"
+	WrongRemote       UpdateOutcome = "wrong-remote"
+	WrongBranch       UpdateOutcome = "wrong-branch"
+	InvalidProvenance UpdateOutcome = "invalid-provenance"
+)
+
+// UpdateResponse carries the typed result of a captain update.
+type UpdateResponse struct {
+	Outcome UpdateOutcome
+	Before  string
+	After   string
+	Err     error
+}
+
+// IsFailure returns true when the outcome is a failure state.
+func (u UpdateOutcome) IsFailure() bool {
+	switch u {
+	case AlreadyCurrent, FastForwarded, StateOnlySkipped:
+		return false
+	default:
+		return true
+	}
+}
+
+// String returns a human-readable label for the outcome.
+func (u UpdateOutcome) String() string {
+	return string(u)
+}
+
+// outcomeFromFFReason maps a SafeFFReason to the corresponding UpdateOutcome.
+func outcomeFromFFReason(reason SafeFFReason, err error) UpdateOutcome {
+	if err != nil {
+		switch reason {
+		case SafeFFOffBranch:
+			return WrongBranch
+		case SafeFFMissingOrigin:
+			return Offline
+		case SafeFFChangesTracked:
+			return Dirty
+		default:
+			return outcomeFromFFError(err)
+		}
+	}
+	switch reason {
+	case SafeFFAlreadyCurrent:
+		return AlreadyCurrent
+	case SafeFFSuccess:
+		return FastForwarded
+	default:
+		return Diverged
+	}
+}
+
+// outcomeFromFFError maps safeFF error strings to typed outcomes as fallback.
+func outcomeFromFFError(err error) UpdateOutcome {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "tracked changes"),
+		strings.Contains(msg, "unignored untracked"):
+		return Dirty
+	case strings.Contains(msg, "remote origin"),
+		strings.Contains(msg, "origin/HEAD"),
+		strings.Contains(msg, "does not exist locally"):
+		return Offline
+	case strings.Contains(msg, "remote %q differs"):
+		return WrongRemote
+	case strings.Contains(msg, "expected"):
+		return WrongBranch
+	case strings.Contains(msg, "not an ancestor"),
+		strings.Contains(msg, "merge --ff-only failed"):
+		return Diverged
+	default:
+		return Diverged
+	}
+}
 // so Launch buildLaunchArgs can always pass -e for munsu integrate + captain-compat names.
 // Idempotent. Soft-skips when pi is unavailable (non-pi fleets / offline test hosts).
 func EnsureCaptainPiExtensions(captainHome string) error {
@@ -1504,7 +1587,48 @@ func (cr *ConvergeResult) OverallStatus() string {
 	return "ok"
 }
 
-// --- Converge ---
+// Update performs a single captain home update and returns a typed outcome.
+// It validates provenance, detects state-only homes, runs safeFF, and maps
+// results to typed outcomes.
+func Update(captainHome, parentHome string) UpdateResponse {
+	if _, err := ValidateProvenance(captainHome); err != nil {
+		return UpdateResponse{
+			Outcome: InvalidProvenance,
+			Err:     err,
+		}
+	}
+
+	// Detect state-only homes (no git worktree).
+	if _, err := os.Stat(filepath.Join(captainHome, ".git")); os.IsNotExist(err) {
+		return UpdateResponse{
+			Outcome: StateOnlySkipped,
+		}
+	}
+
+	before, after, reason, err := safeFF(captainHome, parentHome)
+	outcome := outcomeFromFFReason(reason, err)
+	if err != nil {
+		return UpdateResponse{
+			Outcome: outcome,
+			Err:     err,
+		}
+	}
+
+	if outcome == AlreadyCurrent || outcome == FastForwarded {
+		return UpdateResponse{
+			Outcome: outcome,
+			Before:  before,
+			After:   after,
+		}
+	}
+
+	return UpdateResponse{
+		Outcome: outcome,
+		Before:  before,
+		After:   after,
+	}
+}
+
 // ConvergeLockPath returns the path to the converge lock.
 func ConvergeLockPath(parentHome string) string {
 	return filepath.Join(parentHome, "state", ConvergeLockName)
