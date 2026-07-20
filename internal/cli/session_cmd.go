@@ -20,9 +20,11 @@ import (
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/waker"
 	"github.com/spf13/cobra"
 )
+
 
 func newBriefCmd() *cobra.Command {
 	var scout bool
@@ -281,6 +283,10 @@ func newWakeDrainCmd() *cobra.Command {
 // It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
 // and checks fleet state + watcher health for blind-turn detection.
 func runGuardClaude(homeDir string) error {
+	// Defer obligation check: warn about open obligations when turn-end is allowed.
+	// Does not run on exitWithCode paths (os.Exit skips defers).
+	defer checkTurnEndObligations(homeDir)
+
 	// Read stdin JSON for loop guard
 	stopHookActive := false
 	data, err := io.ReadAll(os.Stdin)
@@ -350,6 +356,10 @@ func runGuardClaude(homeDir string) error {
 // runGuardCodexLike implements the Codex Stop hook guard.
 // Codex uses the same deny shape as Claude: exit 2 + stderr reason.
 func runGuardCodexLike(homeDir string) error {
+	// Defer obligation check: warn about open obligations when turn-end is allowed.
+	// Does not run on exitWithCode paths (os.Exit skips defers).
+	defer checkTurnEndObligations(homeDir)
+
 	// Read stdin JSON for loop guard
 	stopHookActive := false
 	data, err := io.ReadAll(os.Stdin)
@@ -414,6 +424,10 @@ func runGuardCodexLike(homeDir string) error {
 }
 
 func runGuardGrok(homeDir string) error {
+	// Defer obligation check: warn about open obligations when turn-end is allowed.
+	// Does not run on exitWithCode paths (os.Exit skips defers).
+	defer checkTurnEndObligations(homeDir)
+
 	// Read stdin JSON for loop guard
 	stopHookActive := false
 	data, err := io.ReadAll(os.Stdin)
@@ -485,9 +499,12 @@ func runGuardGrok(homeDir string) error {
 // - Healthy: allow stop with {"decision":"allow"}
 // All paths exit 0 because agy gates on the stdout decision field, NOT exit code.
 func runGuardAgy(homeDir string) error {
+	// Defer obligation check: warn about open obligations when turn-end is allowed.
+	defer checkTurnEndObligations(homeDir)
+
 	// Read stdin JSON for fullyIdle
-	data, err := io.ReadAll(os.Stdin)
 	fullyIdle := false
+	data, err := io.ReadAll(os.Stdin)
 	if err == nil {
 		var payload map[string]interface{}
 		if json.Unmarshal([]byte(strings.TrimSpace(string(data))), &payload) == nil {
@@ -563,6 +580,34 @@ func runGuardAgy(homeDir string) error {
 	})
 	fmt.Fprintln(os.Stdout, string(continueJSON))
 	return nil
+}
+
+// checkTurnEndObligations loads obligations for the current role (from MUNSU_ROLE)
+// and logs any open obligations to stderr. It is non-blocking: it only warns.
+// Safe to call even when MUNSU_ROLE is not set (defaults to soldier).
+func checkTurnEndObligations(homeDir string) {
+	role := os.Getenv("MUNSU_ROLE")
+	if role == "" {
+		role = "soldier"
+	}
+
+	obligations, err := turnend.LoadObligations(homeDir, turnend.Role(role))
+	if err != nil {
+		// Non-blocking: silently ignore load errors
+		return
+	}
+
+	var open []string
+	for _, o := range obligations {
+		if o.State == turnend.StateOpen {
+			open = append(open, string(o.Kind))
+		}
+	}
+
+	if len(open) > 0 {
+		fmt.Fprintf(os.Stderr, "NOTE: open turn-end obligations for role=%s: %s\\n", role, strings.Join(open, ", "))
+		fmt.Fprintf(os.Stderr, "  run 'munsu turnend obligations' to view; 'munsu turnend complete <kind>' to close\\n")
+	}
 }
 
 func newAfkCmd() *cobra.Command {
