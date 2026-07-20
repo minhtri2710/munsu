@@ -3,12 +3,14 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +22,10 @@ var materialStates = map[string]bool{
 	"needs-decision": true,
 	"blocked":        true,
 }
+
+// injectedEvents tracks synthetic event IDs that have already been injected
+// into the parent pane to prevent duplicate injection of the same event.
+var injectedEvents sync.Map
 
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
@@ -34,9 +40,9 @@ func newReportCmd() *cobra.Command {
   soldier  -> appends to task .status in the current home (MUNSU_HOME)
   captain  -> appends to General home state/captain:<id>.status (MUNSU_PARENT_STATUS)
   general  -> local append only (same as soldier)
-
-Also writes to the typed event log and enqueues a wake for material states
-(done, failed, needs-decision, blocked).
+Also writes to the typed event log, enqueues a wake for material states
+(done, failed, needs-decision, blocked), and injects a sentinel message
+directly into the parent terminal pane when the composer is safe.
 
 Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 		Args: ExactArgs(2),
@@ -105,15 +111,16 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				lifecycle.EnqueueWake(wakeHome, "signal", taskID, wakePayload)
 			}
 
-			// 4. Ring policy: flag for optional pane injection
-			// When ring=ring or ring=auto (and not AFK-batching), a future
-			// enhancement will inject to the parent pane when composer is empty.
-			// Currently the wake queue signals the parent supervisor.
+			// 4. Attempt parent pane injection for material states
+			// When ring=ring or ring=auto (and not AFK-batching), inject a sentinel
+			// message into the parent's terminal pane if the composer is empty.
+			// The wake queue is the primary mechanism; injection is best-effort.
 			ringDecision := resolveRingPolicy(ring, homeDir)
 			if ringDecision == "ring" && materialStates[state] {
-				// Ring-worthy material event produced — parent supervisor
-				// will handle pane injection via wake queue.
-				_ = ringDecision
+				injectErr := injectToParentPane(role, homeDir, parentHome, taskID, msg, state, syntheticID)
+				if injectErr != nil {
+					fmt.Fprintf(os.Stderr, "report: parent pane injection skipped: %v\n", injectErr)
+				}
 			}
 
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
@@ -145,8 +152,6 @@ func newNotifyCmd() *cobra.Command {
 	return notifyCmd
 }
 
-// resolveRingPolicy returns the effective ring decision.
-// auto: ring unless AFK flag is present.
 func resolveRingPolicy(ring, homeDir string) string {
 	switch ring {
 	case "ring":
@@ -154,10 +159,57 @@ func resolveRingPolicy(ring, homeDir string) string {
 	case "no-ring":
 		return "no-ring"
 	default: // auto
-		afkPath := filepath.Join(homeDir, "state", ".afk")
-		if _, err := os.Stat(afkPath); err == nil {
+		if afk.ShouldBatch(homeDir) {
 			return "no-ring"
 		}
 		return "ring"
 	}
+}
+
+// injectToParentPane resolves the parent pane target and injects a sentinel
+// message. Returns nil on success or if injection is not possible; returns
+// an error only when the backend resolves but injection fails.
+func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) error {
+	// Dedup: skip if this event was already injected.
+	eventKey := fmt.Sprintf("%s/%s/%d", taskID, state, syntheticID)
+	if _, loaded := injectedEvents.LoadOrStore(eventKey, true); loaded {
+		return nil
+	}
+
+	// Resolve the parent pane target.
+	// For captains, resolve from the general's home (parentHome).
+	// For soldiers, resolve from the current home (the soldier's home).
+	// If resolution fails, skip injection silently (wake is the primary mechanism).
+	targetHome := homeDir
+	if role == "captain" && parentHome != "" {
+		targetHome = parentHome
+	}
+	target, err := afk.ResolveTargetWithSource(targetHome)
+	if err != nil {
+		return nil
+	}
+	if target.Handle == "" || target.Source == afk.Unsupported {
+		return nil
+	}
+
+	// Obtain a session backend for SendKeys and Capture.
+	bk, _, err := session.Resolve(homeDir, "")
+	if err != nil {
+		return nil
+	}
+
+	// Verify the backend supports both SendKeys and Capture.
+	// session.Backend satisfies both afk.Backend and afk.PaneCapture.
+	var afkBk afk.Backend = bk
+	var afkCap afk.PaneCapture = bk
+
+	// Build the inject message.
+	injectMsg := fmt.Sprintf("[report] %s: %s (task=%s)", state, msg, taskID)
+
+	// Attempt injection.
+	if err := afk.DirectInject(afkBk, afkCap, target.Handle, injectMsg, fmt.Sprintf("%d", syntheticID)); err != nil {
+		return err
+	}
+
+	return nil
 }

@@ -125,6 +125,13 @@ func IsActive(homeDir string) bool {
 	return err == nil
 }
 
+// ShouldBatch reports whether the AFK daemon is active and should handle
+// escalation batching. When true, direct parent pane injection should be skipped
+// because the AFK daemon will batch and escalate via its own injection cycle.
+func ShouldBatch(homeDir string) bool {
+	return IsActive(homeDir)
+}
+
 // Status returns the current AFK state: whether the daemon is active,
 // and the timestamp from the flag file if it exists.
 func Status(homeDir string) (active bool, startedAt string, err error) {
