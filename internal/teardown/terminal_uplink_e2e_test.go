@@ -29,7 +29,16 @@ import (
 //
 // Run with: go test -tags=e2e -run TestE2E_TerminalUplinkContinuity ./internal/teardown/
 func TestE2E_TerminalUplinkContinuity(t *testing.T) {
-	// ---- Setup: General home, Captain home, Soldier task ----
+	// ---- Setup: hermetic PATH + General home, Captain home, Soldier task ----
+
+	// Set hermetic PATH with only git (no treehouse) so worktree operations
+	// consistently use the production git-worktree fallback.
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("looking up git: %v", err)
+	}
+	t.Setenv("PATH", filepath.Dir(gitPath))
+
 	generalHome := t.TempDir()
 	captainHome := t.TempDir()
 	soldierID := "e2e-test-soldier"
@@ -49,7 +58,7 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	os.MkdirAll(generalStateDir, 0755)
 
 	// Create soldier task meta in captain home (so teardown can read it)
-	wtPath := setupGitWorktree(t)
+	wtPath := setupGitWorktree(t, captainHome)
 	metaContent := fmt.Sprintf("kind=ship\nwindow=@1\nworktree=%s\n", wtPath)
 	if err := os.WriteFile(filepath.Join(captainStateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatalf("writing meta: %v", err)
@@ -201,6 +210,17 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	t.Log("Phase 7 passed: full production teardown succeeded after ack")
 
 	// ---- Phase 8: Duplicate Soldier report is idempotent ----
+	// Before rewriting, assert that the original receipt and ack still exist
+	// (teardown preserves durable evidence — step 7 does NOT clear receipts)
+	receiptPathPhase8 := turnend.ReceiptPath(captainHome, soldierID, termKey)
+	ackPathPhase8 := turnend.AckPath(captainHome, soldierID, termKey)
+	if _, err := os.Stat(receiptPathPhase8); err != nil {
+		t.Fatalf("original receipt should persist after teardown: %v", err)
+	}
+	if _, err := os.Stat(ackPathPhase8); err != nil {
+		t.Fatalf("original ack should persist after teardown: %v", err)
+	}
+
 	// Re-init obligations and re-write receipt to simulate another report
 	if err := turnend.InitTaskObligations(captainHome, soldierID, termKey); err != nil {
 		t.Fatalf("re-init obligations (should be noop): %v", err)
@@ -209,7 +229,7 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 		t.Fatalf("re-write receipt: %v", err)
 	}
 
-	// Receipt should not be acked yet
+	// Receipt should not be acked yet (WriteReceipt invalidated stale ack)
 	if turnend.IsReceiptAcked(captainHome, soldierID, termKey) {
 		t.Fatal("re-written receipt should not be acked yet")
 	}
@@ -225,10 +245,11 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	t.Log("Phase 8 passed: duplicate report/relay is idempotent on stable task/key")
 }
 
-// setupGitWorktree creates a hermetic git repo and acquires a treehouse-managed
-// worktree via production worktree.Get, ensuring worktree.Return succeeds.
+// setupGitWorktree creates a hermetic git repo and acquires a worktree
+// through production worktree.Get using the git-worktree fallback
+// (PATH is already hermetic at call site — no treehouse).
 // Returns the worktree path.
-func setupGitWorktree(t *testing.T) string {
+func setupGitWorktree(t *testing.T, captainHome string) string {
 	t.Helper()
 
 	// Create bare remote
@@ -243,7 +264,8 @@ func setupGitWorktree(t *testing.T) string {
 	gitCmd(t, repoDir, "config", "user.email", "e2e-test@munsu")
 	gitCmd(t, repoDir, "config", "user.name", "E2E Test")
 
-	// Create initial commit on main
+	// Create initial commit on main (explicitly named)
+	gitCmd(t, repoDir, "checkout", "-b", "main")
 	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# e2e test"), 0644); err != nil {
 		t.Fatalf("writing README: %v", err)
 	}
@@ -251,13 +273,18 @@ func setupGitWorktree(t *testing.T) string {
 	gitCmd(t, repoDir, "commit", "-m", "initial commit")
 	gitCmd(t, repoDir, "push", "-u", "origin", "main")
 
-	// Acquire worktree through production worktree.Get so treehouse manages it
-	// The worktree is on a detached HEAD from main. We'll set up the tracking
-	// branch inside it.
-	wtPath, err := worktree.Get(repoDir, repoDir, true)
+	// Acquire worktree through production worktree.Get (git fallback)
+	wtPath, err := worktree.Get(captainHome, repoDir, false)
 	if err != nil {
 		t.Fatalf("worktree.Get: %v", err)
 	}
+
+	// Register cleanup: return worktree if test fails before Phase 7
+	t.Cleanup(func() {
+		if _, err := os.Stat(wtPath); err == nil {
+			worktree.Return(captainHome, wtPath)
+		}
+	})
 
 	// In the worktree, create a task branch with upstream tracking
 	gitCmd(t, wtPath, "config", "user.email", "e2e-test@munsu")

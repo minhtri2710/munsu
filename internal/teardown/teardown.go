@@ -203,13 +203,6 @@ func Run(opts Options) (*TeardownResult, error) {
 		result.Steps = append(result.Steps, "task obligations cleared")
 	}
 
-	// 4.6. Clear terminal receipts and acks for this task
-	if err := turnend.ClearTaskReceipts(opts.HomeDir, opts.ID); err != nil {
-		result.Steps = append(result.Steps, fmt.Sprintf("clear task receipts: %v", err))
-	} else {
-		result.Steps = append(result.Steps, "terminal receipts cleared")
-	}
-
 	// 5. Clean up data directory
 	// Policy: --force always removes the data dir (GC orphan briefs).
 	// Normal teardown keeps the data dir if report.md or brief.md exist.

@@ -543,3 +543,89 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	// Success — --force bypassed both safety check and uplink check
 }
 
+// TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating proves that acks for a
+// wrong task ID or wrong term key do NOT satisfy the uplink gating.
+// Only the exact taskID+termKey ack unblocks teardown.
+func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
+	tmpDir := t.TempDir()
+	soldierID := "teardown-wrong-key-test"
+	termKey := "uplink"
+
+	stateDir := filepath.Join(tmpDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	metaContent := "kind=scout\nwindow=@1\nworktree=/nonexistent\n"
+	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create report.md so scoutSafetyCheck passes
+	dataDir := filepath.Join(tmpDir, "data", soldierID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# report"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write receipt + obligations
+	if err := turnend.WriteReceipt(tmpDir, soldierID, termKey, "done", "task complete"); err != nil {
+		t.Fatal(err)
+	}
+	if err := turnend.InitTaskObligations(tmpDir, soldierID, termKey); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	// Write ack for WRONG task (same key) — should NOT unblock
+	if err := turnend.WriteAck(tmpDir, "wrong-task", termKey); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	root.SetArgs([]string{"teardown", soldierID})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected teardown to fail (wrong-task ack should not satisfy gating), got nil")
+	}
+	if !strings.Contains(err.Error(), "report-relay") && !strings.Contains(err.Error(), "acknowledged") {
+		t.Errorf("expected uplink check failure, got: %v", err)
+	}
+
+	// Write ack for correct task but WRONG key — should NOT unblock either
+	if err := turnend.WriteAck(tmpDir, soldierID, "wrong-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	root = NewRootCommand()
+	root.SetArgs([]string{"teardown", soldierID})
+	err = root.Execute()
+	if err == nil {
+		t.Fatal("expected teardown to fail (wrong-key ack should not satisfy gating), got nil")
+	}
+	if !strings.Contains(err.Error(), "report-relay") && !strings.Contains(err.Error(), "acknowledged") {
+		t.Errorf("expected uplink check failure, got: %v", err)
+	}
+
+	// Now write ack for the exact taskID+key — should unblock
+	if err := turnend.WriteAck(tmpDir, soldierID, termKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := turnend.CompleteTaskObligation(tmpDir, soldierID, turnend.ReportRelay); err != nil {
+		t.Fatal(err)
+	}
+
+	root = NewRootCommand()
+	root.SetArgs([]string{"teardown", soldierID})
+	err = root.Execute()
+	if err != nil {
+		t.Fatalf("with exact taskID+key ack, teardown should succeed, got: %v", err)
+	}
+}
+

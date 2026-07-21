@@ -3,6 +3,7 @@ package turnend
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -406,5 +407,43 @@ func TestLineVerb(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("lineVerb(%q) = %q, want %q", tt.line, got, tt.want)
 		}
+	}
+}
+
+// TestWriteReceipt_StaleAckInvalidation verifies that WriteReceipt removes
+// any prior ack for the same taskID+termKey, making the new receipt pending.
+func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-task"
+	termKey := "uplink"
+
+	// Write initial receipt and ack (simulating completed relay)
+	if err := WriteReceipt(homeDir, taskID, termKey, "done", "first"); err != nil {
+		t.Fatalf("first receipt: %v", err)
+	}
+	if err := WriteAck(homeDir, taskID, termKey); err != nil {
+		t.Fatalf("first ack: %v", err)
+	}
+	if !IsReceiptAcked(homeDir, taskID, termKey) {
+		t.Fatal("receipt should be acked after WriteAck")
+	}
+
+	// Rewrite receipt via WriteReceipt — should invalidate the stale ack
+	if err := WriteReceipt(homeDir, taskID, termKey, "done", "second"); err != nil {
+		t.Fatalf("second receipt: %v", err)
+	}
+
+	// Ack should no longer exist (removed by WriteReceipt)
+	if IsReceiptAcked(homeDir, taskID, termKey) {
+		t.Error("receipt should NOT be acked after WriteReceipt invalidated stale ack")
+	}
+
+	// But old receipt should be overwritten with new content
+	data, err := os.ReadFile(ReceiptPath(homeDir, taskID, termKey))
+	if err != nil {
+		t.Fatalf("reading receipt: %v", err)
+	}
+	if !strings.Contains(string(data), "second") {
+		t.Errorf("expected new receipt content, got: %s", string(data))
 	}
 }

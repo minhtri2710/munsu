@@ -234,34 +234,6 @@ func ClearTaskAll(homeDir, taskID string) error {
 	return err
 }
 
-// ClearTaskReceipts removes all receipt and ack files for the given task.
-func ClearTaskReceipts(homeDir, taskID string) error {
-	p := ReceiptDir(homeDir)
-	entries, err := os.ReadDir(p)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("reading receipts dir: %w", err)
-	}
-	prefix := taskID + "."
-	removed := 0
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), prefix) {
-			continue
-		}
-		if !strings.HasSuffix(e.Name(), ".receipt") && !strings.HasSuffix(e.Name(), ".ack") {
-			continue
-		}
-		if err := os.Remove(filepath.Join(p, e.Name())); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing %s: %w", e.Name(), err)
-		}
-		removed++
-	}
-	_ = removed
-	return nil
-}
-
 // --- Durable relay receipts ---
 // Receipt: Soldier->Captain durable proof that a material terminal report
 // was sent. Stored in captain-owned state/.terminal-receipts/<taskID>.<key>.receipt
@@ -286,10 +258,16 @@ func AckPath(homeDir, taskID, termKey string) string {
 
 // WriteReceipt writes a durable relay receipt for a terminal report.
 // The receipt is identified by taskID + termKey (terminal key).
+// If a receipt already exists for this taskID+termKey, it is overwritten
+// and any prior ack is removed, making the new receipt pending again.
 func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
 	p := ReceiptPath(homeDir, taskID, termKey)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("creating receipts dir: %w", err)
+	}
+	// Remove any prior ack so the new receipt starts pending
+	if err := os.Remove(AckPath(homeDir, taskID, termKey)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale ack: %w", err)
 	}
 	content := fmt.Sprintf("task_id=%s\nkey=%s\nstate=%s\nmsg=%s\ntimestamp=%d\n",
 		taskID, termKey, state, msg, time.Now().UnixNano())
