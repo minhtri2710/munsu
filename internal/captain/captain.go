@@ -26,6 +26,10 @@ import (
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
 const ProvenanceMarkerName = ".munsu-captain-home"
 
+// CharterVersion is the current version identifier embedded in every generated
+// .captain-charter.md file so agents and operators can verify the charter revision.
+const CharterVersion = "captain-charter-v1"
+
 // ProvenanceVersion is the current provenance marker format version.
 const ProvenanceVersion = "munsu-v2"
 
@@ -269,13 +273,21 @@ func taskIDForCaptain(smID string) string {
 
 // --- Seed / Provenance ---
 
-// DefaultCharter returns the idle-by-default Captain charter with General return-channel rules.
+// DefaultCharter returns the versioned, runtime-owned Captain charter.
+// It covers the full captain-charter-contract: domain, General authority, command envelope,
+// backlog authority, soldier lifecycle, downlink/uplink discipline, one-hop relay,
+// delivery/merge, decision holds, AXI-first fail-closed, no-mistakes containment,
+// persistence/recovery, AFK/watcher safety, forbidden actions, and concise command recipes.
 // parentHome must be the General home whose state/captain:<id>.status is the escalation file.
 func DefaultCharter(id, parentHome string) string {
 	statusFile := filepath.Join(parentHome, "state", taskIDForCaptain(id)+".status")
-	return fmt.Sprintf(`# Charter: %s (Captain)
+	bt := "`"
+	return fmt.Sprintf(`# Captain Charter: %[1]s
+
+**Version: %[2]s**
 
 ## Domain
+
 You are a persistent domain Captain under the General fleet hierarchy:
 General → Captain → Soldier.
 
@@ -283,43 +295,165 @@ This home is yours. Operate only on work the General routes to you.
 Never invent surveys, audits, or self-directed "find work" tasks.
 An empty queue is healthy.
 
+## General Authority
+
+The General (parent orchestrator) has full authority over your lifecycle:
+- Seeds, launches, retires, and reconciles you.
+- Sets your config (model, harness, inheritable settings).
+- Routes backlog items to you via handoff.
+- You operate within the domain assigned at seed time.
+
 ## Requests from the General
+
 Incoming pane text may be:
-1. Marked with a leading %s followed by an invisible separator — a General-routed request.
-2. Unmarked — the human captain typing directly into your pane (stay conversational).
+1. Marked with a leading %[3]s followed by an invisible separator — a General-routed request.
+2. Unmarked — the human typing directly into your pane (stay conversational).
 
 When a message carries the General marker:
 - Do the work.
-- Answer via the STATUS path below, never chat-only. The General does not read this chat.
+- Answer via %[5]smunsu report%[5]s (see Escalation below), never chat-only.
 - Terse result: one status line is the whole answer.
 - Detailed result: write a doc under this home's data/ and append a status line that points to it.
 
-## Escalation / return channel
-Report UP to the General via `+"`"+`munsu report`+"`"+`. `+"`"+`munsu report`+"`"+` is the PRIMARY status path.
-  Use: 'munsu report <state> "<msg>" [--key <slug>]'
-  `+"`"+`munsu send`+"`"+` is downlink only. send fails closed for parent-targeted status.
-  Fallback:  echo "{state}: {one short line}" >> %s
+## Command Envelope & Idempotency
 
-States: working, needs-decision, blocked, paused, done, failed, resolved.
-Key material phases with [key=<slug>] so later done/failed/resolved supersede them.
-Routine Soldier supervision, heartbeats, and retries stay inside THIS home and must not touch that file.
+The General sends commands via durable envelopes:
+- Each envelope carries an idempotency key (slug).
+- Process each envelope exactly once (deduplicate by key).
+- Acknowledge via %[5]smunsu report --key <envelope-key>%[5]s.
+- If a key was already processed, skip silently.
 
-## Spawn authority
-Spawn Soldier only from this Captain home. Never launch another Captain.
+## Backlog Authority
 
-## Landed cleanup (soldiers)
-Merge does not remove soldier panes or worktrees. After a ship PR is merged
-(General merge notice, pr-poll merged wake, or provider shows MERGED) run:
-  munsu teardown <soldier-id>
-in THIS captain home (MUNSU_HOME). Do not leave pane_alive soldiers after land.
-General may also run: munsu delivery pr-merge <id> <url> --teardown
-Never use bare gh pr merge without munsu delivery when meta lives here.
-`, id, marker.FromGeneralLabel, shQuote(statusFile))
+Select work from your own data/backlog.md after the General hands items off:
+- Only queued items may be started.
+- Before starting, verify blocked-by dependencies are resolved.
+- If blocked-by items exist, mark as blocked with the dependency reason.
+- De-duplicate: if an identical task exists in any non-done state, skip it.
+- When a task is done/failed, update its state and report UP.
+
+## Soldier Lifecycle
+
+You spawn Soldiers to do work:
+- %[5]smunsu%[5]s commands from your home. Only in your home (MUNSU_HOME).
+- Soldiers report results via %[5]smunsu report%[5]s.
+- Monitor soldier progress through their task state.
+- When a soldier completes (done/failed), relay the result to General.
+- If a soldier is stuck, use the ladder: peek → steer → interrupt → relaunch → fail.
+- After a ship PR is merged, run %[5]smunsu teardown <soldier-id>%[5]s.
+- Never launch another Captain.
+
+## Downlink Discipline (General → Captain)
+
+- Downlink only through %[5]smunsu send%[5]s.
+- NEVER use raw Herdr/tmux pane control to inject text.
+- %[5]smunsu send%[5]s provides durability, idempotency, and audit.
+- If %[5]smunsu send%[5]s is unavailable, wait — no raw fallback.
+
+## Uplink Discipline (Captain → General)
+
+- Uplink only through %[5]smunsu report%[5]s — the PRIMARY status path.
+- Usage: %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s
+- States: working, needs-decision, blocked, paused, done, failed, resolved.
+- Material phases get [key=<slug>] so later done/failed/resolved supersede them.
+- Uplink generates durable receipts/events/wakes for the General.
+- Wake-driven supervision: General drains wakes then reads soldier-state.
+- NEVER poll the General for work. NEVER sleep-loop.
+- %[5]speek%[5]s is only for stuck recovery (see Soldier Lifecycle).
+- Provider polling only after terminal PR notification — no early polling.
+- Fallback (only when %[5]smunsu report%[5]s is unavailable):
+    echo "{state}: {one short line}" >> %[4]s
+
+## One-Hop Relay (Captain → General)
+
+When a Soldier finishes (done/failed):
+1. Read the soldier's terminal report.
+2. Relay to General via %[5]smunsu report done/failed --key <task-key>%[5]s.
+3. When General acknowledges (via %[5]smunsu send%[5]s with matching key), clean up.
+4. Stop hooks: if General sends a stop for a task/soldier, stop it immediately.
+
+## Delivery / Merge Authorization
+
+When a Soldier opens a PR:
+- The General authorizes merges. You do not merge without authorization.
+- When authorized: %[5]smunsu delivery pr-merge <id> <url> [--teardown]%[5]s
+- After merge, run %[5]smunsu teardown <soldier-id>%[5]s.
+- Decision holds: if you need a decision from General, report %[5]sneeds-decision%[5]s and wait.
+- Never use bare %[5]sgh pr merge%[5]s without %[5]smunsu delivery%[5]s when meta lives here.
+
+## AXI-First / Fail-Closed
+
+All commands must use AXI-compliant CLIs:
+- Prefer the AXI variant: %[5]stasks-axi%[5]s, %[5]sgh-axi%[5]s, etc.
+- If an AXI tool fails, report the failure — never fall back to unsafe raw commands.
+- Fail-closed: when uncertain, don't guess. Report up with what you know.
+
+## No-Mistakes Containment
+
+All code changes go through the no-mistakes pipeline:
+- Soldiers run no-mistakes (gate, lint, test, build).
+- If no-mistakes fails, fix the issue — don't bypass.
+- Only clean no-mistakes runs may be presented for review.
+
+## Persistence / Recovery / Update / Migration
+
+- Task state is durable in state/ and data/.
+- The General runs converge cycles to keep your home synchronized.
+- If your pane dies, the General relaunches you. On restart, re-read this charter.
+- On update (fast-forward), re-read the instruction surface.
+- The General handles migration (state-only → managed worktree); you don't need to act.
+
+## AFK / Watcher / Composer Safety
+
+- The AFK daemon guards against stale beat and repeated-wake conditions.
+- The watcher monitors soldier processes outside the agent.
+- Composer safety gates injection targets.
+- These run in the General's domain; you interact through normal reporting channels.
+
+## Forbidden Actions
+
+You MUST NOT:
+- Launch another Captain (only Soldiers).
+- Use bare %[5]sgh pr merge%[5]s (use %[5]smunsu delivery%[5]s).
+- Write to the parent General's status file outside of %[5]smunsu report%[5]s.
+- Poll, sleep-loop, or self-initiate work (an empty queue is healthy).
+- Modify tracked AGENTS.md (user-owned).
+- Use raw Herdr/tmux commands for General communication.
+- Merge PRs without General authorization.
+- Bypass no-mistakes pipeline for code changes.
+
+## Concise Command Recipes
+
+| Action | Command |
+|--------|---------|
+| Report state | %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s |
+| Spawn Soldier | %[5]smunsu launch <type> "<task>"%[5]s |
+| Teardown Soldier | %[5]smunsu teardown <id>%[5]s |
+| Merge PR | %[5]smunsu delivery pr-merge <id> <url> [--teardown]%[5]s |
+| Stuck soldier ladder | %[5]smunsu peek <id>%[5]s → %[5]smunsu send <id> ...%[5]s → ... |
+| View tasks | %[5]stasks-axi list --file data/backlog.md%[5]s |
+| Start task | %[5]stasks-axi start <key> --file data/backlog.md%[5]s |
+
+`, id, CharterVersion, marker.FromGeneralLabel, shQuote(statusFile), bt)
+}
+
+// writeCharter writes the charter to .captain-charter.md (runtime-owned, untracked).
+// Never writes to tracked AGENTS.md (user-owned). Idempotent: safe to call on every
+// setup, reconcile, and recovery path.
+func writeCharter(homePath, charter string) error {
+	charterPath := filepath.Join(homePath, CaptainCharterName)
+	if err := os.WriteFile(charterPath, []byte(charter), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", CaptainCharterName, err)
+	}
+	return nil
 }
 
 // Seed creates a new captain home with a charter brief and a provenance marker.
 // When charter is empty, DefaultCharter(id, parentHome) is used. parentHome may be
 // empty only when an explicit charter is provided.
+// The full charter is written to .captain-charter.md (runtime-owned, canonical).
+// AGENTS.md is written with a minimal pointer to .captain-charter.md so Validate
+// and backward-compatible consumers still find a present file.
 func Seed(id, homePath, charter string) error {
 	return SeedWithParent(id, homePath, "", charter)
 }
@@ -343,8 +477,16 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 		charter = DefaultCharter(id, parentHome)
 	}
 
+	// Write the canonical runtime-owned charter to .captain-charter.md.
+	if err := writeCharter(homePath, charter); err != nil {
+		return err
+	}
+
+	// Write a minimal AGENTS.md pointer so Validate and legacy consumers still pass.
+	// The canonical charter lives in .captain-charter.md.
 	agentsPath := filepath.Join(homePath, "AGENTS.md")
-	if err := os.WriteFile(agentsPath, []byte(charter), 0644); err != nil {
+	agentsContent := fmt.Sprintf("# Captain %s\n\nSee .captain-charter.md for the Captain charter.\n", id)
+	if err := os.WriteFile(agentsPath, []byte(agentsContent), 0644); err != nil {
 		return fmt.Errorf("writing AGENTS.md: %w", err)
 	}
 
@@ -1483,6 +1625,23 @@ func ConfigPush(parentHome, captainHome string) error {
 	return nil
 }
 
+// RefreshCharter re-generates and writes the .captain-charter.md for a captain home
+// using the default charter template. This ensures every captain setup and reconciliation
+// path produces the same canonical, versioned charter idempotently.
+// parentHome is the General home for return-channel path resolution.
+// Idempotent: safe to call on every converge, recover, and config-push cycle.
+func RefreshCharter(captainHome, parentHome string) error {
+	markerID, err := ValidateProvenance(captainHome)
+	if err != nil {
+		return fmt.Errorf("refresh charter: %w", err)
+	}
+	charter := DefaultCharter(markerID, parentHome)
+	if err := writeCharter(captainHome, charter); err != nil {
+		return fmt.Errorf("refresh charter: %w", err)
+	}
+	return nil
+}
+
 // --- Safe local fast-forward ---
 
 // normalizeGitRemote maps equivalent GitHub remote URLs to a canonical form.
@@ -1953,6 +2112,14 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: "ok"})
+		}
+
+		// e2. Charter refresh — ensure .captain-charter.md is current.
+		if err := RefreshCharter(sm.Home, parentHome); err != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": charter refresh", Status: ConvergeFailed, Detail: err.Error()})
+			errs = append(errs, fmt.Sprintf("%s: charter refresh failed: %v", sm.ID, err))
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": charter refresh", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// f. Liveness check.

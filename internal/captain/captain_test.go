@@ -131,11 +131,11 @@ func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
 	if !strings.Contains(charter, "PRIMARY status path") {
 		t.Fatalf("charter missing PRIMARY status path doctrine")
 	}
-	if !strings.Contains(charter, "Landed cleanup") || !strings.Contains(charter, "munsu teardown") {
-		t.Fatalf("charter missing landed cleanup / teardown duty")
+	if !strings.Contains(charter, "Delivery / Merge Authorization") || !strings.Contains(charter, "munsu teardown") {
+		t.Fatalf("charter missing delivery/merge / teardown duty")
 	}
-	if !strings.Contains(charter, "downlink only") {
-		t.Fatalf("charter missing send-is-downlink-only doctrine")
+	if !strings.Contains(charter, "Downlink Discipline") {
+		t.Fatalf("charter missing downlink discipline doctrine")
 	}
 }
 
@@ -145,12 +145,21 @@ func TestSeedWithParent_WritesDefaultCharter(t *testing.T) {
 	if err := SeedWithParent("api", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile(filepath.Join(sm, "AGENTS.md"))
+	// The canonical charter lives in .captain-charter.md.
+	body, err := os.ReadFile(filepath.Join(sm, CaptainCharterName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(body), "captain:api.status") {
 		t.Fatalf("default charter missing status file path, got: %s", body)
+	}
+	// AGENTS.md should be a minimal pointer, not the full charter.
+	agentsBody, err := os.ReadFile(filepath.Join(sm, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(agentsBody), ".captain-charter.md") {
+		t.Fatalf("AGENTS.md should point to .captain-charter.md, got: %s", agentsBody)
 	}
 }
 
@@ -176,13 +185,24 @@ func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 		}
 	}
 
-	agentsPath := filepath.Join(homePath, "AGENTS.md")
-	data, err := os.ReadFile(agentsPath)
+	// The canonical charter is written to .captain-charter.md.
+	charterPath := filepath.Join(homePath, CaptainCharterName)
+	data, err := os.ReadFile(charterPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) != charter {
-		t.Errorf("AGENTS.md content = %q, want %q", string(data), charter)
+		t.Errorf("%s content = %q, want %q", CaptainCharterName, string(data), charter)
+	}
+
+	// AGENTS.md should be a minimal pointer.
+	agentsPath := filepath.Join(homePath, "AGENTS.md")
+	agentsData, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(agentsData), ".captain-charter.md") {
+		t.Errorf("AGENTS.md should point to .captain-charter.md, got: %s", agentsData)
 	}
 
 	markerData, err := os.ReadFile(filepath.Join(homePath, ProvenanceMarkerName))
@@ -3383,8 +3403,6 @@ func TestMigrateToWorktree_RemoteMismatchRefused(t *testing.T) {
 	}
 }
 
-
-
 // ---------------------------------------------------------------------------
 // Regression tests for captain-migration-postconditions
 // ---------------------------------------------------------------------------
@@ -3400,7 +3418,6 @@ func TestSeedWorktree_GitClean(t *testing.T) {
 	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
-
 
 	// Verify worktree is git-clean.
 
@@ -3430,8 +3447,6 @@ func TestSeedWorktree_GitClean(t *testing.T) {
 // TestRepairWorktreeAdminPath proves that after renaming a worktree directory,
 // repairWorktreeAdminPath updates git's worktree admin so that "git worktree list"
 // shows the final (renamed) path, not the old temp path.
-
-
 
 // TestRepairWorktreeAdminPath proves that after renaming a worktree directory,
 // repairWorktreeAdminPath updates git's worktree admin so that "git worktree list"
@@ -3486,8 +3501,6 @@ func TestRepairWorktreeAdminPath(t *testing.T) {
 // managed worktree captains even when parentHome (the General state home) is NOT
 // a git repo. This covers Defect 3: captain update must use the source-repo from
 // .captain-provenance, not treat the General state home as a git repo.
-
-
 
 // TestUpdate_ManagedWorktreeUsesProvenanceRepo proves that Update() works for
 // managed worktree captains even when parentHome (the General state home) is NOT
@@ -3560,8 +3573,6 @@ func TestUpdate_ManagedWorktreeUsesProvenanceRepo(t *testing.T) {
 // AlreadyCurrent for a managed worktree that is already at the latest commit,
 // using provenance source-repo resolution (Defect 3 regression).
 
-
-
 // TestUpdate_ManagedWorktreeAlreadyCurrent proves that Update() returns
 // AlreadyCurrent for a managed worktree that is already at the latest commit,
 // using provenance source-repo resolution (Defect 3 regression).
@@ -3584,8 +3595,6 @@ func TestUpdate_ManagedWorktreeAlreadyCurrent(t *testing.T) {
 // TestUpdate_ManagedWorktreeNoParentGit proves that Update() correctly resolves
 // the source-repo from .captain-provenance when parentHome is not a git repo
 // and returns the appropriate outcome.
-
-
 
 // TestUpdate_ManagedWorktreeNoParentGit proves that Update() correctly resolves
 // the source-repo from .captain-provenance when parentHome is not a git repo
@@ -3614,8 +3623,6 @@ func TestUpdate_ManagedWorktreeNoParentGit(t *testing.T) {
 
 // TestMigrateRollbackSafety proves that when SeedFromWorktree fails partway
 // through, the worktree is cleaned up and no partial artifacts remain.
-
-
 
 // TestMigrateRollbackSafety proves that when SeedFromWorktree fails partway
 // through, the worktree is cleaned up and no partial artifacts remain.
@@ -3648,4 +3655,3 @@ func TestMigrateRollbackSafety(t *testing.T) {
 		t.Errorf("stale worktree entry remains in source repo after rollback:\n%s", worktreeOut)
 	}
 }
-

@@ -47,11 +47,11 @@ func TestRecoverTransaction_FullOk(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(parent, Info{ID: "sm-ok", Home: smHome})
 
-	if len(res.Steps) != 8 {
-		t.Fatalf("expected 8 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
-	// All eight steps should be ok or skipped.
+	// All nine steps should be ok or skipped.
 	for _, s := range res.Steps {
 		if s.State == StepFailed {
 			t.Errorf("step %q failed unexpectedly: %s", s.Name, s.Detail)
@@ -79,8 +79,8 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(parent, Info{ID: "sm-bad", Home: smHome})
 
-	if len(res.Steps) != 8 {
-		t.Fatalf("expected 8 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
 	// Provenance must fail.
@@ -100,8 +100,8 @@ func TestRecoverTransaction_EmptyHomeFailed(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(t.TempDir(), Info{ID: "empty", Home: ""})
 
-	if len(res.Steps) != 8 {
-		t.Fatalf("expected 8 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
 	if res.Steps[0].Name != "provenance" || res.Steps[0].State != StepFailed {
@@ -150,8 +150,8 @@ func TestRecoverTransaction_DeadLaunchedRelaunches(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(parent, Info{ID: "sm-dead", Home: smHome})
 
-	if len(res.Steps) != 8 {
-		t.Fatalf("expected 8 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 9 {
+		t.Fatalf("expected 9 steps, got %d", len(res.Steps))
 	}
 
 	// Provenance ok.
