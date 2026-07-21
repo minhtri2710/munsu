@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -26,8 +27,12 @@ type FileBackend struct {
 
 // compile once
 var (
-	itemRe = regexp.MustCompile(`^\s*-\s+\[( |x|-|!)\]\s+(\S+):\s*(.*)$`)
-	metaRe = regexp.MustCompile(`^(.*)\s+\[kind=(\S+)\s+repo=(\S+)\]$`)
+	// itemRe matches both legacy ("id: description") and tasks-axi dash ("id - description") formats.
+	itemRe = regexp.MustCompile(`^\s*-\s+\[( |x|-|!)\]\s+(\S+)(?:\s*-\s+|:\s+)(.*)$`)
+	// legacyMetaRe matches [kind=x repo=y] suffix.
+	legacyMetaRe = regexp.MustCompile(`^(.*)\s+\[kind=(\S+)\s+repo=(\S+)\]$`)
+	// dashMetaRe matches (repo: x) (kind: y) and optional (since ...) suffix (tasks-axi format).
+	dashMetaRe = regexp.MustCompile(`^(.*)\(repo:\s+(\S+)\)\s*\(kind:\s+(\S+)\)(?:\s*\(since[^)]*\))?$`)
 )
 
 // NewFileBackend creates a FileBackend writing to the given path.
@@ -152,10 +157,14 @@ func (fb *FileBackend) parse() ([]Item, error) {
 		desc := m[3]
 		kind := ""
 		repo := ""
-		if metaM := metaRe.FindStringSubmatch(desc); metaM != nil {
+		if metaM := legacyMetaRe.FindStringSubmatch(desc); metaM != nil {
 			desc = metaM[1]
 			kind = metaM[2]
 			repo = metaM[3]
+		} else if metaM := dashMetaRe.FindStringSubmatch(desc); metaM != nil {
+			desc = strings.TrimSpace(metaM[1])
+			repo = metaM[2]
+			kind = metaM[3]
 		}
 
 		state, _ := ParseState(m[1])
