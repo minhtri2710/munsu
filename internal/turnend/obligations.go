@@ -259,19 +259,38 @@ func AckPath(homeDir, taskID, termKey string) string {
 // WriteReceipt writes a durable relay receipt for a terminal report.
 // The receipt is identified by taskID + termKey (terminal key).
 // If a receipt already exists for this taskID+termKey, it is overwritten
-// and any prior ack is removed, making the new receipt pending again.
+// atomically: writes to a temp file, removes any stale ack, then renames
+// the temp file over the existing receipt. On pre-rename failure the temp
+// file is cleaned up; on post-rename failure the old receipt (now pending)
+// is acceptable fail-closed behavior.
 func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
 	p := ReceiptPath(homeDir, taskID, termKey)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("creating receipts dir: %w", err)
 	}
-	// Remove any prior ack so the new receipt starts pending
-	if err := os.Remove(AckPath(homeDir, taskID, termKey)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing stale ack: %w", err)
-	}
+
+	// Write to a temp file first for atomic replacement
+	tmpPath := p + ".tmp"
 	content := fmt.Sprintf("task_id=%s\nkey=%s\nstate=%s\nmsg=%s\ntimestamp=%d\n",
 		taskID, termKey, state, msg, time.Now().UnixNano())
-	return os.WriteFile(p, []byte(content), 0644)
+	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing temp receipt: %w", err)
+	}
+
+	// Remove any prior ack so the new receipt starts pending
+	if err := os.Remove(AckPath(homeDir, taskID, termKey)); err != nil && !os.IsNotExist(err) {
+		os.Remove(tmpPath)
+		return fmt.Errorf("removing stale ack: %w", err)
+	}
+
+	// Atomic rename: temp file over receipt
+	if err := os.Rename(tmpPath, p); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("renaming receipt: %w", err)
+	}
+
+	return nil
 }
 
 // IsReceiptAcked checks whether a terminal receipt has been acknowledged.

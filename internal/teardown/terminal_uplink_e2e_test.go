@@ -29,15 +29,24 @@ import (
 //
 // Run with: go test -tags=e2e -run TestE2E_TerminalUplinkContinuity ./internal/teardown/
 func TestE2E_TerminalUplinkContinuity(t *testing.T) {
-	// ---- Setup: hermetic PATH + General home, Captain home, Soldier task ----
+	// ---- Setup: hermetic PATH (only git) + General home, Captain home, Soldier task ----
 
-	// Set hermetic PATH with only git (no treehouse) so worktree operations
-	// consistently use the production git-worktree fallback.
-	gitPath, err := exec.LookPath("git")
+	// Resolve git's real path and create a temporary bin/ with only a git symlink.
+	// This ensures worktree.Get/Return always use the production git-worktree
+	// fallback (treehouse is not on this hermetic PATH).
+	gitRaw, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("looking up git: %v", err)
 	}
-	t.Setenv("PATH", filepath.Dir(gitPath))
+	gitReal, err := filepath.EvalSymlinks(gitRaw)
+	if err != nil {
+		t.Fatalf("resolving git symlink: %v", err)
+	}
+	binDir := t.TempDir()
+	if err := os.Symlink(gitReal, filepath.Join(binDir, "git")); err != nil {
+		t.Fatalf("symlinking git: %v", err)
+	}
+	t.Setenv("PATH", binDir)
 
 	generalHome := t.TempDir()
 	captainHome := t.TempDir()
@@ -282,7 +291,9 @@ func setupGitWorktree(t *testing.T, captainHome string) string {
 	// Register cleanup: return worktree if test fails before Phase 7
 	t.Cleanup(func() {
 		if _, err := os.Stat(wtPath); err == nil {
-			worktree.Return(captainHome, wtPath)
+			if err := worktree.Return(captainHome, wtPath); err != nil {
+				t.Errorf("worktree cleanup return: %v", err)
+			}
 		}
 	})
 

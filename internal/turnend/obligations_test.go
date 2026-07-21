@@ -446,4 +446,13 @@ func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
 	if !strings.Contains(string(data), "second") {
 		t.Errorf("expected new receipt content, got: %s", string(data))
 	}
+	if strings.Contains(string(data), "first") {
+		t.Errorf("receipt should not contain old content, got: %s", string(data))
+	}
+
+	// No temp file should remain
+	tmpPath := ReceiptPath(homeDir, taskID, termKey) + ".tmp"
+	if _, err := os.Stat(tmpPath); err == nil {
+		t.Error("temporary file should be cleaned up after successful WriteReceipt")
+	}
 }
