@@ -41,6 +41,14 @@ var doUpdateIn = UpdateIn
 // doArmBackground is an injectable seam for tests. Production code must not replace it.
 var doArmBackground = supervision.ArmBackground
 
+// resolveBuildIdentity sets InstalledVersion and InstalledCommitSHA on the
+// snapshot from the given commit SHA. Shared by UpdateWithHandshake and
+// UpdateWithHandshakeEx to keep version and commit identity in sync.
+func resolveBuildIdentity(snap *WatcherSnapshot, commit string) {
+	snap.InstalledCommitSHA = commit
+	snap.InstalledVersion = VersionString(commit)
+}
+
 // resolveInstalledVersion populates InstalledPath, InstalledVersion, and
 // InstalledCommitSHA on the snapshot by resolving the binary's real path
 // and inspecting the git HEAD.
@@ -64,8 +72,7 @@ var resolveInstalledVersion = func(snap *WatcherSnapshot) {
 	if err != nil {
 		return
 	}
-	snap.InstalledVersion = VersionString(commit)
-	snap.InstalledCommitSHA = commit
+	resolveBuildIdentity(snap, commit)
 }
 
 // Update performs a fast-forward-only git pull on the munsu installation
@@ -334,7 +341,7 @@ func UpdateWithHandshakeEx(homeDir, repoOpt string) (*WatcherSnapshot, error) {
 		return snap, err
 	}
 
-	// Step 4: Set installed version from known root.
+	// Step 4: Set installed version and commit identity from known root.
 	execPath, _ := os.Executable()
 	realPath, _ := filepath.EvalSymlinks(execPath)
 	if realPath == "" {
@@ -342,7 +349,7 @@ func UpdateWithHandshakeEx(homeDir, repoOpt string) (*WatcherSnapshot, error) {
 	}
 	snap.InstalledPath = realPath
 	if commit, err := ShortHEAD(root); err == nil {
-		snap.InstalledVersion = VersionString(commit)
+		resolveBuildIdentity(snap, commit)
 	}
 
 	return completeHandshake(homeDir, snap)
