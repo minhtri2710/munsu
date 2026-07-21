@@ -18,8 +18,14 @@ var semverRegex = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
 // --- Compat public API ---
 
-// Run dispatches to tasks-axi if compatible and not forced to manual, or falls back to manual markdown.
-func Run(homeDir, verb string, args []string) error {
+// Run dispatches to tasks-axi if compatible and not forced to manual, or falls back
+// to manual markdown.
+// When isDefault is false (non-default --home), always forces manual backend
+// to prevent data leaks across homes.
+func Run(homeDir string, isDefault bool, verb string, args []string) error {
+	if !isDefault {
+		return manualRun(homeDir, verb, args)
+	}
 	if isManual(homeDir) {
 		return manualRun(homeDir, verb, args)
 	}

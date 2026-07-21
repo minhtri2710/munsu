@@ -100,10 +100,7 @@ func newBacklogListCmd() *cobra.Command {
 		Short: "List backlog items",
 		Args:  MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "list", args)
-			}
-			return backlog.RunManual(ctx.Home, "list", args)
+			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "list", args)
 		}),
 	}
 }
@@ -114,10 +111,7 @@ func newBacklogShowCmd() *cobra.Command {
 		Short: "Show backlog item details",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "show", args)
-			}
-			return backlog.RunManual(ctx.Home, "show", args)
+			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "show", args)
 		}),
 	}
 }
@@ -128,10 +122,7 @@ func newBacklogStartCmd() *cobra.Command {
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "start", args)
-			}
-			return backlog.RunManual(ctx.Home, "start", args)
+			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "start", args)
 		}),
 	}
 }
@@ -142,14 +133,10 @@ func newBacklogDoneCmd() *cobra.Command {
 		Short: "Mark a backlog item as done",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "done", args)
-			}
-			return backlog.RunManual(ctx.Home, "done", args)
+			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "done", args)
 		}),
 	}
 }
-
 func newBacklogBlockCmd() *cobra.Command {
 	var by string
 	cmd := &cobra.Command{
@@ -161,10 +148,10 @@ When --by is omitted, falls back to manual backend.`,
 
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if by != "" && isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "block", []string{args[0], "--by", by})
+			if by != "" {
+				args = append(args, "--by", by)
 			}
-			return backlog.RunManual(ctx.Home, "block", args)
+			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "block", args)
 		}),
 	}
 	cmd.Flags().StringVar(&by, "by", "", "Dependency that blocks this item (required for tasks-axi backend)")
@@ -180,10 +167,7 @@ func newBacklogReadyCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			if isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "ready", args)
-			}
-			return backlog.RunManual(ctx.Home, "ready", args)
+			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "ready", args)
 		}),
 	}
 }
@@ -197,10 +181,7 @@ func newBacklogUnblockCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			if isDefaultHome(ctx.Home) {
-				return backlog.Run(ctx.Home, "unblock", args)
-			}
-			return backlog.RunManual(ctx.Home, "unblock", args)
+			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "unblock", args)
 		}),
 	}
 }

@@ -128,7 +128,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		}
 		homeDir := t.TempDir()
 		// Should not error — falls back to manual
-		err := Run(homeDir, "list", []string{})
+		err := Run(homeDir, true, "list", []string{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -145,7 +145,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
 
 		homeDir := t.TempDir()
-		err := Run(homeDir, "list", []string{})
+		err := Run(homeDir, true, "list", []string{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -170,7 +170,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		defer func() { os.Stdout = oldStdout }()
 
 		homeDir := t.TempDir()
-		err = Run(homeDir, "add", []string{"task-1", "priority:high"})
+		err = Run(homeDir, true, "add", []string{"task-1", "priority:high"})
 		w.Close()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -207,7 +207,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		defer func() { os.Stdout = oldStdout }()
 
 		homeDir := t.TempDir()
-		err = Run(homeDir, "block", []string{"task-a", "--by", "task-b"})
+		err = Run(homeDir, true, "block", []string{"task-a", "--by", "task-b"})
 		w.Close()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -259,7 +259,7 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
 
 		// Should use manual path, not tasks-axi
-		err := Run(homeDir, "add", []string{"TASK-1", "Forced manual"})
+		err := Run(homeDir, true, "add", []string{"TASK-1", "Forced manual"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -292,7 +292,7 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 		os.Stdout = w
 		defer func() { os.Stdout = oldStdout }()
 
-		err = Run(homeDir, "list", []string{})
+		err = Run(homeDir, true, "list", []string{})
 		w.Close()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -314,7 +314,7 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 		homeDir := t.TempDir()
 		// No config/backlog-backend and no tasks-axi
 
-		err := Run(homeDir, "add", []string{"TASK-1", "Manual fallback"})
+		err := Run(homeDir, true, "add", []string{"TASK-1", "Manual fallback"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
