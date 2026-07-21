@@ -1929,3 +1929,185 @@ func TestFormatItem(t *testing.T) {
 		}
 	})
 }
+
+// --- ListItems routing tests ---
+
+func TestListItems_RouteThroughBackend(t *testing.T) {
+	oldLookPath := lookPath
+	oldExecCommand := execCommand
+	defer func() {
+		lookPath = oldLookPath
+		execCommand = oldExecCommand
+	}()
+
+	execCommand = mockExecCommand()
+
+	// tasks-axi list mock output.
+	const mockListOutput = `count: 2
+	tasks[2]{id,state,kind,repo,title}:
+	  TASK-1,in_flight,scout,munsu,From tasks-axi
+	  TASK-2,queued,ship,other,queued item
+`
+
+	t.Run("ModeTasksAxi reads from tasks-axi, not FileBackend", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_LIST", mockListOutput)
+		defer os.Unsetenv("MOCK_TASKS_AXI_LIST")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
+
+		// Pre-populate backlog.md with DIVERGENT data (tasks-axi should NOT read this).
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
+
+		items, err := ListItems(homeDir, StateQueued)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("expected 2 items, got %d", len(items))
+		}
+		// Must read from tasks-axi mock, not FileBackend.
+		if items[0].Description != "From tasks-axi" {
+			t.Errorf("expected 'From tasks-axi' (tasks-axi), got %q", items[0].Description)
+		}
+	})
+
+	t.Run("ModeTasksAxi FAILED fails closed on ListItems", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_FAIL", "1")
+		defer os.Unsetenv("MOCK_TASKS_AXI_FAIL")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
+
+		// Pre-populate divergent native backlog to prove FAILED never consults it.
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Divergent native\n"), 0644)
+
+		_, err := ListItems(homeDir, StateQueued)
+		if err == nil {
+			t.Fatal("expected error from tasks-axi FAILED, got nil")
+		}
+		if !strings.Contains(err.Error(), "tasks-axi") {
+			t.Errorf("error should reference tasks-axi, got: %v", err)
+		}
+
+		// Verify backlog.md was NOT consulted (still has divergent data).
+		data, _ := os.ReadFile(filepath.Join(dataDir, "backlog.md"))
+		if !strings.Contains(string(data), "Divergent native") {
+			t.Errorf("backlog.md should remain unchanged (not consulted by ListItems)")
+		}
+	})
+
+	t.Run("ModeManual still reads native", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
+
+		// Pre-populate backlog.md with native data.
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Native manual data\n"), 0644)
+
+		items, err := ListItems(homeDir, StateQueued)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(items))
+		}
+		if items[0].Description != "Native manual data" {
+			t.Errorf("expected 'Native manual data', got %q", items[0].Description)
+		}
+	})
+
+	t.Run("ModeAuto with tasks-axi available reads from tasks-axi", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_LIST", mockListOutput)
+		defer os.Unsetenv("MOCK_TASKS_AXI_LIST")
+
+		homeDir := t.TempDir()
+		// No config/backlog-backend → ModeAuto
+
+		// Pre-populate divergent native backlog to prove auto mode uses tasks-axi.
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
+
+		items, err := ListItems(homeDir, StateQueued)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("expected 2 items, got %d", len(items))
+		}
+		// Must read from tasks-axi mock, not native.
+		if items[0].Description != "From tasks-axi" {
+			t.Errorf("expected 'From tasks-axi' (auto mode), got %q", items[0].Description)
+		}
+	})
+
+	t.Run("ModeAuto with tasks-axi ABSENT falls back to FileBackend", func(t *testing.T) {
+		// No tasks-axi mock at all — simulate ABSENT.
+		lookPath = func(name string) (string, error) {
+			return "", fmt.Errorf("not found")
+		}
+
+		homeDir := t.TempDir()
+		// No config/backlog-backend → ModeAuto, tasks-axi not available → FileBackend fallback
+
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [ ] TASK-1: Fallback native item\n"), 0644)
+
+		items, err := ListItems(homeDir, StateQueued)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("expected 1 item via fallback, got %d", len(items))
+		}
+		if items[0].Description != "Fallback native item" {
+			t.Errorf("expected 'Fallback native item', got %q", items[0].Description)
+		}
+	})
+}

@@ -1328,28 +1328,6 @@ func TestCheckCaptainBacklogAuthority_AllowsReadyTask(t *testing.T) {
 	}
 }
 
-func TestParseTasksAxiShow_ExtractsState(t *testing.T) {
-	output := "task:\n  id: test\n  title: Test task\n  state: queued\n  blocked: no\n  blocked_by: none\n"
-	state, blocked := parseTasksAxiShow(output)
-	if state != "queued" {
-		t.Errorf("state = %q, want queued", state)
-	}
-	if blocked != "" {
-		t.Errorf("blocked = %q, want empty", blocked)
-	}
-}
-
-func TestParseTasksAxiShow_ExtractsBlocked(t *testing.T) {
-	output := "task:\n  id: test\n  title: Test task\n  state: queued\n  blocked: yes\n  blocked_by: dep-1\n"
-	state, blocked := parseTasksAxiShow(output)
-	if state != "queued" {
-		t.Errorf("state = %q, want queued", state)
-	}
-	if blocked != "dep-1" {
-		t.Errorf("blocked = %q, want dep-1", blocked)
-	}
-}
-
 func TestCheckCaptainBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 	restore := mockReadBacklogTaskState("in-flight", "", true, nil)
 	defer restore()
@@ -1378,7 +1356,7 @@ func TestCheckCaptainBacklogAuthority_AllowsTasksAxiInFlightUnderscore(t *testin
 // and returns a restore function.
 func mockReadBacklogTaskState(state, blocked string, found bool, err error) func() {
 	original := readBacklogTaskState
-	readBacklogTaskState = func(backlogPath, id string) (string, string, bool, error) {
+	readBacklogTaskState = func(homeDir, id string) (string, string, bool, error) {
 		return state, blocked, found, err
 	}
 	return func() { readBacklogTaskState = original }

@@ -9,6 +9,18 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
+// setManualMode forces manual backlog backend for tests that use native backlog.md.
+func setManualMode(t *testing.T, homeDir string) {
+	t.Helper()
+	configDir := filepath.Join(homeDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
+		t.Fatalf("writing backlog-backend config: %v", err)
+	}
+}
+
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
 func setHomeEnv(t *testing.T, path string) {
 	t.Helper()
@@ -375,6 +387,7 @@ func TestApplyNoMistakesStep_Cancelled(t *testing.T) {
 
 func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
 	tmp := t.TempDir()
+	setManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	// Create meta with window
@@ -421,6 +434,7 @@ func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
 
 func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
 	tmp := t.TempDir()
+	setManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	if err := task.WriteMeta(tmp, "blocked-test", map[string]string{
@@ -462,6 +476,7 @@ func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
 
 func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
 	tmp := t.TempDir()
+	setManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	// Create meta with window
@@ -505,6 +520,7 @@ func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
 
 func TestRead_BacklogQueuedWhenUnknown(t *testing.T) {
 	tmp := t.TempDir()
+	setManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	// Create meta only (no status file, no window)
