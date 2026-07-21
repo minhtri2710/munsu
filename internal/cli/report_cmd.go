@@ -110,11 +110,11 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 				// Write durable receipt in captain-owned state
 				if err := turnend.WriteReceipt(parentHome, taskID, termKey, state, msg); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: report: writing captain receipt: %v\n", err)
+					return fmt.Errorf("report: writing captain receipt: %w", err)
 				}
 				// Initialize per-task obligations (idempotent)
 				if err := turnend.InitTaskObligations(parentHome, taskID, termKey); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: report: init task obligations: %v\n", err)
+					return fmt.Errorf("report: init task obligations: %w", err)
 				}
 			}
 

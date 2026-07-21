@@ -234,6 +234,34 @@ func ClearTaskAll(homeDir, taskID string) error {
 	return err
 }
 
+// ClearTaskReceipts removes all receipt and ack files for the given task.
+func ClearTaskReceipts(homeDir, taskID string) error {
+	p := ReceiptDir(homeDir)
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading receipts dir: %w", err)
+	}
+	prefix := taskID + "."
+	removed := 0
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".receipt") && !strings.HasSuffix(e.Name(), ".ack") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(p, e.Name())); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing %s: %w", e.Name(), err)
+		}
+		removed++
+	}
+	_ = removed
+	return nil
+}
+
 // --- Durable relay receipts ---
 // Receipt: Soldier->Captain durable proof that a material terminal report
 // was sent. Stored in captain-owned state/.terminal-receipts/<taskID>.<key>.receipt

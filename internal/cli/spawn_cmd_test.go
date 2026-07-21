@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
@@ -413,3 +415,131 @@ func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
 		t.Errorf("normal teardown must not produce gate refusal, got: %v", err)
 	}
 }
+
+// TestTeardownCmd_UplinkAckInTempHome proves the CLI `munsu teardown` command
+// enforces the exact uplink ack in a non-default temp home. It:
+//  1. Creates a scout task with material status + report.md (passes scoutSafetyCheck)
+//  2. Sets up receipt + obligation (triggers uplinkCheck)
+//  3. Runs teardown without ack → must fail with uplink check error
+//  4. Writes ack, runs teardown → must fail on worktree safety, NOT uplink check
+func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	soldierID := "teardown-homer-test"
+
+	// Set up state dir
+	stateDir := filepath.Join(tmpDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs report.md)
+	metaContent := "kind=scout\nwindow=@1\nworktree=/nonexistent\n"
+	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create status with material state so uplinkCheck can detect it
+	if err := task.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create report.md so scoutSafetyCheck passes
+	dataDir := filepath.Join(tmpDir, "data", soldierID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# report"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write receipt (no ack) so uplinkCheck blocks
+	if err := turnend.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
+		t.Fatal(err)
+	}
+	if err := turnend.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	// Step 1: Without ack, teardown must fail with uplink check error
+	root := NewRootCommand()
+	root.SetArgs([]string{"teardown", soldierID})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected teardown to fail with uplink check (no ack), got nil")
+	}
+	if !strings.Contains(err.Error(), "report-relay") && !strings.Contains(err.Error(), "acknowledged") {
+		t.Errorf("expected uplink check failure mentioning 'report-relay' or 'acknowledged', got: %v", err)
+	}
+
+	// Step 2: Write ack so uplinkCheck passes
+	if err := turnend.WriteAck(tmpDir, soldierID, "default"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := turnend.CompleteTaskObligation(tmpDir, soldierID, turnend.ReportRelay); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 3: With ack, teardown must succeed for scout task (scoutSafetyCheck passes with report.md)
+	root = NewRootCommand()
+	root.SetArgs([]string{"teardown", soldierID})
+	err = root.Execute()
+	if err != nil {
+		t.Fatalf("with ack, teardown of scout task should succeed, got: %v", err)
+	}
+}
+
+// TestTeardownCmd_ForceSkipsUplinkCheckInTempHome proves that --force
+// bypasses the uplink check even without ack. The teardown should succeed
+// with --force and never mention report-relay errors.
+func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	soldierID := "teardown-force-test"
+
+	stateDir := filepath.Join(tmpDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	metaContent := "kind=scout\nwindow=@1\nworktree=/nonexistent\n"
+	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create report.md so scoutSafetyCheck passes
+	dataDir := filepath.Join(tmpDir, "data", soldierID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# report"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write receipt + obligations (no ack — would normally block)
+	if err := turnend.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
+		t.Fatal(err)
+	}
+	if err := turnend.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	root := NewRootCommand()
+	root.SetArgs([]string{"teardown", "--force", soldierID})
+	err := root.Execute()
+	if err != nil {
+		// Must NOT mention report-relay — --force bypasses uplink check
+		if strings.Contains(err.Error(), "report-relay") || strings.Contains(err.Error(), "acknowledged") {
+			t.Errorf("--force should skip uplink check, but got: %v", err)
+		}
+		// Other errors (worktree return etc.) are fine — force bypasses safety checks
+		return
+	}
+	// Success — --force bypassed both safety check and uplink check
+}
+

@@ -339,6 +339,7 @@ With --force:
 			}
 
 			opts := teardown.Options{
+				HomeDir: ctx.Home,
 				ID:      id,
 				Force:   force,
 			}

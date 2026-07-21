@@ -5,6 +5,7 @@ package teardown
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/worktree"
 )
 
 // TestE2E_TerminalUplinkContinuity proves the full Soldier → Captain → General
@@ -47,7 +49,8 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	os.MkdirAll(generalStateDir, 0755)
 
 	// Create soldier task meta in captain home (so teardown can read it)
-	metaContent := fmt.Sprintf("kind=ship\nwindow=@1\nworktree=%s\n", t.TempDir())
+	wtPath := setupGitWorktree(t)
+	metaContent := fmt.Sprintf("kind=ship\nwindow=@1\nworktree=%s\n", wtPath)
 	if err := os.WriteFile(filepath.Join(captainStateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatalf("writing meta: %v", err)
 	}
@@ -220,6 +223,68 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 		t.Fatalf("expected 1 relayed after duplicate report, got %d", relayed)
 	}
 	t.Log("Phase 8 passed: duplicate report/relay is idempotent on stable task/key")
+}
+
+// setupGitWorktree creates a hermetic git repo and acquires a treehouse-managed
+// worktree via production worktree.Get, ensuring worktree.Return succeeds.
+// Returns the worktree path.
+func setupGitWorktree(t *testing.T) string {
+	t.Helper()
+
+	// Create bare remote
+	remoteDir := t.TempDir()
+	gitCmd(t, "", "init", "--bare", remoteDir)
+
+	// Clone to create main repo
+	repoDir := t.TempDir()
+	gitCmd(t, "", "clone", remoteDir, repoDir)
+
+	// Configure git user for commits
+	gitCmd(t, repoDir, "config", "user.email", "e2e-test@munsu")
+	gitCmd(t, repoDir, "config", "user.name", "E2E Test")
+
+	// Create initial commit on main
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# e2e test"), 0644); err != nil {
+		t.Fatalf("writing README: %v", err)
+	}
+	gitCmd(t, repoDir, "add", ".")
+	gitCmd(t, repoDir, "commit", "-m", "initial commit")
+	gitCmd(t, repoDir, "push", "-u", "origin", "main")
+
+	// Acquire worktree through production worktree.Get so treehouse manages it
+	// The worktree is on a detached HEAD from main. We'll set up the tracking
+	// branch inside it.
+	wtPath, err := worktree.Get(repoDir, repoDir, true)
+	if err != nil {
+		t.Fatalf("worktree.Get: %v", err)
+	}
+
+	// In the worktree, create a task branch with upstream tracking
+	gitCmd(t, wtPath, "config", "user.email", "e2e-test@munsu")
+	gitCmd(t, wtPath, "config", "user.name", "E2E Test")
+	gitCmd(t, wtPath, "checkout", "-b", "task-branch")
+	if err := os.WriteFile(filepath.Join(wtPath, "work.md"), []byte("work"), 0644); err != nil {
+		t.Fatalf("writing work.md: %v", err)
+	}
+	gitCmd(t, wtPath, "add", ".")
+	gitCmd(t, wtPath, "commit", "-m", "task work")
+	gitCmd(t, wtPath, "push", "-u", "origin", "task-branch")
+
+	return wtPath
+}
+
+// gitCmd runs a git command, failing the test on error.
+func gitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed in %q: %s\n%s", args, dir, err, string(out))
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func readLastStatusLine(t *testing.T, path string) string {
