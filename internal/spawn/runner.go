@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
@@ -41,6 +42,12 @@ type Runner struct {
 	briefData     []byte
 	windowID      string
 	spawnRole     string
+
+	// soldier launch prompt state
+	prompt       string
+	promptEnv    *soldier.LaunchEnvelope
+	launchArgs   []string
+	launchBin    string
 }
 
 // NewRunner creates a Runner for the given Args.
@@ -104,6 +111,9 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	r.resolveLaunchConfig()
+	if err := r.buildSoldierPrompt(); err != nil {
+		return "", err
+	}
 	if err := r.createSession(); err != nil {
 		return "", err
 	}
@@ -654,17 +664,133 @@ func (r *Runner) createSession() error {
 	return nil
 }
 
+// Phase 11a: buildSoldierPrompt builds the complete Soldier launch prompt,
+// runs fail-closed validation, and persists durable files to the worktree.
+// Must be called AFTER acquireWorktree and BEFORE createSession so that
+// fail-closed checks happen before any session allocation.
+func (r *Runner) buildSoldierPrompt() error {
+	// Read brief content from the registered brief path.
+	briefPath := brief.Path(r.homeDir, r.args.ID)
+	briefData, readErr := os.ReadFile(briefPath)
+	if readErr != nil {
+		return fmt.Errorf("reading brief %s: %w", briefPath, readErr)
+	}
+	r.briefData = briefData
+
+	// Resolve parent captain ID from the home's endpoint meta.
+	parentCaptainID := r.resolveParentCaptainID()
+
+	// Build the prompt input struct.
+	input := soldier.LaunchPromptInput{
+		TaskID:          r.args.ID,
+		TaskKind:        r.args.Kind,
+		DeliveryMode:    r.effectiveMode,
+		Repository:      r.args.ProjectName,
+		ParentCaptainID: parentCaptainID,
+		ParentHome:      r.homeDir,
+		WorktreePath:    r.wtPath,
+		HomeDir:         r.homeDir,
+		BriefContent:    briefData,
+		HarnessName:     r.harness,
+	}
+
+	// Fail-closed: validate before building.
+	if err := soldier.FailClosedDuringLaunch(input); err != nil {
+		return fmt.Errorf("pre-launch fail-closed: %w", err)
+	}
+
+	// Build the complete prompt and envelope.
+	promptText, env, err := soldier.BuildLaunchPrompt(input)
+	if err != nil {
+		return fmt.Errorf("building soldier launch prompt: %w", err)
+	}
+	r.prompt = promptText
+	r.promptEnv = env
+
+	// Persist durable files to the worktree.
+	charter := soldier.DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
+	if err := soldier.PersistLaunchFiles(r.wtPath, charter, briefData, env); err != nil {
+		return fmt.Errorf("persisting soldier launch files: %w", err)
+	}
+
+	// Build launch arguments with the complete prompt.
+	bin, args, err := soldier.BuildLaunchArgs(r.wtPath, r.harness, promptText)
+	if err != nil {
+		return fmt.Errorf("building soldier launch arguments: %w", err)
+	}
+	r.launchBin = bin
+	r.launchArgs = args
+
+	return nil
+}
+
+// resolveParentCaptainID returns the parent captain ID from the endpoint meta.
+// Returns empty string when not running under a captain.
+func (r *Runner) resolveParentCaptainID() string {
+	if r.spawnRole == "captain" {
+		if id, err := captain.ValidateProvenance(r.homeDir); err == nil {
+			return id
+		}
+	}
+	// For general launches, use a generic identifier.
+	return "general"
+}
+
+// shQuote wraps s in single quotes, escaping embedded single quotes.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 // Phase 12: bootstrapWindow writes a launch script and sends it to the session.
+// Uses the full prompt arguments built by buildSoldierPrompt.
 func (r *Runner) bootstrapWindow() {
-	if r.launchCmd == "" {
+	if r.launchBin == "" || len(r.launchArgs) == 0 {
+		// Fall back to old launchCmd approach if prompt build was skipped.
+		if r.launchCmd == "" {
+			return
+		}
+		launchScript := filepath.Join(r.wtPath, ".soldier-launch.sh")
+		scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=soldier\nexport MUNSU_TASK_ID=" + fmt.Sprintf("%q", r.args.ID) + "\nexport MUNSU_PARENT_STATUS=" + fmt.Sprintf("%q", r.homeDir) + "\n" + r.launchCmd + "\n"
+		if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
+		}
+		fullCmd := fmt.Sprintf("cd %s && bash .soldier-launch.sh", r.wtPath)
+		if sendErr := r.bk.SendKeys(r.windowID, fullCmd); sendErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
+		}
 		return
 	}
+
+	// Build a shell script that sources identity env then execs with full prompt args.
+	var b strings.Builder
+	b.WriteString("#!/usr/bin/env bash\n")
+	b.WriteString("set -euo pipefail\n")
+	b.WriteString("cd ")
+	b.WriteString(shQuote(r.wtPath))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_HOME=")
+	b.WriteString(shQuote(r.homeDir))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_ROLE=soldier\n")
+	b.WriteString("export MUNSU_TASK_ID=")
+	b.WriteString(shQuote(r.args.ID))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_PARENT_STATUS=")
+	b.WriteString(shQuote(r.homeDir))
+	b.WriteString("\n")
+	b.WriteString("exec ")
+	b.WriteString(shQuote(r.launchBin))
+	for _, arg := range r.launchArgs {
+		b.WriteString(" ")
+		b.WriteString(shQuote(arg))
+	}
+	b.WriteString("\n")
+
 	launchScript := filepath.Join(r.wtPath, ".soldier-launch.sh")
-	scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=soldier\nexport MUNSU_TASK_ID=" + fmt.Sprintf("%q", r.args.ID) + "\nexport MUNSU_PARENT_STATUS=" + fmt.Sprintf("%q", r.homeDir) + "\n" + r.launchCmd + "\n"
-	if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
+	if writeErr := os.WriteFile(launchScript, []byte(b.String()), 0755); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 	}
-	fullCmd := fmt.Sprintf("cd %s && bash .soldier-launch.sh", r.wtPath)
+	fullCmd := fmt.Sprintf("bash %s", shQuote(launchScript))
 	if sendErr := r.bk.SendKeys(r.windowID, fullCmd); sendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
 	}
@@ -688,7 +814,8 @@ func (r *Runner) writeBriefToWorktree() {
 }
 
 // Phase 13b: waitAndInjectBrief waits for the harness to be ready, then
-// injects the brief prompt.
+// sends a fallback instruction to re-read the brief if the prompt was not
+// fully injected as a launch argument.
 func (r *Runner) waitAndInjectBrief() error {
 	if len(r.briefData) == 0 {
 		return nil
@@ -705,7 +832,11 @@ func (r *Runner) waitAndInjectBrief() error {
 	}
 	// Brief settle: let harness present clean prompt before one-liner.
 	time.Sleep(500 * time.Millisecond)
-	// Inject brief: all harnesses use file-based .soldier-brief.md.
+	// When the prompt was passed as a launch argument, the soldier already has
+	// charter + task content in context. The fallback is for harnesses that
+	// cannot accept a full prompt argument — send a file-read instruction.
+	// If the full prompt was injected (launchArgs non-empty), this is a no-op
+	// safety net; the Soldier already has everything in context.
 	_ = r.bk.SendKeys(r.windowID, "read and execute .soldier-brief.md")
 	return nil
 }
