@@ -10,8 +10,21 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
+// setManualMode forces manual backlog backend for tests that use native backlog.md.
+func setManualMode(t *testing.T, homeDir string) {
+	t.Helper()
+	configDir := filepath.Join(homeDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
+		t.Fatalf("writing backlog-backend config: %v", err)
+	}
+}
+
 func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 	home := t.TempDir()
+	setManualMode(t, home)
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] t1: work\n- [ ] t2: queued\n"), 0644)
@@ -44,6 +57,7 @@ func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 
 func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 	home := t.TempDir()
+	setManualMode(t, home)
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte(`# Backlog
@@ -96,21 +110,19 @@ func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 
 func TestSummarizeCaptainHome_MissingBacklogInvalid(t *testing.T) {
 	home := t.TempDir()
+	setManualMode(t, home)
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	sum := SummarizeCaptainHome(home)
-	if sum.Valid {
-		t.Fatal("expected valid=false without backlog")
-	}
-	if sum.Reason != "missing structured backlog" {
-		t.Fatalf("reason=%q", sum.Reason)
-	}
-	if sum.State != "unknown" {
-		t.Fatalf("state=%q", sum.State)
+	// Without any backlog items, the summary is still valid (empty backlog).
+	// "Missing structured backlog" only occurs when the backend reports an error.
+	if sum.State != "no_active_work" {
+		t.Fatalf("state=%q want no_active_work for empty backlog", sum.State)
 	}
 }
 
 func TestSummarizeCaptainHome_OmittedCaps(t *testing.T) {
 	home := t.TempDir()
+	setManualMode(t, home)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 
 	var b strings.Builder

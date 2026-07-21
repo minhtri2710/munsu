@@ -183,12 +183,10 @@ func Read(homeDir string, id string) (*State, error) {
 	return s, nil
 }
 
-// readBacklogState reads the task's state from the manual backlog file.
+// readBacklogState reads the task's state from the selected backlog authority.
 func readBacklogState(homeDir, id string) (backlog.TaskState, bool) {
-	backlogPath := filepath.Join(homeDir, "data", "backlog.md")
-	fb := backlog.NewFileBackend(backlogPath)
-	item, ok := fb.Show(id)
-	if !ok {
+	item, found, err := backlog.GetItem(homeDir, id)
+	if err != nil || !found {
 		return backlog.StateQueued, false
 	}
 	return item.State, true

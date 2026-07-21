@@ -276,9 +276,8 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 		}
 	}
 
-	// Check backlog state via tasks-axi or file backend.
-	backlogPath := filepath.Join(r.homeDir, "data", "backlog.md")
-	state, blocked, found, err := readBacklogTaskState(backlogPath, r.args.ID)
+	// Check backlog state via selected backlog authority.
+	state, blocked, found, err := readBacklogTaskState(r.homeDir, r.args.ID)
 	if err != nil {
 		// If backlog doesn't exist or can't be read, allow through but warn.
 		fmt.Fprintf(os.Stderr, "warning: cannot read backlog for captain authority check: %v\n", err)
@@ -315,47 +314,18 @@ func normalizeBacklogState(state string) string {
 	}
 }
 
-// readBacklogTaskState reads the backlog file and returns the task state,
-// blocked-by value, whether found, and any error.
-// It tries tasks-axi first, then falls back to the file backend.
-var readBacklogTaskState = func(backlogPath, id string) (string, string, bool, error) {
-	// Try tasks-axi first.
-	if path, err := exec.LookPath("tasks-axi"); err == nil {
-		cmd := exec.Command(path, "show", id, "--file", backlogPath)
-		out, err := cmd.CombinedOutput()
-		if err == nil {
-			state, blocked := parseTasksAxiShow(string(out))
-			if state != "" {
-				return state, blocked, true, nil
-			}
-		}
+// readBacklogTaskState reads the backlog state via the selected backlog authority.
+// Returns the state string, blocked-by value (always empty from GetItem),
+// whether found, and any error.
+var readBacklogTaskState = func(homeDir, id string) (string, string, bool, error) {
+	item, found, err := backlog.GetItem(homeDir, id)
+	if err != nil {
+		return "", "", false, fmt.Errorf("reading backlog state for %s: %w", id, err)
 	}
-
-	// Fallback to file backend.
-	fb := backlog.NewFileBackend(backlogPath)
-	item, ok := fb.Show(id)
-	if !ok {
+	if !found {
 		return "", "", false, nil
 	}
 	return item.State.String(), "", true, nil
-}
-
-// parseTasksAxiShow extracts state and blocked-by from tasks-axi show output.
-func parseTasksAxiShow(output string) (state string, blocked string) {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "state:") {
-			state = strings.TrimSpace(strings.TrimPrefix(line, "state:"))
-		}
-		if strings.HasPrefix(line, "blocked_by:") {
-			blocked = strings.TrimSpace(strings.TrimPrefix(line, "blocked_by:"))
-			if blocked == "none" {
-				blocked = ""
-			}
-		}
-	}
-	return state, blocked
 }
 
 // Phase 2: resolveMode resolves the effective delivery mode.

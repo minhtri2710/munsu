@@ -8,12 +8,21 @@ import (
 	"testing"
 )
 
-// writeBacklog creates a test backlog file with the given items.
+// writeBacklog creates a test backlog file with the given items
+// and sets the backend to manual mode so native backlog.md is used.
 func writeBacklog(t *testing.T, homeDir string, items []string) {
 	t.Helper()
 	dataDir := filepath.Join(homeDir, "data")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatalf("creating data dir: %v", err)
+	}
+	// Force manual mode so tests that write native backlog.md are read via FileBackend.
+	configDir := filepath.Join(homeDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
+		t.Fatalf("writing backlog-backend config: %v", err)
 	}
 	content := "# Backlog\n\n## 2026-07-19\n"
 	for _, item := range items {

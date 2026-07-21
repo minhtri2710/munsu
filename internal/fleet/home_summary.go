@@ -1,7 +1,6 @@
 package fleet
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -132,15 +131,10 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		return sum
 	}
 
-	backlogPath := filepath.Join(homeDir, "data", "backlog.md")
-	_, backlogStatErr := os.Stat(backlogPath)
-	backlogPresent := backlogStatErr == nil
-
-	fb := backlog.NewFileBackend(backlogPath)
-	items, backlogErr := fb.List(backlog.StateQueued) // zero filter = all
-	if backlogErr != nil {
+	items, listErr := backlog.ListItems(homeDir, backlog.StateQueued) // zero filter = all
+	backlogPresent := listErr == nil
+	if !backlogPresent {
 		items = nil
-		backlogPresent = false
 	}
 
 	inFlightByID := map[string]backlog.Item{}

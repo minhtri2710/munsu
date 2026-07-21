@@ -2,7 +2,6 @@ package backlog
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -28,13 +27,11 @@ type BacklogDigest struct {
 	Items       []DigestItem `json:"items,omitempty"`
 }
 
-// BuildDigest reads the backlog file under homeDir/data/backlog.md and returns
+// BuildDigest reads the backlog via the selected backend and returns
 // a bounded, metadata-only digest. It is fail-open: on any error it returns
 // a zero digest (all counts 0) instead of blocking.
 func BuildDigest(homeDir string) *BacklogDigest {
-	path := filepath.Join(homeDir, "data", "backlog.md")
-	fb := NewFileBackend(path)
-	items, err := fb.parse()
+	items, err := ListItems(homeDir, StateQueued) // zero filter = all
 	if err != nil || len(items) == 0 {
 		return &BacklogDigest{}
 	}

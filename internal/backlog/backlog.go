@@ -371,6 +371,30 @@ func parseTasksAxiListOutput(out string) ([]Item, error) {
 	return items, nil
 }
 
+// ListItems returns all backlog items via the selected backend.
+// When filter is StateQueued (zero value), all items are returned unfiltered.
+func ListItems(homeDir string, filter TaskState) ([]Item, error) {
+	mode := resolveBackend(homeDir, true)
+	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
+		return listItemsViaTasksAxi(homeDir, filter)
+	}
+	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	return fb.List(filter)
+}
+
+// listItemsViaTasksAxi runs tasks-axi list and parses the output.
+func listItemsViaTasksAxi(homeDir string, filter TaskState) ([]Item, error) {
+	args := []string{}
+	if filter != StateQueued {
+		args = append(args, filter.String())
+	}
+	out, stderr, err := runTasksAxiCapture(homeDir, "list", args)
+	if err != nil {
+		return nil, fmt.Errorf("backlog: tasks-axi list failed: %w (stderr: %s)", err, strings.TrimSpace(stderr))
+	}
+	return parseTasksAxiListOutput(out)
+}
+
 // AddItemDispatch adds a backlog item using the resolved backend with explicit
 // fail-closed semantics. Routes to tasks-axi when selected, never silently falls
 // through to the native parser on FAILED.
