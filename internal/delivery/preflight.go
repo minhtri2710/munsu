@@ -79,6 +79,11 @@ func checkNoMistakesBinary() Check {
 }
 
 func checkGhAuth() Check {
+	// Check gh-axi availability first (consolidated authority path)
+	if _, err := exec.LookPath("gh-axi"); err == nil {
+		return Check{Name: "gh-auth", OK: true, Detail: "gh-axi available on PATH"}
+	}
+	// Fall back to gh auth status check
 	cmd := exec.Command("gh", "auth", "status")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

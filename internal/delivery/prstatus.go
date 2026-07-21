@@ -26,10 +26,31 @@ type PRMergeStatus struct {
 // When the provider is unreachable or ambiguous, it returns an error so callers
 // can fail closed.
 //
-// Uses `gh pr view --json state,headRefOid,mergeCommit` under the hood.
-// Note: GitHub CLI does not expose a boolean "merged" field; MERGED is
-// conveyed via state=MERGED (and optional mergeCommit.oid).
+// Uses gh-axi via the consolidated GitHubClient when the capability is Ready.
+// Falls through to gh CLI through the adapter path for fields that gh-axi
+// does not expose directly.
 var QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
+	// Check gh-axi capability first
+	client, err := DefaultGitHubClient()
+	if err == nil {
+		// gh-axi is Ready; use the consolidated adapter
+		data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "state,headRefOid,mergeCommit")
+		if err != nil {
+			return nil, err
+		}
+		return parsePRMergeStatus(data)
+	}
+
+	// If gh-axi is not available, try direct gh CLI as fallback for
+	// read-only status queries. The capability model controls mutation
+	// authority; status reads tolerate degraded paths.
+	return queryPRMergeStatusDirect(ghURL)
+}
+
+// queryPRMergeStatusDirect uses raw gh CLI to query PR merge status.
+// This is the degraded path when gh-axi is not available.
+// QueryPRMergeStatus prefers the consolidated gh-axi path first.
+func queryPRMergeStatusDirect(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
 	args := []string{
 		"pr", "view",
 		fmt.Sprintf("%d", ghURL.Num),
@@ -44,7 +65,12 @@ var QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
 		}
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
+	return parsePRMergeStatus(out)
+}
 
+// parsePRMergeStatus parses the PR merge status from gh CLI JSON output.
+// Shared between the consolidated gh-axi path and the degraded direct path.
+func parsePRMergeStatus(data []byte) (*PRMergeStatus, error) {
 	var raw struct {
 		State       string `json:"state"`
 		HeadRefOid  string `json:"headRefOid"`
@@ -52,7 +78,7 @@ var QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
 			Oid string `json:"oid"`
 		} `json:"mergeCommit"`
 	}
-	if err := json.Unmarshal(out, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
 	}
 
