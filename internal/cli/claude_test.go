@@ -492,7 +492,82 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// TestReadParentPID verifies readParentPID on this host.
+// TestClaudeGuardPendingRelayBlocks verifies guard --harness claude blocks
+// (exit 2) when a pending terminal receipt exists with material status.
+func TestClaudeGuardPendingRelayBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	// Create minimal state/.terminal-receipts with a pending receipt
+	receiptsDir := filepath.Join(tmpDir, "state", ".terminal-receipts")
+	os.MkdirAll(receiptsDir, 0755)
+	receiptPath := filepath.Join(receiptsDir, "test-task.uplink.receipt")
+	os.WriteFile(receiptPath, []byte("state=done\n"), 0644)
+
+	// No ack file means the receipt is pending
+
+	// Create material status file so MaterialReportExists returns true
+	stateDir := filepath.Join(tmpDir, "state")
+	os.WriteFile(filepath.Join(stateDir, "test-task.status"), []byte("done: task complete\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	stderr := ""
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		sout, serr := captureBoth(func() {
+			runGuardClaude(tmpDir)
+		})
+		stderr = serr
+		_ = sout
+
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 for pending relay obligation, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "material relay pending") {
+		t.Errorf("stderr must contain 'material relay pending', got: %s", stderr)
+	}
+}
+
+// TestClaudeGuardNoPendingRelayAllows verifies guard --harness claude allows
+// (exit 0) when no pending terminal receipts exist.
+func TestClaudeGuardNoPendingRelayAllows(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	// No receipts directory at all — should allow
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	w.Write([]byte(`{}`))
+	w.Close()
+	os.Stdin = r
+
+	err := runGuardClaude(tmpDir)
+	os.Stdin = oldStdin
+
+	if err != nil {
+		t.Errorf("expected no error when no pending obligations, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 when no pending obligations, got %d", exitCode)
+	}
+}
 // readParentPID(os.Getpid()) must equal os.Getppid() (sanity).
 // Walking from a known child reaches a known ancestor (monotonic pid change).
 func TestReadParentPID(t *testing.T) {

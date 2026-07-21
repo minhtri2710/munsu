@@ -366,3 +366,106 @@ func TestAgyGuardBlindTurn(t *testing.T) {
 		t.Errorf("expected non-empty reason for blind turn, got %v", payload["reason"])
 	}
 }
+
+// TestAgyGuardPendingRelayContinues verifies guard --harness agy returns
+// {"decision":"continue","reason":"..."} when a pending terminal receipt
+// exists with material status.
+func TestAgyGuardPendingRelayContinues(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	receiptsDir := filepath.Join(tmpDir, "state", ".terminal-receipts")
+	os.MkdirAll(receiptsDir, 0755)
+	receiptPath := filepath.Join(receiptsDir, "test-task.uplink.receipt")
+	os.WriteFile(receiptPath, []byte("state=done\n"), 0644)
+
+	stateDir := filepath.Join(tmpDir, "state")
+	os.WriteFile(filepath.Join(stateDir, "test-task.status"), []byte("done: task complete\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	var stdout string
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		sout, _ := captureBoth(func() {
+			runGuardAgy(tmpDir)
+		})
+		stdout = sout
+
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 for agy continue, got %d", exitCode)
+	}
+
+	stdoutStr := strings.TrimSpace(stdout)
+	if stdoutStr == "" {
+		t.Fatal("expected non-empty stdout for pending relay")
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(stdoutStr), &payload); err != nil {
+		t.Fatalf("stdout must be valid JSON: %v\nGot: %s", err, stdoutStr)
+	}
+	if payload["decision"] != "continue" {
+		t.Errorf("expected decision 'continue' for pending relay, got %v", payload["decision"])
+	}
+	if reason, ok := payload["reason"].(string); !ok || reason == "" {
+		t.Errorf("expected non-empty reason for pending relay, got %v", payload["reason"])
+	}
+	if !strings.Contains(stdoutStr, "material relay pending") {
+		t.Errorf("reason must contain 'material relay pending', got: %s", stdoutStr)
+	}
+}
+
+// TestAgyGuardNoPendingRelayAllows verifies guard --harness agy returns
+// {"decision":"allow"} when no pending terminal receipts exist.
+func TestAgyGuardNoPendingRelayAllows(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	var stdout string
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		sout, _ := captureBoth(func() {
+			runGuardAgy(tmpDir)
+		})
+		stdout = sout
+
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 for agy allow, got %d", exitCode)
+	}
+
+	stdoutStr := strings.TrimSpace(stdout)
+	if stdoutStr == "" {
+		t.Fatal("expected non-empty stdout for no pending relay")
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(stdoutStr), &payload); err != nil {
+		t.Fatalf("stdout must be valid JSON: %v\nGot: %s", err, stdoutStr)
+	}
+	if payload["decision"] != "allow" {
+		t.Errorf("expected decision 'allow' when no pending obligations, got %v", payload["decision"])
+	}
+}

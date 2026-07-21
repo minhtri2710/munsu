@@ -307,3 +307,75 @@ func TestCodexGuardHealthyExit(t *testing.T) {
 		t.Errorf("expected exit 0 for healthy guard, got %d", exitCode)
 	}
 }
+
+// TestCodexGuardPendingRelayBlocks verifies guard --harness codex blocks
+// (exit 2) when a pending terminal receipt exists with material status.
+func TestCodexGuardPendingRelayBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	receiptsDir := filepath.Join(tmpDir, "state", ".terminal-receipts")
+	os.MkdirAll(receiptsDir, 0755)
+	receiptPath := filepath.Join(receiptsDir, "test-task.uplink.receipt")
+	os.WriteFile(receiptPath, []byte("state=done\n"), 0644)
+
+	stateDir := filepath.Join(tmpDir, "state")
+	os.WriteFile(filepath.Join(stateDir, "test-task.status"), []byte("done: task complete\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	stderr := ""
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		sout, serr := captureBoth(func() {
+			runGuardCodexLike(tmpDir)
+		})
+		stderr = serr
+		_ = sout
+
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 for pending relay obligation, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "material relay pending") {
+		t.Errorf("stderr must contain 'material relay pending', got: %s", stderr)
+	}
+}
+
+// TestCodexGuardNoPendingRelayAllows verifies guard --harness codex allows
+// (exit 0) when no pending terminal receipts exist.
+func TestCodexGuardNoPendingRelayAllows(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	w.Write([]byte(`{}`))
+	w.Close()
+	os.Stdin = r
+
+	err := runGuardCodexLike(tmpDir)
+	os.Stdin = oldStdin
+
+	if err != nil {
+		t.Errorf("expected no error when no pending obligations, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 when no pending obligations, got %d", exitCode)
+	}
+}

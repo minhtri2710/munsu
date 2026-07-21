@@ -283,10 +283,6 @@ func newWakeDrainCmd() *cobra.Command {
 // It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
 // and checks fleet state + watcher health for blind-turn detection.
 func runGuardClaude(homeDir string) error {
-	// Defer obligation check: warn about open obligations when turn-end is allowed.
-	// Does not run on exitWithCode paths (os.Exit skips defers).
-	defer checkTurnEndObligations(homeDir)
-
 	// Read stdin JSON for loop guard
 	stopHookActive := false
 	data, err := io.ReadAll(os.Stdin)
@@ -302,12 +298,22 @@ func runGuardClaude(homeDir string) error {
 	// Loop guard: stop_hook_active means Claude has already been forced
 	// to continue one turn. Allow the stop by exiting 0.
 	if stopHookActive {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
 	// Check scope: only guard primary checkouts
 	cls := scope.Classify(homeDir)
 	if cls.Err != nil || cls.Identity != scope.Primary {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -324,6 +330,11 @@ func runGuardClaude(homeDir string) error {
 
 	// No in-flight work → safe to end turn
 	if inFlight == 0 {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -332,6 +343,11 @@ func runGuardClaude(homeDir string) error {
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -356,10 +372,6 @@ func runGuardClaude(homeDir string) error {
 // runGuardCodexLike implements the Codex Stop hook guard.
 // Codex uses the same deny shape as Claude: exit 2 + stderr reason.
 func runGuardCodexLike(homeDir string) error {
-	// Defer obligation check: warn about open obligations when turn-end is allowed.
-	// Does not run on exitWithCode paths (os.Exit skips defers).
-	defer checkTurnEndObligations(homeDir)
-
 	// Read stdin JSON for loop guard
 	stopHookActive := false
 	data, err := io.ReadAll(os.Stdin)
@@ -375,12 +387,22 @@ func runGuardCodexLike(homeDir string) error {
 	// Loop guard: stop_hook_active means Codex has already been forced
 	// to continue one turn. Allow the stop by exiting 0.
 	if stopHookActive {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
 	// Check scope: only guard primary checkouts
 	cls := scope.Classify(homeDir)
 	if cls.Err != nil || cls.Identity != scope.Primary {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -397,6 +419,11 @@ func runGuardCodexLike(homeDir string) error {
 
 	// No in-flight work → safe to end turn
 	if inFlight == 0 {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -405,6 +432,11 @@ func runGuardCodexLike(homeDir string) error {
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -424,10 +456,6 @@ func runGuardCodexLike(homeDir string) error {
 }
 
 func runGuardGrok(homeDir string) error {
-	// Defer obligation check: warn about open obligations when turn-end is allowed.
-	// Does not run on exitWithCode paths (os.Exit skips defers).
-	defer checkTurnEndObligations(homeDir)
-
 	// Read stdin JSON for loop guard
 	stopHookActive := false
 	data, err := io.ReadAll(os.Stdin)
@@ -443,12 +471,22 @@ func runGuardGrok(homeDir string) error {
 	// Loop guard: stop_hook_active means Grok has already been forced
 	// to continue one turn. Allow the stop by exiting 0.
 	if stopHookActive {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
 	// Check scope: only guard primary checkouts
 	cls := scope.Classify(homeDir)
 	if cls.Err != nil || cls.Identity != scope.Primary {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -465,6 +503,11 @@ func runGuardGrok(homeDir string) error {
 
 	// No in-flight work -> safe to end turn
 	if inFlight == 0 {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -473,6 +516,11 @@ func runGuardGrok(homeDir string) error {
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
+		if err := checkPendingRelayObligations(homeDir); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			exitWithCode(2)
+			return nil
+		}
 		return nil
 	}
 
@@ -495,13 +543,11 @@ func runGuardGrok(homeDir string) error {
 // runGuardAgy implements the agy Stop hook guard.
 // agy Stop hooks are active: stdout decision JSON gates the turn end.
 // - fullyIdle=true: allow stop with {"decision":"allow"}
+// - pending relay obligations: continue with {"decision":"continue","reason":"..."}
 // - Blind turn: continue with {"decision":"continue","reason":"..."}
 // - Healthy: allow stop with {"decision":"allow"}
 // All paths exit 0 because agy gates on the stdout decision field, NOT exit code.
 func runGuardAgy(homeDir string) error {
-	// Defer obligation check: warn about open obligations when turn-end is allowed.
-	defer checkTurnEndObligations(homeDir)
-
 	// Read stdin JSON for fullyIdle
 	fullyIdle := false
 	data, err := io.ReadAll(os.Stdin)
@@ -512,6 +558,16 @@ func runGuardAgy(homeDir string) error {
 				fullyIdle = true
 			}
 		}
+	}
+
+	// Obligation gate: check before any allow decision
+	if err := checkPendingRelayObligations(homeDir); err != nil {
+		continueJSON, _ := json.Marshal(map[string]interface{}{
+			"decision": "continue",
+			"reason":   err.Error(),
+		})
+		fmt.Fprintln(os.Stdout, string(continueJSON))
+		return nil
 	}
 
 	// fullyIdle means the agent says it's completely finished — allow the stop
@@ -582,32 +638,34 @@ func runGuardAgy(homeDir string) error {
 	return nil
 }
 
-// checkTurnEndObligations loads obligations for the current role (from MUNSU_ROLE)
-// and logs any open obligations to stderr. It is non-blocking: it only warns.
-// Safe to call even when MUNSU_ROLE is not set (defaults to soldier).
-func checkTurnEndObligations(homeDir string) {
-	role := os.Getenv("MUNSU_ROLE")
-	if role == "" {
-		role = "soldier"
+// checkPendingRelayObligations checks for un-acked terminal receipts with material
+// status. It is BLOCKING: returns an error if material relay is pending. Fail-closed
+// on read errors. Checks both homeDir and MUNSU_PARENT_STATUS (captain home).
+func checkPendingRelayObligations(homeDir string) error {
+	// Collect homes to check: own home + parent home (for soldiers, receipts
+	// live in captain-owned state under MUNSU_PARENT_STATUS).
+	homes := []string{homeDir}
+	if parentHome := os.Getenv("MUNSU_PARENT_STATUS"); parentHome != "" && parentHome != homeDir {
+		homes = append(homes, parentHome)
 	}
 
-	obligations, err := turnend.LoadObligations(homeDir, turnend.Role(role))
-	if err != nil {
-		// Non-blocking: silently ignore load errors
-		return
-	}
-
-	var open []string
-	for _, o := range obligations {
-		if o.State == turnend.StateOpen {
-			open = append(open, string(o.Kind))
+	for _, h := range homes {
+		receipts, err := turnend.ListPendingReceipts(h)
+		if err != nil {
+			return fmt.Errorf("obligation gate fail-closed: reading terminal receipts from %s: %w", h, err)
+		}
+		for _, r := range receipts {
+			has, err := turnend.MaterialReportExists(h, r.TaskID)
+			if err != nil {
+				return fmt.Errorf("obligation gate fail-closed: checking material report for task %s in %s: %w", r.TaskID, h, err)
+			}
+			if has {
+				return fmt.Errorf("material relay pending: task %s has un-acked terminal receipt (state=%s) in %s; run 'munsu turnend obligations' or use --force", r.TaskID, r.State, h)
+			}
 		}
 	}
 
-	if len(open) > 0 {
-		fmt.Fprintf(os.Stderr, "NOTE: open turn-end obligations for role=%s: %s\\n", role, strings.Join(open, ", "))
-		fmt.Fprintf(os.Stderr, "  run 'munsu turnend obligations' to view; 'munsu turnend complete <kind>' to close\\n")
-	}
+	return nil
 }
 
 func newAfkCmd() *cobra.Command {
