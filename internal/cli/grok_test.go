@@ -432,3 +432,120 @@ func TestGrokGuardNoPendingRelayAllows(t *testing.T) {
 		t.Errorf("expected exit 0 when no pending obligations, got %d", exitCode)
 	}
 }
+
+// TestGrokGuardParentHomeReceiptBlocks verifies guard --harness grok blocks
+// when homeDir has NO receipt but MUNSU_PARENT_STATUS has a pending material receipt.
+func TestGrokGuardParentHomeReceiptBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
+	os.MkdirAll(parentReceipts, 0755)
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
+	parentState := filepath.Join(parentHome, "state")
+	os.WriteFile(filepath.Join(parentState, "task-1.status"), []byte("done: task complete\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	stderr := ""
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		_, serr := captureBoth(func() {
+			runGuardGrok(tmpDir)
+		})
+		stderr = serr
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 from parent-home receipt, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "material relay pending") {
+		t.Errorf("stderr must mention 'material relay pending', got: %s", stderr)
+	}
+	if !strings.Contains(stderr, parentHome) {
+		t.Errorf("stderr must mention parent-home path, got: %s", stderr)
+	}
+}
+
+// TestGrokGuardParentHomeAckedAllows verifies guard --harness grok allows
+// after the parent-home receipt is acknowledged.
+func TestGrokGuardParentHomeAckedAllows(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
+	os.MkdirAll(parentReceipts, 0755)
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.ack"), []byte("acked_at=1\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	w.Write([]byte(`{}`))
+	w.Close()
+	os.Stdin = r
+
+	err := runGuardGrok(tmpDir)
+	os.Stdin = oldStdin
+
+	if err != nil {
+		t.Errorf("expected no error after ack, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 after ack, got %d", exitCode)
+	}
+}
+
+// TestGrokGuardParentHomeUnreadableFailsClosed verifies guard fails closed
+// when parent receipt directory exists but is unreadable.
+func TestGrokGuardParentHomeUnreadableFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
+	os.MkdirAll(parentReceipts, 0755)
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
+	os.Chmod(parentReceipts, 0000)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() {
+		exitWithCode = oldExit
+		os.Chmod(parentReceipts, 0755)
+	}()
+
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		runGuardGrok(tmpDir)
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 for fail-closed on unreadable dir, got %d", exitCode)
+	}
+}
