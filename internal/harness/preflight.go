@@ -39,7 +39,7 @@ var preflightAuthEnv = map[string][]string{
 	Claude:   {"ANTHROPIC_API_KEY"},
 	Codex:    {"OPENAI_API_KEY"},
 	Opencode: {"OPENAI_API_KEY"},
-	Pi:       {"OPENAI_API_KEY"},
+	Pi:       piAuthEnvVars(),
 	Grok:     {"GROK_API_KEY", "XAI_API_KEY"},
 	Agy:      {"ANTHROPIC_API_KEY"},
 }
@@ -116,11 +116,52 @@ func (e *PreflightError) Error() string {
 	}
 }
 
+// piAuthEnvVars returns all environment variables that Pi accepts as API keys.
+// Pi reads --api-key from any of these provider-specific env vars.
+// Never read, print, parse, or log the actual values of these environment variables.
+func piAuthEnvVars() []string {
+	return []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_OAUTH_TOKEN",
+		"ANT_LING_API_KEY",
+		"OPENAI_API_KEY",
+		"AZURE_OPENAI_API_KEY",
+		"DEEPSEEK_API_KEY",
+		"NVIDIA_API_KEY",
+		"GEMINI_API_KEY",
+		"GROQ_API_KEY",
+		"CEREBRAS_API_KEY",
+		"XAI_API_KEY",
+		"FIREWORKS_API_KEY",
+		"TOGETHER_API_KEY",
+		"OPENROUTER_API_KEY",
+		"AI_GATEWAY_API_KEY",
+		"ZAI_API_KEY",
+		"ZAI_CODING_CN_API_KEY",
+		"MISTRAL_API_KEY",
+		"MINIMAX_API_KEY",
+		"MOONSHOT_API_KEY",
+		"OPENCODE_API_KEY",
+		"KIMI_API_KEY",
+		"CLOUDFLARE_API_KEY",
+		"XIAOMI_API_KEY",
+		"XIAOMI_TOKEN_PLAN_CN_API_KEY",
+		"XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+		"XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+		"AWS_BEARER_TOKEN_BEDROCK",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_SECRET_ACCESS_KEY",
+	}
+}
+
 // authHint returns an actionable error message for missing auth configuration.
 func authHint(harness string) string {
 	envVars, ok := preflightAuthEnv[harness]
 	if !ok || len(envVars) == 0 {
 		return fmt.Sprintf("harness %q auth not configured (unknown auth method)", harness)
+	}
+	if harness == Pi {
+		return fmt.Sprintf("harness %q auth not configured; set any Pi-supported API key environment variable (see `pi --help` for the full list)", harness)
 	}
 	return fmt.Sprintf("harness %q auth not configured; set %s environment variable", harness, envVars[0])
 }

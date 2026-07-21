@@ -104,6 +104,65 @@ func TestPreflight_ModelValid_Unknown(t *testing.T) {
 	}
 }
 
+func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
+	// Regression: Pi preflight should accept any Pi-supported provider
+	// env var, not just OPENAI_API_KEY.
+	origPiKey := os.Getenv("OPENAI_API_KEY")
+	origXaiKey := os.Getenv("XAI_API_KEY")
+	origAnthropicKey := os.Getenv("ANTHROPIC_API_KEY")
+	origGeminiKey := os.Getenv("GEMINI_API_KEY")
+	defer func() {
+		os.Setenv("OPENAI_API_KEY", origPiKey)
+		os.Setenv("XAI_API_KEY", origXaiKey)
+		os.Setenv("ANTHROPIC_API_KEY", origAnthropicKey)
+		os.Setenv("GEMINI_API_KEY", origGeminiKey)
+	}()
+	os.Unsetenv("OPENAI_API_KEY")
+	os.Unsetenv("XAI_API_KEY")
+
+	// Pi with no API key at all should fail (absent)
+	result, err := Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightAbsent {
+		t.Errorf("Pi with no key: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightAbsent)
+	}
+
+	// Pi with a non-OPENAI Pi-supported key should pass
+	os.Setenv("XAI_API_KEY", "test-key")
+	result, err = Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightOK {
+		t.Errorf("Pi with XAI_API_KEY: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
+	}
+
+	// Pi with ANTHROPIC_API_KEY should also pass
+	os.Unsetenv("XAI_API_KEY")
+	os.Setenv("ANTHROPIC_API_KEY", "test-key")
+	result, err = Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightOK {
+		t.Errorf("Pi with ANTHROPIC_API_KEY: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
+	}
+
+	// Pi with GEMINI_API_KEY should also pass
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	os.Setenv("GEMINI_API_KEY", "test-key")
+	result, err = Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightOK {
+		t.Errorf("Pi with GEMINI_API_KEY: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
+	}
+
+}
+
 func TestPreflight_AllLevelsKnown(t *testing.T) {
 	orig := os.Getenv("OPENAI_API_KEY")
 	defer os.Setenv("OPENAI_API_KEY", orig)
@@ -117,6 +176,7 @@ func TestPreflight_AllLevelsKnown(t *testing.T) {
 	if result.AdapterKnown != PreflightOK {
 		t.Errorf("AdapterKnown = %q, want %q", result.AdapterKnown, PreflightOK)
 	}
+
 	// Binary may or may not be on PATH, but it must not be Unknown
 	if result.BinaryOnPath == PreflightUnknown {
 		t.Error("BinaryOnPath should not be Unknown for codex")
