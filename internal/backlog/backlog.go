@@ -183,9 +183,13 @@ func AddItem(homeDir, id, desc, kind, repo string, start bool) error {
 	return fb.Add(id, desc, kind, repo, start)
 }
 
-// GetItem reads a backlog item by ID from the home-scoped backlog file.
+// GetItem reads a backlog item by ID via the selected backend.
 // Returns the item, whether it was found, and any error.
 func GetItem(homeDir, id string) (Item, bool, error) {
+	mode := resolveBackend(homeDir, true)
+	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
+		return getItemViaTasksAxi(homeDir, id)
+	}
 	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
 	item, ok := fb.Show(id)
 	if !ok {
@@ -194,8 +198,79 @@ func GetItem(homeDir, id string) (Item, bool, error) {
 	return item, true, nil
 }
 
-// HasDuplicate checks whether the backlog contains multiple items with the same ID.
+// getItemViaTasksAxi runs tasks-axi show and parses the output.
+func getItemViaTasksAxi(homeDir, id string) (Item, bool, error) {
+	out, err := runTasksAxiCapture(homeDir, "show", []string{id})
+	if err != nil {
+		// tasks-axi show returns non-zero when item not found.
+		return Item{}, false, nil
+	}
+	item, ok := parseTasksAxiShowOutput(out)
+	if !ok {
+		return Item{}, false, nil
+	}
+	return item, true, nil
+}
+
+// parseTasksAxiShowOutput parses a YAML-like tasks-axi show output block
+// into an Item struct. Expected format:
+//
+//	task:
+//	  id: <id>
+//	  title: <title>
+//	  state: <state>
+//	  kind: <kind>    (optional)
+//	  repo: <repo>    (optional)
+func parseTasksAxiShowOutput(out string) (Item, bool) {
+	var item Item
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "task:" {
+			continue
+		}
+		key, val, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		switch key {
+		case "id":
+			item.ID = val
+			found = true
+		case "title":
+			item.Description = val
+		case "state":
+			s, err := ParseState(val)
+			if err == nil {
+				item.State = s
+			} else {
+				item.State = StateQueued
+			}
+		case "kind":
+			if val != "-" {
+				item.Kind = val
+			}
+		case "repo":
+			if val != "-" {
+				item.Repo = val
+			}
+		}
+	}
+	if !found || item.ID == "" {
+		return Item{}, false
+	}
+	return item, true
+}
+
+// HasDuplicate checks whether the backlog contains multiple items with the same ID,
+// using the selected backend.
 func HasDuplicate(homeDir, id string) (bool, error) {
+	mode := resolveBackend(homeDir, true)
+	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
+		return hasDuplicateViaTasksAxi(homeDir, id)
+	}
 	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
 	items, err := fb.List(StateQueued) // unfiltered returns all
 	if err != nil {
@@ -211,6 +286,78 @@ func HasDuplicate(homeDir, id string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// hasDuplicateViaTasksAxi runs tasks-axi list and parses the output to check
+// for duplicate IDs.
+func hasDuplicateViaTasksAxi(homeDir, id string) (bool, error) {
+	out, err := runTasksAxiCapture(homeDir, "list", []string{})
+	if err != nil {
+		return false, fmt.Errorf("tasks-axi list failed: %w", err)
+	}
+	items, err := parseTasksAxiListOutput(out)
+	if err != nil {
+		return false, err
+	}
+	count := 0
+	for _, item := range items {
+		if item.ID == id {
+			count++
+			if count > 1 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// parseTasksAxiListOutput parses tasks-axi list CSV output into []Item.
+// Expected format:
+//
+//	count: N
+//	tasks[N]{id,state,kind,repo,title}:
+//	  id1,state1,kind1,repo1,title1
+//	  id2,state2,kind2,repo2,title2
+func parseTasksAxiListOutput(out string) ([]Item, error) {
+	var items []Item
+	inCSV := false
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Detect CSV header line: tasks[N]{...}:
+		if strings.Contains(trimmed, "tasks[") && strings.Contains(trimmed, ":") {
+			inCSV = true
+			continue
+		}
+		if !inCSV {
+			continue
+		}
+		// Parse CSV row: id,state,kind,repo,title
+		parts := strings.Split(trimmed, ",")
+		if len(parts) < 2 {
+			continue
+		}
+		item := Item{ID: strings.TrimSpace(parts[0])}
+		if len(parts) >= 2 {
+			s, err := ParseState(strings.TrimSpace(parts[1]))
+			if err == nil {
+				item.State = s
+			}
+		}
+		if len(parts) >= 3 {
+			item.Kind = strings.TrimSpace(parts[2])
+		}
+		if len(parts) >= 4 {
+			item.Repo = strings.TrimSpace(parts[3])
+		}
+		if len(parts) >= 5 {
+			item.Description = strings.TrimSpace(parts[4])
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 // AddItemDispatch adds a backlog item using the resolved backend with explicit
@@ -316,9 +463,29 @@ func atoi(s string) int {
 	return n
 }
 
-// runTasksAxi runs tasks-axi using its current-directory configuration.
-func runTasksAxi(verb string, args []string) error {
-	return runTasksAxiForHome("", verb, args)
+// runTasksAxiCapture runs tasks-axi and returns captured stdout.
+func runTasksAxiCapture(homeDir, verb string, args []string) (string, error) {
+	path, err := lookPath("tasks-axi")
+	if err != nil {
+		return "", fmt.Errorf("tasks-axi not found: %w", err)
+	}
+
+	cliArgs := []string{verb}
+	cliArgs = append(cliArgs, args...)
+	if homeDir != "" {
+		backlogPath, err := filepath.Abs(filepath.Join(homeDir, "data", "backlog.md"))
+		if err != nil {
+			return "", fmt.Errorf("resolving backlog path: %w", err)
+		}
+		cliArgs = append(cliArgs, "--file", backlogPath)
+	}
+
+	cmd := execCommand(path, cliArgs...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // runTasksAxiForHome scopes tasks-axi to a runtime home's durable backlog.

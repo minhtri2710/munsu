@@ -105,6 +105,15 @@ func TestHelperProcess(t *testing.T) {
 			fmt.Fprintf(os.Stderr, "tasks-axi failed\n")
 			os.Exit(1)
 		}
+		// Structured mock output for show/list commands.
+		if mockShow := os.Getenv("MOCK_TASKS_AXI_SHOW"); mockShow != "" {
+			fmt.Print(mockShow)
+			return
+		}
+		if mockList := os.Getenv("MOCK_TASKS_AXI_LIST"); mockList != "" {
+			fmt.Print(mockList)
+			return
+		}
 		fmt.Printf("EXEC_CMD: %s\n", strings.Join(subArgs, " "))
 		return
 	}
@@ -550,6 +559,373 @@ func TestAddItemDispatch_NoCrossStoreMutation(t *testing.T) {
 		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
 		if _, err := os.Stat(backlogPath); err == nil {
 			t.Errorf("backlog.md should NOT exist after tasks-axi FAILED (fail-closed), but it does")
+		}
+	})
+}
+
+func TestGetItem_RouteThroughBackend(t *testing.T) {
+	oldLookPath := lookPath
+	oldExecCommand := execCommand
+	defer func() {
+		lookPath = oldLookPath
+		execCommand = oldExecCommand
+	}()
+
+	execCommand = mockExecCommand()
+
+	// tasks-axi show mock output for a single item.
+	const mockShowOutput = `task:
+  id: TASK-1
+  title: From tasks-axi
+  state: in_flight
+  kind: scout
+  repo: munsu
+`
+
+	t.Run("ModeManual reads from FileBackend", func(t *testing.T) {
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
+
+		// Pre-populate backlog.md (FileBackend should read this).
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: From native\n"), 0644)
+
+		lookPath = func(name string) (string, error) {
+			return "/mock/tasks-axi", nil
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_SHOW", mockShowOutput)
+		defer os.Unsetenv("MOCK_TASKS_AXI_SHOW")
+
+		item, found, err := GetItem(homeDir, "TASK-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			t.Fatal("expected item to be found")
+		}
+		// Must read from FileBackend (native), not tasks-axi mock.
+		if item.Description != "From native" {
+			t.Errorf("expected 'From native' (FileBackend), got %q", item.Description)
+		}
+	})
+
+	t.Run("ModeTasksAxi reads from tasks-axi, not FileBackend", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_SHOW", mockShowOutput)
+		defer os.Unsetenv("MOCK_TASKS_AXI_SHOW")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
+
+		// Pre-populate backlog.md with DIVERGENT data (tasks-axi should NOT read this).
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
+
+		item, found, err := GetItem(homeDir, "TASK-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			t.Fatal("expected item to be found")
+		}
+		// Must read from tasks-axi mock, not FileBackend.
+		if item.Description != "From tasks-axi" {
+			t.Errorf("expected 'From tasks-axi' (tasks-axi backend), got %q", item.Description)
+		}
+		if item.State != StateInFlight {
+			t.Errorf("expected state InFlight from tasks-axi, got %v", item.State)
+		}
+
+		// Verify backlog.md was NOT consulted (should still have divergent data).
+		data, _ := os.ReadFile(filepath.Join(dataDir, "backlog.md"))
+		if !strings.Contains(string(data), "Divergent native data") {
+			t.Errorf("backlog.md should remain unchanged (not consulted by GetItem)")
+		}
+	})
+}
+
+func TestHasDuplicate_RouteThroughBackend(t *testing.T) {
+	oldLookPath := lookPath
+	oldExecCommand := execCommand
+	defer func() {
+		lookPath = oldLookPath
+		execCommand = oldExecCommand
+	}()
+
+	execCommand = mockExecCommand()
+
+	// tasks-axi list mock output with two items (one duplicate).
+	const mockListWithDup = `count: 2
+	tasks[2]{id,state,kind,repo,title}:
+	  TASK-1,in_flight,scout,munsu,first
+	  TASK-1,queued,scout,munsu,duplicate
+`
+
+	const mockListNoDup = `count: 1
+	tasks[1]{id,state,kind,repo,title}:
+	  TASK-1,in_flight,scout,munsu,only one
+`
+
+	t.Run("ModeTasksAxi detects duplicates via tasks-axi", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_LIST", mockListWithDup)
+		defer os.Unsetenv("MOCK_TASKS_AXI_LIST")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
+
+		// Pre-populate backlog.md with NO duplicates (tasks-axi should NOT read this).
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Only one in native\n"), 0644)
+
+		dup, err := HasDuplicate(homeDir, "TASK-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !dup {
+			t.Error("expected duplicate detected via tasks-axi")
+		}
+	})
+
+	t.Run("ModeTasksAxi no duplicates via tasks-axi", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_LIST", mockListNoDup)
+		defer os.Unsetenv("MOCK_TASKS_AXI_LIST")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
+
+		dup, err := HasDuplicate(homeDir, "TASK-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dup {
+			t.Error("expected no duplicate, got true")
+		}
+	})
+
+	t.Run("ModeTasksAxi FAILED propagates error", func(t *testing.T) {
+		lookPath = func(name string) (string, error) {
+			if name == "tasks-axi" {
+				return "/mock/tasks-axi", nil
+			}
+			return "", fmt.Errorf("file not found")
+		}
+		os.Setenv("MOCK_TASKS_AXI_VERSION", "tasks-axi version 0.1.5")
+		defer os.Unsetenv("MOCK_TASKS_AXI_VERSION")
+		os.Setenv("MOCK_TASKS_AXI_FAIL", "1")
+		defer os.Unsetenv("MOCK_TASKS_AXI_FAIL")
+
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		os.MkdirAll(configDir, 0755)
+		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
+
+		// FAILED should NOT fall through to FileBackend — GetItem returns not-found.
+		_, found, err := GetItem(homeDir, "TASK-1")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if found {
+			t.Error("expected not-found from tasks-axi FAILED, got found")
+		}
+
+		// FAILED should NOT fall through to FileBackend — HasDuplicate returns error.
+		_, err = HasDuplicate(homeDir, "TASK-1")
+		if err == nil {
+			t.Error("expected error from tasks-axi FAILED in HasDuplicate, got nil")
+		}
+	})
+}
+
+func TestParseTasksAxiShowOutput(t *testing.T) {
+	t.Run("full item", func(t *testing.T) {
+		out := `task:
+  id: test-1
+  title: my task
+  state: in_flight
+  kind: scout
+  repo: munsu
+`
+		item, ok := parseTasksAxiShowOutput(out)
+		if !ok {
+			t.Fatal("expected parse success")
+		}
+		if item.ID != "test-1" {
+			t.Errorf("id = %q, want 'test-1'", item.ID)
+		}
+		if item.Description != "my task" {
+			t.Errorf("desc = %q, want 'my task'", item.Description)
+		}
+		if item.State != StateInFlight {
+			t.Errorf("state = %v, want InFlight", item.State)
+		}
+		if item.Kind != "scout" {
+			t.Errorf("kind = %q, want 'scout'", item.Kind)
+		}
+		if item.Repo != "munsu" {
+			t.Errorf("repo = %q, want 'munsu'", item.Repo)
+		}
+	})
+
+	t.Run("no metadata fields", func(t *testing.T) {
+		out := `task:
+  id: test-1
+  title: simple
+  state: queued
+`
+		item, ok := parseTasksAxiShowOutput(out)
+		if !ok {
+			t.Fatal("expected parse success")
+		}
+		if item.Description != "simple" {
+			t.Errorf("desc = %q, want 'simple'", item.Description)
+		}
+		if item.State != StateQueued {
+			t.Errorf("state = %v, want Queued", item.State)
+		}
+		if item.Kind != "" {
+			t.Errorf("kind should be empty, got %q", item.Kind)
+		}
+		if item.Repo != "" {
+			t.Errorf("repo should be empty, got %q", item.Repo)
+		}
+	})
+
+	t.Run("empty output returns not found", func(t *testing.T) {
+		_, ok := parseTasksAxiShowOutput("")
+		if ok {
+			t.Error("expected parse failure for empty output")
+		}
+	})
+
+	t.Run("done item", func(t *testing.T) {
+		out := `task:
+  id: test-1
+  title: done
+  state: done
+`
+		item, ok := parseTasksAxiShowOutput(out)
+		if !ok {
+			t.Fatal("expected parse success")
+		}
+		if item.State != StateDone {
+			t.Errorf("state = %v, want Done", item.State)
+		}
+	})
+
+	t.Run("dash placeholder for kind/repo", func(t *testing.T) {
+		out := `task:
+  id: test-1
+  title: no meta
+  state: queued
+  kind: -
+  repo: -
+`
+		item, ok := parseTasksAxiShowOutput(out)
+		if !ok {
+			t.Fatal("expected parse success")
+		}
+		if item.Kind != "" {
+			t.Errorf("kind should be empty for '-', got %q", item.Kind)
+		}
+		if item.Repo != "" {
+			t.Errorf("repo should be empty for '-', got %q", item.Repo)
+		}
+	})
+}
+
+func TestParseTasksAxiListOutput(t *testing.T) {
+	t.Run("single item", func(t *testing.T) {
+		out := `count: 1
+	tasks[1]{id,state,kind,repo,title}:
+	  TASK-1,in_flight,scout,munsu,my task
+`
+		items, err := parseTasksAxiListOutput(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(items))
+		}
+		if items[0].ID != "TASK-1" {
+			t.Errorf("id = %q, want 'TASK-1'", items[0].ID)
+		}
+		if items[0].State != StateInFlight {
+			t.Errorf("state = %v, want InFlight", items[0].State)
+		}
+		if items[0].Kind != "scout" {
+			t.Errorf("kind = %q, want 'scout'", items[0].Kind)
+		}
+		if items[0].Repo != "munsu" {
+			t.Errorf("repo = %q, want 'munsu'", items[0].Repo)
+		}
+		if items[0].Description != "my task" {
+			t.Errorf("desc = %q, want 'my task'", items[0].Description)
+		}
+	})
+
+	t.Run("multiple items with duplicate", func(t *testing.T) {
+		out := `count: 2
+	tasks[2]{id,state,kind,repo,title}:
+	  TASK-1,queued,scout,munsu,first
+	  TASK-1,in_flight,ship,munsu,second
+`
+		items, err := parseTasksAxiListOutput(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("expected 2 items, got %d", len(items))
+		}
+		if items[0].ID != "TASK-1" || items[1].ID != "TASK-1" {
+			t.Errorf("expected both items to be TASK-1")
+		}
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		out := `count: 0
+`
+		items, err := parseTasksAxiListOutput(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 0 {
+			t.Errorf("expected 0 items, got %d", len(items))
 		}
 	})
 }

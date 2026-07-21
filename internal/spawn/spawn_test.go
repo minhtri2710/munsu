@@ -698,8 +698,24 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 	}
 }
 
+// setupManualHome creates a minimal home directory with an explicit manual
+// backlog-backend config. Tests that write directly to backlog.md must use
+// this to avoid routing reads through tasks-axi in ModeAuto.
+func setupManualHome(t *testing.T) string {
+	t.Helper()
+	homeDir := t.TempDir()
+	configDir := filepath.Join(homeDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return homeDir
+}
+
 func TestCheckBacklogAuthority_RefusesBlockedTask(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := setupManualHome(t)
 	t.Chdir(tmpDir)
 
 	// Create backlog with a blocked item
@@ -722,7 +738,7 @@ func TestCheckBacklogAuthority_RefusesBlockedTask(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := setupManualHome(t)
 	t.Chdir(tmpDir)
 
 	// Create backlog with a done item
@@ -745,7 +761,7 @@ func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := setupManualHome(t)
 	t.Chdir(tmpDir)
 
 	// Create backlog with a done item
@@ -765,7 +781,7 @@ func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := setupManualHome(t)
 	t.Chdir(tmpDir)
 
 	// Create backlog with an in-flight item and no meta/window (tasks-axi start before spawn).
@@ -784,7 +800,7 @@ func TestCheckBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_RefusesInFlightWithLiveMeta(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := setupManualHome(t)
 	t.Chdir(tmpDir)
 
 	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
@@ -809,7 +825,7 @@ func TestCheckBacklogAuthority_RefusesInFlightWithLiveMeta(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_RefusesAlreadyLiveMeta(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := setupManualHome(t)
 	t.Chdir(tmpDir)
 
 	// Create backlog with a queued item
@@ -837,7 +853,7 @@ func TestCheckBacklogAuthority_RefusesAlreadyLiveMeta(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_RefusesDuplicateID(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := setupManualHome(t)
 	t.Chdir(tmpDir)
 
 	// Create backlog with duplicate IDs

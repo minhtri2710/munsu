@@ -52,6 +52,7 @@ var markerToState = map[string]TaskState{
 var nameToState = map[string]TaskState{
 	"queued":    StateQueued,
 	"in-flight": StateInFlight,
+	"in_flight": StateInFlight,
 	"blocked":   StateBlocked,
 	"done":      StateDone,
 }
