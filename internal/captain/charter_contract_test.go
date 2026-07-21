@@ -2,6 +2,7 @@ package captain
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,6 +61,11 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 		t.Error("DefaultCharter must NOT contain deprecated 'munsu launch' command")
 	}
 
+	// Must contain munsu brief in the dispatch ordering.
+	if !strings.Contains(charter, "munsu brief") {
+		t.Error("DefaultCharter must contain 'munsu brief' command")
+	}
+
 	// Must contain tasks-axi commands for backlog management.
 	if !strings.Contains(charter, "tasks-axi ready") {
 		t.Error("DefaultCharter must contain 'tasks-axi ready' command")
@@ -79,6 +85,24 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 	// Must contain munsu delivery for PR merge.
 	if !strings.Contains(charter, "munsu delivery pr-merge") {
 		t.Error("DefaultCharter must contain 'munsu delivery pr-merge' command")
+	}
+
+	// Dispatch ordering must be correct: ready -> start -> brief -> spawn.
+	if !strings.Contains(charter, "tasks-axi ready") ||
+		!strings.Contains(charter, "tasks-axi start") ||
+		!strings.Contains(charter, "munsu brief") ||
+		!strings.Contains(charter, "munsu spawn") {
+		t.Error("DefaultCharter dispatch ordering must contain ready -> start -> brief -> spawn")
+	}
+	// Verify the ordering appears in the correct sequence.
+	readyIdx := strings.Index(charter, "tasks-axi ready")
+	startIdx := strings.Index(charter, "tasks-axi start")
+	briefIdx := strings.Index(charter, "munsu brief")
+	spawnIdx := strings.Index(charter, "munsu spawn")
+	if readyIdx < 0 || startIdx < 0 || briefIdx < 0 || spawnIdx < 0 {
+		t.Error("dispatch ordering missing one or more commands")
+	} else if !(readyIdx < startIdx && startIdx < briefIdx && briefIdx < spawnIdx) {
+		t.Error("dispatch ordering must be: ready -> start -> brief -> spawn")
 	}
 }
 
@@ -130,24 +154,43 @@ func TestCharter_BacklogAuthority(t *testing.T) {
 	}
 }
 
-// TestCharter_RelaySemantics verifies the one-hop relay section follows the
-// production contract: durable receipt → reconcile → ack before teardown.
+// TestCharter_RelaySemantics verifies the one-hop relay section matches the
+// production RelayTerminalReceipts contract:
+//   - wake/reconcile invokes production relay
+//   - durable parent write must succeed BEFORE local ack
+//   - teardown allowed ONLY after local exact ack / closed obligation
+//   - NO wording about waiting for General munsu-send/wake acknowledgment
 func TestCharter_RelaySemantics(t *testing.T) {
 	charter := DefaultCharter("relay-test", t.TempDir())
 
-	// Must mention durable receipt.
-	if !strings.Contains(charter, "durable receipt") {
-		t.Error("DefaultCharter must mention durable receipt in relay section")
+	// Must mention RelayTerminalReceipts by name.
+	if !strings.Contains(charter, "RelayTerminalReceipts") {
+		t.Error("DefaultCharter must mention RelayTerminalReceipts in relay section")
 	}
 
-	// Must mention reconcile and relay.
-	if !strings.Contains(charter, "Reconcile") {
-		t.Error("DefaultCharter must mention Reconcile in relay section")
+	// Must mention durable parent write / status write BEFORE local ack.
+	if !strings.Contains(charter, "durable parent write") && !strings.Contains(charter, "parent write") {
+		t.Error("DefaultCharter must mention durable parent write succeeds before local ack")
 	}
 
-	// Must require ack before teardown.
-	if !strings.Contains(charter, "ack") || !strings.Contains(charter, "teardown") {
-		t.Error("DefaultCharter must require ack before teardown")
+	// Must mention local exact ack / turnend.WriteAck.
+	if !strings.Contains(charter, "WriteAck") {
+		t.Error("DefaultCharter must mention turnend.WriteAck for local ack")
+	}
+
+	// Must mention ReportRelay obligation / CompleteTaskObligation.
+	if !strings.Contains(charter, "ReportRelay") || !strings.Contains(charter, "CompleteTaskObligation") {
+		t.Error("DefaultCharter must mention ReportRelay/CompleteTaskObligation")
+	}
+
+	// Must require teardown only after obligation closed.
+	if !strings.Contains(charter, "obligation is closed") {
+		t.Error("DefaultCharter must require teardown only after obligation is closed")
+	}
+
+	// Must NOT mention waiting for General acknowledgment via munsu send.
+	if strings.Contains(charter, "wait for General") {
+		t.Error("DefaultCharter must NOT say 'wait for General' — production relay does not wait")
 	}
 }
 
@@ -198,28 +241,94 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 	}
 }
 
-// TestManagedWorktree_CharterUntracked verifies that managed worktree captains
-// write the charter to .captain-charter.md (excluded via info/exclude) and
-// never modify the tracked AGENTS.md.
+// TestManagedWorktree_CharterUntracked is a hermetic git worktree test proving:
+//   - tracked AGENTS.md is preserved byte-for-byte after seed + ConfigPush + RefreshCharter
+//   - git status --porcelain is clean after refresh
+//   - .captain-charter.md exists with current charter
 func TestManagedWorktree_CharterUntracked(t *testing.T) {
-	// This requires a git repo with worktree support — test via SeedFromWorktree
-	// which is already tested in TestSeedWorktree_CreatesWorktreeAndStructure.
-	// Here we verify the contract requirements via assertion on the worktree paths.
+	parent := t.TempDir()
+	// Parent must be a git repo with an origin for remote validation.
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
 
-	// The CaptainCharterName constant ensures contract alignment.
-	if CaptainCharterName != ".captain-charter.md" {
-		t.Fatalf("CaptainCharterName = %q, want .captain-charter.md", CaptainCharterName)
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	// Write a tracked AGENTS.md in the source repo BEFORE creating the worktree.
+	trackedContent := "# Project AGENTS.md\n\nThis is the tracked user-owned file.\n"
+	if err := os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte(trackedContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.Command("git", "-C", repo, "add", "AGENTS.md").CombinedOutput(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.Command("git", "-C", repo, "commit", "-m", "add AGENTS.md").CombinedOutput(); err != nil {
+		t.Fatal(err)
+	}
+	// Update the tracking ref so SeedFromWorktree sees origin/main.
+	if _, err := exec.Command("git", "-C", repo, "update-ref", "refs/remotes/origin/main", "HEAD").CombinedOutput(); err != nil {
+		t.Fatal(err)
 	}
 
-	// Verify .captain-charter.md is in the worktree exclude list.
-	found := false
-	for _, entry := range worktreeExcludeContent {
-		if entry == CaptainCharterName {
-			found = true
-			break
-		}
+	id := "test-wt-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// SeedFromWorktree creates a managed worktree at homePath.
+	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+		t.Fatal(err)
 	}
-	if !found {
-		t.Errorf("%s must be in worktreeExcludeContent so it's never tracked", CaptainCharterName)
+
+	// 1. Assert tracked AGENTS.md is byte-for-byte unchanged.
+	agentsBody, err := os.ReadFile(filepath.Join(homePath, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(agentsBody) != trackedContent {
+		t.Fatalf("tracked AGENTS.md was modified:\nwant: %q\ngot:  %q", trackedContent, string(agentsBody))
+	}
+
+	// 2. Assert git status --porcelain is clean (worktree has no tracked changes).
+	statusOut, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(statusOut))) > 0 {
+		t.Fatalf("worktree has uncommitted changes:\n%s", string(statusOut))
+	}
+
+	// 3. Assert .captain-charter.md exists with current charter content.
+	charterBody, err := os.ReadFile(filepath.Join(homePath, CaptainCharterName))
+	if err != nil {
+		t.Fatalf("%s not found: %v", CaptainCharterName, err)
+	}
+	if !strings.Contains(string(charterBody), CharterVersion) {
+		t.Errorf("%s should contain charter version %q", CaptainCharterName, CharterVersion)
+	}
+
+	// 4. Run ConfigPush + RefreshCharter and re-assert cleanliness.
+	if err := ConfigPush(parent, homePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// AGENTS.md still byte-for-byte unchanged.
+	agentsBody2, err := os.ReadFile(filepath.Join(homePath, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(agentsBody2) != trackedContent {
+		t.Fatalf("AGENTS.md was modified after ConfigPush:\nwant: %q\ngot:  %q", trackedContent, string(agentsBody2))
+	}
+
+	// git status still clean.
+	statusOut2, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(statusOut2))) > 0 {
+		t.Fatalf("worktree dirty after ConfigPush:\n%s", string(statusOut2))
+	}
+
+	// .captain-charter.md still exists (now refreshed).
+	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); err != nil {
+		t.Errorf("%s missing after ConfigPush: %v", CaptainCharterName, err)
 	}
 }

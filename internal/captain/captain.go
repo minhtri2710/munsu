@@ -342,10 +342,10 @@ The selected backlog backend is the authoritative task source:
 
 ## Soldier Lifecycle
 
-Spawn Soldiers to do work from this home:
-- %[5]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[5]s
-  — kind: ship (default) | scout — mode: no-mistakes | direct-PR | local-only (empty = auto-detect)
-- Monitor soldier progress through their task state.
+Spawn Soldiers to do work from this home. The dispatch ordering is:
+  %[5]stasks-axi ready --file <backlog>%[5]s → %[5]stasks-axi start <key> --file <backlog>%[5]s → %[5]smunsu brief <id> <project>%[5]s → %[5]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[5]s
+- kind: ship (default) | scout — mode: no-mistakes | direct-PR | local-only (empty = auto-detect)
+- After spawning, monitor soldier progress through their task state.
 - When a soldier completes (done/failed), relay the result to General (see One-Hop Relay).
 - If a soldier is stuck, use the ladder: %[5]smunsu peek <id>%[5]s → %[5]smunsu send <id> ...%[5]s → interrupt → relaunch → fail.
 - After a ship PR is merged, run %[5]smunsu teardown <soldier-id>%[5]s.
@@ -367,13 +367,17 @@ Spawn Soldiers to do work from this home:
 
 ## One-Hop Relay (Captain → General)
 
-When a Soldier finishes (done/failed), the relay follows a durable receipt contract:
+When a Soldier finishes (done/failed), the relay is driven by Converge which invokes %[5]sRelayTerminalReceipts%[5]s:
 
 1. **Terminal receipt**: The soldier's terminal report generates a durable receipt (event/wake) in the captain's state.
-2. **Reconcile and relay**: Read the receipt, reconcile with task meta, then relay to General:
-   %[5]smunsu report done/failed --key <task-key>%[5]s
-3. **Exact ack before teardown**: Wait for General acknowledgment (durable wake on parent status key). Only after receiving the ack may you run %[5]smunsu teardown <soldier-id>%[5]s.
-4. **Stop hooks**: If General sends a stop (via command envelope with matching task key), stop the soldier immediately — do not wait for completion.
+2. **Wake/reconcile**: A wake is raised; the next converge cycle picks it up, reads the receipt, and reconciles with task meta.
+3. **Production relay** (%[5]sRelayTerminalReceipts%[5]s):
+   - Writes a durable relay status + event under the parent General's state (namespace: %[5]scaptain:<id>.relay-<task>%[5]s).
+   - Writes an exact task/key acknowledgment in the captain home via %[5]sturnend.WriteAck%[5]s.
+   - Completes the %[5]sReportRelay%[5]s obligation via %[5]sturnend.CompleteTaskObligation%[5]s.
+4. **Safety invariant**: The durable parent write (General status + event) MUST succeed BEFORE the local ack is written. If the parent write fails, the local ack is withheld and the receipt remains pending.
+5. **Teardown**: You may run %[5]smunsu teardown <soldier-id>%[5]s ONLY after the local exact ack is written and the obligation is closed. Do NOT teardown while a receipt is still pending.
+6. **Stop hooks**: If General sends a stop (via command envelope with matching task key), stop the soldier immediately — do not wait for completion.
 
 ## Delivery / Merge Authorization
 
@@ -427,6 +431,7 @@ You MUST NOT:
 | Action | Command |
 |--------|---------|
 | Report state | %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s |
+| Brief soldier | %[5]smunsu brief <id> <project>%[5]s |
 | Spawn soldier | %[5]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[5]s |
 | Teardown soldier | %[5]smunsu teardown <id>%[5]s |
 | Send to soldier | %[5]smunsu send <id> <message>%[5]s |
