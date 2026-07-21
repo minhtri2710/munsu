@@ -1,6 +1,10 @@
 package delivery
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/minhtri2710/munsu/internal/capability"
+)
 
 // Pipeline defines the interface for delivery operations.
 // Each method maps to a phase of the delivery lifecycle.
@@ -24,15 +28,24 @@ var (
 // --- GHAxiAdapter ---
 
 // GHAxiAdapter implements Pipeline operations via the gh-axi CLI.
-type GHAxiAdapter struct{}
-
-// NewGHAxiAdapter returns a new GHAxiAdapter.
-func NewGHAxiAdapter() *GHAxiAdapter {
-	return &GHAxiAdapter{}
+// It checks the GitHub capability state on construction — if gh-axi is
+// not Ready, operations fail closed.
+type GHAxiAdapter struct {
+	state capability.State
 }
 
-// RunPRCheck arms a PR merge poll via PRCheck.
+// NewGHAxiAdapter returns a new GHAxiAdapter after probing gh-axi availability.
+// Returns an adapter with Ready state when gh-axi is on PATH, Absent otherwise.
+func NewGHAxiAdapter() *GHAxiAdapter {
+	return &GHAxiAdapter{state: ProbeGitHubCapability()}
+}
+
+// RunPRCheck arms a PR merge poll via PRCheck. Fails closed if gh-axi
+// is not available.
 func (a *GHAxiAdapter) RunPRCheck(homeDir, id, prURL string) error {
+	if a.state != capability.Ready {
+		return fmt.Errorf("GHAxiAdapter: GitHub capability not ready (state=%s): gh-axi required for PR check", a.state)
+	}
 	return PRCheck(homeDir, id, prURL)
 }
 

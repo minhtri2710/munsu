@@ -255,8 +255,15 @@ func RequireIdentity(homeDir, id string) (*DeliveryIdentity, error) {
 }
 
 // CaptureIdentity extracts a DeliveryIdentity from a PR URL and GitHub
-// API data. It fetches the PR head SHA and branch info via gh CLI.
+// API data. It fetches the PR head SHA and branch info via gh-axi CLI when
+// the capability is Ready, falling back to gh CLI for JSON fields.
 func CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
+	client, err := DefaultGitHubClient()
+	if err == nil {
+		return client.CaptureIdentity(prURL)
+	}
+
+	// Degraded path: try gh CLI directly
 	ghURL, err := ghurl.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PR URL: %w", err)

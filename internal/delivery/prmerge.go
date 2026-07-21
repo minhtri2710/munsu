@@ -81,24 +81,13 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 		}
 	}
 
-	// Build gh-axi args
-	ghAxiPath, err := exec.LookPath("gh-axi")
+	// Merge via consolidated GitHubClient
+	client, err := DefaultGitHubClient()
 	if err != nil {
-		return fmt.Errorf("gh-axi not found on PATH: %w", err)
+		return fmt.Errorf("gh-axi not available: %w", err)
 	}
-
-	args := []string{"pr", "merge",
-		fmt.Sprintf("%d", ghURL.Num),
-		"--repo", fmt.Sprintf("%s/%s", ghURL.Owner, ghURL.Repo),
-		fmt.Sprintf("--%s", method),
-	}
-
-	cmd := exec.Command(ghAxiPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("gh-axi pr merge: %w", err)
+	if err := client.MergePR(ghURL.Owner, ghURL.Repo, ghURL.Num, method); err != nil {
+		return fmt.Errorf("merge via gh-axi: %w", err)
 	}
 
 	// Read existing meta (preserve the full identity, don't clear pr_head)
@@ -141,9 +130,28 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 }
 
 // checkPROpen verifies that a PR is in OPEN state before attempting merge.
-// Uses `gh pr view --json state` to check the current PR state.
-// Returns an error if the PR is merged, closed, or unreachable.
+// Uses gh-axi via the consolidated GitHubClient when the capability is Ready.
+// Falls back to gh CLI for the degraded path.
 func checkPROpen(ghURL ghurl.GHURL) error {
+	client, err := DefaultGitHubClient()
+	if err == nil {
+		state, err := client.ViewPRState(ghURL.Owner, ghURL.Repo, ghURL.Num)
+		if err != nil {
+			return fmt.Errorf("checking PR state via gh-axi: %w", err)
+		}
+		switch state {
+		case "OPEN":
+			return nil
+		case "MERGED":
+			return fmt.Errorf("PR #%d is already merged (state=%s): refusing to merge", ghURL.Num, state)
+		case "CLOSED":
+			return fmt.Errorf("PR #%d is closed (state=%s): refusing to merge", ghURL.Num, state)
+		default:
+			return fmt.Errorf("PR #%d has unexpected state %q: refusing to merge", ghURL.Num, state)
+		}
+	}
+
+	// Degraded path: gh CLI directly
 	cmd := exec.Command("gh", "pr", "view",
 		fmt.Sprintf("%d", ghURL.Num),
 		"--repo", fmt.Sprintf("%s/%s", ghURL.Owner, ghURL.Repo),
