@@ -492,8 +492,208 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// TestReadParentPID verifies readParentPID on this host.
-// readParentPID(os.Getpid()) must equal os.Getppid() (sanity).
+// TestClaudeGuardPendingRelayBlocks verifies guard --harness claude blocks
+// (exit 2) when a pending terminal receipt exists with material status.
+func TestClaudeGuardPendingRelayBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	// Create minimal state/.terminal-receipts with a pending receipt
+	receiptsDir := filepath.Join(tmpDir, "state", ".terminal-receipts")
+	os.MkdirAll(receiptsDir, 0755)
+	receiptPath := filepath.Join(receiptsDir, "test-task.uplink.receipt")
+	os.WriteFile(receiptPath, []byte("state=done\n"), 0644)
+
+	// No ack file means the receipt is pending
+
+	// Create material status file so MaterialReportExists returns true
+	stateDir := filepath.Join(tmpDir, "state")
+	os.WriteFile(filepath.Join(stateDir, "test-task.status"), []byte("done: task complete\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	stderr := ""
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		sout, serr := captureBoth(func() {
+			runGuardClaude(tmpDir)
+		})
+		stderr = serr
+		_ = sout
+
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 for pending relay obligation, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "material relay pending") {
+		t.Errorf("stderr must contain 'material relay pending', got: %s", stderr)
+	}
+}
+
+// TestClaudeGuardNoPendingRelayAllows verifies guard --harness claude allows
+// (exit 0) when no pending terminal receipts exist.
+func TestClaudeGuardNoPendingRelayAllows(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	// No receipts directory at all — should allow
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	w.Write([]byte(`{}`))
+	w.Close()
+	os.Stdin = r
+
+	err := runGuardClaude(tmpDir)
+	os.Stdin = oldStdin
+
+	if err != nil {
+		t.Errorf("expected no error when no pending obligations, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 when no pending obligations, got %d", exitCode)
+	}
+}
+
+// TestClaudeGuardParentHomeReceiptBlocks verifies guard --harness claude blocks
+// when homeDir has NO receipt but MUNSU_PARENT_STATUS has a pending material receipt.
+func TestClaudeGuardParentHomeReceiptBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	// Create receipt + material status in parent home only
+	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
+	os.MkdirAll(parentReceipts, 0755)
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
+	parentState := filepath.Join(parentHome, "state")
+	os.WriteFile(filepath.Join(parentState, "task-1.status"), []byte("done: task complete\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	stderr := ""
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		_, serr := captureBoth(func() {
+			runGuardClaude(tmpDir)
+		})
+		stderr = serr
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 from parent-home receipt, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "material relay pending") {
+		t.Errorf("stderr must mention 'material relay pending', got: %s", stderr)
+	}
+	if !strings.Contains(stderr, parentHome) {
+		t.Errorf("stderr must mention parent-home path, got: %s", stderr)
+	}
+}
+
+// TestClaudeGuardParentHomeAckedAllows verifies guard --harness claude allows
+// after the parent-home receipt is acknowledged.
+func TestClaudeGuardParentHomeAckedAllows(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	// Create receipt + ack in parent home (simulates captain having relayed)
+	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
+	os.MkdirAll(parentReceipts, 0755)
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
+	// Write ack file to acknowledge the receipt
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.ack"), []byte("acked_at=1\n"), 0644)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	w.Write([]byte(`{}`))
+	w.Close()
+	os.Stdin = r
+
+	err := runGuardClaude(tmpDir)
+	os.Stdin = oldStdin
+
+	if err != nil {
+		t.Errorf("expected no error after ack, got: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 after ack, got %d", exitCode)
+	}
+}
+
+// TestClaudeGuardParentHomeUnreadableFailsClosed verifies guard fails closed
+// when parent receipt directory exists but is unreadable.
+func TestClaudeGuardParentHomeUnreadableFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	// Create receipt dir with restricted permissions
+	parentReceipts := filepath.Join(parentHome, "state", ".terminal-receipts")
+	os.MkdirAll(parentReceipts, 0755)
+	os.WriteFile(filepath.Join(parentReceipts, "task-1.uplink.receipt"), []byte("state=done\n"), 0644)
+	// Make the directory unreadable
+	os.Chmod(parentReceipts, 0000)
+	if err := os.Chmod(parentReceipts, 0000); err == nil {
+		// Only test if we can actually restrict permissions
+	}
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() {
+		exitWithCode = oldExit
+		os.Chmod(parentReceipts, 0755)
+	}()
+
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{}`))
+		w.Close()
+		os.Stdin = r
+
+		runGuardClaude(tmpDir)
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 2 {
+		t.Errorf("expected exit 2 for fail-closed on unreadable dir, got %d", exitCode)
+	}
+}
+
 // Walking from a known child reaches a known ancestor (monotonic pid change).
 func TestReadParentPID(t *testing.T) {
 	ppid := readParentPID(os.Getpid())

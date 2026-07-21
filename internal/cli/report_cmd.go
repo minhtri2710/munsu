@@ -12,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/spf13/cobra"
 )
 
@@ -97,6 +98,28 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// 1. Durable task status append
 			if err := task.AppendStatus(targetHome, taskID, statusLine); err != nil {
 				return fmt.Errorf("report: appending status: %w", err)
+			}
+
+			// 1.5. For soldier material states: write a durable Captain receipt
+			// and initialize per-task obligations so teardown blocks until relay.
+			// The receipt lives in captain-owned state under parentHome (MUNSU_PARENT_STATUS).
+			if role == "soldier" && materialStates[state] && parentHome != "" {
+				termKey := key
+				if termKey == "" {
+					termKey = "default"
+				}
+				// Write durable receipt in captain-owned state
+				if err := turnend.WriteReceipt(parentHome, taskID, termKey, state, msg); err != nil {
+					return operationError("receipt_write_failed",
+						"Check MUNSU_PARENT_STATUS path permissions and structure",
+						fmt.Sprintf("report: writing captain receipt: %v", err))
+				}
+				// Initialize per-task obligations (idempotent)
+				if err := turnend.InitTaskObligations(parentHome, taskID, termKey); err != nil {
+					return operationError("obligations_init_failed",
+						"Check MUNSU_PARENT_STATUS path permissions and structure",
+						fmt.Sprintf("report: init task obligations: %v", err))
+				}
 			}
 
 			// 2. Append to typed event log using synthetic event ID

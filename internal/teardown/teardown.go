@@ -55,7 +55,6 @@ func Run(opts Options) (*TeardownResult, error) {
 		kind = "ship" // default
 	}
 
-	// Safety checks (skip with --force)
 	if !opts.Force {
 		proofs, err := safetyCheck(opts, meta, kind)
 		if err != nil {
@@ -64,6 +63,42 @@ func Run(opts Options) (*TeardownResult, error) {
 		result.Proofs = append(result.Proofs, proofs...)
 		for _, p := range proofs {
 			result.Steps = append(result.Steps, "proof: "+p)
+		}
+	} else {
+		// --force: preserve evidence before destructive cleanup
+		// Copy status file and any terminal receipts to a .backup/ dir
+		// so unacked terminal evidence is not silently erased.
+		backupDir := filepath.Join(opts.HomeDir, "state", ".backup", opts.ID)
+		os.MkdirAll(backupDir, 0755)
+		stateDir := filepath.Join(opts.HomeDir, "state")
+		// Copy status file
+		if src, err := os.ReadFile(filepath.Join(stateDir, opts.ID+".status")); err == nil {
+			os.WriteFile(filepath.Join(backupDir, opts.ID+".status"), src, 0644)
+		}
+		// Copy receipt files
+		receiptsDir := turnend.ReceiptDir(opts.HomeDir)
+		if entries, err := os.ReadDir(receiptsDir); err == nil {
+			prefix := opts.ID + "."
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), prefix) {
+					if src, err := os.ReadFile(filepath.Join(receiptsDir, e.Name())); err == nil {
+						os.WriteFile(filepath.Join(backupDir, e.Name()), src, 0644)
+					}
+				}
+			}
+		}
+		result.Steps = append(result.Steps, "evidence preserved to state/.backup/"+opts.ID+" (--force)")
+	}
+
+	// Step 0: Terminal uplink continuity check
+	// Before any destructive teardown, ensure material terminal reports are
+	// durably acknowledged. If the ReportRelay obligation is still open and
+	// the task has material status (done/failed/blocked/needs-decision),
+	// fail closed — the parent supervisor must receive confirmation before
+	// local artifacts are removed. Use --force to override.
+	if !opts.Force {
+		if err := uplinkCheck(opts); err != nil {
+			return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 		}
 	}
 
@@ -128,7 +163,6 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
-
 	// 3.5. Terminal event: close any open keyed phases before removing the status file.
 	// This ensures the append-only log has proper terminal events for each
 	// open keyed phase (working/paused), preventing stale working/blocked status
@@ -161,12 +195,12 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 	}
 
-	// 4.5. Clear turn-end obligation records for the soldier role
-	// Aligns with teardown cleanup of turnend markers.
-	if err := turnend.ClearCompleted(opts.HomeDir, turnend.RoleSoldier); err != nil {
-		result.Steps = append(result.Steps, fmt.Sprintf("clear obligations: %v", err))
+	// 4.5. Clear per-task obligation records for this task
+	// Uses per-task path instead of global per-role file.
+	if err := turnend.ClearTaskCompleted(opts.HomeDir, opts.ID); err != nil {
+		result.Steps = append(result.Steps, fmt.Sprintf("clear task obligations: %v", err))
 	} else {
-		result.Steps = append(result.Steps, "completed obligations cleared")
+		result.Steps = append(result.Steps, "task obligations cleared")
 	}
 
 	// 5. Clean up data directory
@@ -514,4 +548,41 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 			result.Steps = append(result.Steps, fmt.Sprintf("warning: event log: %v", err))
 		}
 	}
+}
+
+// uplinkCheck verifies terminal uplink continuity before teardown removes
+// status/meta artifacts. It ensures material soldier reports are durably
+// acknowledged by the parent supervisor before local cleanup proceeds.
+//
+// Uses per-task obligations (state/.obligations/<taskID>.obligations) to check
+// the exact task+key, not a global per-role flag.
+//
+// If the task has material status (done/failed/blocked/needs-decision) AND the
+// ReportRelay obligation is still open, the check fails closed. This prevents
+// teardown from removing evidence that the parent supervisor has not yet seen.
+//
+// The check is idempotent after ReportRelay is completed. Use --force to bypass.
+func uplinkCheck(opts Options) error {
+	// Check if per-task ReportRelay obligation is still open.
+	// Per-task obligations are bound to exact taskID+terminalKey, not global role.
+	open, err := turnend.IsTaskReportRelayOpen(opts.HomeDir, opts.ID)
+	if err != nil {
+		return fmt.Errorf("reading task obligations: %w", err)
+	}
+	if !open {
+		return nil
+	}
+
+	// ReportRelay is open. Check if the task has material status.
+	// FAILS CLOSED: MaterialReportExists returns error for unreadable status.
+	hasMaterial, err := turnend.MaterialReportExists(opts.HomeDir, opts.ID)
+	if err != nil {
+		return fmt.Errorf("checking material report (fail-closed): %w", err)
+	}
+	if !hasMaterial {
+		return nil
+	}
+
+	// Material report exists AND ReportRelay is still open — fail closed.
+	return fmt.Errorf("terminal report-relay not acknowledged: material status exists but ReportRelay obligation is still open for task %s (use --force to override, or have captain relay this task)", opts.ID)
 }
