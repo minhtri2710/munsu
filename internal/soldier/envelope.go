@@ -11,11 +11,53 @@ import (
 // SkillEntry records one selected skill in the launch envelope.
 type SkillEntry struct {
 	Name         string `json:"name"`
-	Role         string `json:"role"`         // "soldier" or "general" or "captain"
+	Role         string `json:"role"`         // "soldier", "captain", "general", or empty
 	Applicable   bool   `json:"applicable"`   // true when soldier-applicable
 	SourcePath   string `json:"source_path,omitempty"`
 	SourceSHA256 string `json:"source_sha256,omitempty"`
 	Version      string `json:"version,omitempty"`
+}
+
+// SoldierSkillDenied lists skill names that are explicitly forbidden in
+// Soldier context regardless of their Role metadata. These are skills
+// that require Captain or General authority to operate safely.
+// This is an authoritative denylist — not a role-based filter.
+var SoldierSkillDenied = map[string]bool{
+	"captain-provisioning":   true,
+	"munsu-ops":              true,
+	"stuck-soldier-recovery": true,
+	"no-mistakes":            true,
+	"tasks-axi":              true, // backlog mutation is captain-only
+	"bootstrap-diagnostics":  true,
+	"harness-adapters":       true, // spawn authority
+
+	// Delivery and supervision skills.
+	"backlog-mutation":   true,
+	"merge-authority":    true,
+	"teardown-authority": true,
+	"supervision":        true,
+	"watcher":            true,
+	"converge":           true,
+}
+
+// SkillAuthorityClass returns the effective authority class for a skill:
+// "soldier", "captain", or "general". It first checks the denylist, then
+// falls back to the Role field. Skills matching denylist entries are always
+// classified "captain" or "general" as appropriate.
+func SkillAuthorityClass(name, role string) string {
+	if SoldierSkillDenied[name] {
+		return "captain"
+	}
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "", "soldier", "any":
+		return "soldier"
+	case "captain", "captain-only":
+		return "captain"
+	case "general", "general-only":
+		return "general"
+	default:
+		return "captain"
+	}
 }
 
 // LaunchEnvelope is the structured, versioned launch context for a Soldier.
@@ -68,16 +110,39 @@ func ReadEnvelope(worktreePath string) (*LaunchEnvelope, error) {
 	return &env, nil
 }
 
-// VerifyEnvelopeIntegrity checks that charter and brief SHA-256 hashes match
-// the actual file contents. Returns an error on mismatch or missing files.
+// VerifyEnvelopeIntegrity validates all durable files against the envelope:
+// - charter must exist and match CharterSHA256
+// - brief must exist and match BriefSHA256
+// - prompt must exist and match PromptSHA256
+// - task meta fields (TaskID, DeliveryMode, ParentCaptainID, ParentHome)
+//   must be non-empty and self-consistent
+// Returns an error on any mismatch or missing file.
 func VerifyEnvelopeIntegrity(worktreePath string) error {
 	env, err := ReadEnvelope(worktreePath)
 	if err != nil {
 		return err
 	}
 
-	// Verify charter hash.
-	charterData, err := os.ReadFile(filepath.Join(worktreePath, CharterName))
+	// Verify identity/metadata fields are non-empty.
+	if env.TaskID == "" {
+		return fmt.Errorf("envelope: task ID is empty")
+	}
+	if env.DeliveryMode == "" {
+		return fmt.Errorf("envelope: delivery mode is empty")
+	}
+	if env.ParentCaptainID == "" {
+		return fmt.Errorf("envelope: parent captain ID is empty")
+	}
+	if env.ParentHome == "" {
+		return fmt.Errorf("envelope: parent home is empty")
+	}
+	if env.EnvelopeVersion == "" {
+		return fmt.Errorf("envelope: version is empty")
+	}
+
+	// Verify charter file exists and hash matches.
+	charterPath := filepath.Join(worktreePath, CharterName)
+	charterData, err := os.ReadFile(charterPath)
 	if err != nil {
 		return fmt.Errorf("%s: %w", CharterName, err)
 	}
@@ -85,16 +150,30 @@ func VerifyEnvelopeIntegrity(worktreePath string) error {
 		return fmt.Errorf("%s SHA-256 mismatch: envelope says %s, actual file differs", CharterName, env.CharterSHA256)
 	}
 
-	// Verify brief hash.
+	// Verify brief file exists and hash matches.
 	briefPath := filepath.Join(worktreePath, BriefName)
-	if _, err := os.Stat(briefPath); err == nil {
-		briefData, err := os.ReadFile(briefPath)
-		if err != nil {
-			return fmt.Errorf("%s: %w", BriefName, err)
-		}
-		if env.BriefSHA256 != "" && sha256Content(briefData) != env.BriefSHA256 {
-			return fmt.Errorf("%s SHA-256 mismatch: envelope says %s, actual file differs", BriefName, env.BriefSHA256)
-		}
+	briefData, err := os.ReadFile(briefPath)
+	if err != nil {
+		return fmt.Errorf("%s: %w", BriefName, err)
+	}
+	if env.BriefSHA256 == "" {
+		return fmt.Errorf("envelope: brief SHA-256 is empty")
+	}
+	if sha256Content(briefData) != env.BriefSHA256 {
+		return fmt.Errorf("%s SHA-256 mismatch: envelope says %s, actual file differs", BriefName, env.BriefSHA256)
+	}
+
+	// Verify prompt file exists and hash matches.
+	promptPath := filepath.Join(worktreePath, PromptName)
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		return fmt.Errorf("%s: %w", PromptName, err)
+	}
+	if env.PromptSHA256 == "" {
+		return fmt.Errorf("envelope: prompt SHA-256 is empty")
+	}
+	if sha256Content(promptData) != env.PromptSHA256 {
+		return fmt.Errorf("%s SHA-256 mismatch: envelope says %s, actual file differs", PromptName, env.PromptSHA256)
 	}
 
 	return nil
@@ -156,7 +235,10 @@ func VerifyRequiredSkills(env *LaunchEnvelope, baseDir string) ([]string, error)
 
 // CollectSkills filters skills by role applicability (soldier/any) and builds
 // the required/optional lists with integrity metadata.
-// Skills with captain or general-only roles are excluded.
+// Uses SkillAuthorityClass for classification: skills in the denylist
+// (SoldierSkillDenied) or with Captain/General-only roles are excluded.
+// Non-applicable required skills are still returned (Applicable=false) with
+// a diagnostic so callers can surface the rejection.
 func CollectSkills(allSkills []SkillEntry, requiredNames, optionalNames []string) (required, optional []SkillEntry, diags []string) {
 	// Build lookup from the skill catalog.
 	catalog := make(map[string]SkillEntry)
@@ -177,9 +259,10 @@ func CollectSkills(allSkills []SkillEntry, requiredNames, optionalNames []string
 			required = append(required, SkillEntry{Name: name, Applicable: false})
 			continue
 		}
-		if !isSoldierApplicable(entry.Role) {
-			diags = append(diags, fmt.Sprintf("required skill %q has role %q (not soldier-applicable)", name, entry.Role))
-			required = append(required, SkillEntry{Name: name, Applicable: false})
+		authClass := SkillAuthorityClass(entry.Name, entry.Role)
+		if authClass != "soldier" {
+			diags = append(diags, fmt.Sprintf("required skill %q has authority class %q (denied for soldier)", name, authClass))
+			required = append(required, SkillEntry{Name: name, Applicable: false, Role: entry.Role})
 			continue
 		}
 		entry.Applicable = true
@@ -196,8 +279,9 @@ func CollectSkills(allSkills []SkillEntry, requiredNames, optionalNames []string
 			diags = append(diags, fmt.Sprintf("optional skill %q not found in catalog (omitted)", name))
 			continue
 		}
-		if !isSoldierApplicable(entry.Role) {
-			diags = append(diags, fmt.Sprintf("optional skill %q has role %q (not soldier-applicable, omitted)", name, entry.Role))
+		authClass := SkillAuthorityClass(entry.Name, entry.Role)
+		if authClass != "soldier" {
+			diags = append(diags, fmt.Sprintf("optional skill %q has authority class %q (denied for soldier, omitted)", name, authClass))
 			continue
 		}
 		entry.Applicable = true
@@ -205,18 +289,4 @@ func CollectSkills(allSkills []SkillEntry, requiredNames, optionalNames []string
 	}
 
 	return required, optional, diags
-}
-
-// isSoldierApplicable returns true when the role permits soldier inclusion.
-// Empty role means any rank. "soldier" is always applicable.
-// "captain" and "general" are excluded.
-func isSoldierApplicable(role string) bool {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "", "soldier", "any":
-		return true
-	case "captain", "general", "captain-only", "general-only":
-		return false
-	default:
-		return false
-	}
 }

@@ -680,6 +680,13 @@ func (r *Runner) buildSoldierPrompt() error {
 	// Resolve parent captain ID from the home's endpoint meta.
 	parentCaptainID := r.resolveParentCaptainID()
 
+	// Resolve required and optional skills deterministically.
+	// Selection order: task kind/mode/lifecycle policy, not keyword guessing.
+	requiredSkills, optionalSkills, skillDiags := r.resolveSkills()
+	for _, d := range skillDiags {
+		fmt.Fprintf(os.Stderr, "skill diagnostic: %s\n", d)
+	}
+
 	// Build the prompt input struct.
 	input := soldier.LaunchPromptInput{
 		TaskID:          r.args.ID,
@@ -691,6 +698,8 @@ func (r *Runner) buildSoldierPrompt() error {
 		WorktreePath:    r.wtPath,
 		HomeDir:         r.homeDir,
 		BriefContent:    briefData,
+		RequiredSkills:  requiredSkills,
+		OptionalSkills:  optionalSkills,
 		HarnessName:     r.harness,
 	}
 
@@ -709,12 +718,12 @@ func (r *Runner) buildSoldierPrompt() error {
 
 	// Persist durable files to the worktree.
 	charter := soldier.DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
-	if err := soldier.PersistLaunchFiles(r.wtPath, charter, briefData, env); err != nil {
+	if err := soldier.PersistLaunchFiles(r.wtPath, charter, briefData, env, promptText); err != nil {
 		return fmt.Errorf("persisting soldier launch files: %w", err)
 	}
 
-	// Build launch arguments with the complete prompt.
-	bin, args, err := soldier.BuildLaunchArgs(r.wtPath, r.harness, promptText)
+	// Build launch arguments with the complete prompt, passing model and effort.
+	bin, args, err := soldier.BuildLaunchArgs(r.wtPath, r.harness, r.model, r.effort, promptText)
 	if err != nil {
 		return fmt.Errorf("building soldier launch arguments: %w", err)
 	}
@@ -722,6 +731,54 @@ func (r *Runner) buildSoldierPrompt() error {
 	r.launchArgs = args
 
 	return nil
+}
+
+// resolveSkills returns deterministic required/optional skills for the current
+// spawn based on task kind, delivery mode, and lifecycle policy.
+// Uses explicit typed declarations — no keyword guessing or load-all.
+func (r *Runner) resolveSkills() (required, optional []soldier.SkillEntry, diags []string) {
+	// Catalog of skills available to spawns.
+	// In a production system this would come from a registry or config file;
+	// here we build it from known skills and their authority classifications.
+	catalog := []soldier.SkillEntry{
+		// Soldier-applicable skills
+		{Name: "gh-axi", Role: "soldier"},
+		{Name: "chrome-devtools-axi", Role: "soldier"},
+		{Name: "srcwalk", Role: "soldier"},
+		{Name: "qmd", Role: "soldier"},
+
+		// Captain-only skills (will be denied by authority classification)
+		{Name: "captain-provisioning", Role: "captain"},
+		{Name: "munsu-ops", Role: "soldier"}, // explicitly denied in denylist
+		{Name: "tasks-axi", Role: "soldier"}, // explicitly denied in denylist (backlog mutation)
+		{Name: "stuck-soldier-recovery", Role: "captain"},
+		{Name: "no-mistakes", Role: "captain"},
+		{Name: "bootstrap-diagnostics", Role: "general"},
+		{Name: "harness-adapters", Role: "captain"},
+	}
+
+	// Determine required skills from task kind and delivery mode.
+	// ship tasks always get gh-axi; scout tasks may not need GitHub.
+	var requiredNames []string
+	var optionalNames []string
+
+	switch r.args.Kind {
+	case "scout":
+		requiredNames = []string{"srcwalk", "qmd"}
+		optionalNames = []string{"gh-axi"}
+	default:
+		// ship tasks: github + code navigation required.
+		requiredNames = []string{"gh-axi"}
+		optionalNames = []string{"srcwalk", "qmd", "chrome-devtools-axi"}
+	}
+
+	// Apply no-mistakes mode policy: no-mistakes requires gh-axi always.
+	if r.effectiveMode == "no-mistakes" {
+		requiredNames = append(requiredNames, "gh-axi")
+	}
+
+	required, optional, diags = soldier.CollectSkills(catalog, requiredNames, optionalNames)
+	return required, optional, diags
 }
 
 // resolveParentCaptainID returns the parent captain ID from the endpoint meta.
@@ -743,21 +800,12 @@ func shQuote(s string) string {
 
 // Phase 12: bootstrapWindow writes a launch script and sends it to the session.
 // Uses the full prompt arguments built by buildSoldierPrompt.
+// Fails closed when prompt args are empty (unsupported harness path).
 func (r *Runner) bootstrapWindow() {
 	if r.launchBin == "" || len(r.launchArgs) == 0 {
-		// Fall back to old launchCmd approach if prompt build was skipped.
-		if r.launchCmd == "" {
-			return
-		}
-		launchScript := filepath.Join(r.wtPath, ".soldier-launch.sh")
-		scriptContent := "#!/usr/bin/env bash\nset -e\nexport MUNSU_HOME=" + fmt.Sprintf("%q", r.homeDir) + "\nexport MUNSU_ROLE=soldier\nexport MUNSU_TASK_ID=" + fmt.Sprintf("%q", r.args.ID) + "\nexport MUNSU_PARENT_STATUS=" + fmt.Sprintf("%q", r.homeDir) + "\n" + r.launchCmd + "\n"
-		if writeErr := os.WriteFile(launchScript, []byte(scriptContent), 0755); writeErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
-		}
-		fullCmd := fmt.Sprintf("cd %s && bash .soldier-launch.sh", r.wtPath)
-		if sendErr := r.bk.SendKeys(r.windowID, fullCmd); sendErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
-		}
+		// BuildLaunchArgs already fail-closed for unsupported harnesses.
+		// If we reach here without prompt args, no fallback — fail closed.
+		fmt.Fprintf(os.Stderr, "error: no soldier launch arguments — harness does not support prompt-arg delivery\n")
 		return
 	}
 
@@ -813,13 +861,16 @@ func (r *Runner) writeBriefToWorktree() {
 	}
 }
 
-// Phase 13b: waitAndInjectBrief waits for the harness to be ready, then
-// sends a fallback instruction to re-read the brief if the prompt was not
-// fully injected as a launch argument.
+// Phase 13b: waitForReady waits for the harness to be ready. No brief injection
+// is needed — the full prompt was already passed as a launch argument.
+// For harnesses that reached bootstrapWindow, the prompt is in context;
+// this is a pure handshake wait with error handling.
 func (r *Runner) waitAndInjectBrief() error {
 	if len(r.briefData) == 0 {
 		return nil
 	}
+	// The prompt was already delivered as a launch argument. We still wait
+	// for harness readiness to catch launch failures early.
 	if err := r.waitForHarnessReady(60); err != nil {
 		capture, _ := r.bk.Capture(r.windowID, 60)
 		_ = task.AppendStatus(r.homeDir, r.args.ID, "failed: harness handshake")
@@ -830,14 +881,8 @@ func (r *Runner) waitAndInjectBrief() error {
 		_ = r.bk.Teardown(r.windowID)
 		return fmt.Errorf("harness %q handshake failed: %w", r.harness, err)
 	}
-	// Brief settle: let harness present clean prompt before one-liner.
-	time.Sleep(500 * time.Millisecond)
-	// When the prompt was passed as a launch argument, the soldier already has
-	// charter + task content in context. The fallback is for harnesses that
-	// cannot accept a full prompt argument — send a file-read instruction.
-	// If the full prompt was injected (launchArgs non-empty), this is a no-op
-	// safety net; the Soldier already has everything in context.
-	_ = r.bk.SendKeys(r.windowID, "read and execute .soldier-brief.md")
+	// No brief injection needed — the complete prompt was already provided
+	// as a launch argument via bootstrapWindow / BuildLaunchArgs.
 	return nil
 }
 

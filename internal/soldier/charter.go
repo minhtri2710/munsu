@@ -76,8 +76,8 @@ You MUST NOT:
 - Your parent Captain is at %[5]s$MUNSU_PARENT_STATUS%[5]s.
 - Your task ID is %[5]s$MUNSU_TASK_ID%[5]s.
 - Your home is at %[5]s$MUNSU_HOME%[5]s.
-- Terminal reporting: %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s
-  - Report material phases with [--key <slug>] so later done/failed/resolved supersede them.
+- Terminal reporting: %[5]smunsu report <state> "<msg>" --key <slug>%[5]s
+  - Report material phases with --key <slug> so later done/failed/resolved supersede them.
   - States: working, needs-decision, blocked, paused, done, failed, resolved.
   - Use %[5]smunsu report blocked "{why}"%[5]s after the second encounter of the same obstacle.
   - Use %[5]smunsu report needs-decision "{summary}"%[5]s when a human decision is required.

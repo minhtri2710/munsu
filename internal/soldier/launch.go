@@ -9,6 +9,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
+// PromptName is the name of the prompt file persisted to the worktree.
+const PromptName = ".soldier-prompt.md"
+
 // LaunchPromptInput is the canonical input for building a Soldier launch prompt.
 // All fields must be populated before BuildLaunchPrompt is called.
 type LaunchPromptInput struct {
@@ -58,8 +61,11 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
 	charterSHA := sha256Content([]byte(charter))
 
-	// 2. Build skill instructions section.
-	skillSection := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills)
+	// 2. Build skill instructions section (strict: read/hash errors propagate).
+	skillSection, err := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills, input.WorktreePath)
+	if err != nil {
+		return "", nil, fmt.Errorf("soldier launch: skill instruction build failed: %w", err)
+	}
 
 	// 3. Build prompt: charter + brief content + skill instructions + terminal command.
 	var b strings.Builder
@@ -102,10 +108,13 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 
 // buildSkillInstructions returns a markdown section with skill content for
 // applicable required skills (inline instructions) and a note about optional skills.
-func buildSkillInstructions(required, optional []SkillEntry) string {
+// An error is returned when a required skill's source file cannot be read or its
+// SHA-256 does not match the declared hash. Optional read errors produce durable
+// diagnostics without blocking prompt construction.
+func buildSkillInstructions(required, optional []SkillEntry, baseDir string) (string, error) {
 	var b strings.Builder
 
-	// Required skills: inline canonical content.
+	// Required skills: inline canonical content. Read/hash verification is strict.
 	var hasRequired bool
 	for _, s := range required {
 		if !s.Applicable {
@@ -123,10 +132,17 @@ func buildSkillInstructions(required, optional []SkillEntry) string {
 			b.WriteString(fmt.Sprintf("Integrity: %s\n\n", s.SourceSHA256))
 		}
 
-		// Inline skill content from source if available.
+		// Inline skill content from source. Read errors and hash mismatches are
+		// hard failures for required skills.
 		if s.SourcePath != "" {
 			content, err := os.ReadFile(s.SourcePath)
-			if err == nil && len(content) > 0 {
+			if err != nil {
+				return "", fmt.Errorf("reading required skill %q from %s: %w", s.Name, s.SourcePath, err)
+			}
+			if s.SourceSHA256 != "" && sha256Content(content) != s.SourceSHA256 {
+				return "", fmt.Errorf("required skill %q at %s: SHA-256 mismatch (declared %s)", s.Name, s.SourcePath, s.SourceSHA256)
+			}
+			if len(content) > 0 {
 				b.WriteString(string(content))
 				b.WriteString("\n\n")
 			}
@@ -153,27 +169,29 @@ func buildSkillInstructions(required, optional []SkillEntry) string {
 		b.WriteString("\n")
 	}
 
-	return strings.TrimSpace(b.String())
+	return strings.TrimSpace(b.String()), nil
 }
 
 // terminalReportReminder returns the exact terminal report command
-// that the Soldier must use.
+// that the Soldier must use. The --key is required, not optional.
 func terminalReportReminder(taskID, parentCaptainID string) string {
 	bt := "`"
 	return fmt.Sprintf(`## Terminal Report Requirement
 
 When the task is complete, you MUST execute exactly:
 
-%smunsu report done "PR {url}" [--key %[2]s]%s
+%smunsu report done "PR {url}" --key %[2]s%s
 
 This is the authoritative terminal report signal to your parent Captain (%[3]s).
 Do not use any other command or mechanism for terminal reporting.
 
+The --key flag is REQUIRED and must match the task ID exactly.
+
 Summary of report states:
-- %[4]smunsu report working "..." [--key <slug>]%[4]s — material phase
+- %[4]smunsu report working "..." --key <slug>%[4]s — material phase
 - %[4]smunsu report blocked "{why}"%[4]s — after second obstacle encounter
 - %[4]smunsu report needs-decision "{summary}"%[4]s — human decision needed
-- %[4]smunsu report done "PR {url}"%[4]s — task complete, PR open (no merge)
+- %[4]smunsu report done "PR {url}" --key %[2]s%[4]s — task complete, PR open (no merge)
 - %[4]smunsu report failed "{reason}"%[4]s — task cannot be completed
 `, bt, taskID, parentCaptainID, bt)
 }
@@ -183,23 +201,34 @@ Summary of report states:
 //
 // The complete prompt is passed directly as a prompt argument so the Soldier
 // starts with charter + task content already in context.
-func BuildLaunchArgs(soldierHome, harnessName string, prompt string) (string, []string, error) {
+// model and effort may be empty strings; they are only appended when the
+// adapter's template defines a corresponding flag.
+// The harness must have PromptArg support (from CaptainLaunch contract);
+// unsupported harnesses fail closed.
+func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(harnessName)
 	if !ok {
 		return "", nil, fmt.Errorf("soldier launch: harness %q is not a verified harness", harnessName)
 	}
+	if !adapter.CaptainLaunch.Supported || !adapter.CaptainLaunch.PromptArg {
+		return "", nil, fmt.Errorf("soldier launch: harness %q does not have a verified prompt-arg contract", harnessName)
+	}
 	tmpl := adapter.LaunchTemplate
 
 	args := []string{}
-	if tmpl.ModelFlag != "" {
-		args = append(args, tmpl.ModelFlag)
-		// Use first env/default if available; otherwise let harness pick.
+	if model != "" && tmpl.ModelFlag != "" {
+		args = append(args, tmpl.ModelFlag, model)
+	} else if tmpl.DefaultModel != "" && tmpl.ModelFlag != "" {
+		args = append(args, tmpl.ModelFlag, tmpl.DefaultModel)
+	}
+	if effort != "" && tmpl.EffortFlag != "" {
+		args = append(args, tmpl.EffortFlag, effort)
+	} else if tmpl.DefaultEffort != "" && tmpl.EffortFlag != "" {
+		args = append(args, tmpl.EffortFlag, tmpl.DefaultEffort)
 	}
 	args = append(args, tmpl.ExtraArgs...)
 
-	// For Pi harness: no separator, prompt arg directly.
-	// For other harnesses: use contract.Separator if available.
-	if adapter.CaptainLaunch.Supported && adapter.CaptainLaunch.Separator != "" {
+	if adapter.CaptainLaunch.Separator != "" {
 		args = append(args, adapter.CaptainLaunch.Separator)
 	}
 
@@ -210,9 +239,9 @@ func BuildLaunchArgs(soldierHome, harnessName string, prompt string) (string, []
 }
 
 // PersistLaunchFiles writes all durable launch files to the worktree:
-// .soldier-charter.md, .soldier-brief.md, and .soldier-envelope.json.
+// .soldier-charter.md, .soldier-brief.md, .soldier-envelope.json, and .soldier-prompt.md.
 // Returns an error if any write fails.
-func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte, env *LaunchEnvelope) error {
+func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte, env *LaunchEnvelope, promptText string) error {
 	// Write charter.
 	if err := writeCharter(worktreePath, charter); err != nil {
 		return err
@@ -222,6 +251,12 @@ func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte
 	briefPath := filepath.Join(worktreePath, BriefName)
 	if err := os.WriteFile(briefPath, briefContent, 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", BriefName, err)
+	}
+
+	// Write prompt.
+	promptPath := filepath.Join(worktreePath, PromptName)
+	if err := os.WriteFile(promptPath, []byte(promptText), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", PromptName, err)
 	}
 
 	// Write envelope.
@@ -279,4 +314,3 @@ func FailClosedDuringLaunch(input LaunchPromptInput) error {
 	}
 	return nil
 }
-

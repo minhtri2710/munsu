@@ -1040,10 +1040,11 @@ func TestBootstrapWindowExportsSoldierRole(t *testing.T) {
 	worktreeDir := t.TempDir()
 	var sent string
 	r := &Runner{
-		homeDir:   t.TempDir(),
-		wtPath:    worktreeDir,
-		launchCmd: "pi",
-		windowID:  "win-1",
+		homeDir:    t.TempDir(),
+		wtPath:     worktreeDir,
+		launchBin:  "pi",
+		launchArgs: []string{"--model", "gpt-5", "--thinking", "high", "test prompt"},
+		windowID:   "win-1",
 		bk: &fakeBackend{sendKeys: func(windowID, text string) error {
 			sent = text
 			return nil
@@ -1060,6 +1061,10 @@ func TestBootstrapWindowExportsSoldierRole(t *testing.T) {
 	}
 	if sent == "" {
 		t.Fatal("bootstrapWindow did not send launch command")
+	}
+	// Verify prompt arg is in the script.
+	if !strings.Contains(string(script), "test prompt") {
+		t.Fatalf("launch script must contain prompt argument:\n%s", script)
 	}
 }
 
