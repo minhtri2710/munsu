@@ -6,7 +6,134 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/minhtri2710/munsu/internal/capability"
 )
+
+// MinNoMistakesVersion is the minimum compatible no-mistakes version.
+// Versions below this threshold may not support required axi subcommands.
+const MinNoMistakesVersion = "1.20.0"
+
+// ProbeResult captures the result of a no-mistakes capability probe.
+type ProbeResult struct {
+	State   capability.State `json:"state"`
+	Path    string           `json:"path,omitempty"`
+	Version string           `json:"version,omitempty"`
+	Detail  string           `json:"detail,omitempty"`
+}
+
+// String returns a human-readable summary of the probe result.
+func (p ProbeResult) String() string {
+	switch p.State {
+	case capability.Absent:
+		return "no-mistakes: absent"
+	case capability.Unsupported:
+		return fmt.Sprintf("no-mistakes: unsupported (version %s)", p.Version)
+	case capability.Ready:
+		return fmt.Sprintf("no-mistakes: ready (%s at %s)", p.Version, p.Path)
+	case capability.Failed:
+		return fmt.Sprintf("no-mistakes: failed (%s)", p.Detail)
+	default:
+		return fmt.Sprintf("no-mistakes: unknown state")
+	}
+}
+
+// NoMistakesProbe probes no-mistakes availability end-to-end:
+// binary presence, version parsing, version compatibility, and axi command surface.
+// It does not modify any state and is safe to call repeatedly.
+func NoMistakesProbe() ProbeResult {
+	path, err := exec.LookPath("no-mistakes")
+	if err != nil {
+		return ProbeResult{
+			State:  capability.Absent,
+			Detail: "no-mistakes not found on PATH",
+		}
+	}
+
+	out, err := exec.Command("no-mistakes", "--version").Output()
+	if err != nil {
+		return ProbeResult{
+			State:  capability.Failed,
+			Path:   path,
+			Detail: fmt.Sprintf("cannot check version: %v", err),
+		}
+	}
+	ver := strings.TrimSpace(string(out))
+	if ver == "" {
+		return ProbeResult{
+			State:  capability.Failed,
+			Path:   path,
+			Detail: "no-mistakes --version returned empty output",
+		}
+	}
+
+	cleanVer := strings.TrimPrefix(ver, "v")
+	// Handle format: "no-mistakes version v1.40.0 (87a5477) ..."
+	// Strip leading "no-mistakes version " if present
+	if strings.HasPrefix(cleanVer, "no-mistakes version ") {
+		cleanVer = cleanVer[len("no-mistakes version "):]
+		cleanVer = strings.TrimPrefix(cleanVer, "v")
+	}
+	// Extract first version component (e.g. "1.40.0" from "1.40.0 (87a5477)")
+	if idx := strings.IndexAny(cleanVer, " ("); idx > 0 {
+		cleanVer = cleanVer[:idx]
+	}
+
+	parsed, err := semver.NewVersion(cleanVer)
+	if err != nil {
+		return ProbeResult{
+			State:   capability.Failed,
+			Path:    path,
+			Version: ver,
+			Detail:  fmt.Sprintf("cannot parse version %q: %v", ver, err),
+		}
+	}
+
+	minVer, err := semver.NewVersion(MinNoMistakesVersion)
+	if err != nil {
+		return ProbeResult{
+			State:  capability.Failed,
+			Path:   path,
+			Detail: fmt.Sprintf("invalid minimum version %q: %v", MinNoMistakesVersion, err),
+		}
+	}
+
+	if parsed.LessThan(minVer) {
+		return ProbeResult{
+			State:   capability.Unsupported,
+			Path:    path,
+			Version: parsed.String(),
+			Detail:  fmt.Sprintf("no-mistakes version %s < minimum %s", parsed.String(), MinNoMistakesVersion),
+		}
+	}
+
+	// Verify the axi command surface is available by probing axi status help.
+	axiOut, err := exec.Command("no-mistakes", "axi", "status", "--help").Output()
+	if err != nil {
+		return ProbeResult{
+			State:   capability.Failed,
+			Path:    path,
+			Version: parsed.String(),
+			Detail:  fmt.Sprintf("axi command surface not available: %v", err),
+		}
+	}
+	if !strings.Contains(string(axiOut), "status") {
+		return ProbeResult{
+			State:   capability.Failed,
+			Path:    path,
+			Version: parsed.String(),
+			Detail:  "axi status subcommand not recognized",
+		}
+	}
+
+	return ProbeResult{
+		State:   capability.Ready,
+		Path:    path,
+		Version: parsed.String(),
+		Detail:  "found on PATH, version compatible, axi surface available",
+	}
+}
 
 // NoMistakesStatus runs `no-mistakes axi status` and parses the JSON output.
 // It returns a map of status fields.

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/capability"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/project"
@@ -25,16 +26,16 @@ type Args struct {
 	Mode                string // --mode flag value; empty=auto-detect
 	ProjectMode         string // project registry mode (raw, not defaulted); empty = resolve from registry
 	Yolo                bool
-	Force               bool   // --force flag; bypass captain backlog authority checks
+	Force               bool            // --force flag; bypass captain backlog authority checks
 	Backend             string          // --backend flag value; empty = auto-detect
 	HarnessFlag         string          // --harness flag value; empty = resolve from config
 	ModelFlag           string          // --model flag; empty = dispatch/template default
 	EffortFlag          string          // --effort flag; empty = dispatch/template default
 	HomeDir             string          // if empty, resolved via home.Resolve
 	Session             session.Backend // injectable session backend; nil = resolve at runtime
-	Arm                bool
-	Reopen             bool   // allow spawning a done/blocked/already-live task
-	ArmFunc            func(homeDir string) error // injectable arm function; nil = no auto-arm
+	Arm                 bool
+	Reopen              bool                       // allow spawning a done/blocked/already-live task
+	ArmFunc             func(homeDir string) error // injectable arm function; nil = no auto-arm
 	NoMistakesPreflight func(repoPath string) error
 }
 
@@ -73,14 +74,34 @@ func noMistakesOnPath() bool {
 	return err == nil
 }
 
+// noMistakesAvailable checks both binary presence and version/compat readiness
+// using the full capability probe. Used by auto-detection paths where silent
+// fallback to direct-PR is acceptable (unlike explicit/project/config selection).
+func noMistakesAvailable() bool {
+	probe := delivery.NoMistakesProbe()
+	return probe.State == capability.Ready
+}
+
 // EnsureDeliveryModeRunnable validates that an explicit non-empty mode is runnable.
-// If mode is "no-mistakes" and the binary is not on PATH, returns a hard error
-// with install guidance.
+// If mode is "no-mistakes" and the binary is not on PATH or version is incompatible,
+// returns a hard error with actionable guidance.
 func EnsureDeliveryModeRunnable(mode string) error {
-	if mode == "no-mistakes" && !noMistakesOnPath() {
-		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")
+	if mode != "no-mistakes" {
+		return nil
 	}
-	return nil
+	probe := delivery.NoMistakesProbe()
+	switch probe.State {
+	case capability.Absent:
+		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")
+	case capability.Unsupported:
+		return fmt.Errorf("delivery mode 'no-mistakes': %s; upgrade to a compatible version", probe.Detail)
+	case capability.Failed:
+		return fmt.Errorf("delivery mode 'no-mistakes' compatibility check failed: %s", probe.Detail)
+	case capability.Ready:
+		return nil
+	default:
+		return fmt.Errorf("delivery mode 'no-mistakes': unexpected probe state")
+	}
 }
 
 // ResolveDeliveryMode resolves the effective delivery mode following this precedence:
@@ -132,15 +153,21 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 		}
 	}
 
-	// 4. Auto: no-mistakes on PATH → no-mistakes, else → direct-PR
-	if noMistakesOnPath() {
+	// 4. Auto: no-mistakes on PATH and compatible → no-mistakes, else → direct-PR
+	if noMistakesAvailable() {
 		return "no-mistakes", nil
+	}
+	// Binary on PATH but incompatible version: inform the user why.
+	if noMistakesOnPath() {
+		probe := delivery.NoMistakesProbe()
+		fmt.Fprintf(os.Stderr, "warning: no-mistakes found on PATH but not compatible: %s; defaulting to direct-PR. Upgrade no-mistakes or run 'munsu doctor'\n", probe.Detail)
+		return "direct-PR", nil
 	}
 
 	// 5. When require-no-mistakes config is set, refuse fallback
 	if homeDir != "" {
 		if _, err := config.Get(homeDir, "require-no-mistakes"); err == nil {
-			return "", fmt.Errorf("config/require-no-mistakes is set but no-mistakes binary not found on PATH")
+			return "", fmt.Errorf("config/require-no-mistakes is set but no-mistakes binary is absent or incompatible on this system")
 		}
 	}
 
