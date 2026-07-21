@@ -16,11 +16,13 @@ import (
 // WatcherSnapshot captures whether a watcher was active before an update.
 // Fields carry evidence for reporting partial or failed restarts.
 type WatcherSnapshot struct {
-	Active           bool   // true if an identity and beat were found
-	OldVersion       string // build version of the watcher before update
-	OldPID           int    // PID of the watcher before update
-	InstalledVersion string // new build version after update
-	InstalledPath    string // path to the installed binary
+	Active              bool   // true if an identity and beat were found
+	OldVersion          string // build version of the watcher before update
+	OldPID              int    // PID of the watcher before update
+	OldCommitSHA        string // commit SHA of the old watcher
+	InstalledVersion    string // new build version after update
+	InstalledCommitSHA  string // verified commit SHA of the installed build
+	InstalledPath       string // path to the installed binary
 }
 
 // handshakeTimeout is the maximum time to wait for a restarted watcher
@@ -36,9 +38,10 @@ var doUpdate = Update
 // doArmBackground is an injectable seam for tests. Production code must not replace it.
 var doArmBackground = supervision.ArmBackground
 
-// resolveInstalledVersion populates InstalledPath and InstalledVersion on the
-// snapshot by resolving the binary's real path and inspecting the git HEAD.
-// Made injectable for tests so they can set a known version without a real git repo.
+// resolveInstalledVersion populates InstalledPath, InstalledVersion, and
+// InstalledCommitSHA on the snapshot by resolving the binary's real path
+// and inspecting the git HEAD.
+// Made injectable for tests so they can set known values without a real git repo.
 var resolveInstalledVersion = func(snap *WatcherSnapshot) {
 	execPath, err := os.Executable()
 	if err != nil {
@@ -59,6 +62,7 @@ var resolveInstalledVersion = func(snap *WatcherSnapshot) {
 		return
 	}
 	snap.InstalledVersion = VersionString(commit)
+	snap.InstalledCommitSHA = commit
 }
 
 // Update performs a fast-forward-only git pull on the munsu installation.
@@ -136,8 +140,9 @@ func Update() error {
 	// Rebuild binary with version/commit ldflags
 	version := VersionString(commit)
 	tmpPath := realPath + ".tmp"
+	ldflags := fmt.Sprintf("-X github.com/minhtri2710/munsu/internal/cli.Version=%s -X github.com/minhtri2710/munsu/internal/supervision.CommitSHA=%s", version, commit)
 	buildCmd := exec.Command("go", "build",
-		"-ldflags", fmt.Sprintf("-X github.com/minhtri2710/munsu/internal/cli.Version=%s", version),
+		"-ldflags", ldflags,
 		"-o", tmpPath,
 		"./cmd/munsu",
 	)
@@ -185,9 +190,10 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 		return &WatcherSnapshot{Active: false}
 	}
 	return &WatcherSnapshot{
-		Active:     true,
-		OldVersion: id.BuildVersion,
-		OldPID:     id.PID,
+		Active:       true,
+		OldVersion:   id.BuildVersion,
+		OldPID:       id.PID,
+		OldCommitSHA: id.CommitSHA,
 	}
 }
 
@@ -246,9 +252,9 @@ func waitForNewWatcher(homeDir string, snap *WatcherSnapshot) error {
 			beatOK = false
 		}
 
-		// Check identity: should have the new build version.
+		// Check identity: should have the new build version (verified via CommitSHA).
 		if id := supervision.ReadIdentity(homeDir); id != nil {
-			if id.BuildVersion == snap.InstalledVersion && id.PID > 0 {
+			if supervision.NewBuildIdentity(id.CommitSHA).Matches(supervision.NewBuildIdentity(snap.InstalledCommitSHA)) && id.PID > 0 {
 				identityOK = true
 				_, beatPID, beatOK2 := lifecycle.ReadBeat(homeDir)
 				if beatOK2 && beatPID == id.PID && beatPID != snap.OldPID {
@@ -282,10 +288,12 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 	newID := supervision.ReadIdentity(homeDir)
 	newVersion := ""
 	newPID := ""
+	newCommitSHA := ""
 	ownershipOK := false
 	if newID != nil {
 		newVersion = newID.BuildVersion
 		newPID = fmt.Sprintf("%d", newID.PID)
+		newCommitSHA = newID.CommitSHA
 		ownershipOK = supervision.ValidatePIDOwnership(homeDir, newID.PID)
 	}
 
@@ -299,17 +307,20 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 	}
 
 	return &HandshakeError{
-		OldVersion:      snap.OldVersion,
-		OldPID:          oldPID,
-		DesiredVersion:  snap.InstalledVersion,
-		IdentityVersion: newVersion,
-		IdentityPID:     newPID,
-		BeatPID:         beatPIDStr,
-		BeatTimestamp:   beatTS,
-		BeatOK:          beatOK,
-		IdentityOK:      identityOK,
-		OwnershipOK:     ownershipOK,
-		BeatFresh:       beatFresh,
+		OldVersion:        snap.OldVersion,
+		OldPID:            oldPID,
+		OldCommitSHA:      snap.OldCommitSHA,
+		DesiredVersion:    snap.InstalledVersion,
+		DesiredCommitSHA:  snap.InstalledCommitSHA,
+		IdentityVersion:   newVersion,
+		IdentityPID:       newPID,
+		IdentityCommitSHA: newCommitSHA,
+		BeatPID:           beatPIDStr,
+		BeatTimestamp:     beatTS,
+		BeatOK:            beatOK,
+		IdentityOK:        identityOK,
+		OwnershipOK:       ownershipOK,
+		BeatFresh:         beatFresh,
 	}
 }
 
@@ -317,9 +328,12 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 type HandshakeError struct {
 	OldVersion      string
 	OldPID          string
+	OldCommitSHA    string
 	DesiredVersion  string
+	DesiredCommitSHA string
 	IdentityVersion string
 	IdentityPID     string
+	IdentityCommitSHA string
 	BeatPID         string
 	BeatTimestamp   int64
 	BeatOK          bool
@@ -332,13 +346,19 @@ func (e *HandshakeError) Error() string {
 	var b strings.Builder
 	b.WriteString("watcher handshake failed: ")
 	if e.OldVersion != "" {
-		fmt.Fprintf(&b, "old=%s pid=%s ", e.OldVersion, e.OldPID)
+		fmt.Fprintf(&b, "old=%s pid=%s commit=%s ", e.OldVersion, e.OldPID, e.OldCommitSHA)
 	}
 	fmt.Fprintf(&b, "desired=%s", e.DesiredVersion)
+	if e.DesiredCommitSHA != "" {
+		fmt.Fprintf(&b, " commit=%s", e.DesiredCommitSHA)
+	}
 	if e.IdentityOK {
 		b.WriteString(" identity=ok")
 	} else {
 		fmt.Fprintf(&b, " identity=%s pid=%s", e.IdentityVersion, e.IdentityPID)
+		if e.IdentityCommitSHA != "" {
+			fmt.Fprintf(&b, " commit=%s", e.IdentityCommitSHA)
+		}
 	}
 	if e.BeatOK {
 		b.WriteString(" beat=ok")

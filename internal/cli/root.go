@@ -8,10 +8,21 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/spf13/cobra"
 )
 
 var Version = "0.1.0-dev"
+
+// CommitSHA holds the verified commit SHA, set via ldflags at build time.
+// It is propagated to supervision.CommitSHA for watcher identity comparison.
+var CommitSHA = ""
+
+func init() {
+	// Propagate version and commit SHA to supervision for watcher identity.
+	supervision.BuildVersion = Version
+	supervision.CommitSHA = CommitSHA
+}
 
 var (
 	homeOverride string

@@ -565,3 +565,166 @@ func TestProcessStart_IsTimestamp(t *testing.T) {
 		t.Errorf("ProcessStart = %q, expected positive integer", id.ProcessStart)
 	}
 }
+
+// --- BuildIdentity tests ---
+
+func TestBuildIdentity_ZeroNeverMatches(t *testing.T) {
+	zero := BuildIdentity{}
+	other := NewBuildIdentity("abc1234")
+	if zero.Matches(zero) {
+		t.Error("zero BuildIdentity should not match itself")
+	}
+	if zero.Matches(other) {
+		t.Error("zero BuildIdentity should not match a non-zero identity")
+	}
+	if other.Matches(zero) {
+		t.Error("non-zero BuildIdentity should not match a zero identity")
+	}
+}
+
+func TestBuildIdentity_ExactMatch(t *testing.T) {
+	a := NewBuildIdentity("abc1234")
+	b := NewBuildIdentity("abc1234")
+	if !a.Matches(b) {
+		t.Error("identical SHAs should match")
+	}
+}
+
+func TestBuildIdentity_ShortVsFullShA(t *testing.T) {
+	short := NewBuildIdentity("abc1234")
+	full := NewBuildIdentity("abc1234def5678abc1234def5678abc1234def5")
+	if !short.Matches(full) {
+		t.Error("short SHA should match when it's a prefix of full SHA")
+	}
+	if !full.Matches(short) {
+		t.Error("full SHA should match short SHA when short is a prefix")
+	}
+}
+
+func TestBuildIdentity_DifferentCommits(t *testing.T) {
+	a := NewBuildIdentity("abc1234")
+	b := NewBuildIdentity("xyz7890")
+	if a.Matches(b) {
+		t.Error("different SHAs should not match")
+	}
+}
+
+func TestBuildIdentity_String(t *testing.T) {
+	if NewBuildIdentity("").String() != "unknown" {
+		t.Error("zero BuildIdentity should display as 'unknown'")
+	}
+	if NewBuildIdentity("abc1234").String() != "abc1234" {
+		t.Error("BuildIdentity.String should return the SHA")
+	}
+}
+
+func TestBuildIdentity_IsZero(t *testing.T) {
+	if !NewBuildIdentity("").IsZero() {
+		t.Error("BuildIdentity with empty SHA should be zero")
+	}
+	if NewBuildIdentity("abc1234").IsZero() {
+		t.Error("BuildIdentity with SHA should not be zero")
+	}
+}
+
+func TestBuildIdentity_WhitespaceTrimmed(t *testing.T) {
+	a := NewBuildIdentity("  abc1234  ")
+	b := NewBuildIdentity("abc1234")
+	if !a.Matches(b) {
+		t.Error("BuildIdentity should trim whitespace")
+	}
+}
+
+// --- CommitSHA field on WatcherIdentity ---
+
+func TestNewIdentity_HasCommitSHA(t *testing.T) {
+	orig := CommitSHA
+	CommitSHA = "testsha1234"
+	defer func() { CommitSHA = orig }()
+
+	id := NewIdentity(t.TempDir())
+	if id.CommitSHA != "testsha1234" {
+		t.Errorf("CommitSHA = %q, want %q", id.CommitSHA, "testsha1234")
+	}
+}
+
+func TestNewIdentity_EmptyCommitSHA(t *testing.T) {
+	id := NewIdentity(t.TempDir())
+	// In test context CommitSHA is empty by default
+	if id.CommitSHA != "" {
+		t.Errorf("CommitSHA should be empty in test context, got %q", id.CommitSHA)
+	}
+}
+
+func TestCommitSHARoundTrip_ProtocolV2(t *testing.T) {
+	home := t.TempDir()
+	id := NewIdentity(home)
+	id.CommitSHA = "abc1234def5678"
+
+	if err := WriteIdentity(home, id); err != nil {
+		t.Fatalf("WriteIdentity: %v", err)
+	}
+
+	read := ReadIdentity(home)
+	if read == nil {
+		t.Fatal("ReadIdentity returned nil after write")
+	}
+	if read.CommitSHA != "abc1234def5678" {
+		t.Errorf("CommitSHA round-trip = %q, want %q", read.CommitSHA, "abc1234def5678")
+	}
+}
+
+func TestCommitSHA_BackwardCompatV1(t *testing.T) {
+	// Write a protocol v1 identity (7 fields, no CommitSHA) and verify
+	// that parseIdentity returns a WatcherIdentity with empty CommitSHA.
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	// 7-field format used in protocol v1
+	content := "hometest\t12345\tstartts\t/usr/bin/munsu\tv1.0.0\t1\t1700000000\n"
+	os.WriteFile(filepath.Join(home, "state", ".watcher-identity"), []byte(content), 0644)
+
+	read := ReadIdentity(home)
+	if read == nil {
+		t.Fatal("ReadIdentity should parse v1 format")
+	}
+	if read.CommitSHA != "" {
+		t.Errorf("CommitSHA should be empty for v1 format, got %q", read.CommitSHA)
+	}
+	if read.BuildVersion != "v1.0.0" {
+		t.Errorf("BuildVersion = %q, want v1.0.0", read.BuildVersion)
+	}
+}
+
+func TestWatcherIdentity_BuildIdentity(t *testing.T) {
+	id := &WatcherIdentity{CommitSHA: "abc1234"}
+	bi := id.BuildIdentity()
+	if bi.String() != "abc1234" {
+		t.Errorf("BuildIdentity = %q, want abc1234", bi.String())
+	}
+}
+
+func TestWatcherIdentity_BuildIdentity_Nil(t *testing.T) {
+	var id *WatcherIdentity
+	bi := id.BuildIdentity()
+	if !bi.IsZero() {
+		t.Error("BuildIdentity for nil watcher identity should be zero")
+	}
+}
+
+func TestIdentitySummary_IncludesCommitSHA(t *testing.T) {
+	id := NewIdentity(t.TempDir())
+	id.CommitSHA = "abc1234"
+	s := IdentitySummary(&id)
+	if !strings.Contains(s, "commit=abc1234") {
+		t.Errorf("summary should include commit SHA, got: %s", s)
+	}
+}
+
+func TestIdentitySummary_CommitSHAMissing(t *testing.T) {
+	id := NewIdentity(t.TempDir())
+	id.CommitSHA = ""
+	s := IdentitySummary(&id)
+	if !strings.Contains(s, "commit=-") {
+		t.Errorf("summary should show '-' for missing commit SHA, got: %s", s)
+	}
+}
