@@ -63,8 +63,8 @@ func TestParity_MarkedGeneral_CharterContainsReturnChannel(t *testing.T) {
 	if !strings.Contains(charter, "munsu report") {
 		t.Fatal("DefaultCharter must document munsu report as PRIMARY status path")
 	}
-	if !strings.Contains(charter, "Downlink Discipline") {
-		t.Fatal("DefaultCharter must declare downlink discipline")
+	if !strings.Contains(charter, "Downlink: Captain") {
+		t.Fatal("DefaultCharter must declare downlink: Captain → Soldier")
 	}
 	statusPath := filepath.Join(parent, "state", "captain:parity-test.status")
 	if !strings.Contains(charter, statusPath) {
@@ -581,7 +581,7 @@ func TestParity_DefaultCharter_IdleByDefault(t *testing.T) {
 	checks := []string{
 		"empty queue is healthy",
 		"Never invent surveys, audits",
-		"Downlink Discipline",
+		"Downlink: Captain",
 		"PRIMARY status path",
 	}
 	for _, check := range checks {

@@ -134,8 +134,8 @@ func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
 	if !strings.Contains(charter, "Delivery / Merge Authorization") || !strings.Contains(charter, "munsu teardown") {
 		t.Fatalf("charter missing delivery/merge / teardown duty")
 	}
-	if !strings.Contains(charter, "Downlink Discipline") {
-		t.Fatalf("charter missing downlink discipline doctrine")
+	if !strings.Contains(charter, "Downlink: Captain") {
+		t.Fatalf("charter missing downlink: Captain → Soldier doctrine")
 	}
 }
 
@@ -1624,8 +1624,9 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 	if !strings.Contains(script, "export MUNSU_HOME="+shQuote(canonicalSM)) {
 		t.Errorf("script should export canonical MUNSU_HOME %q, got: %s", canonicalSM, script)
 	}
-	if !strings.Contains(script, shQuote("# charter")) {
-		t.Error("script should contain charter content")
+	// After ConfigPush refreshes .captain-charter.md, the default charter is present.
+	if !strings.Contains(script, "Captain Charter") {
+		t.Error("script should contain default charter content")
 	}
 }
 
