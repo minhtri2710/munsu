@@ -768,9 +768,19 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		return "", nil, fmt.Errorf("captain launch: harness %q must not pass a project path arg", h)
 	}
 
-	charter, err := os.ReadFile(filepath.Join(captainHome, "AGENTS.md"))
+	// Read charter: prefer untracked .captain-charter.md (worktree captains)
+	// over tracked AGENTS.md as fallback (state-only homes).
+	charterPath := filepath.Join(captainHome, CaptainCharterName)
+	charter, err := os.ReadFile(charterPath)
 	if err != nil {
-		return "", nil, fmt.Errorf("reading captain charter: %w", err)
+		if !os.IsNotExist(err) {
+			return "", nil, fmt.Errorf("reading captain charter: %w", err)
+		}
+		// Fall back to tracked AGENTS.md (state-only homes).
+		charter, err = os.ReadFile(filepath.Join(captainHome, "AGENTS.md"))
+		if err != nil {
+			return "", nil, fmt.Errorf("reading captain charter: %w", err)
+		}
 	}
 
 	// Model/effort: config/captain-harness multi-token line, then config/model.
@@ -1493,24 +1503,31 @@ func normalizeGitRemote(remote string) string {
 // remote origin, correct branch/detached state, clean tree (ignoring only
 // marker and local inherited paths), ancestor relationship, then git merge --ff-only.
 func safeFF(captainHome, parentHome string) (before, after string, reason SafeFFReason, err error) {
+	// For managed worktree captains, use the source-repo from .captain-provenance
+	// instead of parentHome (General state home, which is not a git repo).
+	upstreamRepo := parentHome
+	if src := readCaptainProvenance(captainHome); src != "" {
+		upstreamRepo = src
+	}
+
 	// Verify same canonical remote origin (allows independent clones, HTTPS/SSH equivalence).
-	parentRemote, err := gitRun("-C", parentHome, "remote", "get-url", "origin")
+	parentRemote, err := gitRun("-C", upstreamRepo, "remote", "get-url", "origin")
 	if err != nil {
-		return "", "", SafeFFMissingOrigin, fmt.Errorf("parent remote origin: %w", err)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("upstream remote origin: %w", err)
 	}
 	smRemote, err := gitRun("-C", captainHome, "remote", "get-url", "origin")
 	if err != nil {
 		return "", "", SafeFFMissingOrigin, fmt.Errorf("captain remote origin: %w", err)
 	}
 	if normalizeGitRemote(parentRemote) != normalizeGitRemote(smRemote) {
-		return "", "", SafeFFMissingOrigin, fmt.Errorf("captain remote %q differs from parent remote %q (canonical: %q vs %q)",
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("captain remote %q differs from upstream remote %q (canonical: %q vs %q)",
 			smRemote, parentRemote, normalizeGitRemote(smRemote), normalizeGitRemote(parentRemote))
 	}
 
 	// Resolve default branch via origin/HEAD symbolic ref. No fallback.
-	symRef, err := gitRun("-C", parentHome, "symbolic-ref", "refs/remotes/origin/HEAD")
+	symRef, err := gitRun("-C", upstreamRepo, "symbolic-ref", "refs/remotes/origin/HEAD")
 	if err != nil {
-		return "", "", SafeFFMissingOrigin, fmt.Errorf("parent origin/HEAD symbolic ref missing — no default branch detected: %w", err)
+		return "", "", SafeFFMissingOrigin, fmt.Errorf("upstream origin/HEAD symbolic ref missing — no default branch detected: %w", err)
 	}
 	// symRef looks like "refs/remotes/origin/main" — extract branch name.
 	remoteRefParts := strings.SplitN(symRef, "/", 4)
@@ -1521,12 +1538,12 @@ func safeFF(captainHome, parentHome string) (before, after string, reason SafeFF
 
 	// Verify the local branch ref exists.
 	localRef := "refs/heads/" + defaultBranch
-	if _, err := gitRun("-C", parentHome, "rev-parse", "--verify", localRef); err != nil {
+	if _, err := gitRun("-C", upstreamRepo, "rev-parse", "--verify", localRef); err != nil {
 		return "", "", SafeFFMissingOrigin, fmt.Errorf("default branch %q (%s) does not exist locally", defaultBranch, localRef)
 	}
 
 	// Resolve the commit that the local default branch points to.
-	defaultCommit, err := gitRun("-C", parentHome, "rev-parse", localRef)
+	defaultCommit, err := gitRun("-C", upstreamRepo, "rev-parse", localRef)
 	if err != nil {
 		return "", "", SafeFFMissingOrigin, fmt.Errorf("resolving default branch commit: %w", err)
 	}
@@ -1578,7 +1595,7 @@ func safeFF(captainHome, parentHome string) (before, after string, reason SafeFF
 		return "", "", SafeFFError, fmt.Errorf("merge-base failed: %w", err)
 	}
 	if mergeBase != before {
-		return "", "", SafeFFError, fmt.Errorf("captain %s is not an ancestor of parent default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
+		return "", "", SafeFFError, fmt.Errorf("captain %s is not an ancestor of upstream default-branch commit %s — diverged or unequal history", before[:8], defaultCommit[:8])
 	}
 
 	if before == defaultCommit {

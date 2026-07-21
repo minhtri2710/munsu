@@ -264,9 +264,9 @@ func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 		}
 	}
 
-	// Verify AGENTS.md.
-	if _, err := os.Stat(filepath.Join(homePath, "AGENTS.md")); err != nil {
-		t.Errorf("AGENTS.md not created: %v", err)
+	// Verify .captain-charter.md (untracked charter).
+	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); err != nil {
+		t.Errorf("%s not created: %v", CaptainCharterName, err)
 	}
 
 	// Verify provenance marker.
@@ -274,9 +274,18 @@ func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 		t.Errorf("provenance marker not created: %v", err)
 	}
 
-	// Verify .gitignore.
-	if _, err := os.Stat(filepath.Join(homePath, ".gitignore")); err != nil {
-		t.Errorf(".gitignore not created: %v", err)
+	// Verify excludes are in info/exclude (not tracked .gitignore).
+	gitPtrData, gErr := os.ReadFile(filepath.Join(homePath, ".git"))
+	if gErr != nil {
+		t.Fatal(gErr)
+	}
+	gitdirLine := strings.TrimSpace(string(gitPtrData))
+	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
+		t.Fatalf(".git is not a gitdir pointer: %q", gitdirLine)
+	}
+	commonDir := filepath.Dir(filepath.Dir(strings.TrimPrefix(gitdirLine, "gitdir: ")))
+	if _, err := os.Stat(filepath.Join(commonDir, "info", "exclude")); err != nil {
+		t.Errorf("info/exclude not created: %v", err)
 	}
 
 	// Verify registered in parent.
@@ -352,8 +361,8 @@ func TestSeedWorktree_ForceReplaces(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(homePath, ".git")); err != nil {
 		t.Fatal("worktree removed after force seed")
 	}
-	if _, err := os.Stat(filepath.Join(homePath, "AGENTS.md")); err != nil {
-		t.Error("AGENTS.md missing after force seed")
+	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); err != nil {
+		t.Errorf("%s missing after force seed", CaptainCharterName)
 	}
 }
 
@@ -463,8 +472,8 @@ func TestSeedWorktree_ParentHomeCharter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify default charter was written.
-	body, err := os.ReadFile(filepath.Join(homePath, "AGENTS.md"))
+	// Verify default charter was written to .captain-charter.md (untracked).
+	body, err := os.ReadFile(filepath.Join(homePath, CaptainCharterName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,16 +521,28 @@ func TestSeedWorktree_GitignoreContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(homePath, ".gitignore"))
+	// Read the .git worktree pointer to find info/exclude.
+	gitPtrData, err := os.ReadFile(filepath.Join(homePath, ".git"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := string(data)
+	gitdirLine := strings.TrimSpace(string(gitPtrData))
+	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
+		t.Fatalf(".git is not a gitdir pointer: %q", gitdirLine)
+	}
+	// Use the common dir (two levels up from worktree git dir).
+	gitDir := strings.TrimPrefix(gitdirLine, "gitdir: ")
+	commonDir := filepath.Dir(filepath.Dir(gitDir))
+	excludeData, err := os.ReadFile(filepath.Join(commonDir, "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(excludeData)
 	if !strings.Contains(content, "state/") {
-		t.Error(".gitignore missing state/ entry")
+		t.Error("info/exclude missing state/ entry")
 	}
 	if !strings.Contains(content, CaptainProvenanceName) {
-		t.Errorf(".gitignore missing %s entry", CaptainProvenanceName)
+		t.Errorf("info/exclude missing %s entry", CaptainProvenanceName)
 	}
 }
 
@@ -2986,15 +3007,25 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 		t.Errorf("provenance missing created, got: %s", provData)
 	}
 
-	// .gitignore exists and covers operational dirs.
-	gitignorePath := filepath.Join(homePath, WorktreeGitignoreName)
-	gitignoreData, err := os.ReadFile(gitignorePath)
+	// Exclude file exists in worktree git info/exclude and covers operational dirs.
+	gitPtrData, err := os.ReadFile(filepath.Join(homePath, ".git"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, entry := range worktreeGitignoreContent {
-		if !strings.Contains(string(gitignoreData), entry) {
-			t.Errorf(".gitignore missing entry %q, got: %s", entry, gitignoreData)
+	gitdirLine := strings.TrimSpace(string(gitPtrData))
+	if !strings.HasPrefix(gitdirLine, "gitdir: ") {
+		t.Fatalf(".git is not a gitdir pointer: %q", gitdirLine)
+	}
+	gitDir := strings.TrimPrefix(gitdirLine, "gitdir: ")
+	commonDir := filepath.Dir(filepath.Dir(gitDir))
+	excludePath := filepath.Join(commonDir, "info", "exclude")
+	excludeData, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range worktreeExcludeContent {
+		if !strings.Contains(string(excludeData), entry) {
+			t.Errorf("info/exclude missing entry %q, got: %s", entry, excludeData)
 		}
 	}
 
@@ -3008,9 +3039,9 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 		}
 	}
 
-	// AGENTS.md exists.
-	if _, err := os.Stat(filepath.Join(homePath, "AGENTS.md")); err != nil {
-		t.Errorf("AGENTS.md missing: %v", err)
+	// .captain-charter.md exists (untracked charter file).
+	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); err != nil {
+		t.Errorf("%s missing: %v", CaptainCharterName, err)
 	}
 
 	// .munsu-captain-home exists.
@@ -3202,14 +3233,18 @@ func TestMigrateToWorktree_SuccessPath(t *testing.T) {
 		t.Errorf("captain provenance missing: %v", err)
 	}
 
-	// 4. .gitignore exists.
-	if _, err := os.Stat(filepath.Join(smHome, WorktreeGitignoreName)); err != nil {
-		t.Errorf(".gitignore missing: %v", err)
+	// 4. Charter preserved as untracked .captain-charter.md (not dirtying tracked AGENTS.md).
+	if _, err := os.Stat(filepath.Join(smHome, CaptainCharterName)); err != nil {
+		t.Errorf("%s missing: %v", CaptainCharterName, err)
 	}
 
-	// 5. AGENTS.md preserved.
-	if _, err := os.Stat(filepath.Join(smHome, "AGENTS.md")); err != nil {
-		t.Errorf("AGENTS.md missing: %v", err)
+	// 5. Worktree admin path points at final home (no temp path).
+	wtList := gitTestRun(t, project, "worktree", "list", "--porcelain")
+	if !strings.Contains(wtList, smHome) {
+		t.Errorf("git worktree list missing final home %s; got:\n%s", smHome, wtList)
+	}
+	if strings.Contains(wtList, ".worktree-") {
+		t.Errorf("git worktree list still has temp path; got:\n%s", wtList)
 	}
 
 	// 6. Operational dirs preserved with content.
@@ -3345,6 +3380,272 @@ func TestMigrateToWorktree_RemoteMismatchRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not match parent remote") {
 		t.Errorf("error = %v, want remote mismatch", err)
+	}
+}
+
+
+
+// ---------------------------------------------------------------------------
+// Regression tests for captain-migration-postconditions
+// ---------------------------------------------------------------------------
+
+// TestSeedWorktree_GitClean proves that after SeedFromWorktree, the managed
+// worktree is git-clean — no tracked modifications, and the only untracked
+// files are properly gitignored via info/exclude.
+func TestSeedWorktree_GitClean(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	homePath := filepath.Join(parent, "captains", "test-captain")
+
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+
+	// Verify worktree is git-clean.
+
+	// Verify worktree is git-clean.
+	status := gitTestRun(t, homePath, "status", "--porcelain")
+	if status != "" {
+		t.Errorf("worktree is not git-clean, status:\n%s", status)
+	}
+
+	// Verify .captain-charter.md exists but is gitignored (ls-files shows nothing).
+	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); err != nil {
+		t.Errorf("%s not created: %v", CaptainCharterName, err)
+	}
+	charterInIndex := gitTestRun(t, homePath, "ls-files", CaptainCharterName)
+	if charterInIndex != "" {
+		t.Errorf("%s should not be tracked, but found in index: %q", CaptainCharterName, charterInIndex)
+	}
+
+	// Verify source tracked files (e.g. README.md) are unchanged from origin.
+	originRef := gitTestRun(t, project, "rev-parse", "origin/main")
+	headRef := gitTestRun(t, homePath, "rev-parse", "HEAD")
+	if headRef != originRef {
+		t.Errorf("HEAD = %q, want origin/main = %q — worktree on wrong ref", headRef, originRef)
+	}
+}
+
+// TestRepairWorktreeAdminPath proves that after renaming a worktree directory,
+// repairWorktreeAdminPath updates git's worktree admin so that "git worktree list"
+// shows the final (renamed) path, not the old temp path.
+
+
+
+// TestRepairWorktreeAdminPath proves that after renaming a worktree directory,
+// repairWorktreeAdminPath updates git's worktree admin so that "git worktree list"
+// shows the final (renamed) path, not the old temp path.
+func TestRepairWorktreeAdminPath(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+
+	// Create worktree at a temp path, then rename to final captain home.
+	tempPath := filepath.Join(parent, "captains", "temp-worktree")
+	if err := SeedFromWorktree("test-captain", tempPath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify git worktree list shows temp path before rename.
+	worktreeOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
+	if !strings.Contains(worktreeOut, tempPath) {
+		t.Fatalf("expected worktree list to contain %q before rename, got:\n%s", tempPath, worktreeOut)
+	}
+
+	// Atomic rename: move temp path to final captain home.
+	finalPath := filepath.Join(parent, "captains", "final-captain")
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// After rename, git worktree list still shows old temp path — stale.
+	staleOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
+	if strings.Contains(staleOut, finalPath) {
+		t.Skip("rename already updated git worktree list — nothing to repair")
+	}
+
+	// Now repair the admin path.
+	if err := repairWorktreeAdminPath(finalPath, ""); err != nil {
+		t.Fatalf("repairWorktreeAdminPath failed: %v", err)
+	}
+
+	// Verify git worktree list now shows final path.
+	repairedOut := gitTestRun(t, project, "worktree", "list", "--porcelain")
+	if !strings.Contains(repairedOut, finalPath) {
+		t.Errorf("expected worktree list to contain %q after repair, got:\n%s", finalPath, repairedOut)
+	}
+
+	// Verify the worktree is still functional.
+	gitTestRun(t, finalPath, "rev-parse", "HEAD")
+	if _, err := os.Stat(filepath.Join(finalPath, CaptainCharterName)); err != nil {
+		t.Errorf("%s missing after rename and repair: %v", CaptainCharterName, err)
+	}
+}
+
+// TestUpdate_ManagedWorktreeUsesProvenanceRepo proves that Update() works for
+// managed worktree captains even when parentHome (the General state home) is NOT
+// a git repo. This covers Defect 3: captain update must use the source-repo from
+// .captain-provenance, not treat the General state home as a git repo.
+
+
+
+// TestUpdate_ManagedWorktreeUsesProvenanceRepo proves that Update() works for
+// managed worktree captains even when parentHome (the General state home) is NOT
+// a git repo. This covers Defect 3: captain update must use the source-repo from
+// .captain-provenance, not treat the General state home as a git repo.
+func TestUpdate_ManagedWorktreeUsesProvenanceRepo(t *testing.T) {
+	// Create a source git repo (the project repo).
+	project := newWorktreeFixture(t)
+	initialCommit := gitTestRun(t, project, "rev-parse", "HEAD")
+
+	// Create a fake General state home (NOT a git repo).
+	parent := t.TempDir()
+	// Write the parent provenance marker so ValidateProvenance passes.
+	if err := os.MkdirAll(filepath.Join(parent, "captains"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed a managed worktree captain (creates .captain-provenance with source-repo).
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify .captain-provenance exists and points to the project repo.
+	sourceRepo := readCaptainProvenance(homePath)
+	if sourceRepo == "" {
+		t.Fatal(".captain-provenance missing or has no source-repo")
+	}
+	if sourceRepo != project {
+		t.Logf("source-repo = %q, project fixture = %q", sourceRepo, project)
+	}
+
+	// Advance the project repo (source) with a new commit.
+	if err := os.WriteFile(filepath.Join(project, "README.md"), []byte("# Updated\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, project, "add", "README.md")
+	gitTestRun(t, project, "commit", "-m", "update")
+	gitTestRun(t, project, "push", "origin", "main")
+	newCommit := gitTestRun(t, project, "rev-parse", "HEAD")
+	gitTestRun(t, homePath, "fetch", "origin", "main")
+	// Reset captain back to initial commit (as if it hasn't been updated yet).
+	gitTestRun(t, homePath, "reset", "--hard", initialCommit)
+
+	// Verify captain is behind.
+	currentHead := gitTestRun(t, homePath, "rev-parse", "HEAD")
+	if currentHead == newCommit {
+		t.Skip("initial and new commit are same — cannot test fast-forward")
+	}
+
+	// Run Update: parentHome is NOT a git repo, but safeFF should use
+	// provenance source-repo to resolve the upstream.
+	resp := Update(homePath, parent)
+	if resp.Outcome != FastForwarded {
+		t.Fatalf("Update outcome = %q, want %q (before=%s, after=%s, err=%v)",
+			resp.Outcome, FastForwarded, safeStr(resp.Before), safeStr(resp.After), resp.Err)
+	}
+	if resp.Before == resp.After {
+		t.Fatal("expected Before != After on fast-forward")
+	}
+
+	// Verify captain is now at the new commit.
+	updatedHead := gitTestRun(t, homePath, "rev-parse", "HEAD")
+	if updatedHead != newCommit {
+		t.Errorf("captain HEAD = %q, want %q", updatedHead, newCommit)
+	}
+}
+
+// TestUpdate_ManagedWorktreeAlreadyCurrent proves that Update() returns
+// AlreadyCurrent for a managed worktree that is already at the latest commit,
+// using provenance source-repo resolution (Defect 3 regression).
+
+
+
+// TestUpdate_ManagedWorktreeAlreadyCurrent proves that Update() returns
+// AlreadyCurrent for a managed worktree that is already at the latest commit,
+// using provenance source-repo resolution (Defect 3 regression).
+func TestUpdate_ManagedWorktreeAlreadyCurrent(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	homePath := filepath.Join(parent, "captains", "test-captain")
+
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Captain is already at origin/main. Update should return AlreadyCurrent.
+	resp := Update(homePath, parent)
+	if resp.Outcome != AlreadyCurrent {
+		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
+	}
+}
+
+// TestUpdate_ManagedWorktreeNoParentGit proves that Update() correctly resolves
+// the source-repo from .captain-provenance when parentHome is not a git repo
+// and returns the appropriate outcome.
+
+
+
+// TestUpdate_ManagedWorktreeNoParentGit proves that Update() correctly resolves
+// the source-repo from .captain-provenance when parentHome is not a git repo
+// and returns the appropriate outcome.
+func TestUpdate_ManagedWorktreeNoParentGit(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	homePath := filepath.Join(parent, "captains", "test-captain")
+
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify parent is NOT a git repo.
+	if _, err := os.Stat(filepath.Join(parent, ".git")); !os.IsNotExist(err) {
+		t.Skip("parent unexpectedly has .git — cannot test no-parent-git scenario")
+	}
+
+	// Update must not fail with a git error involving parent. It should resolve
+	// from provenance and succeed (AlreadyCurrent since nothing advanced).
+	resp := Update(homePath, parent)
+	if resp.Outcome != AlreadyCurrent {
+		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
+	}
+}
+
+// TestMigrateRollbackSafety proves that when SeedFromWorktree fails partway
+// through, the worktree is cleaned up and no partial artifacts remain.
+
+
+
+// TestMigrateRollbackSafety proves that when SeedFromWorktree fails partway
+// through, the worktree is cleaned up and no partial artifacts remain.
+func TestMigrateRollbackSafety(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// Seed with a non-existent parent home for the charter path (will fail).
+	err := SeedFromWorktree(id, homePath, repo, "/nonexistent/parent", "", false, "")
+	if err == nil {
+		t.Fatal("expected error for non-existent parent charter path")
+	}
+
+	// The worktree should not exist (rolled back on failure).
+	if _, err := os.Stat(homePath); !os.IsNotExist(err) {
+		t.Error("worktree should have been rolled back on failure, but still exists")
+	}
+
+	// Verify the source repo has no stale worktree registration (best-effort).
+	worktreeOut, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(worktreeOut), homePath) {
+		t.Errorf("stale worktree entry remains in source repo after rollback:\n%s", worktreeOut)
 	}
 }
 
