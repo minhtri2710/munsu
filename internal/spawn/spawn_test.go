@@ -497,11 +497,7 @@ func TestNoMistakesOnPath(t *testing.T) {
 
 func TestEffectiveModeForSpawn_AutoNoMistakesPresent(t *testing.T) {
 	// Create a fake no-mistakes binary on PATH
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	tmpDir := createFakeNoMistakes(t, true, true)
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	mode, err := effectiveModeForSpawn(t.TempDir(), Args{})
@@ -528,11 +524,7 @@ func TestEffectiveModeForSpawn_AutoNoMistakesAbsent(t *testing.T) {
 
 func TestEffectiveModeForSpawn_ExplicitNoMistakesWithBinary(t *testing.T) {
 	// Fake no-mistakes on PATH, explicit flag
-	tmpDir := t.TempDir()
-	binPath := filepath.Join(tmpDir, "no-mistakes")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
+	tmpDir := createFakeNoMistakes(t, true, true)
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
@@ -551,6 +543,153 @@ func TestEffectiveModeForSpawn_ExplicitNoMistakesWithoutBinary(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for explicit no-mistakes without binary")
 	}
+}
+
+// TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR verifies
+// that explicit --mode=no-mistakes never returns "direct-PR" on failure.
+func TestEffectiveModeForSpawn_ExplicitNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
+	t.Run("absent binary", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+		if err == nil {
+			t.Fatalf("expected error, got mode=%q", mode)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on error, got %q", mode)
+		}
+	})
+
+	t.Run("unsupported version", func(t *testing.T) {
+		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
+		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+
+		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+		if err == nil {
+			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on error, got %q", mode)
+		}
+	})
+
+	t.Run("failed probe", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		binPath := filepath.Join(tmpDir, "no-mistakes")
+		if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+
+		mode, err := effectiveModeForSpawn(t.TempDir(), Args{Mode: "no-mistakes"})
+		if err == nil {
+			t.Fatalf("expected error for failed probe, got mode=%q", mode)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on error, got %q", mode)
+		}
+	})
+}
+
+// TestEffectiveModeForSpawn_ProjectNoMistakesNeverFallsBackToDirectPR verifies
+// that project-registry no-mistakes never returns "direct-PR" on failure.
+func TestEffectiveModeForSpawn_ProjectNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
+	t.Run("absent binary", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "no-mistakes"})
+		if err == nil {
+			t.Fatalf("expected error, got mode=%q", mode)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on error, got %q", mode)
+		}
+	})
+
+	t.Run("unsupported version", func(t *testing.T) {
+		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
+		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+
+		mode, err := effectiveModeForSpawn(t.TempDir(), Args{ProjectMode: "no-mistakes"})
+		if err == nil {
+			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on error, got %q", mode)
+		}
+	})
+}
+
+// TestEffectiveModeForSpawn_ConfigNoMistakesNeverFallsBackToDirectPR verifies
+// that config/default-mode no-mistakes never returns "direct-PR" on failure.
+func TestEffectiveModeForSpawn_ConfigNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
+	t.Run("absent binary", func(t *testing.T) {
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("no-mistakes"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", t.TempDir())
+
+		// Use ResolveDeliveryMode directly (config/default-mode is step 3)
+		mode, err := ResolveDeliveryMode(homeDir, "", "")
+		if err == nil {
+			t.Fatalf("expected error, got mode=%q", mode)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on error, got %q", mode)
+		}
+	})
+
+	t.Run("unsupported version", func(t *testing.T) {
+		homeDir := t.TempDir()
+		configDir := filepath.Join(homeDir, "config")
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("no-mistakes"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
+		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+
+		mode, err := ResolveDeliveryMode(homeDir, "", "")
+		if err == nil {
+			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
+		}
+		if mode != "" {
+			t.Errorf("mode must be empty on error, got %q", mode)
+		}
+	})
+}
+
+// TestResolveDeliveryMode_AutoFallbackOnIncompatible verifies that auto mode
+// falls back to direct-PR when no-mistakes is on PATH but incompatible.
+func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
+	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
+	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+
+	mode, err := ResolveDeliveryMode(t.TempDir(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "direct-PR" {
+		t.Errorf("auto should fallback to direct-PR for incompatible version, got %q", mode)
+	}
+}
+
+// createFakeNoMistakesVersion creates a fake no-mistakes binary that reports
+// the given semver version string.
+func createFakeNoMistakesVersion(t *testing.T, version string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "no-mistakes")
+	script := "#!/bin/sh\necho \"no-mistakes version v" + version + " (test)\"\nexit 0\n"
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return tmpDir
 }
 
 func TestEffectiveModeForSpawn_ProjectModeHonored(t *testing.T) {
@@ -1105,7 +1244,6 @@ func TestPreflightDelivery_UnknownModeError(t *testing.T) {
 	}
 }
 
-
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -1185,10 +1323,10 @@ func TestWaitAndInjectBrief_FailurePatternTearsDown(t *testing.T) {
 	dataDir := filepath.Join(homeDir, "data", "handshake-test")
 	_ = os.MkdirAll(dataDir, 0755)
 	r := &Runner{
-		homeDir:  homeDir,
-		harness:  "codex",
-		bk:       fake,
-		windowID: "win-1",
+		homeDir:   homeDir,
+		harness:   "codex",
+		bk:        fake,
+		windowID:  "win-1",
 		briefData: []byte("# test brief"),
 	}
 	r.args.ID = "handshake-test"
@@ -1377,4 +1515,50 @@ func mockReadBacklogTaskState(state, blocked string, found bool, err error) func
 		return state, blocked, found, err
 	}
 	return func() { readBacklogTaskState = original }
+}
+
+// createFakeNoMistakes writes a fake no-mistakes binary to a temp directory
+// and returns that directory. The binary handles --version and axi status --help
+// when the corresponding flags are true.
+func createFakeNoMistakes(t *testing.T, respondVersion, respondAxi bool) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	binPath := filepath.Join(tmpDir, "no-mistakes")
+
+	var script string
+	if respondVersion {
+		script += `case "--version" in
+  "$1")
+    echo "no-mistakes version v1.40.0 (test)"
+    exit 0
+    ;;
+esac
+`
+	}
+	if respondAxi {
+		script += `case "$1" in
+  axi)
+    case "$2" in
+      status)
+        case "$3" in
+          --help)
+            echo "Show the active run in detail"
+            echo "Usage:"
+            echo "  no-mistakes axi status [flags]"
+            exit 0
+            ;;
+        esac
+        ;;
+    esac
+    ;;
+esac
+`
+	}
+	script += "exit 0\n"
+
+	content := "#!/bin/sh\n" + script
+	if err := os.WriteFile(binPath, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return tmpDir
 }
