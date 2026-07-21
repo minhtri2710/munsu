@@ -22,6 +22,7 @@ var KnownKeys = []string{
 	"afk-wedge-stale-beat",
 	"afk-wedge-max-repeat",
 	"afk-max-defer",
+	"install-root",
 }
 
 // IsKnownKey returns true if key is a well-known config key.
