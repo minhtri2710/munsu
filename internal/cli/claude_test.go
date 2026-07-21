@@ -808,6 +808,13 @@ func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
 // TestSessionStartNudgeRetryBeforeSuccess verifies that when the lock is
 // NOT held (session-start has not yet succeeded), a second nudge call
 // still produces the nudge -- retry before success is allowed.
+//
+// The nudge function itself does not track session-start success; that's
+// delegated to `munsu session-start` which acquires the lock. The retry
+// test simulates the condition where session-start hasn't been run yet
+// (no lock file), verifies the nudge fires, then verifies it fires again
+// on a retry -- proving that a failed/absent session-start doesn't
+// suppress subsequent nudges.
 func TestSessionStartNudgeRetryBeforeSuccess(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
@@ -834,8 +841,9 @@ func TestSessionStartNudgeRetryBeforeSuccess(t *testing.T) {
 		t.Errorf("first nudge should print instruction, got: %s", stdout1)
 	}
 
-	// Captain nudge: still no lock (simulates session-start not yet run)
-	// Should also produce output
+	// Captain nudge: still no lock (simulates session-start not yet run,
+	// e.g. underlying command failed or was cancelled)
+	// Should also produce output - retry is allowed before success
 	stdout2, _ := captureBoth(func() {
 		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
 		if err != nil {
@@ -844,6 +852,11 @@ func TestSessionStartNudgeRetryBeforeSuccess(t *testing.T) {
 	})
 	if !strings.Contains(stdout2, "session-start") {
 		t.Errorf("captain nudge should also print instruction before lock acquired, got: %s", stdout2)
+	}
+
+	// Verify both calls produce the same nudge (retry is identical to first attempt)
+	if strings.TrimSpace(stdout1) != strings.TrimSpace(stdout2) {
+		t.Errorf("retry nudge must be identical to first nudge\nfirst: %q\nretry: %q", stdout1, stdout2)
 	}
 }
 

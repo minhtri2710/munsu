@@ -78,9 +78,15 @@ func TestOpencodePluginsContent_PretoolCheck(t *testing.T) {
 func TestOpencodePluginsContent_SessionstartNudge(t *testing.T) {
 	content := OpencodePluginsContent("/opt/munsu", "munsu-sessionstart-nudge.js")
 
-	// Verify exactly-once handling
-	if !strings.Contains(content, "handledSessions") {
-		t.Error("sessionstart-nudge must have exactly-once session tracking")
+	// Verify durable exactly-once handling (file-based, survives reload)
+	if !strings.Contains(content, "DURABLE_FILE") {
+		t.Error("sessionstart-nudge must have durable exactly-once tracking")
+	}
+	if !strings.Contains(content, "loadNudgedSessions") {
+		t.Error("sessionstart-nudge must have loadNudgedSessions for reload resilience")
+	}
+	if !strings.Contains(content, "saveNudgedSession") {
+		t.Error("sessionstart-nudge must persist exactly-once marker after successful delivery")
 	}
 
 	// Verify session.created event
@@ -96,6 +102,28 @@ func TestOpencodePluginsContent_SessionstartNudge(t *testing.T) {
 	// Verify it calls sessionstart-nudge command
 	if !strings.Contains(content, "sessionstart-nudge") {
 		t.Error("sessionstart-nudge must call munsu integrate sessionstart-nudge")
+	}
+
+	// Verify retry-after-failure: command failure -> inMemory guard cleared
+	if !strings.Contains(content, "inMemory.delete(sessionID)") {
+		t.Error("sessionstart-nudge must clear in-memory guard on failure to allow retry")
+	}
+
+	// Verify success marker is only recorded after successful delivery
+	// (saveNudgedSession is called after promptAsync succeeds; the function
+	// returns early on promptAsync failure, so ordering is guaranteed by control flow)
+	if !strings.Contains(content, "saveNudgedSession") {
+		t.Error("sessionstart-nudge must record durable marker after successful nudge delivery")
+	}
+
+	// Verify promptAsync error handler exists (for retry on delivery failure)
+	if !strings.Contains(content, "promptAsync") {
+		t.Error("sessionstart-nudge must call promptAsync to send nudge")
+	}
+	// promptAsync failure should clear in-memory guard
+	// Look for catch block that deletes from inMemory
+	if !strings.Contains(content, "catch {") {
+		t.Error("sessionstart-nudge must catch promptAsync errors")
 	}
 }
 

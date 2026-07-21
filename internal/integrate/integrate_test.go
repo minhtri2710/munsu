@@ -1506,4 +1506,261 @@ func TestPiCapSessionStartWiring(t *testing.T) {
 	if !strings.Contains(content, "gate_refused") {
 		t.Error("Pi extension must check gate_refused before session-start")
 	}
+}
+
+// --- Harness install/status/repair parity tests ---
+
+// TestCodexStatusDriftDetection tests that install → status=installed
+// → remove hook → drifted for Codex hooks.json CapSessionStart artifact.
+func TestCodexStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	scope := ScopeProject
+
+	// Install Codex hooks
+	result, err := Install(homeDir, projectDir, "codex", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "codex", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Remove SessionStart hooks from target file
+	targetPath := filepath.Join(projectDir, ".codex", "hooks.json")
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	hooks := parsed["hooks"].(map[string]interface{})
+	delete(hooks, "SessionStart")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should report drifted
+	status, err = Status(homeDir, projectDir, "codex", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook removal")
+	}
+
+	// Repair should fix drift
+	result, err = Repair(homeDir, projectDir, "codex", scope, false)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+	if result.State != "repair" {
+		t.Fatalf("expected repair, got %q", result.State)
+	}
+
+	// Status should report installed again
+	status, err = Status(homeDir, projectDir, "codex", scope)
+	if err != nil {
+		t.Fatalf("Status after repair failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
+	}
+}
+
+// TestGrokStatusDriftDetection tests that install → status → remove hook → drifted
+// for Grok fm-primary-sessionstart-nudge.json CapSessionStart artifact.
+func TestGrokStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	scope := ScopeProject
+
+	// Install Grok hooks
+	result, err := Install(homeDir, projectDir, "grok", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "grok", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Remove the sessionstart-nudge hook file
+	sessionstartPath := filepath.Join(projectDir, ".grok", "hooks", "fm-primary-sessionstart-nudge.json")
+	if err := os.Remove(sessionstartPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should report drifted (missing CapSessionStart artifact)
+	status, err = Status(homeDir, projectDir, "grok", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook file removal")
+	}
+
+	// Repair should fix drift
+	result, err = Repair(homeDir, projectDir, "grok", scope, false)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+	if result.State != "repair" {
+		t.Fatalf("expected repair state, got %q", result.State)
+	}
+
+	// Status should report installed again
+	status, err = Status(homeDir, projectDir, "grok", scope)
+	if err != nil {
+		t.Fatalf("Status after repair failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
+	}
+}
+
+// TestAgyStatusDriftDetection tests that install → status → modify hooks.json
+// → drifted for Agy munsu-sessionstart-nudge CapSessionStart artifact.
+func TestAgyStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	scope := ScopeProject
+
+	// Install Agy hooks
+	result, err := Install(homeDir, projectDir, "agy", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "agy", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Remove munsu-sessionstart-nudge from hooks.json
+	targetPath := filepath.Join(projectDir, ".agents", "hooks.json")
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	delete(parsed, "munsu-sessionstart-nudge")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should report drifted
+	status, err = Status(homeDir, projectDir, "agy", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook removal")
+	}
+
+	// Repair should fix drift
+	result, err = Repair(homeDir, projectDir, "agy", scope, false)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+	if result.State != "repair" {
+		t.Fatalf("expected repair, got %q", result.State)
+	}
+
+	// Status should report installed again
+	status, err = Status(homeDir, projectDir, "agy", scope)
+	if err != nil {
+		t.Fatalf("Status after repair failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
+	}
 } 
