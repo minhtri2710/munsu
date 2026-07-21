@@ -254,6 +254,39 @@ func MaterialStates(state string) bool {
 	}
 }
 
+// MaterialReportExists returns true if the task has a material status line
+// (done, failed, needs-decision, blocked) in its status file.
+func MaterialReportExists(homeDir, taskID string) bool {
+	statusPath := filepath.Join(homeDir, "state", taskID+".status")
+	f, err := os.Open(statusPath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var lastLine string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lastLine = line
+		}
+	}
+	if lastLine == "" {
+		return false
+	}
+	return MaterialStates(lineVerb(lastLine))
+}
+
+// lineVerb extracts the leading verb from a status line.
+func lineVerb(line string) string {
+	before, _, _ := strings.Cut(line, ":")
+	if idx := strings.Index(before, "[key="); idx >= 0 {
+		before = strings.TrimSpace(before[:idx])
+	}
+	return strings.TrimSpace(before)
+}
+
 // parseInt parses an int64 from a string; returns 0 on failure.
 func parseInt(s string) int64 {
 	var n int64

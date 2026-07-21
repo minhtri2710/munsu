@@ -63,7 +63,19 @@ func Run(opts Options) (*TeardownResult, error) {
 		}
 		result.Proofs = append(result.Proofs, proofs...)
 		for _, p := range proofs {
-			result.Steps = append(result.Steps, "proof: "+p)
+result.Steps = append(result.Steps, "proof: "+p)
+		}
+	}
+
+	// Step 0: Terminal uplink continuity check
+	// Before any destructive teardown, ensure material terminal reports are
+	// durably acknowledged. If the ReportRelay obligation is still open and
+	// the task has material status (done/failed/blocked/needs-decision),
+	// fail closed — the parent supervisor must receive confirmation before
+	// local artifacts are removed. Use --force to override.
+	if !opts.Force {
+		if err := uplinkCheck(opts); err != nil {
+			return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 		}
 	}
 
@@ -514,4 +526,42 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 			result.Steps = append(result.Steps, fmt.Sprintf("warning: event log: %v", err))
 		}
 	}
+}
+
+// uplinkCheck verifies terminal uplink continuity before teardown removes
+// status/meta artifacts. It ensures material soldier reports are durably
+// acknowledged by the parent supervisor before local cleanup proceeds.
+//
+// If the task has material status (done/failed/blocked/needs-decision) AND the
+// ReportRelay obligation is still open, the check fails closed. This prevents
+// teardown from removing evidence that the parent supervisor has not yet seen.
+//
+// The check is idempotent after ReportRelay is completed. Use --force to bypass.
+func uplinkCheck(opts Options) error {
+	// Check if ReportRelay obligation is still open.
+	obligations, err := turnend.LoadObligations(opts.HomeDir, turnend.RoleSoldier)
+	if err != nil {
+		return fmt.Errorf("reading obligations: %w", err)
+	}
+
+	var reportRelayOpen bool
+	for _, o := range obligations {
+		if o.Kind == turnend.ReportRelay && o.State == turnend.StateOpen {
+			reportRelayOpen = true
+			break
+		}
+	}
+
+	if !reportRelayOpen {
+		return nil
+	}
+
+	// ReportRelay is open. Check if the task has material status.
+	if !turnend.MaterialReportExists(opts.HomeDir, opts.ID) {
+		// No material report means no uplink to worry about.
+		return nil
+	}
+
+	// Material report exists AND ReportRelay is still open — fail closed.
+	return fmt.Errorf("terminal report-relay not acknowledged: material status exists but ReportRelay obligation is still open (use --force to override, or run 'munsu turnend complete report-relay')")
 }

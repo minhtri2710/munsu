@@ -319,3 +319,68 @@ func TestSoldierObligations(t *testing.T) {
 		t.Errorf("soldier after clear: got %d obligations, want 0", len(loaded))
 	}
 }
+
+func TestMaterialReportExists(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	taskID := "test-task"
+
+	// No status file → no material report
+	if MaterialReportExists(home, taskID) {
+		t.Errorf("expected false for missing status file")
+	}
+
+	// Write a non-material status line
+	statusPath := filepath.Join(stateDir, taskID+".status")
+	os.WriteFile(statusPath, []byte("working: in progress\n"), 0644)
+	if MaterialReportExists(home, taskID) {
+		t.Errorf("expected false for non-material status")
+	}
+
+	// Write a material status line (done)
+	os.WriteFile(statusPath, []byte("working: in progress\ndone: task complete\n"), 0644)
+	if !MaterialReportExists(home, taskID) {
+		t.Errorf("expected true for material done status")
+	}
+
+	// Test with failed
+	os.WriteFile(statusPath, []byte("failed: something broke\n"), 0644)
+	if !MaterialReportExists(home, taskID) {
+		t.Errorf("expected true for material failed status")
+	}
+
+	// Test with needs-decision (keyed)
+	os.WriteFile(statusPath, []byte("needs-decision [key=approach]: pick approach\n"), 0644)
+	if !MaterialReportExists(home, taskID) {
+		t.Errorf("expected true for material needs-decision status")
+	}
+
+	// Test with blocked
+	os.WriteFile(statusPath, []byte("blocked: waiting for review\n"), 0644)
+	if !MaterialReportExists(home, taskID) {
+		t.Errorf("expected true for material blocked status")
+	}
+}
+
+func TestLineVerb(t *testing.T) {
+	tests := []struct {
+		line string
+		want string
+	}{
+		{"done: task complete", "done"},
+		{"failed: something broke", "failed"},
+		{"working [key=phase1]: Phase 1", "working"},
+		{"needs-decision [key=approach]: Pick approach", "needs-decision"},
+		{"blocked: waiting", "blocked"},
+		{"resolved [key=approach]: Chose React", "resolved"},
+		{"paused: waiting", "paused"},
+	}
+	for _, tt := range tests {
+		got := lineVerb(tt.line)
+		if got != tt.want {
+			t.Errorf("lineVerb(%q) = %q, want %q", tt.line, got, tt.want)
+		}
+	}
+}

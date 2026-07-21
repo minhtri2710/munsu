@@ -10,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
+	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -574,5 +575,128 @@ func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
 		if strings.Contains(step, "closed keyed phase") {
 			t.Errorf("unexpected phase close with no status file: %s", step)
 		}
+	}
+}
+
+func TestUplinkCheck_NoMaterialStatusPasses(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	id := "test-task"
+	metaContent := "kind=ship\nwindow=@1\n"
+	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
+
+	// No status file → no material report → should pass
+	err := uplinkCheck(Options{HomeDir: home, ID: id})
+	if err != nil {
+		t.Fatalf("uplinkCheck should pass without status file: %v", err)
+	}
+
+	// Non-material status → should pass
+	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("working: in progress\n"), 0644)
+	err = uplinkCheck(Options{HomeDir: home, ID: id})
+	if err != nil {
+		t.Fatalf("uplinkCheck should pass with non-material status: %v", err)
+	}
+}
+
+func TestUplinkCheck_MaterialStatusWithoutReportRelayFails(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	id := "test-task"
+	metaContent := "kind=ship\nwindow=@1\n"
+	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
+
+	// Write material status (ReportRelay obligation is open by default for soldiers)
+	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
+
+	// uplinkCheck should fail: material status + open ReportRelay
+	err := uplinkCheck(Options{HomeDir: home, ID: id})
+	if err == nil {
+		t.Fatal("uplinkCheck should fail with material status and open ReportRelay")
+	}
+	if !strings.Contains(err.Error(), "report-relay") {
+		t.Errorf("error should mention report-relay: %v", err)
+	}
+}
+
+func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	id := "test-task"
+	metaContent := "kind=ship\nwindow=@1\n"
+	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
+
+	// Write material status
+	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
+
+	// Complete the ReportRelay obligation first
+	found, err := turnend.CompleteObligation(home, turnend.RoleSoldier, turnend.ReportRelay)
+	if err != nil {
+		t.Fatalf("CompleteObligation error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected to find ReportRelay to complete")
+	}
+
+	// Now uplinkCheck should pass: material status but ReportRelay is closed
+	err = uplinkCheck(Options{HomeDir: home, ID: id})
+	if err != nil {
+		t.Fatalf("uplinkCheck should pass after ReportRelay completed: %v", err)
+	}
+}
+
+func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Create report dir so scout safety check passes
+	reportDir := filepath.Join(home, "data", "test-uplink-fail")
+	os.MkdirAll(reportDir, 0755)
+	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings\n"), 0644)
+
+	id := "test-uplink-fail"
+	metaContent := "kind=scout\nwindow=@1\n"
+	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
+
+	// Write material done status. ReportRelay is open by default for soldiers.
+	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
+
+	// Teardown should fail because uplink is not acknowledged
+	_, err := Run(Options{HomeDir: home, ID: id, Force: false})
+	if err == nil {
+		t.Fatal("teardown should fail with material status and open ReportRelay")
+	}
+	if !strings.Contains(err.Error(), "report-relay") {
+		t.Errorf("error should mention report-relay: %v", err)
+	}
+}
+
+func TestRun_TeardownForceSkipsUplinkCheck(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	id := "test-uplink-force"
+	metaContent := "kind=scout\nwindow=@1\n"
+	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
+
+	// Write material status with open ReportRelay
+	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
+
+	// With --force, teardown should proceed past uplink check
+	// (will fail at session/return steps but not at uplink)
+	result, err := Run(Options{HomeDir: home, ID: id, Force: true})
+	if err != nil {
+		t.Fatalf("with --force should skip uplink check: %v", err)
+	}
+	if len(result.Steps) == 0 {
+		t.Error("expected some teardown steps")
 	}
 }
