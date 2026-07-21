@@ -8,23 +8,23 @@ import (
 
 func TestObligationsByRole(t *testing.T) {
 	tests := []struct {
-		role     Role
-		want     int
+		role      Role
+		want      int
 		wantKinds []ObligationKind
 	}{
 		{
-			role:     RoleGeneral,
-			want:     1,
+			role:      RoleGeneral,
+			want:      1,
 			wantKinds: []ObligationKind{Cleanup},
 		},
 		{
-			role:     RoleCaptain,
-			want:     2,
+			role:      RoleCaptain,
+			want:      2,
 			wantKinds: []ObligationKind{ReportRelay, Cleanup},
 		},
 		{
-			role:     RoleSoldier,
-			want:     2,
+			role:      RoleSoldier,
+			want:      2,
 			wantKinds: []ObligationKind{ReportRelay, Cleanup},
 		},
 	}
@@ -327,39 +327,63 @@ func TestMaterialReportExists(t *testing.T) {
 
 	taskID := "test-task"
 
-	// No status file → no material report
-	if MaterialReportExists(home, taskID) {
+	// No status file → no material report, no error
+	has, err := MaterialReportExists(home, taskID)
+	if err != nil {
+		t.Fatalf("unexpected error for missing status: %v", err)
+	}
+	if has {
 		t.Errorf("expected false for missing status file")
 	}
 
 	// Write a non-material status line
 	statusPath := filepath.Join(stateDir, taskID+".status")
 	os.WriteFile(statusPath, []byte("working: in progress\n"), 0644)
-	if MaterialReportExists(home, taskID) {
+	has, err = MaterialReportExists(home, taskID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if has {
 		t.Errorf("expected false for non-material status")
 	}
 
 	// Write a material status line (done)
 	os.WriteFile(statusPath, []byte("working: in progress\ndone: task complete\n"), 0644)
-	if !MaterialReportExists(home, taskID) {
+	has, err = MaterialReportExists(home, taskID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
 		t.Errorf("expected true for material done status")
 	}
 
 	// Test with failed
 	os.WriteFile(statusPath, []byte("failed: something broke\n"), 0644)
-	if !MaterialReportExists(home, taskID) {
+	has, err = MaterialReportExists(home, taskID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
 		t.Errorf("expected true for material failed status")
 	}
 
 	// Test with needs-decision (keyed)
 	os.WriteFile(statusPath, []byte("needs-decision [key=approach]: pick approach\n"), 0644)
-	if !MaterialReportExists(home, taskID) {
+	has, err = MaterialReportExists(home, taskID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
 		t.Errorf("expected true for material needs-decision status")
 	}
 
 	// Test with blocked
 	os.WriteFile(statusPath, []byte("blocked: waiting for review\n"), 0644)
-	if !MaterialReportExists(home, taskID) {
+	has, err = MaterialReportExists(home, taskID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
 		t.Errorf("expected true for material blocked status")
 	}
 }

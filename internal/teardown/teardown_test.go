@@ -587,13 +587,17 @@ func TestUplinkCheck_NoMaterialStatusPasses(t *testing.T) {
 	metaContent := "kind=ship\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
-	// No status file → no material report → should pass
+	// No status file, no per-task obligations → should pass
 	err := uplinkCheck(Options{HomeDir: home, ID: id})
 	if err != nil {
 		t.Fatalf("uplinkCheck should pass without status file: %v", err)
 	}
 
-	// Non-material status → should pass
+	// Non-material status → should pass even with per-task obligations
+	// Must init per-task obligations first for uplinkCheck to see them
+	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+		t.Fatalf("init obligations: %v", err)
+	}
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("working: in progress\n"), 0644)
 	err = uplinkCheck(Options{HomeDir: home, ID: id})
 	if err != nil {
@@ -610,7 +614,12 @@ func TestUplinkCheck_MaterialStatusWithoutReportRelayFails(t *testing.T) {
 	metaContent := "kind=ship\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
-	// Write material status (ReportRelay obligation is open by default for soldiers)
+	// Init per-task obligations so uplinkCheck checks this task
+	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+		t.Fatalf("init obligations: %v", err)
+	}
+
+	// Write material status
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 
 	// uplinkCheck should fail: material status + open ReportRelay
@@ -632,13 +641,18 @@ func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) 
 	metaContent := "kind=ship\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
+	// Init per-task obligations
+	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+		t.Fatalf("init obligations: %v", err)
+	}
+
 	// Write material status
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 
-	// Complete the ReportRelay obligation first
-	found, err := turnend.CompleteObligation(home, turnend.RoleSoldier, turnend.ReportRelay)
+	// Complete the per-task ReportRelay obligation
+	found, err := turnend.CompleteTaskObligation(home, id, turnend.ReportRelay)
 	if err != nil {
-		t.Fatalf("CompleteObligation error: %v", err)
+		t.Fatalf("CompleteTaskObligation error: %v", err)
 	}
 	if !found {
 		t.Fatal("expected to find ReportRelay to complete")
@@ -665,7 +679,12 @@ func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
 	metaContent := "kind=scout\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
-	// Write material done status. ReportRelay is open by default for soldiers.
+	// Init per-task obligations
+	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+		t.Fatalf("init obligations: %v", err)
+	}
+
+	// Write material done status.
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 
 	// Teardown should fail because uplink is not acknowledged
@@ -678,25 +697,50 @@ func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
 	}
 }
 
-func TestRun_TeardownForceSkipsUplinkCheck(t *testing.T) {
+func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
+	receiptsDir := filepath.Join(home, "state", ".terminal-receipts")
 	os.MkdirAll(stateDir, 0755)
+	os.MkdirAll(receiptsDir, 0755)
 
 	id := "test-uplink-force"
 	metaContent := "kind=scout\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
-	// Write material status with open ReportRelay
+	// Write material status
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
+	// Write a receipt file
+	os.WriteFile(filepath.Join(receiptsDir, id+".uplink.receipt"), []byte("state=done\n"), 0644)
 
-	// With --force, teardown should proceed past uplink check
-	// (will fail at session/return steps but not at uplink)
+	// With --force, teardown should proceed but preserve evidence
 	result, err := Run(Options{HomeDir: home, ID: id, Force: true})
 	if err != nil {
-		t.Fatalf("with --force should skip uplink check: %v", err)
+		t.Fatalf("with --force should preserve evidence: %v", err)
 	}
-	if len(result.Steps) == 0 {
-		t.Error("expected some teardown steps")
+
+	// Verify evidence was preserved to .backup/
+	backupPath := filepath.Join(stateDir, ".backup", id, id+".status")
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("evidence should be preserved at %s: %v", backupPath, err)
 	}
+	// Verify receipt was also preserved
+	backupReceipt := filepath.Join(stateDir, ".backup", id, id+".uplink.receipt")
+	if _, err := os.Stat(backupReceipt); err != nil {
+		t.Fatalf("receipt evidence should be preserved at %s: %v", backupReceipt, err)
+	}
+
+	if !hasStepContaining(result.Steps, ".backup") {
+		t.Errorf("result.Steps should mention .backup backup: %v", result.Steps)
+	}
+}
+
+// hasStepContaining returns true if any step in the list contains substr.
+func hasStepContaining(steps []string, substr string) bool {
+	for _, s := range steps {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
 }

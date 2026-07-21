@@ -129,6 +129,7 @@ func outcomeFromFFError(err error) UpdateOutcome {
 		return Diverged
 	}
 }
+
 // so Launch buildLaunchArgs can always pass -e for munsu integrate + captain-compat names.
 // Idempotent. Soft-skips when pi is unavailable (non-pi fleets / offline test hosts).
 func EnsureCaptainPiExtensions(captainHome string) error {
@@ -370,8 +371,6 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	return nil
 }
 
-
-
 // removeExistingWorktree removes a managed worktree at homePath if it exists.
 // Errors are logged but not returned — best-effort cleanup before replacement.
 func removeExistingWorktree(homePath, repoPath string) {
@@ -426,7 +425,6 @@ func validateWorktreeRemote(repoPath, parentHome string) error {
 	return nil
 }
 
-
 // rollbackWorktree cleans up partial provisioning artifacts on failure.
 // Removes the worktree if created, and unregisters if registered.
 func rollbackWorktree(worktreeCreated bool, absHome, absRepo string, registered bool, parentHome, id string) {
@@ -441,6 +439,7 @@ func rollbackWorktree(worktreeCreated bool, absHome, absRepo string, registered 
 		}
 	}
 }
+
 // canonicalHome returns the fully-resolved, absolute path for homePath.
 // Fails closed: any resolution error returns an error — no raw fallback.
 func canonicalHome(homePath string) (string, error) {
@@ -1967,6 +1966,19 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent"})
+		}
+
+		// g. Terminal receipt relay (Captain → General)
+		// Scans the captain home for un-acked soldier terminal reports
+		// and relays each one to the General's state.
+		relayed, relayErr := RelayTerminalReceipts(sm.Home, parentHome)
+		if relayErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeFailed, Detail: relayErr.Error()})
+			errs = append(errs, fmt.Sprintf("%s: terminal relay failed: %v", sm.ID, relayErr))
+		} else if relayed > 0 {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: fmt.Sprintf("relayed %d receipt(s) to General", relayed)})
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeSkipped, Detail: "no pending receipts"})
 		}
 
 		// Watcher status check and reporting.

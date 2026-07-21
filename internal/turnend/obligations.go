@@ -4,6 +4,13 @@
 // and are persisted under the munsu home so they survive process restarts.
 // Obligations differ by role: general, captain, and soldier each have a
 // distinct set of obligations.
+//
+// Task+terminal-key binding:
+//   - Per-task obligation files replace per-role global files for soldier
+//     ReportRelay, scoping the relay obligation to the exact task+key.
+//   - Durable relay receipts in captain-owned state ensure Soldier->Captain
+//     ack survives restart.
+//   - Captain reconcile/turn-end relays to General and acks the exact task/key.
 package turnend
 
 import (
@@ -29,11 +36,9 @@ type ObligationKind string
 
 const (
 	// ReportRelay: material status change must be relayed to the parent channel.
-	// Applies to captains (relay to general) and soldiers (relay to captain/general).
 	ReportRelay ObligationKind = "report-relay"
 
 	// Cleanup: temp artifacts, stale turnend markers, closed-key hygiene.
-	// Applies to all roles.
 	Cleanup ObligationKind = "cleanup"
 )
 
@@ -41,23 +46,22 @@ const (
 type State string
 
 const (
-	StateOpen    State = "open"
-	StateClosed  State = "closed"
+	StateOpen   State = "open"
+	StateClosed State = "closed"
 )
 
 // Obligation is a single turn-end obligation.
 type Obligation struct {
 	Kind      ObligationKind `json:"kind"`
 	State     State          `json:"state"`
+	Key       string         `json:"key,omitempty"`     // terminal key bound to this obligation
+	TaskID    string         `json:"task_id,omitempty"` // task ID for per-task obligations
 	Detail    string         `json:"detail,omitempty"`
 	CreatedAt int64          `json:"created_at"` // unix nanos
 	ClosedAt  int64          `json:"closed_at,omitempty"`
 }
 
 // Obligations returns the set of obligations for the given role.
-// The returned list is the role's canonical obligation set — all obligations
-// start in StateOpen. Consumers should call LoadObligations to get the
-// persisted state of each obligation.
 func Obligations(role Role) []Obligation {
 	now := time.Now().UnixNano()
 	switch role {
@@ -105,93 +109,78 @@ func Obligations(role Role) []Obligation {
 	}
 }
 
-// --- Durable persistence ---
+// --- Per-task obligation persistence ---
+// Per-task obligations bind ReportRelay to the exact taskID + terminalKey.
+// File: state/.obligations/<taskID>.obligations
 
 const obligationsDir = "state/.obligations"
 
-// obligationsPath returns the per-role durable obligations file path.
-func obligationsPath(homeDir string, role Role) string {
-	return filepath.Join(homeDir, obligationsDir, string(role)+".obligations")
+// taskObligationsPath returns the per-task obligations file path.
+func taskObligationsPath(homeDir, taskID string) string {
+	return filepath.Join(homeDir, obligationsDir, taskID+".obligations")
 }
 
-// LoadObligations reads the persisted obligation state for the given role.
-// Returns the persisted obligations, or the default set if no persisted state
-// exists. An empty/zero-length file is treated as "all closed" — returns nil.
-func LoadObligations(homeDir string, role Role) ([]Obligation, error) {
-	p := obligationsPath(homeDir, role)
+// InitTaskObligations creates per-task soldier obligations for a given taskID.
+// Idempotent: no-op if per-task file already exists.
+func InitTaskObligations(homeDir, taskID, termKey string) error {
+	p := taskObligationsPath(homeDir, taskID)
+	if _, err := os.Stat(p); err == nil {
+		return nil // already exists — idempotent
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("creating obligations dir: %w", err)
+	}
+	now := time.Now().UnixNano()
+	obligations := []Obligation{
+		{
+			Kind:      ReportRelay,
+			State:     StateOpen,
+			Key:       termKey,
+			TaskID:    taskID,
+			Detail:    "relay material terminal report for task/key",
+			CreatedAt: now,
+		},
+		{
+			Kind:      Cleanup,
+			State:     StateOpen,
+			Key:       "",
+			TaskID:    taskID,
+			Detail:    "clean temp artifacts, stale turnend markers, closed-key hygiene",
+			CreatedAt: now,
+		},
+	}
+	return SaveTaskObligations(homeDir, taskID, obligations)
+}
+
+// LoadTaskObligations reads the per-task obligation state.
+// Returns nil, nil if no per-task file exists.
+func LoadTaskObligations(homeDir, taskID string) ([]Obligation, error) {
+	p := taskObligationsPath(homeDir, taskID)
 	f, err := os.Open(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No persisted state — return the canonical default set.
-			return Obligations(role), nil
+			return nil, nil
 		}
-		return nil, fmt.Errorf("reading obligations for %s: %w", role, err)
+		return nil, fmt.Errorf("reading task obligations %s: %w", taskID, err)
 	}
 	defer f.Close()
 
-	var obligations []Obligation
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// Format: kind\tstate\tdetail\tcreated_at\tclosed_at
-		parts := strings.SplitN(line, "\t", 5)
-		if len(parts) < 4 {
-			continue
-		}
-		createdAt := parseInt(parts[3])
-		var closedAt int64
-		if len(parts) >= 5 {
-			closedAt = parseInt(parts[4])
-		}
-		obligations = append(obligations, Obligation{
-			Kind:      ObligationKind(parts[0]),
-			State:     State(parts[1]),
-			Detail:    parts[2],
-			CreatedAt: createdAt,
-			ClosedAt:  closedAt,
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning obligations for %s: %w", role, err)
-	}
-
-	// Empty file — all obligations closed.
-	if len(obligations) == 0 {
-		return nil, nil
-	}
-
-	return obligations, nil
+	return parseObligations(f)
 }
 
-// SaveObligations persists the obligation state for the given role.
-func SaveObligations(homeDir string, role Role, obligations []Obligation) error {
-	p := obligationsPath(homeDir, role)
-	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating obligations dir: %w", err)
-	}
-
-	var b strings.Builder
-	for _, o := range obligations {
-		b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%d\t%d\n", o.Kind, o.State, o.Detail, o.CreatedAt, o.ClosedAt))
-	}
-
-	return os.WriteFile(p, []byte(b.String()), 0644)
+// SaveTaskObligations persists the per-task obligation state.
+func SaveTaskObligations(homeDir, taskID string, obligations []Obligation) error {
+	p := taskObligationsPath(homeDir, taskID)
+	return writeObligationsFile(p, obligations)
 }
 
-// CompleteObligation marks an obligation of the given kind as closed.
-// It loads the current persisted state, finds the matching open obligation,
-// marks it closed, and saves. Returns true if a matching open obligation was
-// found and closed, false if none was found.
-func CompleteObligation(homeDir string, role Role, kind ObligationKind) (bool, error) {
-	obligations, err := LoadObligations(homeDir, role)
+// CompleteTaskObligation marks an obligation of the given kind as closed
+// for the specific task. Returns true if a matching open obligation was found.
+func CompleteTaskObligation(homeDir, taskID string, kind ObligationKind) (bool, error) {
+	obligations, err := LoadTaskObligations(homeDir, taskID)
 	if err != nil {
 		return false, err
 	}
-
 	now := time.Now().UnixNano()
 	found := false
 	for i, o := range obligations {
@@ -201,42 +190,238 @@ func CompleteObligation(homeDir string, role Role, kind ObligationKind) (bool, e
 			found = true
 		}
 	}
-
 	if !found {
 		return false, nil
 	}
-
-	if err := SaveObligations(homeDir, role, obligations); err != nil {
-		return false, err
-	}
-
-	return true, nil
+	return true, SaveTaskObligations(homeDir, taskID, obligations)
 }
 
-// ClearCompleted removes all closed obligations from the persisted state,
-// leaving only open obligations. This aligns with teardown cleanup and
-// prevents accumulation of stale closed records.
-func ClearCompleted(homeDir string, role Role) error {
-	obligations, err := LoadObligations(homeDir, role)
+// IsTaskReportRelayOpen returns true if the task has an open ReportRelay obligation.
+func IsTaskReportRelayOpen(homeDir, taskID string) (bool, error) {
+	obligations, err := LoadTaskObligations(homeDir, taskID)
+	if err != nil {
+		return false, err
+	}
+	for _, o := range obligations {
+		if o.Kind == ReportRelay && o.State == StateOpen {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ClearTaskCompleted removes all closed obligations for a specific task.
+func ClearTaskCompleted(homeDir, taskID string) error {
+	obligations, err := LoadTaskObligations(homeDir, taskID)
 	if err != nil {
 		return err
 	}
-
 	var open []Obligation
 	for _, o := range obligations {
 		if o.State == StateOpen {
 			open = append(open, o)
 		}
 	}
+	return SaveTaskObligations(homeDir, taskID, open)
+}
 
+// ClearTaskAll removes ALL obligation state for the given task.
+func ClearTaskAll(homeDir, taskID string) error {
+	err := os.Remove(taskObligationsPath(homeDir, taskID))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+// --- Durable relay receipts ---
+// Receipt: Soldier->Captain durable proof that a material terminal report
+// was sent. Stored in captain-owned state/.terminal-receipts/<taskID>.<key>.receipt
+// Ack: Captain marks relay to General by writing <taskID>.<key>.ack
+
+const receiptsDir = "state/.terminal-receipts"
+
+// ReceiptDir returns the receipts directory under the given home.
+func ReceiptDir(homeDir string) string {
+	return filepath.Join(homeDir, receiptsDir)
+}
+
+// ReceiptPath returns the path for a terminal receipt file.
+func ReceiptPath(homeDir, taskID, termKey string) string {
+	return filepath.Join(homeDir, receiptsDir, taskID+"."+termKey+".receipt")
+}
+
+// AckPath returns the path for an ack file marking a receipt as relayed.
+func AckPath(homeDir, taskID, termKey string) string {
+	return filepath.Join(homeDir, receiptsDir, taskID+"."+termKey+".ack")
+}
+
+// WriteReceipt writes a durable relay receipt for a terminal report.
+// The receipt is identified by taskID + termKey (terminal key).
+func WriteReceipt(homeDir, taskID, termKey, state, msg string) error {
+	p := ReceiptPath(homeDir, taskID, termKey)
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("creating receipts dir: %w", err)
+	}
+	content := fmt.Sprintf("task_id=%s\nkey=%s\nstate=%s\nmsg=%s\ntimestamp=%d\n",
+		taskID, termKey, state, msg, time.Now().UnixNano())
+	return os.WriteFile(p, []byte(content), 0644)
+}
+
+// IsReceiptAcked checks whether a terminal receipt has been acknowledged.
+func IsReceiptAcked(homeDir, taskID, termKey string) bool {
+	_, err := os.Stat(AckPath(homeDir, taskID, termKey))
+	return err == nil
+}
+
+// WriteAck marks a terminal receipt as acknowledged by the Captain.
+func WriteAck(homeDir, taskID, termKey string) error {
+	p := AckPath(homeDir, taskID, termKey)
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("creating receipts dir: %w", err)
+	}
+	content := fmt.Sprintf("task_id=%s\nkey=%s\nacked_at=%d\n",
+		taskID, termKey, time.Now().UnixNano())
+	return os.WriteFile(p, []byte(content), 0644)
+}
+
+// PendingReceipt represents one un-acked terminal receipt.
+type PendingReceipt struct {
+	TaskID  string
+	TermKey string
+	State   string
+}
+
+// ListPendingReceipts returns all receipt files without corresponding ack.
+func ListPendingReceipts(homeDir string) ([]PendingReceipt, error) {
+	dir := ReceiptDir(homeDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading receipts dir: %w", err)
+	}
+
+	var pending []PendingReceipt
+	seen := make(map[string]bool)
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".receipt") || e.IsDir() {
+			continue
+		}
+		core := strings.TrimSuffix(name, ".receipt")
+		taskID, termKey, ok := strings.Cut(core, ".")
+		if !ok || taskID == "" || termKey == "" {
+			continue
+		}
+		if IsReceiptAcked(homeDir, taskID, termKey) {
+			continue
+		}
+		key := taskID + "." + termKey
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		state := ""
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if k, v, ok := strings.Cut(line, "="); ok && k == "state" {
+					state = strings.TrimSpace(v)
+				}
+			}
+		}
+
+		pending = append(pending, PendingReceipt{
+			TaskID:  taskID,
+			TermKey: termKey,
+			State:   state,
+		})
+	}
+	return pending, nil
+}
+
+// ParseTermKey extracts the terminal [key=<slug>] from a status line.
+func ParseTermKey(line string) string {
+	_, key := parseKey(line)
+	return key
+}
+
+// --- Per-role obligation persistence (backward-compatible) ---
+
+// obligationsPath returns the per-role durable obligations file path.
+func obligationsPath(homeDir string, role Role) string {
+	return filepath.Join(homeDir, obligationsDir, string(role)+".obligations")
+}
+
+// LoadObligations reads the persisted obligation state for the given role.
+// Returns the persisted obligations, or the default set if no persisted state
+// exists. An empty/zero-length file returns nil.
+func LoadObligations(homeDir string, role Role) ([]Obligation, error) {
+	p := obligationsPath(homeDir, role)
+	f, err := os.Open(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Obligations(role), nil
+		}
+		return nil, fmt.Errorf("reading obligations for %s: %w", role, err)
+	}
+	defer f.Close()
+	obligations, err := parseObligations(f)
+	if err != nil {
+		return nil, err
+	}
+	if len(obligations) == 0 {
+		return nil, nil
+	}
+	return obligations, nil
+}
+
+// SaveObligations persists the obligation state for the given role.
+func SaveObligations(homeDir string, role Role, obligations []Obligation) error {
+	return writeObligationsFile(obligationsPath(homeDir, role), obligations)
+}
+
+// CompleteObligation marks an obligation of the given kind as closed for a role.
+func CompleteObligation(homeDir string, role Role, kind ObligationKind) (bool, error) {
+	obligations, err := LoadObligations(homeDir, role)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UnixNano()
+	found := false
+	for i, o := range obligations {
+		if o.Kind == kind && o.State == StateOpen {
+			obligations[i].State = StateClosed
+			obligations[i].ClosedAt = now
+			found = true
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	return true, SaveObligations(homeDir, role, obligations)
+}
+
+// ClearCompleted removes all closed obligations from persisted state.
+func ClearCompleted(homeDir string, role Role) error {
+	obligations, err := LoadObligations(homeDir, role)
+	if err != nil {
+		return err
+	}
+	var open []Obligation
+	for _, o := range obligations {
+		if o.State == StateOpen {
+			open = append(open, o)
+		}
+	}
 	return SaveObligations(homeDir, role, open)
 }
 
 // ClearAll removes ALL persisted obligation state for the given role.
-// Used during full teardown when the session/task is being destroyed.
 func ClearAll(homeDir string, role Role) error {
-	p := obligationsPath(homeDir, role)
-	err := os.Remove(p)
+	err := os.Remove(obligationsPath(homeDir, role))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -244,7 +429,7 @@ func ClearAll(homeDir string, role Role) error {
 }
 
 // MaterialStates returns true if the given state is a material state that
-// warrants report-relay. This mirrors the materialStates set in the report CLI.
+// warrants report-relay.
 func MaterialStates(state string) bool {
 	switch state {
 	case "done", "failed", "needs-decision", "blocked":
@@ -256,11 +441,15 @@ func MaterialStates(state string) bool {
 
 // MaterialReportExists returns true if the task has a material status line
 // (done, failed, needs-decision, blocked) in its status file.
-func MaterialReportExists(homeDir, taskID string) bool {
+// FAILS CLOSED: returns error on unreadable status.
+func MaterialReportExists(homeDir, taskID string) (bool, error) {
 	statusPath := filepath.Join(homeDir, "state", taskID+".status")
 	f, err := os.Open(statusPath)
 	if err != nil {
-		return false
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading status file %s: %w", statusPath, err)
 	}
 	defer f.Close()
 
@@ -272,10 +461,13 @@ func MaterialReportExists(homeDir, taskID string) bool {
 			lastLine = line
 		}
 	}
-	if lastLine == "" {
-		return false
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("scanning status file %s: %w", statusPath, err)
 	}
-	return MaterialStates(lineVerb(lastLine))
+	if lastLine == "" {
+		return false, nil
+	}
+	return MaterialStates(lineVerb(lastLine)), nil
 }
 
 // lineVerb extracts the leading verb from a status line.
@@ -285,6 +477,88 @@ func lineVerb(line string) string {
 		before = strings.TrimSpace(before[:idx])
 	}
 	return strings.TrimSpace(before)
+}
+
+// parseObligations reads obligation entries from a file.
+// Format: kind\tstate\tkey\tdetail\tcreated_at\tclosed_at (new)
+//
+//	or: kind\tstate\tdetail\tcreated_at\tclosed_at (old backward-compat)
+func parseObligations(f *os.File) ([]Obligation, error) {
+	var obligations []Obligation
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 6)
+		if len(parts) < 4 {
+			continue
+		}
+		o := Obligation{
+			Kind:  ObligationKind(parts[0]),
+			State: State(parts[1]),
+		}
+		if !strings.Contains(parts[2], " ") && len(parts) >= 6 {
+			// New 6-field format: kind\tstate\tkey\tdetail\tcreated_at\tclosed_at
+			o.Key = parts[2]
+			o.Detail = parts[3]
+			o.CreatedAt = parseInt(parts[4])
+			o.ClosedAt = parseInt(parts[5])
+		} else {
+			// Old 4/5-field format: kind\tstate\tdetail\tcreated_at\tclosed_at
+			o.Detail = parts[2]
+			o.CreatedAt = parseInt(parts[3])
+			if len(parts) >= 5 {
+				o.ClosedAt = parseInt(parts[4])
+			}
+		}
+		obligations = append(obligations, o)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return obligations, nil
+}
+
+// writeObligationsFile serializes obligations to a file.
+func writeObligationsFile(p string, obligations []Obligation) error {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating obligations dir: %w", err)
+	}
+	var b strings.Builder
+	for _, o := range obligations {
+		if o.Key != "" {
+			b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%s\t%d\t%d\n",
+				o.Kind, o.State, o.Key, o.Detail, o.CreatedAt, o.ClosedAt))
+		} else {
+			b.WriteString(fmt.Sprintf("%s\t%s\t%s\t%d\t%d\n",
+				o.Kind, o.State, o.Detail, o.CreatedAt, o.ClosedAt))
+		}
+	}
+	return os.WriteFile(p, []byte(b.String()), 0644)
+}
+
+// parseKey extracts [key=<slug>] from a status line.
+func parseKey(line string) (string, string) {
+	startMarker := " [key="
+	idx := strings.LastIndex(line, startMarker)
+	if idx < 0 {
+		startMarker = "[key="
+		idx = strings.LastIndex(line, startMarker)
+	}
+	if idx >= 0 {
+		end := strings.Index(line[idx+len(startMarker):], "]")
+		if end >= 0 {
+			keyVal := line[idx+len(startMarker) : idx+len(startMarker)+end]
+			if keyVal != "" {
+				msg := strings.TrimSpace(line[:idx])
+				return msg, keyVal
+			}
+		}
+	}
+	return line, ""
 }
 
 // parseInt parses an int64 from a string; returns 0 on failure.
