@@ -673,6 +673,226 @@ func TestUpdateWithHandshake_ArmBackgroundFails(t *testing.T) {
 	}
 }
 
+// --- UpdateWithHandshakeEx tests ---
+
+// TestResolveBuildIdentity_PopulatesBoth verifies that resolveBuildIdentity
+// sets both InstalledVersion and InstalledCommitSHA from a commit string.
+func TestResolveBuildIdentity_PopulatesBoth(t *testing.T) {
+	snap := &WatcherSnapshot{}
+	resolveBuildIdentity(snap, "abc1234")
+	if snap.InstalledVersion != "0.1.0-dev+abc1234" {
+		t.Errorf("InstalledVersion = %q, want 0.1.0-dev+abc1234", snap.InstalledVersion)
+	}
+	if snap.InstalledCommitSHA != "abc1234" {
+		t.Errorf("InstalledCommitSHA = %q, want abc1234", snap.InstalledCommitSHA)
+	}
+}
+
+// TestResolveBuildIdentity_EmptyCommit verifies that an empty commit produces
+// an empty version string and empty commit SHA.
+func TestResolveBuildIdentity_EmptyCommit(t *testing.T) {
+	snap := &WatcherSnapshot{}
+	resolveBuildIdentity(snap, "")
+	if snap.InstalledVersion != "0.1.0-dev+" {
+		t.Errorf("InstalledVersion = %q, want 0.1.0-dev+", snap.InstalledVersion)
+	}
+	if snap.InstalledCommitSHA != "" {
+		t.Errorf("InstalledCommitSHA = %q, want empty", snap.InstalledCommitSHA)
+	}
+}
+
+// TestUpdateWithHandshakeEx_PopulatesInstalledCommitSHA verifies that when
+// UpdateWithHandshakeEx runs with a valid repo, both InstalledVersion and
+// InstalledCommitSHA are populated from the commit SHA.
+func TestUpdateWithHandshakeEx_PopulatesInstalledCommitSHA(t *testing.T) {
+	defer setHandshakeTimeout(100 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
+
+	home := t.TempDir()
+	repo := t.TempDir()
+	initMunsuRepo(t, repo, "main")
+
+	// Capture the expected commit.
+	expectedCommit := shortHEADFromCWD(t, repo)
+
+	// Override doUpdateIn to be a no-op (skip actual git fetch/build).
+	savedUpdateIn := doUpdateIn
+	doUpdateIn = func(string) error { return nil }
+	defer func() { doUpdateIn = savedUpdateIn }()
+
+	// No active watcher, so handshake will skip convergence.
+	snap, err := UpdateWithHandshakeEx(home, repo)
+	if err != nil {
+		t.Fatalf("UpdateWithHandshakeEx: %v", err)
+	}
+	if snap.Active {
+		t.Error("expected Active=false for empty home")
+	}
+	if snap.InstalledVersion != "0.1.0-dev+"+expectedCommit {
+		t.Errorf("InstalledVersion = %q, want 0.1.0-dev+%s", snap.InstalledVersion, expectedCommit)
+	}
+	if snap.InstalledCommitSHA != expectedCommit {
+		t.Errorf("InstalledCommitSHA = %q, want %q", snap.InstalledCommitSHA, expectedCommit)
+	}
+}
+
+// TestUpdateWithHandshakeEx_UpdateFailureNoConvergence verifies that when the
+// update step fails, no watcher convergence is attempted and the error is
+// propagated directly.
+func TestUpdateWithHandshakeEx_UpdateFailureNoConvergence(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	initMunsuRepo(t, repo, "main")
+
+	armCalled := false
+	savedUpdateIn := doUpdateIn
+	doUpdateIn = func(string) error {
+		return fmt.Errorf("build failed: test error")
+	}
+	defer func() { doUpdateIn = savedUpdateIn }()
+
+	savedArm := doArmBackground
+	doArmBackground = func(dir string, restart bool) error {
+		armCalled = true
+		return nil
+	}
+	defer func() { doArmBackground = savedArm }()
+
+	snap, err := UpdateWithHandshakeEx(home, repo)
+	if err == nil {
+		t.Fatal("expected error from UpdateWithHandshakeEx")
+	}
+	if !strings.Contains(err.Error(), "build failed: test error") {
+		t.Errorf("error should contain injected error: %v", err)
+	}
+	if armCalled {
+		t.Error("ArmBackground should not be called after update failure")
+	}
+	if snap.Active {
+		t.Error("expected Active=false when no watcher was set up")
+	}
+}
+
+// TestUpdateWithHandshakeEx_EmptyCommitFailsClosed verifies that an empty
+// desired commit SHA causes the handshake to fail closed even if a new
+// watcher identity appears.
+func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
+	defer setHandshakeTimeout(50 * time.Millisecond)()
+	defer setHeartBeatPoll(10 * time.Millisecond)()
+
+	home := t.TempDir()
+	repo := t.TempDir()
+	initMunsuRepo(t, repo, "main")
+
+	// Set up a fake active watcher.
+	id := supervision.NewIdentity(home)
+	id.BuildVersion = "0.1.0-dev+oldcommit"
+	id.CommitSHA = "oldcommit"
+	supervision.WriteIdentity(home, id)
+	lifecycle.WriteBeat(home)
+
+	savedUpdateIn := doUpdateIn
+	doUpdateIn = func(string) error { return nil }
+	defer func() { doUpdateIn = savedUpdateIn }()
+
+	// Override doArmBackground to start a new watcher with empty commit.
+	savedArm := doArmBackground
+	doArmBackground = func(dir string, restart bool) error {
+		// Start a subprocess that writes identity with empty commit SHA.
+		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperNewWatcher$")
+		cmd.Env = append(os.Environ(),
+			"GO_TEST_HELPER_NEW_WATCHER=1",
+			"GO_TEST_HELPER_HOME="+home,
+			"GO_TEST_HELPER_VERSION=0.1.0-dev+newcommit",
+			"GO_TEST_HELPER_COMMIT=",
+		)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		t.Cleanup(func() { cmd.Process.Kill() })
+		return nil
+	}
+	defer func() { doArmBackground = savedArm }()
+
+	_, err := UpdateWithHandshakeEx(home, repo)
+	if err == nil {
+		t.Fatal("expected error for empty desired commit, got nil")
+	}
+	// Must include convergence-failed message, not update error.
+	if !strings.Contains(err.Error(), "binary updated but watcher convergence failed") {
+		t.Errorf("error should mention convergence failure: %s", err.Error())
+	}
+	// The underlying handshake error should show identity with empty commit.
+	var he *HandshakeError
+	if errors.As(err, &he) {
+		if he.IdentityCommitSHA != "" {
+			t.Errorf("IdentityCommitSHA should be empty, got %q", he.IdentityCommitSHA)
+		}
+		if he.IdentityOK {
+			t.Error("IdentityOK should be false for empty commit in identity")
+		}
+	}
+}
+
+// TestUpdateWithHandshakeEx_ActiveWatcherHandshake verifies that when a
+// watcher is active, UpdateWithHandshakeEx restarts it and waits for the
+// new build identity. Uses a real subprocess for PID ownership validation,
+// mirroring the --repo path.
+func TestUpdateWithHandshakeEx_ActiveWatcherHandshake(t *testing.T) {
+	defer setHandshakeTimeout(2 * time.Second)()
+	defer setHeartBeatPoll(20 * time.Millisecond)()
+
+	home := t.TempDir()
+	repo := t.TempDir()
+	initMunsuRepo(t, repo, "main")
+
+	// Set up a fake active watcher.
+	id := supervision.NewIdentity(home)
+	supervision.WriteIdentity(home, id)
+	lifecycle.WriteBeat(home)
+
+	expectedCommit := shortHEADFromCWD(t, repo)
+
+	savedUpdateIn := doUpdateIn
+	doUpdateIn = func(string) error { return nil }
+	defer func() { doUpdateIn = savedUpdateIn }()
+
+	// Start subprocess helper for real PID ownership validation.
+	savedArm := doArmBackground
+	doArmBackground = func(dir string, restart bool) error {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperNewWatcher$")
+		cmd.Env = append(os.Environ(),
+			"GO_TEST_HELPER_NEW_WATCHER=1",
+			"GO_TEST_HELPER_HOME="+home,
+			"GO_TEST_HELPER_VERSION=0.1.0-dev+"+expectedCommit,
+			"GO_TEST_HELPER_COMMIT="+expectedCommit,
+		)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		t.Cleanup(func() { cmd.Process.Kill() })
+		return nil
+	}
+	defer func() { doArmBackground = savedArm }()
+
+	snap, err := UpdateWithHandshakeEx(home, repo)
+	if err != nil {
+		t.Fatalf("UpdateWithHandshakeEx: %v", err)
+	}
+	if !snap.Active {
+		t.Error("expected Active=true")
+	}
+	if snap.InstalledCommitSHA != expectedCommit {
+		t.Errorf("InstalledCommitSHA = %q, want %q", snap.InstalledCommitSHA, expectedCommit)
+	}
+	if snap.InstalledVersion != "0.1.0-dev+"+expectedCommit {
+		t.Errorf("InstalledVersion = %q, want 0.1.0-dev+%s", snap.InstalledVersion, expectedCommit)
+	}
+	if snap.OldPID != os.Getpid() {
+		t.Errorf("OldPID = %d, want %d", snap.OldPID, os.Getpid())
+	}
+}
+
 // TestHelperNewWatcher is a subprocess helper that writes a valid watcher
 // identity and beat from a separate process. Used by integration tests
 // that need a real PID for ownership validation.
