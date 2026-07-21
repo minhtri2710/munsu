@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // PreflightLevel indicates the status of a preflight readiness check.
@@ -44,6 +45,44 @@ var preflightAuthEnv = map[string][]string{
 	Agy:      {"ANTHROPIC_API_KEY"},
 }
 
+// piCredentialFile is a function that reports whether a Pi credential store file
+// exists as a regular user-readable file. It is a variable so tests can inject
+// a custom checker that uses temp directories instead of the real Pi config.
+// The callback receives the path that would be checked; return true when the
+// path exists, is a regular file, and is readable.
+// Security: never read, print, parse, or log the file contents.
+var piCredentialFile = func(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if !info.Mode().IsRegular() {
+		return false
+	}
+	// Verify the file is actually readable (stat succeeds but file may be
+	// permission-denied on open). Security: never read the content.
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
+}
+
+// piConfigDir returns the Pi agent config directory.
+// Respects PI_CODING_AGENT_DIR; falls back to ~/.pi/agent.
+// It is a variable so tests can inject a custom config dir seam.
+var piConfigDir = func() string {
+	if d := os.Getenv("PI_CODING_AGENT_DIR"); d != "" {
+		return d
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".pi", "agent")
+}
+
 // Preflight checks the readiness of a harness before spawning.
 // Checks in order: adapter known → binary on PATH → auth credentials → model valid.
 // Each level returns ok/absent/unknown honestly.
@@ -80,6 +119,16 @@ func Preflight(harnessName string) (*PreflightResult, error) {
 			if os.Getenv(env) != "" {
 				found = true
 				break
+			}
+		}
+		if !found && harnessName == Pi {
+			// Pi additionally supports auth via its credential store file (~/.pi/agent/auth.json).
+			configDir := piConfigDir()
+			if configDir != "" {
+				credPath := filepath.Join(configDir, "auth.json")
+				if piCredentialFile(credPath) {
+					found = true
+				}
 			}
 		}
 		if !found {
@@ -161,7 +210,7 @@ func authHint(harness string) string {
 		return fmt.Sprintf("harness %q auth not configured (unknown auth method)", harness)
 	}
 	if harness == Pi {
-		return fmt.Sprintf("harness %q auth not configured; set any Pi-supported API key environment variable (see `pi --help` for the full list)", harness)
+		return fmt.Sprintf("harness %q auth not configured; set any Pi-supported API key environment variable or set up Pi's credential store (`pi --help` for details)", harness)
 	}
 	return fmt.Sprintf("harness %q auth not configured; set %s environment variable", harness, envVars[0])
 }

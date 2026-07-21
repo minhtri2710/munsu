@@ -2,6 +2,7 @@ package harness
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -106,7 +107,16 @@ func TestPreflight_ModelValid_Unknown(t *testing.T) {
 
 func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
 	// Regression: Pi preflight should accept any Pi-supported provider
-	// env var, not just OPENAI_API_KEY.
+	// env var, not just OPENAI_API_KEY. Also verifies credential store
+	// check does not interfere (uses isolated temp dir).
+	clearEnvMarkers(t)
+
+	// Isolate credential store to an empty temp dir to avoid interference
+	// from the real ~/.pi/agent/auth.json on this machine.
+	tmpDir := t.TempDir()
+	restoreCred := injectPiCredentialCheck(t, tmpDir)
+	defer restoreCred()
+
 	origPiKey := os.Getenv("OPENAI_API_KEY")
 	origXaiKey := os.Getenv("XAI_API_KEY")
 	origAnthropicKey := os.Getenv("ANTHROPIC_API_KEY")
@@ -120,7 +130,7 @@ func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
 	os.Unsetenv("OPENAI_API_KEY")
 	os.Unsetenv("XAI_API_KEY")
 
-	// Pi with no API key at all should fail (absent)
+	// Pi with no API key at all should fail (absent) — empty temp dir, no env
 	result, err := Preflight(Pi)
 	if err != nil {
 		t.Fatalf("Preflight(%q) error = %v", Pi, err)
@@ -160,7 +170,6 @@ func TestPreflight_PiAuthWithNonOpenAIKey(t *testing.T) {
 	if result.AuthConfigured != PreflightOK {
 		t.Errorf("Pi with GEMINI_API_KEY: AuthConfigured = %q, want %q", result.AuthConfigured, PreflightOK)
 	}
-
 }
 
 func TestPreflight_AllLevelsKnown(t *testing.T) {
@@ -230,5 +239,157 @@ func TestPreflight_AllKnownHarnesses(t *testing.T) {
 		if result != nil && result.AdapterKnown != PreflightOK {
 			t.Errorf("Preflight(%q).AdapterKnown = %q, want %q", h, result.AdapterKnown, PreflightOK)
 		}
+	}
+}
+
+// TestPreflight_PiCredentialStore_FileExists verifies that a valid auth.json
+// in the Pi config dir causes AuthConfigured to be PreflightOK when no env
+// vars are set.
+func TestPreflight_PiCredentialStore_FileExists(t *testing.T) {
+	clearEnvMarkers(t)
+
+	tmpDir := t.TempDir()
+	authPath := filepath.Join(tmpDir, "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"test": true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := injectPiCredentialCheck(t, tmpDir)
+	defer restore()
+
+	result, err := Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightOK {
+		t.Errorf("AuthConfigured = %q, want %q (auth.json present in temp dir)", result.AuthConfigured, PreflightOK)
+	}
+}
+
+// TestPreflight_PiCredentialStore_FileMissing verifies that absence of auth.json
+// causes AuthConfigured to be PreflightAbsent when no env vars are set.
+func TestPreflight_PiCredentialStore_FileMissing(t *testing.T) {
+	clearEnvMarkers(t)
+
+	tmpDir := t.TempDir()
+	// No auth.json written; temp dir is empty
+
+	restore := injectPiCredentialCheck(t, tmpDir)
+	defer restore()
+
+	result, err := Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightAbsent {
+		t.Errorf("AuthConfigured = %q, want %q (no auth.json)", result.AuthConfigured, PreflightAbsent)
+	}
+}
+
+// TestPreflight_PiCredentialStore_DirInsteadOfFile verifies that a directory
+// at the credential store path is not accepted (fails-closed).
+func TestPreflight_PiCredentialStore_DirInsteadOfFile(t *testing.T) {
+	clearEnvMarkers(t)
+
+	tmpDir := t.TempDir()
+	authPath := filepath.Join(tmpDir, "auth.json")
+	if err := os.MkdirAll(authPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := injectPiCredentialCheck(t, tmpDir)
+	defer restore()
+
+	result, err := Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightAbsent {
+		t.Errorf("AuthConfigured = %q, want %q (auth.json is a directory)", result.AuthConfigured, PreflightAbsent)
+	}
+}
+
+// TestPreflight_PiCredentialStore_Unreadable verifies that an unreadable
+// auth.json file fails closed.
+func TestPreflight_PiCredentialStore_Unreadable(t *testing.T) {
+	clearEnvMarkers(t)
+
+	tmpDir := t.TempDir()
+	authPath := filepath.Join(tmpDir, "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Remove read permission to make it unreadable
+	if err := os.Chmod(authPath, 0000); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := injectPiCredentialCheck(t, tmpDir)
+	defer restore()
+
+	result, err := Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightAbsent {
+		t.Errorf("AuthConfigured = %q, want %q (auth.json unreadable)", result.AuthConfigured, PreflightAbsent)
+	}
+}
+
+// TestPreflight_PiCredentialStore_EnvVarTakesPrecedence verifies that an env var
+// is still sufficient even when auth.json is absent.
+func TestPreflight_PiCredentialStore_EnvVarTakesPrecedence(t *testing.T) {
+	clearEnvMarkers(t)
+
+	tmpDir := t.TempDir()
+	// No auth.json
+
+	orig := os.Getenv("ANTHROPIC_API_KEY")
+	defer os.Setenv("ANTHROPIC_API_KEY", orig)
+	os.Setenv("ANTHROPIC_API_KEY", "test-key")
+
+	restore := injectPiCredentialCheck(t, tmpDir)
+	defer restore()
+
+	result, err := Preflight(Pi)
+	if err != nil {
+		t.Fatalf("Preflight(%q) error = %v", Pi, err)
+	}
+	if result.AuthConfigured != PreflightOK {
+		t.Errorf("AuthConfigured = %q, want %q (ANTHROPIC_API_KEY set)", result.AuthConfigured, PreflightOK)
+	}
+}
+
+// injectPiCredentialCheck replaces piCredentialFile with a check scoped to
+// the given temp dir, so tests don't examine the real ~/.pi/agent/auth.json.
+// Returns a restore function.
+func injectPiCredentialCheck(t *testing.T, tmpDir string) func() {
+	t.Helper()
+	origConfigDir := piConfigDir
+	origCredentialFile := piCredentialFile
+
+	piConfigDir = func() string {
+		return tmpDir
+	}
+	piCredentialFile = func(path string) bool {
+		// Only honor paths under the temp dir (safety)
+		info, err := os.Stat(path)
+		if err != nil {
+			return false
+		}
+		if !info.Mode().IsRegular() {
+			return false
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return false
+		}
+		f.Close()
+		return true
+	}
+
+	return func() {
+		piConfigDir = origConfigDir
+		piCredentialFile = origCredentialFile
 	}
 }
