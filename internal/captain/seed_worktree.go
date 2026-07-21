@@ -27,6 +27,7 @@ var worktreeExcludeContent = []string{
 	"state/",
 	"tmp/",
 	"sessions/",
+	"holds/",
 	".captain-launch.sh",
 	".captain-provenance",
 	".munsu-captain-home",
