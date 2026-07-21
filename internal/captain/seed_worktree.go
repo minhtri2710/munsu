@@ -14,28 +14,36 @@ const (
 	// worktree captain homes.
 	CaptainProvenanceName = ".captain-provenance"
 
-	// WorktreeGitignoreName is the gitignore file in a managed worktree
-	// captain home.
-	WorktreeGitignoreName = ".gitignore"
+	// CaptainCharterName is the untracked captain charter file written in a
+	// managed worktree captain home. It is excluded via git info/exclude so the
+	// worktree stays git-clean without modifying the tracked AGENTS.md.
+	CaptainCharterName = ".captain-charter.md"
 )
 
-// worktreeGitignoreContent lists the operational dirs and files that are
-// gitignored in a managed worktree captain home so they never pollute
-// the host project's index.
-var worktreeGitignoreContent = []string{
+// worktreeExcludeContent lists the operational dirs and files that are
+// excluded in a managed worktree captain home via git info/exclude so they
+// never pollute the host project's index without modifying tracked .gitignore.
+var worktreeExcludeContent = []string{
 	"state/",
 	"tmp/",
 	"sessions/",
 	".captain-launch.sh",
 	".captain-provenance",
+	".munsu-captain-home",
+	".captain-charter.md",
+	"config/",
+	"data/",
 }
 
 // SeedFromWorktree provisions a managed git-worktree captain home.
 //
 // It creates a detached worktree at homePath from repoPath's default branch,
-// writes .gitignore, writes provenance metadata, then runs the standard seed
-// setup (charter, state/data/config dirs, registration, config push, pi
-// extensions).
+// writes git info/exclude for operational dirs, writes provenance metadata, then
+// runs the standard seed setup (charter via untracked .captain-charter.md,
+// state/data/config dirs, registration, config push, pi extensions).
+//
+// Unlike Seed, it never writes to the tracked .gitignore or AGENTS.md, keeping
+// the worktree git-clean while still providing a runtime Captain charter file.
 //
 // Idempotent: if homePath is already a managed worktree with matching
 // provenance, SeedFromWorktree is a no-op (returns nil). Legacy state-only
@@ -131,9 +139,9 @@ func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 	}
 	worktreeCreated = true
 
-	// Write .gitignore for operational dirs.
-	if err = writeWorktreeGitignore(absHome); err != nil {
-		err = fmt.Errorf("writing worktree .gitignore: %w", err)
+	// Write git info/exclude for operational dirs instead of tracked .gitignore.
+	if err = writeWorktreeExcludes(absHome); err != nil {
+		err = fmt.Errorf("writing worktree excludes: %w", err)
 		return
 	}
 
@@ -151,7 +159,7 @@ func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		}
 	}
 
-	// Write charter / AGENTS.md.
+	// Write charter to untracked .captain-charter.md instead of tracked AGENTS.md.
 	if strings.TrimSpace(charter) == "" {
 		if parentHome == "" {
 			err = fmt.Errorf("seeding captain %s: empty charter requires parent home for return-channel path", id)
@@ -159,8 +167,8 @@ func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		}
 		charter = DefaultCharter(id, parentHome)
 	}
-	if err = os.WriteFile(filepath.Join(absHome, "AGENTS.md"), []byte(charter), 0644); err != nil {
-		err = fmt.Errorf("writing AGENTS.md: %w", err)
+	if err = os.WriteFile(filepath.Join(absHome, CaptainCharterName), []byte(charter), 0644); err != nil {
+		err = fmt.Errorf("writing %s: %w", CaptainCharterName, err)
 		return
 	}
 
@@ -250,17 +258,49 @@ func isStateOnlyHome(homePath string) bool {
 	return gitErr != nil || gitFi.IsDir()
 }
 
-// writeWorktreeGitignore writes the .gitignore file for a managed worktree
-// captain home, ensuring operational dirs never pollute the index.
-func writeWorktreeGitignore(homePath string) error {
+// writeWorktreeExcludes writes operational dir excludes to the worktree's git
+// info/exclude (via git common dir) instead of the tracked .gitignore, keeping
+// the worktree git-clean without modifying source-tracked files.
+// Git uses the common dir's info/exclude for per-worktree excludes,
+// not the worktree-specific git dir.
+func writeWorktreeExcludes(homePath string) error {
+	commonDir, err := worktreeCommonDir(homePath)
+	if err != nil {
+		return fmt.Errorf("resolving worktree common dir: %w", err)
+	}
+	excludePath := filepath.Join(commonDir, "info", "exclude")
+
+	// Ensure the info/ directory exists.
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0755); err != nil {
+		return fmt.Errorf("creating info/ directory: %w", err)
+	}
+
 	content := "# Captain home operational dirs and runtime artifacts\n"
-	for _, entry := range worktreeGitignoreContent {
+	for _, entry := range worktreeExcludeContent {
 		content += entry + "\n"
 	}
-	content += "# Inherited config and data must also be gitignored\n"
-	content += "config/\n"
-	content += "data/\n"
-	return os.WriteFile(filepath.Join(homePath, WorktreeGitignoreName), []byte(content), 0644)
+	return os.WriteFile(excludePath, []byte(content), 0644)
+}
+
+// worktreeCommonDir resolves the git common directory for a worktree captain
+// home. For worktrees, the common dir is the parent repository's .git directory,
+// accessible via the .git worktree pointer file.
+func worktreeCommonDir(homePath string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(homePath, ".git"))
+	if err != nil {
+		return "", fmt.Errorf("reading .git worktree pointer: %w", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir: ") {
+		return "", fmt.Errorf("unexpected .git format: %q", line)
+	}
+	gitDir := strings.TrimPrefix(line, "gitdir: ")
+	if !filepath.IsAbs(gitDir) {
+		return "", fmt.Errorf(".git gitdir is not absolute: %q", gitDir)
+	}
+	// The worktree git dir is at $GIT_COMMON_DIR/worktrees/<name>
+	// So the common dir is two levels up from the worktree git dir.
+	return filepath.Dir(filepath.Dir(gitDir)), nil
 }
 
 // writeCaptainProvenance writes the .captain-provenance metadata file
@@ -492,8 +532,8 @@ func MigrateToWorktree(captainHome, repoPath, id, parentHome string) (err error)
 	}
 	worktreeCreated = true
 
-	// 9. Write .gitignore for operational dirs.
-	if err = writeWorktreeGitignore(tmpWorktree); err != nil {
+	// 9. Write git info/exclude for operational dirs (not tracked .gitignore).
+	if err = writeWorktreeExcludes(tmpWorktree); err != nil {
 		return
 	}
 
@@ -507,14 +547,14 @@ func MigrateToWorktree(captainHome, repoPath, id, parentHome string) (err error)
 		return
 	}
 
-	// 12. Copy AGENTS.md from old home.
+	// 12. Copy charter from old home to untracked .captain-charter.md (do not dirty tracked AGENTS.md).
 	srcAgents := filepath.Join(absHome, "AGENTS.md")
 	agentsData, rErr := os.ReadFile(srcAgents)
 	if rErr != nil {
 		return fmt.Errorf("reading AGENTS.md from old home: %w", rErr)
 	}
-	if err = os.WriteFile(filepath.Join(tmpWorktree, "AGENTS.md"), agentsData, 0644); err != nil {
-		return fmt.Errorf("writing AGENTS.md to worktree: %w", err)
+	if err = os.WriteFile(filepath.Join(tmpWorktree, CaptainCharterName), agentsData, 0644); err != nil {
+		return fmt.Errorf("writing %s to worktree: %w", CaptainCharterName, err)
 	}
 
 	// 13. Copy allowlisted operational dirs from old home.
@@ -534,6 +574,11 @@ func MigrateToWorktree(captainHome, repoPath, id, parentHome string) (err error)
 	}
 	swapped = true
 	worktreeCreated = false // worktree is now at the real location
+
+	// Repair git worktree admin registration so list shows final home path.
+	if err = repairWorktreeAdminPath(absHome, ""); err != nil {
+		return fmt.Errorf("repairing worktree admin path after swap: %w", err)
+	}
 
 	// Re-seed provenance marker so its canonical path points to the real home.
 	if err = SeedProvenance(absHome, id); err != nil {
@@ -560,3 +605,72 @@ func MigrateToWorktree(captainHome, repoPath, id, parentHome string) (err error)
 	return nil
 }
 
+// repairWorktreeAdminPath updates git's worktree administrative registration
+// after a worktree directory has been atomically renamed (via os.Rename).
+//
+// After rename, both the worktree's own .git file and the source repo's
+// worktree admin entry at $GIT_COMMON_DIR/worktrees/<name>/gitdir need to be
+// updated so that "git worktree list" shows the final home path and no stale
+// temp path remains.
+//
+// gitdirArg is the path to resolve the worktree name from. Typically this
+// is the worktree's own .git file, but callers may pass the source repo's
+// worktree admin dir directly when the worktree .git file is unavailable.
+// finalHomePath is the new (renamed-to) captain home path.
+func repairWorktreeAdminPath(finalHomePath, gitdirArg string) error {
+	// Read the worktree's git dir path from its .git file or use provided gitdir.
+	gitDir := gitdirArg
+	if gitDir == "" {
+		data, err := os.ReadFile(filepath.Join(finalHomePath, ".git"))
+		if err != nil {
+			return fmt.Errorf("reading .git worktree pointer: %w", err)
+		}
+		line := strings.TrimSpace(string(data))
+		if !strings.HasPrefix(line, "gitdir: ") {
+			return fmt.Errorf("unexpected .git format: %q", line)
+		}
+		gitDir = strings.TrimPrefix(line, "gitdir: ")
+	}
+
+	// The worktree name is the last path component of the git dir.
+	worktreeName := filepath.Base(gitDir)
+	if worktreeName == "" {
+		return fmt.Errorf("cannot resolve worktree name from gitdir %q", gitDir)
+	}
+
+	// The git common dir is two levels up from the worktree git dir:
+	//   <common-dir>/worktrees/<name>/
+	// So common-dir = filepath.Dir(filepath.Dir(gitDir)).
+	commonDir := filepath.Dir(filepath.Dir(gitDir))
+	gitdirAdminPath := filepath.Join(commonDir, "worktrees", worktreeName, "gitdir")
+
+	// Update the worktree admin entry with the final home path.
+	if err := os.WriteFile(gitdirAdminPath, []byte(finalHomePath+"\n"), 0644); err != nil {
+		return fmt.Errorf("updating worktree admin gitdir at %s: %w", gitdirAdminPath, err)
+	}
+
+	// Also rewrite the .git file in the worktree to ensure it points to the
+	// same worktree git dir (path is already absolute so unchanged after rename).
+	gitFileContent := fmt.Sprintf("gitdir: %s\n", gitDir)
+	if err := os.WriteFile(filepath.Join(finalHomePath, ".git"), []byte(gitFileContent), 0644); err != nil {
+		return fmt.Errorf("rewriting .git worktree pointer: %w", err)
+	}
+
+	return nil
+}
+
+// readCaptainProvenance parses the .captain-provenance file and returns the
+// source-repo path (the git repo the managed worktree was created from).
+// Returns empty string if the file does not exist or source-repo is missing.
+func readCaptainProvenance(homePath string) string {
+	data, err := os.ReadFile(filepath.Join(homePath, CaptainProvenanceName))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "source-repo: ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "source-repo: "))
+		}
+	}
+	return ""
+}
