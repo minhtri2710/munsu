@@ -3656,3 +3656,494 @@ func TestMigrateRollbackSafety(t *testing.T) {
 		t.Errorf("stale worktree entry remains in source repo after rollback:\n%s", worktreeOut)
 	}
 }
+
+// =============================================================================
+// Config inheritance parity tests
+// =============================================================================
+
+// TestConfigPush_InheritsEnvOverriddenKeys proves that MUNSU_INHERITABLE_CONFIG
+// env var controls which config keys are inheritable. Only keys in the env list
+// should be pushed; keys outside it must be skipped even when present in parent.
+func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
+	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key:another-key:extra-key")
+
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	SeedProvenance(smHome, "test-sm")
+
+	// Parent config: inheritable (custom-key, another-key, extra-key) + non-inheritable.
+	configDir := filepath.Join(parent, "config")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "custom-key"), []byte("val1\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "another-key"), []byte("val2\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "extra-key"), []byte("val3\n"), 0644)
+	os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644) // NOT in env list
+	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet\n"), 0644) // NOT in env list
+
+	if err := ConfigPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify env-overridden inheritable keys were pushed.
+	for _, name := range []string{"custom-key", "another-key", "extra-key"} {
+		_, err := os.Stat(filepath.Join(smHome, "config", name))
+		if err != nil {
+			t.Errorf("env-overridden inheritable key %q was NOT pushed: %v", name, err)
+		}
+	}
+
+	// Verify keys NOT in env list were NOT pushed.
+	for _, name := range []string{"soldier-harness", "model"} {
+		_, err := os.Stat(filepath.Join(smHome, "config", name))
+		if !os.IsNotExist(err) {
+			t.Errorf("key %q outside env override list was pushed (should not be): %v", name, err)
+		}
+	}
+}
+
+// TestConfigPush_InheritsEnvMirrorDeletions proves that when MUNSU_INHERITABLE_CONFIG
+// is set, mirror deletion only removes keys in the env-overridden inheritable list,
+// not all default inheritable keys.
+func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
+	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key")
+
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	SeedProvenance(smHome, "test-sm")
+
+	// Captain has an inheritable key (custom-key) that parent does NOT have.
+	os.WriteFile(filepath.Join(smHome, "config", "custom-key"), []byte("old\n"), 0644)
+	// Captain also has a non-inheritable key.
+	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
+
+	// Parent config dir exists but has NO files (custom-key absent → mirror delete).
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+
+	if err := ConfigPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mirror deletion should remove inheritable custom-key.
+	_, err := os.Stat(filepath.Join(smHome, "config", "custom-key"))
+	if !os.IsNotExist(err) {
+		t.Error("inheritable custom-key should have been mirror-deleted")
+	}
+
+	// Non-inheritable model must NOT be deleted.
+	_, err = os.Stat(filepath.Join(smHome, "config", "model"))
+	if os.IsNotExist(err) {
+		t.Error("non-inheritable model should NOT have been deleted")
+	}
+}
+
+// TestConfigPush_InheritsAllowsEmptyEnvList proves that setting
+// MUNSU_INHERITABLE_CONFIG to empty string falls back to default inheritable list.
+func TestConfigPush_InheritsAllowsEmptyEnvList(t *testing.T) {
+	t.Setenv("MUNSU_INHERITABLE_CONFIG", "")
+
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	SeedProvenance(smHome, "test-sm")
+
+	// Parent has default inheritable config.
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{}\n"), 0644)
+
+	if err := ConfigPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+
+	// With empty env string, getInheritableList returns the default list,
+	// so soldier-harness and soldier-dispatch.json should be pushed.
+	for _, name := range []string{"soldier-harness", "soldier-dispatch.json"} {
+		_, err := os.Stat(filepath.Join(smHome, "config", name))
+		if err != nil {
+			t.Errorf("default inheritable key %q should be pushed with empty env: %v", name, err)
+		}
+	}
+}
+
+// TestConfigPush_RefusesTrackedDestination proves that ConfigPush refuses when
+// the destination file is tracked in captain git, even if the path is safe.
+// A custom inheritable key is committed to the captain repo AFTER seeding to
+// simulate a user-tracked file that ConfigPush should not overwrite.
+func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+
+	// Track AGENTS.md so seed succeeds.
+	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("# Agents\n"), 0644)
+	gitTestRun(t, project, "add", "AGENTS.md")
+	gitTestRun(t, project, "commit", "-m", "add AGENTS.md")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write parent config for an inheritable key.
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("claude\n"), 0644)
+
+	// Now commit a tracked file in the captain worktree at the same path (config/soldier-harness).
+	// config/ is git-ignored via worktree exclude, so we must force-add.
+	os.MkdirAll(filepath.Join(homePath, "config"), 0755)
+	os.WriteFile(filepath.Join(homePath, "config", "soldier-harness"), []byte("tracked-content\n"), 0644)
+	gitTestRun(t, homePath, "add", "-f", "config/soldier-harness")
+	gitTestRun(t, homePath, "commit", "-m", "track soldier-harness")
+
+	// The worktree now has a tracked config/soldier-harness and is on a different
+	// commit than origin/main. That's fine — safeFF will be skipped in the test.
+	// ConfigPush should refuse because soldier-harness is tracked.
+	err := ConfigPush(parent, homePath)
+	if err == nil {
+		t.Fatal("expected error for tracked destination in git worktree")
+	}
+	if !strings.Contains(err.Error(), "is tracked in captain git") {
+		t.Errorf("error should mention tracked in captain git, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Managed-home clean-state parity tests
+// =============================================================================
+
+// TestManagedCleanState_PreservesHolds proves that holds/*.hold files survive
+// ConfigPush/RefreshCharter and do not dirty git status in a managed worktree.
+func TestManagedCleanState_PreservesHolds(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+
+	// Write AGENTS.md into source repo so it's tracked.
+	trackedAgents := "# Project AGENTS.md\n\nUser-owned tracked content.\n"
+	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
+	gitTestRun(t, project, "add", "AGENTS.md")
+	gitTestRun(t, project, "commit", "-m", "add AGENTS.md")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+	// Create origin/main tracking ref for SeedFromWorktree.
+	gitTestRun(t, project, "remote", "set-head", "origin", "main")
+
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create holds directory with a hold file — simulates in-flight soldier hold.
+	holdsDir := filepath.Join(homePath, "holds")
+	os.MkdirAll(holdsDir, 0755)
+	holdContent := "hold: some-reason\ncreated: 2026-07-23\n"
+	os.WriteFile(filepath.Join(holdsDir, "TASK-42.hold"), []byte(holdContent), 0644)
+	os.WriteFile(filepath.Join(holdsDir, "TASK-99.hold"), []byte("hold: awaiting-review\n"), 0644)
+
+	// Run ConfigPush — must not remove holds or dirty git.
+	if err := ConfigPush(parent, homePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert holds still exist.
+	data, err := os.ReadFile(filepath.Join(holdsDir, "TASK-42.hold"))
+	if err != nil {
+		t.Errorf("TASK-42.hold missing after ConfigPush: %v", err)
+	} else if string(data) != holdContent {
+		t.Errorf("TASK-42.hold content changed: %q", string(data))
+	}
+
+	if _, err := os.Stat(filepath.Join(holdsDir, "TASK-99.hold")); os.IsNotExist(err) {
+		t.Error("TASK-99.hold missing after ConfigPush")
+	}
+
+	// Assert tracked AGENTS.md is still byte-for-byte unchanged.
+	agentsBody, err := os.ReadFile(filepath.Join(homePath, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(agentsBody) != trackedAgents {
+		t.Fatalf("AGENTS.md was modified:\nwant: %q\ngot:  %q", trackedAgents, string(agentsBody))
+	}
+
+	// Assert git status is clean.
+	statusOut, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(statusOut))) > 0 {
+		t.Fatalf("worktree has uncommitted changes after ConfigPush:\n%s", string(statusOut))
+	}
+
+	// Assert .captain-charter.md exists with current charter.
+	if _, err := os.Stat(filepath.Join(homePath, CaptainCharterName)); os.IsNotExist(err) {
+		t.Errorf("%s missing after ConfigPush", CaptainCharterName)
+	}
+
+	// RefreshCharter and re-assert cleanliness.
+	if err := RefreshCharter(homePath, parent); err != nil {
+		t.Fatal(err)
+	}
+
+	// Holds still present.
+	if _, err := os.Stat(filepath.Join(holdsDir, "TASK-42.hold")); os.IsNotExist(err) {
+		t.Error("TASK-42.hold missing after RefreshCharter")
+	}
+	// Git still clean.
+	statusOut2, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(statusOut2))) > 0 {
+		t.Fatalf("worktree dirty after RefreshCharter:\n%s", string(statusOut2))
+	}
+}
+
+// TestManagedCleanState_OperationalDirsAreIgnored proves that all operational dirs
+// (state/, config/, tmp/, sessions/, holds/) are git-ignored and do not appear
+// in git status --porcelain in a managed worktree.
+func TestManagedCleanState_OperationalDirsAreIgnored(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+
+	// Track AGENTS.md so we can verify it stays clean.
+	trackedAgents := "# Project AGENTS.md\n"
+	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
+	gitTestRun(t, project, "add", "AGENTS.md")
+	gitTestRun(t, project, "commit", "-m", "add AGENTS.md")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+	gitTestRun(t, project, "remote", "set-head", "origin", "main")
+
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write content to each operational dir.
+	os.WriteFile(filepath.Join(homePath, "state", "test.state"), []byte("op state\n"), 0644)
+	os.WriteFile(filepath.Join(homePath, "tmp", "test.tmp"), []byte("temp data\n"), 0644)
+	os.WriteFile(filepath.Join(homePath, "sessions", "test.session"), []byte("session data\n"), 0644)
+	os.MkdirAll(filepath.Join(homePath, "holds"), 0755)
+	os.WriteFile(filepath.Join(homePath, "holds", "test.hold"), []byte("hold data\n"), 0644)
+	// config/ is already created by seed; write a file in it.
+	os.WriteFile(filepath.Join(homePath, "config", "local-config"), []byte("local config\n"), 0644)
+
+	// Assert all operational dirs are git-ignored.
+	for _, dir := range []string{"state/test.state", "tmp/test.tmp", "sessions/test.session", "holds/test.hold"} {
+		// check-ignore must return exit 0 for ignored paths.
+		if err := exec.Command("git", "-C", homePath, "check-ignore", "-q", "--", dir).Run(); err != nil {
+			t.Errorf("%s should be git-ignored, but check-ignore failed: %v", dir, err)
+		}
+	}
+
+	// config/local-config is NOT gitignored (config/ is excluded at worktree level).
+	if err := exec.Command("git", "-C", homePath, "check-ignore", "-q", "--", "config/local-config").Run(); err != nil {
+		t.Errorf("config/local-config should be git-ignored via worktree exclude, but check-ignore failed: %v", err)
+	}
+
+	// Git status must be clean despite all the operational content.
+	statusOut, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(statusOut))) > 0 {
+		t.Fatalf("worktree has uncommitted changes despite operational dir content:\n%s", string(statusOut))
+	}
+}
+
+// TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush proves that
+// tracked AGENTS.md is preserved byte-for-byte across multiple ConfigPush + RefreshCharter
+// cycles, and the worktree remains git-clean throughout.
+func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+
+	trackedAgents := "# My Custom AGENTS.md\n\nThis content must survive multiple pushes.\n"
+	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
+	gitTestRun(t, project, "add", "AGENTS.md")
+	gitTestRun(t, project, "commit", "-m", "add AGENTS.md")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+	gitTestRun(t, project, "remote", "set-head", "origin", "main")
+
+	// Create parent config so ConfigPush has work to do.
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{}\n"), 0644)
+
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run multiple ConfigPush + RefreshCharter cycles.
+	for i := 0; i < 5; i++ {
+		// Vary parent config content each cycle to verify inheritance pushes.
+		content := fmt.Sprintf("pi-%d\n", i)
+		os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte(content), 0644)
+
+		if err := ConfigPush(parent, homePath); err != nil {
+			t.Fatalf("ConfigPush cycle %d failed: %v", i, err)
+		}
+		if err := RefreshCharter(homePath, parent); err != nil {
+			t.Fatalf("RefreshCharter cycle %d failed: %v", i, err)
+		}
+
+		// AGENTS.md must remain unchanged.
+		agentsBody, err := os.ReadFile(filepath.Join(homePath, "AGENTS.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(agentsBody) != trackedAgents {
+			t.Fatalf("AGENTS.md changed after cycle %d:\nwant: %q\ngot:  %q", i, trackedAgents, string(agentsBody))
+		}
+
+		// Git status must stay clean.
+		statusOut, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(strings.TrimSpace(string(statusOut))) > 0 {
+			t.Fatalf("worktree dirty after cycle %d:\n%s", i, string(statusOut))
+		}
+
+		// Inherited config must reflect latest push.
+		destContent, err := os.ReadFile(filepath.Join(homePath, "config", "soldier-harness"))
+		if err != nil {
+			t.Fatalf("soldier-harness missing after cycle %d: %v", i, err)
+		}
+		if string(destContent) != content {
+			t.Errorf("soldier-harness content cycle %d = %q, want %q", i, string(destContent), content)
+		}
+	}
+
+	// Final check: .captain-charter.md exists and is up-to-date.
+	charterBody, err := os.ReadFile(filepath.Join(homePath, CaptainCharterName))
+	if err != nil {
+		t.Fatalf("%s missing after cycles: %v", CaptainCharterName, err)
+	}
+	if !strings.Contains(string(charterBody), CharterVersion) {
+		t.Errorf("%s should contain version %q", CaptainCharterName, CharterVersion)
+	}
+}
+
+// TestManagedCleanState_HoldsSurviveMultipleCycles proves that runtime holds
+// (*.hold files in holds/) persist across multiple ConfigPush/RefreshCharter cycles
+// without being removed and without dirtying git status.
+func TestManagedCleanState_HoldsSurviveMultipleCycles(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+
+	trackedAgents := "# Project AGENTS.md\n"
+	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
+	gitTestRun(t, project, "add", "AGENTS.md")
+	gitTestRun(t, project, "commit", "-m", "add AGENTS.md")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+	gitTestRun(t, project, "remote", "set-head", "origin", "main")
+
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create holds before any ConfigPush.
+	holdsDir := filepath.Join(homePath, "holds")
+	os.MkdirAll(holdsDir, 0755)
+	holdPaths := []string{
+		filepath.Join(holdsDir, "TASK-1.hold"),
+		filepath.Join(holdsDir, "TASK-2.hold"),
+		filepath.Join(holdsDir, "TASK-3.hold"),
+	}
+	for _, p := range holdPaths {
+		os.WriteFile(p, []byte("hold: active\n"), 0644)
+	}
+
+	// Parent config so ConfigPush does work.
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	// Run multiple cycles — holds must survive.
+	for i := 0; i < 3; i++ {
+		if err := ConfigPush(parent, homePath); err != nil {
+			t.Fatalf("ConfigPush cycle %d failed: %v", i, err)
+		}
+		if err := RefreshCharter(homePath, parent); err != nil {
+			t.Fatalf("RefreshCharter cycle %d failed: %v", i, err)
+		}
+
+		// All holds still exist.
+		for _, p := range holdPaths {
+			if _, err := os.Stat(p); os.IsNotExist(err) {
+				t.Errorf("hold %s vanished after cycle %d", filepath.Base(p), i)
+			}
+		}
+
+		// Git status must remain clean.
+		statusOut, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(strings.TrimSpace(string(statusOut))) > 0 {
+			t.Fatalf("worktree dirty after cycle %d:\n%s", i, string(statusOut))
+		}
+	}
+
+	// Final count check.
+	entries, err := os.ReadDir(holdsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Errorf("expected 3 hold files after cycles, got %d", len(entries))
+	}
+}
+
+// TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles proves that
+// ConfigPush does not dirty git status when untracked-but-gitignored files exist
+// in the worktree.
+func TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+
+	trackedAgents := "# Project AGENTS.md\n"
+	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
+	gitTestRun(t, project, "add", "AGENTS.md")
+	gitTestRun(t, project, "commit", "-m", "add AGENTS.md")
+	gitTestRun(t, project, "push", "-u", "origin", "main")
+	gitTestRun(t, project, "remote", "set-head", "origin", "main")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a runtime state file BEFORE ConfigPush.
+	os.WriteFile(filepath.Join(homePath, "state", "run-token"), []byte("abc123\n"), 0644)
+
+	// Run ConfigPush.
+	if err := ConfigPush(parent, homePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// The state/run-token file must still exist.
+	data, err := os.ReadFile(filepath.Join(homePath, "state", "run-token"))
+	if err != nil {
+		t.Errorf("state/run-token missing after ConfigPush: %v", err)
+	} else if string(data) != "abc123\n" {
+		t.Errorf("state/run-token content changed: %q", string(data))
+	}
+
+	// And git must be clean.
+	statusOut, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(statusOut))) > 0 {
+		t.Fatalf("worktree dirty after ConfigPush with runtime files:\n%s", string(statusOut))
+	}
+}
