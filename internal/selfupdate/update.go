@@ -30,8 +30,11 @@ var handshakeTimeout = 15 * time.Second
 // heartBeatPoll is the interval between polls while waiting for the watcher.
 var heartBeatPoll = 200 * time.Millisecond
 
-// doUpdate is an injectable seam for tests. Production code must not replace it.
+// doUpdate is an injectable seam for tests (legacy, binary-ancestry resolution).
 var doUpdate = Update
+
+// doUpdateIn is an injectable seam for tests with explicit install root.
+var doUpdateIn = UpdateIn
 
 // doArmBackground is an injectable seam for tests. Production code must not replace it.
 var doArmBackground = supervision.ArmBackground
@@ -61,28 +64,58 @@ var resolveInstalledVersion = func(snap *WatcherSnapshot) {
 	snap.InstalledVersion = VersionString(commit)
 }
 
-// Update performs a fast-forward-only git pull on the munsu installation.
-// It determines the install root by resolving the munsu binary's real path,
-// then walking up to find the git repository root.
+// Update performs a fast-forward-only git pull on the munsu installation
+// using binary-ancestry resolution for backward compatibility.
 func Update() error {
-	// Find the munsu binary path
+	installRoot, err := resolveBinaryForUpdate()
+	if err != nil {
+		return err
+	}
+	return UpdateIn(installRoot)
+}
+
+// UpdateIn performs a fast-forward-only git pull + rebuild on the given
+// install root. The root must be a verified munsu git repository.
+func UpdateIn(root string) error {
+	realPath, err := execRealPath()
+	if err != nil {
+		return err
+	}
+	return updateIn(root, realPath)
+}
+
+// resolveBinaryForUpdate resolves the install root from binary ancestry.
+func resolveBinaryForUpdate() (string, error) {
 	execPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("finding munsu binary: %w", err)
+		return "", fmt.Errorf("finding munsu binary: %w", err)
 	}
-
-	// Resolve symlinks to get the real path
 	realPath, err := filepath.EvalSymlinks(execPath)
 	if err != nil {
-		return fmt.Errorf("resolving munsu path: %w", err)
+		return "", fmt.Errorf("resolving munsu path: %w", err)
 	}
-
-	// Walk up to find the git repo root
 	installRoot, err := findGitRoot(filepath.Dir(realPath))
 	if err != nil {
-		return fmt.Errorf("finding munsu repository: %w", err)
+		return "", fmt.Errorf("finding munsu repository: %w", err)
 	}
+	return installRoot, nil
+}
 
+// execRealPath returns the real (symlink-resolved) path of the running binary.
+func execRealPath() (string, error) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("finding munsu binary: %w", err)
+	}
+	realPath, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving munsu path: %w", err)
+	}
+	return realPath, nil
+}
+
+// updateIn is the core update logic: git fetch, ff-merge, rebuild, atomic install.
+func updateIn(installRoot, realPath string) error {
 	// Verify it's a git repo we can update
 	gitMeta, err := os.ReadFile(filepath.Join(installRoot, ".git"))
 	if err != nil {
@@ -99,6 +132,11 @@ func Update() error {
 		}
 	}
 
+	// Check worktree is clean before mutation
+	if err := requireCleanWorktree(installRoot); err != nil {
+		return err
+	}
+
 	// Fetch and fast-forward
 	cmd := exec.Command("git", "fetch", "origin")
 	cmd.Dir = installRoot
@@ -107,17 +145,23 @@ func Update() error {
 		return fmt.Errorf("git fetch failed: %w", err)
 	}
 
-	branchBytes, err := gitDir(installRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	// Resolve default branch from remote HEAD
+	defaultBranch, err := resolveDefaultBranch(installRoot)
 	if err != nil {
-		return fmt.Errorf("determining current branch: %w", err)
+		return err
 	}
-	branch := strings.TrimSpace(string(branchBytes))
-	if branch == "" || branch == "HEAD" {
-		return fmt.Errorf("not on a branch (detached HEAD)")
+
+	// Verify on default branch (not detached)
+	currentBranch, err := currentBranch(installRoot)
+	if err != nil {
+		return err
+	}
+	if currentBranch != defaultBranch {
+		return fmt.Errorf("checked out branch %q does not match default branch %q; only default branch can be updated", currentBranch, defaultBranch)
 	}
 
 	// Fast-forward merge
-	mergeCmd := exec.Command("git", "merge", "--ff-only", "origin/"+branch)
+	mergeCmd := exec.Command("git", "merge", "--ff-only", "origin/"+defaultBranch)
 	mergeCmd.Dir = installRoot
 	mergeCmd.Stderr = os.Stderr
 	out, err := mergeCmd.Output()
@@ -158,6 +202,59 @@ func Update() error {
 	return nil
 }
 
+// requireCleanWorktree checks that the git worktree has no uncommitted changes.
+func requireCleanWorktree(root string) error {
+	out, err := gitDir(root, "status", "--porcelain")
+	if err != nil {
+		return fmt.Errorf("checking worktree status: %w", err)
+	}
+	if len(strings.TrimSpace(string(out))) > 0 {
+		return fmt.Errorf("worktree at %s has uncommitted changes; refusing to update", root)
+	}
+	return nil
+}
+
+// resolveDefaultBranch resolves the default branch name from
+// refs/remotes/origin/HEAD. Requires a fetch to have been done.
+func resolveDefaultBranch(root string) (string, error) {
+	out, err := gitDir(root, "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err != nil {
+		// Fallback: try rev-parse --abbrev-ref, then hardcode main/master
+		// as last resort.
+		ref, refErr := gitDir(root, "rev-parse", "--abbrev-ref", "HEAD")
+		if refErr == nil {
+			branch := strings.TrimSpace(string(ref))
+			if branch != "" && branch != "HEAD" {
+				return branch, nil
+			}
+		}
+		// Try common defaults as fallback
+		for _, candidate := range []string{"main", "master"} {
+			if _, err := gitDir(root, "rev-parse", "--verify", candidate); err == nil {
+				return candidate, nil
+			}
+		}
+		return "", fmt.Errorf("cannot resolve default branch for %s: %w", root, err)
+	}
+	ref := strings.TrimSpace(string(out))
+	// ref is like "refs/remotes/origin/main" — extract the branch name.
+	parts := strings.Split(ref, "/")
+	return parts[len(parts)-1], nil
+}
+
+// currentBranch returns the checked-out branch name.
+func currentBranch(root string) (string, error) {
+	out, err := gitDir(root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("determining current branch: %w", err)
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" || branch == "HEAD" {
+		return "", fmt.Errorf("not on a branch (detached HEAD)")
+	}
+	return branch, nil
+}
+
 // snapshotWatcher checks whether a watcher is active and returns a snapshot.
 // Returns a snapshot with Active=false if no watcher is clearly running.
 func snapshotWatcher(homeDir string) *WatcherSnapshot {
@@ -191,9 +288,9 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 	}
 }
 
-// UpdateWithHandshake performs an update and, if a watcher was active,
-// restarts it and waits for the new binary to claim the watcher role.
-// Returns the snapshot with evidence on success or partial/failure.
+// UpdateWithHandshake performs an update using binary-ancestry resolution
+// and, if a watcher was active, restarts it and waits for the new build
+// identity to appear. Returns the snapshot with evidence.
 func UpdateWithHandshake(homeDir string) (*WatcherSnapshot, error) {
 	snap := snapshotWatcher(homeDir)
 
@@ -205,6 +302,49 @@ func UpdateWithHandshake(homeDir string) (*WatcherSnapshot, error) {
 	// Resolve the install root for evidence.
 	resolveInstalledVersion(snap)
 
+	return completeHandshake(homeDir, snap)
+}
+
+// UpdateWithHandshakeEx resolves the install root using the 6-step resolver,
+// persists it, performs the update, and handles the watcher handshake.
+// Returns the snapshot with evidence on success or partial/failure.
+func UpdateWithHandshakeEx(homeDir, repoOpt string) (*WatcherSnapshot, error) {
+	// Step 1: Resolve the install root.
+	root, err := ResolveInstallRoot(homeDir, repoOpt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Persist after successful resolution.
+	if persistErr := PersistInstallRoot(homeDir, root); persistErr != nil {
+		// Non-fatal: resolution succeeded, persistence is secondary.
+		fmt.Fprintf(os.Stderr, "warning: failed to persist install root: %v\n", persistErr)
+	}
+
+	snap := snapshotWatcher(homeDir)
+
+	// Step 3: Perform update in the resolved root.
+	if err := doUpdateIn(root); err != nil {
+		return snap, err
+	}
+
+	// Step 4: Set installed version from known root.
+	execPath, _ := os.Executable()
+	realPath, _ := filepath.EvalSymlinks(execPath)
+	if realPath == "" {
+		realPath = execPath
+	}
+	snap.InstalledPath = realPath
+	if commit, err := ShortHEAD(root); err == nil {
+		snap.InstalledVersion = VersionString(commit)
+	}
+
+	return completeHandshake(homeDir, snap)
+}
+
+// completeHandshake runs the post-update handshake: arm background and wait
+// for the new build version if the watcher was active.
+func completeHandshake(homeDir string, snap *WatcherSnapshot) (*WatcherSnapshot, error) {
 	// No active watcher: skip restart entirely (no unsolicited start).
 	if !snap.Active {
 		return snap, nil

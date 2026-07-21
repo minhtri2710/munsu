@@ -132,6 +132,7 @@ or an absolute path to a project directory.`,
 
 func newUpdateCmd() *cobra.Command {
 	var captains bool
+	var repoOpt string
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Self-update munsu with watcher handshake",
@@ -143,10 +144,18 @@ With --captains, after the self-update succeeds, fast-forward every
 registered captain home to the parent default branch and nudge each
 captain whose instruction surface (AGENTS.md, bin/, .agents/skills/)
 advanced to re-read its charter. Fail-closed per captain: dirty,
-diverged, or offline homes are skipped and reported, never forced.`,
+diverged, or offline homes are skipped and reported, never forced.
+
+Install root resolution (in order):
+  --repo <path>          explicit source checkout path
+  MUNSU_REPO             environment variable
+  <munsu-home>/config/install-root   persisted from a previous successful update
+  Binary ancestry        when the munsu binary is inside a git checkout
+  Current working directory         when inside a matching munsu checkout`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			snap, err := selfupdate.UpdateWithHandshake(ctx.Home)
+			snap, err := selfupdate.UpdateWithHandshakeEx(ctx.Home, repoOpt)
 			if err != nil {
+				// Self-update failed: captains are NOT touched.
 				return err
 			}
 			if snap.Active {
@@ -161,6 +170,7 @@ diverged, or offline homes are skipped and reported, never forced.`,
 				return nil
 			}
 
+			// Only reachable if self-update succeeded.
 			registered, err := captain.List(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
@@ -173,9 +183,9 @@ diverged, or offline homes are skipped and reported, never forced.`,
 			result, convergeErr := captain.Converge(ctx.Home, registered)
 			if result != nil {
 				for _, step := range result.Steps {
-					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
+					fmt.Fprintf(cmd.OutOrStdout(), "  %-50s %s\n", step.Name+":", step.Status)
 					if step.Detail != "" && step.Detail != "ok" {
-						fmt.Printf("  %-50s %s\n", "", step.Detail)
+						fmt.Fprintf(cmd.OutOrStdout(), "  %-50s %s\n", "", step.Detail)
 					}
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  Overall: %s\n", result.OverallStatus())
@@ -189,5 +199,7 @@ diverged, or offline homes are skipped and reported, never forced.`,
 	}
 	cmd.Flags().BoolVar(&captains, "captains", false,
 		"Fast-forward all registered captain homes and nudge updated captains to re-read charter")
+	cmd.Flags().StringVar(&repoOpt, "repo", "",
+		"Explicit path to the munsu source checkout (overrides MUNSU_REPO and other resolution)")
 	return cmd
 }
