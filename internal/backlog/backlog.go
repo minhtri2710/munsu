@@ -16,26 +16,67 @@ var (
 
 var semverRegex = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
+// BackendMode represents the resolved backlog backend selection.
+type BackendMode int
+
+const (
+	// ModeAuto tries tasks-axi if available, falling back to manual only when
+	// the CLI is ABSENT or UNSUPPORTED (not on PATH, incompatible version).
+	// On runtime FAILED, the error propagates — no silent fallback.
+	ModeAuto BackendMode = iota
+	// ModeManual uses the FileBackend (native markdown parser) exclusively.
+	ModeManual
+	// ModeTasksAxi uses tasks-axi exclusively. If the CLI is unavailable at
+	// dispatch time or fails at runtime, the error propagates (fail closed).
+	ModeTasksAxi
+)
+
+// resolveBackend resolves the backend mode based on home, CLI flag, and config.
+// Non-default homes force ModeManual to prevent data leaks across homes.
+func resolveBackend(homeDir string, isDefault bool) BackendMode {
+	// Non-default --home always forces manual (data safety policy).
+	if !isDefault {
+		return ModeManual
+	}
+	// Check explicit config/backlog-backend.
+	data, err := os.ReadFile(filepath.Join(homeDir, "config", "backlog-backend"))
+	if err == nil {
+		switch strings.TrimSpace(string(data)) {
+		case "manual":
+			return ModeManual
+		case "tasks-axi":
+			return ModeTasksAxi
+		}
+	}
+	// Absent config or unknown value → Auto mode (backward compatible default).
+	return ModeAuto
+}
+
 // --- Compat public API ---
 
-// Run dispatches to tasks-axi if compatible and not forced to manual, or falls back
-// to manual markdown.
-// When isDefault is false (non-default --home), always forces manual backend
-// to prevent data leaks across homes.
+// Run dispatches to the resolved backlog backend with explicit fail-closed
+// semantics. When ModeTasksAxi, the CLI must be available at dispatch time or
+// an error is returned. When ModeAuto, fallback to manual only on ABSENT/
+// UNSUPPORTED (not on FAILED).
 func Run(homeDir string, isDefault bool, verb string, args []string) error {
-	if !isDefault {
-		return manualRun(homeDir, verb, args)
-	}
-	if isManual(homeDir) {
-		return manualRun(homeDir, verb, args)
-	}
-	if tasksAxiAvailable() {
+	switch resolveBackend(homeDir, isDefault) {
+	case ModeTasksAxi:
+		if !tasksAxiAvailable() {
+			return fmt.Errorf("backlog: backend is tasks-axi but tasks-axi CLI is not available (check PATH and version >= 0.1.1)")
+		}
 		return runTasksAxiForHome(homeDir, verb, args)
+	case ModeAuto:
+		if tasksAxiAvailable() {
+			return runTasksAxiForHome(homeDir, verb, args)
+		}
+		return manualRun(homeDir, verb, args)
+	default:
+		return manualRun(homeDir, verb, args)
 	}
-	return manualRun(homeDir, verb, args)
 }
 
 // isManual checks whether the config/backlog-backend file under homeDir contains "manual".
+// Kept for backward compatibility; new code should use resolveBackend.
 func isManual(homeDir string) bool {
 	if homeDir == "" {
 		return false
@@ -142,9 +183,13 @@ func AddItem(homeDir, id, desc, kind, repo string, start bool) error {
 	return fb.Add(id, desc, kind, repo, start)
 }
 
-// GetItem reads a backlog item by ID from the home-scoped backlog file.
+// GetItem reads a backlog item by ID via the selected backend.
 // Returns the item, whether it was found, and any error.
 func GetItem(homeDir, id string) (Item, bool, error) {
+	mode := resolveBackend(homeDir, true)
+	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
+		return getItemViaTasksAxi(homeDir, id)
+	}
 	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
 	item, ok := fb.Show(id)
 	if !ok {
@@ -153,8 +198,89 @@ func GetItem(homeDir, id string) (Item, bool, error) {
 	return item, true, nil
 }
 
-// HasDuplicate checks whether the backlog contains multiple items with the same ID.
+// getItemViaTasksAxi runs tasks-axi show and parses the output.
+// Distinguishes NOT_FOUND (stderr contains "code: NOT_FOUND") from
+// runtime FAILED — only NOT_FOUND maps to (not found), FAILED propagates.
+func getItemViaTasksAxi(homeDir, id string) (Item, bool, error) {
+	out, stderr, err := runTasksAxiCapture(homeDir, "show", []string{id})
+	if err != nil {
+		if isTasksAxiNotFound(stderr) {
+			return Item{}, false, nil
+		}
+		return Item{}, false, fmt.Errorf("backlog: tasks-axi show failed: %w (stderr: %s)", err, strings.TrimSpace(stderr))
+	}
+	item, ok := parseTasksAxiShowOutput(out)
+	if !ok {
+		return Item{}, false, nil
+	}
+	return item, true, nil
+}
+
+// isTasksAxiNotFound checks stderr for the machine-readable NOT_FOUND code
+// that tasks-axi emits when a show target does not exist.
+func isTasksAxiNotFound(stderr string) bool {
+	return strings.Contains(stderr, "code: NOT_FOUND")
+}
+
+// parseTasksAxiShowOutput parses a YAML-like tasks-axi show output block
+// into an Item struct. Expected format:
+//
+//	task:
+//	  id: <id>
+//	  title: <title>
+//	  state: <state>
+//	  kind: <kind>    (optional)
+//	  repo: <repo>    (optional)
+func parseTasksAxiShowOutput(out string) (Item, bool) {
+	var item Item
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "task:" {
+			continue
+		}
+		key, val, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		switch key {
+		case "id":
+			item.ID = val
+			found = true
+		case "title":
+			item.Description = val
+		case "state":
+			s, err := ParseState(val)
+			if err == nil {
+				item.State = s
+			} else {
+				item.State = StateQueued
+			}
+		case "kind":
+			if val != "-" {
+				item.Kind = val
+			}
+		case "repo":
+			if val != "-" {
+				item.Repo = val
+			}
+		}
+	}
+	if !found || item.ID == "" {
+		return Item{}, false
+	}
+	return item, true
+}
+
+// HasDuplicate checks whether the backlog contains multiple items with the same ID,
+// using the selected backend.
 func HasDuplicate(homeDir, id string) (bool, error) {
+	mode := resolveBackend(homeDir, true)
+	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
+		return hasDuplicateViaTasksAxi(homeDir, id)
+	}
 	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
 	items, err := fb.List(StateQueued) // unfiltered returns all
 	if err != nil {
@@ -172,17 +298,99 @@ func HasDuplicate(homeDir, id string) (bool, error) {
 	return false, nil
 }
 
-// AddItemDispatch adds a backlog item using the unified dispatcher.
-// Routes to tasks-axi when available and not forced to manual.
-func AddItemDispatch(homeDir, id, desc, kind, repo string, start bool) error {
-	if isManual(homeDir) {
-		return AddItem(homeDir, id, desc, kind, repo, start)
+// hasDuplicateViaTasksAxi runs tasks-axi list and parses the output to check
+// for duplicate IDs. List invocation errors propagate rather than being
+// silently converted to "no duplicates."
+func hasDuplicateViaTasksAxi(homeDir, id string) (bool, error) {
+	out, stderr, err := runTasksAxiCapture(homeDir, "list", []string{})
+	if err != nil {
+		return false, fmt.Errorf("backlog: tasks-axi list failed: %w (stderr: %s)", err, strings.TrimSpace(stderr))
 	}
-	if tasksAxiAvailable() {
+	items, err := parseTasksAxiListOutput(out)
+	if err != nil {
+		return false, err
+	}
+	count := 0
+	for _, item := range items {
+		if item.ID == id {
+			count++
+			if count > 1 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// parseTasksAxiListOutput parses tasks-axi list CSV output into []Item.
+// Expected format:
+//
+//	count: N
+//	tasks[N]{id,state,kind,repo,title}:
+//	  id1,state1,kind1,repo1,title1
+//	  id2,state2,kind2,repo2,title2
+func parseTasksAxiListOutput(out string) ([]Item, error) {
+	var items []Item
+	inCSV := false
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Detect CSV header line: tasks[N]{...}:
+		if strings.Contains(trimmed, "tasks[") && strings.Contains(trimmed, ":") {
+			inCSV = true
+			continue
+		}
+		if !inCSV {
+			continue
+		}
+		// Parse CSV row: id,state,kind,repo,title
+		parts := strings.Split(trimmed, ",")
+		if len(parts) < 2 {
+			continue
+		}
+		item := Item{ID: strings.TrimSpace(parts[0])}
+		if len(parts) >= 2 {
+			s, err := ParseState(strings.TrimSpace(parts[1]))
+			if err == nil {
+				item.State = s
+			}
+		}
+		if len(parts) >= 3 {
+			item.Kind = strings.TrimSpace(parts[2])
+		}
+		if len(parts) >= 4 {
+			item.Repo = strings.TrimSpace(parts[3])
+		}
+		if len(parts) >= 5 {
+			item.Description = strings.TrimSpace(parts[4])
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// AddItemDispatch adds a backlog item using the resolved backend with explicit
+// fail-closed semantics. Routes to tasks-axi when selected, never silently falls
+// through to the native parser on FAILED.
+func AddItemDispatch(homeDir, id, desc, kind, repo string, start bool) error {
+	switch resolveBackend(homeDir, true) {
+	case ModeTasksAxi:
+		if !tasksAxiAvailable() {
+			return fmt.Errorf("backlog: backend is tasks-axi but tasks-axi CLI is not available (check PATH and version >= 0.1.1)")
+		}
 		args := buildTasksAxiAddArgs(id, desc, kind, repo, start)
 		return runTasksAxiForHome(homeDir, "add", args)
+	case ModeAuto:
+		if tasksAxiAvailable() {
+			args := buildTasksAxiAddArgs(id, desc, kind, repo, start)
+			return runTasksAxiForHome(homeDir, "add", args)
+		}
+		return AddItem(homeDir, id, desc, kind, repo, start)
+	default:
+		return AddItem(homeDir, id, desc, kind, repo, start)
 	}
-	return AddItem(homeDir, id, desc, kind, repo, start)
 }
 
 // formatItem formats an Item for display output.
@@ -266,9 +474,30 @@ func atoi(s string) int {
 	return n
 }
 
-// runTasksAxi runs tasks-axi using its current-directory configuration.
-func runTasksAxi(verb string, args []string) error {
-	return runTasksAxiForHome("", verb, args)
+// runTasksAxiCapture runs tasks-axi and returns captured stdout and stderr
+// separately, enabling callers to distinguish NOT_FOUND from FAILED.
+func runTasksAxiCapture(homeDir, verb string, args []string) (stdout, stderr string, err error) {
+	path, lookupErr := lookPath("tasks-axi")
+	if lookupErr != nil {
+		return "", "", fmt.Errorf("tasks-axi not found: %w", lookupErr)
+	}
+
+	cliArgs := []string{verb}
+	cliArgs = append(cliArgs, args...)
+	if homeDir != "" {
+		backlogPath, err := filepath.Abs(filepath.Join(homeDir, "data", "backlog.md"))
+		if err != nil {
+			return "", "", fmt.Errorf("resolving backlog path: %w", err)
+		}
+		cliArgs = append(cliArgs, "--file", backlogPath)
+	}
+
+	cmd := execCommand(path, cliArgs...)
+	var stdoutBuf, stderrBuf strings.Builder
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	err = cmd.Run()
+	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
 // runTasksAxiForHome scopes tasks-axi to a runtime home's durable backlog.
