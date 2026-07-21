@@ -199,17 +199,27 @@ func GetItem(homeDir, id string) (Item, bool, error) {
 }
 
 // getItemViaTasksAxi runs tasks-axi show and parses the output.
+// Distinguishes NOT_FOUND (stderr contains "code: NOT_FOUND") from
+// runtime FAILED — only NOT_FOUND maps to (not found), FAILED propagates.
 func getItemViaTasksAxi(homeDir, id string) (Item, bool, error) {
-	out, err := runTasksAxiCapture(homeDir, "show", []string{id})
+	out, stderr, err := runTasksAxiCapture(homeDir, "show", []string{id})
 	if err != nil {
-		// tasks-axi show returns non-zero when item not found.
-		return Item{}, false, nil
+		if isTasksAxiNotFound(stderr) {
+			return Item{}, false, nil
+		}
+		return Item{}, false, fmt.Errorf("backlog: tasks-axi show failed: %w (stderr: %s)", err, strings.TrimSpace(stderr))
 	}
 	item, ok := parseTasksAxiShowOutput(out)
 	if !ok {
 		return Item{}, false, nil
 	}
 	return item, true, nil
+}
+
+// isTasksAxiNotFound checks stderr for the machine-readable NOT_FOUND code
+// that tasks-axi emits when a show target does not exist.
+func isTasksAxiNotFound(stderr string) bool {
+	return strings.Contains(stderr, "code: NOT_FOUND")
 }
 
 // parseTasksAxiShowOutput parses a YAML-like tasks-axi show output block
@@ -289,11 +299,12 @@ func HasDuplicate(homeDir, id string) (bool, error) {
 }
 
 // hasDuplicateViaTasksAxi runs tasks-axi list and parses the output to check
-// for duplicate IDs.
+// for duplicate IDs. List invocation errors propagate rather than being
+// silently converted to "no duplicates."
 func hasDuplicateViaTasksAxi(homeDir, id string) (bool, error) {
-	out, err := runTasksAxiCapture(homeDir, "list", []string{})
+	out, stderr, err := runTasksAxiCapture(homeDir, "list", []string{})
 	if err != nil {
-		return false, fmt.Errorf("tasks-axi list failed: %w", err)
+		return false, fmt.Errorf("backlog: tasks-axi list failed: %w (stderr: %s)", err, strings.TrimSpace(stderr))
 	}
 	items, err := parseTasksAxiListOutput(out)
 	if err != nil {
@@ -463,11 +474,12 @@ func atoi(s string) int {
 	return n
 }
 
-// runTasksAxiCapture runs tasks-axi and returns captured stdout.
-func runTasksAxiCapture(homeDir, verb string, args []string) (string, error) {
-	path, err := lookPath("tasks-axi")
-	if err != nil {
-		return "", fmt.Errorf("tasks-axi not found: %w", err)
+// runTasksAxiCapture runs tasks-axi and returns captured stdout and stderr
+// separately, enabling callers to distinguish NOT_FOUND from FAILED.
+func runTasksAxiCapture(homeDir, verb string, args []string) (stdout, stderr string, err error) {
+	path, lookupErr := lookPath("tasks-axi")
+	if lookupErr != nil {
+		return "", "", fmt.Errorf("tasks-axi not found: %w", lookupErr)
 	}
 
 	cliArgs := []string{verb}
@@ -475,17 +487,17 @@ func runTasksAxiCapture(homeDir, verb string, args []string) (string, error) {
 	if homeDir != "" {
 		backlogPath, err := filepath.Abs(filepath.Join(homeDir, "data", "backlog.md"))
 		if err != nil {
-			return "", fmt.Errorf("resolving backlog path: %w", err)
+			return "", "", fmt.Errorf("resolving backlog path: %w", err)
 		}
 		cliArgs = append(cliArgs, "--file", backlogPath)
 	}
 
 	cmd := execCommand(path, cliArgs...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
+	var stdoutBuf, stderrBuf strings.Builder
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	err = cmd.Run()
+	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
 // runTasksAxiForHome scopes tasks-axi to a runtime home's durable backlog.

@@ -674,6 +674,12 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_ROLE", "general")
 
+	// Explicitly configure manual backend — this test spawns against a manually
+	// written backlog and expects native parser behavior.
+	configDir := filepath.Join(tmpDir, "config")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
+
 	// Create brief file so preflightBrief passes
 	briefDir := filepath.Join(tmpDir, "data", "test-task")
 	if err := os.MkdirAll(briefDir, 0755); err != nil {

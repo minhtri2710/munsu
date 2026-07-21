@@ -755,13 +755,27 @@ func TestHasDuplicate_RouteThroughBackend(t *testing.T) {
 		os.MkdirAll(configDir, 0755)
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
 
-		// FAILED should NOT fall through to FileBackend — GetItem returns not-found.
+		// FAILED should propagate — GetItem returns error, not silent not-found.
 		_, found, err := GetItem(homeDir, "TASK-1")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if err == nil {
+			t.Fatal("expected error from tasks-axi FAILED in GetItem, got nil")
+		}
+		if !strings.Contains(err.Error(), "tasks-axi") {
+			t.Errorf("error should reference tasks-axi failure, got: %v", err)
 		}
 		if found {
 			t.Error("expected not-found from tasks-axi FAILED, got found")
+		}
+
+		// Pre-populate divergent native markdown to prove FAILED never consults it.
+		dataDir := filepath.Join(homeDir, "data")
+		os.MkdirAll(dataDir, 0755)
+		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Divergent native\n"), 0644)
+
+		// FAILED should still propagate — does not fall back to FileBackend despite native file.
+		_, _, err = GetItem(homeDir, "TASK-1")
+		if err == nil {
+			t.Fatal("expected error from tasks-axi FAILED even with native backlog.md present (fail-closed)")
 		}
 
 		// FAILED should NOT fall through to FileBackend — HasDuplicate returns error.
