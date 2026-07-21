@@ -16,26 +16,67 @@ var (
 
 var semverRegex = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
+// BackendMode represents the resolved backlog backend selection.
+type BackendMode int
+
+const (
+	// ModeAuto tries tasks-axi if available, falling back to manual only when
+	// the CLI is ABSENT or UNSUPPORTED (not on PATH, incompatible version).
+	// On runtime FAILED, the error propagates — no silent fallback.
+	ModeAuto BackendMode = iota
+	// ModeManual uses the FileBackend (native markdown parser) exclusively.
+	ModeManual
+	// ModeTasksAxi uses tasks-axi exclusively. If the CLI is unavailable at
+	// dispatch time or fails at runtime, the error propagates (fail closed).
+	ModeTasksAxi
+)
+
+// resolveBackend resolves the backend mode based on home, CLI flag, and config.
+// Non-default homes force ModeManual to prevent data leaks across homes.
+func resolveBackend(homeDir string, isDefault bool) BackendMode {
+	// Non-default --home always forces manual (data safety policy).
+	if !isDefault {
+		return ModeManual
+	}
+	// Check explicit config/backlog-backend.
+	data, err := os.ReadFile(filepath.Join(homeDir, "config", "backlog-backend"))
+	if err == nil {
+		switch strings.TrimSpace(string(data)) {
+		case "manual":
+			return ModeManual
+		case "tasks-axi":
+			return ModeTasksAxi
+		}
+	}
+	// Absent config or unknown value → Auto mode (backward compatible default).
+	return ModeAuto
+}
+
 // --- Compat public API ---
 
-// Run dispatches to tasks-axi if compatible and not forced to manual, or falls back
-// to manual markdown.
-// When isDefault is false (non-default --home), always forces manual backend
-// to prevent data leaks across homes.
+// Run dispatches to the resolved backlog backend with explicit fail-closed
+// semantics. When ModeTasksAxi, the CLI must be available at dispatch time or
+// an error is returned. When ModeAuto, fallback to manual only on ABSENT/
+// UNSUPPORTED (not on FAILED).
 func Run(homeDir string, isDefault bool, verb string, args []string) error {
-	if !isDefault {
-		return manualRun(homeDir, verb, args)
-	}
-	if isManual(homeDir) {
-		return manualRun(homeDir, verb, args)
-	}
-	if tasksAxiAvailable() {
+	switch resolveBackend(homeDir, isDefault) {
+	case ModeTasksAxi:
+		if !tasksAxiAvailable() {
+			return fmt.Errorf("backlog: backend is tasks-axi but tasks-axi CLI is not available (check PATH and version >= 0.1.1)")
+		}
 		return runTasksAxiForHome(homeDir, verb, args)
+	case ModeAuto:
+		if tasksAxiAvailable() {
+			return runTasksAxiForHome(homeDir, verb, args)
+		}
+		return manualRun(homeDir, verb, args)
+	default:
+		return manualRun(homeDir, verb, args)
 	}
-	return manualRun(homeDir, verb, args)
 }
 
 // isManual checks whether the config/backlog-backend file under homeDir contains "manual".
+// Kept for backward compatibility; new code should use resolveBackend.
 func isManual(homeDir string) bool {
 	if homeDir == "" {
 		return false
@@ -172,17 +213,26 @@ func HasDuplicate(homeDir, id string) (bool, error) {
 	return false, nil
 }
 
-// AddItemDispatch adds a backlog item using the unified dispatcher.
-// Routes to tasks-axi when available and not forced to manual.
+// AddItemDispatch adds a backlog item using the resolved backend with explicit
+// fail-closed semantics. Routes to tasks-axi when selected, never silently falls
+// through to the native parser on FAILED.
 func AddItemDispatch(homeDir, id, desc, kind, repo string, start bool) error {
-	if isManual(homeDir) {
-		return AddItem(homeDir, id, desc, kind, repo, start)
-	}
-	if tasksAxiAvailable() {
+	switch resolveBackend(homeDir, true) {
+	case ModeTasksAxi:
+		if !tasksAxiAvailable() {
+			return fmt.Errorf("backlog: backend is tasks-axi but tasks-axi CLI is not available (check PATH and version >= 0.1.1)")
+		}
 		args := buildTasksAxiAddArgs(id, desc, kind, repo, start)
 		return runTasksAxiForHome(homeDir, "add", args)
+	case ModeAuto:
+		if tasksAxiAvailable() {
+			args := buildTasksAxiAddArgs(id, desc, kind, repo, start)
+			return runTasksAxiForHome(homeDir, "add", args)
+		}
+		return AddItem(homeDir, id, desc, kind, repo, start)
+	default:
+		return AddItem(homeDir, id, desc, kind, repo, start)
 	}
-	return AddItem(homeDir, id, desc, kind, repo, start)
 }
 
 // formatItem formats an Item for display output.
