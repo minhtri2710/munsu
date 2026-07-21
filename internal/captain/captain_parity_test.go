@@ -3,6 +3,7 @@
 // contract suite (#287) — extending with hermetic fixtures only.
 // No firstmate code was harmed in the making of these tests.
 package captain
+
 import (
 	"fmt"
 	"os"
@@ -62,8 +63,8 @@ func TestParity_MarkedGeneral_CharterContainsReturnChannel(t *testing.T) {
 	if !strings.Contains(charter, "munsu report") {
 		t.Fatal("DefaultCharter must document munsu report as PRIMARY status path")
 	}
-	if !strings.Contains(charter, "downlink only") {
-		t.Fatal("DefaultCharter must declare send as downlink only")
+	if !strings.Contains(charter, "Downlink: Captain") {
+		t.Fatal("DefaultCharter must declare downlink: Captain → Soldier")
 	}
 	statusPath := filepath.Join(parent, "state", "captain:parity-test.status")
 	if !strings.Contains(charter, statusPath) {
@@ -313,7 +314,7 @@ func TestParity_ConservativeUpdate_AlreadyCurrent(t *testing.T) {
 	gitRun("-C", smHome, "config", "user.name", "Test")
 	gitRun("-C", smHome, "config", "user.email", "t@t.invalid")
 	gitRun("-C", smHome, "checkout", "-b", "main")
-// Already at the same commit as parent.
+	// Already at the same commit as parent.
 
 	SeedProvenance(smHome, "test-sm")
 
@@ -580,7 +581,7 @@ func TestParity_DefaultCharter_IdleByDefault(t *testing.T) {
 	checks := []string{
 		"empty queue is healthy",
 		"Never invent surveys, audits",
-		"downlink only",
+		"Downlink: Captain",
 		"PRIMARY status path",
 	}
 	for _, check := range checks {

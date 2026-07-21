@@ -53,6 +53,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 		res.Steps = append(res.Steps,
 			StepResult{Name: "config-validation", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "integration-status", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "charter-refresh", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
@@ -69,6 +70,9 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 
 	// Step c: integration status
 	res.Steps = append(res.Steps, tx.stepIntegrationStatus(sm))
+
+	// Step c2: charter refresh — re-generate .captain-charter.md idempotently
+	res.Steps = append(res.Steps, tx.stepCharterRefresh(parentHome, sm))
 
 	// Step d: launch readiness
 	res.Steps = append(res.Steps, tx.stepLaunchReadiness(sm))
@@ -119,8 +123,8 @@ func (tx *RecoverTransaction) stepConfigValidation(parentHome string, sm Info) S
 	for _, c := range checks {
 		_, err := os.Stat(c.path)
 		diags = append(diags, ConfigDiagnostic{
-			Name: c.desc,
-			Path: c.path,
+			Name:     c.desc,
+			Path:     c.path,
 			Required: false,
 			Present:  err == nil,
 		})
@@ -168,6 +172,15 @@ func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("integration state %q", result.State)}
 	}
+}
+
+func (tx *RecoverTransaction) stepCharterRefresh(parentHome string, sm Info) StepResult {
+	if err := RefreshCharter(sm.Home, parentHome); err != nil {
+		return StepResult{Name: "charter-refresh", State: StepFailed,
+			Detail: fmt.Sprintf("charter refresh failed: %v", err)}
+	}
+	return StepResult{Name: "charter-refresh", State: StepOk,
+		Detail: "versioned .captain-charter.md refreshed"}
 }
 
 func (tx *RecoverTransaction) stepLaunchReadiness(sm Info) StepResult {
