@@ -146,6 +146,9 @@ func TestSnapshotWatcher_Active(t *testing.T) {
 	if snap.OldPID != os.Getpid() {
 		t.Errorf("OldPID = %d, want %d", snap.OldPID, os.Getpid())
 	}
+	if snap.OldCommitSHA != id.CommitSHA {
+		t.Errorf("OldCommitSHA = %q, want %q", snap.OldCommitSHA, id.CommitSHA)
+	}
 }
 
 // --- waitForNewWatcher tests ---
@@ -156,11 +159,13 @@ func TestWaitForNewWatcher_Timeout(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:           true,
-		OldVersion:       "0.1.0-dev+oldcommit",
-		OldPID:           99999,
-		InstalledVersion: "0.1.0-dev+newcommit",
-		InstalledPath:    "/tmp/fake-munsu",
+		Active:              true,
+		OldVersion:          "0.1.0-dev+oldcommit",
+		OldPID:              99999,
+		OldCommitSHA:        "oldcommit",
+		InstalledVersion:    "0.1.0-dev+newcommit",
+		InstalledCommitSHA:  "newcommit",
+		InstalledPath:       "/tmp/fake-munsu",
 	}
 
 	err := waitForNewWatcher(home, snap)
@@ -175,8 +180,14 @@ func TestWaitForNewWatcher_Timeout(t *testing.T) {
 	if he.DesiredVersion != "0.1.0-dev+newcommit" {
 		t.Errorf("DesiredVersion = %q, want %q", he.DesiredVersion, "0.1.0-dev+newcommit")
 	}
+	if he.DesiredCommitSHA != "newcommit" {
+		t.Errorf("DesiredCommitSHA = %q, want %q", he.DesiredCommitSHA, "newcommit")
+	}
 	if he.OldVersion != "0.1.0-dev+oldcommit" {
 		t.Errorf("OldVersion = %q, want %q", he.OldVersion, "0.1.0-dev+oldcommit")
+	}
+	if he.OldCommitSHA != "oldcommit" {
+		t.Errorf("OldCommitSHA = %q, want %q", he.OldCommitSHA, "oldcommit")
 	}
 	if he.OldPID != "99999" {
 		t.Errorf("OldPID = %q, want 99999", he.OldPID)
@@ -189,11 +200,13 @@ func TestWaitForNewWatcher_IdentityAppears(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:           true,
-		OldVersion:       "0.1.0-dev+oldcommit",
-		OldPID:           77777,
-		InstalledVersion: "0.1.0-dev+newcommit",
-		InstalledPath:    "/tmp/fake-munsu",
+		Active:              true,
+		OldVersion:          "0.1.0-dev+oldcommit",
+		OldCommitSHA:        "oldcommit",
+		OldPID:              77777,
+		InstalledVersion:    "0.1.0-dev+newcommit",
+		InstalledCommitSHA:  "newcommit",
+		InstalledPath:       "/tmp/fake-munsu",
 	}
 
 	// Simulate watcher starting in background after a short delay.
@@ -202,8 +215,9 @@ func TestWaitForNewWatcher_IdentityAppears(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		time.Sleep(50 * time.Millisecond)
-		// Write identity with new version.
+		// Write identity with new commit SHA.
 		id := supervision.NewIdentity(home)
+		id.CommitSHA = "newcommit"
 		id.BuildVersion = "0.1.0-dev+newcommit"
 		supervision.WriteIdentity(home, id)
 		// Write beat.
@@ -224,11 +238,13 @@ func TestWaitForNewWatcher_OnlyBeatWithoutIdentity(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:           true,
-		OldVersion:       "0.1.0-dev+old",
-		OldPID:           77777,
-		InstalledVersion: "0.1.0-dev+new",
-		InstalledPath:    "/tmp/fake",
+		Active:              true,
+		OldVersion:          "0.1.0-dev+old",
+		OldCommitSHA:        "oldcommit",
+		OldPID:              77777,
+		InstalledVersion:    "0.1.0-dev+new",
+		InstalledCommitSHA:  "newcommit",
+		InstalledPath:       "/tmp/fake",
 	}
 
 	// Write beat but no identity — should still time out.
@@ -256,16 +272,19 @@ func TestWaitForNewWatcher_SpoofedIdentity(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:           true,
-		OldVersion:       "0.1.0-dev+old",
-		OldPID:           77777,
-		InstalledVersion: "0.1.0-dev+new",
-		InstalledPath:    "/tmp/fake",
+		Active:              true,
+		OldVersion:          "0.1.0-dev+old",
+		OldCommitSHA:        "oldcommit",
+		OldPID:              77777,
+		InstalledVersion:    "0.1.0-dev+new",
+		InstalledCommitSHA:  "newcommit",
+		InstalledPath:       "/tmp/fake",
 	}
 
-	// Write identity with matching build version but dead PID.
+	// Write identity with matching CommitSHA but dead PID.
 	spoofedID := supervision.NewIdentity(home)
 	spoofedID.PID = 99999
+	spoofedID.CommitSHA = "newcommit"
 	spoofedID.BuildVersion = "0.1.0-dev+new"
 	supervision.WriteIdentity(home, spoofedID)
 
@@ -292,15 +311,18 @@ func TestWaitForNewWatcher_StaleBeat(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:           true,
-		OldVersion:       "0.1.0-dev+old",
-		OldPID:           77777,
-		InstalledVersion: "0.1.0-dev+new",
-		InstalledPath:    "/tmp/fake",
+		Active:              true,
+		OldVersion:          "0.1.0-dev+old",
+		OldCommitSHA:        "oldcommit",
+		OldPID:              77777,
+		InstalledVersion:    "0.1.0-dev+new",
+		InstalledCommitSHA:  "newcommit",
+		InstalledPath:       "/tmp/fake",
 	}
 
-	// Identity with real PID and matching version.
+	// Identity with real PID and matching CommitSHA.
 	id := supervision.NewIdentity(home)
+	id.CommitSHA = "newcommit"
 	id.BuildVersion = "0.1.0-dev+new"
 	supervision.WriteIdentity(home, id)
 
@@ -327,15 +349,18 @@ func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:           true,
-		OldVersion:       "0.1.0-dev+old",
-		OldPID:           77777,
-		InstalledVersion: "0.1.0-dev+new",
-		InstalledPath:    "/tmp/fake",
+		Active:              true,
+		OldVersion:          "0.1.0-dev+old",
+		OldCommitSHA:        "oldcommit",
+		OldPID:              77777,
+		InstalledVersion:    "0.1.0-dev+new",
+		InstalledCommitSHA:  "newcommit",
+		InstalledPath:       "/tmp/fake",
 	}
 
-	// Identity with real PID and matching version.
+	// Identity with real PID and matching CommitSHA.
 	id := supervision.NewIdentity(home)
+	id.CommitSHA = "newcommit"
 	id.BuildVersion = "0.1.0-dev+new"
 	supervision.WriteIdentity(home, id)
 
@@ -360,7 +385,9 @@ func TestHandshakeError_Format(t *testing.T) {
 	err := &HandshakeError{
 		OldVersion:      "0.1.0-dev+abc",
 		OldPID:          "12345",
+		OldCommitSHA:    "abc",
 		DesiredVersion:  "0.1.0-dev+xyz",
+		DesiredCommitSHA: "xyz",
 		IdentityVersion: "",
 		IdentityPID:     "",
 		BeatPID:         "",
@@ -372,8 +399,14 @@ func TestHandshakeError_Format(t *testing.T) {
 	if !strings.Contains(msg, "old=0.1.0-dev+abc") {
 		t.Errorf("message should contain old version, got: %s", msg)
 	}
+	if !strings.Contains(msg, "commit=abc") {
+		t.Errorf("message should contain old commit SHA, got: %s", msg)
+	}
 	if !strings.Contains(msg, "desired=0.1.0-dev+xyz") {
 		t.Errorf("message should contain desired version, got: %s", msg)
+	}
+	if !strings.Contains(msg, "commit=xyz") {
+		t.Errorf("message should contain desired commit SHA, got: %s", msg)
 	}
 	if !strings.Contains(msg, "pid=12345") {
 		t.Errorf("message should contain old PID, got: %s", msg)
@@ -384,7 +417,9 @@ func TestHandshakeError_PartialSuccess(t *testing.T) {
 	err := &HandshakeError{
 		OldVersion:      "0.1.0-dev+abc",
 		OldPID:          "12345",
+		OldCommitSHA:    "abc",
 		DesiredVersion:  "0.1.0-dev+xyz",
+		DesiredCommitSHA: "xyz",
 		IdentityVersion: "0.1.0-dev+xyz",
 		IdentityPID:     "99999",
 		BeatPID:         "88888",
@@ -448,12 +483,14 @@ func TestUpdateWithHandshake_ActiveWatcherRestarts(t *testing.T) {
 	lifecycle.WriteBeat(home)
 
 	installedVersion := "0.1.0-dev+newcommit"
+	installedCommitSHA := "newcommit"
 
 	// Override version resolution so the snapshot carries the test version.
 	savedResolve := resolveInstalledVersion
 	resolveInstalledVersion = func(snap *WatcherSnapshot) {
 		snap.InstalledPath = "/tmp/fake-munsu"
 		snap.InstalledVersion = installedVersion
+		snap.InstalledCommitSHA = installedCommitSHA
 	}
 	defer func() { resolveInstalledVersion = savedResolve }()
 
@@ -472,6 +509,7 @@ func TestUpdateWithHandshake_ActiveWatcherRestarts(t *testing.T) {
 			"GO_TEST_HELPER_NEW_WATCHER=1",
 			"GO_TEST_HELPER_HOME="+home,
 			"GO_TEST_HELPER_VERSION="+installedVersion,
+			"GO_TEST_HELPER_COMMIT="+installedCommitSHA,
 		)
 		if err := cmd.Start(); err != nil {
 			return err
@@ -491,6 +529,9 @@ func TestUpdateWithHandshake_ActiveWatcherRestarts(t *testing.T) {
 	if snap.InstalledVersion != installedVersion {
 		t.Errorf("InstalledVersion = %q, want %q", snap.InstalledVersion, installedVersion)
 	}
+	if snap.InstalledCommitSHA != installedCommitSHA {
+		t.Errorf("InstalledCommitSHA = %q, want %q", snap.InstalledCommitSHA, installedCommitSHA)
+	}
 	if snap.OldPID != os.Getpid() {
 		t.Errorf("OldPID = %d, want %d", snap.OldPID, os.Getpid())
 	}
@@ -506,19 +547,22 @@ func TestUpdateWithHandshake_TimeoutCarriesEvidence(t *testing.T) {
 
 	home := t.TempDir()
 
-	// Set up a fake active watcher.
+	// Set up a fake active watcher with known CommitSHA.
 	id := supervision.NewIdentity(home)
 	id.BuildVersion = "0.1.0-dev+oldcommit"
+	id.CommitSHA = "oldcommit"
 	supervision.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	installedVersion := "0.1.0-dev+newcommit"
+	installedCommitSHA := "newcommit"
 
 	// Override version resolution so the snapshot carries a known InstalledVersion.
 	savedResolve := resolveInstalledVersion
 	resolveInstalledVersion = func(snap *WatcherSnapshot) {
 		snap.InstalledPath = "/tmp/fake-munsu"
 		snap.InstalledVersion = installedVersion
+		snap.InstalledCommitSHA = installedCommitSHA
 	}
 	defer func() { resolveInstalledVersion = savedResolve }()
 
@@ -557,6 +601,9 @@ func TestUpdateWithHandshake_TimeoutCarriesEvidence(t *testing.T) {
 	}
 	if he.OldVersion != "0.1.0-dev+oldcommit" {
 		t.Errorf("OldVersion = %q, want 0.1.0-dev+oldcommit", he.OldVersion)
+	}
+	if he.OldCommitSHA != "oldcommit" {
+		t.Errorf("OldCommitSHA = %q, want oldcommit", he.OldCommitSHA)
 	}
 	if he.OldPID != fmt.Sprintf("%d", oldPID) {
 		t.Errorf("OldPID = %q, want %d", he.OldPID, oldPID)
@@ -635,11 +682,13 @@ func TestHelperNewWatcher(t *testing.T) {
 	}
 	home := os.Getenv("GO_TEST_HELPER_HOME")
 	version := os.Getenv("GO_TEST_HELPER_VERSION")
+	commitSHA := os.Getenv("GO_TEST_HELPER_COMMIT")
 	if home == "" || version == "" {
 		t.Fatal("GO_TEST_HELPER_HOME and GO_TEST_HELPER_VERSION required")
 	}
 	id := supervision.NewIdentity(home)
 	id.BuildVersion = version
+	id.CommitSHA = commitSHA
 	if err := supervision.WriteIdentity(home, id); err != nil {
 		t.Fatal(err)
 	}
@@ -648,12 +697,17 @@ func TestHelperNewWatcher(t *testing.T) {
 	time.Sleep(10 * time.Second)
 }
 
-// custom build version written into the identity.
+// custom build version and commit SHA written into the identity.
 func TestSnapshotWatcher_WithCustomVersion(t *testing.T) {
 	home := t.TempDir()
 	origVersion := supervision.BuildVersion
+	origCommitSHA := supervision.CommitSHA
 	supervision.BuildVersion = "0.2.0-test+abc1234"
-	t.Cleanup(func() { supervision.BuildVersion = origVersion })
+	supervision.CommitSHA = "abc1234"
+	t.Cleanup(func() {
+		supervision.BuildVersion = origVersion
+		supervision.CommitSHA = origCommitSHA
+	})
 
 	id := supervision.NewIdentity(home)
 	supervision.WriteIdentity(home, id)
@@ -665,6 +719,9 @@ func TestSnapshotWatcher_WithCustomVersion(t *testing.T) {
 	}
 	if snap.OldVersion != "0.2.0-test+abc1234" {
 		t.Errorf("OldVersion = %q, want %q", snap.OldVersion, "0.2.0-test+abc1234")
+	}
+	if snap.OldCommitSHA != "abc1234" {
+		t.Errorf("OldCommitSHA = %q, want abc1234", snap.OldCommitSHA)
 	}
 }
 
@@ -714,13 +771,16 @@ func TestBuildHandshakeError(t *testing.T) {
 	home := t.TempDir()
 	id := supervision.NewIdentity(home)
 	id.BuildVersion = "0.1.0-dev+stale"
+	id.CommitSHA = "stalecommit"
 	supervision.WriteIdentity(home, id)
 
 	snap := &WatcherSnapshot{
-		Active:           true,
-		OldVersion:       "0.1.0-dev+old",
-		OldPID:           12345,
-		InstalledVersion: "0.1.0-dev+new",
+		Active:              true,
+		OldVersion:          "0.1.0-dev+old",
+		OldPID:              12345,
+		OldCommitSHA:        "oldcommit",
+		InstalledVersion:    "0.1.0-dev+new",
+		InstalledCommitSHA:  "newcommit",
 	}
 
 	err := buildHandshakeError(home, snap, false, false)
@@ -731,11 +791,17 @@ func TestBuildHandshakeError(t *testing.T) {
 	if he.OldVersion != "0.1.0-dev+old" {
 		t.Errorf("OldVersion = %q", he.OldVersion)
 	}
+	if he.OldCommitSHA != "oldcommit" {
+		t.Errorf("OldCommitSHA = %q, want oldcommit", he.OldCommitSHA)
+	}
 	if he.OldPID != "12345" {
 		t.Errorf("OldPID = %q", he.OldPID)
 	}
 	if he.DesiredVersion != "0.1.0-dev+new" {
 		t.Errorf("DesiredVersion = %q", he.DesiredVersion)
+	}
+	if he.DesiredCommitSHA != "newcommit" {
+		t.Errorf("DesiredCommitSHA = %q, want newcommit", he.DesiredCommitSHA)
 	}
 	// Identity file exists (stale), so we should see it.
 	if he.IdentityVersion != "0.1.0-dev+stale" {
@@ -778,6 +844,37 @@ func TestHandshakeError_AllFieldsSet_IdentityOK(t *testing.T) {
 	}
 	if strings.Contains(msg, "beatfresh=fail") {
 		t.Errorf("should not include beatfresh=fail for fresh beat, got: %s", msg)
+	}
+}
+
+// TestHandshakeError_FailedWithCommitSHA verifies that the error includes
+// commit SHA information when available.
+func TestHandshakeError_FailedWithCommitSHA(t *testing.T) {
+	err := &HandshakeError{
+		OldVersion:       "0.1.0-dev+abc",
+		OldPID:           "12345",
+		OldCommitSHA:     "abc",
+		DesiredVersion:   "0.1.0-dev+xyz",
+		DesiredCommitSHA: "xyz",
+		IdentityVersion:  "0.1.0-dev+other",
+		IdentityPID:      "99999",
+		IdentityCommitSHA: "different_sha",
+		BeatPID:          "88888",
+		BeatTimestamp:    1000000,
+		BeatOK:           false,
+		IdentityOK:       false,
+		OwnershipOK:      false,
+		BeatFresh:        false,
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "commit=abc") {
+		t.Errorf("message should contain old commit SHA, got: %s", msg)
+	}
+	if !strings.Contains(msg, "commit=xyz") {
+		t.Errorf("message should contain desired commit SHA, got: %s", msg)
+	}
+	if !strings.Contains(msg, "commit=different_sha") {
+		t.Errorf("message should contain identity commit SHA, got: %s", msg)
 	}
 }
 
