@@ -448,6 +448,90 @@ func TestFileBackend_Parse(t *testing.T) {
 			t.Fatalf("expected 2 items, got %d", len(items))
 		}
 	})
+
+	t.Run("tasks-axi dash format", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "backlog.md")
+		content := `# Backlog
+
+## 2024-01-01
+- [ ] test-item - test item (repo: munsu) (kind: scout) (since 2026-07-21)
+- [-] in-flight-item - in progress (repo: munsu) (kind: ship) (since 2026-07-21)
+- [!] blocked-item - blocked task (repo: other) (kind: scout) (since 2026-07-20)
+- [x] done-item - completed
+`
+		os.WriteFile(path, []byte(content), 0644)
+		fb := NewFileBackend(path)
+
+		items, err := fb.parse()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 4 {
+			t.Fatalf("expected 4 items, got %d", len(items))
+		}
+
+		tests := []struct {
+			id         string
+			desc       string
+			state      TaskState
+			kind, repo string
+		}{
+			{"test-item", "test item", StateQueued, "scout", "munsu"},
+			{"in-flight-item", "in progress", StateInFlight, "ship", "munsu"},
+			{"blocked-item", "blocked task", StateBlocked, "scout", "other"},
+			{"done-item", "completed", StateDone, "", ""},
+		}
+		for i, tc := range tests {
+			if items[i].ID != tc.id {
+				t.Errorf("item[%d].id = %q, want %q", i, items[i].ID, tc.id)
+			}
+			if items[i].Description != tc.desc {
+				t.Errorf("item[%d].desc = %q, want %q", i, items[i].Description, tc.desc)
+			}
+			if items[i].State != tc.state {
+				t.Errorf("item[%d].state = %v, want %v", i, items[i].State, tc.state)
+			}
+			if items[i].Kind != tc.kind {
+				t.Errorf("item[%d].kind = %q, want %q", i, items[i].Kind, tc.kind)
+			}
+			if items[i].Repo != tc.repo {
+				t.Errorf("item[%d].repo = %q, want %q", i, items[i].Repo, tc.repo)
+			}
+		}
+	})
+
+	t.Run("tasks-axi dash format with description containing dashes", func(t *testing.T) {
+		tmp := t.TempDir()
+		path := filepath.Join(tmp, "backlog.md")
+		content := `# Backlog
+
+## 2024-01-01
+- [ ] my-task - my task - with dashes (repo: munsu) (kind: ship)
+`
+		os.WriteFile(path, []byte(content), 0644)
+		fb := NewFileBackend(path)
+
+		items, err := fb.parse()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(items))
+		}
+		if items[0].ID != "my-task" {
+			t.Errorf("id = %q, want 'my-task'", items[0].ID)
+		}
+		if items[0].Description != "my task - with dashes" {
+			t.Errorf("desc = %q, want 'my task - with dashes'", items[0].Description)
+		}
+		if items[0].Kind != "ship" {
+			t.Errorf("kind = %q, want 'ship'", items[0].Kind)
+		}
+		if items[0].Repo != "munsu" {
+			t.Errorf("repo = %q, want 'munsu'", items[0].Repo)
+		}
+	})
 }
 
 func TestFileBackend_Render(t *testing.T) {
