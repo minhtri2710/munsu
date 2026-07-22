@@ -154,7 +154,7 @@ var (
 	// before it surfaces as stale. After this threshold, a paused task
 	// triggers a stale wake so the general can reassess it.
 	pauseResurfaceThreshold = 5 * time.Minute
-)	
+)
 
 // ScanFleet checks all live tasks for the first actionable condition.
 func ScanFleet(homeDir string) *WakeReason {

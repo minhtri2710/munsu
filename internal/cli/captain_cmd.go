@@ -33,7 +33,7 @@ Flags for worktree provisioning:
   --force  Replace existing managed worktree
   --ref    Explicit branch/ref (default: repo's default branch)
 `,
-		Args:  ExactArgs(2),
+		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if seedRepo != "" {
 				return captain.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "", seedForce, seedRef)
@@ -145,7 +145,7 @@ managed git worktree, preserving operational dirs (state/, config/, data/, etc.)
 In worktree mode, the migration is atomic: on failure the original home is
 restored and a rollback marker (.migration-rollback) is written. On success,
 the old home is backed up at <home-path>.backup-<timestamp>.`,
-		Args:  ExactArgs(2),
+		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if migrateRepo != "" {
 				return captain.MigrateToWorktree(args[0], migrateRepo, args[1], ctx.Home)
@@ -163,7 +163,7 @@ the old home is backed up at <home-path>.backup-<timestamp>.`,
 already-current, fast-forwarded, state-only-skipped, dirty, diverged, offline,
 wrong-remote, wrong-branch, or invalid-provenance.
 State-only homes (no git worktree) return state-only-skipped rather than failing.`,
-		Args:  ExactArgs(1),
+		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			res := captain.Update(args[0], ctx.Home)
 			fmt.Printf("outcome: %s\n", res.Outcome)
@@ -287,4 +287,3 @@ func captainRecoverEntryLine(e captain.RecoverEntry) string {
 	}
 	return e.ID + ": " + string(e.Outcome)
 }
-

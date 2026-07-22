@@ -263,7 +263,8 @@ func TestSendCmd_CaptainDeadPaneQueuesOutbox(t *testing.T) {
 // runCmd is a test helper that runs a command in a directory.
 func runCmd(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
-	cmd := exec.Command(name, args...); cmd.Dir = dir
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("cmd %s %v failed (dir=%s): %v\n%s", name, args, dir, err, string(out))
@@ -628,4 +629,3 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 		t.Fatalf("with exact taskID+key ack, teardown should succeed, got: %v", err)
 	}
 }
-
