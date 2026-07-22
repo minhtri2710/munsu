@@ -267,7 +267,7 @@ func TestEvaluateGuard_AgedWakeProducesAgedWakeCondition(t *testing.T) {
 	os.WriteFile(queuePath, []byte(line), 0644)
 
 	result := EvaluateGuard(home, 1, time.Now())
-	
+
 	foundAgedWake := false
 	for _, c := range result.Conditions {
 		if c.Code == ConditionAgedWakePending {
@@ -295,7 +295,7 @@ func TestEvaluateGuard_FreshWakeNoAgedCondition(t *testing.T) {
 	lifecycle.EnqueueWake(home, "signal", "task-fresh", "done: just finished")
 
 	result := EvaluateGuard(home, 1, time.Now())
-	
+
 	for _, c := range result.Conditions {
 		if c.Code == ConditionAgedWakePending {
 			t.Errorf("fresh material wake should not produce aged condition")
@@ -305,7 +305,7 @@ func TestEvaluateGuard_FreshWakeNoAgedCondition(t *testing.T) {
 
 func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 	home := t.TempDir()
-	
+
 	// Old material wake
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
 	queuePath := lifecycle.QueuePath(home)
@@ -321,7 +321,7 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 func TestHasAgedMaterialWake_Fresh(t *testing.T) {
 	home := t.TempDir()
 	lifecycle.EnqueueWake(home, "signal", "task-fresh", "done: fresh")
-	
+
 	if HasAgedMaterialWake(home, time.Now()) {
 		t.Fatal("HasAgedMaterialWake should be false for fresh wake")
 	}

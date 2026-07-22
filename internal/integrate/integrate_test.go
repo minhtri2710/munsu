@@ -1763,4 +1763,4 @@ func TestAgyStatusDriftDetection(t *testing.T) {
 	if status.State != "installed" {
 		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
 	}
-} 
+}

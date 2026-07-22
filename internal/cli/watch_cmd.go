@@ -381,11 +381,11 @@ func newWatchStatusCmd() *cobra.Command {
 // and wake queue state. Never enters daemon mode; pure stateless read.
 func evaluateWatcherStatus(homeDir string) contract.Response[contract.WatchStatus] {
 	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
-	
+
 	watchID := identifyWatcher(homeDir)
 	var identity string
 	var pid int
-	
+
 	if id := supervision.ReadIdentity(homeDir); id != nil {
 		identity = supervision.IdentitySummary(id)
 		pid = id.PID
@@ -408,7 +408,7 @@ func evaluateWatcherStatus(homeDir string) contract.Response[contract.WatchStatu
 	}
 
 	queuedWakes := countQueuedWakes(homeDir)
-	
+
 	// Detect oldest material wake age.
 	materialAge := ""
 	if queuedWakes > 0 {
