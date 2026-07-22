@@ -24,3 +24,7 @@ __pycache__/
 # munsu soldier launch artifacts
 .soldier-brief.md
 .soldier-launch.sh
+.soldier-charter.md
+.soldier-envelope.json
+.soldier-prompt.md
+.herdr-test/

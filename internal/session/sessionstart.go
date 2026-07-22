@@ -19,7 +19,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/scope"
 )
 
-
 type SessionStartResult struct {
 	LockAcquired    bool
 	Bootstrap       *bootstrap.Result
