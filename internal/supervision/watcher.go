@@ -292,6 +292,11 @@ func scanTask(homeDir, id string) *WakeReason {
 	return nil
 }
 
+// TerminalReconcileHook, if set, is called at the start of each watcher runCycle
+// to reconcile terminal receipts. The hook should return quickly when there is
+// nothing to do. It is set by the captain package during init.
+var TerminalReconcileHook func(homeDir string) error
+
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
 func RunCycle(homeDir string) (bool, error) {
@@ -299,6 +304,17 @@ func RunCycle(homeDir string) (bool, error) {
 }
 
 func runCycle(homeDir string) (bool, error) {
+	// Reconcile terminal receipts before scanning fleet.
+	// This is the watcher-driven supervision path: durability remains primary.
+	if TerminalReconcileHook != nil {
+		if err := TerminalReconcileHook(homeDir); err != nil {
+			// Log diagnostics but do not fail the cycle — stale-pane detection
+			// and check wakes should still run even if terminal reconcile has
+			// transient issues.
+			fmt.Fprintf(os.Stderr, "terminal reconcile error: %v\n", err)
+		}
+	}
+
 	emitted := false
 	for _, reason := range scanFleet(homeDir, true) {
 		if len(reason.TaskIDs) == 0 {
