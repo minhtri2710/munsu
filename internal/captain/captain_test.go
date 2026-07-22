@@ -1271,42 +1271,28 @@ func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 	}
 }
 
-// TestEnsureWatcher_RefusesWithoutParentHome verifies that EnsureWatcher
-// fails closed when config/parent-home is missing or invalid.
-func TestEnsureWatcher_RefusesWithoutParentHome(t *testing.T) {
+// TestEnsureWatcher_NoLongerRequiresParentHome verifies that EnsureWatcher
+// no longer requires config/parent-home. The watcher is recovery-only and
+// does not need parent-home for terminal receipt routing.
+func TestEnsureWatcher_NoLongerRequiresParentHome(t *testing.T) {
 	t.Parallel()
 	captainHome := t.TempDir()
 	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
 	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "captains"), 0755)
 
-	// No parent-home config — EnsureWatcher should fail
+	// No parent-home config — EnsureWatcher should start watcher without error.
+	// (Starting actually requires spawning a child process which won't work in
+	// unit tests, but the function should get past the parent-home check.)
+	// The actual exec will fail, but the parent-home validation no longer blocks.
 	err := EnsureWatcher(captainHome, true)
 	if err == nil {
-		t.Fatal("EnsureWatcher should fail when parent-home config is missing")
+		t.Log("EnsureWatcher succeeded without parent-home (as expected)")
+		return
 	}
-	if !strings.Contains(err.Error(), "parent-home is missing") {
-		t.Errorf("error should mention missing parent-home, got: %v", err)
-	}
-}
-
-// TestEnsureWatcher_RefusesNonexistentParentHome verifies that EnsureWatcher
-// fails closed when config/parent-home points to a non-existent directory.
-func TestEnsureWatcher_RefusesNonexistentParentHome(t *testing.T) {
-	t.Parallel()
-	captainHome := t.TempDir()
-	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
-
-	// Write parent-home pointing to non-existent directory
-	if err := config.Set(captainHome, "parent-home", "/nonexistent/parent"); err != nil {
-		t.Fatal(err)
-	}
-
-	err := EnsureWatcher(captainHome, true)
-	if err == nil {
-		t.Fatal("EnsureWatcher should fail when parent-home is non-existent")
-	}
-	if !strings.Contains(err.Error(), "does not exist") {
-		t.Errorf("error should mention non-existent parent-home, got: %v", err)
+	// If it errored, verify it's NOT the parent-home missing error.
+	if strings.Contains(err.Error(), "parent-home is missing") {
+		t.Errorf("EnsureWatcher should not fail on missing parent-home, got: %v", err)
 	}
 }
 

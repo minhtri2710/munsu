@@ -17,12 +17,25 @@ func init() {
 	supervision.TerminalReconcileHook = reconcileHook
 }
 
-// reconcileHook is the supervision-watcher hook that reconciles terminal
-// receipts when running inside a captain home with MUNSU_PARENT_STATUS set.
+// reconcileHook is the supervision-watcher recovery hook running inside a
+// captain home. It is called ONCE at watcher startup (recovery-only), not
+// every cycle.
+//
+// If MUNSU_PARENT_STATUS is set, it attempts to relay pending mailbox
+// envelopes (Captain→General) via the legacy terminal receipt relay for
+// backward compatibility. If no parent is configured, it silently returns:
+// the mailbox system handles durable pending without routing.
+//
+// General never requires parent-home. Soldier→Captain is local-only and
+// never needs to relay to a parent.
 func reconcileHook(homeDir string) error {
 	parentHome := os.Getenv("MUNSU_PARENT_STATUS")
 	if parentHome == "" || parentHome == homeDir {
-		return nil // not a captain home or no parent
+		// No parent configured — this is normal for standalone or
+		// General homes. Captain→General mailbox envelopes remain
+		// pending and durable; they are visible through health checks.
+		// No diagnostic wake is emitted (no `_config` storm).
+		return nil
 	}
 	_, err := ReconcileTerminalReceipts(homeDir, parentHome)
 	return err

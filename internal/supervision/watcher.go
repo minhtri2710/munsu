@@ -14,10 +14,10 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 const pollInterval = 5 * time.Second
@@ -293,10 +293,13 @@ func scanTask(homeDir, id string) *WakeReason {
 	return nil
 }
 
-// TerminalReconcileHook, if set, is called at the start of each watcher runCycle
-// to reconcile terminal receipts. The hook should return quickly when there is
-// nothing to do. It is set by the captain package during init.
+// TerminalReconcileHook is a recovery-only hook for terminal receipt retry.
+// It is called ONCE when the watcher starts, not every cycle.
+// Set by the captain package during init.
 var TerminalReconcileHook func(homeDir string) error
+
+// recoveryDone tracks whether the one-shot recovery has completed.
+var recoveryDone bool
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
@@ -304,17 +307,42 @@ func RunCycle(homeDir string) (bool, error) {
 	return runCycle(homeDir)
 }
 
-func runCycle(homeDir string) (bool, error) {
-	// Reconcile terminal receipts before scanning fleet.
-	// This is the watcher-driven supervision path: durability remains primary.
-	if TerminalReconcileHook != nil {
-		if err := TerminalReconcileHook(homeDir); err != nil {
-			// Log diagnostics but do not fail the cycle — stale-pane detection
-			// and check wakes should still run even if terminal reconcile has
-			// transient issues.
-			fmt.Fprintf(os.Stderr, "terminal reconcile error: %v\n", err)
+// runRecovery executes the one-shot recovery on watcher startup.
+// It retries pending inbox envelopes once with fingerprint dedup,
+// then runs the legacy terminal reconcile hook (if any) once.
+func runRecovery(homeDir string) {
+	if recoveryDone {
+		return
+	}
+	recoveryDone = true
+
+	// Recovery step 1: retry pending inbox envelopes via mailbox recovery.
+	attempts, err := mailbox.RecoverAllInboxes(homeDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mailbox recovery error: %v\n", err)
+	} else {
+		for _, a := range attempts {
+			if a.Err != nil {
+				fmt.Fprintf(os.Stderr, "mailbox recovery: %s: %v\n", a.MessageID, a.Err)
+			} else if a.Delivered {
+				fmt.Fprintf(os.Stderr, "mailbox recovery: %s: delivered\n", a.MessageID)
+			}
 		}
 	}
+
+	// Recovery step 2: run legacy terminal reconcile hook once.
+	// This catches any remaining turnend receipts that were not migrated
+	// to the new mailbox format.
+	if TerminalReconcileHook != nil {
+		if err := TerminalReconcileHook(homeDir); err != nil {
+			fmt.Fprintf(os.Stderr, "terminal reconcile recovery: %v\n", err)
+		}
+	}
+}
+
+func runCycle(homeDir string) (bool, error) {
+	// Run one-shot recovery on first cycle.
+	runRecovery(homeDir)
 
 	emitted := false
 	for _, reason := range scanFleet(homeDir, true) {
@@ -386,42 +414,14 @@ func runCycle(homeDir string) (bool, error) {
 		emitted = true
 	}
 
-	// Check parent-home presence for terminal receipt relay.
-	// When MUNSU_PARENT_STATUS is not set but there are pending receipts,
-	// enqueue a diagnostic wake so the General can surface the misconfiguration.
-	// Do NOT silently skip — failing closed ensures the General knows relay is
-	// broken rather than silently dropping soldier terminal reports.
-	if parentHome := os.Getenv("MUNSU_PARENT_STATUS"); parentHome == "" {
-		// Check if there are any pending receipts that would not be relayed.
-		pending, checkErr := turnend.ListPendingReceipts(homeDir)
-		if checkErr == nil && len(pending) > 0 {
-			// Surface the unhealthy state through a diagnostic wake so the
-			// General's converge sweep detects the misconfiguration.
-			wgMsg := fmt.Sprintf("parent-home not configured for captain — %d pending receipt(s) not relayed", len(pending))
-			fmt.Fprintf(os.Stderr, "watcher relay: %s\n", wgMsg)
-			if wakeErr := lifecycle.EnqueueWake(homeDir, "signal", "_config", wgMsg); wakeErr != nil {
-				fmt.Fprintf(os.Stderr, "watcher relay: failed to enqueue diagnostic wake: %v\n", wakeErr)
-			} else {
-				emitted = true
-			}
-		}
-	} else {
-		// MUNSU_PARENT_STATUS is set — relay receipts via the captain-level
-		// TerminalReconcileHook (called at the top of this function). The
-		// hook handles the full relay chain: receipt → General status/event
-		// → captain ack → obligation close. We do NOT duplicate that logic
-		// here — the hook is the single authority for terminal relay.
-		//
-		// However, if the hook is not wired (e.g. watcher running outside
-		// captain context), fall back to the turnend-level relay.
-		if TerminalReconcileHook == nil {
-			if relayed, relayErr := turnend.RelayPendingReceipts(homeDir, parentHome); relayErr != nil {
-				fmt.Fprintf(os.Stderr, "watcher relay error (no hook): %v\n", relayErr)
-			} else if relayed > 0 {
-				emitted = true
-			}
-		}
-	}
+	// Recovery-only: mailbox inbox recovery and legacy terminal reconcile
+	// are handled in runRecovery, called once at startup. No per-cycle
+	// routing of pending receipts or diagnostics. General never requires
+	// parent-home. Pending mailbox counts are visible through health checks
+	// and status queries, not watcher diagnostic wakes.
+	//
+	// The watcher is recovery-only for pending envelope delivery.
+	// Normal rank-aware communication goes directly via mailbox.SendReport.
 
 	return emitted, nil
 }
