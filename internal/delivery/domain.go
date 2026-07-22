@@ -193,12 +193,18 @@ func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 		num = n
 	}
 
-	_, parsedOwner, parsedRepo, parsedNum, _, err := ParseProviderURL(prURL)
+	urlProvider, parsedOwner, parsedRepo, parsedNum, _, err := ParseProviderURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid pr_url %q: %w", prURL, err)
 	}
 	owner := meta["pr_owner"]
 	repo := meta["pr_repo"]
+
+	// Check provider/URL consistency: if pr_provider is set in meta,
+	// it must match the provider detected from the URL.
+	if metaProvider := meta["pr_provider"]; metaProvider != "" && metaProvider != urlProvider {
+		return nil, fmt.Errorf("provider mismatch: pr_provider=%q but URL provider=%q", metaProvider, urlProvider)
+	}
 	if owner != "" && owner != parsedOwner {
 		return nil, fmt.Errorf("pr_owner %q does not match pr_url owner %q", owner, parsedOwner)
 	}
@@ -274,22 +280,39 @@ func RequireIdentity(homeDir, id string) (*DeliveryIdentity, error) {
 	return ident, nil
 }
 
-// CaptureIdentity extracts a DeliveryIdentity from a PR URL and GitHub
-// API data. It fetches the PR head SHA and branch info via gh-axi CLI when
-// the capability is Ready, falling back to gh CLI for JSON fields.
+// CaptureIdentity extracts a DeliveryIdentity from a PR/MR URL.
+// For GitHub URLs it uses gh-axi (via GitHubClient) with degraded gh CLI fallback.
+// For GitLab URLs it uses glab (via GitLabClient) with no degraded fallback.
 func CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
+	provider, _, _, _, _, err := ParseProviderURL(prURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid PR/MR URL: %w", err)
+	}
+
+	switch provider {
+	case "github":
+		return captureGitHubIdentity(prURL)
+	case "gitlab":
+		return captureGitLabIdentity(prURL)
+	default:
+		return nil, fmt.Errorf("unknown provider %q for URL %s", provider, prURL)
+	}
+}
+
+// captureGitHubIdentity captures a DeliveryIdentity from a GitHub PR URL.
+// Uses gh-axi via the typed GitHubClient when Ready; falls back to raw gh CLI.
+func captureGitHubIdentity(prURL string) (*DeliveryIdentity, error) {
 	client, err := DefaultGitHubClient()
 	if err == nil {
 		return client.CaptureIdentity(prURL)
 	}
 
-	// Degraded path: try gh CLI directly
+	// Degraded path: try gh CLI directly (read-only, permitted when gh-axi is Absent)
 	ghURL, err := ghurl.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PR URL: %w", err)
 	}
 
-	// Fetch PR metadata via gh CLI (head SHA, head ref, base ref)
 	cmd := exec.Command("gh", "pr", "view",
 		fmt.Sprintf("%d", ghURL.Num),
 		"--repo", fmt.Sprintf("%s/%s", ghURL.Owner, ghURL.Repo),
@@ -303,7 +326,6 @@ func CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
 		return nil, fmt.Errorf("gh pr view: %w", err)
 	}
 
-	// Parse JSON output
 	var result struct {
 		HeadRefOid  string `json:"headRefOid"`
 		HeadRefName string `json:"headRefName"`
@@ -328,4 +350,15 @@ func CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
 		HeadSHA:    result.HeadRefOid,
 		CapturedAt: time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// captureGitLabIdentity captures a DeliveryIdentity from a GitLab MR URL.
+// Uses glab via the typed GitLabClient. No degraded fallback — if glab is
+// Absent or Failed, callers must fail closed so silent raw glab is never used.
+func captureGitLabIdentity(mrURL string) (*DeliveryIdentity, error) {
+	client, err := DefaultGitLabClient()
+	if err != nil {
+		return nil, fmt.Errorf("GitLab provider not available: %w", err)
+	}
+	return client.CaptureIdentity(mrURL)
 }

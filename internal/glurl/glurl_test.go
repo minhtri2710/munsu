@@ -154,7 +154,42 @@ func TestParseMRURL_GitHubURL(t *testing.T) {
 	}
 }
 
-func TestFormatMRRef(t *testing.T) {
+func TestParseMRURL_NonHTTPS(t *testing.T) {
+	_, err := ParseMRURL("http://gitlab.com/owner/project/-/merge_requests/42")
+	if err == nil {
+		t.Fatal("expected error for non-HTTPS URL")
+	}
+}
+
+func TestParseMRURL_WithUserinfo(t *testing.T) {
+	_, err := ParseMRURL("https://token@gitlab.com/owner/project/-/merge_requests/42")
+	if err == nil {
+		t.Fatal("expected error for URL with userinfo")
+	}
+}
+
+func TestParseMRURL_WithQueryString(t *testing.T) {
+	_, err := ParseMRURL("https://gitlab.com/owner/project/-/merge_requests/42?foo=bar")
+	if err == nil {
+		t.Fatal("expected error for URL with query string")
+	}
+}
+
+func TestParseMRURL_WithFragment(t *testing.T) {
+	_, err := ParseMRURL("https://gitlab.com/owner/project/-/merge_requests/42#section")
+	if err == nil {
+		t.Fatal("expected error for URL with fragment")
+	}
+}
+
+func TestParseMRURL_ExtraPathSuffix(t *testing.T) {
+	_, err := ParseMRURL("https://gitlab.com/owner/project/-/merge_requests/42/foo")
+	if err == nil {
+		t.Fatal("expected error for URL with extra path suffix")
+	}
+}
+
+func TestParseMRURL_FormatMRRef(t *testing.T) {
 	gl := GLURL{Host: "gitlab.com", Owner: "owner", Project: "project", IID: 42}
 	ref := gl.FormatMRRef()
 	if ref != "owner/project!42" {

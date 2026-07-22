@@ -47,6 +47,26 @@ func ParseMRURL(raw string) (GLURL, error) {
 		return GLURL{}, fmt.Errorf("URL %q has no host", raw)
 	}
 
+	// Reject non-HTTPS schemes
+	if u.Scheme != "https" {
+		return GLURL{}, fmt.Errorf("URL must use https scheme, got %q", u.Scheme)
+	}
+
+	// Reject userinfo (credentials in URL)
+	if u.User != nil {
+		return GLURL{}, fmt.Errorf("URL must not contain userinfo (username:password@host), got %q", raw)
+	}
+
+	// Reject query strings
+	if u.RawQuery != "" {
+		return GLURL{}, fmt.Errorf("URL must not contain query string, got %q", raw)
+	}
+
+	// Reject fragments
+	if u.Fragment != "" {
+		return GLURL{}, fmt.Errorf("URL must not contain fragment, got %q", raw)
+	}
+
 	path := strings.TrimRight(u.Path, "/")
 	if path == "" {
 		return GLURL{}, fmt.Errorf("URL %q has no path", raw)
@@ -71,6 +91,20 @@ func ParseMRURL(raw string) (GLURL, error) {
 
 	if iid <= 0 {
 		return GLURL{}, fmt.Errorf("merge request IID must be positive, got %d", iid)
+	}
+
+	// Reject extra path content after the IID (e.g., /-/merge_requests/42/foo).
+	// After trimming trailing slash, the segment after mrSegment must be exactly
+	// the IID as a string.
+	afterMRSegment := path[idx+len(mrSegment):]
+	if afterMRSegment != iidStr {
+		// Trailing slash is fine, but anything else after is not.
+		// iidStr is the raw suffix before trimming, afterMRSegment is the trimmed one.
+		// If they differ by more than a trailing slash, reject.
+		trimmedIID := strings.TrimRight(iidStr, "/")
+		if afterMRSegment != trimmedIID {
+			return GLURL{}, fmt.Errorf("extra path content after merge request IID %d in %q", iid, raw)
+		}
 	}
 
 	// The namespace+project is everything before the MR segment

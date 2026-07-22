@@ -59,6 +59,44 @@ func (a *GHAxiAdapter) MergeLocal(homeDir, id string) error {
 	return fmt.Errorf("GHAxiAdapter: MergeLocal not supported — use GitLocalAdapter")
 }
 
+// --- GlabAdapter ---
+
+// GlabAdapter implements Pipeline operations for GitLab MRs via the glab CLI.
+// It checks the GitLab capability state on construction — if glab is
+// not Ready, operations fail closed.
+type GlabAdapter struct {
+	state capability.State
+}
+
+// NewGlabAdapter returns a new GlabAdapter after probing glab availability.
+func NewGlabAdapter() *GlabAdapter {
+	return &GlabAdapter{state: ProbeGitLabCapability()}
+}
+
+// RunMRCheck arms an MR merge poll for the given task using GitLab status paths.
+// Fails closed if glab is not available.
+func (a *GlabAdapter) RunMRCheck(homeDir, id, mrURL string) error {
+	if a.state != capability.Ready {
+		return fmt.Errorf("GlabAdapter: GitLab capability not ready (state=%s): glab required for MR check", a.state)
+	}
+	return MRLiveCheck(homeDir, id, mrURL)
+}
+
+// RunPRCheck is not supported on GlabAdapter for GitHub-style PRs.
+func (a *GlabAdapter) RunPRCheck(homeDir, id, prURL string) error {
+	return fmt.Errorf("GlabAdapter: RunPRCheck not supported for GitHub PRs — use GHAxiAdapter")
+}
+
+// RunNoMistakes is not supported on GlabAdapter.
+func (a *GlabAdapter) RunNoMistakes(intent string, skip []string) error {
+	return fmt.Errorf("GlabAdapter: RunNoMistakes not supported — use NoMistakesAdapter")
+}
+
+// MergeLocal is not supported on GlabAdapter.
+func (a *GlabAdapter) MergeLocal(homeDir, id string) error {
+	return fmt.Errorf("GlabAdapter: MergeLocal not supported — use GitLocalAdapter")
+}
+
 // --- NoMistakesAdapter ---
 
 // NoMistakesAdapter implements Pipeline operations via the no-mistakes CLI.
@@ -114,6 +152,7 @@ func (a *GitLocalAdapter) MergeLocal(homeDir, id string) error {
 // CompositeAdapter routes each Pipeline method to the correct adapter.
 type CompositeAdapter struct {
 	ghAxi      *GHAxiAdapter
+	glab       *GlabAdapter
 	noMistakes *NoMistakesAdapter
 	gitLocal   *GitLocalAdapter
 }
@@ -123,13 +162,28 @@ type CompositeAdapter struct {
 func NewCompositeAdapter() *CompositeAdapter {
 	return &CompositeAdapter{
 		ghAxi:      NewGHAxiAdapter(),
+		glab:       NewGlabAdapter(),
 		noMistakes: NewNoMistakesAdapter(),
 		gitLocal:   NewGitLocalAdapter(),
 	}
 }
 
+// RunPRCheck routes to the correct adapter based on the provider detected
+// from the URL. GitHub PRs go through GHAxiAdapter; GitLab MRs through
+// GlabAdapter. Unrecognized URLs fail closed.
 func (a *CompositeAdapter) RunPRCheck(homeDir, id, prURL string) error {
-	return a.ghAxi.RunPRCheck(homeDir, id, prURL)
+	provider, _, _, _, _, err := ParseProviderURL(prURL)
+	if err != nil {
+		return fmt.Errorf("CompositeAdapter: unrecognized PR/MR URL: %w", err)
+	}
+	switch provider {
+	case "github":
+		return a.ghAxi.RunPRCheck(homeDir, id, prURL)
+	case "gitlab":
+		return a.glab.RunMRCheck(homeDir, id, prURL)
+	default:
+		return fmt.Errorf("CompositeAdapter: unknown provider %q for URL %s", provider, prURL)
+	}
 }
 
 func (a *CompositeAdapter) RunNoMistakes(intent string, skip []string) error {
