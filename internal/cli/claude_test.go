@@ -724,3 +724,219 @@ func TestReadParentPID(t *testing.T) {
 		pid = nextPid
 	}
 }
+
+// TestSessionStartNudgeAlwaysExitsZero verifies every path exits 0.
+// Gate agent, non-primary, lock-held, and primary-unlocked must all
+// exit 0 because Claude/Codex-class hooks treat non-zero as blocking
+// session init.
+func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
+	type testCase struct {
+		name   string
+		setup  func(tmpDir string)
+	}
+
+	tests := []testCase{
+		{
+			name: "gate agent silent exit 0",
+			setup: func(tmpDir string) {
+				t.Setenv("NO_MISTAKES_GATE", "1")
+			},
+		},
+		{
+			name: "non-primary silent exit 0",
+			setup: func(tmpDir string) {
+				// No git repo => non-primary
+			},
+		},
+		{
+			name: "lock held silent exit 0",
+			setup: func(tmpDir string) {
+				// Create a git repo so scope is primary
+				runGit(t, tmpDir, "init")
+				// Create lock file with current PID
+				stateDir := filepath.Join(tmpDir, "state")
+				os.MkdirAll(stateDir, 0755)
+				lockContent := fmt.Sprintf("%d\n", os.Getpid())
+				os.WriteFile(filepath.Join(stateDir, ".lock"), []byte(lockContent), 0644)
+			},
+		},
+		{
+			name: "primary unlocked prints nudge exit 0",
+			setup: func(tmpDir string) {
+				// Create a git repo so scope is primary
+				runGit(t, tmpDir, "init")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", tmpDir)
+			tt.setup(tmpDir)
+
+			// runSessionStartNudge checks os.Getwd() for primary scope.
+			oldCwd, _ := os.Getwd()
+			os.Chdir(tmpDir)
+			defer os.Chdir(oldCwd)
+
+			var exitCode int
+			oldExit := exitWithCode
+			exitWithCode = func(code int) { exitCode = code }
+			defer func() { exitWithCode = oldExit }()
+
+			cmd := &cobra.Command{}
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+
+			captureBoth(func() {
+				err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
+				if err != nil {
+					t.Errorf("runSessionStartNudge returned error: %v", err)
+				}
+			})
+
+			// runSessionStartNudge never calls exitWithCode -- it returns nil.
+			// But we track exitCode to be safe.
+			if exitCode != 0 {
+				t.Errorf("expected exit 0, got %d", exitCode)
+			}
+		})
+	}
+}
+
+// TestSessionStartNudgeRetryBeforeSuccess verifies that when the lock is
+// NOT held (session-start has not yet succeeded), a second nudge call
+// still produces the nudge -- retry before success is allowed.
+//
+// The nudge function itself does not track session-start success; that's
+// delegated to `munsu session-start` which acquires the lock. The retry
+// test simulates the condition where session-start hasn't been run yet
+// (no lock file), verifies the nudge fires, then verifies it fires again
+// on a retry -- proving that a failed/absent session-start doesn't
+// suppress subsequent nudges.
+func TestSessionStartNudgeRetryBeforeSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	// Create a git repo so scope is primary
+	runGit(t, tmpDir, "init")
+
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	// First nudge: should produce output (no lock, primary, no gate)
+	stdout1, _ := captureBoth(func() {
+		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
+		if err != nil {
+			t.Errorf("first nudge returned error: %v", err)
+		}
+	})
+	if !strings.Contains(stdout1, "session-start") {
+		t.Errorf("first nudge should print instruction, got: %s", stdout1)
+	}
+
+	// Captain nudge: still no lock (simulates session-start not yet run,
+	// e.g. underlying command failed or was cancelled)
+	// Should also produce output - retry is allowed before success
+	stdout2, _ := captureBoth(func() {
+		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
+		if err != nil {
+			t.Errorf("captain nudge returned error: %v", err)
+		}
+	})
+	if !strings.Contains(stdout2, "session-start") {
+		t.Errorf("captain nudge should also print instruction before lock acquired, got: %s", stdout2)
+	}
+
+	// Verify both calls produce the same nudge (retry is identical to first attempt)
+	if strings.TrimSpace(stdout1) != strings.TrimSpace(stdout2) {
+		t.Errorf("retry nudge must be identical to first nudge\nfirst: %q\nretry: %q", stdout1, stdout2)
+	}
+}
+
+// TestSessionStartNudgeIdempotentAfterLock verifies that once the lock is
+// held by an ancestor, subsequent nudge calls stay silent.
+func TestSessionStartNudgeIdempotentAfterLock(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	runGit(t, tmpDir, "init")
+
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+
+	// Create lock file with current PID to simulate lock held
+	stateDir := filepath.Join(tmpDir, "state")
+	os.MkdirAll(stateDir, 0755)
+	lockContent := fmt.Sprintf("%d\n", os.Getpid())
+	os.WriteFile(filepath.Join(stateDir, ".lock"), []byte(lockContent), 0644)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	// First call with lock held: silent
+	stdout1, _ := captureBoth(func() {
+		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
+		if err != nil {
+			t.Errorf("first nudge with lock returned error: %v", err)
+		}
+	})
+	if strings.TrimSpace(stdout1) != "" {
+		t.Errorf("expected silent output when lock held, got: %s", stdout1)
+	}
+
+	// Captain call: still silent (lock still held)
+	stdout2, _ := captureBoth(func() {
+		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
+		if err != nil {
+			t.Errorf("captain nudge with lock returned error: %v", err)
+		}
+	})
+	if strings.TrimSpace(stdout2) != "" {
+		t.Errorf("expected silent output on second call when lock still held, got: %s", stdout2)
+	}
+}
+
+// TestSessionStartNudgeExactLine verifies the exact nudge line matches the
+// contract specification.
+func TestSessionStartNudgeExactLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	runGit(t, tmpDir, "init")
+
+	oldCwd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldCwd)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	stdout, _ := captureBoth(func() {
+		err := runSessionStartNudge(cmd, Ctx{Home: tmpDir})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	// Must be exactly one line
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected exactly 1 line of output, got %d lines: %s", len(lines), stdout)
+	}
+
+	line := strings.TrimSpace(lines[0])
+	expected := "Run `munsu session-start` now, exactly once, before executing any other instructions."
+	if line != expected {
+		t.Errorf("nudge line mismatch:\ngot:  %q\nwant: %q", line, expected)
+	}
+}

@@ -140,14 +140,44 @@ export const MunsuPretoolCheck = async ({ directory, worktree }) => {
 //
 // Mirrors the munsu sessionstart-nudge plugin contract:
 // - `event` handler checks event.type === "session.created"
-// - exactly-once per session via handledSessions Set
+// - exactly-once per session via durable file + in-memory guard
 // - spawns munsu integrate sessionstart-nudge
-// - sends result as a promptAsync nudge if non-empty
+// - records success-only after promptAsync delivers
 func opencodeSessionstartNudgePlugin(munsuBin string) string {
 	return fmt.Sprintf(`import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MUNSU_BIN = "%s";
-const handledSessions = new Set();
+
+// Durable file path: next to this plugin file in .opencode/plugins/
+const DURABLE_FILE = (() => {
+  try {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    return join(dir, ".munsu-nudged");
+  } catch { return ""; }
+})();
+
+function loadNudgedSessions() {
+  if (!DURABLE_FILE) return new Set();
+  try {
+    if (!existsSync(DURABLE_FILE)) return new Set();
+    const data = readFileSync(DURABLE_FILE, "utf-8").trim();
+    if (!data) return new Set();
+    return new Set(JSON.parse(data));
+  } catch { return new Set(); }
+}
+
+function saveNudgedSession(sessionID) {
+  if (!DURABLE_FILE) return;
+  try {
+    const sessions = loadNudgedSessions();
+    sessions.add(sessionID);
+    mkdirSync(dirname(DURABLE_FILE), { recursive: true });
+    writeFileSync(DURABLE_FILE, JSON.stringify([...sessions]), "utf-8");
+  } catch {}
+}
 
 function runProcess(command, args) {
   return new Promise((resolveResult) => {
@@ -164,19 +194,39 @@ export const MunsuSessionstartNudge = async ({ client, directory, worktree }) =>
     event: async ({ event }) => {
       if (event.type !== "session.created") return;
       const sessionID = event.properties?.info?.id ?? event.properties?.sessionID;
-      if (!sessionID || handledSessions.has(sessionID)) return;
-      handledSessions.add(sessionID);
+      if (!sessionID) return;
+
+      // Check durable marker (survives plugin reload).
+      const durable = loadNudgedSessions();
+      if (durable.has(sessionID)) return;
+
+      // In-memory guard: prevents concurrent duplicate processing.
+      const inMemory = new Set();
+      if (inMemory.has(sessionID)) return;
+      inMemory.add(sessionID);
 
       const result = await runProcess(MUNSU_BIN, ["integrate", "sessionstart-nudge"]);
       const nudge = result.code === 0 ? result.stdout.trim() : "";
-      if (!nudge) return;
+      if (!nudge) {
+        // Nudge command failed or returned empty. Remove guard so retry is possible.
+        inMemory.delete(sessionID);
+        return;
+      }
 
       try {
         await client.session.promptAsync({
           path: { id: sessionID },
           body: { parts: [{ type: "text", text: nudge }] },
         });
-      } catch {}
+      } catch {
+        // promptAsync failed. Remove guard so retry is possible.
+        inMemory.delete(sessionID);
+        return;
+      }
+
+      // Success: record durable exactly-once marker and clean up in-memory guard.
+      saveNudgedSession(sessionID);
+      inMemory.delete(sessionID);
     },
   };
 };

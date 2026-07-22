@@ -1278,3 +1278,489 @@ func TestGenerateGrokManifest(t *testing.T) {
 		t.Errorf("expected version 1.0.0, got %q", m.Version)
 	}
 }
+
+// --- CapSessionStart harness wiring tests ---
+
+// TestClaudeCapSessionStartWiring verifies that Claude settings.json has
+// SessionStart hook with startup|resume|clear matcher and sessionstart-nudge
+// command under CapSessionStart.
+func TestClaudeCapSessionStartWiring(t *testing.T) {
+	content := ClaudeSettingsContent("/usr/local/bin/munsu")
+
+	// Must have SessionStart hook
+	if !strings.Contains(content, "SessionStart") {
+		t.Fatal("Claude settings must have SessionStart hook")
+	}
+
+	// Must have correct matcher: startup|resume|clear
+	// The matcher must NOT include compact (exactly-once semantics)
+	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
+		t.Error("SessionStart matcher must be startup|resume|clear")
+	}
+	if strings.Contains(content, "compact") {
+		t.Error("SessionStart matcher must NOT include compact (reserved for agent continuity)")
+	}
+
+	// Must call sessionstart-nudge command
+	if !strings.Contains(content, "sessionstart-nudge") {
+		t.Error("SessionStart hook must call munsu integrate sessionstart-nudge")
+	}
+
+	// Must NOT call session-start directly (lightweight nudge, not full digest)
+	if strings.Contains(content, "session-start") && !strings.Contains(content, "sessionstart-nudge") {
+		t.Error("SessionStart hook must use sessionstart-nudge, not session-start")
+	}
+
+	// Must be valid JSON
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+}
+
+// TestCodexCapSessionStartWiring verifies that Codex hooks.json has
+// SessionStart hook with startup|resume|clear matcher and sessionstart-nudge
+// command under CapSessionStart.
+func TestCodexCapSessionStartWiring(t *testing.T) {
+	content := CodexHooksContent("/usr/local/bin/munsu")
+
+	// Must have SessionStart hook
+	if !strings.Contains(content, "SessionStart") {
+		t.Fatal("Codex hooks must have SessionStart hook")
+	}
+
+	// Must have correct matcher
+	if !strings.Contains(content, `"matcher": "startup|resume|clear"`) {
+		t.Error("SessionStart matcher must be startup|resume|clear")
+	}
+	if strings.Contains(content, "compact") {
+		t.Error("SessionStart matcher must NOT include compact")
+	}
+
+	// Must call sessionstart-nudge command
+	if !strings.Contains(content, "sessionstart-nudge") {
+		t.Error("SessionStart hook must call munsu integrate sessionstart-nudge")
+	}
+
+	// Must NOT call session-start directly
+	if strings.Contains(content, "session-start") && !strings.Contains(content, "sessionstart-nudge") {
+		t.Error("SessionStart hook must use sessionstart-nudge, not session-start")
+	}
+
+	// Must be valid JSON
+	var parsed interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+}
+
+// TestGrokCapSessionStartWiring verifies that fm-primary-sessionstart-nudge.json
+// has SessionStart hook and calls sessionstart-nudge under CapSessionStart.
+func TestGrokCapSessionStartWiring(t *testing.T) {
+	content := GrokHooksContent("/usr/local/bin/munsu", "fm-primary-sessionstart-nudge.json")
+	if content == "" {
+		t.Fatal("expected non-empty sessionstart-nudge hook content")
+	}
+
+	// Must have SessionStart event
+	if !strings.Contains(content, "SessionStart") {
+		t.Error("sessionstart-nudge hook must have SessionStart event")
+	}
+
+	// Must call sessionstart-nudge command
+	if !strings.Contains(content, "sessionstart-nudge") {
+		t.Error("SessionStart hook must call munsu integrate sessionstart-nudge")
+	}
+
+	// Must NOT have a matcher (SessionStart hooks are unconditional)
+	// (Grok buildHookJSON sets no matcher for sessionstart-nudge)
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	hooks, ok := parsed["hooks"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing hooks key")
+	}
+	matchers, ok := hooks["SessionStart"].([]interface{})
+	if !ok || len(matchers) == 0 {
+		t.Fatal("expected SessionStart hook")
+	}
+	for _, m := range matchers {
+		matcher, ok := m.(map[string]interface{})
+		if !ok {
+			t.Fatal("matcher must be an object")
+		}
+		if matcherMatcher, hasMatcher := matcher["matcher"]; hasMatcher {
+			t.Errorf("SessionStart hook should not have matcher, got %q", matcherMatcher)
+		}
+		hookList, ok := matcher["hooks"].([]interface{})
+		if !ok || len(hookList) == 0 {
+			t.Fatal("missing hooks array")
+		}
+		for _, h := range hookList {
+			hook, ok := h.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if hook["type"] != "command" {
+				t.Errorf("expected command type, got %q", hook["type"])
+			}
+			if cmd, ok := hook["command"].(string); ok {
+				if !strings.Contains(cmd, "sessionstart-nudge") {
+					t.Errorf("command should call sessionstart-nudge, got %q", cmd)
+				}
+			}
+		}
+	}
+}
+
+// TestAgyCapSessionStartWiring verifies that agy hooks.json has
+// munsu-sessionstart-nudge PreInvocation hook with sessionstart-nudge
+// command under CapSessionStart.
+func TestAgyCapSessionStartWiring(t *testing.T) {
+	content := AgyHooksContent("/usr/local/bin/munsu")
+	if content == "" {
+		t.Fatal("expected non-empty agy hooks content")
+	}
+
+	// Must have munsu-sessionstart-nudge key
+	if !strings.Contains(content, "munsu-sessionstart-nudge") {
+		t.Error("agy hooks must have munsu-sessionstart-nudge hook name")
+	}
+
+	// Must have PreInvocation event
+	if !strings.Contains(content, "PreInvocation") {
+		t.Error("sessionstart nudge must use PreInvocation event")
+	}
+
+	// Must call sessionstart-nudge command
+	if !strings.Contains(content, "sessionstart-nudge") {
+		t.Error("PreInvocation hook must call munsu integrate sessionstart-nudge")
+	}
+
+	// Must NOT have Stop event (nudge is PreInvocation, not Stop)
+	// Parse JSON to verify the sessionstart-nudge hook only has PreInvocation
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if nudgeHook, ok := parsed["munsu-sessionstart-nudge"].(map[string]interface{}); ok {
+		if _, hasStop := nudgeHook["Stop"]; hasStop {
+			t.Error("sessionstart-nudge must NOT have Stop event (wrong event type)")
+		}
+		if _, hasPreInvocation := nudgeHook["PreInvocation"]; !hasPreInvocation {
+			t.Error("sessionstart-nudge must have PreInvocation event")
+		}
+	} else {
+		t.Error("munsu-sessionstart-nudge must be a JSON object with event keys")
+	}
+}
+
+// TestPiCapSessionStartWiring verifies that Pi extension has
+// session_start handler that calls safety-check then session-start
+// and provides exactly-once semantics under CapSessionStart.
+func TestPiCapSessionStartWiring(t *testing.T) {
+	content := PiExtensionTemplate("/usr/local/bin/munsu")
+	if content == "" {
+		t.Fatal("expected non-empty Pi extension content")
+	}
+
+	// Must have session_start event handler
+	if !strings.Contains(content, "session_start") {
+		t.Error("Pi extension must have session_start event handler")
+	}
+
+	// Must call integrate safety-check before session-start
+	if !strings.Contains(content, "integrate") || !strings.Contains(content, "safety-check") {
+		t.Error("Pi extension must call integrate safety-check")
+	}
+
+	// Pi uses the full session-start (not the lightweight nudge)
+	if !strings.Contains(content, "session-start") {
+		t.Error("Pi extension must call munsu session-start (native full path)")
+	}
+
+	// Must have exactly-once entry for session-start
+	if !strings.Contains(content, "munsu-session-start") {
+		t.Error("Pi extension must track exactly-once via munsu-session-start entry")
+	}
+
+	// Must check scope/gate safety before session-start
+	if !strings.Contains(content, "gate_refused") {
+		t.Error("Pi extension must check gate_refused from safety-check")
+	}
+
+	// Must pass --output json to session-start
+	if !strings.Contains(content, `"session-start", "--output", "json"`) &&
+		!strings.Contains(content, `"session-start","--output","json"`) {
+		t.Error("Pi extension must call session-start with --output json")
+	}
+
+	// Must fail closed on safety failure
+	if !strings.Contains(content, "Cannot start session") {
+		t.Error("Pi extension should show 'Cannot start session' on safety failure")
+	}
+
+	// Must only dispatch after safety check passes
+	if !strings.Contains(content, "gate_refused") {
+		t.Error("Pi extension must check gate_refused before session-start")
+	}
+}
+
+// --- Harness install/status/repair parity tests ---
+
+// TestCodexStatusDriftDetection tests that install → status=installed
+// → remove hook → drifted for Codex hooks.json CapSessionStart artifact.
+func TestCodexStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	scope := ScopeProject
+
+	// Install Codex hooks
+	result, err := Install(homeDir, projectDir, "codex", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "codex", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Remove SessionStart hooks from target file
+	targetPath := filepath.Join(projectDir, ".codex", "hooks.json")
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	hooks := parsed["hooks"].(map[string]interface{})
+	delete(hooks, "SessionStart")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should report drifted
+	status, err = Status(homeDir, projectDir, "codex", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook removal")
+	}
+
+	// Repair should fix drift
+	result, err = Repair(homeDir, projectDir, "codex", scope, false)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+	if result.State != "repair" {
+		t.Fatalf("expected repair, got %q", result.State)
+	}
+
+	// Status should report installed again
+	status, err = Status(homeDir, projectDir, "codex", scope)
+	if err != nil {
+		t.Fatalf("Status after repair failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
+	}
+}
+
+// TestGrokStatusDriftDetection tests that install → status → remove hook → drifted
+// for Grok fm-primary-sessionstart-nudge.json CapSessionStart artifact.
+func TestGrokStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	scope := ScopeProject
+
+	// Install Grok hooks
+	result, err := Install(homeDir, projectDir, "grok", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "grok", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Remove the sessionstart-nudge hook file
+	sessionstartPath := filepath.Join(projectDir, ".grok", "hooks", "fm-primary-sessionstart-nudge.json")
+	if err := os.Remove(sessionstartPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should report drifted (missing CapSessionStart artifact)
+	status, err = Status(homeDir, projectDir, "grok", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook file removal")
+	}
+
+	// Repair should fix drift
+	result, err = Repair(homeDir, projectDir, "grok", scope, false)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+	if result.State != "repair" {
+		t.Fatalf("expected repair state, got %q", result.State)
+	}
+
+	// Status should report installed again
+	status, err = Status(homeDir, projectDir, "grok", scope)
+	if err != nil {
+		t.Fatalf("Status after repair failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
+	}
+}
+
+// TestAgyStatusDriftDetection tests that install → status → modify hooks.json
+// → drifted for Agy munsu-sessionstart-nudge CapSessionStart artifact.
+func TestAgyStatusDriftDetection(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := filepath.Join(dir, "home")
+	projectDir := filepath.Join(dir, "project")
+	os.MkdirAll(projectDir, 0755)
+
+	munsuBin := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuBin, []byte("#!/bin/sh\necho munsu\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	SetMunsuPathResolver(testMunsuResolver{path: munsuBin})
+	defer ResetMunsuPathResolver()
+
+	scope := ScopeProject
+
+	// Install Agy hooks
+	result, err := Install(homeDir, projectDir, "agy", scope, false)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+	if result.State != "installed" {
+		t.Fatalf("expected installed, got %q", result.State)
+	}
+
+	// Status should report installed
+	status, err := Status(homeDir, projectDir, "agy", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed, got %q: %s", status.State, status.Message)
+	}
+	if status.Drifted {
+		t.Error("expected no drift after clean install")
+	}
+
+	// Remove munsu-sessionstart-nudge from hooks.json
+	targetPath := filepath.Join(projectDir, ".agents", "hooks.json")
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	delete(parsed, "munsu-sessionstart-nudge")
+	modified, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetPath, modified, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Status should report drifted
+	status, err = Status(homeDir, projectDir, "agy", scope)
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if status.State != "drifted" {
+		t.Fatalf("expected drifted, got %q: %s", status.State, status.Message)
+	}
+	if !status.Drifted {
+		t.Error("expected Drifted=true after hook removal")
+	}
+
+	// Repair should fix drift
+	result, err = Repair(homeDir, projectDir, "agy", scope, false)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+	if result.State != "repair" {
+		t.Fatalf("expected repair, got %q", result.State)
+	}
+
+	// Status should report installed again
+	status, err = Status(homeDir, projectDir, "agy", scope)
+	if err != nil {
+		t.Fatalf("Status after repair failed: %v", err)
+	}
+	if status.State != "installed" {
+		t.Fatalf("expected installed after repair, got %q: %s", status.State, status.Message)
+	}
+} 

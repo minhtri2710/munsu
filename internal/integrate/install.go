@@ -577,7 +577,15 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		}
 
 		// Verify content digest if manifest has one.
-		if manifest.ContentDigest != "" {
+		// Skip for Grok and OpenCode: the content digest is a combined digest
+		// of all hook/plugin files, but the verification loop checks individual
+		// files. Structural ownership checks (GrokHooksHasOwnedHooks and
+		// OpencodePluginsHasOwnedHooks) already verify all files are correct.
+		// Also skip for Agy (structural ownership via AgyHooksHasOwnedHooks).
+		if manifest.ContentDigest != "" &&
+			harnessName != harness.Grok &&
+			harnessName != harness.Opencode &&
+			harnessName != harness.Agy {
 			currentData, readErr := os.ReadFile(tp)
 			if readErr != nil {
 				allPresent = false

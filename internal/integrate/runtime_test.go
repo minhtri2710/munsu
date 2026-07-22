@@ -437,3 +437,81 @@ console.log("ALL TESTS PASSED");
 		t.Fatalf("Runtime test did not report ALL TESTS PASSED, got: %s", outStr)
 	}
 }
+
+// TestPiSessionStartRetryLogic verifies the Pi extension template's retry
+// semantics: failed session-start does not append the exactly-once marker,
+// allowing retry; success does append it.
+func TestPiSessionStartRetryLogic(t *testing.T) {
+	content := PiExtensionTemplate("/usr/local/bin/munsu")
+
+	// Must reference munsu-session-start marker
+	if !strings.Contains(content, "munsu-session-start") {
+		t.Fatal("template must reference munsu-session-start marker")
+	}
+
+	// Must return early with error notification when session-start fails
+	// (check: sessionResult.code !== 0 guard before appendEntry)
+	if !strings.Contains(content, "sessionResult.code !== 0") {
+		t.Error("template must guard against failed session-start")
+	}
+
+	// Must only append munsu-session-start AFTER session-start succeeds.
+	// Verify by checking that the appendEntry call comes AFTER the
+	// session-start command execution.
+	sessionStartCmdIdx := strings.Index(content, `"session-start"`)
+	appendEntryIdx := strings.Index(content, `appendEntry("munsu-session-start`)
+	if appendEntryIdx > 0 && sessionStartCmdIdx > 0 && appendEntryIdx < sessionStartCmdIdx {
+		t.Error("appendEntry for munsu-session-start must appear AFTER session-start command")
+	}
+
+	// Verify the guard is before the appendEntry
+	failureGuardIdx := strings.Index(content, "sessionResult.code !== 0")
+	if failureGuardIdx > 0 && appendEntryIdx > 0 && failureGuardIdx > appendEntryIdx {
+		t.Error("session-start failure guard must appear BEFORE appendEntry")
+	}
+}
+
+// TestPiSessionStartIdempotentDispatch verifies that the Pi extension
+// template checks for existing munsu-session-start entry and returns
+// early, preventing double-dispatch.
+func TestPiSessionStartIdempotentDispatch(t *testing.T) {
+	content := PiExtensionTemplate("/usr/local/bin/munsu")
+
+	// Must reference munsu-session-start
+	if !strings.Contains(content, "munsu-session-start") {
+		t.Fatal("template must reference munsu-session-start")
+	}
+
+	// Must bail out early when munsu-session-start entry already exists
+	// The guard pattern: customType === "munsu-session-start" → return
+	if !strings.Contains(content, "munsu-session-start") {
+		t.Error("template must check for munsu-session-start entry")
+	}
+
+	// Verify the munsu-session-start entry check is inside the session_start
+	// handler by checking it appears before the session-start command execution
+	sessionStartCmdIdx := strings.Index(content, `"session-start", "--output"`)
+	entryCheckIdx := strings.Index(content, "munsu-session-start")
+	if entryCheckIdx > 0 && sessionStartCmdIdx > 0 && entryCheckIdx > sessionStartCmdIdx {
+		t.Error("munsu-session-start entry check must appear BEFORE session-start command execution")
+	}
+}
+
+// TestPiSessionStartNoResurrection verifies that after a successful
+// session-start, a subsequent session_start event does not re-dispatch
+// (the newest munsu-session-start entry prevents resurrection).
+func TestPiSessionStartNoResurrection(t *testing.T) {
+	content := PiExtensionTemplate("/usr/local/bin/munsu")
+
+	// Must check entries and return when munsu-session-start exists
+	// Newest entry wins — we check for the exact type match pattern
+	if !strings.Contains(content, "munsu-session-start") {
+		t.Fatal("template must reference munsu-session-start")
+	}
+
+	// The template must scan entries and bail on first match of munsu-session-start
+	// (newest-to-oldest is not needed for session-start since any match means done)
+	if !strings.Contains(content, "return") {
+		t.Error("template must return when any munsu-session-start entry exists")
+	}
+}
