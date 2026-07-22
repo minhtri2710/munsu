@@ -277,9 +277,9 @@ func TestLaunchEnvelope_IntegrityEmptyMetaFields(t *testing.T) {
 func TestCollectSkills_RequiredSkillsSelected(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
-		{Name: "srcwalk", Role: ""},
+		{Name: "qmd", Role: "soldier"},
 	}
-	required, _, diags := CollectSkills(catalog, []string{"gh-axi", "srcwalk"}, nil)
+	required, _, diags := CollectSkills(catalog, []string{"gh-axi", "qmd"}, nil)
 	if len(diags) > 0 {
 		t.Errorf("unexpected diagnostics: %v", diags)
 	}
@@ -290,7 +290,7 @@ func TestCollectSkills_RequiredSkillsSelected(t *testing.T) {
 		t.Errorf("gh-axi should be applicable")
 	}
 	if !required[1].Applicable {
-		t.Errorf("srcwalk should be applicable")
+		t.Errorf("qmd should be applicable")
 	}
 }
 
@@ -362,17 +362,17 @@ func TestCollectSkills_Dedup(t *testing.T) {
 func TestCollectSkills_RequiredAndOptional(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
-		{Name: "srcwalk", Role: "soldier"},
+		{Name: "qmd", Role: "soldier"},
 	}
-	required, optional, diags := CollectSkills(catalog, []string{"gh-axi"}, []string{"srcwalk"})
+	required, optional, diags := CollectSkills(catalog, []string{"gh-axi"}, []string{"qmd"})
 	if len(diags) > 0 {
 		t.Errorf("unexpected diagnostics: %v", diags)
 	}
 	if len(required) != 1 || required[0].Name != "gh-axi" {
 		t.Error("gh-axi should be in required skills")
 	}
-	if len(optional) != 1 || optional[0].Name != "srcwalk" {
-		t.Error("srcwalk should be in optional skills")
+	if len(optional) != 1 || optional[0].Name != "qmd" {
+		t.Error("qmd should be in optional skills")
 	}
 }
 
@@ -383,9 +383,6 @@ func TestCollectSkills_RequiredAndOptional(t *testing.T) {
 func TestSkillAuthorityClass_Soldier(t *testing.T) {
 	if got := SkillAuthorityClass("gh-axi", "soldier"); got != "soldier" {
 		t.Errorf("gh-axi soldier = %q, want 'soldier'", got)
-	}
-	if got := SkillAuthorityClass("srcwalk", ""); got != "soldier" {
-		t.Errorf("srcwalk empty role = %q, want 'soldier'", got)
 	}
 	if got := SkillAuthorityClass("any-skill", "any"); got != "soldier" {
 		t.Errorf("any-skill any role = %q, want 'soldier'", got)

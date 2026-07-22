@@ -52,7 +52,7 @@ Date: 2026-07-21.
 
 ### Scout brief (from fm-brief.sh --scout)
 - Delivers: no commit/branch/push/PR rules, report.md deliverable, scratch worktree
-- Skills: `qmd`, `srcwalk` (investigation tools only)
+- Skills: `qmd` (investigation tools only)
 - Source: `bin/fm-brief.sh` `scoutBriefTemplate` at lines 122-150
 
 ### Harness-adapters skill invocation (from `.agents/skills/harness-adapters/SKILL.md`)

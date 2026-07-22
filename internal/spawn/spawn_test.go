@@ -68,7 +68,7 @@ func (f *fakeBackend) Teardown(windowID string) error {
 }
 
 // Fixture: r6 transcript capture of pi ready UI (trimmed to key lines).
-const piReadyCapture = `spec-driven-development, spec-to-code-compliance, srcwalk, stitch-design-taste,
+const piReadyCapture = `spec-driven-development, spec-to-code-compliance, stitch-design-taste,
 supply-chain-risk-auditor, tasks-axi, tdd, teach, test-driven-development,
 to-spec, to-tickets, triage, using-agent-skills, variant-analysis, vuln-report,
 wayfinder, wizard, wooyun-legacy, writing-beats, writing-fragments,
@@ -78,7 +78,7 @@ writing-great-skills, writing-shape, zeroize-audit
   @eko24ive/pi-ask:src, @ff-labs/pi-fff@latest:src,
 @heyhuynhgiabuu/pi-search@latest:dist, @heyhuynhgiabuu/pi-task:dist,
 @juicesharp/rpiv-advisor, @ogulcancelik/pi-herdr,
-@sting8k/pi-srcwalk@latest:pi-srcwalk, @sting8k/pi-vcc@latest,
+@sting8k/pi-vcc@latest,
 @vigolium/piolium@latest:piolium, herdr-agent-state.ts,
 joelhooks/pi-rhizomatic:pi-rhizomatic.ts, pi-augment@latest:src,
 pi-boomerang@latest, pi-clinepass-provider:src, pi-hashline-edit-pro,
@@ -1643,5 +1643,74 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		if strings.Contains(l, "working: spawned") {
 			t.Errorf("status log should NOT contain 'working: spawned', got: %s", l)
 		}
+	}
+}
+
+// TestRegression_ResolveSkillsWithoutSrcwalk proves that resolveSkills produces
+// a valid skill catalog without requiring srcwalk. This is a focused regression
+// guard for the remove-srcwalk-integration task.
+func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
+	tests := []struct {
+		name       string
+		kind       string
+		wantGhAxi  bool
+		wantQmd    bool
+	}{
+		{name: "ship", kind: "ship", wantGhAxi: true, wantQmd: false},
+		{name: "scout", kind: "scout", wantGhAxi: false, wantQmd: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &Runner{
+				args: Args{
+					Kind: tc.kind,
+					Mode: "direct-PR",
+				},
+				effectiveMode: "direct-PR",
+				spawnRole:     "soldier",
+			}
+
+			required, optional, diags := r.resolveSkills()
+			if len(diags) > 0 {
+				t.Fatalf("resolveSkills returned diagnostics: %v", diags)
+			}
+
+			// Verify srcwalk is NOT in required or optional.
+			for _, s := range required {
+				if s.Name == "srcwalk" {
+					t.Error("srcwalk must NOT be in required skills")
+				}
+			}
+			for _, s := range optional {
+				if s.Name == "srcwalk" {
+					t.Error("srcwalk must NOT be in optional skills")
+				}
+			}
+
+			// Verify expected required skills.
+			var foundGhAxi, foundQmd bool
+			for _, s := range required {
+				if s.Name == "gh-axi" {
+					foundGhAxi = true
+					if !s.Applicable {
+						t.Error("gh-axi must be applicable")
+					}
+				}
+				if s.Name == "qmd" {
+					foundQmd = true
+					if !s.Applicable {
+						t.Error("qmd must be applicable")
+					}
+				}
+			}
+
+			if tc.wantGhAxi && !foundGhAxi {
+				t.Error("gh-axi must be in required skills")
+			}
+			if tc.wantQmd && !foundQmd {
+				t.Error("qmd must be in required skills")
+			}
+		})
 	}
 }
