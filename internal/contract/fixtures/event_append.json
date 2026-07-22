@@ -1,0 +1,1 @@
+{"schema_version":"munsu.orchestration/v2","kind":"event.append","status":"success","data":{"event_id":42,"type":"state_change","synthetic":false}}

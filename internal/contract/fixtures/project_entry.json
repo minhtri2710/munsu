@@ -1,0 +1,1 @@
+{"schema_version":"munsu.orchestration/v2","kind":"project.list","status":"success","data":[{"name":"munsu","mode":"auto","description":"Fleet orchestrator","added":"2026-01-01","directory":"/home/munsu"},{"name":"site","mode":"manual","description":"Website","added":"2026-06-15","directory":"/home/site"}]}

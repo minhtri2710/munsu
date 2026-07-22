@@ -1,0 +1,1 @@
+{"schema_version":"munsu.orchestration/v2","kind":"watch.status","status":"success","data":{"watch_id":"watch-01","state":"healthy","beat_age":"2s","pid":12345,"identity":"munsu-watch","queued_wakes":0,"material_age":"","guard_state":"healthy"},"help":["Run `munsu guard` to check supervision health"]}

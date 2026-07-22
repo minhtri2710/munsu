@@ -1,0 +1,1 @@
+{"schema_version":"munsu.orchestration/v2","kind":"safety.check","status":"success","data":{"identity":"codex-adapter","gate_capability":"mount","canonical_path":"/tmp/munsu-mount","gate_refused":false,"block":false,"reason":"Path is within allowed scope"}}

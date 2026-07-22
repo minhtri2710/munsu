@@ -2,6 +2,7 @@ package mailbox
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -929,5 +930,168 @@ func TestTurnendReceiptsMigration(t *testing.T) {
 	// Legacy receipt should still exist.
 	if _, err := os.Stat(turnendDir + "/old-task.old-key.receipt"); err != nil {
 		t.Error("legacy receipt should still exist after mailbox operations")
+	}
+}
+
+// TestDirectDurableMailbox_NoWatcherRouting proves that the happy-path
+// report/send flow (sender writes envelope to receiver's inbox, marks as
+// delivered, sender retains pending record) does NOT require a watcher
+// process, any watcher routing, or ListPendingReceipts-style normal routing.
+// The watcher is recovery-only; this test proves the happy path is pure
+// durable-file + acknowledged agent-prompt with zero watcher involvement.
+func TestDirectDurableMailbox_NoWatcherRouting(t *testing.T) {
+	// Use temp dirs only — no watcher process, no watcher beat, no watcher
+	// identity file. This is a pure file-based durable mailbox test.
+	receiverHome := t.TempDir()
+	senderHome := t.TempDir()
+	window := "@w"
+
+	// 1. Envelope creation — no watcher exists.
+	env := &Envelope{
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-no-watcher",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "captain:1",
+		Payload:        "done: task complete without watcher",
+	}
+
+	// 2. Write to receiver's inbox (direct write, no watcher needed).
+	if err := NewEnvelope(receiverHome, env); err != nil {
+		t.Fatalf("NewEnvelope without watcher: %v", err)
+	}
+
+	// 3. Save sender pending record (direct write, no watcher needed).
+	if _, err := SaveSenderPending(senderHome, env); err != nil {
+		t.Fatalf("SaveSenderPending without watcher: %v", err)
+	}
+
+	// 4. Deliver with a fake backend (simulates agent prompt, no watcher).
+	fake := &fakeBackend{alive: true, windowID: window}
+	installFakeBackend(t, fake)
+	writeFakeMeta(t, receiverHome, "captain:1", window)
+
+	meta, _ := task.ReadMeta(receiverHome, "captain:1")
+	result := DeliverEnvelope(receiverHome, env.SenderIdentity, env, meta)
+
+	if result.Err != nil {
+		t.Fatalf("DeliverEnvelope without watcher: %v", result.Err)
+	}
+	if !result.PromptSent {
+		t.Fatal("prompt must be sent without watcher")
+	}
+
+	// 5. Verify envelope is delivered in inbox.
+	got, _ := GetInboxEnvelope(receiverHome, env.SenderIdentity, env.MessageID)
+	if got == nil {
+		t.Fatal("envelope must exist in inbox after delivery")
+	}
+	if got.DeliveryStatus != StatusDelivered {
+		t.Errorf("envelope status = %q, want delivered", got.DeliveryStatus)
+	}
+
+	// 6. Receiver marks processed (acknowledged agent-prompt).
+	if err := MarkProcessed(receiverHome, env.SenderIdentity, env.MessageID); err != nil {
+		t.Fatalf("MarkProcessed without watcher: %v", err)
+	}
+
+	// 7. Verify ack.
+	if !IsAcked(receiverHome, env.SenderIdentity, env.MessageID) {
+		t.Fatal("envelope must be acked without watcher")
+	}
+
+	// 8. Sender removes pending record after ack.
+	if err := RemoveSenderPending(senderHome, env.MessageID); err != nil {
+		t.Fatalf("RemoveSenderPending: %v", err)
+	}
+	pending, _ := ListSenderPending(senderHome)
+	if len(pending) != 0 {
+		t.Error("pending must be empty after ack")
+	}
+
+	// 9. Verify no watcher artifacts created.
+	watcherArtifacts := []string{
+		filepath.Join(receiverHome, "state", ".last-watcher-beat"),
+		filepath.Join(receiverHome, "state", ".watcher-identity"),
+		filepath.Join(receiverHome, "state", ".inbox", env.SenderIdentity, ".recovered-"+env.MessageID),
+	}
+	for _, path := range watcherArtifacts {
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("watcher artifact should not exist after direct mailbox path: %s", path)
+		}
+	}
+
+	// 10. Verify no parent-home wake storms — no wake queue was created.
+	wakeQueuePath := filepath.Join(receiverHome, "state", ".wake-queue")
+	if _, err := os.Stat(wakeQueuePath); err == nil {
+		t.Error("wake queue should not exist after direct mailbox delivery")
+	}
+
+	// 11. Verify no ListPendingReceipts-style routing.
+	// The old pattern would check state/.terminal-receipts/ — ensure no such
+	// routing side effect happened.
+	receiptsDir := filepath.Join(receiverHome, "state", ".terminal-receipts")
+	if entries, err := os.ReadDir(receiptsDir); err == nil && len(entries) > 0 {
+		t.Errorf("no terminal-receipts should be created by direct mailbox, got %d entries", len(entries))
+	}
+}
+
+// TestDirectMailbox_NoWatcherDuringSendReport proves the combined
+// SendReport path (create envelope + save pending + deliver) works
+// without any watcher process running.
+func TestDirectMailbox_NoWatcherDuringSendReport(t *testing.T) {
+	receiverHome := t.TempDir()
+	senderHome := t.TempDir()
+	window := "@w"
+
+	env := &Envelope{
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-direct",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "captain:1",
+		Payload:        "done: direct durable mailbox",
+	}
+
+	fake := &fakeBackend{alive: true, windowID: window}
+	installFakeBackend(t, fake)
+	writeFakeMeta(t, receiverHome, "captain:1", window)
+
+	meta, _ := task.ReadMeta(receiverHome, "captain:1")
+	result := SendReport(env, receiverHome, senderHome, meta)
+
+	if result.Err != nil {
+		t.Fatalf("SendReport without watcher: %v", result.Err)
+	}
+	if !result.PromptSent {
+		t.Fatal("SendReport must send prompt without watcher")
+	}
+	if len(fake.sent) != 1 {
+		t.Fatalf("expected 1 prompt sent, got %d", len(fake.sent))
+	}
+
+	// Verify envelope is in inbox and delivered.
+	got, _ := GetInboxEnvelope(receiverHome, "soldier-direct", env.MessageID)
+	if got == nil {
+		t.Fatal("envelope must exist in inbox")
+	}
+	if got.DeliveryStatus != StatusDelivered {
+		t.Errorf("status = %q, want delivered", got.DeliveryStatus)
+	}
+
+	// Verify sender pending record exists.
+	pending, _ := ListSenderPending(senderHome)
+	if len(pending) != 1 {
+		t.Fatal("sender must have pending record")
+	}
+
+	// Verify prompt message content (agent-prompt acknowledgement).
+	if !strings.Contains(fake.sent[0], "done: direct durable mailbox") {
+		t.Errorf("prompt must contain original payload, got: %s", fake.sent[0])
+	}
+
+	// Verify no watcher artifacts created.
+	if _, err := os.Stat(filepath.Join(receiverHome, "state", ".last-watcher-beat")); err == nil {
+		t.Error("watcher beat must not exist after direct SendReport")
 	}
 }
