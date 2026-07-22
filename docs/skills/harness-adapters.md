@@ -38,4 +38,3 @@ and the alternate `default` + `rules` shape.
 Manage via `munsu config dispatch show|set-default|add|rm|path`.
 
 Spawn precedence: CLI `--harness`/`--model`/`--effort` > matched dispatch profile > adapter template defaults.
-

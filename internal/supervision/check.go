@@ -2,6 +2,7 @@
 // A check plugin is an executable script (per-task or global) that the watcher
 // discovers and surfaces as a Kind=check wake for the AFK/general pipeline.
 package supervision
+
 import (
 	"fmt"
 	"os"
@@ -135,7 +136,7 @@ func ValidateCheck(path string) error {
 //   - The file content does not start with a shebang
 //   - The file is older than its companion .meta file's last modification
 //     (meta has been updated since the check was written, meaning the
-//      task state has advanced but the check was not regenerated)
+//     task state has advanced but the check was not regenerated)
 func MigrateOrRefuseStale(path string) (bool, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -173,4 +174,3 @@ func MigrateOrRefuseStale(path string) (bool, error) {
 	}
 	return true, nil // check is valid
 }
-
