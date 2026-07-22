@@ -2152,13 +2152,23 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 
 		// g. Terminal receipt relay (Captain → General)
 		// Scans the captain home for un-acked soldier terminal reports
-		// and relays each one to the General's state.
-		relayed, relayErr := RelayTerminalReceipts(sm.Home, parentHome)
+		// and relays each one to the General's state using the shared
+		// reconciliation seam.
+		relayResult, relayErr := ReconcileTerminalReceipts(sm.Home, parentHome)
 		if relayErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeFailed, Detail: relayErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: terminal relay failed: %v", sm.ID, relayErr))
-		} else if relayed > 0 {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: fmt.Sprintf("relayed %d receipt(s) to General", relayed)})
+		} else if relayResult != nil && relayResult.Relayed() > 0 {
+			detail := fmt.Sprintf("relayed %d receipt(s) to General", relayResult.Relayed())
+			if f := relayResult.Failed(); f > 0 {
+				detail += fmt.Sprintf(" (%d failed)", f)
+			}
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: detail})
+			for _, o := range relayResult.Outcomes {
+				if o.Outcome != OutcomeRelayed {
+					errs = append(errs, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
+				}
+			}
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeSkipped, Detail: "no pending receipts"})
 		}
