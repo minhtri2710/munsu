@@ -14,7 +14,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/event"
-	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -379,22 +378,18 @@ func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error
 }
 
 // topologyAwareMergeCheck verifies the work is landed using the provider's
-// confirmed PR merge status. It supports three merge topologies:
+// confirmed PR/MR merge status. It supports three merge topologies:
 //   - Squash/rebase merge with deleted head: accepts provider-confirmed merged PR identity
 //   - Ordinary merge: retains ancestry proof (merged branch still exists locally)
 //   - Unknown/unverifiable: refuses teardown
 //
 // Returns the proof string on success.
 func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *delivery.DeliveryIdentity) (string, error) {
-	ghURL, err := ghurl.ParseGHURL(ident.URL)
+	// Query the provider for the current PR/MR merge status using the
+	// provider-neutral seam that routes by identity provider.
+	status, err := delivery.QueryDeliveryMergeStatus(ident)
 	if err != nil {
-		return "", fmt.Errorf("invalid PR URL in delivery identity: %w", err)
-	}
-
-	// Query the provider for the current PR merge status
-	status, err := delivery.QueryPRMergeStatus(ghURL)
-	if err != nil {
-		return "", fmt.Errorf("cannot verify PR merge status: %w (use --force to override)", err)
+		return "", fmt.Errorf("cannot verify merge status: %w (use --force to override)", err)
 	}
 
 	// Check for refused states

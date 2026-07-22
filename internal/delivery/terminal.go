@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -14,22 +13,39 @@ import (
 // so terminal identity capture is fail-closed on provider absence.
 var captureTerminalIdentity = captureTerminalIdentityViaProvider
 
-// captureTerminalIdentityViaProvider captures identity using only the typed
-// GitHub provider client. Rejects the degraded gh CLI fallback path for
-// terminal identity capture — provider absence means fail closed.
+// captureTerminalIdentityViaProvider captures identity using the typed
+// provider client (GitHub via gh-axi or GitLab via glab). Rejects degraded
+// CLI fallback paths — provider absence means fail closed.
 func captureTerminalIdentityViaProvider(prURL string) (*DeliveryIdentity, error) {
-	client, err := DefaultGitHubClient()
+	provider, _, _, _, _, err := ParseProviderURL(prURL)
 	if err != nil {
-		return nil, fmt.Errorf("GitHub provider not available: %w", err)
+		return nil, fmt.Errorf("unrecognized PR/MR URL: %w", err)
 	}
-	return client.CaptureIdentity(prURL)
+
+	switch provider {
+	case "github":
+		client, err := DefaultGitHubClient()
+		if err != nil {
+			return nil, fmt.Errorf("GitHub provider not available: %w", err)
+		}
+		return client.CaptureIdentity(prURL)
+	case "gitlab":
+		client, err := DefaultGitLabClient()
+		if err != nil {
+			return nil, fmt.Errorf("GitLab provider not available: %w", err)
+		}
+		return client.CaptureIdentity(prURL)
+	default:
+		return nil, fmt.Errorf("unknown provider %q for URL %s", provider, prURL)
+	}
 }
 
-// ExtractPRURL extracts a GitHub PR URL from the terminal report message.
-// Strict parsing: only the "PR <url>" prefix is accepted to avoid false
-// positives from arbitrary message text. Returns the validated URL and true,
-// or empty string and false if no PR URL is present.
-// Malformed input (PR prefix but invalid URL) returns an error via ghurl.ParseGHURL.
+// ExtractPRURL extracts a GitHub PR or GitLab MR URL from the terminal
+// report message. Strict parsing: only the "PR <url>" prefix is accepted
+// to avoid false positives from arbitrary message text. Returns the
+// validated URL and true, or empty string and false if no PR URL is present.
+// Malformed input (PR prefix but invalid URL) returns an error via
+// ParseProviderURL.
 func ExtractPRURL(msg string) (string, bool, error) {
 	// Trim leading whitespace only — preserve trailing content for prefix match.
 	trimmed := strings.TrimLeft(msg, " \t\r\n")
@@ -44,8 +60,8 @@ func ExtractPRURL(msg string) (string, bool, error) {
 		return "", false, fmt.Errorf("PR prefix found but URL is empty")
 	}
 
-	// Validate the URL is a real GitHub PR URL
-	_, err := ghurl.ParseGHURL(candidate)
+	// Validate the URL is a recognized PR or MR URL
+	_, _, _, _, _, err := ParseProviderURL(candidate)
 	if err != nil {
 		return "", false, fmt.Errorf("invalid PR URL in terminal report: %w", err)
 	}
