@@ -1020,9 +1020,11 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	}
 }
 
-// TestRunCycle_SkipsRelayWithoutParentEnv verifies that runCycle does NOT
-// relay when MUNSU_PARENT_STATUS is not set.
-func TestRunCycle_SkipsRelayWithoutParentEnv(t *testing.T) {
+// TestRunCycle_EmitsDiagnosticWakeWithoutParentEnv verifies that runCycle
+// emits a diagnostic wake when MUNSU_PARENT_STATUS is not set but there are
+// pending receipts. This is the fail-closed replacement for the old silent-skip
+// behavior — relay must not silently drop terminal reports.
+func TestRunCycle_EmitsDiagnosticWakeWithoutParentEnv(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
@@ -1039,17 +1041,17 @@ func TestRunCycle_SkipsRelayWithoutParentEnv(t *testing.T) {
 	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
-		t.Fatalf("InitTaskObligations: %v", err)
-	}
 
 	// Ensure MUNSU_PARENT_STATUS is unset
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	// Run one cycle — should NOT relay (no parent home)
+	// Run one cycle — should emit a diagnostic wake (fail-closed), not silently skip
 	emitted, err := runCycle(tmp)
 	if err != nil {
 		t.Fatalf("runCycle: %v", err)
+	}
+	if !emitted {
+		t.Error("runCycle should emit diagnostic wake when parent-home is missing and receipts are pending")
 	}
 
 	// Receipt should NOT be acked (no relay happened)
@@ -1057,7 +1059,21 @@ func TestRunCycle_SkipsRelayWithoutParentEnv(t *testing.T) {
 		t.Error("receipt should NOT be acked without parent env")
 	}
 
-	_ = emitted // emitted may be false or true depending on other scan conditions
+	// Verify a diagnostic wake was enqueued
+	records, drainErr := lifecycle.DrainWakes(tmp)
+	if drainErr != nil {
+		t.Fatalf("DrainWakes: %v", drainErr)
+	}
+	foundDiag := false
+	for _, r := range records {
+		if strings.Contains(r.Payload, "parent-home not configured") {
+			foundDiag = true
+			break
+		}
+	}
+	if !foundDiag {
+		t.Errorf("expected diagnostic wake about missing parent-home config, got wakes: %+v", records)
+	}
 }
 
 // TestRunCycle_FailsGracefullyOnInvalidParent verifies that runCycle does not

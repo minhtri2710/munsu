@@ -54,6 +54,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 			StepResult{Name: "config-validation", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "integration-status", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "charter-refresh", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "config-push", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
@@ -74,6 +75,12 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 
 	// Step c2: charter refresh — re-generate .captain-charter.md idempotently
 	res.Steps = append(res.Steps, tx.stepCharterRefresh(parentHome, sm))
+
+	// Step c3: config inheritance push — ensures config/parent-home and other
+	// inheritable config are up to date from the authoritative General home.
+	// This must run before launch-readiness and watcher-ensure so those steps
+	// see the latest parent-home contract.
+	res.Steps = append(res.Steps, tx.stepConfigPush(parentHome, sm, configOk))
 
 	// Step d: launch readiness
 	res.Steps = append(res.Steps, tx.stepLaunchReadiness(sm))
@@ -186,6 +193,22 @@ func (tx *RecoverTransaction) stepCharterRefresh(parentHome string, sm Info) Ste
 	}
 	return StepResult{Name: "charter-refresh", State: StepOk,
 		Detail: "versioned .captain-charter.md refreshed"}
+}
+
+// stepConfigPush pushes inheritable config from the General home to the
+// captain, including config/parent-home. This ensures every recovery path
+// (including state-only alive captains) picks up the authoritative General
+// home reference for watcher relay and terminal receipt routing.
+func (tx *RecoverTransaction) stepConfigPush(parentHome string, sm Info, configOk bool) StepResult {
+	if !configOk {
+		return StepResult{Name: "config-push", State: StepSkipped,
+			Detail: "skipped: config validation failed"}
+	}
+	if err := ConfigPush(parentHome, sm.Home); err != nil {
+		return StepResult{Name: "config-push", State: StepFailed,
+			Detail: fmt.Sprintf("config-push failed: %v", err)}
+	}
+	return StepResult{Name: "config-push", State: StepOk, Detail: "inheritable config pushed including parent-home"}
 }
 
 func (tx *RecoverTransaction) stepLaunchReadiness(sm Info) StepResult {
