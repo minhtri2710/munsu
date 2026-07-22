@@ -250,3 +250,105 @@ func TestEvaluateGuard_WatcherAbsentNotInEvaluateGuard(t *testing.T) {
 		}
 	}
 }
+
+// TestEvaluateGuard_AgedWakeProducesAgedWakeCondition proves that material
+// wake entries older than MaterialWakeAgeThreshold produce the
+// ConditionAgedWakePending code, making the guard unhealthy.
+func TestEvaluateGuard_AgedWakeProducesAgedWakeCondition(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+
+	// Enqueue a material wake with an old timestamp by manipulating the queue file.
+	// Direct EnqueueWake adds current time, so write a TSV line manually.
+	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
+	queuePath := lifecycle.QueuePath(home)
+	os.MkdirAll(filepath.Dir(queuePath), 0755)
+	line := fmt.Sprintf("%d	%d\tsignal\ttask-1\tdone: PR merged\n", oldEpoch, 1)
+	os.WriteFile(queuePath, []byte(line), 0644)
+
+	result := EvaluateGuard(home, 1, time.Now())
+
+	foundAgedWake := false
+	for _, c := range result.Conditions {
+		if c.Code == ConditionAgedWakePending {
+			foundAgedWake = true
+			if !strings.Contains(c.Message, "aged") {
+				t.Errorf("aged wake condition message should contain 'aged', got: %s", c.Message)
+			}
+			break
+		}
+	}
+	if !foundAgedWake {
+		codes := make([]string, len(result.Conditions))
+		for i, c := range result.Conditions {
+			codes[i] = string(c.Code)
+		}
+		t.Errorf("expected ConditionAgedWakePending, got codes: %v", codes)
+	}
+}
+
+func TestEvaluateGuard_FreshWakeNoAgedCondition(t *testing.T) {
+	home := t.TempDir()
+	writeBeatFile(t, home, time.Now().Unix())
+
+	// Enqueue a fresh material wake.
+	lifecycle.EnqueueWake(home, "signal", "task-fresh", "done: just finished")
+
+	result := EvaluateGuard(home, 1, time.Now())
+
+	for _, c := range result.Conditions {
+		if c.Code == ConditionAgedWakePending {
+			t.Errorf("fresh material wake should not produce aged condition")
+		}
+	}
+}
+
+func TestHasAgedMaterialWake_Threshold(t *testing.T) {
+	home := t.TempDir()
+
+	// Old material wake
+	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
+	queuePath := lifecycle.QueuePath(home)
+	os.MkdirAll(filepath.Dir(queuePath), 0755)
+	line := fmt.Sprintf("%d	%d\tsignal\ttask-old\tdone: very old\n", oldEpoch, 1)
+	os.WriteFile(queuePath, []byte(line), 0644)
+
+	if !HasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("HasAgedMaterialWake should be true for old material wake")
+	}
+}
+
+func TestHasAgedMaterialWake_Fresh(t *testing.T) {
+	home := t.TempDir()
+	lifecycle.EnqueueWake(home, "signal", "task-fresh", "done: fresh")
+
+	if HasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("HasAgedMaterialWake should be false for fresh wake")
+	}
+}
+
+func TestHasAgedMaterialWake_NonMaterialWakes(t *testing.T) {
+	home := t.TempDir()
+	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
+	queuePath := lifecycle.QueuePath(home)
+	os.MkdirAll(filepath.Dir(queuePath), 0755)
+	// Routine wake, not material.
+	line := fmt.Sprintf("%d	%d\tstale\ttask-routine\tworking: in progress\n", oldEpoch, 1)
+	os.WriteFile(queuePath, []byte(line), 0644)
+
+	if HasAgedMaterialWake(home, time.Now()) {
+		t.Fatal("HasAgedMaterialWake should be false for non-material (routine) wake")
+	}
+}
+
+func TestConditionAgedWakePending_Constant(t *testing.T) {
+	if string(ConditionAgedWakePending) != "aged_wake_pending" {
+		t.Errorf("ConditionAgedWakePending = %q, want 'aged_wake_pending'", ConditionAgedWakePending)
+	}
+}
+
+func TestMaterialWakeAgeThreshold_Constant(t *testing.T) {
+	if MaterialWakeAgeThreshold != 5*time.Minute {
+		t.Errorf("MaterialWakeAgeThreshold = %v, want 5m0s", MaterialWakeAgeThreshold)
+	}
+}

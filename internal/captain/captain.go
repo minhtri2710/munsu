@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -507,6 +508,10 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	if parentHome != "" {
 		if err := Register(parentHome, id, homePath, "", ""); err != nil {
 			return fmt.Errorf("registering captain %s: %w", id, err)
+		}
+		// Store the General parent home in captain config for durable parent resolution.
+		if err := config.Set(homePath, "parent-home", parentHome); err != nil {
+			return fmt.Errorf("writing parent-home config: %w", err)
 		}
 		// Inherit General config + project registry so soldiers need not re-add projects.
 		if err := ConfigPush(parentHome, homePath); err != nil {
@@ -1628,6 +1633,11 @@ func ConfigPush(parentHome, captainHome string) error {
 		return err
 	}
 
+	// Refresh parent-home config so the captain always has a durable reference to its General.
+	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
+		return fmt.Errorf("refreshing parent-home: %w", err)
+	}
+
 	// Refresh the canonical .captain-charter.md so it stays current on every config-push cycle.
 	if err := RefreshCharter(captainHome, parentHome); err != nil {
 		return fmt.Errorf("refreshing captain charter: %w", err)
@@ -1861,6 +1871,14 @@ func Update(captainHome, parentHome string) UpdateResponse {
 
 	// Detect state-only homes (no git worktree).
 	if _, err := os.Stat(filepath.Join(captainHome, ".git")); os.IsNotExist(err) {
+		// Config-push for state-only homes: write config/parent-home from the
+		// authoritative registered General home so watcher relay works.
+		if cpErr := ConfigPush(parentHome, captainHome); cpErr != nil {
+			return UpdateResponse{
+				Outcome: StateOnlySkipped,
+				Err:     fmt.Errorf("config-push after state-only update: %w", cpErr),
+			}
+		}
 		return UpdateResponse{
 			Outcome: StateOnlySkipped,
 		}
@@ -2127,6 +2145,9 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: "ok"})
+			// Notification continuity: enqueue a config-reread wake so the captain's
+			// watcher continuity system picks up the config change as a notifiable event.
+			_ = lifecycle.EnqueueWake(sm.Home, "config", "config-reread", "config refreshed via converge")
 		}
 
 		// e2. Charter refresh — ensure .captain-charter.md is current.
@@ -2152,13 +2173,23 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 
 		// g. Terminal receipt relay (Captain → General)
 		// Scans the captain home for un-acked soldier terminal reports
-		// and relays each one to the General's state.
-		relayed, relayErr := RelayTerminalReceipts(sm.Home, parentHome)
+		// and relays each one to the General's state using the shared
+		// reconciliation seam.
+		relayResult, relayErr := ReconcileTerminalReceipts(sm.Home, parentHome)
 		if relayErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeFailed, Detail: relayErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: terminal relay failed: %v", sm.ID, relayErr))
-		} else if relayed > 0 {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: fmt.Sprintf("relayed %d receipt(s) to General", relayed)})
+		} else if relayResult != nil && relayResult.Relayed() > 0 {
+			detail := fmt.Sprintf("relayed %d receipt(s) to General", relayResult.Relayed())
+			if f := relayResult.Failed(); f > 0 {
+				detail += fmt.Sprintf(" (%d failed)", f)
+			}
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: detail})
+			for _, o := range relayResult.Outcomes {
+				if o.Outcome != OutcomeRelayed {
+					errs = append(errs, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
+				}
+			}
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeSkipped, Detail: "no pending receipts"})
 		}

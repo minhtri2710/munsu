@@ -386,7 +386,7 @@ func TestIdentity_MetaKeys(t *testing.T) {
 	expected := []string{
 		"pr_provider", "pr_owner", "pr_repo",
 		"pr_number", "pr_url",
-		"pr_base", "pr_head_ref", "pr_head",
+		"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha",
 		"pr_timestamp",
 	}
 	if len(keys) != len(expected) {

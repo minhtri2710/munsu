@@ -5,9 +5,11 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -95,6 +97,16 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				wakeHome = parentHome
 			}
 
+			// 0. For soldier material states with a PR URL in the message:
+			// capture and persist delivery identity before any terminal report
+			// success. Provider/identity failure fails closed: no status, receipt,
+			// ack reset, event, or wake is produced. Retry is idempotent.
+			if role == "soldier" && materialStates[state] {
+				if err := delivery.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+					return fmt.Errorf("report: %w", err)
+				}
+			}
+
 			// 1. Durable task status append
 			if err := task.AppendStatus(targetHome, taskID, statusLine); err != nil {
 				return fmt.Errorf("report: appending status: %w", err)
@@ -129,8 +141,10 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			}
 
 			// 3. For material states, enqueue a wake in the supervisor's queue
+			var enqueueTimestamp int64
 			if materialStates[state] {
 				wakePayload := fmt.Sprintf("%s: %s [event=%d]", taskID, statusLine, syntheticID)
+				enqueueTimestamp = time.Now().Unix()
 				lifecycle.EnqueueWake(wakeHome, "signal", taskID, wakePayload)
 			}
 
@@ -139,18 +153,36 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// message into the parent's terminal pane if the composer is empty.
 			// The wake queue is the primary mechanism; injection is best-effort.
 			ringDecision := resolveRingPolicy(ring, homeDir)
+			var injectResult *contract.ReportInjection
+			watcherID := identifyWatcher(homeDir)
 			if ringDecision == "ring" && materialStates[state] {
-				injectErr := injectToParentPane(role, homeDir, parentHome, taskID, msg, state, syntheticID)
-				if injectErr != nil {
-					fmt.Fprintf(os.Stderr, "report: parent pane injection skipped: %v\n", injectErr)
+				result := injectToParentPane(role, homeDir, parentHome, taskID, msg, state, syntheticID)
+				injectResult = &contract.ReportInjection{
+					Outcome: string(result.Outcome),
+					Verdict: result.Verdict,
+					Target:  result.Target,
+					EventID: syntheticID,
+					Error:   result.Error,
 				}
+			}
+
+			// Determine receipt timestamp from the captain receipt (if written).
+			var receiptTimestamp int64
+			if role == "soldier" && materialStates[state] && parentHome != "" {
+				receiptTimestamp = time.Now().Unix()
 			}
 
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "report",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID)},
+				Data: contract.MessageResult{
+					Message:          fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
+					Injection:        injectResult,
+					EnqueueTimestamp: enqueueTimestamp,
+					ReceiptTimestamp: receiptTimestamp,
+					WatcherIdentity:  watcherID,
+				},
 			})
 		},
 	}
@@ -190,64 +222,61 @@ func resolveRingPolicy(ring, homeDir string) string {
 }
 
 // injectToParentPane resolves the parent pane target and injects a sentinel
-// message. Returns nil on success or if injection is not possible; returns
-// an error only when the backend resolves but injection fails.
-func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) error {
+// message. Returns the typed InjectResult with outcome diagnostics.
+func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) afk.InjectResult {
 	// Dedup: skip if this event was already injected.
 	eventKey := fmt.Sprintf("%s/%s/%d", taskID, state, syntheticID)
 	if _, loaded := injectedEvents.LoadOrStore(eventKey, true); loaded {
-		return nil
+		return afk.InjectResult{Outcome: afk.OutcomeInjected, Target: "(deduped)"}
 	}
 
 	// Resolve the parent pane target.
 	// For captains, resolve from the general's home (parentHome).
 	// For soldiers, resolve from the current home (the soldier's home).
-	// If resolution fails, skip injection silently (wake is the primary mechanism).
 	targetHome := homeDir
 	if role == "captain" && parentHome != "" {
 		targetHome = parentHome
 	}
 	target, err := afk.ResolveTargetWithSource(targetHome)
-	if err != nil {
-		return nil
-	}
-	if target.Handle == "" || target.Source == afk.Unsupported {
-		return nil
+	if err != nil || target.Handle == "" || target.Source == afk.Unsupported {
+		return afk.InjectResult{
+			Outcome: afk.OutcomeEndpointDead,
+			Target:  target.Handle,
+			Error:   fmt.Sprintf("target resolution: %v no-handle=%v unsupported=%v", err, target.Handle == "", target.Source == afk.Unsupported),
+		}
 	}
 
 	// Obtain a session backend for SendKeys and Capture.
 	bk, _, err := session.Resolve(homeDir, "")
 	if err != nil {
-		return nil
+		return afk.InjectResult{
+			Outcome: afk.OutcomeEndpointDead,
+			Target:  target.Handle,
+			Error:   fmt.Sprintf("backend resolve: %v", err),
+		}
 	}
 
-	// Verify the backend supports both SendKeys and Capture.
-	// session.Backend satisfies both afk.Backend and afk.PaneCapture.
+	// session.Backend satisfies afk.PaneCapture.
 	var afkCap afk.PaneCapture = bk
 
-	// Build the inject message.
 	injectMsg := fmt.Sprintf("[report] %s: %s (task=%s)", state, msg, taskID)
-
-	// Build payload with sentinel prefix and optional event ID.
 	markedMsg := afk.Mark(injectMsg)
 	if syntheticID > 0 {
 		markedMsg = fmt.Sprintf("%s [event=%d]", markedMsg, syntheticID)
 	}
 
-	// Check composer safety before dispatch.
 	safe, verdict, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
 	if err != nil {
-		return fmt.Errorf("checking inject target: %w", err)
+		return afk.InjectResult{Outcome: afk.OutcomeEndpointDead, Verdict: verdict.String(), Target: target.Handle, Error: err.Error()}
 	}
 	if !safe {
-		return fmt.Errorf("composer not empty: verdict=%s (unsafe-composer)", verdict)
+		return afk.InjectResult{Outcome: afk.OutcomeUnsafe, Verdict: verdict.String(), Target: target.Handle}
 	}
 
-	// Use typed prompt submission through session.SubmitPrompt.
 	result := session.SubmitPrompt(bk, target.Handle, markedMsg)
 	if !result.Acknowledged() {
-		return fmt.Errorf("inject not acknowledged: %s (wake is primary mechanism)", result.Status)
+		return afk.InjectResult{Outcome: afk.OutcomeBackendFailed, Verdict: verdict.String(), Target: target.Handle, Error: string(result.Status)}
 	}
+	return afk.InjectResult{Outcome: afk.OutcomeInjected, Verdict: verdict.String(), Target: target.Handle}
 
-	return nil
 }

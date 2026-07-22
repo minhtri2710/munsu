@@ -292,8 +292,12 @@ type SpawnReceipt struct {
 
 // MessageResult represents success and idempotent no-op acknowledgements.
 type MessageResult struct {
-	Message string `json:"message"`
-	Noop    bool   `json:"noop"`
+	Message           string            `json:"message"`
+	Noop              bool              `json:"noop"`
+	Injection         *ReportInjection  `json:"injection,omitempty"`
+	EnqueueTimestamp  int64             `json:"enqueue_timestamp,omitempty"`
+	ReceiptTimestamp  int64             `json:"receipt_timestamp,omitempty"`
+	WatcherIdentity   string            `json:"watcher_identity,omitempty"`
 }
 
 // EmptyResult makes an empty collection definitive.
@@ -348,6 +352,30 @@ type SafetyCheckData struct {
 	Block          bool   `json:"block"`
 	Reason         string `json:"reason,omitempty"`
 	Error          string `json:"error,omitempty"`
+}
+
+// ReportInjection records the outcome of one material report injection attempt.
+type ReportInjection struct {
+	Outcome   string `json:"outcome"`    // injected | unsafe | afk | endpoint-dead | backend-failed
+	Verdict   string `json:"verdict,omitempty"`
+	Target    string `json:"target,omitempty"`
+	EventID   uint64 `json:"event_id,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// WatchStatus reports the bounded watcher health and status.
+// Never enters foreground daemon mode — pure stateless read of beat/identity/wake state.
+type WatchStatus struct {
+	WatchID      string          `json:"watch_id"`
+	State        string          `json:"state"`         // healthy | stale | absent
+	BeatAge      string          `json:"beat_age"`
+	PID          int             `json:"pid"`
+	Identity     string          `json:"identity,omitempty"`
+	QueuedWakes  int             `json:"queued_wakes"`
+	MaterialAge  string          `json:"material_age,omitempty"` // age of oldest material wake
+	GuardState   string          `json:"guard_state"`            // healthy | unhealthy | indeterminate
+	Lease        *WatchLeaseInfo `json:"lease,omitempty"`
+	Diagnostics  []string        `json:"diagnostics,omitempty"`
 }
 
 // DecisionHoldInfo is one row in a decision-hold list.

@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 const pollInterval = 5 * time.Second
@@ -153,7 +154,7 @@ var (
 	// before it surfaces as stale. After this threshold, a paused task
 	// triggers a stale wake so the general can reassess it.
 	pauseResurfaceThreshold = 5 * time.Minute
-)	
+)
 
 // ScanFleet checks all live tasks for the first actionable condition.
 func ScanFleet(homeDir string) *WakeReason {
@@ -292,6 +293,11 @@ func scanTask(homeDir, id string) *WakeReason {
 	return nil
 }
 
+// TerminalReconcileHook, if set, is called at the start of each watcher runCycle
+// to reconcile terminal receipts. The hook should return quickly when there is
+// nothing to do. It is set by the captain package during init.
+var TerminalReconcileHook func(homeDir string) error
+
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
 func RunCycle(homeDir string) (bool, error) {
@@ -299,6 +305,17 @@ func RunCycle(homeDir string) (bool, error) {
 }
 
 func runCycle(homeDir string) (bool, error) {
+	// Reconcile terminal receipts before scanning fleet.
+	// This is the watcher-driven supervision path: durability remains primary.
+	if TerminalReconcileHook != nil {
+		if err := TerminalReconcileHook(homeDir); err != nil {
+			// Log diagnostics but do not fail the cycle — stale-pane detection
+			// and check wakes should still run even if terminal reconcile has
+			// transient issues.
+			fmt.Fprintf(os.Stderr, "terminal reconcile error: %v\n", err)
+		}
+	}
+
 	emitted := false
 	for _, reason := range scanFleet(homeDir, true) {
 		if len(reason.TaskIDs) == 0 {
@@ -367,6 +384,43 @@ func runCycle(homeDir string) (bool, error) {
 			return emitted, err
 		}
 		emitted = true
+	}
+
+	// Check parent-home presence for terminal receipt relay.
+	// When MUNSU_PARENT_STATUS is not set but there are pending receipts,
+	// enqueue a diagnostic wake so the General can surface the misconfiguration.
+	// Do NOT silently skip — failing closed ensures the General knows relay is
+	// broken rather than silently dropping soldier terminal reports.
+	if parentHome := os.Getenv("MUNSU_PARENT_STATUS"); parentHome == "" {
+		// Check if there are any pending receipts that would not be relayed.
+		pending, checkErr := turnend.ListPendingReceipts(homeDir)
+		if checkErr == nil && len(pending) > 0 {
+			// Surface the unhealthy state through a diagnostic wake so the
+			// General's converge sweep detects the misconfiguration.
+			wgMsg := fmt.Sprintf("parent-home not configured for captain — %d pending receipt(s) not relayed", len(pending))
+			fmt.Fprintf(os.Stderr, "watcher relay: %s\n", wgMsg)
+			if wakeErr := lifecycle.EnqueueWake(homeDir, "signal", "_config", wgMsg); wakeErr != nil {
+				fmt.Fprintf(os.Stderr, "watcher relay: failed to enqueue diagnostic wake: %v\n", wakeErr)
+			} else {
+				emitted = true
+			}
+		}
+	} else {
+		// MUNSU_PARENT_STATUS is set — relay receipts via the captain-level
+		// TerminalReconcileHook (called at the top of this function). The
+		// hook handles the full relay chain: receipt → General status/event
+		// → captain ack → obligation close. We do NOT duplicate that logic
+		// here — the hook is the single authority for terminal relay.
+		//
+		// However, if the hook is not wired (e.g. watcher running outside
+		// captain context), fall back to the turnend-level relay.
+		if TerminalReconcileHook == nil {
+			if relayed, relayErr := turnend.RelayPendingReceipts(homeDir, parentHome); relayErr != nil {
+				fmt.Fprintf(os.Stderr, "watcher relay error (no hook): %v\n", relayErr)
+			} else if relayed > 0 {
+				emitted = true
+			}
+		}
 	}
 
 	return emitted, nil

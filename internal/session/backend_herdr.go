@@ -110,7 +110,21 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 				combined = strings.TrimSpace(string(out))
 			}
 			if combined != "" {
+				// Check for protocol_mismatch error code.
+				if herr := parseHerdrError(fmt.Errorf("%s", combined)); herr != nil && herr.Code == HerdrErrProtocolMismatch {
+					return "", &HerdrCLIError{
+						Code:    HerdrErrProtocolMismatch,
+						Message: fmt.Sprintf("herdr %v: %s", fullArgs, combined),
+					}
+				}
 				return "", fmt.Errorf("herdr %v: %s", fullArgs, combined)
+			}
+		}
+		// Check for protocol_mismatch in the error message directly.
+		if isHerdrProtocolMismatch(err) {
+			return "", &HerdrCLIError{
+				Code:    HerdrErrProtocolMismatch,
+				Message: err.Error(),
 			}
 		}
 		return "", fmt.Errorf("herdr %v: %w", fullArgs, err)
@@ -159,11 +173,22 @@ func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, 
 	return h.herdr(args...)
 }
 
-// isNotFoundErr returns true for 'not found' / 'not_found' / 'pane_not_found' herdr errors.
+// isNotFoundErr returns true for structured 'not found' / 'pane_not_found' herdr errors.
+// Prefers typed error code matching over textual substring for known codes;
+// falls back to textual matching for legacy/unknown error formats.
 func isNotFoundErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Try structured error code first.
+	if herr := parseHerdrError(err); herr != nil {
+		switch herr.Code {
+		case HerdrErrPaneNotFound, HerdrErrWorkspaceNotFound, HerdrErrTabNotFound:
+			return true
+		}
+		return false
+	}
+	// Legacy fallback: textual substring matching.
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found") || strings.Contains(msg, "pane_not_found")
 }
@@ -333,6 +358,10 @@ func (h *HerdrBackend) CheckAlive(windowID string) (bool, error) {
 	if isNotFoundErr(err) {
 		return false, ErrPaneNotFound
 	}
+	// Reject protocol_mismatch (fail closed).
+	if isHerdrProtocolMismatch(err) {
+		return false, fmt.Errorf("herdr protocol mismatch: %w", err)
+	}
 	return false, err
 }
 
@@ -414,6 +443,14 @@ func (h *HerdrBackend) Teardown(windowID string) error {
 	}
 
 	return nil
+}
+
+// Capability probes the installed herdr CLI and returns capability info.
+// It discovers the CLI path from PATH resolution (not a stored field) to
+// reflect actual runtime state. The result is suitable for caching by callers
+// that need repeated access within a single operation.
+func (h *HerdrBackend) Capability() CapabilityInfo {
+	return ProbeHerdrCapability("")
 }
 
 // MetaExtras returns extra metadata fields from the last tab creation.

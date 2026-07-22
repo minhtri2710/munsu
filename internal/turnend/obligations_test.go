@@ -456,3 +456,197 @@ func TestWriteReceipt_StaleAckInvalidation(t *testing.T) {
 		t.Error("temporary file should be cleaned up after successful WriteReceipt")
 	}
 }
+
+// TestReadCaptainID_FromMarker verifies that readCaptainID parses the
+// .munsu-captain-home provenance marker correctly.
+func TestReadCaptainID_FromMarker(t *testing.T) {
+	tmp := t.TempDir()
+	t.Run("reads captain ID from marker", func(t *testing.T) {
+		markerPath := filepath.Join(tmp, ProvenanceMarkerName)
+		os.MkdirAll(filepath.Dir(markerPath), 0755)
+		os.WriteFile(markerPath, []byte("munsu-v2\nmy-captain\n/home/user/.munsu/captains/my-captain\n"), 0644)
+
+		id, err := readCaptainID(tmp)
+		if err != nil {
+			t.Fatalf("readCaptainID: %v", err)
+		}
+		if id != "my-captain" {
+			t.Errorf("captain id = %q, want %q", id, "my-captain")
+		}
+	})
+
+	t.Run("falls back to basename when no marker", func(t *testing.T) {
+		empty := t.TempDir()
+		id, err := readCaptainID(empty)
+		if err != nil {
+			t.Fatalf("readCaptainID without marker: %v", err)
+		}
+		basename := filepath.Base(empty)
+		if id != basename {
+			t.Errorf("captain id = %q, want basename %q", id, basename)
+		}
+	})
+
+	t.Run("falls back to basename when marker is malformed", func(t *testing.T) {
+		bad := t.TempDir()
+		markerPath := filepath.Join(bad, ProvenanceMarkerName)
+		os.WriteFile(markerPath, []byte("munsu-v2\n\n"), 0644)
+
+		id, err := readCaptainID(bad)
+		if err != nil {
+			t.Fatalf("readCaptainID with empty id: %v", err)
+		}
+		basename := filepath.Base(bad)
+		if id != basename {
+			t.Errorf("captain id = %q, want basename %q", id, basename)
+		}
+	})
+}
+
+// TestRelayPendingReceipts_NoPending verifies idempotent no-op on empty receipts.
+func TestRelayPendingReceipts_NoPending(t *testing.T) {
+	captainHome := t.TempDir()
+	parentHome := t.TempDir()
+
+	relayed, err := RelayPendingReceipts(captainHome, parentHome)
+	if err != nil {
+		t.Fatalf("RelayPendingReceipts with no receipts: %v", err)
+	}
+	if relayed != 0 {
+		t.Errorf("expected 0 relayed, got %d", relayed)
+	}
+}
+
+// TestRelayPendingReceipts_RelaysToParent verifies that pending receipts
+// are relayed to the parent home, ack is written, and obligation is closed.
+func TestRelayPendingReceipts_RelaysToParent(t *testing.T) {
+	captainHome := t.TempDir()
+	parentHome := t.TempDir()
+	taskID := "test-soldier"
+	termKey := "uplink"
+
+	// Create captain provenance marker
+	captainID := "test-captain"
+	markerPath := filepath.Join(captainHome, ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+captainHome+"\n"), 0644)
+
+	// Create parent state dir and captain home state dir
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+
+	// Write receipt and init obligation (simulating soldier done)
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", "task complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// Verify receipt is NOT acked before relay
+	if IsReceiptAcked(captainHome, taskID, termKey) {
+		t.Fatal("receipt should NOT be acked before relay")
+	}
+
+	// Relay
+	relayed, err := RelayPendingReceipts(captainHome, parentHome)
+	if err != nil {
+		t.Fatalf("RelayPendingReceipts: %v", err)
+	}
+	if relayed != 1 {
+		t.Fatalf("expected 1 relayed receipt, got %d", relayed)
+	}
+
+	// Verify ack exists
+	if !IsReceiptAcked(captainHome, taskID, termKey) {
+		t.Fatal("receipt should be acked after relay")
+	}
+
+	// Verify parent received the relay status
+	relayStatusPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
+	data, err := os.ReadFile(relayStatusPath)
+	if err != nil {
+		t.Fatalf("parent relay status should exist: %v", err)
+	}
+	if !strings.Contains(string(data), "done") {
+		t.Errorf("relay status should contain 'done', got: %s", string(data))
+	}
+
+	// Verify obligation is closed
+	open, err := IsTaskReportRelayOpen(captainHome, taskID)
+	if err != nil {
+		t.Fatalf("IsTaskReportRelayOpen: %v", err)
+	}
+	if open {
+		t.Fatal("ReportRelay should be closed after relay")
+	}
+}
+
+// TestRelayPendingReceipts_Idempotent verifies relay is idempotent.
+func TestRelayPendingReceipts_Idempotent(t *testing.T) {
+	captainHome := t.TempDir()
+	parentHome := t.TempDir()
+	taskID := "test-soldier"
+	termKey := "uplink"
+
+	captainID := "test-captain"
+	markerPath := filepath.Join(captainHome, ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+captainHome+"\n"), 0644)
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+
+	// Write receipt, init obligations, relay
+	WriteReceipt(captainHome, taskID, termKey, "done", "task complete")
+	InitTaskObligations(captainHome, taskID, termKey)
+
+	relayed, err := RelayPendingReceipts(captainHome, parentHome)
+	if err != nil {
+		t.Fatalf("first relay: %v", err)
+	}
+	if relayed != 1 {
+		t.Fatalf("expected 1 first relay, got %d", relayed)
+	}
+
+	// Second relay should be idempotent (receipt no longer pending)
+	relayed, err = RelayPendingReceipts(captainHome, parentHome)
+	if err != nil {
+		t.Fatalf("second relay: %v", err)
+	}
+	if relayed != 0 {
+		t.Errorf("second relay should relay 0, got %d", relayed)
+	}
+}
+
+// TestRelayPendingReceipts_InvalidParent fails gracefully.
+func TestRelayPendingReceipts_InvalidParent(t *testing.T) {
+	captainHome := t.TempDir()
+	taskID := "test-soldier"
+	termKey := "uplink"
+
+	captainID := "test-captain"
+	markerPath := filepath.Join(captainHome, ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+captainHome+"\n"), 0644)
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+
+	// Write receipt and init obligations
+	WriteReceipt(captainHome, taskID, termKey, "done", "task complete")
+	InitTaskObligations(captainHome, taskID, termKey)
+
+	// Relay with non-existent parent home (no state dir).
+	// RelayPendingReceipts should NOT fail fatally — AppendStatus creates the path.
+	nonexistent := filepath.Join(captainHome, "nonexistent")
+	relayed, err := RelayPendingReceipts(captainHome, nonexistent)
+	if err != nil {
+		t.Fatalf("RelayPendingReceipts to nonexistent parent: %v", err)
+	}
+	if relayed != 1 {
+		t.Errorf("expected 1 relay even to invalid parent (AppendStatus creates path), got %d", relayed)
+	}
+
+	// Receipt should still be acked after relay attempt
+	if !IsReceiptAcked(captainHome, taskID, termKey) {
+		t.Error("receipt should be acked after relay (relay succeeds regardless of parent validity)")
+	}
+}
