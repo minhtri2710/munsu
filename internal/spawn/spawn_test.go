@@ -1613,6 +1613,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	args := Args{
 		ID:          "reconcile-task",
 		ProjectName: "test-proj",
+		HarnessFlag: "pi",
 		HomeDir:     homeDir,
 		Session:     fakeBk,
 		Mode:        "local-only",
