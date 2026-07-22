@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -291,11 +292,10 @@ func PushEnvelopeToCaptain(parentHome string, captainHome string, env *CommandEn
 
 // FlushEnvelopeSend delivers all pending envelopes for one captain.
 // For each pending envelope:
-// 1. Validates the captain endpoint is alive
-// 2. Copies the envelope to the captain's state
-// 3. Sends the marked message via SendKeys
-// 4. Marks the envelope delivered in the General home
-// Stops at the first send failure; earlier delivered envelopes stay delivered.
+// 1. Copies the envelope to the captain's state
+// 2. Sends the marked message via typed prompt submission
+// 3. Marks the envelope delivered only when acknowledged
+// Stops at the first unacknowledged result; earlier delivered envelopes stay delivered.
 func FlushEnvelopeSend(parentHome string, sm Info) error {
 	pending, err := ListPendingEnvelopes(parentHome, sm.ID)
 	if err != nil {
@@ -323,20 +323,20 @@ func FlushEnvelopeSend(parentHome string, sm Info) error {
 	if bkErr != nil {
 		return fmt.Errorf("%s: cannot resolve backend — envelope retained: %v", sm.ID, bkErr)
 	}
-	if !bk.Alive(windowID) {
-		return fmt.Errorf("%s: endpoint not alive with %d pending envelope(s) — envelope retained", sm.ID, len(pending))
-	}
 
 	for _, env := range pending {
-		// Push envelope to captain home for the agent to read.
-		if err := PushEnvelopeToCaptain(parentHome, sm.Home, env); err != nil {
-			return fmt.Errorf("%s: pushing envelope %s to captain home: %v", sm.ID, env.EnvelopeID, err)
+		// Send the message with marker via typed prompt submission.
+		// Do NOT push envelope to captain home until submission is acknowledged.
+		msg := marker.MarkFromGeneral(env.Message)
+		result := session.DispatchPrompt(bk, windowID, msg)
+		if !result.Acknowledged() {
+			// Never push or mark delivered on unacknowledged — envelope retained.
+			return fmt.Errorf("%s: envelope %s send not acknowledged (status=%s) — envelope retained", sm.ID, env.EnvelopeID, result.Status)
 		}
 
-		// Send the message with marker.
-		msg := marker.MarkFromGeneral(env.Message)
-		if err := bk.SendKeys(windowID, msg); err != nil {
-			return fmt.Errorf("%s: envelope %s send failed — envelope retained: %v", sm.ID, env.EnvelopeID, err)
+		// Push envelope to captain home only after acknowledged submission.
+		if err := PushEnvelopeToCaptain(parentHome, sm.Home, env); err != nil {
+			return fmt.Errorf("%s: pushing envelope %s to captain home after send: %v", sm.ID, env.EnvelopeID, err)
 		}
 
 		// Mark delivered in parent home.

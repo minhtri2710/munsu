@@ -53,8 +53,12 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error (tmux not on PATH), got nil")
 	}
-	if !strings.Contains(err.Error(), "tmux") {
-		t.Errorf("expected error mentioning 'tmux' (from meta backend), got: %v", err)
+	// TestSendCmd_UsesMetaBackend — verifies send uses backend from task meta
+	// instead of global config. With typed prompt submission, TmuxBackend returns
+	// unsupported (no PromptSubmitter). The error should reference the backend
+	// that was actually used (TmuxBackend), not the config default (herdr).
+	if !strings.Contains(err.Error(), "TmuxBackend") && !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("expected error mentioning TmuxBackend/unsupported (from meta backend), got: %v", err)
 	}
 }
 
@@ -263,7 +267,8 @@ func TestSendCmd_CaptainDeadPaneQueuesOutbox(t *testing.T) {
 // runCmd is a test helper that runs a command in a directory.
 func runCmd(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
-	cmd := exec.Command(name, args...); cmd.Dir = dir
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("cmd %s %v failed (dir=%s): %v\n%s", name, args, dir, err, string(out))
@@ -628,4 +633,3 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 		t.Fatalf("with exact taskID+key ack, teardown should succeed, got: %v", err)
 	}
 }
-

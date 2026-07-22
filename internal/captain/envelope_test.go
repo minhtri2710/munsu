@@ -404,8 +404,8 @@ func TestFlushEnvelopeSend_RetainsWhenDead(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when endpoint dead")
 	}
-	if !strings.Contains(err.Error(), "not alive") {
-		t.Errorf("error should mention not alive: %v", err)
+	if !strings.Contains(err.Error(), "endpoint-dead") {
+		t.Errorf("error should mention endpoint-dead: %v", err)
 	}
 
 	// Envelope should still be pending.

@@ -223,15 +223,24 @@ func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, sy
 
 	// Verify the backend supports both SendKeys and Capture.
 	// session.Backend satisfies both afk.Backend and afk.PaneCapture.
-	var afkBk afk.Backend = bk
 	var afkCap afk.PaneCapture = bk
 
 	// Build the inject message.
 	injectMsg := fmt.Sprintf("[report] %s: %s (task=%s)", state, msg, taskID)
 
-	// Attempt injection.
-	if err := afk.DirectInject(afkBk, afkCap, target.Handle, injectMsg, fmt.Sprintf("%d", syntheticID)); err != nil {
-		return err
+	// Check composer safety before dispatch.
+	safe, verdict, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
+	if err != nil {
+		return fmt.Errorf("checking inject target: %w", err)
+	}
+	if !safe {
+		return fmt.Errorf("composer not empty: verdict=%s (unsafe-composer)", verdict)
+	}
+
+	// Use typed prompt submission through session.DispatchPrompt.
+	result := session.DispatchPrompt(bk, target.Handle, injectMsg)
+	if !result.Acknowledged() {
+		return fmt.Errorf("inject not acknowledged: %s (wake is primary mechanism)", result.Status)
 	}
 
 	return nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -32,6 +33,9 @@ type HerdrBackend struct {
 	// during teardown, even if label matches hometag. Populated by teardown.Run
 	// when other tasks still reference the same workspace.
 	DenyCloseWorkspaceIDs []string
+
+	// protocolCache caches the detected API protocol version. -1 = not checked.
+	protocolCache int
 
 	// lastCreate stores the last tab-creation result for MetaExtras.
 	lastCreate *herdrLastCreate
@@ -392,5 +396,240 @@ func (h *HerdrBackend) MetaExtras() map[string]string {
 		"herdr_workspace_id": h.lastCreate.WorkspaceID,
 		"herdr_tab_id":       h.lastCreate.TabID,
 		"herdr_pane_id":      h.lastCreate.PaneID,
+	}
+}
+
+// --- Typed prompt submission ---
+
+// herdrAPISchemaResponse represents the top-level herdr api schema response.
+type herdrAPISchemaResponse struct {
+	Protocol int `json:"protocol"`
+}
+
+// protocolVersion probes the herdr API protocol version once and caches it.
+// Returns 0 if the probe fails (no server running, CLI not found, etc.).
+func (h *HerdrBackend) protocolVersion() int {
+	if h.protocolCache != 0 {
+		return h.protocolCache
+	}
+
+	out, err := h.herdr("api", "schema")
+	if err != nil {
+		h.protocolCache = -1
+		return 0
+	}
+
+	// The text output contains "protocol: <N>" on the second line.
+	// Parse it from the text format (not JSON).
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "protocol:") {
+			v := strings.TrimSpace(strings.TrimPrefix(line, "protocol:"))
+			p, err := strconv.Atoi(v)
+			if err != nil {
+				h.protocolCache = -1
+				return 0
+			}
+			h.protocolCache = p
+			return p
+		}
+	}
+
+	h.protocolCache = -1
+	return 0
+}
+
+// herdrAgentGetResponse represents the JSON response from herdr agent get.
+type herdrAgentGetResponse struct {
+	Result *herdrAgentGetResult `json:"result,omitempty"`
+	Error  *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+type herdrAgentGetResult struct {
+	Agent struct {
+		AgentStatus string `json:"agent_status"`
+	} `json:"agent"`
+}
+
+// herdrAgentPromptResponse represents the JSON response from herdr agent prompt.
+type herdrAgentPromptResponse struct {
+	Result *herdrAgentPromptResult `json:"result,omitempty"`
+	Error  *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+type herdrAgentPromptResult struct {
+	Type  string          `json:"type"`
+	Agent *herdrAgentInfo `json:"agent,omitempty"`
+}
+
+type herdrAgentInfo struct {
+	AgentStatus string `json:"agent_status"`
+}
+
+// IsRecognizedAgent checks whether the target pane ID is a recognized
+// live agent via `herdr agent get`. Returns (true, status) for recognized
+// agents, (false, "") if not found or unrecognized, and (false, "") on
+// probe error (falls closed to unrecognized).
+func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
+	pid := herdrPaneID(windowID)
+	out, err := h.herdrForWindow(windowID, "agent", "get", pid)
+	if err != nil {
+		return false, ""
+	}
+
+	var resp herdrAgentGetResponse
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return false, ""
+	}
+
+	if resp.Error != nil && resp.Error.Code == "agent_not_found" {
+		return false, ""
+	}
+	if resp.Error != nil {
+		return false, ""
+	}
+
+	if resp.Result == nil || resp.Result.Agent.AgentStatus == "" {
+		return false, ""
+	}
+
+	return true, resp.Result.Agent.AgentStatus
+}
+
+// AgentPrompt submits a prompt to the target agent using herdr agent prompt
+// with --wait and a 60-second timeout. Returns typed PromptResult.
+//
+// Preconditions checked before submission:
+//  1. Protocol version >= 17 (otherwise returns PromptUnsupported)
+//  2. Target is a recognized live agent (otherwise returns PromptEndpointDead)
+//
+// If submission succeeds, the result distinguishes:
+//   - submitted: agent accepted and started processing
+//   - queued-while-busy: agent was already working, prompt queued
+//
+// On stalled/error:
+//   - agent_prompt_stalled → PromptStalled (NO fallback)
+//   - agent_not_found → PromptEndpointDead
+//   - other errors → PromptBackendFailed
+func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
+	// Precondition: protocol >= 17.
+	pv := h.protocolVersion()
+	if pv < 17 {
+		return PromptResult{
+			Status: PromptUnsupported,
+			Detail: fmt.Sprintf("herdr protocol v%d < 17", pv),
+		}
+	}
+
+	pid := herdrPaneID(windowID)
+
+	// Precondition: target is a recognized live agent.
+	recognized, status := h.IsRecognizedAgent(windowID)
+	if !recognized {
+		return PromptResult{
+			Status: PromptEndpointDead,
+			Detail: "target is not a recognized agent",
+		}
+	}
+
+	// Check pre-submission status for queued-while-busy detection.
+	wasBusy := status == "working"
+
+	// Submit prompt with --wait and 120s timeout.
+	out, err := h.herdrForWindow(windowID, "agent", "prompt", pid, text,
+		"--wait", "--timeout", "120000")
+	if err != nil {
+		// Parse JSON error response.
+		if out != "" {
+			var errResp herdrAgentPromptResponse
+			if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
+				switch errResp.Error.Code {
+				case "agent_prompt_stalled":
+					return PromptResult{
+						Status: PromptStalled,
+						Detail: errResp.Error.Message,
+					}
+				case "agent_not_found":
+					return PromptResult{
+						Status: PromptEndpointDead,
+						Detail: errResp.Error.Message,
+					}
+				default:
+					return PromptResult{
+						Status: PromptBackendFailed,
+						Detail: fmt.Sprintf("herdr error: %s", errResp.Error.Code),
+						Err:    fmt.Errorf("%s: %s", errResp.Error.Code, errResp.Error.Message),
+					}
+				}
+			}
+		}
+		return PromptResult{
+			Status: PromptBackendFailed,
+			Detail: "herdr agent prompt call failed",
+			Err:    err,
+		}
+	}
+
+	// Parse success response.
+	var successResp herdrAgentPromptResponse
+	if jsonErr := json.Unmarshal([]byte(out), &successResp); jsonErr != nil || successResp.Result == nil {
+		return PromptResult{
+			Status: PromptBackendFailed,
+			Detail: "unparseable herdr agent prompt response",
+			Err:    fmt.Errorf("json parse error: %v, raw: %s", jsonErr, out),
+		}
+	}
+
+	// Determine result based on pre-submission status and response.
+	if successResp.Result.Agent != nil {
+		postStatus := successResp.Result.Agent.AgentStatus
+		if wasBusy {
+			return PromptResult{
+				Status: PromptQueuedWhileBusy,
+				Detail: fmt.Sprintf("agent was working, post-status: %s", postStatus),
+			}
+		}
+		return PromptResult{
+			Status: PromptSubmitted,
+			Detail: fmt.Sprintf("agent-status: %s", postStatus),
+		}
+	}
+
+	// Success but no agent info — assume submitted.
+	return PromptResult{
+		Status: PromptSubmitted,
+		Detail: "no agent status in response",
+	}
+}
+
+// LegacyPrompt implements the LegacyPrompt interface for HerdrBackend.
+// This is used when the protocol is < 17 and the target does not support
+// AgentPrompt. It falls back to raw SendKeys (send-text + send-keys Enter)
+// without typed acknowledgment.
+func (h *HerdrBackend) LegacyPrompt(windowID, text string) PromptResult {
+	// Fallback: use raw pane send-text + send-keys Enter (legacy protocol 16 behavior).
+	if err := h.SendKeys(windowID, text); err != nil {
+		if isNotFoundErr(err) {
+			return PromptResult{
+				Status: PromptEndpointDead,
+				Detail: err.Error(),
+			}
+		}
+		return PromptResult{
+			Status: PromptBackendFailed,
+			Detail: "legacy send-keys failed",
+			Err:    err,
+		}
+	}
+	return PromptResult{
+		Status: PromptSubmitted,
+		Detail: "legacy send-keys (protocol 16)",
+		Legacy: true,
 	}
 }

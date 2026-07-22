@@ -198,7 +198,7 @@ func DirectInject(backend Backend, capture PaneCapture, parentTarget, msg, event
 		return fmt.Errorf("checking inject target: %w", err)
 	}
 	if !safe {
-		return fmt.Errorf("composer not empty: verdict=%s", verdict)
+		return fmt.Errorf("composer not empty: verdict=%s (unsafe-composer)", verdict)
 	}
 
 	// Build payload with sentinel prefix and optional event ID.

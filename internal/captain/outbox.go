@@ -103,10 +103,11 @@ func listSendOutboxPaths(parentHome, smID string) ([]string, error) {
 	return paths, nil
 }
 
-// FlushSendOutbox delivers queued marked sends for one captain when the pane is alive.
-// On success each delivered entry is removed. If the pane is dead, entries remain and
-// a clear error is returned. Partial flush stops on first send failure (earlier entries
-// already removed stay delivered).
+// FlushSendOutbox delivers queued marked sends for one captain using typed prompt
+// submission. On acknowledged delivery each entry is removed. If the prompt is not
+// acknowledged (stalled, endpoint dead, backend failure), entries remain and a clear
+// error is returned. Partial flush stops on first unacknowledged result (earlier
+// entries already removed stay delivered).
 func FlushSendOutbox(parentHome string, sm Info) error {
 	paths, err := listSendOutboxPaths(parentHome, sm.ID)
 	if err != nil {
@@ -143,9 +144,6 @@ func FlushSendOutbox(parentHome string, sm Info) error {
 	if bkErr != nil {
 		return fmt.Errorf("%s: cannot resolve backend — outbox retained: %v", sm.ID, bkErr)
 	}
-	if !bk.Alive(windowID) {
-		return fmt.Errorf("%s: endpoint not alive with %d queued send(s) — outbox retained", sm.ID, len(paths))
-	}
 
 	for _, path := range paths {
 		entry, readErr := readSendOutboxEntry(path)
@@ -156,9 +154,15 @@ func FlushSendOutbox(parentHome string, sm Info) error {
 			return fmt.Errorf("%s: outbox entry id=%q mismatch — outbox retained", sm.ID, entry["id"])
 		}
 		msg := entry["message"]
-		if err := bk.SendKeys(windowID, msg); err != nil {
-			return fmt.Errorf("%s: outbox send failed — remaining entries retained: %v", sm.ID, err)
+
+		// Use typed prompt submission.
+		result := session.DispatchPrompt(bk, windowID, msg)
+		if !result.Acknowledged() {
+			// Never remove on unacknowledged result — preserves outbox for retry.
+			return fmt.Errorf("%s: outbox send not acknowledged (status=%s) — outbox retained", sm.ID, result.Status)
 		}
+
+		// Only remove after acknowledged delivery.
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("%s: sent but failed to remove outbox entry %s: %v", sm.ID, path, err)
 		}
