@@ -143,7 +143,7 @@ func TestE2E_SoldierReportIdentity(t *testing.T) {
 func TestE2E_SkillSelectionWithDenylist(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
-		{Name: "srcwalk", Role: "soldier"},
+		{Name: "qmd", Role: "soldier"},
 		{Name: "munsu-ops", Role: "soldier"},     // denied by denylist regardless of role
 		{Name: "tasks-axi", Role: "soldier"},      // denied by denylist
 		{Name: "captain-provisioning", Role: "captain"},
@@ -151,21 +151,21 @@ func TestE2E_SkillSelectionWithDenylist(t *testing.T) {
 	}
 
 	required, optional, diags := CollectSkills(catalog,
-		[]string{"gh-axi", "srcwalk", "captain-provisioning", "munsu-ops"},
+		[]string{"gh-axi", "qmd", "captain-provisioning", "munsu-ops"},
 		[]string{"bootstrap-diagnostics"})
 
-	// gh-axi and srcwalk must be applicable.
-	var foundGhAxi, foundSrcwalk bool
+	// gh-axi and qmd must be applicable.
+	var foundGhAxi, foundQmd bool
 	for _, s := range required {
 		if s.Name == "gh-axi" && s.Applicable {
 			foundGhAxi = true
 		}
-		if s.Name == "srcwalk" && s.Applicable {
-			foundSrcwalk = true
+		if s.Name == "qmd" && s.Applicable {
+			foundQmd = true
 		}
 	}
-	if !foundGhAxi || !foundSrcwalk {
-		t.Error("gh-axi and srcwalk must be in required and applicable")
+	if !foundGhAxi || !foundQmd {
+		t.Error("gh-axi and qmd must be in required and applicable")
 	}
 
 	// captain-provisioning must be non-applicable (captain role).
@@ -430,5 +430,137 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 	}
 	if readEnv.BriefSHA256 != sha256Content(briefContent) {
 		t.Error("envelope brief hash does not match actual brief on disk")
+	}
+}
+
+// TestRegression_SkillSelectionWithoutSrcwalk proves that the soldier contract
+// skill selection works correctly without srcwalk in the catalog. Focused
+// regression guard for the remove-srcwalk-integration task.
+func TestRegression_SkillSelectionWithoutSrcwalk(t *testing.T) {
+	catalog := []SkillEntry{
+		{Name: "gh-axi", Role: "soldier"},
+		{Name: "qmd", Role: "soldier"},
+		{Name: "chrome-devtools-axi", Role: "soldier"},
+	}
+
+	required, optional, diags := CollectSkills(catalog,
+		[]string{"gh-axi"},
+		[]string{"qmd", "chrome-devtools-axi"})
+
+	if len(diags) > 0 {
+		t.Errorf("unexpected diagnostics without srcwalk: %v", diags)
+	}
+
+	// Verify gh-axi is applicable and required.
+	var foundGhAxi bool
+	for _, s := range required {
+		if s.Name == "gh-axi" {
+			foundGhAxi = true
+			if !s.Applicable {
+				t.Error("gh-axi must be applicable")
+			}
+		}
+	}
+	if !foundGhAxi {
+		t.Error("gh-axi must be in required skills")
+	}
+
+	// Verify optional skills are present.
+	var foundQmd, foundChrome bool
+	for _, s := range optional {
+		if s.Name == "qmd" {
+			foundQmd = true
+			if !s.Applicable {
+				t.Error("qmd must be applicable")
+			}
+		}
+		if s.Name == "chrome-devtools-axi" {
+			foundChrome = true
+			if !s.Applicable {
+				t.Error("chrome-devtools-axi must be applicable")
+			}
+		}
+		// Verify srcwalk never appears in optional.
+		if s.Name == "srcwalk" {
+			t.Error("srcwalk must NOT be in optional skills")
+		}
+	}
+	if !foundQmd {
+		t.Error("qmd must be in optional skills")
+	}
+	if !foundChrome {
+		t.Error("chrome-devtools-axi must be in optional skills")
+	}
+}
+
+// TestRegression_BuildLaunchPromptWithoutSrcwalk proves that prompt generation
+// does not reference srcwalk and produces a valid soldier charter. Focused
+// regression guard for the remove-srcwalk-integration task.
+func TestRegression_BuildLaunchPromptWithoutSrcwalk(t *testing.T) {
+	wt := t.TempDir()
+	brief := []byte("# Regression\n\nClean skill environment.\n")
+
+	input := LaunchPromptInput{
+		TaskID:          "regression-clean-env",
+		TaskKind:        "ship",
+		DeliveryMode:    "direct-PR",
+		ParentCaptainID: "captain-test",
+		ParentHome:      "/tmp/test",
+		WorktreePath:    wt,
+		HomeDir:         "/tmp/test-home",
+		BriefContent:    brief,
+		HarnessName:     "pi",
+		RequiredSkills: []SkillEntry{
+			{Name: "gh-axi", Role: "soldier", Applicable: true},
+		},
+		OptionalSkills: []SkillEntry{
+			{Name: "qmd", Role: "soldier", Applicable: true},
+		},
+	}
+
+	prompt, env, err := BuildLaunchPrompt(input)
+	if err != nil {
+		t.Fatalf("BuildLaunchPrompt failed without srcwalk: %v", err)
+	}
+
+	// Verify prompt does NOT reference srcwalk.
+	if strings.Contains(prompt, "srcwalk") {
+		t.Error("prompt must NOT contain srcwalk references")
+	}
+
+	// Verify exact generated sections from applicable skills.
+	if !strings.Contains(prompt, "## Required Skills") {
+		t.Error("prompt must contain ## Required Skills section")
+	}
+	if !strings.Contains(prompt, "### gh-axi") {
+		t.Error("prompt must contain ### gh-axi section")
+	}
+	if !strings.Contains(prompt, "## Optional Skills") {
+		t.Error("prompt must contain ## Optional Skills section")
+	}
+	if !strings.Contains(prompt, "- qmd") {
+		t.Error("prompt must contain - qmd in optional skills")
+	}
+
+	// Verify env does not reference srcwalk.
+	for _, s := range env.RequiredSkills {
+		if s.Name == "srcwalk" {
+			t.Error("srcwalk must NOT be in env.RequiredSkills")
+		}
+	}
+	for _, s := range env.OptionalSkills {
+		if s.Name == "srcwalk" {
+			t.Error("srcwalk must NOT be in env.OptionalSkills")
+		}
+	}
+
+	// Verify prompt contains essential soldier charter elements.
+	if !strings.Contains(prompt, "Soldier Charter") {
+		t.Error("prompt must contain soldier charter header")
+	}
+
+	// Verify the prompt hash is non-empty.
+	if env.PromptSHA256 == "" {
+		t.Error("prompt SHA256 must be set")
 	}
 }

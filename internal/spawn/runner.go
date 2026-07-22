@@ -724,7 +724,6 @@ func (r *Runner) resolveSkills() (required, optional []soldier.SkillEntry, diags
 		// Soldier-applicable skills
 		{Name: "gh-axi", Role: "soldier"},
 		{Name: "chrome-devtools-axi", Role: "soldier"},
-		{Name: "srcwalk", Role: "soldier"},
 		{Name: "qmd", Role: "soldier"},
 
 		// Captain-only skills (will be denied by authority classification)
@@ -744,12 +743,12 @@ func (r *Runner) resolveSkills() (required, optional []soldier.SkillEntry, diags
 
 	switch r.args.Kind {
 	case "scout":
-		requiredNames = []string{"srcwalk", "qmd"}
+		requiredNames = []string{"qmd"}
 		optionalNames = []string{"gh-axi"}
 	default:
-		// ship tasks: github + code navigation required.
+		// ship tasks: github required.
 		requiredNames = []string{"gh-axi"}
-		optionalNames = []string{"srcwalk", "qmd", "chrome-devtools-axi"}
+		optionalNames = []string{"qmd", "chrome-devtools-axi"}
 	}
 
 	// Apply no-mistakes mode policy: no-mistakes requires gh-axi always.
