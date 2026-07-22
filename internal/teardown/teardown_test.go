@@ -10,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
+	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
@@ -129,26 +130,191 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 	}
 }
 
-func TestShipSafetyCheck_Dirty(t *testing.T) {
+func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 	tmp := t.TempDir()
 	wt := filepath.Join(tmp, "worktree")
 	remote := filepath.Join(tmp, "remote.git")
 	os.MkdirAll(wt, 0755)
 	setupGitRepo(t, wt, remote)
 
-	// Create a dirty file
-	os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("changes"), 0644)
+	gitEnv := append(os.Environ(),
+		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
+	)
+
+	// Create branch with upstream.
+	cmd := exec.Command("git", "checkout", "-b", "fm/soldier-artifact-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout -b: %s", out)
+	}
+	cmd = exec.Command("git", "push", "-u", "origin", "fm/soldier-artifact-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push: %s", out)
+	}
+
+	// Write known launch artifacts (untracked).
+	for _, name := range soldier.LaunchArtifactNames() {
+		os.WriteFile(filepath.Join(wt, name), []byte("test content\n"), 0644)
+	}
 
 	meta := map[string]string{
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{}, meta)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	if err != nil {
+		t.Fatalf("shipSafetyCheck should pass when only known launch artifacts are dirty: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
+	tmp := t.TempDir()
+	wt := filepath.Join(tmp, "worktree")
+	remote := filepath.Join(tmp, "remote.git")
+	os.MkdirAll(wt, 0755)
+	setupGitRepo(t, wt, remote)
+
+	gitEnv := append(os.Environ(),
+		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
+	)
+
+	// Create branch with upstream.
+	cmd := exec.Command("git", "checkout", "-b", "fm/unknown-dirty-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout -b: %s", out)
+	}
+	cmd = exec.Command("git", "push", "-u", "origin", "fm/unknown-dirty-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push: %s", out)
+	}
+
+	// Write a known launch artifact (should be fine alone).
+	os.WriteFile(filepath.Join(wt, ".soldier-charter.md"), []byte("test\n"), 0644)
+
+	// Write an unknown untracked file (should cause failure).
+	os.WriteFile(filepath.Join(wt, "arbitrary.txt"), []byte("unknown\n"), 0644)
+
+	meta := map[string]string{
+		"worktree": wt,
+		"kind":     "ship",
+	}
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
 	if err == nil {
-		t.Fatal("shipSafetyCheck should fail for dirty worktree")
+		t.Fatal("shipSafetyCheck should fail when unknown untracked file exists alongside known artifacts")
 	}
 	if !strings.Contains(err.Error(), "uncommitted changes") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
+	tmp := t.TempDir()
+	wt := filepath.Join(tmp, "worktree")
+	remote := filepath.Join(tmp, "remote.git")
+	os.MkdirAll(wt, 0755)
+	setupGitRepo(t, wt, remote)
+
+	gitEnv := append(os.Environ(),
+		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
+	)
+
+	// Create branch with upstream.
+	cmd := exec.Command("git", "checkout", "-b", "fm/mixed-dirty-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout -b: %s", out)
+	}
+	cmd = exec.Command("git", "push", "-u", "origin", "fm/mixed-dirty-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push: %s", out)
+	}
+
+	// Write all known launch artifacts.
+	for _, name := range soldier.LaunchArtifactNames() {
+		os.WriteFile(filepath.Join(wt, name), []byte("test\n"), 0644)
+	}
+	// Write an unknown untracked file.
+	os.WriteFile(filepath.Join(wt, "rogue.txt"), []byte("rogue\n"), 0644)
+
+	meta := map[string]string{
+		"worktree": wt,
+		"kind":     "ship",
+	}
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	if err == nil {
+		t.Fatal("shipSafetyCheck should fail when unknown untracked file coexists with known artifacts")
+	}
+	if !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestParsedPorcelainFilename(t *testing.T) {
+	tests := []struct {
+		line string
+		want string
+	}{
+		{"?? .soldier-charter.md", ".soldier-charter.md"},
+		{" M main.go", "main.go"},
+		{"A  newfile.txt", "newfile.txt"},
+		{"?? \"file with spaces.go\"", "file with spaces.go"},
+		{"XY", ""},
+		{"", ""},
+		{" M dir/nested/file.go", "dir/nested/file.go"},
+	}
+	for _, tc := range tests {
+		got := parsePorcelainFilename(tc.line)
+		if got != tc.want {
+			t.Errorf("parsePorcelainFilename(%q) = %q, want %q", tc.line, got, tc.want)
+		}
+	}
+}
+
+func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
+	tmp := t.TempDir()
+	wt := filepath.Join(tmp, "worktree")
+	remote := filepath.Join(tmp, "remote.git")
+	os.MkdirAll(wt, 0755)
+	setupGitRepo(t, wt, remote)
+
+	gitEnv := append(os.Environ(),
+		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
+	)
+
+	// Create branch with upstream.
+	cmd := exec.Command("git", "checkout", "-b", "fm/launch-script-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout -b: %s", out)
+	}
+	cmd = exec.Command("git", "push", "-u", "origin", "fm/launch-script-test")
+	cmd.Dir = wt
+	cmd.Env = gitEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push: %s", out)
+	}
+
+	// Write only the launch script (a member of the known set).
+	os.WriteFile(filepath.Join(wt, ".soldier-launch.sh"), []byte("#!/bin/bash\nexec pi\n"), 0755)
+
+	meta := map[string]string{
+		"worktree": wt,
+		"kind":     "ship",
+	}
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	if err != nil {
+		t.Fatalf("shipSafetyCheck should pass when only .soldier-launch.sh is dirty: %v", err)
 	}
 }
 
