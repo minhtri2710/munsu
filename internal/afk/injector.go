@@ -19,6 +19,25 @@ const (
 	injectCooldown = 60 * time.Second
 )
 
+// InjectOutcome is a typed diagnostic for injection attempts.
+type InjectOutcome string
+
+const (
+	OutcomeInjected      InjectOutcome = "injected"
+	OutcomeUnsafe        InjectOutcome = "unsafe"
+	OutcomeAFK           InjectOutcome = "afk"
+	OutcomeEndpointDead  InjectOutcome = "endpoint-dead"
+	OutcomeBackendFailed InjectOutcome = "backend-failed"
+)
+
+// InjectResult carries the outcome and diagnostics of an injection attempt.
+type InjectResult struct {
+	Outcome InjectOutcome `json:"outcome"`
+	Verdict string        `json:"verdict,omitempty"`
+	Target  string        `json:"target,omitempty"`
+	Error   string        `json:"error,omitempty"`
+}
+
 // InjectEvent records a single inject event for inspection and testing.
 type InjectEvent struct {
 	Timestamp time.Time `json:"timestamp"`
@@ -188,17 +207,24 @@ func formatPayload(be *BatchedEscalation) string {
 //
 // Unlike InjectIfSafe (which resolves the target internally from config),
 // DirectInject takes an explicit parentTarget pane handle.
-// Returns an error if the composer is not empty (Pending/Unknown) or if
-// SendKeys fails. Callers should treat errors as non-fatal since the wake
-// queue remains the primary escalation mechanism.
-func DirectInject(backend Backend, capture PaneCapture, parentTarget, msg, eventID string) error {
+// Returns the typed InjectResult with outcome, verdict, and target diagnostics.
+func DirectInject(backend Backend, capture PaneCapture, parentTarget, msg, eventID string) InjectResult {
 	// Check composer safety.
 	safe, verdict, err := IsSafeInjectTarget(capture, parentTarget)
 	if err != nil {
-		return fmt.Errorf("checking inject target: %w", err)
+		return InjectResult{
+			Outcome: OutcomeEndpointDead,
+			Verdict: verdict.String(),
+			Target:  parentTarget,
+			Error:   fmt.Sprintf("capture failed: %v", err),
+		}
 	}
 	if !safe {
-		return fmt.Errorf("composer not empty: verdict=%s", verdict)
+		return InjectResult{
+			Outcome: OutcomeUnsafe,
+			Verdict: verdict.String(),
+			Target:  parentTarget,
+		}
 	}
 
 	// Build payload with sentinel prefix and optional event ID.
@@ -207,5 +233,18 @@ func DirectInject(backend Backend, capture PaneCapture, parentTarget, msg, event
 		payload = fmt.Sprintf("%s [event=%s]", payload, eventID)
 	}
 
-	return backend.SendKeys(parentTarget, payload)
+	if err := backend.SendKeys(parentTarget, payload); err != nil {
+		return InjectResult{
+			Outcome: OutcomeBackendFailed,
+			Verdict: verdict.String(),
+			Target:  parentTarget,
+			Error:   fmt.Sprintf("send-keys failed: %v", err),
+		}
+	}
+
+	return InjectResult{
+		Outcome: OutcomeInjected,
+		Verdict: verdict.String(),
+		Target:  parentTarget,
+	}
 }

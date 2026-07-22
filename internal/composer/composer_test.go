@@ -318,6 +318,72 @@ func TestClassify_DimGhostSuggestionOnly(t *testing.T) {
 	}
 }
 
+// --- OpenCode busy-queued tests ---
+
+func TestClassify_OpenCodeEmpty(t *testing.T) {
+	// OpenCode "o" glyph on bare row → Empty
+	got := ClassifyContent("o", "o", false)
+	if got != Empty {
+		t.Errorf("ClassifyContent(o, bare) = %v, want empty", got)
+	}
+}
+
+func TestClassify_OpenCodeEmptyBordered(t *testing.T) {
+	// OpenCode "o" glyph inside bordered box → Empty
+	got := ClassifyContent("o", "o", true)
+	if got != Empty {
+		t.Errorf("ClassifyContent(o, bordered) = %v, want empty", got)
+	}
+}
+
+func TestClassify_OpenCodeBusyRunning(t *testing.T) {
+	// OpenCode "o Running..." after glyph → Busy (agent executing)
+	got := ClassifyContent("o Running...", "o Running...", true)
+	if got != Busy {
+		t.Errorf("ClassifyContent(o Running) = %v, want busy", got)
+	}
+}
+
+func TestClassify_OpenCodeBusyThinking(t *testing.T) {
+	// OpenCode "o Thinking..." after glyph → Busy (agent executing)
+	got := ClassifyContent("o Thinking...", "o Thinking...", true)
+	if got != Busy {
+		t.Errorf("ClassifyContent(o Thinking) = %v, want busy", got)
+	}
+}
+
+func TestClassify_OpenCodeBusyWorking(t *testing.T) {
+	// OpenCode "o Working..." after glyph → Busy
+	got := ClassifyContent("o Working...", "o Working...", true)
+	if got != Busy {
+		t.Errorf("ClassifyContent(o Working) = %v, want busy", got)
+	}
+}
+
+func TestClassify_OpenCodeBusyGenerating(t *testing.T) {
+	// OpenCode "o Generating..." after glyph → Busy
+	got := ClassifyContent("o Generating...", "o Generating...", true)
+	if got != Busy {
+		t.Errorf("ClassifyContent(o Generating) = %v, want busy", got)
+	}
+}
+
+func TestClassify_OpenCodePendingText(t *testing.T) {
+	// OpenCode with typed text after glyph → Pending (not busy, typed input)
+	// "o git push" has typed text after the glyph, but it's not a busy action.
+	// Wait: "git push" is not in the busy list, so it should be Pending.
+	got := ClassifyContent("o git push", "o git push", true)
+	if got != Pending {
+		t.Errorf("ClassifyContent(o git push) = %v, want pending", got)
+	}
+}
+
+func TestVerdict_BusyString(t *testing.T) {
+	if Busy.String() != "busy" {
+		t.Errorf("Busy.String() = %q, want busy", Busy.String())
+	}
+}
+
 // --- Golden fixture tests (end-to-end) ---
 
 func TestGoldenFixtures(t *testing.T) {
@@ -391,7 +457,8 @@ func TestVerdict_String(t *testing.T) {
 	}{
 		{Empty, "empty"},
 		{Pending, "pending"},
-		{Unknown, "unknown"},
+		{Busy, "busy"},
+	{Unknown, "unknown"},
 	}
 	for _, tt := range tests {
 		if got := tt.v.String(); got != tt.want {
