@@ -1,0 +1,6 @@
+schema_version: "munsu.orchestration/v2"
+kind: decision.hold
+status: success
+data:
+  decision_key: approve-deploy
+  reason: Awaiting QA signoff

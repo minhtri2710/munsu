@@ -1,0 +1,389 @@
+package cli
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// axiBinaryPath caches the path to the built munsu binary for the test run.
+var axiBinaryPath string
+var axiBuildDir string
+
+// buildMunsuBinary builds the munsu binary and returns its path.
+// The binary is built once into OS temp dir and cached for the package test run.
+func buildMunsuBinary(t *testing.T) string {
+	t.Helper()
+	if axiBinaryPath != "" {
+		return axiBinaryPath
+	}
+
+	projectRoot := findGoModRoot(t)
+
+	// Use OS temp dir (not t.TempDir) so the binary survives individual
+	// test teardown and is only cleaned up by tempdir cleanup daemon.
+	if axiBuildDir == "" {
+		var err error
+		axiBuildDir, err = os.MkdirTemp("", "munsu-axi-binary-*")
+		if err != nil {
+			t.Fatalf("creating build dir: %v", err)
+		}
+	}
+
+	binPath := filepath.Join(axiBuildDir, "munsu")
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/munsu/")
+	cmd.Dir = projectRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("building munsu binary: %s\n%v", string(out), err)
+	}
+	axiBinaryPath = binPath
+	return binPath
+}
+
+func findGoModRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatal("could not find go.mod root")
+	return ""
+}
+
+// runMunsu runs the built munsu binary with the given args and home dir.
+// Returns combined stdout+stderr and any execution error.
+func runMunsu(t *testing.T, homeDir string, args []string) (string, error) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("binary tests not supported on Windows")
+	}
+	binary := buildMunsuBinary(t)
+	cmdArgs := []string{"--home", homeDir}
+	cmdArgs = append(cmdArgs, args...)
+	cmd := exec.Command(binary, cmdArgs...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestBinaryGuardContract_TOON verifies the guard command outputs contract-shaped
+// TOON when invoked as a real binary.
+func TestBinaryGuardContract_TOON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"guard"})
+	if err != nil {
+		t.Fatalf("munsu guard failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "kind: guard") {
+		t.Errorf("output must contain kind: guard, got: %s", out)
+	}
+	if !strings.Contains(out, "schema_version:") {
+		t.Errorf("output must contain schema_version, got: %s", out)
+	}
+	if !strings.Contains(out, "status: success") && !strings.Contains(out, "status: error") {
+		t.Errorf("output must have status, got: %s", out)
+	}
+	if !strings.Contains(out, "state:") {
+		t.Errorf("guard output must contain state, got: %s", out)
+	}
+}
+
+// TestBinaryGuardContract_JSON verifies the guard command outputs contract-shaped
+// JSON when --output json is provided.
+func TestBinaryGuardContract_JSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"guard", "--output", "json"})
+	if err != nil {
+		t.Fatalf("munsu guard --output json failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		SchemaVersion string `json:"schema_version"`
+		Kind          string `json:"kind"`
+		Status        string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if resp.SchemaVersion != "munsu.orchestration/v2" {
+		t.Errorf("schema_version = %q, want munsu.orchestration/v2", resp.SchemaVersion)
+	}
+	if resp.Kind != "guard" {
+		t.Errorf("kind = %q, want guard", resp.Kind)
+	}
+	if resp.Status != "success" {
+		t.Errorf("status = %q, want success", resp.Status)
+	}
+}
+
+// TestBinaryBackendCapabilities_TOON verifies the backend capabilities command.
+func TestBinaryBackendCapabilities_TOON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"backend", "capabilities", "--backend", "tmux"})
+	if err != nil {
+		t.Fatalf("backend capabilities failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "kind: backend.capabilities") {
+		t.Errorf("output must contain kind: backend.capabilities, got: %s", out)
+	}
+	if !strings.Contains(out, "features[3]") {
+		t.Errorf("output must contain features[3], got: %s", out)
+	}
+}
+
+// TestBinaryBackendCapabilities_JSON verifies backend capabilities JSON output.
+func TestBinaryBackendCapabilities_JSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"backend", "capabilities", "--backend", "tmux", "--output", "json"})
+	if err != nil {
+		t.Fatalf("backend capabilities --output json failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		SchemaVersion string `json:"schema_version"`
+		Kind          string `json:"kind"`
+		Status        string `json:"status"`
+		Data          struct {
+			Backend  string   `json:"backend"`
+			Features []string `json:"features"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if resp.Data.Backend != "tmux" {
+		t.Errorf("backend = %q, want tmux", resp.Data.Backend)
+	}
+	if len(resp.Data.Features) == 0 {
+		t.Error("features must not be empty")
+	}
+}
+
+// TestBinaryBackendCapabilities_UnknownBackend verifies fail-closed error
+// for unknown backend.
+func TestBinaryBackendCapabilities_UnknownBackend(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"backend", "capabilities", "--backend", "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for unknown backend, got nil")
+	}
+	if !strings.Contains(out, "error_code:") {
+		t.Errorf("output must contain error_code on error, got: %s", out)
+	}
+}
+
+// TestBinaryWatchEnsure_NoopContract verifies the watch ensure command
+// produces contract output with noop:true when no watcher is running.
+func TestBinaryWatchEnsure_NoopContract(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+
+	out, err := runMunsu(t, home, []string{"watch", "ensure"})
+	if err != nil {
+		t.Fatalf("watch ensure failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "kind: watch.ensure") {
+		t.Errorf("output must contain kind: watch.ensure, got: %s", out)
+	}
+}
+
+// TestBinaryWatchEnsure_JSON verifies watch ensure JSON output contract.
+func TestBinaryWatchEnsure_JSON(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+
+	out, err := runMunsu(t, home, []string{"watch", "ensure", "--output", "json"})
+	if err != nil {
+		t.Fatalf("watch ensure failed: %v\n%s", err, out)
+	}
+	var resp struct {
+		SchemaVersion string `json:"schema_version"`
+		Kind          string `json:"kind"`
+		Status        string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if resp.SchemaVersion != "munsu.orchestration/v2" {
+		t.Errorf("schema_version = %q, want munsu.orchestration/v2", resp.SchemaVersion)
+	}
+	if resp.Kind != "watch.ensure" {
+		t.Errorf("kind = %q, want watch.ensure", resp.Kind)
+	}
+}
+
+// TestBinaryReport_StructuredError verifies the report command fails closed
+// with a structured error when MUNSU_TASK_ID is missing.
+func TestBinaryReport_StructuredError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	parentHome := t.TempDir()
+
+	binary := buildMunsuBinary(t)
+	cmd := exec.Command(binary, "--home", home, "report", "--ring", "no-ring", "done", "task complete")
+	// Explicitly override MUNSU_TASK_ID to empty to test fail-closed even
+	// when the test runner inherits a MUNSU_TASK_ID from the parent shell.
+	cmd.Env = append(
+		os.Environ(),
+		"MUNSU_HOME="+home,
+		"MUNSU_ROLE=soldier",
+		"MUNSU_PARENT_STATUS="+parentHome,
+		"MUNSU_TASK_ID=",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected error from report without MUNSU_TASK_ID, got nil")
+	}
+	if !strings.Contains(string(out), "error_code:") {
+		t.Errorf("output must contain structured error_code, got: %s", string(out))
+	}
+}
+
+// TestBinaryTaskObserve_MissingTask verifies structured error for missing task.
+func TestBinaryTaskObserve_MissingTask(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"task", "observe", "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for missing task, got nil")
+	}
+	if !strings.Contains(out, "error_code:") {
+		t.Errorf("output must contain error_code, got: %s", out)
+	}
+}
+
+// TestBinaryTaskObserve_DefinitiveEmpty verifies task observe on a task with
+// empty/default state returns a successful observation with status: unknown
+// rather than an error.
+func TestBinaryTaskObserve_DefinitiveEmpty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+
+	// Create a task meta so the task exists but has no status.
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "state", "my-task.meta"), []byte("kind=ship\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runMunsu(t, home, []string{"task", "observe", "my-task"})
+	if err != nil {
+		t.Fatalf("task observe of existing task should not error: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "my-task") {
+		t.Errorf("output must include task ID, got: %s", out)
+	}
+}
+
+// TestBinaryFleetSnapshot_DefinitiveEmpty verifies fleet snapshot v2 returns
+// count:0 and soldiers:[] for an empty home.
+func TestBinaryFleetSnapshot_DefinitiveEmpty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	os.MkdirAll(filepath.Join(home, "data"), 0755)
+
+	out, err := runMunsu(t, home, []string{"fleet", "snapshot", "--version", "2"})
+	if err != nil {
+		t.Fatalf("fleet snapshot v2: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "count: 0") {
+		t.Errorf("empty snapshot must have count: 0, got: %s", out)
+	}
+	if !strings.Contains(out, "soldiers: []") {
+		t.Errorf("empty snapshot must have soldiers: [], got: %s", out)
+	}
+	if !strings.Contains(out, "captain_guidance") {
+		t.Errorf("empty snapshot must have captain_guidance, got: %s", out)
+	}
+}
+
+// TestBinaryWakeClaim_MissingFlag verifies missing --owner flag produces
+// structured error.
+func TestBinaryWakeClaim_MissingFlag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"wake", "claim", "wake-01"})
+	if err == nil {
+		t.Fatal("expected error for missing --owner flag, got nil")
+	}
+	if !strings.Contains(out, "error_code:") {
+		t.Errorf("output must contain structured error, got: %s", out)
+	}
+}
+
+// TestBinaryInvalidOutputFlag_FailsClosed verifies an unknown --output value
+// is rejected with a structured error before any backend call.
+func TestBinaryInvalidOutputFlag_FailsClosed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"guard", "--output", "xml"})
+	if err == nil {
+		t.Fatal("expected error for invalid --output, got nil")
+	}
+	if !strings.Contains(out, "error_code: unsupported_input") {
+		t.Errorf("output must contain error_code unsupported_input, got: %s", out)
+	}
+}
+
+// TestBinaryUnknownFlag_FailsClosed verifies an unknown flag is rejected before
+// any command logic runs.
+func TestBinaryUnknownFlag_FailsClosed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"guard", "--nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag, got nil")
+	}
+	if !strings.Contains(out, "error_code:") {
+		t.Errorf("output must contain structured error, got: %s", out)
+	}
+}

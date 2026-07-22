@@ -1,0 +1,6 @@
+schema_version: "munsu.orchestration/v2"
+kind: project.list
+status: success
+data[2]{name,mode,description,added,directory}:
+  munsu,auto,Fleet orchestrator,2026-01-01,/home/munsu
+  site,manual,Website,2026-06-15,/home/site

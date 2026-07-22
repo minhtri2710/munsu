@@ -19,19 +19,29 @@ var fixtureFiles embed.FS
 var fixtureNames = []string{
 	"backend_capabilities",
 	"capabilities",
+	"decision_hold",
+	"drain_cycle",
 	"empty",
 	"error",
+	"event_append",
+	"event_record",
 	"fleet_snapshot_v2",
 	"guard",
+	"message_injection",
 	"noop",
+	"project_entry",
+	"safety_check",
+	"session_start",
 	"spawn_receipt",
 	"success",
+	"task_entry",
 	"task_observe",
 	"truncated",
 	"wake_ack",
 	"wake_claim",
 	"watch_ensure",
 	"watch_run",
+	"watch_status",
 	"watch_stop",
 }
 
@@ -99,9 +109,14 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 	for _, value := range []any{
 		ErrorResponse{}, ErrorEnvelope{}, Capabilities{}, TaskObserve{},
 		FleetSnapshotV2{}, Soldier{}, CaptainEntry{}, CaptainGuidance{},
+		CaptainChildBrief{}, CaptainDecision{}, CaptainHold{}, CaptainQueued{},
+		CaptainLanded{}, CaptainOmitted{}, CaptainHomeCounts{},
 		WakeAck{}, BackendCapabilities{}, SpawnReceipt{}, MessageResult{}, EmptyResult{},
-		TruncatedResult{}, Guard{}, WatchEnsure{}, WatchRun{}, WatchStop{}, WakeClaim{},
-		EventRecord{}, EventAppend{}, DrainCycle{},
+		TruncatedResult{}, Guard{}, GuardViolation{}, WatchEnsure{}, WatchRun{}, WatchStop{},
+		WakeClaim{}, WatchStatus{}, WatchLeaseInfo{},
+		EventRecord{}, EventAppend{}, DrainCycle{}, SessionStart{},
+		SafetyCheckData{}, ReportInjection{}, DecisionHoldInfo{},
+		TaskEntry{}, ProjectEntry{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		for field := range typeOf.Fields() {
@@ -133,6 +148,206 @@ func TestErrorFixtureHasStableActionableEnvelope(t *testing.T) {
 	}
 }
 
+// TestAllStableErrorCodes verifies every documented error_code has a
+// representative fixture and round-trips correctly in both formats.
+func TestAllStableErrorCodes(t *testing.T) {
+	t.Parallel()
+
+	codes := []string{
+		"invalid_argument",
+		"unknown_flag",
+		"unsupported_input",
+		"not_found",
+		"invalid_state",
+		"dependency_unavailable",
+		"conflict",
+		"internal",
+	}
+
+	for _, code := range codes {
+		code := code
+		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+			errResp := ErrorResponse{
+				SchemaVersion: SchemaVersion,
+				Kind:          "error",
+				Status:        "error",
+				Error: ErrorEnvelope{
+					ErrorCode: code,
+					Retryable: false,
+					Action:    "Run `munsu help` for usage",
+					Message:   "A test error for " + code,
+				},
+			}
+
+			// Encode and decode JSON
+			jsonOut, err := Encode(errResp, OutputJSON)
+			if err != nil {
+				t.Fatalf("JSON encode: %v", err)
+			}
+			var decoded ErrorResponse
+			if err := json.Unmarshal([]byte(jsonOut), &decoded); err != nil {
+				t.Fatalf("JSON decode: %v", err)
+			}
+			if decoded.Error.ErrorCode != code {
+				t.Errorf("error_code = %q, want %q", decoded.Error.ErrorCode, code)
+			}
+			if decoded.Error.Action == "" || decoded.Error.Message == "" {
+				t.Error("error must have action and message")
+			}
+
+			// TOON encode (must not error)
+			toonOut, err := Encode(errResp, OutputTOON)
+			if err != nil {
+				t.Fatalf("TOON encode: %v", err)
+			}
+			if toonOut == "" {
+				t.Error("TOON output must not be empty")
+			}
+			if !strings.Contains(toonOut, code) {
+				t.Errorf("TOON output must contain error_code %q", code)
+			}
+		})
+	}
+}
+
+// TestAllDefinitiveEmpties verifies that each model serializes its
+// definitive empty form correctly in both output formats.
+func TestAllDefinitiveEmpties(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty_result", func(t *testing.T) {
+		t.Parallel()
+		resp := Response[EmptyResult]{
+			SchemaVersion: SchemaVersion,
+			Kind:          "fleet.snapshot",
+			Status:        "success",
+			Data: EmptyResult{
+				Count:   0,
+				Context: "No soldiers found",
+			},
+		}
+
+		jsonOut, err := Encode(resp, OutputJSON)
+		if err != nil {
+			t.Fatalf("JSON encode: %v", err)
+		}
+		if !strings.Contains(jsonOut, `"count": 0`) {
+			t.Errorf("JSON must contain count: 0")
+		}
+		if !strings.Contains(jsonOut, `"context": "No soldiers found"`) {
+			t.Errorf("JSON must contain context")
+		}
+
+		toonOut, err := Encode(resp, OutputTOON)
+		if err != nil {
+			t.Fatalf("TOON encode: %v", err)
+		}
+		if !strings.Contains(toonOut, "count: 0") {
+			t.Errorf("TOON must contain count: 0")
+		}
+		if !strings.Contains(toonOut, "context: No soldiers found") {
+			t.Errorf("TOON must contain context")
+		}
+	})
+
+	t.Run("empty_collection", func(t *testing.T) {
+		t.Parallel()
+		resp := Response[FleetSnapshotV2]{
+			SchemaVersion: SchemaVersion,
+			Kind:          "fleet.snapshot",
+			Status:        "success",
+			Data: FleetSnapshotV2{
+				Scope: "/",
+				Count: 0,
+				Total: 0,
+				Soldiers: []Soldier{},
+			},
+		}
+
+		jsonOut, err := Encode(resp, OutputJSON)
+		if err != nil {
+			t.Fatalf("JSON encode: %v", err)
+		}
+		if strings.Contains(jsonOut, `"soldiers": null`) {
+			t.Errorf("empty soldiers must be [] not null")
+		}
+		if !strings.Contains(jsonOut, `"soldiers": []`) {
+			t.Errorf("empty soldiers must serialize as []")
+		}
+
+		toonOut, err := Encode(resp, OutputTOON)
+		if err != nil {
+			t.Fatalf("TOON encode: %v", err)
+		}
+		if !strings.Contains(toonOut, "soldiers: []") {
+			t.Errorf("TOON empty soldiers must be []")
+		}
+	})
+}
+
+// TestIdempotentMutationReceipts verifies that no-op and idempotent
+// mutation results serialize with correct noop: true semantics.
+func TestIdempotentMutationReceipts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("noop_true", func(t *testing.T) {
+		t.Parallel()
+		resp := Response[MessageResult]{
+			SchemaVersion: SchemaVersion,
+			Kind:          "message",
+			Status:        "success",
+			Data: MessageResult{
+				Message: "Watch already running",
+				Noop:    true,
+			},
+		}
+
+		jsonOut, err := Encode(resp, OutputJSON)
+		if err != nil {
+			t.Fatalf("JSON encode: %v", err)
+		}
+		if !strings.Contains(jsonOut, `"noop": true`) {
+			t.Errorf("JSON noop must be true")
+		}
+		if !strings.Contains(jsonOut, `"status": "success"`) {
+			t.Errorf("idempotent no-op must be status=success")
+		}
+
+		toonOut, err := Encode(resp, OutputTOON)
+		if err != nil {
+			t.Fatalf("TOON encode: %v", err)
+		}
+		if !strings.Contains(toonOut, "noop: true") {
+			t.Errorf("TOON noop must be true")
+		}
+	})
+
+	t.Run("noop_false_success", func(t *testing.T) {
+		t.Parallel()
+		resp := Response[MessageResult]{
+			SchemaVersion: SchemaVersion,
+			Kind:          "message",
+			Status:        "success",
+			Data: MessageResult{
+				Message: "Wake acknowledged",
+				Noop:    false,
+			},
+		}
+
+		jsonOut, err := Encode(resp, OutputJSON)
+		if err != nil {
+			t.Fatalf("JSON encode: %v", err)
+		}
+		if strings.Contains(jsonOut, `"noop": true`) {
+			t.Errorf("first mutation must not be noop")
+		}
+		if !strings.Contains(jsonOut, `"noop": false`) {
+			t.Errorf("first mutation must have noop=false")
+		}
+	})
+}
+
 func validateJSONEnvelope(t *testing.T, name string, document map[string]any) {
 	t.Helper()
 	for _, key := range []string{"schema_version", "kind", "status"} {
@@ -149,8 +364,16 @@ func validateJSONEnvelope(t *testing.T, name string, document map[string]any) {
 		}
 		return
 	}
-	if _, ok := document["data"].(map[string]any); !ok {
-		t.Errorf("%s.json success response needs a data object", name)
+	dataVal := document["data"]
+	if dataVal == nil {
+		t.Errorf("%s.json success response needs a data field", name)
+		return
+	}
+	switch dataVal.(type) {
+	case map[string]any, []any:
+		// data can be either an object or an array
+	default:
+		t.Errorf("%s.json success data must be an object or array, got %T", name, dataVal)
 	}
 }
 

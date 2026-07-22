@@ -1,0 +1,9 @@
+schema_version: "munsu.orchestration/v2"
+kind: session.start
+status: success
+data:
+  lock: acquired
+  watcher: started
+  bootstrap_ok: true
+  fleet_sync_ok: true
+  message: Session initialized

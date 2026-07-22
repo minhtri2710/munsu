@@ -1,0 +1,1 @@
+{"schema_version":"munsu.orchestration/v2","kind":"drain.cycle","status":"success","data":{"claim_id":"drain-01","consumer":"general-main","actionable":["wake-01"],"routine_count":2,"state":"actionable"},"help":["Run `munsu wake claim wake-01 --owner general-main` to claim the actionable wake"]}

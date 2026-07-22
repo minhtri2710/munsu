@@ -1,0 +1,6 @@
+schema_version: "munsu.orchestration/v2"
+kind: task.list
+status: success
+data[2]{id,kind,project,status}:
+  task-01,ship,munsu,working
+  task-02,scout,munsu,done

@@ -289,3 +289,49 @@ func TestExistingAdapterContracts_StillHold(t *testing.T) {
 		}
 	}
 }
+
+// TestCapabilityChain_NoSilentFallback verifies that each state in the
+// capability chain (Absent, Failed, Unsupported) produces an error and
+// never silently falls back to Ready.
+func TestCapabilityChain_NoSilentFallback(t *testing.T) {
+	states := []capability.State{
+		capability.Absent,
+		capability.Failed,
+		capability.Unsupported,
+	}
+	for _, s := range states {
+		s := s
+		t.Run(s.String(), func(t *testing.T) {
+			t.Parallel()
+			// GitHubClientForState must reject all non-Ready states.
+			client, err := GitHubClientForState(s)
+			if err == nil {
+				t.Fatalf("expected error for %s, got client %T", s, client)
+			}
+			// Error must mention the capability state, not something generic.
+			if !strings.Contains(err.Error(), "capability") &&
+				!strings.Contains(err.Error(), "gh-axi") {
+				t.Errorf("error must mention capability or gh-axi, got: %v", err)
+			}
+			// Must not return a usable client.
+			if _, ok := client.(*ghAxiClient); ok {
+				t.Errorf("non-Ready state %s must not yield ghAxiClient", s)
+			}
+		})
+	}
+}
+
+// TestProbeGitHubCapability_ReturnsDeterministicState verifies that
+// ProbeGitHubCapability returns exactly Ready or Absent (never Failed or
+// Unsupported for the lookPath pathway).
+func TestProbeGitHubCapability_ReturnsDeterministicState(t *testing.T) {
+	state := ProbeGitHubCapability()
+	if state != capability.Ready && state != capability.Absent {
+		t.Errorf("unexpected state %v, want Ready or Absent", state)
+	}
+	// Should be deterministic within the same test process.
+	state2 := ProbeGitHubCapability()
+	if state != state2 {
+		t.Error("ProbeGitHubCapability is not deterministic")
+	}
+}
