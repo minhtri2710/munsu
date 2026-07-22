@@ -4349,3 +4349,133 @@ func TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles(t *testing.T) {
 		t.Fatalf("worktree dirty after ConfigPush with runtime files:\n%s", string(statusOut))
 	}
 }
+
+// TestMigrateToWorktree_HoldsPreservedClean proves that holds/*.hold files are
+// preserved during Managed migration and the new worktree remains git-clean.
+// This is the regression test for captain-migration-holds-clean: copied holds
+// survive the atomic swap and do not dirty the managed worktree's git status.
+func TestMigrateToWorktree_HoldsPreservedClean(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	id := "test-captain"
+	smHome := stateOnlyHomeFixture(t, parent, id)
+
+	// Create holds directory with multiple hold files — simulates in-flight
+	// soldier decision holds that must survive migration to managed worktree.
+	holdsDir := filepath.Join(smHome, "holds")
+	if err := os.MkdirAll(holdsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	holdContents := map[string]string{
+		"nomistakes-pi-contract-decision-fix-location.hold": "origin-id=nomistakes-pi-contract\ndecision-key=fix-location\nreason=Should the permanent fix live in no-mistakes upstream (small PR to add pi neutralization) or in munsu's own no-mistakes adapter/fork?\n",
+		"nomistakes-pi-contract-decision-adm-priority.hold": "origin-id=nomistakes-pi-contract\ndecision-key=adm-priority\nreason=Should ADM priority be treated as blocking or advisory for no-mistakes gate?\n",
+		"TASK-42.hold": "hold: awaiting-general-decision\ncreated: 2026-07-23\n",
+		"TASK-99.hold": "hold: awaiting-review\ncreated: 2026-07-23\n",
+	}
+
+	var holdFilePaths []string
+	for name, content := range holdContents {
+		p := filepath.Join(holdsDir, name)
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		holdFilePaths = append(holdFilePaths, p)
+	}
+
+	// Write some operational state for cross-check.
+	os.MkdirAll(filepath.Join(smHome, "state", "sub"), 0755)
+	os.WriteFile(filepath.Join(smHome, "state", "sub", "data.txt"), []byte("runtime\n"), 0644)
+	os.WriteFile(filepath.Join(smHome, "config", "custom.cfg"), []byte("setting=1\n"), 0644)
+
+	// Run migration.
+	if err := MigrateToWorktree(smHome, project, id, parent); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Home is now a managed worktree.
+	managed, err := isManagedWorktree(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managed {
+		t.Fatal("home should be a managed worktree after migration")
+	}
+
+	// 2. All hold files were copied and content is byte-for-byte identical.
+	for name, wantContent := range holdContents {
+		p := filepath.Join(smHome, "holds", name)
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Errorf("hold %q not found in migrated worktree: %v", name, err)
+			continue
+		}
+		if string(data) != wantContent {
+			t.Errorf("hold %q content changed:\nwant: %q\ngot:  %q", name, wantContent, string(data))
+		}
+	}
+
+	// 3. Git status is clean — holds/ is excluded via info/exclude.
+	statusOut, err := exec.Command("git", "-C", smHome, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strings.TrimSpace(string(statusOut))) > 0 {
+		t.Fatalf("worktree is not git-clean after migration:\n%s", string(statusOut))
+	}
+
+	// 4. Backup directory exists and contains the original holds (migration evidence).
+	backupGlob, err := filepath.Glob(smHome + ".backup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backupGlob) == 0 {
+		t.Error("backup directory not found after migration")
+	} else {
+		backupHolds := filepath.Join(backupGlob[0], "holds")
+		for name := range holdContents {
+			if _, err := os.Stat(filepath.Join(backupHolds, name)); os.IsNotExist(err) {
+				t.Errorf("hold %q missing from backup at %s", name, backupHolds)
+			}
+		}
+		// Also verify state/config survived in backup.
+		if _, err := os.Stat(filepath.Join(backupGlob[0], "state", "sub", "data.txt")); os.IsNotExist(err) {
+			t.Error("state/sub/data.txt missing from backup")
+		}
+		if _, err := os.Stat(filepath.Join(backupGlob[0], "config", "custom.cfg")); os.IsNotExist(err) {
+			t.Error("config/custom.cfg missing from backup")
+		}
+	}
+
+	// 5. Operational state was also preserved in the live worktree.
+	data, err := os.ReadFile(filepath.Join(smHome, "state", "sub", "data.txt"))
+	if err != nil {
+		t.Errorf("state/sub/data.txt not preserved: %v", err)
+	} else if string(data) != "runtime\n" {
+		t.Errorf("state/sub/data.txt content = %q", string(data))
+	}
+
+	data, err = os.ReadFile(filepath.Join(smHome, "config", "custom.cfg"))
+	if err != nil {
+		t.Errorf("config/custom.cfg not preserved: %v", err)
+	} else if string(data) != "setting=1\n" {
+		t.Errorf("config/custom.cfg content = %q", string(data))
+	}
+
+	// 6. Worktree admin path points at final home (no temp path).
+	wtList := gitTestRun(t, project, "worktree", "list", "--porcelain")
+	if !strings.Contains(wtList, smHome) {
+		t.Errorf("git worktree list missing final home %s", smHome)
+	}
+	if strings.Contains(wtList, ".worktree-") {
+		t.Errorf("git worktree list still has temp path; got:\n%s", wtList)
+	}
+
+	// 7. .captain-charter.md and provenance exist.
+	if _, err := os.Stat(filepath.Join(smHome, CaptainCharterName)); os.IsNotExist(err) {
+		t.Errorf("%s missing after migration", CaptainCharterName)
+	}
+	if _, err := os.Stat(filepath.Join(smHome, CaptainProvenanceName)); os.IsNotExist(err) {
+		t.Errorf("%s missing after migration", CaptainProvenanceName)
+	}
+}
