@@ -1555,6 +1555,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("GEMINI_API_KEY", "test-key")
 
 	configDir := filepath.Join(homeDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
