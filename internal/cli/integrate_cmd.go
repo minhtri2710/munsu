@@ -529,17 +529,17 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 //
 //  4. Retry:
 //     - If session-start fails before exactly-once success is recorded,
-//       the next eligible session-start event may retry (lock not acquired
-//       means lock ancestry check passes, so nudge runs again)
+//     the next eligible session-start event may retry (lock not acquired
+//     means lock ancestry check passes, so nudge runs again)
 //     - Do not record exactly-once success before the underlying command succeeds
 //     - Retries remain silence-gated (still no nudge under gate/non-primary/lock-held)
 //     - No busy-loop inside the hook; one attempt per harness event
 //
 //  5. Pi exception:
 //     - Pi may keep native full munsu session-start on session_start
-//       IF AND ONLY IF it preserves primary/safety gates, exactly-once per
-//       native session (including reload), and does not double-run session-start
-//       after the lock is already held 
+//     IF AND ONLY IF it preserves primary/safety gates, exactly-once per
+//     native session (including reload), and does not double-run session-start
+//     after the lock is already held
 func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
 	// 1. Check for gate agent (NO_MISTAKES_GATE)
 	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
