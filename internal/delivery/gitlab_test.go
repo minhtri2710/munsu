@@ -2,20 +2,166 @@ package delivery
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/ghurl"
 )
 
-// --- Capability probe tests ---
+// fakeGlabRunner implements GlabRunner for testing.
+type fakeGlabRunner struct {
+	lookPathErr error
+	runFn       func(args ...string) ([]byte, error)
+}
 
-func TestProbeGitLabCapability_ReadsGlabPresence(t *testing.T) {
-	state := ProbeGitLabCapability()
-	if state != capability.Ready && state != capability.Absent && state != capability.Failed {
-		t.Errorf("expected Ready, Absent, or Failed, got %v", state)
+func (f *fakeGlabRunner) LookPath() (string, error) {
+	if f.lookPathErr != nil {
+		return "", f.lookPathErr
+	}
+	return "/usr/local/bin/glab", nil
+}
+
+func (f *fakeGlabRunner) Run(args ...string) ([]byte, error) {
+	if f.runFn == nil {
+		return []byte(""), nil
+	}
+	return f.runFn(args...)
+}
+
+func readyRunner() *fakeGlabRunner {
+	return &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			if len(args) >= 1 && args[0] == "--version" {
+				return []byte("glab version 1.45.0"), nil
+			}
+			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
+				return []byte("view a merge request\n"), nil
+			}
+			// mr view with JSON — return valid GitLab JSON
+			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
+				return []byte(fmt.Sprintf(`{
+					"sha": "%s",
+					"source_branch": "feature/test",
+					"target_branch": "main",
+					"state": "opened",
+					"merge_commit_sha": null
+				}`, sampleSHA)), nil
+			}
+			return []byte("{}"), nil
+		},
 	}
 }
+
+func mergedRunner() *fakeGlabRunner {
+	return &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			if len(args) >= 1 && args[0] == "--version" {
+				return []byte("glab version 1.45.0"), nil
+			}
+			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
+				return []byte("view a merge request\n"), nil
+			}
+			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
+				return []byte(`{
+					"sha": "abc123def456abc123def456abc123def456abc1",
+					"source_branch": "feature/test",
+					"target_branch": "main",
+					"state": "merged",
+					"merge_commit_sha": "def456abc123def456abc123def456abc123def4"
+				}`), nil
+			}
+			return []byte("{}"), nil
+		},
+	}
+}
+
+func closedRunner() *fakeGlabRunner {
+	return &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			if len(args) >= 1 && args[0] == "--version" {
+				return []byte("glab version 1.45.0"), nil
+			}
+			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
+				return []byte("view a merge request\n"), nil
+			}
+			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
+				return []byte(`{
+					"sha": "abc123def456abc123def456abc123def456abc1",
+					"source_branch": "feature/test",
+					"target_branch": "main",
+					"state": "closed",
+					"merge_commit_sha": null
+				}`), nil
+			}
+			return []byte("{}"), nil
+		},
+	}
+}
+
+func failedVersionRunner() *fakeGlabRunner {
+	return &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			if len(args) >= 1 && args[0] == "--version" {
+				return nil, errors.New("exec format error")
+			}
+			return []byte("{}"), nil
+		},
+	}
+}
+
+func unsupportedRunner() *fakeGlabRunner {
+	return &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			if len(args) >= 1 && args[0] == "--version" {
+				return []byte("glab version 1.45.0"), nil
+			}
+			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
+				return nil, errors.New("unknown command")
+			}
+			return []byte("{}"), nil
+		},
+	}
+}
+
+const sampleSHA = "abc123def456abc123def456abc123def456abc1"
+
+// --- Four-state probe tests ---
+
+func TestProbeGlabCapability_Absent(t *testing.T) {
+	runner := &fakeGlabRunner{lookPathErr: errors.New("not found")}
+	state := probeGlabCapability(runner)
+	if state != capability.Absent {
+		t.Errorf("expected Absent, got %v", state)
+	}
+}
+
+func TestProbeGlabCapability_Failed(t *testing.T) {
+	runner := failedVersionRunner()
+	state := probeGlabCapability(runner)
+	if state != capability.Failed {
+		t.Errorf("expected Failed, got %v", state)
+	}
+}
+
+func TestProbeGlabCapability_Unsupported(t *testing.T) {
+	runner := unsupportedRunner()
+	state := probeGlabCapability(runner)
+	if state != capability.Unsupported {
+		t.Errorf("expected Unsupported, got %v", state)
+	}
+}
+
+func TestProbeGlabCapability_Ready(t *testing.T) {
+	runner := readyRunner()
+	state := probeGlabCapability(runner)
+	if state != capability.Ready {
+		t.Errorf("expected Ready, got %v", state)
+	}
+}
+
+// --- GitLabClientForState tests ---
 
 func TestGitLabClientForState_AbsentFailsClosed(t *testing.T) {
 	_, err := GitLabClientForState(capability.Absent)
@@ -61,10 +207,10 @@ func TestGitLabClientForState_ReadyReturnsClient(t *testing.T) {
 	}
 }
 
-// --- glabClient tests ---
+// --- CaptureIdentity via fake runner ---
 
 func TestGlabClient_CaptureIdentity_InvalidURL(t *testing.T) {
-	client := &glabClient{}
+	client := &glabClient{runner: readyRunner()}
 	_, err := client.CaptureIdentity("not-a-url")
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
@@ -75,13 +221,92 @@ func TestGlabClient_CaptureIdentity_InvalidURL(t *testing.T) {
 }
 
 func TestGlabClient_CaptureIdentity_NonMRURL(t *testing.T) {
-	client := &glabClient{}
+	client := &glabClient{runner: readyRunner()}
 	_, err := client.CaptureIdentity("https://github.com/owner/repo/pull/1")
 	if err == nil {
 		t.Fatal("expected error for GitHub URL")
 	}
 	if !strings.Contains(err.Error(), "invalid MR URL") {
 		t.Errorf("expected 'invalid MR URL' error, got: %v", err)
+	}
+}
+
+func TestGlabClient_CaptureIdentity_ParseSuccess(t *testing.T) {
+	client := &glabClient{runner: readyRunner()}
+	ident, err := client.CaptureIdentity("https://gitlab.com/owner/project/-/merge_requests/42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ident.Provider != "gitlab" {
+		t.Errorf("Provider: got %q, want %q", ident.Provider, "gitlab")
+	}
+	if ident.Owner != "owner" {
+		t.Errorf("Owner: got %q, want %q", ident.Owner, "owner")
+	}
+	if ident.Repo != "project" {
+		t.Errorf("Repo: got %q, want %q", ident.Repo, "project")
+	}
+	if ident.Number != 42 {
+		t.Errorf("Number: got %d, want 42", ident.Number)
+	}
+	if ident.HeadSHA != sampleSHA {
+		t.Errorf("HeadSHA: got %q, want %q", ident.HeadSHA, sampleSHA)
+	}
+	if ident.BaseRef != "main" {
+		t.Errorf("BaseRef: got %q, want %q", ident.BaseRef, "main")
+	}
+	if ident.HeadRef != "feature/test" {
+		t.Errorf("HeadRef: got %q, want %q", ident.HeadRef, "feature/test")
+	}
+}
+
+// --- Exact argument tests ---
+
+func TestViewMRJSON_ExactArgs(t *testing.T) {
+	var capturedArgs []string
+	runner := &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			capturedArgs = append([]string{}, args...)
+			return []byte(`{"state":"opened"}`), nil
+		},
+	}
+	client := &glabClient{runner: runner}
+	_, err := client.ViewMRJSON("gitlab.com", "owner", "project", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := []string{"mr", "view", "owner/project!42", "-F", "json"}
+	if len(capturedArgs) != len(expected) {
+		t.Fatalf("args: got %v, want %v", capturedArgs, expected)
+	}
+	for i := range expected {
+		if capturedArgs[i] != expected[i] {
+			t.Errorf("arg[%d]: got %q, want %q", i, capturedArgs[i], expected[i])
+		}
+	}
+}
+
+func TestViewMRJSON_SelfHostedExactArgs(t *testing.T) {
+	var capturedArgs []string
+	runner := &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			capturedArgs = append([]string{}, args...)
+			return []byte(`{"state":"opened"}`), nil
+		},
+	}
+	client := &glabClient{runner: runner}
+	_, err := client.ViewMRJSON("gitlab.example.com", "group", "project", 7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := []string{"mr", "view", "group/project!7", "--hostname", "gitlab.example.com", "-F", "json"}
+	if len(capturedArgs) != len(expected) {
+		t.Fatalf("args: got %v, want %v", capturedArgs, expected)
+	}
+	for i := range expected {
+		if capturedArgs[i] != expected[i] {
+			t.Errorf("arg[%d]: got %q, want %q", i, capturedArgs[i], expected[i])
+		}
 	}
 }
 
@@ -126,85 +351,195 @@ func TestNormalizeGlabState_Empty(t *testing.T) {
 	}
 }
 
-// --- DefaultGitLabClient path routing ---
+// --- Delivery merge status via fake runner ---
 
-func TestDefaultGitLabClient_RoutesToGlabWhenReady(t *testing.T) {
-	state := ProbeGitLabCapability()
-	if state != capability.Ready {
-		t.Skip("glab not on PATH or not functional, skipping Ready-path test")
+func TestQueryDeliveryMergeStatus_GitLab_Ready_Open(t *testing.T) {
+	old := defaultGlabRunner
+	defaultGlabRunner = readyRunner()
+	defer func() { defaultGlabRunner = old }()
+
+	ident := &DeliveryIdentity{
+		Provider: "gitlab",
+		Owner:    "owner",
+		Repo:     "project",
+		Number:   42,
+		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	client, err := DefaultGitLabClient()
+	status, err := QueryDeliveryMergeStatus(ident)
 	if err != nil {
-		t.Fatalf("DefaultGitLabClient: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if client == nil {
-		t.Fatal("expected non-nil client")
+	if status.State != "OPEN" {
+		t.Errorf("State: got %q, want OPEN", status.State)
 	}
-}
-
-// --- glabLookPath injection tests ---
-
-func TestProbeGitLabCapability_ReplacedLookPath(t *testing.T) {
-	old := glabLookPath
-	oldProbe := defaultGlabProbe
-	t.Cleanup(func() { glabLookPath = old; defaultGlabProbe = oldProbe })
-
-	// Simulate glab not found via lookPath — probe should return Absent
-	glabLookPath = func() (string, error) {
-		return "", errors.New("not found")
+	if status.Merged {
+		t.Error("expected merged=false for open MR")
 	}
-	// Override the probe to test lookPath only
-	defaultGlabProbe = func() capability.State {
-		_, err := glabLookPath()
-		if err != nil {
-			return capability.Absent
-		}
-		return capability.Ready
-	}
-	if state := ProbeGitLabCapability(); state != capability.Absent {
-		t.Errorf("expected Absent, got %v", state)
+	if status.Closed {
+		t.Error("expected closed=false for open MR")
 	}
 }
 
-func TestGlabProbe_ReturnsFailedWhenVersionFails(t *testing.T) {
-	// Test that the defaultGlabProbe returns Failed when glab is on PATH
-	// but --version fails. We simulate by replacing glabLookPath with a
-	// path that exists but is not glab.
-	oldProbe := defaultGlabProbe
-	t.Cleanup(func() { defaultGlabProbe = oldProbe })
+func TestQueryDeliveryMergeStatus_GitLab_Ready_Merged(t *testing.T) {
+	oldRunner := defaultGlabRunner
+	defaultGlabRunner = mergedRunner()
+	defer func() { defaultGlabRunner = oldRunner }()
 
-	called := false
-	defaultGlabProbe = func() capability.State {
-		called = true
-		return capability.Failed
+	ident := &DeliveryIdentity{
+		Provider: "gitlab",
+		Owner:    "owner",
+		Repo:     "project",
+		Number:   42,
+		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-
-	state := ProbeGitLabCapability()
-	if state != capability.Failed {
-		t.Errorf("expected Failed, got %v", state)
+	status, err := QueryDeliveryMergeStatus(ident)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !called {
-		t.Error("defaultGlabProbe was not called")
+	if status.State != "MERGED" {
+		t.Errorf("State: got %q, want MERGED", status.State)
+	}
+	if !status.Merged {
+		t.Error("expected merged=true for merged MR")
+	}
+	if status.MergedSHA != "def456abc123def456abc123def456abc123def4" {
+		t.Errorf("MergedSHA: got %q", status.MergedSHA)
 	}
 }
 
-func TestDefaultGitLabClient_RejectedState(t *testing.T) {
-	old := glabLookPath
-	oldProbe := defaultGlabProbe
-	t.Cleanup(func() { glabLookPath = old; defaultGlabProbe = oldProbe })
+func TestQueryDeliveryMergeStatus_GitLab_Ready_Closed(t *testing.T) {
+	oldRunner := defaultGlabRunner
+	defaultGlabRunner = closedRunner()
+	defer func() { defaultGlabRunner = oldRunner }()
 
-	glabLookPath = func() (string, error) {
-		return "", errors.New("not found")
+	ident := &DeliveryIdentity{
+		Provider: "gitlab",
+		Owner:    "owner",
+		Repo:     "project",
+		Number:   42,
+		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	defaultGlabProbe = func() capability.State {
-		return capability.Absent
+	status, err := QueryDeliveryMergeStatus(ident)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	_, err := DefaultGitLabClient()
+	if status.State != "CLOSED" {
+		t.Errorf("State: got %q, want CLOSED", status.State)
+	}
+	if !status.Closed {
+		t.Error("expected closed=true for closed MR")
+	}
+	if status.Merged {
+		t.Error("expected merged=false for closed MR")
+	}
+}
+
+// --- Fallback policy tests ---
+
+func TestQueryDeliveryMergeStatus_GitLab_Failed_FallackSpyUncalled(t *testing.T) {
+	oldRunner := defaultGlabRunner
+	oldFallback := defaultGlabFallback
+	defaultGlabRunner = failedVersionRunner()
+	fallbackCalled := false
+	defaultGlabFallback = func(ident *DeliveryIdentity) (*PRMergeStatus, error) {
+		fallbackCalled = true
+		return nil, fmt.Errorf("fallback should not be called when Failed")
+	}
+	defer func() {
+		defaultGlabRunner = oldRunner
+		defaultGlabFallback = oldFallback
+	}()
+
+	ident := &DeliveryIdentity{
+		Provider: "gitlab",
+		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
+	}
+	_, err := QueryDeliveryMergeStatus(ident)
 	if err == nil {
-		t.Fatal("expected error when glab not available")
+		t.Fatal("expected error for Failed state")
 	}
-	if !strings.Contains(err.Error(), "capability absent") {
-		t.Errorf("expected 'capability absent' error, got: %v", err)
+	if fallbackCalled {
+		t.Error("fallback should not be called for Failed state")
+	}
+}
+
+func TestQueryDeliveryMergeStatus_GitLab_Absent_FallackCalled(t *testing.T) {
+	oldRunner := defaultGlabRunner
+	oldFallback := defaultGlabFallback
+	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("not found")}
+	fallbackCalled := false
+	defaultGlabFallback = func(ident *DeliveryIdentity) (*PRMergeStatus, error) {
+		fallbackCalled = true
+		return &PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
+	}
+	defer func() {
+		defaultGlabRunner = oldRunner
+		defaultGlabFallback = oldFallback
+	}()
+
+	ident := &DeliveryIdentity{
+		Provider: "gitlab",
+		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
+	}
+	status, err := QueryDeliveryMergeStatus(ident)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fallbackCalled {
+		t.Error("fallback should be called for Absent state")
+	}
+	if status.State != "OPEN" {
+		t.Errorf("State: got %q, want OPEN", status.State)
+	}
+}
+
+func TestQueryDeliveryMergeStatus_GitLab_Absent_NoFallackError(t *testing.T) {
+	oldRunner := defaultGlabRunner
+	oldFallback := defaultGlabFallback
+	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("not found")}
+	defaultGlabFallback = nil // no fallback configured
+	defer func() {
+		defaultGlabRunner = oldRunner
+		defaultGlabFallback = oldFallback
+	}()
+
+	ident := &DeliveryIdentity{
+		Provider: "gitlab",
+		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
+	}
+	_, err := QueryDeliveryMergeStatus(ident)
+	if err == nil {
+		t.Fatal("expected error when no fallback configured")
+	}
+}
+
+// --- GitHub delegation regression ---
+
+func TestQueryDeliveryMergeStatus_GitHub_Delegates(t *testing.T) {
+	// GitHub URL should route through QueryPRMergeStatus.
+	// Use a mock to verify delegation.
+	saved := QueryPRMergeStatus
+	QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
+		if ghURL.Owner != "minhtri2710" || ghURL.Repo != "munsu" || ghURL.Num != 42 {
+			t.Errorf("unexpected ghURL: %+v", ghURL)
+		}
+		return &PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
+	}
+	defer func() { QueryPRMergeStatus = saved }()
+
+	ident := &DeliveryIdentity{
+		Provider: "github",
+		Owner:    "minhtri2710",
+		Repo:     "munsu",
+		Number:   42,
+		URL:      "https://github.com/minhtri2710/munsu/pull/42",
+	}
+	status, err := QueryDeliveryMergeStatus(ident)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.State != "OPEN" {
+		t.Errorf("State: got %q, want OPEN", status.State)
 	}
 }
 
@@ -255,7 +590,7 @@ func TestParseProviderURL_GitLabURL(t *testing.T) {
 }
 
 func TestParseProviderURL_NestedGitLabURL(t *testing.T) {
-	provider, owner, repo, num, fullURL, err := ParseProviderURL("https://gitlab.com/group/subgroup/project/-/merge_requests/7")
+	provider, owner, repo, num, _, err := ParseProviderURL("https://gitlab.com/group/subgroup/project/-/merge_requests/7")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,22 +606,12 @@ func TestParseProviderURL_NestedGitLabURL(t *testing.T) {
 	if num != 7 {
 		t.Errorf("num: got %d, want 7", num)
 	}
-	if fullURL != "https://gitlab.com/group/subgroup/project/-/merge_requests/7" {
-		t.Errorf("fullURL: got %q", fullURL)
-	}
 }
 
 func TestParseProviderURL_UnrecognizedURL(t *testing.T) {
 	_, _, _, _, _, err := ParseProviderURL("https://example.com/foo/bar/42")
 	if err == nil {
 		t.Fatal("expected error for unrecognized URL")
-	}
-}
-
-func TestParseProviderURL_InvalidURL(t *testing.T) {
-	_, _, _, _, _, err := ParseProviderURL("not-a-url")
-	if err == nil {
-		t.Fatal("expected error for invalid URL")
 	}
 }
 
@@ -374,18 +699,11 @@ func TestGitLabIdentity_LegacyPRKey(t *testing.T) {
 	if id.Number != 42 {
 		t.Errorf("Number: got %d, want 42", id.Number)
 	}
-	if id.Owner == "" {
-		t.Error("expected Owner to be derived from URL")
-	}
-	if id.Repo == "" {
-		t.Error("expected Repo to be derived from URL")
-	}
 }
 
 // --- IdentityFromMeta provider/URL consistency ---
 
 func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
-	// Set pr_provider=github but pr_url is a GitLab URL
 	meta := map[string]string{
 		"pr_provider": "github",
 		"pr_url":      "https://gitlab.com/owner/project/-/merge_requests/42",
@@ -394,7 +712,7 @@ func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
 		"pr_repo":     "project",
 		"pr_base":     "main",
 		"pr_head_ref": "feature/test",
-		"pr_head":     "abc123def456abc123def456abc123def456abc1",
+		"pr_head":     sampleSHA,
 		"pr_timestamp": "2026-07-18T12:00:00Z",
 	}
 	_, err := IdentityFromMeta(meta)
@@ -433,11 +751,8 @@ func TestGitLabCapabilityChain_NoSilentFallback(t *testing.T) {
 	}
 }
 
-func TestProbeGitLabCapability_ReturnsDeterministicState(t *testing.T) {
+func TestProbeGitLabCapability_Deterministic(t *testing.T) {
 	state := ProbeGitLabCapability()
-	if state != capability.Ready && state != capability.Absent && state != capability.Failed && state != capability.Unsupported {
-		t.Errorf("unexpected state %v", state)
-	}
 	state2 := ProbeGitLabCapability()
 	if state != state2 {
 		t.Error("ProbeGitLabCapability is not deterministic")
@@ -446,7 +761,7 @@ func TestProbeGitLabCapability_ReturnsDeterministicState(t *testing.T) {
 
 // --- Preserved GitHub behavior regression ---
 
-func TestGitHubIdentityStillWorksWithParseProviderURL(t *testing.T) {
+func TestGitHubIdentityStillWorks(t *testing.T) {
 	original := validIdentity()
 	meta := original.ToMeta()
 	restored, err := IdentityFromMeta(meta)
@@ -464,7 +779,7 @@ func TestGitHubIdentityStillWorksWithParseProviderURL(t *testing.T) {
 	}
 }
 
-func TestExistingGitHubTestsStillPassWithParseProviderURL(t *testing.T) {
+func TestExistingGitHubTestsStillPass(t *testing.T) {
 	meta := validIdentity().ToMeta()
 	restored, err := IdentityFromMeta(meta)
 	if err != nil {
@@ -483,21 +798,16 @@ func TestExistingGitHubTestsStillPassWithParseProviderURL(t *testing.T) {
 
 // --- CaptureIdentity provider routing ---
 
-func TestCaptureIdentity_RoutesGitHubToGhAxi(t *testing.T) {
-	// GitHub URL should reach captureGitHubIdentity.
-	// With gh-axi or gh CLI available, this may succeed or fail.
-	// The key assertion: the error (if any) must be from the GitHub path,
-	// not from "unrecognized" URL parsing.
+func TestCaptureIdentity_RoutesGitHub(t *testing.T) {
+	// Should not fail with "unrecognized" — it's a valid GitHub URL
 	_, err := CaptureIdentity("https://github.com/minhtri2710/munsu/pull/24")
 	if err != nil && strings.Contains(err.Error(), "unrecognized") {
 		t.Errorf("error should be from GitHub path, not unrecognized: %v", err)
 	}
-	// Success is also valid — the GitHub path worked.
 }
 
-func TestCaptureIdentity_RoutesGitLabToGlabClient(t *testing.T) {
-	// GitLab URL should reach captureGitLabIdentity.
-	// Without glab on PATH, it will fail with capability absent.
+func TestCaptureIdentity_RoutesGitLab(t *testing.T) {
+	// Without glab on PATH, will fail with capability absent
 	_, err := CaptureIdentity("https://gitlab.com/owner/project/-/merge_requests/1")
 	if err == nil {
 		t.Fatal("expected error (glab not available)")

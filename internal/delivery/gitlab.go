@@ -12,6 +12,49 @@ import (
 	"github.com/minhtri2710/munsu/internal/glurl"
 )
 
+// GlabRunner abstracts glab CLI operations for testability.
+// All glab invocations route through this interface.
+type GlabRunner interface {
+	// LookPath returns the glab binary path, or an error if not found.
+	LookPath() (string, error)
+
+	// Run executes glab with the given args and returns stdout.
+	Run(args ...string) ([]byte, error)
+}
+
+// glabRunnerImpl is the production GlabRunner using os/exec.
+type glabRunnerImpl struct{}
+
+func (r *glabRunnerImpl) LookPath() (string, error) {
+	return exec.LookPath("glab")
+}
+
+func (r *glabRunnerImpl) Run(args ...string) ([]byte, error) {
+	path, err := r.LookPath()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(path, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("glab %s: %s", strings.Join(args, " "), strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("glab %s: %w", strings.Join(args, " "), err)
+	}
+	return out, nil
+}
+
+// defaultGlabRunner is the production runner; replace for testing.
+var defaultGlabRunner GlabRunner = &glabRunnerImpl{}
+
+// GlabFallbackFn is an injectable read-only fallback for when glab is
+// Absent or Unsupported. When nil, the fallback returns an unavailable error.
+type GlabFallbackFn func(ident *DeliveryIdentity) (*PRMergeStatus, error)
+
+// defaultGlabFallback is the production fallback (no fallback available).
+var defaultGlabFallback GlabFallbackFn = nil
+
 // ParseProviderURL detects the provider from a PR/MR URL and parses it
 // into the provider-specific components. Returns the provider name and a
 // provider-agnostic (owner, repo, number) tuple.
@@ -44,41 +87,38 @@ type GitLabClient interface {
 	ViewMRState(host, owner, project string, iid int) (string, error)
 
 	// ViewMRJSON fetches MR metadata as JSON via glab --output json.
-	// Returns the full JSON output; callers parse the fields they need.
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
 }
 
-// glabClient implements GitLabClient backed by glab CLI.
-// When glab is Ready, all operations route through glab.
-type glabClient struct{}
+// glabClient implements GitLabClient backed by glab CLI via GlabRunner.
+type glabClient struct {
+	runner GlabRunner
+}
 
 // compile-time check
 var _ GitLabClient = (*glabClient)(nil)
 
-// GlabProbeFn is an injectable probe function that returns a full
-// capability.State (Ready, Absent, Failed, or Unsupported) based on
-// glab availability and correctness.
-type GlabProbeFn func() capability.State
+// ProbeGitLabCapability probes glab availability through the default runner.
+// Returns one of: Ready, Absent, Failed, Unsupported.
+func ProbeGitLabCapability() capability.State {
+	return probeGlabCapability(defaultGlabRunner)
+}
 
-// defaultGlabProbe is the production probe that checks PATH and basic
-// invocation. Replace for testing.
-var defaultGlabProbe GlabProbeFn = func() capability.State {
-	path, err := glabLookPath()
+// probeGlabCapability probes glab availability through the given runner.
+func probeGlabCapability(runner GlabRunner) capability.State {
+	_, err := runner.LookPath()
 	if err != nil {
 		return capability.Absent
 	}
 
-	// Verify glab responds to a basic command
-	out, err := exec.Command(path, "--version").Output()
-	if err != nil {
-		return capability.Failed
-	}
-	if len(out) == 0 {
+	// Verify --version works
+	out, err := runner.Run("--version")
+	if err != nil || len(out) == 0 {
 		return capability.Failed
 	}
 
 	// Verify mr view subcommand is available
-	helpOut, err := exec.Command(path, "mr", "view", "--help").Output()
+	helpOut, err := runner.Run("mr", "view", "--help")
 	if err != nil || !strings.Contains(string(helpOut), "view") {
 		return capability.Unsupported
 	}
@@ -86,25 +126,12 @@ var defaultGlabProbe GlabProbeFn = func() capability.State {
 	return capability.Ready
 }
 
-// ProbeGitLabCapability checks whether glab is available on PATH using the
-// default probe. Returns one of: Ready (found+working), Absent (not on PATH),
-// Failed (found but errored), Unsupported (found but command surface missing).
-func ProbeGitLabCapability() capability.State {
-	return defaultGlabProbe()
-}
-
-// glabLookPath is a variable for testing — can be replaced to simulate
-// glab absence without modifying PATH.
-var glabLookPath = func() (string, error) {
-	return exec.LookPath("glab")
-}
-
 // GitLabClientForState returns the appropriate GitLabClient or an error
 // based on the capability state. Fails closed on Absent/Failed/Unsupported.
 func GitLabClientForState(s capability.State) (GitLabClient, error) {
 	switch s {
 	case capability.Ready:
-		return &glabClient{}, nil
+		return &glabClient{runner: defaultGlabRunner}, nil
 	case capability.Absent:
 		return nil, fmt.Errorf("GitLab capability absent: glab not found on PATH")
 	case capability.Unsupported:
@@ -123,8 +150,6 @@ func DefaultGitLabClient() (GitLabClient, error) {
 }
 
 // ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
-// Parses the glab JSON output for the "state" field.
-// GitLab uses "opened" / "merged" / "closed"; we normalize to upper case.
 func (c *glabClient) ViewMRState(host, owner, project string, iid int) (string, error) {
 	data, err := c.ViewMRJSON(host, owner, project, iid)
 	if err != nil {
@@ -159,13 +184,7 @@ func normalizeGlabState(s string) string {
 }
 
 // ViewMRJSON fetches MR metadata as JSON via glab CLI using --output json.
-// glab does not support field selection at the CLI level — it returns the
-// full MR JSON. Callers extract the fields they need via json.Unmarshal.
 func (c *glabClient) ViewMRJSON(host, owner, project string, iid int) ([]byte, error) {
-	glabPath, err := glabLookPath()
-	if err != nil {
-		return nil, fmt.Errorf("glab not found on PATH: %w", err)
-	}
 	args := []string{
 		"mr", "view",
 		fmt.Sprintf("%s/%s!%d", owner, project, iid),
@@ -175,37 +194,27 @@ func (c *glabClient) ViewMRJSON(host, owner, project string, iid int) ([]byte, e
 	}
 	args = append(args, "-F", "json")
 
-	cmd := exec.Command(glabPath, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("glab mr view: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return nil, fmt.Errorf("glab mr view: %w", err)
-	}
-	return out, nil
+	return c.runner.Run(args...)
 }
 
 // CaptureIdentity captures a full DeliveryIdentity from a GitLab MR URL.
-// Uses glab CLI through the consolidated adapter for JSON fields.
-// The GitLab API uses snake_case JSON keys: sha, source_branch, target_branch.
 func (c *glabClient) CaptureIdentity(mrURL string) (*DeliveryIdentity, error) {
 	glURL, err := glurl.ParseMRURL(mrURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid MR URL: %w", err)
 	}
 
-	// Fetch full MR JSON via glab --output json
 	data, err := c.ViewMRJSON(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse GitLab API fields (snake_case)
+	// GitLab API JSON uses snake_case fields
 	var result struct {
-		SHA          string `json:"sha"`
-		SourceBranch string `json:"source_branch"`
-		TargetBranch string `json:"target_branch"`
+		SHA             string `json:"sha"`
+		SourceBranch    string `json:"source_branch"`
+		TargetBranch    string `json:"target_branch"`
+		MergeCommitSHA  string `json:"merge_commit_sha"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("parsing glab mr view JSON: %w", err)

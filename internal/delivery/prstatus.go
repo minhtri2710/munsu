@@ -90,7 +90,10 @@ func queryGLMergeStatus(ident *DeliveryIdentity) (*PRMergeStatus, error) {
 	case capability.Failed:
 		return nil, fmt.Errorf("GitLab capability failed: cannot query MR status (use --force to override)")
 	case capability.Absent, capability.Unsupported:
-		// Read-only status; permitted fallback via degraded path
+		// Read-only status; permitted fallback if one is configured.
+		if defaultGlabFallback != nil {
+			return defaultGlabFallback(ident)
+		}
 		return nil, fmt.Errorf("GitLab provider not available for MR status query (use --force to override)")
 	default:
 		return nil, fmt.Errorf("GitLab capability in unknown state: %v", state)
@@ -117,11 +120,9 @@ func fetchGLMergeStatus(client GitLabClient, ident *DeliveryIdentity) (*PRMergeS
 // GitLab JSON uses snake_case: state, sha, merge_commit (diff_merge_commit).
 func parseGLMergeStatus(data []byte) (*PRMergeStatus, error) {
 	var raw struct {
-		State       string `json:"state"`       // opened, merged, closed
-		SHA         string `json:"sha"`          // diff head SHA
-		MergeCommit *struct {
-			SHA string `json:"sha"`
-		} `json:"merge_commit"`
+		State          string `json:"state"`          // opened, merged, closed
+		SHA            string `json:"sha"`             // diff head SHA
+		MergeCommitSHA string `json:"merge_commit_sha"` // flat string, null until merged
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing glab mr view JSON: %w", err)
@@ -133,8 +134,8 @@ func parseGLMergeStatus(data []byte) (*PRMergeStatus, error) {
 		State:   normalizedState,
 		HeadSHA: raw.SHA,
 	}
-	if raw.MergeCommit != nil {
-		status.MergedSHA = raw.MergeCommit.SHA
+	if raw.MergeCommitSHA != "" {
+		status.MergedSHA = raw.MergeCommitSHA
 	}
 
 	switch normalizedState {
