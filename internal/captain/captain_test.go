@@ -3895,7 +3895,7 @@ func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	os.WriteFile(filepath.Join(configDir, "custom-key"), []byte("val1\n"), 0644)
 	os.WriteFile(filepath.Join(configDir, "another-key"), []byte("val2\n"), 0644)
 	os.WriteFile(filepath.Join(configDir, "extra-key"), []byte("val3\n"), 0644)
-	os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644) // NOT in env list
+	os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644)  // NOT in env list
 	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet\n"), 0644) // NOT in env list
 
 	if err := ConfigPush(parent, smHome); err != nil {
