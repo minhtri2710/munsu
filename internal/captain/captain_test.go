@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/marker"
@@ -1120,6 +1121,66 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	}
 	if string(got) != reg {
 		t.Errorf("projects.md = %q, want %q", string(got), reg)
+	}
+}
+
+// TestSeedWithParent_WritesParentHomeConfig verifies that seed writes
+// config/parent-home in the captain home.
+func TestSeedWithParent_WritesParentHomeConfig(t *testing.T) {
+	parent := t.TempDir()
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+
+	sm := filepath.Join(parent, "captains", "ops")
+	if err := SeedWithParent("ops", sm, parent, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	dat, err := os.ReadFile(filepath.Join(sm, "config", "parent-home"))
+	if err != nil {
+		t.Fatalf("config/parent-home should exist: %v", err)
+	}
+	if strings.TrimSpace(string(dat)) != parent {
+		t.Errorf("parent-home = %q, want %q", strings.TrimSpace(string(dat)), parent)
+	}
+}
+
+// TestConfigPush_RefreshesParentHome verifies that ConfigPush refreshes
+// config/parent-home in the captain home.
+func TestConfigPush_RefreshesParentHome(t *testing.T) {
+	parent := t.TempDir()
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+
+	captainHome := t.TempDir()
+	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
+
+	// Seed captain with provenance
+	if err := SeedProvenance(captainHome, "test-captain"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# Test Captain\n"), 0644)
+
+	// Write a stale parent-home to verify ConfigPush refreshes it
+	staleHome := filepath.Join(parent, "stale")
+	os.MkdirAll(filepath.Dir(staleHome), 0755)
+	if err := config.Set(captainHome, "parent-home", staleHome); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run ConfigPush — should overwrite stale parent-home with current parent
+	if err := ConfigPush(parent, captainHome); err != nil {
+		t.Fatal(err)
+	}
+
+	dat, err := os.ReadFile(filepath.Join(captainHome, "config", "parent-home"))
+	if err != nil {
+		t.Fatalf("config/parent-home should exist: %v", err)
+	}
+	if strings.TrimSpace(string(dat)) != parent {
+		t.Errorf("parent-home = %q after refresh, want %q", strings.TrimSpace(string(dat)), parent)
 	}
 }
 

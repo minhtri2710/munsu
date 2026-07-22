@@ -508,6 +508,10 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 		if err := Register(parentHome, id, homePath, "", ""); err != nil {
 			return fmt.Errorf("registering captain %s: %w", id, err)
 		}
+		// Store the General parent home in captain config for durable parent resolution.
+		if err := config.Set(homePath, "parent-home", parentHome); err != nil {
+			return fmt.Errorf("writing parent-home config: %w", err)
+		}
 		// Inherit General config + project registry so soldiers need not re-add projects.
 		if err := ConfigPush(parentHome, homePath); err != nil {
 			return fmt.Errorf("seed inherit: %w", err)
@@ -1626,6 +1630,11 @@ func ConfigPush(parentHome, captainHome string) error {
 
 	if err := pushProjectsRegistry(parentHome, captainHome, log); err != nil {
 		return err
+	}
+
+	// Refresh parent-home config so the captain always has a durable reference to its General.
+	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
+		return fmt.Errorf("refreshing parent-home: %w", err)
 	}
 
 	// Refresh the canonical .captain-charter.md so it stays current on every config-push cycle.
