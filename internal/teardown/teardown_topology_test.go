@@ -925,3 +925,378 @@ func TestShipSafetyCheck_Topology_PartialIdentityNoURL(t *testing.T) {
 		t.Errorf("expected 'reading delivery identity' error, got: %v", err)
 	}
 }
+
+// --- Exact regression: no upstream + deleted remote head + complete identity ---
+
+func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *testing.T) {
+	// Exact regression from the incident:
+	//   - Local branch: NO upstream (git branch --unset-upstream)
+	//   - Remote head: DELETED
+	//   - Complete typed identity: PERSISTED
+	//   - Provider confirms: MERGED
+	//   -> shipSafetyCheck MUST succeed without Force
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+
+	// Get the actual feature branch head SHA for identity matching
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	// Remove local upstream (no upstream tracking)
+	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
+	unsetCmd.Dir = wt
+	unsetCmd.Env = gitEnv
+	if out, err := unsetCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git branch --unset-upstream: %s", out)
+	}
+
+	// Delete remote head
+	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
+	delCmd.Dir = wt
+	delCmd.Env = gitEnv
+	if out, err := delCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push origin --delete: %s", out)
+	}
+
+	// Build meta with complete typed identity using both old and new field names
+	meta := map[string]string{
+		"worktree":     wt,
+		"kind":         "ship",
+		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":  "github",
+		"pr_owner":     "minhtri2710",
+		"pr_repo":      "munsu",
+		"pr_number":    "42",
+		"pr_head_ref":  "fm/feature-branch",
+		"pr_head":      headSHA,
+		"pr_head_sha":  headSHA,
+		"pr_base":      "main",
+		"pr_base_ref":  "main",
+		"pr_timestamp": "2026-07-18T00:00:00Z",
+	}
+
+	// Mock provider: merged with matching HeadSHA
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:    true,
+		MergedSHA: headSHA,
+		HeadSHA:   headSHA,
+		State:     "MERGED",
+	}, nil)
+	defer cleanup()
+
+	// Verify no upstream (confirming the regression condition)
+	upstreamCheck := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	upstreamCheck.Dir = wt
+	upstreamCheck.Env = gitEnv
+	if upstreamCheck.Run() == nil {
+		t.Fatal("expected no upstream for regression test")
+	}
+
+	// shipSafetyCheck should succeed without Force
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err != nil {
+		t.Fatalf("regression: no upstream + deleted head + complete identity should pass: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t *testing.T) {
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	// Remove local upstream
+	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
+	unsetCmd.Dir = wt
+	unsetCmd.Env = gitEnv
+	unsetCmd.Run()
+
+	// Delete remote head
+	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
+	delCmd.Dir = wt
+	delCmd.Env = gitEnv
+	delCmd.Run()
+
+	meta := map[string]string{
+		"worktree":     wt,
+		"kind":         "ship",
+		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":  "github",
+		"pr_owner":     "minhtri2710",
+		"pr_repo":      "munsu",
+		"pr_number":    "42",
+		"pr_head_ref":  "fm/feature-branch",
+		"pr_head":      headSHA,
+		"pr_head_sha":  headSHA,
+		"pr_base":      "main",
+		"pr_base_ref":  "main",
+		"pr_timestamp": "2026-07-18T00:00:00Z",
+	}
+
+	// Provider returns empty HeadSHA — fail closed
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:    true,
+		MergedSHA: "",
+		HeadSHA:   "",
+		State:     "MERGED",
+	}, nil)
+	defer cleanup()
+
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("empty provider HeadSHA should fail closed")
+	}
+	if !strings.Contains(err.Error(), "empty head SHA") {
+		t.Errorf("expected 'empty head SHA' error, got: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing.T) {
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	// Remove local upstream
+	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
+	unsetCmd.Dir = wt
+	unsetCmd.Env = gitEnv
+	unsetCmd.Run()
+
+	// Delete remote head
+	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
+	delCmd.Dir = wt
+	delCmd.Env = gitEnv
+	delCmd.Run()
+
+	meta := map[string]string{
+		"worktree":     wt,
+		"kind":         "ship",
+		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":  "github",
+		"pr_owner":     "minhtri2710",
+		"pr_repo":      "munsu",
+		"pr_number":    "42",
+		"pr_head_ref":  "fm/feature-branch",
+		"pr_head":      headSHA,
+		"pr_head_sha":  headSHA,
+		"pr_base":      "main",
+		"pr_base_ref":  "main",
+		"pr_timestamp": "2026-07-18T00:00:00Z",
+	}
+
+	// Provider reports DIFFERENT HeadSHA — fail closed
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:    true,
+		MergedSHA: "different0000000000000000000000000000000000",
+		HeadSHA:   "different0000000000000000000000000000000000",
+		State:     "MERGED",
+	}, nil)
+	defer cleanup()
+
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("SHA mismatch should fail closed")
+	}
+	if !strings.Contains(err.Error(), "head SHA mismatch") {
+		t.Errorf("expected 'head SHA mismatch' error, got: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
+	unsetCmd.Dir = wt
+	unsetCmd.Env = gitEnv
+	unsetCmd.Run()
+
+	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
+	delCmd.Dir = wt
+	delCmd.Env = gitEnv
+	delCmd.Run()
+
+	meta := map[string]string{
+		"worktree":     wt,
+		"kind":         "ship",
+		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":  "github",
+		"pr_owner":     "minhtri2710",
+		"pr_repo":      "munsu",
+		"pr_number":    "42",
+		"pr_head_ref":  "fm/feature-branch",
+		"pr_head":      headSHA,
+		"pr_head_sha":  headSHA,
+		"pr_base":      "main",
+		"pr_base_ref":  "main",
+		"pr_timestamp": "2026-07-18T00:00:00Z",
+	}
+
+	// Provider: still OPEN (not merged)
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:  false,
+		Closed:  false,
+		State:   "OPEN",
+		HeadSHA: headSHA,
+	}, nil)
+	defer cleanup()
+
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("open PR should fail closed")
+	}
+	if !strings.Contains(err.Error(), "still open") {
+		t.Errorf("expected 'still open' error, got: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *testing.T) {
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
+	unsetCmd.Dir = wt
+	unsetCmd.Env = gitEnv
+	unsetCmd.Run()
+
+	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
+	delCmd.Dir = wt
+	delCmd.Env = gitEnv
+	delCmd.Run()
+
+	meta := map[string]string{
+		"worktree":     wt,
+		"kind":         "ship",
+		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":  "github",
+		"pr_owner":     "minhtri2710",
+		"pr_repo":      "munsu",
+		"pr_number":    "42",
+		"pr_head_ref":  "fm/feature-branch",
+		"pr_head":      headSHA,
+		"pr_head_sha":  headSHA,
+		"pr_base":      "main",
+		"pr_base_ref":  "main",
+		"pr_timestamp": "2026-07-18T00:00:00Z",
+	}
+
+	// Provider: CLOSED but not merged
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:  false,
+		Closed:  true,
+		State:   "CLOSED",
+		HeadSHA: headSHA,
+	}, nil)
+	defer cleanup()
+
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("closed-unmerged PR should fail closed")
+	}
+	if !strings.Contains(err.Error(), "closed but not merged") {
+		t.Errorf("expected 'closed but not merged' error, got: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testing.T) {
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	unsetCmd := exec.Command("git", "branch", "--unset-upstream")
+	unsetCmd.Dir = wt
+	unsetCmd.Env = gitEnv
+	unsetCmd.Run()
+
+	delCmd := exec.Command("git", "push", "origin", "--delete", "fm/feature-branch")
+	delCmd.Dir = wt
+	delCmd.Env = gitEnv
+	delCmd.Run()
+
+	meta := map[string]string{
+		"worktree":     wt,
+		"kind":         "ship",
+		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":  "github",
+		"pr_owner":     "minhtri2710",
+		"pr_repo":      "munsu",
+		"pr_number":    "42",
+		"pr_head_ref":  "fm/feature-branch",
+		"pr_head":      headSHA,
+		"pr_head_sha":  headSHA,
+		"pr_base":      "main",
+		"pr_base_ref":  "main",
+		"pr_timestamp": "2026-07-18T00:00:00Z",
+	}
+
+	// Provider returns error — fail closed
+	cleanup := applyMockPRStatus(t, nil, fmt.Errorf("gh CLI timeout"))
+	defer cleanup()
+
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("provider error should fail closed")
+	}
+	if !strings.Contains(err.Error(), "cannot verify PR merge status") {
+		t.Errorf("expected 'cannot verify PR merge status' error, got: %v", err)
+	}
+}

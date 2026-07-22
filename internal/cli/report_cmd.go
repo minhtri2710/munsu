@@ -9,6 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -94,6 +95,16 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				targetHome = parentHome
 				eventHome = parentHome
 				wakeHome = parentHome
+			}
+
+			// 0. For soldier material states with a PR URL in the message:
+			// capture and persist delivery identity before any terminal report
+			// success. Provider/identity failure fails closed: no status, receipt,
+			// ack reset, event, or wake is produced. Retry is idempotent.
+			if role == "soldier" && materialStates[state] {
+				if err := delivery.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+					return fmt.Errorf("report: %w", err)
+				}
 			}
 
 			// 1. Durable task status append

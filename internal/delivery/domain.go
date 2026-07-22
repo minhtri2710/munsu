@@ -142,12 +142,14 @@ func (id *DeliveryIdentity) MetaKeys() []string {
 	return []string{
 		"pr_provider", "pr_owner", "pr_repo",
 		"pr_number", "pr_url",
-		"pr_base", "pr_head_ref", "pr_head",
+		"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha",
 		"pr_timestamp",
 	}
 }
 
 // ToMeta serializes the identity into a task meta map.
+// Writes both canonical (pr_head_sha, pr_base_ref) and legacy
+// (pr_head, pr_base) names for backward compatibility.
 func (id *DeliveryIdentity) ToMeta() map[string]string {
 	return map[string]string{
 		"pr_provider":  id.Provider,
@@ -156,8 +158,10 @@ func (id *DeliveryIdentity) ToMeta() map[string]string {
 		"pr_number":    fmt.Sprintf("%d", id.Number),
 		"pr_url":       id.URL,
 		"pr_base":      id.BaseRef,
+		"pr_base_ref":  id.BaseRef,
 		"pr_head_ref":  id.HeadRef,
 		"pr_head":      id.HeadSHA,
+		"pr_head_sha":  id.HeadSHA,
 		"pr_timestamp": id.CapturedAt,
 	}
 }
@@ -214,15 +218,31 @@ func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 		num = parsed.Num
 	}
 
+	// Resolve headSHA with fallback: pr_head_sha -> pr_head
+	headSHA := meta["pr_head_sha"]
+	if headSHA == "" {
+		headSHA = meta["pr_head"]
+	} else if other := meta["pr_head"]; other != "" && other != headSHA {
+		return nil, fmt.Errorf("pr_head_sha %q conflicts with pr_head %q", headSHA, other)
+	}
+
+	// Resolve baseRef with fallback: pr_base_ref -> pr_base
+	baseRef := meta["pr_base_ref"]
+	if baseRef == "" {
+		baseRef = meta["pr_base"]
+	} else if other := meta["pr_base"]; other != "" && other != baseRef {
+		return nil, fmt.Errorf("pr_base_ref %q conflicts with pr_base %q", baseRef, other)
+	}
+
 	id := &DeliveryIdentity{
 		Provider:   meta["pr_provider"],
 		Owner:      owner,
 		Repo:       repo,
 		Number:     num,
 		URL:        prURL,
-		BaseRef:    meta["pr_base"],
+		BaseRef:    baseRef,
 		HeadRef:    meta["pr_head_ref"],
-		HeadSHA:    meta["pr_head"],
+		HeadSHA:    headSHA,
 		CapturedAt: meta["pr_timestamp"],
 	}
 
