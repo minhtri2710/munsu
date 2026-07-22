@@ -14,6 +14,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/waker"
 )
 
 // --- absorbStaleSignal tests (pure predicate) ---
