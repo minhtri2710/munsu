@@ -386,18 +386,40 @@ func runCycle(homeDir string) (bool, error) {
 		emitted = true
 	}
 
-	// Relay pending terminal receipts to the General parent home.
-	// The watcher runs from the captain home; MUNSU_PARENT_STATUS carries the
-	// General home set by EnsureWatcher/provenance config. When parent is
-	// absent or config is missing, skip silently — the General's converge
-	// cycle will pick up receipts on its next sweep.
-	if parentHome := os.Getenv("MUNSU_PARENT_STATUS"); parentHome != "" {
-		if relayed, err := turnend.RelayPendingReceipts(homeDir, parentHome); err != nil {
-			// Log relay errors but don't fail the cycle — the General's
-			// converge can recover on next sweep.
-			fmt.Fprintf(os.Stderr, "watcher relay error: %v\n", err)
-		} else if relayed > 0 {
-			emitted = true
+	// Check parent-home presence for terminal receipt relay.
+	// When MUNSU_PARENT_STATUS is not set but there are pending receipts,
+	// enqueue a diagnostic wake so the General can surface the misconfiguration.
+	// Do NOT silently skip — failing closed ensures the General knows relay is
+	// broken rather than silently dropping soldier terminal reports.
+	if parentHome := os.Getenv("MUNSU_PARENT_STATUS"); parentHome == "" {
+		// Check if there are any pending receipts that would not be relayed.
+		pending, checkErr := turnend.ListPendingReceipts(homeDir)
+		if checkErr == nil && len(pending) > 0 {
+			// Surface the unhealthy state through a diagnostic wake so the
+			// General's converge sweep detects the misconfiguration.
+			wgMsg := fmt.Sprintf("parent-home not configured for captain — %d pending receipt(s) not relayed", len(pending))
+			fmt.Fprintf(os.Stderr, "watcher relay: %s\n", wgMsg)
+			if wakeErr := lifecycle.EnqueueWake(homeDir, "signal", "_config", wgMsg); wakeErr != nil {
+				fmt.Fprintf(os.Stderr, "watcher relay: failed to enqueue diagnostic wake: %v\n", wakeErr)
+			} else {
+				emitted = true
+			}
+		}
+	} else {
+		// MUNSU_PARENT_STATUS is set — relay receipts via the captain-level
+		// TerminalReconcileHook (called at the top of this function). The
+		// hook handles the full relay chain: receipt → General status/event
+		// → captain ack → obligation close. We do NOT duplicate that logic
+		// here — the hook is the single authority for terminal relay.
+		//
+		// However, if the hook is not wired (e.g. watcher running outside
+		// captain context), fall back to the turnend-level relay.
+		if TerminalReconcileHook == nil {
+			if relayed, relayErr := turnend.RelayPendingReceipts(homeDir, parentHome); relayErr != nil {
+				fmt.Fprintf(os.Stderr, "watcher relay error (no hook): %v\n", relayErr)
+			} else if relayed > 0 {
+				emitted = true
+			}
 		}
 	}
 

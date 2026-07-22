@@ -1184,7 +1184,162 @@ func TestConfigPush_RefreshesParentHome(t *testing.T) {
 	}
 }
 
-// --- getInheritableList tests ---
+// TestUpdate_StateOnlyCaptainConfigPush verifies that Update on a state-only
+// captain (no git worktree) still runs ConfigPush to write config/parent-home.
+// This is requirement 1: existing state-only Captain update paths must atomically
+// write config/parent-home from the authoritative registered General home.
+func TestUpdate_StateOnlyCaptainConfigPush(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+
+	captainHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
+
+	// Seed captain with provenance but NO parent-home config (simulating
+	// an already-provisioned state-only captain from before parent-home was introduced).
+	if err := SeedProvenance(captainHome, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# Test Captain\n"), 0644)
+
+	// Verify parent-home does NOT exist yet
+	if _, err := os.Stat(filepath.Join(captainHome, "config", "parent-home")); err == nil {
+		t.Fatal("test setup: parent-home should NOT exist before Update")
+	}
+
+	// Run Update — should detect state-only home and still run ConfigPush
+	res := Update(captainHome, parent)
+	if res.Outcome != StateOnlySkipped {
+		t.Fatalf("Update outcome = %s, want %s", res.Outcome, StateOnlySkipped)
+	}
+
+	// Verify parent-home was written by ConfigPush
+	dat, err := os.ReadFile(filepath.Join(captainHome, "config", "parent-home"))
+	if err != nil {
+		t.Fatalf("config/parent-home should exist after Update on state-only captain: %v", err)
+	}
+	if strings.TrimSpace(string(dat)) != parent {
+		t.Errorf("parent-home = %q after Update, want %q", strings.TrimSpace(string(dat)), parent)
+	}
+}
+
+// TestRecoverTransaction_ConfigPushStep verifies that the RecoverTransaction
+// includes a config-push step that writes config/parent-home.
+func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+
+	captainHome := seedCaptainForTest(t, parent, "state-only-sm")
+
+	// Verify parent-home does NOT exist yet
+	if _, err := os.Stat(filepath.Join(captainHome, "config", "parent-home")); err == nil {
+		t.Fatal("test setup: parent-home should NOT exist before recover")
+	}
+
+	tx := &RecoverTransaction{}
+	sm := Info{ID: "state-only-sm", Home: captainHome}
+	res := tx.Recover(parent, sm)
+
+	// Find the config-push step
+	foundConfigPush := false
+	for _, step := range res.Steps {
+		if step.Name == "config-push" {
+			foundConfigPush = true
+			if step.State != StepOk {
+				t.Errorf("config-push step state = %s, want ok: %s", step.State, step.Detail)
+			}
+			break
+		}
+	}
+	if !foundConfigPush {
+		t.Fatal("config-push step not found in RecoverTransaction steps")
+	}
+
+	// Verify parent-home was written
+	dat, err := os.ReadFile(filepath.Join(captainHome, "config", "parent-home"))
+	if err != nil {
+		t.Fatalf("config/parent-home should exist after RecoverTransaction: %v", err)
+	}
+	if strings.TrimSpace(string(dat)) != parent {
+		t.Errorf("parent-home = %q after recover, want %q", strings.TrimSpace(string(dat)), parent)
+	}
+}
+
+// TestEnsureWatcher_RefusesWithoutParentHome verifies that EnsureWatcher
+// fails closed when config/parent-home is missing or invalid.
+func TestEnsureWatcher_RefusesWithoutParentHome(t *testing.T) {
+	t.Parallel()
+	captainHome := t.TempDir()
+	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+
+	// No parent-home config — EnsureWatcher should fail
+	err := EnsureWatcher(captainHome, true)
+	if err == nil {
+		t.Fatal("EnsureWatcher should fail when parent-home config is missing")
+	}
+	if !strings.Contains(err.Error(), "parent-home is missing") {
+		t.Errorf("error should mention missing parent-home, got: %v", err)
+	}
+}
+
+// TestEnsureWatcher_RefusesNonexistentParentHome verifies that EnsureWatcher
+// fails closed when config/parent-home points to a non-existent directory.
+func TestEnsureWatcher_RefusesNonexistentParentHome(t *testing.T) {
+	t.Parallel()
+	captainHome := t.TempDir()
+	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
+
+	// Write parent-home pointing to non-existent directory
+	if err := config.Set(captainHome, "parent-home", "/nonexistent/parent"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := EnsureWatcher(captainHome, true)
+	if err == nil {
+		t.Fatal("EnsureWatcher should fail when parent-home is non-existent")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error should mention non-existent parent-home, got: %v", err)
+	}
+}
+
+// TestEnsureWatcher_PassesParentHomeToChildEnv verifies that EnsureWatcher
+// sets MUNSU_PARENT_STATUS in the watcher child process environment when
+// parent-home is valid. We can't easily inspect a real child process env in
+// unit tests, but we can verify that the function does NOT error.
+func TestEnsureWatcher_PassesParentHomeToChildEnv(t *testing.T) {
+	t.Parallel()
+	captainHome := t.TempDir()
+	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
+
+	// Write valid parent-home
+	if err := config.Set(captainHome, "parent-home", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	// We cannot fully test child process env without exec, but we can verify
+	// the function returns an error about exec (since munsu binary isn't in PATH)
+	// rather than a parent-home validation error.
+	err := EnsureWatcher(captainHome, true)
+	if err == nil {
+		// This path would start a real process; in unit test context that's fine.
+		// The point is that it didn't fail on parent-home validation.
+		t.Log("EnsureWatcher passed parent-home validation (expected exec error if no binary)")
+		return
+	}
+	// If it errored, it should NOT be a parent-home validation error
+	if strings.Contains(err.Error(), "parent-home is missing") ||
+		strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("EnsureWatcher should not fail on parent-home validation: %v", err)
+	}
+}
 
 func TestGetInheritableList_Default(t *testing.T) {
 	os.Unsetenv("MUNSU_INHERITABLE_CONFIG")

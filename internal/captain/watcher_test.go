@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -71,6 +72,11 @@ func TestEnsureWatcher_StartsWhenChildWorkInFlight(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
+
+	// Set up valid parent-home config so EnsureWatcher validation passes.
+	if err := config.Set(tmp, "parent-home", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 
 	// Simulate child work by creating a soldier meta file.
 	soldierMeta := map[string]string{"kind": "ship", "window": "win-1"}

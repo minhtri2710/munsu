@@ -1871,6 +1871,14 @@ func Update(captainHome, parentHome string) UpdateResponse {
 
 	// Detect state-only homes (no git worktree).
 	if _, err := os.Stat(filepath.Join(captainHome, ".git")); os.IsNotExist(err) {
+		// Config-push for state-only homes: write config/parent-home from the
+		// authoritative registered General home so watcher relay works.
+		if cpErr := ConfigPush(parentHome, captainHome); cpErr != nil {
+			return UpdateResponse{
+				Outcome: StateOnlySkipped,
+				Err:     fmt.Errorf("config-push after state-only update: %w", cpErr),
+			}
+		}
 		return UpdateResponse{
 			Outcome: StateOnlySkipped,
 		}

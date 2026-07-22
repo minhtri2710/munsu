@@ -54,8 +54,9 @@ func WatcherStatusSummary(captainHome string) WatcherStatus {
 
 // EnsureWatcher starts or stops the per-captain watcher based on whether child
 // work is in flight. When hasChildWork is true and the watcher is not running,
-// it starts one. When hasChildWork is false and the watcher is running, it
-// stops the watcher (idle policy).
+// it validates the durable parent-home config, then starts the watcher with
+// MUNSU_PARENT_STATUS set. When hasChildWork is false and the watcher is
+// running, it stops the watcher (idle policy).
 func EnsureWatcher(captainHome string, hasChildWork bool) error {
 	status := WatcherStatusSummary(captainHome)
 
@@ -63,6 +64,19 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		if status == WatcherRunning {
 			return nil // already running
 		}
+		// Validate durable parent-home before starting the watcher child.
+		// The watcher relies on MUNSU_PARENT_STATUS for terminal receipt relay.
+		parentHome, err := config.Get(captainHome, "parent-home")
+		if err != nil || parentHome == "" {
+			return fmt.Errorf("refusing to start watcher for captain %s: config/parent-home is missing or invalid (err=%v)",
+				captainHome, err)
+		}
+		// Verify the parent home directory actually exists.
+		if _, stErr := os.Stat(parentHome); os.IsNotExist(stErr) {
+			return fmt.Errorf("refusing to start watcher for captain %s: config/parent-home %q does not exist",
+				captainHome, parentHome)
+		}
+
 		// Start the watcher for this captain home.
 		execPath, err := os.Executable()
 		if err != nil {
@@ -74,9 +88,8 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		cmd.Stderr = nil
 		cmd.Env = append(os.Environ(), "MUNSU_HOME="+captainHome)
 		// Pass the General parent home for terminal receipt relay.
-		if parentHome, err := config.Get(captainHome, "parent-home"); err == nil && parentHome != "" {
-			cmd.Env = append(cmd.Env, "MUNSU_PARENT_STATUS="+parentHome)
-		}
+		// Parent-home already validated above — safe to pass.
+		cmd.Env = append(cmd.Env, "MUNSU_PARENT_STATUS="+parentHome)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("starting watcher for captain home %s: %w", captainHome, err)

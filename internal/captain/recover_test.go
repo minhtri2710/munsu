@@ -47,8 +47,8 @@ func TestRecoverTransaction_FullOk(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(parent, Info{ID: "sm-ok", Home: smHome})
 
-	if len(res.Steps) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 11 {
+		t.Fatalf("expected 11 steps, got %d", len(res.Steps))
 	}
 
 	// All ten steps should be ok or skipped.
@@ -79,8 +79,8 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(parent, Info{ID: "sm-bad", Home: smHome})
 
-	if len(res.Steps) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 11 {
+		t.Fatalf("expected 11 steps, got %d", len(res.Steps))
 	}
 
 	// Provenance must fail.
@@ -100,7 +100,7 @@ func TestRecoverTransaction_EmptyHomeFailed(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(t.TempDir(), Info{ID: "empty", Home: ""})
 
-	if len(res.Steps) != 10 {
+	if len(res.Steps) != 11 {
 		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
 	}
 
@@ -150,8 +150,8 @@ func TestRecoverTransaction_DeadLaunchedRelaunches(t *testing.T) {
 	tx := &RecoverTransaction{}
 	res := tx.Recover(parent, Info{ID: "sm-dead", Home: smHome})
 
-	if len(res.Steps) != 10 {
-		t.Fatalf("expected 10 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 11 {
+		t.Fatalf("expected 11 steps, got %d", len(res.Steps))
 	}
 
 	// Provenance ok.
