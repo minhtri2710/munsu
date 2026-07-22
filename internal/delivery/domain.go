@@ -193,29 +193,29 @@ func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 		num = n
 	}
 
-	parsed, err := ghurl.ParseGHURL(prURL)
+	_, parsedOwner, parsedRepo, parsedNum, _, err := ParseProviderURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid pr_url %q: %w", prURL, err)
 	}
 	owner := meta["pr_owner"]
 	repo := meta["pr_repo"]
-	if owner != "" && owner != parsed.Owner {
-		return nil, fmt.Errorf("pr_owner %q does not match pr_url owner %q", owner, parsed.Owner)
+	if owner != "" && owner != parsedOwner {
+		return nil, fmt.Errorf("pr_owner %q does not match pr_url owner %q", owner, parsedOwner)
 	}
-	if repo != "" && repo != parsed.Repo {
-		return nil, fmt.Errorf("pr_repo %q does not match pr_url repo %q", repo, parsed.Repo)
+	if repo != "" && repo != parsedRepo {
+		return nil, fmt.Errorf("pr_repo %q does not match pr_url repo %q", repo, parsedRepo)
 	}
-	if num > 0 && num != parsed.Num {
-		return nil, fmt.Errorf("pr_number %d does not match pr_url number %d", num, parsed.Num)
+	if num > 0 && num != parsedNum {
+		return nil, fmt.Errorf("pr_number %d does not match pr_url number %d", num, parsedNum)
 	}
 	if owner == "" {
-		owner = parsed.Owner
+		owner = parsedOwner
 	}
 	if repo == "" {
-		repo = parsed.Repo
+		repo = parsedRepo
 	}
 	if num <= 0 {
-		num = parsed.Num
+		num = parsedNum
 	}
 
 	// Resolve headSHA with fallback: pr_head_sha -> pr_head

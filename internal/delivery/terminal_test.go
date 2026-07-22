@@ -76,17 +76,63 @@ func TestExtractPRURL_MalformedURL(t *testing.T) {
 	}
 }
 
-func TestExtractPRURL_NonGithubURL(t *testing.T) {
+func TestExtractPRURL_NonPRMRURL(t *testing.T) {
 	msg := "PR https://gitlab.com/owner/repo/pull/1"
 	_, found, err := ExtractPRURL(msg)
 	if err == nil {
-		t.Fatal("expected error for non-github URL")
+		t.Fatal("expected error for non-PR/MR URL")
 	}
-	if !strings.Contains(err.Error(), "not a github.com URL") {
-		t.Errorf("expected 'not a github.com URL' error, got: %v", err)
+	if !strings.Contains(err.Error(), "invalid PR URL") &&
+		!strings.Contains(err.Error(), "unrecognized") {
+		t.Errorf("expected 'invalid PR URL' or 'unrecognized' error, got: %v", err)
 	}
 	if found {
 		t.Fatal("expected found=false on error")
+	}
+}
+
+func TestExtractPRURL_ValidGitLabMRURL(t *testing.T) {
+	url := "https://gitlab.com/owner/project/-/merge_requests/42"
+	msg := "PR " + url
+	got, found, err := ExtractPRURL(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true for valid GitLab MR URL")
+	}
+	if got != url {
+		t.Errorf("got %q, want %q", got, url)
+	}
+}
+
+func TestExtractPRURL_NestedGitLabMRURL(t *testing.T) {
+	url := "https://gitlab.com/group/subgroup/project/-/merge_requests/7"
+	msg := "PR " + url
+	got, found, err := ExtractPRURL(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true for nested GitLab MR URL")
+	}
+	if got != url {
+		t.Errorf("got %q, want %q", got, url)
+	}
+}
+
+func TestExtractPRURL_SelfHostedGitLabMRURL(t *testing.T) {
+	url := "https://gitlab.example.com/team/project/-/merge_requests/7"
+	msg := "PR " + url
+	got, found, err := ExtractPRURL(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true for self-hosted GitLab MR URL")
+	}
+	if got != url {
+		t.Errorf("got %q, want %q", got, url)
 	}
 }
 
