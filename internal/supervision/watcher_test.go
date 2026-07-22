@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/waker"
 )
 
@@ -944,6 +945,154 @@ func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 	if strings.Contains(records[0].Payload, "idle for") {
 		t.Fatalf("stale message must not embed wall-clock age: %q", records[0].Payload)
 	}
+}
+
+// TestRunCycle_RelayPendingReceipts verifies that runCycle relays pending
+// terminal receipts when MUNSU_PARENT_STATUS is set.
+func TestRunCycle_RelayPendingReceipts(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+
+	taskID := "test-soldier"
+	termKey := "uplink"
+
+	// Write provenance marker so turnend can read captain ID
+	captainID := "test-captain"
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
+
+	// Write receipt and init obligation (simulating soldier done)
+	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// Set MUNSU_PARENT_STATUS for the runCycle relay
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	// Run one cycle — should relay the pending receipt
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("runCycle: %v", err)
+	}
+	if !emitted {
+		t.Error("runCycle should emit (relay counts as emit)")
+	}
+
+	// Verify ack was written
+	if !turnend.IsReceiptAcked(tmp, taskID, termKey) {
+		t.Error("receipt should be acked after runCycle relay")
+	}
+
+	// Verify parent received the relay status
+	relayStatusPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
+	data, err := os.ReadFile(relayStatusPath)
+	if err != nil {
+		t.Fatalf("parent relay status should exist: %v", err)
+	}
+	if !strings.Contains(string(data), "done") {
+		t.Errorf("relay status should contain 'done', got: %s", string(data))
+	}
+
+	// Verify obligation is closed
+	open, err := turnend.IsTaskReportRelayOpen(tmp, taskID)
+	if err != nil {
+		t.Fatalf("IsTaskReportRelayOpen: %v", err)
+	}
+	if open {
+		t.Error("ReportRelay should be closed after runCycle relay")
+	}
+
+	// Second runCycle should be idempotent (receipt no longer pending)
+	emitted, err = runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle: %v", err)
+	}
+	if emitted {
+		t.Error("second runCycle should NOT emit (no pending receipts)")
+	}
+}
+
+// TestRunCycle_SkipsRelayWithoutParentEnv verifies that runCycle does NOT
+// relay when MUNSU_PARENT_STATUS is not set.
+func TestRunCycle_SkipsRelayWithoutParentEnv(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	taskID := "test-soldier"
+	termKey := "uplink"
+
+	// Write provenance marker
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
+
+	// Write receipt (but NO MUNSU_PARENT_STATUS)
+	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// Ensure MUNSU_PARENT_STATUS is unset
+	t.Setenv("MUNSU_PARENT_STATUS", "")
+
+	// Run one cycle — should NOT relay (no parent home)
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("runCycle: %v", err)
+	}
+
+	// Receipt should NOT be acked (no relay happened)
+	if turnend.IsReceiptAcked(tmp, taskID, termKey) {
+		t.Error("receipt should NOT be acked without parent env")
+	}
+
+	_ = emitted // emitted may be false or true depending on other scan conditions
+}
+
+// TestRunCycle_FailsGracefullyOnInvalidParent verifies that runCycle does not
+// fatally error when parent home is invalid.
+func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	taskID := "test-soldier"
+	termKey := "uplink"
+
+	// Write provenance marker
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
+
+	// Write receipt
+	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// Set MUNSU_PARENT_STATUS to a non-existent path
+	t.Setenv("MUNSU_PARENT_STATUS", filepath.Join(tmp, "nonexistent"))
+
+	// Run one cycle — should NOT fail fatally, relay succeeds because
+	// AppendStatus creates the path
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("runCycle should not error on invalid parent: %v", err)
+	}
+	_ = emitted
 }
 
 // TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher proves that when the

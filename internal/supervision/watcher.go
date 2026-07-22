@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 const pollInterval = 5 * time.Second
@@ -153,7 +154,7 @@ var (
 	// before it surfaces as stale. After this threshold, a paused task
 	// triggers a stale wake so the general can reassess it.
 	pauseResurfaceThreshold = 5 * time.Minute
-)	
+)
 
 // ScanFleet checks all live tasks for the first actionable condition.
 func ScanFleet(homeDir string) *WakeReason {
@@ -383,6 +384,21 @@ func runCycle(homeDir string) (bool, error) {
 			return emitted, err
 		}
 		emitted = true
+	}
+
+	// Relay pending terminal receipts to the General parent home.
+	// The watcher runs from the captain home; MUNSU_PARENT_STATUS carries the
+	// General home set by EnsureWatcher/provenance config. When parent is
+	// absent or config is missing, skip silently — the General's converge
+	// cycle will pick up receipts on its next sweep.
+	if parentHome := os.Getenv("MUNSU_PARENT_STATUS"); parentHome != "" {
+		if relayed, err := turnend.RelayPendingReceipts(homeDir, parentHome); err != nil {
+			// Log relay errors but don't fail the cycle — the General's
+			// converge can recover on next sweep.
+			fmt.Fprintf(os.Stderr, "watcher relay error: %v\n", err)
+		} else if relayed > 0 {
+			emitted = true
+		}
 	}
 
 	return emitted, nil
