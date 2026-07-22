@@ -20,18 +20,18 @@ type FleetSnapshot struct {
 
 // TaskSnapshot represents one task's state.
 type TaskSnapshot struct {
-	ID         string `json:"id"`
-	Project    string `json:"project"`
-	Harness    string `json:"harness"`
-	Model      string `json:"model"`
-	Kind       string `json:"kind"`
-	Mode       string `json:"mode"`
-	Yolo       string `json:"yolo"`
-	Window     string `json:"window"`
-	Worktree   string `json:"worktree"`
-	PaneAlive  bool   `json:"pane_alive"`
-	PaneAliveUnknown bool `json:"pane_alive_unknown,omitempty"`
-	LastStatus string `json:"last_status,omitempty"`
+	ID               string `json:"id"`
+	Project          string `json:"project"`
+	Harness          string `json:"harness"`
+	Model            string `json:"model"`
+	Kind             string `json:"kind"`
+	Mode             string `json:"mode"`
+	Yolo             string `json:"yolo"`
+	Window           string `json:"window"`
+	Worktree         string `json:"worktree"`
+	PaneAlive        bool   `json:"pane_alive"`
+	PaneAliveUnknown bool   `json:"pane_alive_unknown,omitempty"`
+	LastStatus       string `json:"last_status,omitempty"`
 
 	// Home is the munsu home that owns this task meta (primary or captain).
 	Home string `json:"home,omitempty"`
@@ -105,7 +105,6 @@ func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo 
 
 	return info
 }
-
 
 // PhaseFromMeta returns the display phase for a task from meta-only facts.
 // window empty → registered; window non-empty → alive if paneAlive else dead.
@@ -203,8 +202,16 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 		}
 		if w := meta["window"]; w != "" {
 			if paneAliveForCaptain != nil {
-				ts.PaneAlive, _ = paneAliveForCaptain(taskHome, meta)
+				alive, err := paneAliveForCaptain(taskHome, meta)
+				if err != nil {
+					ts.PaneAlive = false
+					ts.PaneAliveUnknown = true
+				} else {
+					ts.PaneAlive = alive
+					ts.PaneAliveUnknown = false
+				}
 			} else {
+				ts.PaneAlive = false
 				ts.PaneAliveUnknown = true
 			}
 		}

@@ -127,7 +127,8 @@ func (z *ZellijBackend) ParseWindow(handle string) (session, paneID string) {
 
 // paneID extracts the pane ID part from a window handle (session:pane or bare pane).
 func (z *ZellijBackend) paneID(windowID string) string {
-	return paneID(windowID)
+	_, p := ParseWindow(windowID)
+	return p
 }
 
 // NewWindow ensures the zellij session exists and creates a new pane.

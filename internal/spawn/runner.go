@@ -44,10 +44,10 @@ type Runner struct {
 	spawnRole     string
 
 	// soldier launch prompt state
-	prompt       string
-	promptEnv    *soldier.LaunchEnvelope
-	launchArgs   []string
-	launchBin    string
+	prompt     string
+	promptEnv  *soldier.LaunchEnvelope
+	launchArgs []string
+	launchBin  string
 }
 
 // NewRunner creates a Runner for the given Args.
@@ -121,6 +121,10 @@ func (r *Runner) Run() (string, error) {
 	r.writeBriefToWorktree()
 	if err := r.waitAndInjectBrief(); err != nil {
 		return "", err
+	}
+	if !r.bk.Alive(r.windowID) {
+		_ = r.bk.Teardown(r.windowID)
+		return "", fmt.Errorf("created pane %q failed verification on backend %q before persisting state", r.windowID, r.bkName)
 	}
 	r.writeTaskMeta()
 	r.appendSpawnedStatus()
@@ -264,7 +268,9 @@ func canonicalExistingPath(path string) (string, error) {
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
 // the task is present and dispatchable. Normal Captain flow is:
-//   tasks-axi start <id>  →  munsu spawn <id>
+//
+//	tasks-axi start <id>  →  munsu spawn <id>
+//
 // Backlog in_flight without live meta/window MUST allow spawn without --force.
 // Refuse only duplicate live execution (meta window/pane). --force is emergency bypass only.
 func (r *Runner) checkCaptainBacklogAuthority() error {
@@ -627,6 +633,10 @@ func (r *Runner) createSession() error {
 	windowID, err := bk.NewWindow(hometag.WorkspaceTag(r.homeDir), soldierTabLabel(r.args.ProjectName, r.args.ID))
 	if err != nil {
 		return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
+	}
+	if !bk.Alive(windowID) {
+		_ = bk.Teardown(windowID)
+		return fmt.Errorf("created pane %q failed verification on backend %q", windowID, bkName)
 	}
 	r.bk = bk
 	r.bkName = bkName

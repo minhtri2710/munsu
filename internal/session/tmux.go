@@ -121,16 +121,34 @@ func (t *TmuxBackend) Capture(windowID string, lines int) (string, error) {
 	return string(out), nil
 }
 
-// Alive checks whether the identified window/pane still exists by running
-// `tmux list-panes -t <windowID>`. Returns true if the command succeeds.
-func (t *TmuxBackend) Alive(windowID string) bool {
+// CheckAlive checks whether the identified window/pane still exists by running
+// `tmux list-panes -t <windowID>`.
+// Returns (true, nil) if confirmed alive.
+// Returns (false, ErrPaneNotFound) if confirmed dead / absent.
+// Returns (false, err) if tmux binary or execution failed.
+func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 	bin, err := tmuxBin()
 	if err != nil {
-		return false
+		return false, err
 	}
 	target := normalizeTarget(windowID)
 	cmd := exec.Command(bin, "list-panes", "-t", target)
-	return cmd.Run() == nil
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	msg := strings.TrimSpace(string(out))
+	if strings.Contains(msg, "can't find") || strings.Contains(msg, "not found") || strings.Contains(msg, "no server running") {
+		return false, ErrPaneNotFound
+	}
+	return false, fmt.Errorf("tmux list-panes: %s", msg)
+}
+
+// Alive checks whether the identified window/pane still exists by running
+// `tmux list-panes -t <windowID>`. Returns true ONLY when confirmed alive.
+func (t *TmuxBackend) Alive(windowID string) bool {
+	alive, err := t.CheckAlive(windowID)
+	return err == nil && alive
 }
 
 // Teardown kills the identified window via `tmux kill-window -t <windowID>`.
