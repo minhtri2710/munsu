@@ -54,27 +54,20 @@ func WatcherStatusSummary(captainHome string) WatcherStatus {
 
 // EnsureWatcher starts or stops the per-captain watcher based on whether child
 // work is in flight. When hasChildWork is true and the watcher is not running,
-// it validates the durable parent-home config, then starts the watcher with
-// MUNSU_PARENT_STATUS set. When hasChildWork is false and the watcher is
+// starts the watcher. When hasChildWork is false and the watcher is
 // running, it stops the watcher (idle policy).
+//
+// parent-home is no longer required: the watcher is recovery-only and does
+// not route terminal receipts. If config/parent-home is set, it is passed as
+// MUNSU_PARENT_STATUS for legacy compatibility; if not, the watcher starts
+// without it. General never requires parent-home. Captain→General pending
+// remains durable and health-visible through the mailbox system.
 func EnsureWatcher(captainHome string, hasChildWork bool) error {
 	status := WatcherStatusSummary(captainHome)
 
 	if hasChildWork {
 		if status == WatcherRunning {
 			return nil // already running
-		}
-		// Validate durable parent-home before starting the watcher child.
-		// The watcher relies on MUNSU_PARENT_STATUS for terminal receipt relay.
-		parentHome, err := config.Get(captainHome, "parent-home")
-		if err != nil || parentHome == "" {
-			return fmt.Errorf("refusing to start watcher for captain %s: config/parent-home is missing or invalid (err=%v)",
-				captainHome, err)
-		}
-		// Verify the parent home directory actually exists.
-		if _, stErr := os.Stat(parentHome); os.IsNotExist(stErr) {
-			return fmt.Errorf("refusing to start watcher for captain %s: config/parent-home %q does not exist",
-				captainHome, parentHome)
 		}
 
 		// Start the watcher for this captain home.
@@ -87,9 +80,14 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Env = append(os.Environ(), "MUNSU_HOME="+captainHome)
-		// Pass the General parent home for terminal receipt relay.
-		// Parent-home already validated above — safe to pass.
-		cmd.Env = append(cmd.Env, "MUNSU_PARENT_STATUS="+parentHome)
+
+		// Pass parent-home for legacy receipt relay compatibility.
+		// Not required — the watcher is recovery-only.
+		parentHome, err := config.Get(captainHome, "parent-home")
+		if err == nil && parentHome != "" {
+			cmd.Env = append(cmd.Env, "MUNSU_PARENT_STATUS="+parentHome)
+		}
+
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("starting watcher for captain home %s: %w", captainHome, err)
