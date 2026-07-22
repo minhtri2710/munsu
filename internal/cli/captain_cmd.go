@@ -113,9 +113,30 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 	cmd.AddCommand(&cobra.Command{
 		Use:   "config-push <captain-home>",
 		Short: "Push inheritable config to a captain",
+		Long: `Push inheritable config to a captain and advance generation tracking.
+
+Reports whether the inherited surface changed and the new generation.
+On change, sends a CONFIG_REREAD nudge through the acknowledged
+agent-prompt seam if the captain session is alive.`,
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return captain.ConfigPush(ctx.Home, args[0])
+			res, err := captain.ConfigPushWithResult(ctx.Home, args[0])
+			if err != nil {
+				return err
+			}
+			if res.Changed {
+				fmt.Printf("inherited config changed: generation=%d\n", res.Generation)
+				// Try to inject CONFIG_REREAD if captain is alive.
+				if err := captain.DeliverConfigReread(ctx.Home, args[0], res.Generation, res.NewDigest); err != nil {
+					fmt.Printf("  note: config-reread inject deferred: %v\n", err)
+					fmt.Printf("  pending nudge marker preserved for next converge\n")
+				} else {
+					fmt.Printf("  sent CONFIG_REREAD to captain session\n")
+				}
+			} else {
+				fmt.Println("inherited config unchanged (no nudge sent)")
+			}
+			return nil
 		}),
 	})
 
