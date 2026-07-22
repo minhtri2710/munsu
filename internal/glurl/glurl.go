@@ -52,8 +52,9 @@ func ParseMRURL(raw string) (GLURL, error) {
 		return GLURL{}, fmt.Errorf("URL must not be opaque, got %q", raw)
 	}
 
-	// Reject RawPath (percent-encoded or escaped path)
-	if u.RawPath != "" && u.RawPath != u.Path {
+	// Reject any RawPath (percent-encoded or escaped path).
+	// Even if RawPath equals Path, percent-encoded paths are not valid MR URLs.
+	if u.RawPath != "" {
 		return GLURL{}, fmt.Errorf("URL must not contain percent-encoded path, got %q", raw)
 	}
 

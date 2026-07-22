@@ -218,6 +218,13 @@ func TestParseMRURL_OpaqueURL(t *testing.T) {
 	}
 }
 
+func TestParseMRURL_PercentEncoded(t *testing.T) {
+	_, err := ParseMRURL("https://gitlab.com/owner%2Fgroup/project/-/merge_requests/1")
+	if err == nil {
+		t.Fatal("expected error for percent-encoded URL")
+	}
+}
+
 func TestParseMRURL_FormatMRRef(t *testing.T) {
 	gl := GLURL{Host: "gitlab.com", Owner: "owner", Project: "project", IID: 42}
 	ref := gl.FormatMRRef()
