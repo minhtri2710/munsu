@@ -228,6 +228,12 @@ func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, sy
 	// Build the inject message.
 	injectMsg := fmt.Sprintf("[report] %s: %s (task=%s)", state, msg, taskID)
 
+	// Build payload with sentinel prefix and optional event ID.
+	markedMsg := afk.Mark(injectMsg)
+	if syntheticID > 0 {
+		markedMsg = fmt.Sprintf("%s [event=%d]", markedMsg, syntheticID)
+	}
+
 	// Check composer safety before dispatch.
 	safe, verdict, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
 	if err != nil {
@@ -237,8 +243,8 @@ func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, sy
 		return fmt.Errorf("composer not empty: verdict=%s (unsafe-composer)", verdict)
 	}
 
-	// Use typed prompt submission through session.DispatchPrompt.
-	result := session.DispatchPrompt(bk, target.Handle, injectMsg)
+	// Use typed prompt submission through session.SubmitPrompt.
+	result := session.SubmitPrompt(bk, target.Handle, markedMsg)
 	if !result.Acknowledged() {
 		return fmt.Errorf("inject not acknowledged: %s (wake is primary mechanism)", result.Status)
 	}

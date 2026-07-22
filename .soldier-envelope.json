@@ -1,0 +1,40 @@
+{
+  "envelope_version": "soldier-envelope-v1",
+  "task_id": "atomic-agent-message-submit",
+  "task_kind": "ship",
+  "delivery_mode": "direct-PR",
+  "repository": "munsu",
+  "parent_captain_id": "munsu",
+  "parent_home": "/Users/beowulf/.munsu/captains/munsu",
+  "charter_sha256": "f79a0529c113c5ce0744af7b4ef1e33c2d502c348de89be3a9bfd23eaf796f45",
+  "brief_sha256": "208753abd251ea2f751839ccaff79915af53962f08a81a2ee9516b80cb1ceaed",
+  "prompt_sha256": "5b8f1b98281b9b5d06d6b41e4f89e76e4507c98856fb5bd43d0ab382f33fcd39",
+  "required_skills": [
+    {
+      "name": "gh-axi",
+      "role": "soldier",
+      "applicable": true
+    }
+  ],
+  "optional_skills": [
+    {
+      "name": "srcwalk",
+      "role": "soldier",
+      "applicable": true
+    },
+    {
+      "name": "qmd",
+      "role": "soldier",
+      "applicable": true
+    },
+    {
+      "name": "chrome-devtools-axi",
+      "role": "soldier",
+      "applicable": true
+    }
+  ],
+  "metadata": {
+    "harness": "pi",
+    "home": "/Users/beowulf/.munsu/captains/munsu"
+  }
+}

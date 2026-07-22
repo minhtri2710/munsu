@@ -3,7 +3,6 @@ package session
 
 import (
 	"fmt"
-	"strings"
 )
 
 // PromptStatus enumerates typed outcomes from AgentPrompt submission.
@@ -62,19 +61,17 @@ type PromptResult struct {
 
 // String returns a human-readable description of the result.
 func (r PromptResult) String() string {
-	var b strings.Builder
-	b.WriteString(string(r.Status))
+	s := string(r.Status)
 	if r.Detail != "" {
-		b.WriteString(": ")
-		b.WriteString(r.Detail)
+		s += ": " + r.Detail
 	}
 	if r.Err != nil {
-		if b.Len() > 0 {
-			b.WriteString(": ")
+		if r.Detail != "" {
+			s += ": "
 		}
-		b.WriteString(r.Err.Error())
+		s += r.Err.Error()
 	}
-	return b.String()
+	return s
 }
 
 // Acknowledged returns true when the submission was confirmed delivered.
@@ -105,75 +102,36 @@ type LegacyPrompt interface {
 	LegacyPrompt(windowID, text string) PromptResult
 }
 
-// IsPromptText returns true when the text is a prompt/message meant for
-// the agent, as opposed to a raw terminal operation. Only /quit, launch
-// scripts, and literal control keys are raw terminal operations.
-// Agent-interpreted slash commands (/re-read-agents, etc.) are prompts.
-func IsPromptText(text string) bool {
-	text = strings.TrimSpace(text)
-
-	// /quit terminates the agent — always raw.
-	if text == "/quit" {
-		return false
-	}
-
-	// Launch scripts (multi-line or shell command chains) are raw.
-	if strings.Contains(text, "\n") || strings.Contains(text, "&&") || strings.Contains(text, "||") {
-		return false
-	}
-
-	// Literal control key names are raw.
-	controlKeys := []string{"Enter", "Escape", "Tab", "Up", "Down", "Left", "Right",
-		"Backspace", "Delete", "Home", "End", "PageUp", "PageDown",
-		"C-c", "C-d", "C-z", "C-l", "C-u"}
-	for _, k := range controlKeys {
-		if text == k {
-			return false
-		}
-	}
-
-	// Everything else (including agent slash commands like /re-read-agents)
-	// is a prompt.
-	return true
-}
-
-// DispatchPrompt routes a text submission to the correct method based on
-// the Backend's capabilities and the nature of the text.
+// SubmitPrompt submits a prompt to the target agent using typed prompt
+// submission when available. No content heuristics are applied — the caller
+// is responsible for ensuring the text is a prompt (not a raw shell command).
 //
-// Rules:
-//   - Raw terminal commands (shell commands, /quit, control keys) always
-//     use SendKeys.
-//   - If the backend implements PromptSubmitter and the target is a
-//     recognized agent, AgentPrompt is used.
-//   - If the target does not support prompts but the backend declares
-//     LegacyPrompt, fallback is allowed only for policy-safe targets.
-//   - Fallback is NEVER allowed for stalled, protocol mismatch, or
-//     selected-backend failure conditions — those return errors.
-func DispatchPrompt(bk Backend, windowID, text string) PromptResult {
-	// Raw commands always use SendKeys.
-	if !IsPromptText(text) {
-		if err := bk.SendKeys(windowID, text); err != nil {
-			return PromptResult{
-				Status: PromptBackendFailed,
-				Detail: fmt.Sprintf("send-keys failed"),
-				Err:    err,
-			}
-		}
-		return PromptResult{
-			Status: PromptSubmitted,
-			Detail: "send-keys (raw command)",
-			Legacy: true,
-		}
-	}
-
+// Dispatch rules:
+//   - If the backend implements PromptSubmitter, AgentPrompt is used.
+//   - If AgentPrompt returns PromptUnsupported (e.g., protocol < 17,
+//     alive non-agent pane) AND the backend declares LegacyPrompt,
+//     the legacy SendKeys fallback is invoked.
+//   - AgentPrompt results other than Unsupported (stalled, endpoint-dead,
+//     backend-failed) are NEVER subject to fallback.
+//   - If the backend has neither PromptSubmitter nor LegacyPrompt, the
+//     result is PromptUnsupported.
+func SubmitPrompt(bk Backend, windowID, text string) PromptResult {
 	// Try typed prompt submission.
 	if submitter, ok := bk.(PromptSubmitter); ok {
 		result := submitter.AgentPrompt(windowID, text)
+		// Only fall back to legacy if typed prompt returned Unsupported
+		// (e.g., protocol < 17, alive non-agent pane).
+		if result.Status == PromptUnsupported {
+			if legacy, ok := bk.(LegacyPrompt); ok {
+				return legacy.LegacyPrompt(windowID, text)
+			}
+		}
+		// For all other statuses (stalled, endpoint-dead, backend-failed),
+		// return as-is — NEVER fall back.
 		return result
 	}
 
 	// No typed prompt support: fall back to legacy SendKeys if declared.
-	// This is the "explicitly unsupported capability" case.
 	if legacy, ok := bk.(LegacyPrompt); ok {
 		return legacy.LegacyPrompt(windowID, text)
 	}

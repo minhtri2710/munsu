@@ -151,7 +151,7 @@ func newSendCmd() *cobra.Command {
 
 			// Use typed prompt submission when available; falls back to SendKeys
 			// for raw commands and unsupported backends.
-			result := session.DispatchPrompt(bk, windowID, sendLine)
+			result := session.SubmitPrompt(bk, windowID, sendLine)
 			if !result.Acknowledged() {
 				if isCaptain {
 					smID := captain.CaptainIDFromTask(id, meta)

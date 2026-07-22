@@ -408,16 +408,17 @@ func TestFlushEnvelopeSend_RetainsWhenDead(t *testing.T) {
 		t.Errorf("error should mention endpoint-dead: %v", err)
 	}
 
-	// Envelope should still be pending.
+	// Envelope should still be pending in parent (not delivered).
 	got, _ := GetEnvelope(parent, env.EnvelopeID)
 	if got.Status != EnvelopeStatusPending {
 		t.Errorf("status=%q, want pending", got.Status)
 	}
 
-	// Should not be pushed to captain home.
+	// Envelope IS pushed to captain home (push happens before prompt attempt)
+	// so the envelope is there for the next retry. Parent stays pending.
 	capEnv, _ := GetCaptainEnvelope(smHome, env.EnvelopeID)
-	if capEnv != nil {
-		t.Fatal("envelope should not be pushed to dead captain")
+	if capEnv == nil {
+		t.Fatal("envelope should be pushed to captain home even when dead (push before prompt)")
 	}
 }
 

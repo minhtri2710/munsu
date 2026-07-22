@@ -156,7 +156,7 @@ func FlushSendOutbox(parentHome string, sm Info) error {
 		msg := entry["message"]
 
 		// Use typed prompt submission.
-		result := session.DispatchPrompt(bk, windowID, msg)
+		result := session.SubmitPrompt(bk, windowID, msg)
 		if !result.Acknowledged() {
 			// Never remove on unacknowledged result — preserves outbox for retry.
 			return fmt.Errorf("%s: outbox send not acknowledged (status=%s) — outbox retained", sm.ID, result.Status)

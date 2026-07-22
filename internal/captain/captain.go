@@ -2520,7 +2520,7 @@ func sendNudge(parentHome string, sm Info) error {
 	}
 
 	// Send one short re-read message via typed prompt submission. Never send charter content.
-	result := session.DispatchPrompt(bk, windowID, "/re-read-agents")
+	result := session.SubmitPrompt(bk, windowID, "/re-read-agents")
 	if !result.Acknowledged() {
 		return fmt.Errorf("%s: send not acknowledged (status=%s) — marker remains", sm.ID, result.Status)
 	}

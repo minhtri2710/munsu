@@ -325,21 +325,24 @@ func FlushEnvelopeSend(parentHome string, sm Info) error {
 	}
 
 	for _, env := range pending {
-		// Send the message with marker via typed prompt submission.
-		// Do NOT push envelope to captain home until submission is acknowledged.
-		msg := marker.MarkFromGeneral(env.Message)
-		result := session.DispatchPrompt(bk, windowID, msg)
-		if !result.Acknowledged() {
-			// Never push or mark delivered on unacknowledged — envelope retained.
-			return fmt.Errorf("%s: envelope %s send not acknowledged (status=%s) — envelope retained", sm.ID, env.EnvelopeID, result.Status)
-		}
-
-		// Push envelope to captain home only after acknowledged submission.
+		// Push envelope to captain home BEFORE prompting, so the authoritative
+		// envelope exists when the agent begins processing. Keep the parent
+		// envelope pending until prompt is acknowledged; a copied-but-pending
+		// envelope is safe for retry.
 		if err := PushEnvelopeToCaptain(parentHome, sm.Home, env); err != nil {
-			return fmt.Errorf("%s: pushing envelope %s to captain home after send: %v", sm.ID, env.EnvelopeID, err)
+			return fmt.Errorf("%s: pushing envelope %s to captain home: %v", sm.ID, env.EnvelopeID, err)
 		}
 
-		// Mark delivered in parent home.
+		// Send the message with marker via typed prompt submission.
+		msg := marker.MarkFromGeneral(env.Message)
+		result := session.SubmitPrompt(bk, windowID, msg)
+		if !result.Acknowledged() {
+			// Envelope was pushed to captain home but parent still pending;
+			// next converge retry will find it already in captain home.
+			return fmt.Errorf("%s: envelope %s send not acknowledged (status=%s) — envelope retained in parent", sm.ID, env.EnvelopeID, result.Status)
+		}
+
+		// Only mark delivered in parent home after acknowledged submission.
 		if err := MarkEnvelopeDelivered(parentHome, env.EnvelopeID); err != nil {
 			return fmt.Errorf("%s: envelope %s delivered but failed to update status: %v", sm.ID, env.EnvelopeID, err)
 		}

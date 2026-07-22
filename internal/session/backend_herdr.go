@@ -118,6 +118,37 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// herdrCaptureOutput runs herdr and returns stdout/stderr combined output even
+// when the command exits non-zero. Needed for parsing structured JSON error
+// responses like agent_prompt_stalled or agent_not_found where stdout carries
+// the error payload while the exit code is non-zero.
+func (h *HerdrBackend) herdrCaptureOutput(args ...string) (string, error) {
+	bin, err := exec.LookPath("herdr")
+	if err != nil {
+		return "", fmt.Errorf("herdr: not found on PATH: %w", err)
+	}
+
+	fullArgs := append(h.sessionArgs(), args...)
+	cmd := exec.Command(bin, fullArgs...)
+	cmd.Env = append(os.Environ(), "HERDR_SESSION="+h.Session)
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+	if err != nil {
+		return output, err
+	}
+	return output, nil
+}
+
+func (h *HerdrBackend) herdrCaptureForWindow(windowID string, args ...string) (string, error) {
+	sess := h.effectiveSession(windowID)
+	if sess != h.Session {
+		tmp := *h
+		tmp.Session = sess
+		return tmp.herdrCaptureOutput(args...)
+	}
+	return h.herdrCaptureOutput(args...)
+}
+
 func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, error) {
 	sess := h.effectiveSession(windowID)
 	if sess != h.Session {
@@ -407,36 +438,40 @@ type herdrAPISchemaResponse struct {
 }
 
 // protocolVersion probes the herdr API protocol version once and caches it.
-// Returns 0 if the probe fails (no server running, CLI not found, etc.).
-func (h *HerdrBackend) protocolVersion() int {
+// Returns (version, nil) on success. Returns (0, err) on probe failure
+// (no server, CLI not found, etc.) — caller should treat this as
+// backend-failed, not unsupported.
+func (h *HerdrBackend) protocolVersion() (int, error) {
 	if h.protocolCache != 0 {
-		return h.protocolCache
+		if h.protocolCache < 0 {
+			return 0, fmt.Errorf("protocol probe failed previously")
+		}
+		return h.protocolCache, nil
 	}
 
-	out, err := h.herdr("api", "schema")
+	out, err := h.herdrCaptureOutput("api", "schema")
 	if err != nil {
 		h.protocolCache = -1
-		return 0
+		return 0, fmt.Errorf("protocol probe: %w", err)
 	}
 
-	// The text output contains "protocol: <N>" on the second line.
-	// Parse it from the text format (not JSON).
+	// The text output contains "protocol: <N>" on one of the lines.
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "protocol:") {
 			v := strings.TrimSpace(strings.TrimPrefix(line, "protocol:"))
-			p, err := strconv.Atoi(v)
-			if err != nil {
+			p, parseErr := strconv.Atoi(v)
+			if parseErr != nil {
 				h.protocolCache = -1
-				return 0
+				return 0, fmt.Errorf("protocol version parse: %w", parseErr)
 			}
 			h.protocolCache = p
-			return p
+			return p, nil
 		}
 	}
 
 	h.protocolCache = -1
-	return 0
+	return 0, fmt.Errorf("protocol version not found in output: %s", out[:min(len(out), 200)])
 }
 
 // herdrAgentGetResponse represents the JSON response from herdr agent get.
@@ -473,13 +508,30 @@ type herdrAgentInfo struct {
 }
 
 // IsRecognizedAgent checks whether the target pane ID is a recognized
-// live agent via `herdr agent get`. Returns (true, status) for recognized
-// agents, (false, "") if not found or unrecognized, and (false, "") on
-// probe error (falls closed to unrecognized).
+// live agent via `herdr agent get`. Returns:
+//
+//	(true, status) — recognized agent with status string
+//	(false, "") — agent_not_found (may be alive non-agent pane or dead pane)
+//
+// Callers should distinguish alive-non-agent from dead by calling CheckAlive
+// when IsRecognizedAgent returns (false, "").
 func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
 	pid := herdrPaneID(windowID)
-	out, err := h.herdrForWindow(windowID, "agent", "get", pid)
+	out, err := h.herdrCaptureForWindow(windowID, "agent", "get", pid)
 	if err != nil {
+		// Try to parse JSON error from output.
+		if out != "" {
+			var errResp struct {
+				Error *struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
+				if errResp.Error.Code == "agent_not_found" {
+					return false, ""
+				}
+			}
+		}
 		return false, ""
 	}
 
@@ -503,11 +555,13 @@ func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
 }
 
 // AgentPrompt submits a prompt to the target agent using herdr agent prompt
-// with --wait and a 60-second timeout. Returns typed PromptResult.
+// with --wait and a 120-second timeout. Returns typed PromptResult.
 //
 // Preconditions checked before submission:
-//  1. Protocol version >= 17 (otherwise returns PromptUnsupported)
-//  2. Target is a recognized live agent (otherwise returns PromptEndpointDead)
+//  1. Server protocol version >= 17 (otherwise returns PromptUnsupported).
+//     If the protocol probe itself fails (no server), returns PromptBackendFailed.
+//  2. Target is a recognized live agent (otherwise returns PromptEndpointDead
+//     or PromptUnsupported if pane exists but is not an agent).
 //
 // If submission succeeds, the result distinguishes:
 //   - submitted: agent accepted and started processing
@@ -515,11 +569,18 @@ func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
 //
 // On stalled/error:
 //   - agent_prompt_stalled → PromptStalled (NO fallback)
-//   - agent_not_found → PromptEndpointDead
+//   - agent_not_found → PromptEndpointDead (if pane absent) or PromptUnsupported
 //   - other errors → PromptBackendFailed
 func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
-	// Precondition: protocol >= 17.
-	pv := h.protocolVersion()
+	// Precondition: probe protocol version.
+	pv, pErr := h.protocolVersion()
+	if pErr != nil {
+		return PromptResult{
+			Status: PromptBackendFailed,
+			Detail: fmt.Sprintf("protocol probe failed: %v", pErr),
+			Err:    pErr,
+		}
+	}
 	if pv < 17 {
 		return PromptResult{
 			Status: PromptUnsupported,
@@ -532,57 +593,104 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 	// Precondition: target is a recognized live agent.
 	recognized, status := h.IsRecognizedAgent(windowID)
 	if !recognized {
+		// agent_not_found: check if pane exists to distinguish dead from non-agent.
+		alive, aliveErr := h.CheckAlive(windowID)
+		if aliveErr != nil {
+			// If CheckAlive itself fails, we don't know — backend-failed.
+			if aliveErr == ErrPaneNotFound {
+				return PromptResult{
+					Status: PromptEndpointDead,
+					Detail: "pane not found",
+				}
+			}
+			return PromptResult{
+				Status: PromptEndpointDead,
+				Detail: fmt.Sprintf("pane liveness check failed: %v", aliveErr),
+			}
+		}
+		if alive {
+			// Pane exists but is not a recognized agent: unsupported.
+			return PromptResult{
+				Status: PromptUnsupported,
+				Detail: "pane exists but is not a recognized agent",
+			}
+		}
+		// Pane confirmed dead.
 		return PromptResult{
 			Status: PromptEndpointDead,
-			Detail: "target is not a recognized agent",
+			Detail: "pane not alive",
 		}
 	}
 
 	// Check pre-submission status for queued-while-busy detection.
 	wasBusy := status == "working"
 
-	// Submit prompt with --wait and 120s timeout.
-	out, err := h.herdrForWindow(windowID, "agent", "prompt", pid, text,
+	// Submit prompt with --wait and 120s timeout. Use herdrCaptureForWindow
+	// to preserve stdout even on non-zero exit (stalled returns exit 1 with
+	// JSON error in stdout).
+	out, err := h.herdrCaptureForWindow(windowID, "agent", "prompt", pid, text,
 		"--wait", "--timeout", "120000")
 	if err != nil {
-		// Parse JSON error response.
-		if out != "" {
-			var errResp herdrAgentPromptResponse
-			if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
-				switch errResp.Error.Code {
-				case "agent_prompt_stalled":
-					return PromptResult{
-						Status: PromptStalled,
-						Detail: errResp.Error.Message,
-					}
-				case "agent_not_found":
-					return PromptResult{
-						Status: PromptEndpointDead,
-						Detail: errResp.Error.Message,
-					}
-				default:
-					return PromptResult{
-						Status: PromptBackendFailed,
-						Detail: fmt.Sprintf("herdr error: %s", errResp.Error.Code),
-						Err:    fmt.Errorf("%s: %s", errResp.Error.Code, errResp.Error.Message),
-					}
+		// If stdout is empty or unparseable, it's a true backend failure.
+		if out == "" {
+			return PromptResult{
+				Status: PromptBackendFailed,
+				Detail: "herdr agent prompt: empty response on error",
+				Err:    err,
+			}
+		}
+
+		// Try to parse structured JSON error.
+		var errResp struct {
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
+			switch errResp.Error.Code {
+			case "agent_prompt_stalled":
+				return PromptResult{
+					Status: PromptStalled,
+					Detail: errResp.Error.Message,
+				}
+			case "agent_not_found":
+				// Could have disappeared between agent get and prompt.
+				return PromptResult{
+					Status: PromptEndpointDead,
+					Detail: errResp.Error.Message,
+				}
+			default:
+				return PromptResult{
+					Status: PromptBackendFailed,
+					Detail: fmt.Sprintf("herdr error: %s", errResp.Error.Code),
+					Err:    fmt.Errorf("%s: %s", errResp.Error.Code, errResp.Error.Message),
 				}
 			}
 		}
+
+		// Unparseable error output: backend failure.
 		return PromptResult{
 			Status: PromptBackendFailed,
-			Detail: "herdr agent prompt call failed",
+			Detail: fmt.Sprintf("herdr agent prompt: unparseable error: %s", out[:min(len(out), 500)]),
 			Err:    err,
 		}
 	}
 
 	// Parse success response.
-	var successResp herdrAgentPromptResponse
+	var successResp struct {
+		Result *struct {
+			Type  string `json:"type"`
+			Agent *struct {
+				AgentStatus string `json:"agent_status"`
+			} `json:"agent,omitempty"`
+		} `json:"result"`
+	}
 	if jsonErr := json.Unmarshal([]byte(out), &successResp); jsonErr != nil || successResp.Result == nil {
 		return PromptResult{
 			Status: PromptBackendFailed,
 			Detail: "unparseable herdr agent prompt response",
-			Err:    fmt.Errorf("json parse error: %v, raw: %s", jsonErr, out),
+			Err:    fmt.Errorf("json parse error: %v, raw: %s", jsonErr, out[:min(len(out), 500)]),
 		}
 	}
 
