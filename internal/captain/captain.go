@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -2127,6 +2128,9 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: "ok"})
+			// Notification continuity: enqueue a config-reread wake so the captain's
+			// watcher continuity system picks up the config change as a notifiable event.
+			_ = lifecycle.EnqueueWake(sm.Home, "config", "config-reread", "config refreshed via converge")
 		}
 
 		// e2. Charter refresh — ensure .captain-charter.md is current.

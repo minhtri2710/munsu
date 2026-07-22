@@ -21,8 +21,14 @@ const (
 	// target. This includes agent prompt glyphs (❯, ›) and ghost/placeholder
 	// text that was de-emphasised.
 	Empty Verdict = iota
-	// Pending means the composer has unsubmitted real content.
+	// Pending means the composer has unsubmitted real content (typed text
+	// that the agent has not yet submitted). NOT a safe injection target.
 	Pending
+	// Busy means the composer has a submitted command or action in progress
+	// (e.g. OpenCode "o Running..."). The agent is actively executing and
+	// will return to Empty when done. NOT a safe injection target, but
+	// distinct from Pending for diagnostic purposes.
+	Busy
 	// Unknown means the row is not a recognised harness composer (e.g. a bare
 	// dead-shell prompt) and is never a safe injection target.
 	Unknown
@@ -31,6 +37,7 @@ const (
 var verdictStrings = map[Verdict]string{
 	Empty:   "empty",
 	Pending: "pending",
+	Busy:    "busy",
 	Unknown: "unknown",
 }
 
@@ -38,8 +45,9 @@ func (v Verdict) String() string { return verdictStrings[v] }
 
 // Agent prompt glyphs recognised by every known fleet harness.
 const (
-	glyphClaude = "\u276F" // ❯ — claude-code prompt glyph
-	glyphCodex  = "\u203A" // › — codex prompt glyph
+	glyphClaude  = "\u276F" // ❯ — claude-code prompt glyph
+	glyphCodex   = "\u203A" // › — codex prompt glyph
+	glyphOpenCode = "o"     // o — opencode prompt glyph
 )
 
 // Shell prompt glyphs that signal a dead shell on bare rows.
@@ -265,9 +273,9 @@ func StripGhost(s string) string {
 // --- Classification ---
 
 // isAgentPromptGlyph returns true when s is exactly one of the known agent
-// prompt glyphs (❯ for claude, › for codex).
+// prompt glyphs (❯ for claude, › for codex, o for opencode).
 func isAgentPromptGlyph(s string) bool {
-	return s == glyphClaude || s == glyphCodex
+	return s == glyphClaude || s == glyphCodex || s == glyphOpenCode
 }
 
 // isShellPromptGlyph returns true when s is exactly one of the known shell
@@ -332,8 +340,8 @@ func trimSpace(s string) string {
 }
 
 // ClassifyContent determines whether a captured composer row is empty (safe to
-// inject into), pending (has unsubmitted content), or unknown (not a recognised
-// harness — likely a dead shell).
+// inject into), pending (has unsubmitted content), busy (agent executing action),
+// or unknown (not a recognised harness — likely a dead shell).
 //
 // row is the ghost-stripped, border-stripped, whitespace-trimmed content.
 // plainRow is the ANSI-stripped (but NOT ghost-stripped) content, used for
@@ -377,10 +385,43 @@ func ClassifyContent(row, plainRow string, bordered bool) Verdict {
 		if afterPrefix == "" {
 			return Empty
 		}
+		// Busy-queued content (agent executing command): recognisable action
+		// keywords after the prompt glyph signal a busy agent, not pending input.
+		if isBusyContent(afterPrefix) {
+			return Busy
+		}
 		// Non-empty content after the glyph → real pending text.
 		return Pending
 	}
 
 	// Non-empty content with no prompt glyph → pending.
 	return Pending
+}
+
+// isBusyContent returns true when s starts with a known busy-action keyword
+// that signals an agent executing a command rather than waiting for input.
+// These include action participles like Running, Thinking, Working, Processing,
+// Building, Installing, Searching, Generating, Analyzing.
+func isBusyContent(s string) bool {
+	busyPrefixes := []string{
+		"Running",
+		"Thinking",
+		"Working",
+		"Processing",
+		"Building",
+		"Installing",
+		"Searching",
+		"Generating",
+		"Analyzing",
+		"Fetching",
+		"Compiling",
+		"Executing",
+		"Waiting",
+	}
+	for _, prefix := range busyPrefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
