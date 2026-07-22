@@ -27,6 +27,7 @@ func statusPath(homeDir string, id string) (string, error) {
 
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
 // The map is serialized as key=value lines, one per field.
+// Uses atomic write: temp file + rename to prevent partial writes.
 func WriteMeta(homeDir string, id string, meta map[string]string) error {
 	p, err := metaPath(homeDir, id)
 	if err != nil {
@@ -39,7 +40,17 @@ func WriteMeta(homeDir string, id string, meta map[string]string) error {
 	for k, v := range meta {
 		b.WriteString(fmt.Sprintf("%s=%s\n", k, v))
 	}
-	return os.WriteFile(p, []byte(b.String()), 0644)
+	// Atomic write: temp file + rename
+	tmpPath := p + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(b.String()), 0644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing temp meta file: %w", err)
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("renaming temp meta file: %w", err)
+	}
+	return nil
 }
 
 // ReadMeta reads a task meta file at $MUNSU_HOME/state/<id>.meta.
@@ -185,7 +196,7 @@ var ValidMetaFields = []string{
 	"model", "effort", "kind", "mode", "yolo",
 	"backend", "herdr_session", "herdr_workspace_id", "herdr_tab_id", "herdr_pane_id",
 	"pr_provider", "pr_owner", "pr_repo", "pr_number", "pr_url",
-	"pr_base", "pr_head_ref", "pr_head", "pr_timestamp",
+	"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha", "pr_timestamp",
 }
 
 // MetaEntry represents a single task entry from state meta files.

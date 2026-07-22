@@ -240,6 +240,7 @@ func newWatchCmd() *cobra.Command {
 	cmd.AddCommand(ensureCmd)
 	cmd.AddCommand(runCmd)
 	cmd.AddCommand(newWatchStopCmd())
+	cmd.AddCommand(newWatchStatusCmd())
 
 	return cmd
 }

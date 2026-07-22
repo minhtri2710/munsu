@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -2136,6 +2137,9 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: "ok"})
+			// Notification continuity: enqueue a config-reread wake so the captain's
+			// watcher continuity system picks up the config change as a notifiable event.
+			_ = lifecycle.EnqueueWake(sm.Home, "config", "config-reread", "config refreshed via converge")
 		}
 
 		// e2. Charter refresh — ensure .captain-charter.md is current.
@@ -2161,13 +2165,23 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 
 		// g. Terminal receipt relay (Captain → General)
 		// Scans the captain home for un-acked soldier terminal reports
-		// and relays each one to the General's state.
-		relayed, relayErr := RelayTerminalReceipts(sm.Home, parentHome)
+		// and relays each one to the General's state using the shared
+		// reconciliation seam.
+		relayResult, relayErr := ReconcileTerminalReceipts(sm.Home, parentHome)
 		if relayErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeFailed, Detail: relayErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: terminal relay failed: %v", sm.ID, relayErr))
-		} else if relayed > 0 {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: fmt.Sprintf("relayed %d receipt(s) to General", relayed)})
+		} else if relayResult != nil && relayResult.Relayed() > 0 {
+			detail := fmt.Sprintf("relayed %d receipt(s) to General", relayResult.Relayed())
+			if f := relayResult.Failed(); f > 0 {
+				detail += fmt.Sprintf(" (%d failed)", f)
+			}
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: detail})
+			for _, o := range relayResult.Outcomes {
+				if o.Outcome != OutcomeRelayed {
+					errs = append(errs, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
+				}
+			}
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeSkipped, Detail: "no pending receipts"})
 		}

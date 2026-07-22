@@ -58,6 +58,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "outbox-flush", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "nudge-retry", State: StepSkipped, Detail: "skipped: provenance failed"},
 		)
 		return res
@@ -86,7 +87,11 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	// Step g: outbox flush — only when config is OK
 	res.Steps = append(res.Steps, tx.stepOutboxFlush(parentHome, sm, configOk))
 
-	// Step h: nudge retry — only when config is OK
+	// Step h: terminal receipt reconciliation — relay pending soldier
+	// terminal reports to General. Runs only when config is OK.
+	res.Steps = append(res.Steps, tx.stepTerminalReconcile(parentHome, sm, configOk))
+
+	// Step i: nudge retry — only when config is OK
 	res.Steps = append(res.Steps, tx.stepNudgeRetry(parentHome, sm, configOk))
 
 	return res
@@ -287,6 +292,33 @@ func (tx *RecoverTransaction) stepOutboxFlush(parentHome string, sm Info, config
 			Detail: err.Error()}
 	}
 	return StepResult{Name: "outbox-flush", State: StepOk, Detail: "outbox flushed or empty"}
+}
+
+func (tx *RecoverTransaction) stepTerminalReconcile(parentHome string, sm Info, configOk bool) StepResult {
+	if !configOk {
+		return StepResult{Name: "terminal-reconcile", State: StepSkipped,
+			Detail: "skipped: config validation failed"}
+	}
+	result, err := ReconcileTerminalReceipts(sm.Home, parentHome)
+	if err != nil {
+		return StepResult{Name: "terminal-reconcile", State: StepFailed,
+			Detail: err.Error()}
+	}
+	relayed := result.Relayed()
+	if relayed > 0 {
+		var diags []string
+		for _, o := range result.Outcomes {
+			if o.Outcome != OutcomeRelayed {
+				diags = append(diags, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
+			}
+		}
+		detail := fmt.Sprintf("relayed %d receipt(s) to General", relayed)
+		if len(diags) > 0 {
+			detail += "; partial failures: " + strings.Join(diags, ", ")
+		}
+		return StepResult{Name: "terminal-reconcile", State: StepOk, Detail: detail}
+	}
+	return StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "no pending receipts"}
 }
 
 func (tx *RecoverTransaction) stepNudgeRetry(parentHome string, sm Info, configOk bool) StepResult {

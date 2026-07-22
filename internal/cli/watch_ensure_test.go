@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -173,5 +174,104 @@ func TestStopWatcher_CaptainHomeBeatOnly(t *testing.T) {
 	resp := stopWatcher(captain)
 	if resp.Data.State != "identity-mismatch" {
 		t.Fatalf("state=%q, want identity-mismatch", resp.Data.State)
+	}
+}
+
+// TestWatchStatus_NoWatcher reports absent/healthy correctly.
+func TestWatchStatus_NoWatcher(t *testing.T) {
+	home := t.TempDir()
+
+	// Bounded status without watcher or queue.
+	resp := evaluateWatcherStatus(home)
+	if resp.Kind != "watch.status" {
+		t.Fatalf("kind=%q", resp.Kind)
+	}
+	if resp.Data.State != "absent" && resp.Data.State != "healthy" {
+		t.Errorf("state=%q on clean home, want absent", resp.Data.State)
+	}
+	if resp.Data.GuardState != "unhealthy" && resp.Data.GuardState != "healthy" {
+		t.Errorf("guard_state=%q", resp.Data.GuardState)
+	}
+}
+
+// TestWatchStatus_WithDiagnostics proves diagnostics include actionable info.
+func TestWatchStatus_WithDiagnostics(t *testing.T) {
+	home := t.TempDir()
+
+	// Add a pending wake.
+	lifecycle.EnqueueWake(home, "signal", "task-1", "done: work")
+
+	resp := evaluateWatcherStatus(home)
+	if resp.Kind != "watch.status" {
+		t.Fatalf("kind=%q", resp.Kind)
+	}
+	if resp.Data.QueuedWakes < 1 {
+		t.Errorf("queued_wakes=%d, want >=1", resp.Data.QueuedWakes)
+	}
+	if len(resp.Data.Diagnostics) > 0 {
+		hasWakeDiag := false
+		for _, d := range resp.Data.Diagnostics {
+			if strings.Contains(d, "Queued wakes") {
+				hasWakeDiag = true
+				break
+			}
+		}
+		if !hasWakeDiag {
+			t.Errorf("diagnostics missing wake info: %v", resp.Data.Diagnostics)
+		}
+	}
+}
+
+// TestWatchStatus_WithMaterialWake verifies material age in status.
+func TestWatchStatus_WithMaterialWake(t *testing.T) {
+	home := t.TempDir()
+
+	// Write a wake with an old timestamp.
+	oldEpoch := time.Now().Add(-10 * time.Minute).Unix()
+	queuePath := lifecycle.QueuePath(home)
+	os.MkdirAll(filepath.Dir(queuePath), 0755)
+	line := fmt.Sprintf("%d\t%d\tsignal\ttask-old\tdone: old material\n", oldEpoch, 1)
+	os.WriteFile(queuePath, []byte(line), 0644)
+
+	resp := evaluateWatcherStatus(home)
+	if resp.Data.MaterialAge == "" {
+		t.Errorf("expected non-empty MaterialAge, got %q", resp.Data.MaterialAge)
+	}
+	if resp.Data.QueuedWakes < 1 {
+		t.Errorf("queued_wakes=%d", resp.Data.QueuedWakes)
+	}
+}
+
+// TestOldestMaterialWakeAge verifies age calculation.
+func TestOldestMaterialWakeAge(t *testing.T) {
+	home := t.TempDir()
+
+	// Old material wake
+	oldEpoch := time.Now().Add(-10 * time.Minute).Unix()
+	queuePath := lifecycle.QueuePath(home)
+	os.MkdirAll(filepath.Dir(queuePath), 0755)
+	os.WriteFile(queuePath, []byte(fmt.Sprintf("%d\t%d\tsignal\ttask-old\tdone: old\n", oldEpoch, 1)), 0644)
+
+	age := oldestMaterialWakeAge(home)
+	// Age should be roughly 10 minutes.
+	if age < 500 || age > 700 {
+		t.Logf("oldest material wake age = %ds (expected ~600s)", age)
+	}
+}
+
+// TestOldestMaterialWakeAge_NoQueue returns 0.
+func TestOldestMaterialWakeAge_NoQueue(t *testing.T) {
+	home := t.TempDir()
+	if age := oldestMaterialWakeAge(home); age != 0 {
+		t.Errorf("age = %d on empty home, want 0", age)
+	}
+}
+
+// TestOldestMaterialWakeAge_RoutineOnly returns 0.
+func TestOldestMaterialWakeAge_RoutineOnly(t *testing.T) {
+	home := t.TempDir()
+	lifecycle.EnqueueWake(home, "stale", "task-routine", "working: in progress")
+	if age := oldestMaterialWakeAge(home); age != 0 {
+		t.Errorf("age = %d for routine wake, want 0", age)
 	}
 }

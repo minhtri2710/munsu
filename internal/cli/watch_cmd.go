@@ -355,3 +355,139 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 		},
 	}
 }
+
+// newWatchStatusCmd creates the `munsu watch status` command.
+// It returns a bounded watcher health/status reading that never enters
+// foreground daemon mode — pure stateless read of beat, identity, and wake state.
+func newWatchStatusCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Bounded watcher health status (never enters daemon mode)",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+
+			result := evaluateWatcherStatus(ctx.Home)
+			return writeContract(cmd, result)
+		}),
+	}
+	configureContractCommand(cmd)
+	return cmd
+}
+
+// evaluateWatcherStatus builds a bounded watcher status from beat, identity,
+// and wake queue state. Never enters daemon mode; pure stateless read.
+func evaluateWatcherStatus(homeDir string) contract.Response[contract.WatchStatus] {
+	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
+
+	watchID := identifyWatcher(homeDir)
+	var identity string
+	var pid int
+
+	if id := supervision.ReadIdentity(homeDir); id != nil {
+		identity = supervision.IdentitySummary(id)
+		pid = id.PID
+	} else if _, beatPID, ok := lifecycle.ReadBeat(homeDir); ok {
+		pid = beatPID
+	}
+
+	beatAge := ""
+	state := "healthy"
+	guardState := "healthy"
+	if beatStatus.Exists {
+		beatAge = beatStatus.Age.Round(time.Second).String()
+		if beatStatus.Stale {
+			state = "stale"
+			guardState = "unhealthy"
+		}
+	} else {
+		state = "absent"
+		guardState = "unhealthy"
+	}
+
+	queuedWakes := countQueuedWakes(homeDir)
+
+	// Detect oldest material wake age.
+	materialAge := ""
+	if queuedWakes > 0 {
+		if oldest := oldestMaterialWakeAge(homeDir); oldest > 0 {
+			materialAge = time.Duration(oldest).Round(time.Second).String()
+			// Aged material wakes make the guard unhealthy.
+			if oldest > int64(5*time.Minute) && guardState == "healthy" {
+				guardState = "unhealthy"
+			}
+		}
+	}
+
+	var diagnostics []string
+	if !beatStatus.Exists {
+		diagnostics = append(diagnostics, "Watcher never started — run 'munsu watch ensure'")
+	} else if beatStatus.Stale {
+		diagnostics = append(diagnostics, "Watcher beat stale — run 'munsu watch ensure --restart'")
+	}
+	if queuedWakes > 0 {
+		diagnostics = append(diagnostics, fmt.Sprintf("Queued wakes: %d — drain with 'munsu wake-drain'", queuedWakes))
+		if materialAge != "" {
+			diagnostics = append(diagnostics, fmt.Sprintf("Oldest material wake age: %s", materialAge))
+		}
+	}
+
+	lease := watcherLeaseInfo(homeDir)
+
+	return contract.Response[contract.WatchStatus]{
+		SchemaVersion: contract.SchemaVersion,
+		Kind:          "watch.status",
+		Status:        "success",
+		Data: contract.WatchStatus{
+			WatchID:     watchID,
+			State:       state,
+			BeatAge:     beatAge,
+			PID:         pid,
+			Identity:    identity,
+			QueuedWakes: queuedWakes,
+			MaterialAge: materialAge,
+			GuardState:  guardState,
+			Lease:       lease,
+			Diagnostics: diagnostics,
+		},
+	}
+}
+
+// oldestMaterialWakeAge returns the age in seconds of the oldest material wake
+// (wake with done/failed/needs-decision/blocked payload). Returns 0 if no
+// material wakes are found.
+func oldestMaterialWakeAge(homeDir string) int64 {
+	data, err := os.ReadFile(lifecycle.QueuePath(homeDir))
+	if err != nil {
+		return 0
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+		return 0
+	}
+	now := time.Now().Unix()
+	var oldest int64
+	for _, line := range lines {
+		parts := strings.SplitN(line, "\t", 5)
+		if len(parts) < 5 {
+			continue
+		}
+		payload := parts[4]
+		// Check for material states: done, failed, needs-decision, blocked
+		if strings.HasPrefix(payload, "done:") || strings.HasPrefix(payload, "failed:") ||
+			strings.HasPrefix(payload, "needs-decision:") || strings.HasPrefix(payload, "blocked:") ||
+			strings.Contains(payload, "done:") || strings.Contains(payload, "failed:") ||
+			strings.Contains(payload, "needs-decision:") || strings.Contains(payload, "blocked:") {
+			var epoch int64
+			if _, err := fmt.Sscanf(parts[0], "%d", &epoch); err == nil && epoch > 0 {
+				age := now - epoch
+				if age > oldest {
+					oldest = age
+				}
+			}
+		}
+	}
+	return oldest
+}
