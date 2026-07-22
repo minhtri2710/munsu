@@ -2,8 +2,6 @@ package delivery
 
 import (
 	"fmt"
-	"os/exec"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -48,28 +46,4 @@ func MRLiveCheck(homeDir string, id, mrURL string) error {
 	fmt.Printf("  Head SHA: %s\n", ident.HeadSHA)
 	fmt.Printf("  Provider: %s\n", ident.Provider)
 	return nil
-}
-
-// checkGlabAuth verifies glab authentication status.
-// Uses glab auth status; fails closed on any error.
-func checkGlabAuth() Check {
-	glabPath, err := glabLookPath()
-	if err != nil {
-		return Check{
-			Name:   "glab-auth",
-			OK:     false,
-			Detail: "glab not found on PATH",
-		}
-	}
-
-	cmd := exec.Command(glabPath, "auth", "status")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return Check{
-			Name:   "glab-auth",
-			OK:     false,
-			Detail: fmt.Sprintf("glab auth failed: %s", strings.TrimSpace(string(out))),
-		}
-	}
-	return Check{Name: "glab-auth", OK: true, Detail: "authenticated"}
 }

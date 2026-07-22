@@ -189,6 +189,35 @@ func TestParseMRURL_ExtraPathSuffix(t *testing.T) {
 	}
 }
 
+func TestParseMRURL_EmptySegment(t *testing.T) {
+	_, err := ParseMRURL("https://gitlab.com/group//project/-/merge_requests/1")
+	if err == nil {
+		t.Fatal("expected error for URL with empty segment")
+	}
+}
+
+func TestParseMRURL_DotSegment(t *testing.T) {
+	_, err := ParseMRURL("https://gitlab.com/group/./project/-/merge_requests/1")
+	if err == nil {
+		t.Fatal("expected error for URL with dot segment")
+	}
+}
+
+func TestParseMRURL_DotDotSegment(t *testing.T) {
+	_, err := ParseMRURL("https://gitlab.com/group/../project/-/merge_requests/1")
+	if err == nil {
+		t.Fatal("expected error for URL with dotdot segment")
+	}
+}
+
+func TestParseMRURL_OpaqueURL(t *testing.T) {
+	// Opaque URLs have no path
+	_, err := ParseMRURL("opaque:gitlab.com/owner/project/-/merge_requests/1")
+	if err == nil {
+		t.Fatal("expected error for opaque URL")
+	}
+}
+
 func TestParseMRURL_FormatMRRef(t *testing.T) {
 	gl := GLURL{Host: "gitlab.com", Owner: "owner", Project: "project", IID: 42}
 	ref := gl.FormatMRRef()

@@ -233,16 +233,3 @@ func (c *glabClient) CaptureIdentity(mrURL string) (*DeliveryIdentity, error) {
 		CapturedAt: time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
-
-// runGlabMRView runs glab mr view for the given MR identity and returns
-// the raw output. This is the typed authority seam for GitLab MR status paths.
-// It must not be called outside the GitLabClient implementation; all MR
-// operations route through GitLabClientForState.
-func runGlabMRView(host, owner, project string, iid int, args ...string) ([]byte, error) {
-	client, err := DefaultGitLabClient()
-	if err != nil {
-		return nil, fmt.Errorf("GitLab provider not available: %w", err)
-	}
-	// All MR view operations use ViewMRJSON under the hood
-	return client.ViewMRJSON(host, owner, project, iid)
-}

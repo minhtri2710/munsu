@@ -20,6 +20,7 @@ type Pipeline interface {
 // Compile-time checks that adapters implement Pipeline.
 var (
 	_ Pipeline = (*GHAxiAdapter)(nil)
+	_ Pipeline = (*GlabAdapter)(nil)
 	_ Pipeline = (*NoMistakesAdapter)(nil)
 	_ Pipeline = (*GitLocalAdapter)(nil)
 	_ Pipeline = (*CompositeAdapter)(nil)
@@ -61,7 +62,7 @@ func (a *GHAxiAdapter) MergeLocal(homeDir, id string) error {
 
 // --- GlabAdapter ---
 
-// GlabAdapter implements Pipeline operations for GitLab MRs via the glab CLI.
+// GlabAdapter implements Pipeline for GitLab MR operations via the glab CLI.
 // It checks the GitLab capability state on construction — if glab is
 // not Ready, operations fail closed.
 type GlabAdapter struct {
@@ -73,18 +74,20 @@ func NewGlabAdapter() *GlabAdapter {
 	return &GlabAdapter{state: ProbeGitLabCapability()}
 }
 
-// RunMRCheck arms an MR merge poll for the given task using GitLab status paths.
-// Fails closed if glab is not available.
-func (a *GlabAdapter) RunMRCheck(homeDir, id, mrURL string) error {
+// RunPRCheck implements Pipeline for GitLab MR URLs. It requires a GitLab MR
+// URL and calls MRLiveCheck. Non-GitLab URLs fail closed.
+func (a *GlabAdapter) RunPRCheck(homeDir, id, prURL string) error {
+	provider, _, _, _, _, err := ParseProviderURL(prURL)
+	if err != nil {
+		return fmt.Errorf("GlabAdapter: unrecognized URL: %w", err)
+	}
+	if provider != "gitlab" {
+		return fmt.Errorf("GlabAdapter: expected GitLab MR URL, got provider %q", provider)
+	}
 	if a.state != capability.Ready {
 		return fmt.Errorf("GlabAdapter: GitLab capability not ready (state=%s): glab required for MR check", a.state)
 	}
-	return MRLiveCheck(homeDir, id, mrURL)
-}
-
-// RunPRCheck is not supported on GlabAdapter for GitHub-style PRs.
-func (a *GlabAdapter) RunPRCheck(homeDir, id, prURL string) error {
-	return fmt.Errorf("GlabAdapter: RunPRCheck not supported for GitHub PRs — use GHAxiAdapter")
+	return MRLiveCheck(homeDir, id, prURL)
 }
 
 // RunNoMistakes is not supported on GlabAdapter.
@@ -180,7 +183,7 @@ func (a *CompositeAdapter) RunPRCheck(homeDir, id, prURL string) error {
 	case "github":
 		return a.ghAxi.RunPRCheck(homeDir, id, prURL)
 	case "gitlab":
-		return a.glab.RunMRCheck(homeDir, id, prURL)
+		return a.glab.RunPRCheck(homeDir, id, prURL)
 	default:
 		return fmt.Errorf("CompositeAdapter: unknown provider %q for URL %s", provider, prURL)
 	}

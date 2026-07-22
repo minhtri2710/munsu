@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/capability"
 	"github.com/minhtri2710/munsu/internal/ghurl"
+	"github.com/minhtri2710/munsu/internal/glurl"
 )
 
 // PRMergeStatus holds the provider-confirmed merge state of a pull request.
@@ -18,8 +20,8 @@ type PRMergeStatus struct {
 	State     string `json:"state"` // OPEN, MERGED, CLOSED
 }
 
-// QueryPRMergeStatus fetches the current merge status of a PR from the provider
-// (e.g. GitHub). It is the minimal provider query seam used by teardown and
+// QueryPRMergeStatus fetches the current merge status of a PR from the GitHub
+// provider. It is the minimal provider query seam used by teardown and
 // other lifecycle checks that need to distinguish merged branches from merely
 // pushed ones.
 //
@@ -45,6 +47,114 @@ var QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
 	// read-only status queries. The capability model controls mutation
 	// authority; status reads tolerate degraded paths.
 	return queryPRMergeStatusDirect(ghURL)
+}
+
+// QueryDeliveryMergeStatus fetches the merge status from the appropriate
+// provider based on the delivery identity. Routes to existing QueryPRMergeStatus
+// for GitHub PRs, and to the GitLab status path for GitLab MRs.
+// Fail-closed on unrecognized provider or when GitLab capability is Failed.
+// Falls back to read-only status queries when the provider is Absent or
+// Unsupported and the identity allows it.
+var QueryDeliveryMergeStatus = func(ident *DeliveryIdentity) (*PRMergeStatus, error) {
+	if ident == nil {
+		return nil, fmt.Errorf("delivery identity is nil")
+	}
+
+	switch ident.Provider {
+	case "github":
+		ghURL, err := ghurl.ParseGHURL(ident.URL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid GitHub URL in identity: %w", err)
+		}
+		return QueryPRMergeStatus(ghURL)
+	case "gitlab":
+		return queryGLMergeStatus(ident)
+	default:
+		return nil, fmt.Errorf("unknown provider %q in delivery identity", ident.Provider)
+	}
+}
+
+// queryGLMergeStatus queries GitLab MR merge status via the typed GitLabClient.
+// Fail-closed on Failed; Absent/Unsupported may fall through.
+// Returns a PRMergeStatus normalized from GitLab's state model.
+func queryGLMergeStatus(ident *DeliveryIdentity) (*PRMergeStatus, error) {
+	state := ProbeGitLabCapability()
+	switch state {
+	case capability.Ready:
+		// Use the typed GitLabClient
+		client, err := GitLabClientForState(state)
+		if err != nil {
+			return nil, fmt.Errorf("GitLab provider: %w", err)
+		}
+		return fetchGLMergeStatus(client, ident)
+	case capability.Failed:
+		return nil, fmt.Errorf("GitLab capability failed: cannot query MR status (use --force to override)")
+	case capability.Absent, capability.Unsupported:
+		// Read-only status; permitted fallback via degraded path
+		return nil, fmt.Errorf("GitLab provider not available for MR status query (use --force to override)")
+	default:
+		return nil, fmt.Errorf("GitLab capability in unknown state: %v", state)
+	}
+}
+
+// fetchGLMergeStatus queries the GitLab MR status via the typed client.
+func fetchGLMergeStatus(client GitLabClient, ident *DeliveryIdentity) (*PRMergeStatus, error) {
+	// For GitLab MR JSON, we need host and project name separately.
+	// The identity stores Repo as the project name and Owner as the namespace.
+	// Host is not stored in the identity; we derive it from the URL.
+	glURL, err := glurl.ParseMRURL(ident.URL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing GitLab URL from identity: %w", err)
+	}
+	data, err := client.ViewMRJSON(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	if err != nil {
+		return nil, err
+	}
+	return parseGLMergeStatus(data)
+}
+
+// parseGLMergeStatus parses GitLab MR JSON into the common PRMergeStatus.
+// GitLab JSON uses snake_case: state, sha, merge_commit (diff_merge_commit).
+func parseGLMergeStatus(data []byte) (*PRMergeStatus, error) {
+	var raw struct {
+		State       string `json:"state"`       // opened, merged, closed
+		SHA         string `json:"sha"`          // diff head SHA
+		MergeCommit *struct {
+			SHA string `json:"sha"`
+		} `json:"merge_commit"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parsing glab mr view JSON: %w", err)
+	}
+
+	normalizedState := normalizeGlabState(raw.State)
+
+	status := &PRMergeStatus{
+		State:   normalizedState,
+		HeadSHA: raw.SHA,
+	}
+	if raw.MergeCommit != nil {
+		status.MergedSHA = raw.MergeCommit.SHA
+	}
+
+	switch normalizedState {
+	case "OPEN":
+		status.Closed = false
+		status.Merged = false
+	case "MERGED":
+		status.Closed = false
+		status.Merged = true
+		if status.MergedSHA == "" {
+			status.MergedSHA = status.HeadSHA
+		}
+	case "CLOSED":
+		status.Closed = true
+		status.Merged = false
+	default:
+		// leave flags false
+	}
+
+	return status, nil
 }
 
 // queryPRMergeStatusDirect uses raw gh CLI to query PR merge status.

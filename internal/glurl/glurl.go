@@ -47,6 +47,16 @@ func ParseMRURL(raw string) (GLURL, error) {
 		return GLURL{}, fmt.Errorf("URL %q has no host", raw)
 	}
 
+	// Reject opaque URLs (no scheme-based parsing)
+	if u.Opaque != "" {
+		return GLURL{}, fmt.Errorf("URL must not be opaque, got %q", raw)
+	}
+
+	// Reject RawPath (percent-encoded or escaped path)
+	if u.RawPath != "" && u.RawPath != u.Path {
+		return GLURL{}, fmt.Errorf("URL must not contain percent-encoded path, got %q", raw)
+	}
+
 	// Reject non-HTTPS schemes
 	if u.Scheme != "https" {
 		return GLURL{}, fmt.Errorf("URL must use https scheme, got %q", u.Scheme)
@@ -119,6 +129,16 @@ func ParseMRURL(raw string) (GLURL, error) {
 	nsParts := strings.Split(namespacePath, "/")
 	if len(nsParts) < 1 {
 		return GLURL{}, fmt.Errorf("namespace/project path is empty in URL %q", raw)
+	}
+
+	// Reject empty segments (e.g., "group//project") and dot segments
+	for _, part := range nsParts {
+		if part == "" {
+			return GLURL{}, fmt.Errorf("empty namespace/project segment in URL %q", raw)
+		}
+		if part == "." || part == ".." {
+			return GLURL{}, fmt.Errorf("dot segments not allowed in URL path, got %q", raw)
+		}
 	}
 
 	project := nsParts[len(nsParts)-1]

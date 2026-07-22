@@ -333,8 +333,8 @@ func TestShipSafetyCheck_Topology_ProviderUnavailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("unavailable provider should fail")
 	}
-	if !strings.Contains(err.Error(), "cannot verify PR merge status") {
-		t.Errorf("expected cannot verify PR merge status error, got: %v", err)
+	if !strings.Contains(err.Error(), "cannot verify merge status") {
+		t.Errorf("expected cannot verify merge status error, got: %v", err)
 	}
 }
 
@@ -1296,7 +1296,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testi
 	if err == nil {
 		t.Fatal("provider error should fail closed")
 	}
-	if !strings.Contains(err.Error(), "cannot verify PR merge status") {
-		t.Errorf("expected 'cannot verify PR merge status' error, got: %v", err)
+	if !strings.Contains(err.Error(), "cannot verify merge status") {
+		t.Errorf("expected 'cannot verify merge status' error, got: %v", err)
 	}
 }
