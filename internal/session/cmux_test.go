@@ -64,9 +64,9 @@ func TestSelect_CmuxAvailable(t *testing.T) {
 
 func TestParseCmuxWindow(t *testing.T) {
 	tests := []struct {
-		handle           string
-		wantWorkspaceID  string
-		wantSurfaceID    string
+		handle          string
+		wantWorkspaceID string
+		wantSurfaceID   string
 	}{
 		{"workspace:1|surface:1", "workspace:1", "surface:1"},
 		{"ws_abc|surf_def", "ws_abc", "surf_def"},

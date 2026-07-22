@@ -59,9 +59,9 @@ func TestSelect_OrcaAvailable(t *testing.T) {
 
 func TestParseOrcaWindow(t *testing.T) {
 	tests := []struct {
-		handle              string
-		wantContainerID     string
-		wantTerminalID      string
+		handle          string
+		wantContainerID string
+		wantTerminalID  string
 	}{
 		{"container:1|terminal:1", "container:1", "terminal:1"},
 		{"ctn_abc|term_def", "ctn_abc", "term_def"},
