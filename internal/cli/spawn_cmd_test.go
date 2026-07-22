@@ -53,8 +53,12 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error (tmux not on PATH), got nil")
 	}
-	if !strings.Contains(err.Error(), "tmux") {
-		t.Errorf("expected error mentioning 'tmux' (from meta backend), got: %v", err)
+	// TestSendCmd_UsesMetaBackend — verifies send uses backend from task meta
+	// instead of global config. With typed prompt submission, TmuxBackend returns
+	// unsupported (no PromptSubmitter). The error should reference the backend
+	// that was actually used (TmuxBackend), not the config default (herdr).
+	if !strings.Contains(err.Error(), "TmuxBackend") && !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("expected error mentioning TmuxBackend/unsupported (from meta backend), got: %v", err)
 	}
 }
 

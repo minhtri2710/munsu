@@ -2550,12 +2550,13 @@ func sendNudge(parentHome string, sm Info) error {
 		return fmt.Errorf("%s: marker message %q does not match %q — marker remains", sm.ID, marker["message"], expectedMessage)
 	}
 
-	// SendKeys one short re-read message. Never send charter content.
-	if err := bk.SendKeys(windowID, "/re-read-agents"); err != nil {
-		return fmt.Errorf("%s: send failed — marker remains: %v", sm.ID, err)
+	// Send one short re-read message via typed prompt submission. Never send charter content.
+	result := session.SubmitPrompt(bk, windowID, "/re-read-agents")
+	if !result.Acknowledged() {
+		return fmt.Errorf("%s: send not acknowledged (status=%s) — marker remains", sm.ID, result.Status)
 	}
 
-	// After successful SendKeys, update durable meta with actual applied
+	// After successful prompt submission, update durable meta with actual applied
 	// commit and deterministic digest BEFORE removing marker.
 	meta["applied_commit"] = marker["commit"]
 	meta["applied_digest"] = marker["instructions"]
