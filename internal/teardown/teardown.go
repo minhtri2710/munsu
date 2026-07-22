@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -298,15 +300,41 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 		return nil, fmt.Errorf("checking worktree %s: %w", wtPath, err)
 	}
 
-	// Check worktree is not dirty
+	// Check worktree is not dirty (known launch artifacts are always allowed)
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = wtPath
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("checking git status: %w", err)
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		return nil, fmt.Errorf("worktree %s has uncommitted changes (use --force to override)", wtPath)
+	raw := strings.TrimSpace(string(out))
+	if raw != "" {
+		// Filter out known munsu-owned launch artifacts (e.g. .soldier-charter.md,
+		// .soldier-envelope.json, .soldier-prompt.md, .soldier-brief.md,
+		// .soldier-launch.sh). These are lifecycle-owned and cleanable during
+		// normal teardown. Any other untracked/modified files still fail.
+		lines := strings.Split(raw, "\n")
+		allowlist := make(map[string]bool)
+		for _, name := range soldier.LaunchArtifactNames() {
+			allowlist[name] = true
+		}
+		var remaining []string
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// porcelain format: XY filename or XY "filename with spaces"
+			// Skip the two status chars and optional space, then parse filename.
+			name := parsePorcelainFilename(line)
+			if name != "" && allowlist[name] {
+				continue
+			}
+			remaining = append(remaining, line)
+		}
+		if len(remaining) > 0 {
+			return nil, fmt.Errorf("worktree %s has uncommitted changes (use --force to override)\n  %s", wtPath, strings.Join(remaining, "\n  "))
+		}
 	}
 
 	// --- Merge-proof checks (topology-aware) ---
@@ -486,6 +514,29 @@ func reapWorktreeHolders(wtPath string) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// parsePorcelainFilename extracts the filename from a git status --porcelain line.
+// Porcelain format: XY FILENAME, where X is the staging status and Y is the
+// worktree status. For filenames with spaces, git quotes them: XY "filename".
+func parsePorcelainFilename(line string) string {
+	if len(line) < 4 {
+		return ""
+	}
+	// Skip the two status characters and the separator space.
+	rest := strings.TrimSpace(line[2:])
+	if rest == "" {
+		return ""
+	}
+	// Handle quoted filenames (spaces or special chars).
+	if strings.HasPrefix(rest, "\"") {
+		unquoted, err := strconv.Unquote(rest)
+		if err != nil {
+			return rest
+		}
+		return unquoted
+	}
+	return rest
 }
 
 // otherWorkspaceRefs scans all task meta files in homeDir for references to the given
