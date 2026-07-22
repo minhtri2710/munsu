@@ -148,23 +148,22 @@ func newSendCmd() *cobra.Command {
 			if isCaptain {
 				sendLine = marker.MarkFromGeneral(line)
 			}
-			if isCaptain && !bk.Alive(windowID) {
-				smID := captain.CaptainIDFromTask(id, meta)
-				if qErr := captain.EnqueueSendOutbox(ctx.Home, smID, sendLine); qErr != nil {
-					return fmt.Errorf("captain %s pane dead and outbox enqueue failed: %w", id, qErr)
-				}
-				return fmt.Errorf("captain %s pane dead: marked send queued under state/%s/%s; relaunch captain then munsu captain converge", id, captain.SendOutboxDir, smID)
-			}
-			if err := bk.SendKeys(windowID, sendLine); err != nil {
+
+			// Use typed prompt submission when available; falls back to SendKeys
+			// for raw commands and unsupported backends.
+			result := session.SubmitPrompt(bk, windowID, sendLine)
+			if !result.Acknowledged() {
 				if isCaptain {
 					smID := captain.CaptainIDFromTask(id, meta)
 					if qErr := captain.EnqueueSendOutbox(ctx.Home, smID, sendLine); qErr != nil {
-						return fmt.Errorf("sending to %s: %v; outbox enqueue also failed: %w", id, err, qErr)
+						return fmt.Errorf("captain %s outbox enqueue failed: %v; prompt status: %s", id, qErr, result.Status)
 					}
-					return fmt.Errorf("sending to %s: %v; marked send queued under state/%s/%s for converge retry", id, err, captain.SendOutboxDir, smID)
+					return fmt.Errorf("captain %s send not acknowledged (status=%s): marked send queued under state/%s/%s for converge retry", id, result.Status, captain.SendOutboxDir, smID)
 				}
-				return fmt.Errorf("sending to %s: %w", id, err)
+				// Non-captain, not acknowledged: return the error.
+				return fmt.Errorf("sending to %s: %s", id, result.String())
 			}
+
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "send",

@@ -177,11 +177,11 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				Kind:          "report",
 				Status:        "success",
 				Data: contract.MessageResult{
-					Message:           fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
-					Injection:         injectResult,
-					EnqueueTimestamp:  enqueueTimestamp,
-					ReceiptTimestamp:  receiptTimestamp,
-					WatcherIdentity:   watcherID,
+					Message:          fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
+					Injection:        injectResult,
+					EnqueueTimestamp: enqueueTimestamp,
+					ReceiptTimestamp: receiptTimestamp,
+					WatcherIdentity:  watcherID,
 				},
 			})
 		},
@@ -256,13 +256,27 @@ func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, sy
 		}
 	}
 
-	// Verify the backend supports both SendKeys and Capture.
-	var afkBk afk.Backend = bk
+	// session.Backend satisfies afk.PaneCapture.
 	var afkCap afk.PaneCapture = bk
 
-	// Build the inject message.
 	injectMsg := fmt.Sprintf("[report] %s: %s (task=%s)", state, msg, taskID)
+	markedMsg := afk.Mark(injectMsg)
+	if syntheticID > 0 {
+		markedMsg = fmt.Sprintf("%s [event=%d]", markedMsg, syntheticID)
+	}
 
-	// Attempt injection via typed DirectInject.
-	return afk.DirectInject(afkBk, afkCap, target.Handle, injectMsg, fmt.Sprintf("%d", syntheticID))
+	safe, verdict, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
+	if err != nil {
+		return afk.InjectResult{Outcome: afk.OutcomeEndpointDead, Verdict: verdict.String(), Target: target.Handle, Error: err.Error()}
+	}
+	if !safe {
+		return afk.InjectResult{Outcome: afk.OutcomeUnsafe, Verdict: verdict.String(), Target: target.Handle}
+	}
+
+	result := session.SubmitPrompt(bk, target.Handle, markedMsg)
+	if !result.Acknowledged() {
+		return afk.InjectResult{Outcome: afk.OutcomeBackendFailed, Verdict: verdict.String(), Target: target.Handle, Error: string(result.Status)}
+	}
+	return afk.InjectResult{Outcome: afk.OutcomeInjected, Verdict: verdict.String(), Target: target.Handle}
+
 }

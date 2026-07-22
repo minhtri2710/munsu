@@ -37,6 +37,29 @@ func (f *outboxFakeBackend) Teardown(windowID string) error {
 	return nil
 }
 
+// LegacyPrompt implements the session.LegacyPrompt interface for test fakes.
+func (f *outboxFakeBackend) LegacyPrompt(windowID, text string) session.PromptResult {
+	if !f.alive {
+		return session.PromptResult{
+			Status: session.PromptEndpointDead,
+			Detail: "fake backend not alive",
+		}
+	}
+	if f.sendErr != nil {
+		return session.PromptResult{
+			Status: session.PromptBackendFailed,
+			Detail: f.sendErr.Error(),
+			Err:    f.sendErr,
+		}
+	}
+	f.sent = append(f.sent, text)
+	return session.PromptResult{
+		Status: session.PromptSubmitted,
+		Detail: "fake legacy send-keys",
+		Legacy: true,
+	}
+}
+
 func installOutboxBackend(t *testing.T, bk session.Backend) {
 	t.Helper()
 	orig := backendForTask
@@ -122,8 +145,8 @@ func TestFlushSendOutbox_RetainsWhenDead(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected flush error when endpoint dead")
 	}
-	if !strings.Contains(err.Error(), "not alive") {
-		t.Errorf("error should mention not alive, got: %v", err)
+	if !strings.Contains(err.Error(), "endpoint-dead") {
+		t.Errorf("error should mention endpoint-dead, got: %v", err)
 	}
 	if len(fake.sent) != 0 {
 		t.Errorf("should not send when dead, sent=%v", fake.sent)
