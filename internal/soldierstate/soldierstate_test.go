@@ -82,14 +82,44 @@ func TestRead_WithWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Window exists in meta — PaneAlive is diagnostic true (window present).
-	// Status is not derived from pane liveness.
-	if !s.PaneAlive {
-		t.Error("PaneAlive should be true when window exists in meta")
+	// Nonexistent window ID probed on backend → PaneAlive should be false.
+	if s.PaneAlive {
+		t.Error("PaneAlive should be false when window is nonexistent on backend")
 	}
 	// No status file — status remains unknown
 	if s.Status != "unknown" {
 		t.Errorf("status = %q, want unknown (no status file)", s.Status)
+	}
+}
+
+func TestRead_HerdrPaneNotFound_ReturnsPaneAliveFalse(t *testing.T) {
+	tmp := t.TempDir()
+	setHomeEnv(t, tmp)
+
+	if err := task.WriteMeta(tmp, "incident-soldier", map[string]string{
+		"backend":       "herdr",
+		"herdr_session": "default",
+		"window":        "default:w6E:p3",
+		"worktree":      tmp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmp, "herdr")
+	script := "#!/usr/bin/env bash\n" +
+		`echo '{"error":{"code":"pane_not_found","message":"pane w6E:p3 not found"}}'` + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
+	s, err := Read(tmp, "incident-soldier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PaneAlive {
+		t.Errorf("s.PaneAlive = true, want false when Herdr returns pane_not_found")
 	}
 }
 

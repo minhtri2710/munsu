@@ -5,6 +5,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,9 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/hometag"
 )
+
+// ErrPaneNotFound is returned by session backends when a pane is confirmed not found or dead.
+var ErrPaneNotFound = errors.New("pane not found")
 
 // Backend defines the operations for managing agent session windows.
 type Backend interface {
@@ -115,6 +119,7 @@ func Resolve(homeDir string, backendOverride string) (Backend, string, error) {
 		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", name)
 	}
 }
+
 // BackendForTask resolves the session backend for a task using its metadata.
 // When the task metadata has a non-empty "backend" field, it is used as the
 // exact backend name. Otherwise, resolution falls through to the config file

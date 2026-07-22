@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -262,6 +263,58 @@ func TestParseWindow(t *testing.T) {
 		if paneID != tt.wantPaneID {
 			t.Errorf("ParseWindow(%q) paneID = %q, want %q", tt.handle, paneID, tt.wantPaneID)
 		}
+	}
+}
+
+func TestHerdrBackend_PaneIDAndEffectiveSession(t *testing.T) {
+	h := NewHerdrBackend("default")
+
+	// 2-colon window handle (session:workspace:pane)
+	if sess := h.effectiveSession("default:w6E:p3"); sess != "default" {
+		t.Errorf("effectiveSession(default:w6E:p3) = %q, want default", sess)
+	}
+	if p := herdrPaneID("default:w6E:p3"); p != "w6E:p3" {
+		t.Errorf("herdrPaneID(default:w6E:p3) = %q, want w6E:p3", p)
+	}
+
+	// 1-colon window handle (workspace:pane)
+	if sess := h.effectiveSession("w6E:p3"); sess != "default" {
+		t.Errorf("effectiveSession(w6E:p3) = %q, want default", sess)
+	}
+	if p := herdrPaneID("w6E:p3"); p != "w6E:p3" {
+		t.Errorf("herdrPaneID(w6E:p3) = %q, want w6E:p3", p)
+	}
+
+	// Foreign session handle (foreign-session:wTest:p1)
+	if sess := h.effectiveSession("foreign-session:wTest:p1"); sess != "foreign-session" {
+		t.Errorf("effectiveSession(foreign-session:wTest:p1) = %q, want foreign-session", sess)
+	}
+	if p := herdrPaneID("foreign-session:wTest:p1"); p != "wTest:p1" {
+		t.Errorf("herdrPaneID(foreign-session:wTest:p1) = %q, want wTest:p1", p)
+	}
+}
+
+func TestHerdrBackend_CheckAlive_PaneNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "herdr")
+	script := "#!/usr/bin/env bash\n" +
+		`echo '{"error":{"code":"pane_not_found","message":"pane w6E:p3 not found"}}'` + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
+	h := NewHerdrBackend("default")
+	alive, err := h.CheckAlive("default:w6E:p3")
+	if alive {
+		t.Error("CheckAlive returned true for pane_not_found")
+	}
+	if !errors.Is(err, ErrPaneNotFound) {
+		t.Errorf("CheckAlive error = %v, want ErrPaneNotFound", err)
+	}
+	if h.Alive("default:w6E:p3") {
+		t.Error("Alive returned true for pane_not_found")
 	}
 }
 

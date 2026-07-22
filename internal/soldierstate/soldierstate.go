@@ -1,10 +1,11 @@
 // Package soldierstate reads and reports the current state of a soldier.
 // The precedence hierarchy for current-state truth is:
-//   1. Backlog state (tasks-axi or manual backlog: done/blocked)
-//   2. Task meta file (status + description from last report)
-//   3. Provider state (GitHub PR merged/closed/open)
-//   4. Typed event log (keyed open/close transitions)
-//   5. Status file fallback (append-only .status lines)
+//  1. Backlog state (tasks-axi or manual backlog: done/blocked)
+//  2. Task meta file (status + description from last report)
+//  3. Provider state (GitHub PR merged/closed/open)
+//  4. Typed event log (keyed open/close transitions)
+//  5. Status file fallback (append-only .status lines)
+//
 // Pane prose is diagnostic only — never derived as current-state truth.
 package soldierstate
 
@@ -18,6 +19,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/nostatus"
+	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -177,7 +179,11 @@ func Read(homeDir string, id string) (*State, error) {
 	// Terminal output is NOT truth. Pane liveness is captured for diagnostic
 	// display but never used as current-state authority.
 	if windowID, ok := meta["window"]; ok && windowID != "" {
-		s.PaneAlive = true // marked as having a window; actual liveness is backend-specific
+		if bk, _, err := session.BackendForTask(homeDir, meta); err == nil && bk != nil {
+			s.PaneAlive = bk.Alive(windowID)
+		} else {
+			s.PaneAlive = false
+		}
 	}
 
 	return s, nil

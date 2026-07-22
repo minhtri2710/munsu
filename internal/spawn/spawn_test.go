@@ -1545,3 +1545,96 @@ esac
 	}
 	return tmpDir
 }
+
+func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T) {
+	t.Setenv("MUNSU_ROLE", "general")
+	t.Chdir(t.TempDir())
+	homeDir := t.TempDir()
+
+	configDir := filepath.Join(homeDir, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [ ] reconcile-task: Ready\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	projectDir := filepath.Join(homeDir, "projects", "test-proj")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "AGENTS.md"), []byte("# instructions"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmdInit := exec.Command("git", "init")
+	cmdInit.Dir = projectDir
+	if err := cmdInit.Run(); err != nil {
+		t.Fatal(err)
+	}
+	cmdCommit := exec.Command("git", "commit", "--allow-empty", "-m", "initial commit")
+	cmdCommit.Dir = projectDir
+	cmdCommit.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com")
+	if err := cmdCommit.Run(); err != nil {
+		t.Fatal(err)
+	}
+	projectsPath := filepath.Join(homeDir, "data", "projects.md")
+	if err := os.MkdirAll(filepath.Dir(projectsPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectsPath, []byte("# Projects\n\n- test-proj [local-only] - Test project (added 2025-01-01)\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	briefDir := filepath.Join(homeDir, "data", "reconcile-task")
+	if err := os.MkdirAll(briefDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(briefDir, "brief.md"), []byte("# test brief"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBk := &fakeBackend{
+		newWindow: func(session, name string) (string, error) {
+			return "default:w6F:p3", nil
+		},
+		alive: func(windowID string) bool {
+			return false // pane failed verification immediately
+		},
+	}
+
+	args := Args{
+		ID:          "reconcile-task",
+		ProjectName: "test-proj",
+		HomeDir:     homeDir,
+		Session:     fakeBk,
+		Mode:        "local-only",
+	}
+
+	_, err := Run(args)
+	if err == nil {
+		t.Fatal("Run expected error when post-create verification fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed verification") {
+		t.Errorf("expected failed verification error, got: %v", err)
+	}
+
+	metaPath := filepath.Join(homeDir, "state", "reconcile-task.meta")
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Errorf("task meta file should NOT exist on failed verification: %s", metaPath)
+	}
+
+	statusLines, _ := task.ReadStatus(homeDir, "reconcile-task")
+	for _, l := range statusLines {
+		if strings.Contains(l, "working: spawned") {
+			t.Errorf("status log should NOT contain 'working: spawned', got: %s", l)
+		}
+	}
+}

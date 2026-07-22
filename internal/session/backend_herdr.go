@@ -73,12 +73,12 @@ func (h *HerdrBackend) workspaceIDToClose() string {
 }
 
 // effectiveSession returns the session for a given window handle.
-// If the window handle has a session prefix that differs from h.Session,
-// it uses the window's session (belt-and-suspenders).
+// For handles with 2+ colons (e.g. "default:w6E:p3"), the session prefix is extracted.
+// For handles with 0-1 colons (e.g. "w6E:p3"), the backend's configured session is used.
 func (h *HerdrBackend) effectiveSession(windowID string) string {
-	sess, _ := ParseWindow(windowID)
-	if sess != "" && sess != h.Session {
-		return sess
+	idx := strings.Index(windowID, ":")
+	if idx >= 0 && strings.Contains(windowID[idx+1:], ":") {
+		return windowID[:idx]
 	}
 	return h.Session
 }
@@ -101,7 +101,13 @@ func (h *HerdrBackend) herdr(args ...string) (string, error) {
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("herdr %v: %s", fullArgs, strings.TrimSpace(string(ee.Stderr)))
+			combined := strings.TrimSpace(string(ee.Stderr))
+			if combined == "" {
+				combined = strings.TrimSpace(string(out))
+			}
+			if combined != "" {
+				return "", fmt.Errorf("herdr %v: %s", fullArgs, combined)
+			}
 		}
 		return "", fmt.Errorf("herdr %v: %w", fullArgs, err)
 	}
@@ -118,13 +124,13 @@ func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, 
 	return h.herdr(args...)
 }
 
-// isNotFoundErr returns true for 'not found' / 'not_found' / '_not_found' herdr errors.
+// isNotFoundErr returns true for 'not found' / 'not_found' / 'pane_not_found' herdr errors.
 func isNotFoundErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found")
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "not_found") || strings.Contains(msg, "pane_not_found")
 }
 
 // herdrTabCreateResponse represents the JSON response from herdr tab create.
@@ -252,16 +258,21 @@ func ParseWindow(handle string) (session, paneID string) {
 	return handle[:idx], handle[idx+1:]
 }
 
-// paneID extracts the pane ID part from a window handle (session:pane or bare pane).
-func paneID(windowID string) string {
-	_, p := ParseWindow(windowID)
-	return p
+// herdrPaneID extracts the pane ID part from a window handle for Herdr CLI calls.
+// For handles with 2+ colons (e.g. "default:w6E:p3"), the pane ID is "w6E:p3".
+// For handles with 0-1 colons (e.g. "w6E:p3"), the full handle is the pane ID.
+func herdrPaneID(windowID string) string {
+	idx := strings.Index(windowID, ":")
+	if idx >= 0 && strings.Contains(windowID[idx+1:], ":") {
+		return windowID[idx+1:]
+	}
+	return windowID
 }
 
 // SendKeys sends text followed by Enter to the pane identified by windowID.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) SendKeys(windowID, text string) error {
-	pid := paneID(windowID)
+	pid := herdrPaneID(windowID)
 	if _, err := h.herdrForWindow(windowID, "pane", "send-text", pid, text); err != nil {
 		return err
 	}
@@ -272,14 +283,30 @@ func (h *HerdrBackend) SendKeys(windowID, text string) error {
 // Capture reads the last N lines of output from the pane.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (h *HerdrBackend) Capture(windowID string, lines int) (string, error) {
-	return h.herdrForWindow(windowID, "pane", "read", paneID(windowID), "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
+	return h.herdrForWindow(windowID, "pane", "read", herdrPaneID(windowID), "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
+}
+
+// CheckAlive checks whether the pane still exists via herdr pane get.
+// Returns (true, nil) if confirmed alive.
+// Returns (false, ErrPaneNotFound) if confirmed absent (e.g. pane_not_found).
+// Returns (false, err) if execution or CLI error occurred (unknown liveness).
+func (h *HerdrBackend) CheckAlive(windowID string) (bool, error) {
+	_, err := h.herdrForWindow(windowID, "pane", "get", herdrPaneID(windowID))
+	if err == nil {
+		return true, nil
+	}
+	if isNotFoundErr(err) {
+		return false, ErrPaneNotFound
+	}
+	return false, err
 }
 
 // Alive checks whether the pane still exists via herdr pane get.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
+// Returns true ONLY when confirmed alive.
 func (h *HerdrBackend) Alive(windowID string) bool {
-	_, err := h.herdrForWindow(windowID, "pane", "get", paneID(windowID))
-	return err == nil
+	alive, err := h.CheckAlive(windowID)
+	return err == nil && alive
 }
 
 // tabIDToClose returns the tab ID to close during teardown.
@@ -299,7 +326,7 @@ func (h *HerdrBackend) tabIDToClose() string {
 // with matching hometag label and no deny-list entries, we close the workspace
 // to prevent husk tabs. Idempotent: 'not found' errors are silently ignored.
 func (h *HerdrBackend) Teardown(windowID string) error {
-	pid := paneID(windowID)
+	pid := herdrPaneID(windowID)
 
 	// Close pane first (idempotent)
 	_, err := h.herdrForWindow(windowID, "pane", "close", pid)
