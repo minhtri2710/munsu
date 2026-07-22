@@ -12,6 +12,7 @@ import (
 // from unknown keys.
 var KnownKeys = []string{
 	"backend",
+	"parent-home",
 	"soldier-harness",
 	"captain-harness",
 	"model",

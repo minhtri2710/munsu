@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/supervision"
 )
@@ -72,6 +73,10 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Env = append(os.Environ(), "MUNSU_HOME="+captainHome)
+		// Pass the General parent home for terminal receipt relay.
+		if parentHome, err := config.Get(captainHome, "parent-home"); err == nil && parentHome != "" {
+			cmd.Env = append(cmd.Env, "MUNSU_PARENT_STATUS="+parentHome)
+		}
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("starting watcher for captain home %s: %w", captainHome, err)
