@@ -123,6 +123,12 @@ func probeGlabCapability(runner GlabRunner) capability.State {
 		return capability.Unsupported
 	}
 
+	// Verify authentication via glab auth status
+	authOut, err := runner.Run("auth", "status")
+	if err != nil || !strings.Contains(string(authOut), "authenticated") {
+		return capability.Failed
+	}
+
 	return capability.Ready
 }
 

@@ -19,7 +19,23 @@ merge PRs, and merge branches locally.`,
 	cmd.AddCommand(newPRCheckCmd())
 	cmd.AddCommand(newPRMergeCmd())
 	cmd.AddCommand(newMergeLocalCmd())
+	cmd.AddCommand(newMergeStatusCmd())
 	return cmd
+}
+
+func newMergeStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "merge-status <id>",
+		Short: "Query delivery merge status via provider-neutral seam",
+		Long: `Query the current merge status of a delivery identity (PR or MR)
+via the provider-neutral QueryDeliveryMergeStatus seam.
+Exit: 0 = merged, 1 = not merged/open/closed, 2+ = error.
+Used by watcher .check scripts.`,
+		Args: ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return delivery.MergeStatus(ctx.Home, args[0])
+		}),
+	}
 }
 
 func newReviewDiffCmd() *cobra.Command {

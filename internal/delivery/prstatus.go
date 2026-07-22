@@ -128,7 +128,20 @@ func parseGLMergeStatus(data []byte) (*PRMergeStatus, error) {
 		return nil, fmt.Errorf("parsing glab mr view JSON: %w", err)
 	}
 
+	// Fail closed on empty or unknown state
+	if raw.State == "" {
+		return nil, fmt.Errorf("glab mr view returned empty state")
+	}
+
+	// Fail closed on empty head SHA
+	if raw.SHA == "" {
+		return nil, fmt.Errorf("glab mr view returned empty sha")
+	}
+
 	normalizedState := normalizeGlabState(raw.State)
+	if normalizedState == "" {
+		return nil, fmt.Errorf("glab mr view returned unrecognized state %q", raw.State)
+	}
 
 	status := &PRMergeStatus{
 		State:   normalizedState,

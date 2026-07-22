@@ -39,6 +39,9 @@ func readyRunner() *fakeGlabRunner {
 			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
 				return []byte("view a merge request\n"), nil
 			}
+			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
+				return []byte("authenticated to gitlab.com\n"), nil
+			}
 			// mr view with JSON — return valid GitLab JSON
 			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
 				return []byte(fmt.Sprintf(`{
@@ -63,6 +66,9 @@ func mergedRunner() *fakeGlabRunner {
 			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
 				return []byte("view a merge request\n"), nil
 			}
+			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
+				return []byte("authenticated to gitlab.com\n"), nil
+			}
 			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
 				return []byte(`{
 					"sha": "abc123def456abc123def456abc123def456abc1",
@@ -86,6 +92,9 @@ func closedRunner() *fakeGlabRunner {
 			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
 				return []byte("view a merge request\n"), nil
 			}
+			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
+				return []byte("authenticated to gitlab.com\n"), nil
+			}
 			if len(args) >= 4 && args[0] == "mr" && args[1] == "view" {
 				return []byte(`{
 					"sha": "abc123def456abc123def456abc123def456abc1",
@@ -105,6 +114,23 @@ func failedVersionRunner() *fakeGlabRunner {
 		runFn: func(args ...string) ([]byte, error) {
 			if len(args) >= 1 && args[0] == "--version" {
 				return nil, errors.New("exec format error")
+			}
+			return []byte("{}"), nil
+		},
+	}
+}
+
+func failedAuthRunner() *fakeGlabRunner {
+	return &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			if len(args) >= 1 && args[0] == "--version" {
+				return []byte("glab version 1.45.0"), nil
+			}
+			if len(args) >= 3 && args[0] == "mr" && args[1] == "view" && args[2] == "--help" {
+				return []byte("view a merge request\n"), nil
+			}
+			if len(args) >= 2 && args[0] == "auth" && args[1] == "status" {
+				return nil, errors.New("not authenticated")
 			}
 			return []byte("{}"), nil
 		},
@@ -158,6 +184,14 @@ func TestProbeGlabCapability_Ready(t *testing.T) {
 	state := probeGlabCapability(runner)
 	if state != capability.Ready {
 		t.Errorf("expected Ready, got %v", state)
+	}
+}
+
+func TestProbeGlabCapability_AuthFailure(t *testing.T) {
+	runner := failedAuthRunner()
+	state := probeGlabCapability(runner)
+	if state != capability.Failed {
+		t.Errorf("expected Failed, got %v", state)
 	}
 }
 
