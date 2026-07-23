@@ -2,7 +2,6 @@
 package selfupdate
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +52,18 @@ func mkDir(t *testing.T, root, name string) {
 	if err := os.MkdirAll(filepath.Join(root, name), 0755); err != nil {
 		t.Fatalf("mkdir %s: %v", name, err)
 	}
+}
+
+// initRemote creates a bare repo and sets it as origin on the given repo,
+// then pushes main and sets origin/HEAD.
+func initRemote(t *testing.T, localRoot string) string {
+	t.Helper()
+	bare := t.TempDir()
+	runCmd(t, bare, "git", "init", "--bare")
+	runCmd(t, localRoot, "git", "remote", "add", "origin", bare)
+	runCmd(t, localRoot, "git", "push", "-u", "origin", "main")
+	runCmd(t, bare, "git", "symbolic-ref", "HEAD", "refs/heads/main")
+	return bare
 }
 
 // --- TestResolveInstallRoot_Precedence ---
@@ -340,24 +351,6 @@ func TestVerifyMunsuModule_NoGoMod(t *testing.T) {
 	}
 }
 
-// gitDirCleanup ensures the .git directory tree is writable before TempDir
-// cleanup. Some git operations create objects and refs with 0444 permissions
-// that os.RemoveAll cannot always handle on certain platforms/CI environments.
-func gitDirCleanup(t *testing.T, root string) {
-	t.Helper()
-	gitDir := filepath.Join(root, ".git")
-	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
-		return
-	}
-	filepath.Walk(gitDir, func(path string, fi os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		os.Chmod(path, 0755)
-		return nil
-	})
-}
-
 // --- TestUpdateIn_Safety ---
 
 // TestUpdateIn_DirtyRefuses verifies that a dirty worktree is rejected.
@@ -365,22 +358,13 @@ func TestUpdateIn_DirtyRefuses(t *testing.T) {
 	repo := t.TempDir()
 	initMunsuRepo(t, repo, "main")
 
-	// Create an untracked file (this doesn't make the tree dirty in
-	// git-status --porcelain sense — only tracked modified files do).
-	// Write a tracked file.
+	// Write a tracked file and commit it, then modify without staging.
 	writeFile(t, repo, "foo.go", "package foo\n")
 	runCmd(t, repo, "git", "add", "foo.go")
 	runCmd(t, repo, "git", "commit", "-m", "add foo")
-
-	// Now modify it without staging.
 	writeFile(t, repo, "foo.go", "package foo\n// dirty\n")
 
-	fakeBin := filepath.Join(repo, "munsu")
-	writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-	os.Chmod(fakeBin, 0755)
-
 	err := UpdateIn(repo)
-	gitDirCleanup(t, repo)
 	if err == nil {
 		t.Fatal("expected error for dirty worktree")
 	}
@@ -398,101 +382,38 @@ func TestUpdateIn_DetachedHeadRefuses(t *testing.T) {
 	runCmd(t, repo, "git", "add", "a.go")
 	runCmd(t, repo, "git", "commit", "-m", "add a")
 
-	// Detach HEAD to the commit.
+	// Add remote so UpdateIn can reach the detached-HEAD checks.
+	initRemote(t, repo)
+
 	runCmd(t, repo, "git", "checkout", "--detach")
 
-	fakeBin := filepath.Join(repo, "munsu")
-	writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-	os.Chmod(fakeBin, 0755)
-
 	err := UpdateIn(repo)
-	gitDirCleanup(t, repo)
 	if err == nil {
 		t.Fatal("expected error for detached HEAD")
 	}
+	if !strings.Contains(err.Error(), "detached HEAD") {
+		t.Errorf("error should mention detached HEAD, got: %v", err)
+	}
 }
 
-// TestUpdateIn_DefaultBranchOnly verifies that non-default branches are
+// TestUpdateIn_NonDefaultBranchRefuses verifies that non-default branches are
 // rejected (not just detached HEAD).
 func TestUpdateIn_NonDefaultBranchRefuses(t *testing.T) {
 	repo := t.TempDir()
 	initMunsuRepo(t, repo, "main")
 
-	// Create and switch to "develop" branch.
+	// Add remote so UpdateIn can resolve default branch.
+	initRemote(t, repo)
+
 	runCmd(t, repo, "git", "branch", "develop", "main")
 	runCmd(t, repo, "git", "checkout", "develop")
 
-	fakeBin := filepath.Join(repo, "munsu")
-	writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-	os.Chmod(fakeBin, 0755)
-
 	err := UpdateIn(repo)
-	gitDirCleanup(t, repo)
 	if err == nil {
 		t.Fatal("expected error for non-default branch")
 	}
-}
-
-// --- Regression: repeated TempDir cleanup after git operations ---
-
-// TestUpdateIn_DetachedHeadRefuses_Repeated runs the detached-head safety
-// path repeatedly with explicit .git cleanup, verifying that TempDir can
-// always clean up after git operations leave read-only objects.
-func TestUpdateIn_DetachedHeadRefuses_Repeated(t *testing.T) {
-	for i := 0; i < 30; i++ {
-		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
-			repo := t.TempDir()
-			initMunsuRepo(t, repo, "main")
-
-			writeFile(t, repo, "a.go", "package a\n")
-			runCmd(t, repo, "git", "add", "a.go")
-			runCmd(t, repo, "git", "commit", "-m", "add a")
-			runCmd(t, repo, "git", "checkout", "--detach")
-
-			fakeBin := filepath.Join(repo, "munsu")
-			writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-			os.Chmod(fakeBin, 0755)
-
-			err := UpdateIn(repo)
-			// Direct test of the TempDir cleanup fix: run chmod before
-			// os.RemoveAll to ensure .git can be fully removed.
-			gitDirCleanup(t, repo)
-			if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
-				t.Fatalf(".git cleanup failed (iter %d): %v", i, err)
-			}
-			if err == nil {
-				t.Fatal("expected error for detached HEAD")
-			}
-		})
-	}
-}
-
-// TestUpdateIn_DirtyRefuses_Repeated runs the dirty-worktree safety path
-// repeatedly to stress TempDir cleanup.
-func TestUpdateIn_DirtyRefuses_Repeated(t *testing.T) {
-	for i := 0; i < 30; i++ {
-		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
-			repo := t.TempDir()
-			initMunsuRepo(t, repo, "main")
-
-			writeFile(t, repo, "foo.go", "package foo\n")
-			runCmd(t, repo, "git", "add", "foo.go")
-			runCmd(t, repo, "git", "commit", "-m", "add foo")
-			writeFile(t, repo, "foo.go", "package foo\n// dirty\n")
-
-			fakeBin := filepath.Join(repo, "munsu")
-			writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-			os.Chmod(fakeBin, 0755)
-
-			err := UpdateIn(repo)
-			gitDirCleanup(t, repo)
-			if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
-				t.Fatalf(".git cleanup failed (iter %d): %v", i, err)
-			}
-			if err == nil {
-				t.Fatal("expected error for dirty worktree")
-			}
-		})
+	if !strings.Contains(err.Error(), "does not match default branch") {
+		t.Errorf("error should mention does not match default branch, got: %v", err)
 	}
 }
 

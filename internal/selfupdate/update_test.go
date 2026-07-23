@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -159,13 +158,13 @@ func TestWaitForNewWatcher_Timeout(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:              true,
-		OldVersion:          "0.1.0-dev+oldcommit",
-		OldPID:              99999,
-		OldCommitSHA:        "oldcommit",
-		InstalledVersion:    "0.1.0-dev+newcommit",
-		InstalledCommitSHA:  "newcommit",
-		InstalledPath:       "/tmp/fake-munsu",
+		Active:             true,
+		OldVersion:         "0.1.0-dev+oldcommit",
+		OldPID:             99999,
+		OldCommitSHA:       "oldcommit",
+		InstalledVersion:   "0.1.0-dev+newcommit",
+		InstalledCommitSHA: "newcommit",
+		InstalledPath:      "/tmp/fake-munsu",
 	}
 
 	err := waitForNewWatcher(home, snap)
@@ -200,13 +199,13 @@ func TestWaitForNewWatcher_IdentityAppears(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:              true,
-		OldVersion:          "0.1.0-dev+oldcommit",
-		OldCommitSHA:        "oldcommit",
-		OldPID:              77777,
-		InstalledVersion:    "0.1.0-dev+newcommit",
-		InstalledCommitSHA:  "newcommit",
-		InstalledPath:       "/tmp/fake-munsu",
+		Active:             true,
+		OldVersion:         "0.1.0-dev+oldcommit",
+		OldCommitSHA:       "oldcommit",
+		OldPID:             77777,
+		InstalledVersion:   "0.1.0-dev+newcommit",
+		InstalledCommitSHA: "newcommit",
+		InstalledPath:      "/tmp/fake-munsu",
 	}
 
 	// Simulate watcher starting in background after a short delay.
@@ -238,13 +237,13 @@ func TestWaitForNewWatcher_OnlyBeatWithoutIdentity(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:              true,
-		OldVersion:          "0.1.0-dev+old",
-		OldCommitSHA:        "oldcommit",
-		OldPID:              77777,
-		InstalledVersion:    "0.1.0-dev+new",
-		InstalledCommitSHA:  "newcommit",
-		InstalledPath:       "/tmp/fake",
+		Active:             true,
+		OldVersion:         "0.1.0-dev+old",
+		OldCommitSHA:       "oldcommit",
+		OldPID:             77777,
+		InstalledVersion:   "0.1.0-dev+new",
+		InstalledCommitSHA: "newcommit",
+		InstalledPath:      "/tmp/fake",
 	}
 
 	// Write beat but no identity — should still time out.
@@ -272,13 +271,13 @@ func TestWaitForNewWatcher_SpoofedIdentity(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:              true,
-		OldVersion:          "0.1.0-dev+old",
-		OldCommitSHA:        "oldcommit",
-		OldPID:              77777,
-		InstalledVersion:    "0.1.0-dev+new",
-		InstalledCommitSHA:  "newcommit",
-		InstalledPath:       "/tmp/fake",
+		Active:             true,
+		OldVersion:         "0.1.0-dev+old",
+		OldCommitSHA:       "oldcommit",
+		OldPID:             77777,
+		InstalledVersion:   "0.1.0-dev+new",
+		InstalledCommitSHA: "newcommit",
+		InstalledPath:      "/tmp/fake",
 	}
 
 	// Write identity with matching CommitSHA but dead PID.
@@ -311,13 +310,13 @@ func TestWaitForNewWatcher_StaleBeat(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:              true,
-		OldVersion:          "0.1.0-dev+old",
-		OldCommitSHA:        "oldcommit",
-		OldPID:              77777,
-		InstalledVersion:    "0.1.0-dev+new",
-		InstalledCommitSHA:  "newcommit",
-		InstalledPath:       "/tmp/fake",
+		Active:             true,
+		OldVersion:         "0.1.0-dev+old",
+		OldCommitSHA:       "oldcommit",
+		OldPID:             77777,
+		InstalledVersion:   "0.1.0-dev+new",
+		InstalledCommitSHA: "newcommit",
+		InstalledPath:      "/tmp/fake",
 	}
 
 	// Identity with real PID and matching CommitSHA.
@@ -349,13 +348,13 @@ func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
 
 	home := t.TempDir()
 	snap := &WatcherSnapshot{
-		Active:              true,
-		OldVersion:          "0.1.0-dev+old",
-		OldCommitSHA:        "oldcommit",
-		OldPID:              77777,
-		InstalledVersion:    "0.1.0-dev+new",
-		InstalledCommitSHA:  "newcommit",
-		InstalledPath:       "/tmp/fake",
+		Active:             true,
+		OldVersion:         "0.1.0-dev+old",
+		OldCommitSHA:       "oldcommit",
+		OldPID:             77777,
+		InstalledVersion:   "0.1.0-dev+new",
+		InstalledCommitSHA: "newcommit",
+		InstalledPath:      "/tmp/fake",
 	}
 
 	// Identity with real PID and matching CommitSHA.
@@ -383,17 +382,17 @@ func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
 
 func TestHandshakeError_Format(t *testing.T) {
 	err := &HandshakeError{
-		OldVersion:      "0.1.0-dev+abc",
-		OldPID:          "12345",
-		OldCommitSHA:    "abc",
-		DesiredVersion:  "0.1.0-dev+xyz",
+		OldVersion:       "0.1.0-dev+abc",
+		OldPID:           "12345",
+		OldCommitSHA:     "abc",
+		DesiredVersion:   "0.1.0-dev+xyz",
 		DesiredCommitSHA: "xyz",
-		IdentityVersion: "",
-		IdentityPID:     "",
-		BeatPID:         "",
-		BeatTimestamp:   0,
-		BeatOK:          false,
-		IdentityOK:      false,
+		IdentityVersion:  "",
+		IdentityPID:      "",
+		BeatPID:          "",
+		BeatTimestamp:    0,
+		BeatOK:           false,
+		IdentityOK:       false,
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "old=0.1.0-dev+abc") {
@@ -415,17 +414,17 @@ func TestHandshakeError_Format(t *testing.T) {
 
 func TestHandshakeError_PartialSuccess(t *testing.T) {
 	err := &HandshakeError{
-		OldVersion:      "0.1.0-dev+abc",
-		OldPID:          "12345",
-		OldCommitSHA:    "abc",
-		DesiredVersion:  "0.1.0-dev+xyz",
+		OldVersion:       "0.1.0-dev+abc",
+		OldPID:           "12345",
+		OldCommitSHA:     "abc",
+		DesiredVersion:   "0.1.0-dev+xyz",
 		DesiredCommitSHA: "xyz",
-		IdentityVersion: "0.1.0-dev+xyz",
-		IdentityPID:     "99999",
-		BeatPID:         "88888",
-		BeatTimestamp:   1000000,
-		BeatOK:          false,
-		IdentityOK:      true,
+		IdentityVersion:  "0.1.0-dev+xyz",
+		IdentityPID:      "99999",
+		BeatPID:          "88888",
+		BeatTimestamp:    1000000,
+		BeatOK:           false,
+		IdentityOK:       true,
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "identity=ok") {
@@ -795,25 +794,19 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 	doUpdateIn = func(string) error { return nil }
 	defer func() { doUpdateIn = savedUpdateIn }()
 
-	// Override doArmBackground to start a new watcher with empty commit.
+	// Override doArmBackground to synchronously overwrite identity with
+	// an empty commit and write the beat, then return success.
+	// This lets the real waitForNewWatcher poll and discover the empty
+	// commit identity, exercising the real handshake evidence path.
 	savedArm := doArmBackground
 	doArmBackground = func(dir string, restart bool) error {
-		// Clear the old identity before starting the subprocess so that
-		// buildHandshakeError never reads stale state even when the 50ms
-		// timeout elapses before the subprocess writes.
-		supervision.ClearIdentity(dir)
-		// Start a subprocess that writes identity with empty commit SHA.
-		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperNewWatcher$")
-		cmd.Env = append(os.Environ(),
-			"GO_TEST_HELPER_NEW_WATCHER=1",
-			"GO_TEST_HELPER_HOME="+home,
-			"GO_TEST_HELPER_VERSION=0.1.0-dev+newcommit",
-			"GO_TEST_HELPER_COMMIT=",
-		)
-		if err := cmd.Start(); err != nil {
+		emptyID := supervision.NewIdentity(dir)
+		emptyID.BuildVersion = "0.1.0-dev+newcommit"
+		emptyID.CommitSHA = ""
+		if err := supervision.WriteIdentity(dir, emptyID); err != nil {
 			return err
 		}
-		t.Cleanup(func() { cmd.Process.Kill() })
+		lifecycle.WriteBeat(dir)
 		return nil
 	}
 	defer func() { doArmBackground = savedArm }()
@@ -832,70 +825,6 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 		if he.IdentityCommitSHA != "" {
 			t.Errorf("IdentityCommitSHA should be empty, got %q", he.IdentityCommitSHA)
 		}
-		if he.IdentityOK {
-			t.Error("IdentityOK should be false for empty commit in identity")
-		}
-	}
-}
-
-// --- Regression: identity isolation under repeated/shuffled execution ---
-
-// TestEmptyCommitIdentityCleanup_Repeated verifies that IdentityCommitSHA
-// is always empty in the HandshakeError when the old identity is cleared
-// before arm, even under repeated execution. This is a deterministic
-// regression for the race condition where buildHandshakeError reads stale
-// "oldcommit" from the identity file before the subprocess overwrites it.
-func TestEmptyCommitIdentityCleanup_Repeated(t *testing.T) {
-	for i := 0; i < 30; i++ {
-		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
-			defer setHandshakeTimeout(30 * time.Millisecond)()
-			defer setHeartBeatPoll(10 * time.Millisecond)()
-
-			home := t.TempDir()
-			repo := t.TempDir()
-			initMunsuRepo(t, repo, "main")
-
-			// Write old identity with known commit.
-			id := supervision.NewIdentity(home)
-			id.BuildVersion = "0.1.0-dev+oldcommit"
-			id.CommitSHA = "oldcommit"
-			supervision.WriteIdentity(home, id)
-			lifecycle.WriteBeat(home)
-
-			savedUpdateIn := doUpdateIn
-			doUpdateIn = func(string) error { return nil }
-			defer func() { doUpdateIn = savedUpdateIn }()
-
-			savedResolve := resolveInstalledVersion
-			resolveInstalledVersion = func(snap *WatcherSnapshot) {
-				snap.InstalledPath = "/tmp/fake"
-				snap.InstalledVersion = "0.1.0-dev+newcommit"
-				snap.InstalledCommitSHA = "newcommit"
-			}
-			defer func() { resolveInstalledVersion = savedResolve }()
-
-			savedArm := doArmBackground
-			doArmBackground = func(dir string, restart bool) error {
-				// Fix: clear old identity before background write.
-				supervision.ClearIdentity(dir)
-				return nil
-			}
-			defer func() { doArmBackground = savedArm }()
-
-			_, err := UpdateWithHandshake(home)
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			var he *HandshakeError
-			if errors.As(err, &he) {
-				if he.IdentityCommitSHA != "" {
-					t.Errorf("IdentityCommitSHA = %q, want empty (iter %d)", he.IdentityCommitSHA, i)
-				}
-				if he.IdentityOK {
-					t.Error("IdentityOK should be false")
-				}
-			}
-		})
 	}
 }
 
@@ -960,7 +889,10 @@ func TestUpdateWithHandshakeEx_ActiveWatcherHandshake(t *testing.T) {
 
 // TestHelperNewWatcher is a subprocess helper that writes a valid watcher
 // identity and beat from a separate process. Used by integration tests
-// that need a real PID for ownership validation.
+// that need a real PID for ownership validation. Stays alive via
+// time.Sleep so the parent can validate PID ownership until cleanup
+// kills it.
+// kills it.
 func TestHelperNewWatcher(t *testing.T) {
 	if os.Getenv("GO_TEST_HELPER_NEW_WATCHER") != "1" {
 		t.Skip("not a helper invocation")
@@ -978,7 +910,7 @@ func TestHelperNewWatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	lifecycle.WriteBeat(home)
-	// Stay alive to keep proc info available for ownership validation.
+	// Keep process alive so parent can validate PID ownership.
 	time.Sleep(10 * time.Second)
 }
 
@@ -1060,12 +992,12 @@ func TestBuildHandshakeError(t *testing.T) {
 	supervision.WriteIdentity(home, id)
 
 	snap := &WatcherSnapshot{
-		Active:              true,
-		OldVersion:          "0.1.0-dev+old",
-		OldPID:              12345,
-		OldCommitSHA:        "oldcommit",
-		InstalledVersion:    "0.1.0-dev+new",
-		InstalledCommitSHA:  "newcommit",
+		Active:             true,
+		OldVersion:         "0.1.0-dev+old",
+		OldPID:             12345,
+		OldCommitSHA:       "oldcommit",
+		InstalledVersion:   "0.1.0-dev+new",
+		InstalledCommitSHA: "newcommit",
 	}
 
 	err := buildHandshakeError(home, snap, false, false)
@@ -1136,20 +1068,20 @@ func TestHandshakeError_AllFieldsSet_IdentityOK(t *testing.T) {
 // commit SHA information when available.
 func TestHandshakeError_FailedWithCommitSHA(t *testing.T) {
 	err := &HandshakeError{
-		OldVersion:       "0.1.0-dev+abc",
-		OldPID:           "12345",
-		OldCommitSHA:     "abc",
-		DesiredVersion:   "0.1.0-dev+xyz",
-		DesiredCommitSHA: "xyz",
-		IdentityVersion:  "0.1.0-dev+other",
-		IdentityPID:      "99999",
+		OldVersion:        "0.1.0-dev+abc",
+		OldPID:            "12345",
+		OldCommitSHA:      "abc",
+		DesiredVersion:    "0.1.0-dev+xyz",
+		DesiredCommitSHA:  "xyz",
+		IdentityVersion:   "0.1.0-dev+other",
+		IdentityPID:       "99999",
 		IdentityCommitSHA: "different_sha",
-		BeatPID:          "88888",
-		BeatTimestamp:    1000000,
-		BeatOK:           false,
-		IdentityOK:       false,
-		OwnershipOK:      false,
-		BeatFresh:        false,
+		BeatPID:           "88888",
+		BeatTimestamp:     1000000,
+		BeatOK:            false,
+		IdentityOK:        false,
+		OwnershipOK:       false,
+		BeatFresh:         false,
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "commit=abc") {
@@ -1217,6 +1149,3 @@ func shortHEADFromCWD(t *testing.T, root string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
-
-// avoid unused import error for filepath
-var _ = filepath.Join

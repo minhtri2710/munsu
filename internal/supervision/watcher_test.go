@@ -1212,3 +1212,47 @@ func TestDeadStaleWatcher_AutoRecoverOrFailClosed(t *testing.T) {
 	// Should produce a wake from ScanFleet (status signal).
 	_ = emitted
 }
+
+// TestArmBackground_ClearsStaleIdentity verifies that ArmBackground clears
+// stale identity before invoking the process starter. This tests the real
+// production contract without spawning a daemon.
+func TestArmBackground_ClearsStaleIdentity(t *testing.T) {
+	home := t.TempDir()
+
+	// Write a stale identity with known CommitSHA.
+	id := NewIdentity(home)
+	id.BuildVersion = "0.1.0-dev+stalecommit"
+	id.CommitSHA = "stalecommit"
+	WriteIdentity(home, id)
+
+	// Substitute the lower-level starter to capture when it would be invoked.
+	started := make(chan struct{}, 1)
+	savedStarter := startWatcherProcess
+	startWatcherProcess = func(dir string) error {
+		// Verify identity is already cleared before the starter runs.
+		if remaining := ReadIdentity(dir); remaining != nil {
+			if remaining.CommitSHA == "stalecommit" {
+				t.Error("stale identity should have been cleared before starter")
+			}
+		}
+		started <- struct{}{}
+		return nil // don't actually start a daemon
+	}
+	defer func() { startWatcherProcess = savedStarter }()
+
+	if err := ArmBackground(home, false); err != nil {
+		t.Fatalf("ArmBackground: %v", err)
+	}
+
+	// The seam must have been reached (starter called).
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("process starter was never invoked")
+	}
+
+	// After ArmBackground returns, identity must be gone.
+	if remaining := ReadIdentity(home); remaining != nil {
+		t.Errorf("identity should be nil after ArmBackground, got %+v", remaining)
+	}
+}
