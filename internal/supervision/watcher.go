@@ -76,16 +76,12 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	}
 }
 
-// ArmBackground launches the watcher as a background process.
-// If restart is true, signals any existing watcher first, using identity-based
-// PID ownership validation to avoid signaling an unrelated process.
-func ArmBackground(homeDir string, restart bool) error {
-	if restart {
-		if err := stopRunningWatcher(homeDir); err != nil {
-			return err
-		}
-	}
+// startWatcherProcess is an unexported seam for tests. Production uses
+// defaultStartWatcher. Tests can substitute it to verify the identity
+// clearance contract without spawning a real daemon.
+var startWatcherProcess = defaultStartWatcher
 
+func defaultStartWatcher(homeDir string) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("finding munsu binary: %w", err)
@@ -104,6 +100,24 @@ func ArmBackground(homeDir string, restart bool) error {
 
 	fmt.Printf("Watcher armed (pid %d)\n", cmd.Process.Pid)
 	return nil
+}
+
+// ArmBackground launches the watcher as a background process.
+// If restart is true, signals any existing watcher first, using identity-based
+// PID ownership validation to avoid signaling an unrelated process.
+func ArmBackground(homeDir string, restart bool) error {
+	if restart {
+		if err := stopRunningWatcher(homeDir); err != nil {
+			return err
+		}
+	}
+
+	// Clear stale identity before launching the new watcher so that
+	// handshake polling never reads stale state (e.g. old CommitSHA)
+	// before the subprocess writes its own identity.
+	ClearIdentity(homeDir)
+
+	return startWatcherProcess(homeDir)
 }
 
 // stopRunningWatcher signals the running watcher identified by beat + identity.
