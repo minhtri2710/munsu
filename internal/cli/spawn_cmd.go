@@ -8,7 +8,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -110,7 +109,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 func newSendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send <id> <line>",
-		Short: "Send a line to a soldier/captain endpoint (captain dead pane → outbox + fail closed)",
+		Short: "Send a line to a soldier/captain endpoint (captain uses mailbox Store/Receiver)",
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -129,11 +128,43 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("send refused: %w", err)
 			}
 
-			// Read meta to resolve window
+			// Read meta to determine kind and resolve captain info.
 			meta, err := task.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
+
+			isCaptain := meta["kind"] == "captain"
+
+			if isCaptain {
+				// Mailbox Store/Receiver flow for captain targets.
+				smID := captain.CaptainIDFromTask(id, meta)
+				captainHome := meta["home"]
+				if captainHome == "" {
+					return fmt.Errorf("captain %s has no home in meta", smID)
+				}
+				sm := captain.Info{ID: smID, Home: captainHome}
+
+				result := captain.SendMailboxToCaptain(sm, ctx.Home, line)
+				if result.Err != nil {
+					return fmt.Errorf("captain %s: %w", smID, result.Err)
+				}
+
+				// Pending retained until exact ack reconciles via converge.
+				msg := fmt.Sprintf("sent to captain %s (message=%s, pending until ack)", smID, result.MessageID)
+				if !result.Acknowledged {
+					msg = fmt.Sprintf("sent to captain %s (message=%s, notification pending)", smID, result.MessageID)
+				}
+
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "send",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: msg},
+				})
+			}
+
+			// Non-captain: direct typed prompt submission (soldier tasks).
 			windowID, ok := meta["window"]
 			if !ok {
 				return fmt.Errorf("task %s has no window endpoint", id)
@@ -143,24 +174,11 @@ func newSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sendLine := line
-			isCaptain := meta["kind"] == "captain"
-			if isCaptain {
-				sendLine = marker.MarkFromGeneral(line)
-			}
 
 			// Use typed prompt submission when available; falls back to SendKeys
 			// for raw commands and unsupported backends.
-			result := session.SubmitPrompt(bk, windowID, sendLine)
+			result := session.SubmitPrompt(bk, windowID, line)
 			if !result.Acknowledged() {
-				if isCaptain {
-					smID := captain.CaptainIDFromTask(id, meta)
-					if qErr := captain.EnqueueSendOutbox(ctx.Home, smID, sendLine); qErr != nil {
-						return fmt.Errorf("captain %s outbox enqueue failed: %v; prompt status: %s", id, qErr, result.Status)
-					}
-					return fmt.Errorf("captain %s send not acknowledged (status=%s): marked send queued under state/%s/%s for converge retry", id, result.Status, captain.SendOutboxDir, smID)
-				}
-				// Non-captain, not acknowledged: return the error.
 				return fmt.Errorf("sending to %s: %s", id, result.String())
 			}
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/spf13/cobra"
 )
 
@@ -24,11 +26,78 @@ func newInboxCmd() *cobra.Command {
 
 No behavior change to the watcher. Use 'munsu inbox' before 'munsu wake claim' or
 'munsu wake-drain' to preview what needs attention.`,
-		Args: NoArgs,
+	}
+	cmd.AddCommand(newInboxProcessCmd())
+	// The default "show" behavior is the existing inbox view.
+	cmd.RunE = withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+		return renderInbox(ctx.Home, cmd.OutOrStdout())
+	})
+	return cmd
+}
+
+// newInboxProcessCmd creates the `munsu inbox process` subcommand.
+// The captain agent calls this to process an incoming NotificationRef:
+// reads the envelope from its own inbox and writes the ProcessingAck.
+//
+// This is the smallest internal adapter for the captain to complete the
+// mailbox processing loop. Used by the captain agent (Pi/Claude) when it
+// receives a NotificationRef via marked pane input.
+func newInboxProcessCmd() *cobra.Command {
+	var outcome string
+
+	cmd := &cobra.Command{
+		Use:   "process <notification-ref>",
+		Short: "Process a mailbox NotificationRef (captain-side ack adapter)",
+		Long: `Process a mailbox NotificationRef by reading the envelope from the
+receiver's inbox, validating all provenance fields, and writing a ProcessingAck.
+
+Called by the captain agent when it receives a NotificationRef via marked pane
+input from the General. The envelope payload is the actual command; the ref
+points to the envelope in the captain's own inbox.
+
+Usage:
+  munsu inbox process '{"message_id":"...","sender_identity":"..."}'
+
+The outcome flag defaults to "done". Valid outcomes: done, failed, needs-decision,
+blocked, paused.`,
+		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return renderInbox(ctx.Home, cmd.OutOrStdout())
+			refJSON := args[0]
+
+			ref, err := mailbox.ParseNotificationRef(refJSON)
+			if err != nil {
+				return usageError("invalid_ref",
+					"NotificationRef must be valid JSON with message_id and sender_identity fields",
+					fmt.Sprintf("parsing NotificationRef: %v", err))
+			}
+
+			recv, err := mailbox.NewReceiver(ctx.Home)
+			if err != nil {
+				return operationError("receiver_init_failed",
+					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",
+					fmt.Sprintf("creating receiver: %v", err))
+			}
+
+			res := recv.Process(ref, outcome)
+			if !res.Ok() {
+				return operationError("process_failed",
+					"Check that the envelope exists in state/.inbox/<sender>/<id>.json",
+					fmt.Sprintf("processing notification: %v", res.Err))
+			}
+
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "inbox.process",
+				Status:        "success",
+				Data: contract.MessageResult{
+					Message: fmt.Sprintf("processed message %s from %s (outcome=%s)", ref.MessageID, ref.SenderIdentity, outcome),
+				},
+			})
 		}),
 	}
+
+	configureContractCommand(cmd)
+	cmd.Flags().StringVar(&outcome, "outcome", "done", "Processing outcome (done, failed, needs-decision, blocked, paused)")
 	return cmd
 }
 
