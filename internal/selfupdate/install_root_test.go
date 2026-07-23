@@ -54,6 +54,18 @@ func mkDir(t *testing.T, root, name string) {
 	}
 }
 
+// initRemote creates a bare repo and sets it as origin on the given repo,
+// then pushes main and sets origin/HEAD.
+func initRemote(t *testing.T, localRoot string) string {
+	t.Helper()
+	bare := t.TempDir()
+	runCmd(t, bare, "git", "init", "--bare")
+	runCmd(t, localRoot, "git", "remote", "add", "origin", bare)
+	runCmd(t, localRoot, "git", "push", "-u", "origin", "main")
+	runCmd(t, bare, "git", "symbolic-ref", "HEAD", "refs/heads/main")
+	return bare
+}
+
 // --- TestResolveInstallRoot_Precedence ---
 
 // TestResolveInstallRoot_Tier1_RepoOpt verifies that --repo is checked first
@@ -346,19 +358,11 @@ func TestUpdateIn_DirtyRefuses(t *testing.T) {
 	repo := t.TempDir()
 	initMunsuRepo(t, repo, "main")
 
-	// Create an untracked file (this doesn't make the tree dirty in
-	// git-status --porcelain sense — only tracked modified files do).
-	// Write a tracked file.
+	// Write a tracked file and commit it, then modify without staging.
 	writeFile(t, repo, "foo.go", "package foo\n")
 	runCmd(t, repo, "git", "add", "foo.go")
 	runCmd(t, repo, "git", "commit", "-m", "add foo")
-
-	// Now modify it without staging.
 	writeFile(t, repo, "foo.go", "package foo\n// dirty\n")
-
-	fakeBin := filepath.Join(repo, "munsu")
-	writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-	os.Chmod(fakeBin, 0755)
 
 	err := UpdateIn(repo)
 	if err == nil {
@@ -378,36 +382,38 @@ func TestUpdateIn_DetachedHeadRefuses(t *testing.T) {
 	runCmd(t, repo, "git", "add", "a.go")
 	runCmd(t, repo, "git", "commit", "-m", "add a")
 
-	// Detach HEAD to the commit.
-	runCmd(t, repo, "git", "checkout", "--detach")
+	// Add remote so UpdateIn can reach the detached-HEAD checks.
+	initRemote(t, repo)
 
-	fakeBin := filepath.Join(repo, "munsu")
-	writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-	os.Chmod(fakeBin, 0755)
+	runCmd(t, repo, "git", "checkout", "--detach")
 
 	err := UpdateIn(repo)
 	if err == nil {
 		t.Fatal("expected error for detached HEAD")
 	}
+	if !strings.Contains(err.Error(), "detached HEAD") {
+		t.Errorf("error should mention detached HEAD, got: %v", err)
+	}
 }
 
-// TestUpdateIn_DefaultBranchOnly verifies that non-default branches are
+// TestUpdateIn_NonDefaultBranchRefuses verifies that non-default branches are
 // rejected (not just detached HEAD).
 func TestUpdateIn_NonDefaultBranchRefuses(t *testing.T) {
 	repo := t.TempDir()
 	initMunsuRepo(t, repo, "main")
 
-	// Create and switch to "develop" branch.
+	// Add remote so UpdateIn can resolve default branch.
+	initRemote(t, repo)
+
 	runCmd(t, repo, "git", "branch", "develop", "main")
 	runCmd(t, repo, "git", "checkout", "develop")
-
-	fakeBin := filepath.Join(repo, "munsu")
-	writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
-	os.Chmod(fakeBin, 0755)
 
 	err := UpdateIn(repo)
 	if err == nil {
 		t.Fatal("expected error for non-default branch")
+	}
+	if !strings.Contains(err.Error(), "does not match default branch") {
+		t.Errorf("error should mention does not match default branch, got: %v", err)
 	}
 }
 
