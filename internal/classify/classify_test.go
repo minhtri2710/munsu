@@ -64,8 +64,14 @@ func TestGeneralRelevant_BlankLine(t *testing.T) {
 }
 
 func TestGeneralRelevant_PRReady(t *testing.T) {
-	if !GeneralRelevant("working: PR ready for review") {
-		t.Error(`line containing "PR ready" should be general-relevant`)
+	if !GeneralRelevant("PR ready for review") {
+		t.Error(`bare "PR ready for review" should be general-relevant (no leading verb)`)
+	}
+}
+
+func TestGeneralRelevant_WorkingPRReadyNotGeneralRelevant(t *testing.T) {
+	if GeneralRelevant("working: PR ready for review") {
+		t.Error(`"working: PR ready" should NOT be general-relevant (nonterminal verb prevents free-text escalation)`)
 	}
 }
 
@@ -117,14 +123,26 @@ func TestGeneralRelevant_VerbInSuffixDoesNotMatch(t *testing.T) {
 }
 
 func TestGeneralRelevant_DoneColonInNote(t *testing.T) {
-	if !GeneralRelevant("working: done: some work") {
-		t.Error("line with 'done:' anywhere should be general-relevant")
+	if GeneralRelevant("working: done: some work") {
+		t.Error(`"working: done: some work" should NOT be general-relevant (verb is "working", nonterminal)`)
+	}
+}
+
+func TestGeneralRelevant_DoneColonBareLine(t *testing.T) {
+	if !GeneralRelevant("done: some work") {
+		t.Error(`"done: some work" should be general-relevant (terminal verb)`)
 	}
 }
 
 func TestGeneralRelevant_NeedsDecisionInNote(t *testing.T) {
-	if !GeneralRelevant("working: needs-decision: still deciding") {
-		t.Error("line containing 'needs-decision:' should be general-relevant")
+	if GeneralRelevant("working: needs-decision: still deciding") {
+		t.Error(`"working: needs-decision:" should NOT be general-relevant (verb is "working", nonterminal)`)
+	}
+}
+
+func TestGeneralRelevant_NeedsDecisionBare(t *testing.T) {
+	if !GeneralRelevant("needs-decision: still deciding") {
+		t.Error(`"needs-decision: still deciding" should be general-relevant (terminal verb)`)
 	}
 }
 

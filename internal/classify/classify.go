@@ -138,7 +138,13 @@ func readLastLine(path string) string {
 // GeneralRelevant returns true if a status line contains a general-relevant verb
 // (done:, failed:, needs-decision:, blocked:, "PR ready", "checks green",
 // "ready in branch", "merged"). Paused lines are NOT general-relevant.
-// Matches the munsu status_is_captain_relevant pattern.
+// Verb-aware: nonterminal progress verbs (working, resolved, captain-held) NEVER
+// match from free-text prose alone. A "working:" line cannot escalate merely
+// because its prose contains "PR ready", "checks green", "merged", etc. Only
+// the authoritative terminal verbs and bare legacy lines (no leading verb)
+// match free-text tokens.
+// Matches the munsu status_is_captain_relevant pattern with Firstmate ea3ac2e
+// verb-awareness parity.
 func GeneralRelevant(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
@@ -148,8 +154,17 @@ func GeneralRelevant(line string) bool {
 	if IsPaused(trimmed) {
 		return false
 	}
-	// Check exact verb match for core general-relevant verbs.
+
+	// Verb-aware: nonterminal progress verbs are never general-relevant
+	// from free-text prose. Only the authoritative terminal verbs and
+	// bare non-verb legacy lines should match free-text tokens.
 	verb := lineVerb(trimmed)
+	switch verb {
+	case "working", "resolved", "captain-held":
+		return false
+	}
+
+	// Check exact verb match for core general-relevant verbs.
 	switch verb {
 	case "done", "needs-decision", "blocked", "failed":
 		return true
