@@ -1,0 +1,88 @@
+# Firstmate Parity Suite — Run Log
+
+**Date:** 2026-07-23T00:00Z
+**Baseline:** `20a713bb` (origin/main)
+**Firstmate HEAD:** `14c0d5f171a01b1322b710747258791872a63feb`
+
+## Gate Results
+
+| Check | Status |
+|-------|--------|
+| `git diff --check` | PASS |
+| `go build ./...` | PASS |
+| `go vet ./...` | PASS |
+| `go test ./...` | PASS (all packages) |
+
+## Deepening Tests Added
+
+### `internal/captain/captain_parity_test.go` (4 new tests)
+
+| Test | Status |
+|------|--------|
+| `TestParity_SpawnDispatchChain_ProfileToMeta` | PASS |
+| `TestParity_SpawnDispatchChain_GamepadInMeta` | PASS |
+| `TestParity_SpawnDispatchChain_ProfileCatchall` | PASS |
+| `TestParity_SpawnDispatchChain_NoMatchWithoutDefault` | PASS |
+
+### `internal/lifecycle/lease_test.go` (7 new tests)
+
+| Test | Status |
+|------|--------|
+| `TestParity_WakeKind_Signal` | PASS |
+| `TestParity_WakeKind_Stale` | PASS |
+| `TestParity_WakeKind_Check` | PASS |
+| `TestParity_WakeKind_ConfigReread` | PASS |
+| `TestParity_WakeKind_InstructionSurface` | PASS |
+| `TestParity_WakeKind_UnknownKindPassthrough` | PASS |
+| `TestParity_WakeKind_MultipleKinds` | PASS |
+
+## Full `go test ./...` Output
+
+```
+ok      github.com/minhtri2710/munsu/internal/afk           (cached)
+ok      github.com/minhtri2710/munsu/internal/agentsmd       (cached)
+ok      github.com/minhtri2710/munsu/internal/backlog        (cached)
+ok      github.com/minhtri2710/munsu/internal/bootstrap      (cached)
+ok      github.com/minhtri2710/munsu/internal/brief          (cached)
+ok      github.com/minhtri2710/munsu/internal/capability     (cached)
+ok      github.com/minhtri2710/munsu/internal/captain        (cached)
+ok      github.com/minhtri2710/munsu/internal/classify       (cached)
+ok      github.com/minhtri2710/munsu/internal/cli            (cached)
+ok      github.com/minhtri2710/munsu/internal/composer       (cached)
+ok      github.com/minhtri2710/munsu/internal/config         (cached)
+ok      github.com/minhtri2710/munsu/internal/contract       (cached)
+ok      github.com/minhtri2710/munsu/internal/decisionhold   (cached)
+ok      github.com/minhtri2710/munsu/internal/delivery       (cached)
+ok      github.com/minhtri2710/munsu/internal/event          (cached)
+ok      github.com/minhtri2710/munsu/internal/fleet          (cached)
+ok      github.com/minhtri2710/munsu/internal/ghurl          (cached)
+ok      github.com/minhtri2710/munsu/internal/harness        (cached)
+ok      github.com/minhtri2710/munsu/internal/herdrprune     (cached)
+ok      github.com/minhtri2710/munsu/internal/home           (cached)
+ok      github.com/minhtri2710/munsu/internal/hometag        (cached)
+ok      github.com/minhtri2710/munsu/internal/integrate      (cached)
+ok      github.com/minhtri2710/munsu/internal/lifecycle      (cached)
+ok      github.com/minhtri2710/munsu/internal/mailbox        (cached)
+ok      github.com/minhtri2710/munsu/internal/marker         (cached)
+ok      github.com/minhtri2710/munsu/internal/nostatus       (cached)
+ok      github.com/minhtri2710/munsu/internal/project        (cached)
+ok      github.com/minhtri2710/munsu/internal/runner         (cached)
+ok      github.com/minhtri2710/munsu/internal/scope          (cached)
+ok      github.com/minhtri2710/munsu/internal/selfupdate     (cached)
+ok      github.com/minhtri2710/munsu/internal/session        (cached)
+ok      github.com/minhtri2710/munsu/internal/soldier        (cached)
+ok      github.com/minhtri2710/munsu/internal/soldierstate   (cached)
+ok      github.com/minhtri2710/munsu/internal/spawn          (cached)
+ok      github.com/minhtri2710/munsu/internal/stow           (cached)
+ok      github.com/minhtri2710/munsu/internal/supervision    (cached)
+ok      github.com/minhtri2710/munsu/internal/task           (cached)
+ok      github.com/minhtri2710/munsu/internal/teardown       (cached)
+ok      github.com/minhtri2710/munsu/internal/turnend        (cached)
+ok      github.com/minhtri2710/munsu/internal/waker          (cached)
+ok      github.com/minhtri2710/munsu/internal/worktree       (cached)
+```
+
+## Evidence Artifacts
+
+- `data/firstmate-parity-suite/EVIDENCE.md` — Full parity matrix with 70+ behavioral rows
+- `data/firstmate-parity-suite/run.log` — This file

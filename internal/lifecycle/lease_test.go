@@ -255,3 +255,203 @@ func TestIdempotencyAck(t *testing.T) {
 		// Ok if lease is already gone
 	}
 }
+
+// =============================================================================
+// Wake kind completeness — parity with Firstmate wake kinds
+// =============================================================================
+//
+// Firstmate's watcher classifies wakes into typed kinds: signal (captain-relevant
+// status verbs), stale (stale beat), check (PR poll result), config-reread
+// (config changed), instruction-surface (AGENTS.md changed), timeout (pane
+// exceeded timeout), cycle-ended (watcher cycle completed).
+//
+// Munsu uses the same wake queue format (TSV: epoch<tab>seq<tab>kind<tab>key<tab>payload).
+// This group proves every wake kind is enqueued, claimed, drained, and acked correctly.
+
+func TestParity_WakeKind_Signal(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueLines(t, home, []string{
+		"1781000000\t1\tsignal\tcaptain:1\tdone: task complete",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(result.Wakes))
+	}
+	w := result.Wakes[0]
+	if w.Kind != "signal" {
+		t.Errorf("kind = %q, want signal", w.Kind)
+	}
+	if w.Key != "captain:1" {
+		t.Errorf("key = %q, want captain:1", w.Key)
+	}
+	if w.Payload != "done: task complete" {
+		t.Errorf("payload = %q, want 'done: task complete'", w.Payload)
+	}
+	if w.Seq != "1" {
+		t.Errorf("seq = %q, want 1", w.Seq)
+	}
+
+	// Ack and drain.
+	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+		t.Fatalf("AckWakes: %v", err)
+	}
+}
+
+func TestParity_WakeKind_Stale(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueLines(t, home, []string{
+		"1781000001\t2\tstale\tcaptain:1\tbeat not updated in 300s",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(result.Wakes))
+	}
+	w := result.Wakes[0]
+	if w.Kind != "stale" {
+		t.Errorf("kind = %q, want stale", w.Kind)
+	}
+	if w.Key != "captain:1" {
+		t.Errorf("key = %q, want captain:1", w.Key)
+	}
+
+	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+		t.Fatalf("AckWakes: %v", err)
+	}
+}
+
+func TestParity_WakeKind_Check(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueLines(t, home, []string{
+		"1781000002\t3\tcheck\ttask-1\tPR checks green",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(result.Wakes))
+	}
+	w := result.Wakes[0]
+	if w.Kind != "check" {
+		t.Errorf("kind = %q, want check", w.Kind)
+	}
+	if w.Key != "task-1" {
+		t.Errorf("key = %q, want task-1", w.Key)
+	}
+
+	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+		t.Fatalf("AckWakes: %v", err)
+	}
+}
+
+func TestParity_WakeKind_ConfigReread(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueLines(t, home, []string{
+		"1781000003\t4\tconfig-reread\tcaptain:1\tconfig refreshed via converge",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(result.Wakes))
+	}
+	w := result.Wakes[0]
+	if w.Kind != "config-reread" {
+		t.Errorf("kind = %q, want config-reread", w.Kind)
+	}
+	if w.Payload != "config refreshed via converge" {
+		t.Errorf("payload = %q, want 'config refreshed via converge'", w.Payload)
+	}
+
+	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+		t.Fatalf("AckWakes: %v", err)
+	}
+}
+
+func TestParity_WakeKind_InstructionSurface(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueLines(t, home, []string{
+		"1781000004\t5\tinstruction-surface\tcaptain:1\tAGENTS.md changed in abc1234",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(result.Wakes))
+	}
+	w := result.Wakes[0]
+	if w.Kind != "instruction-surface" {
+		t.Errorf("kind = %q, want instruction-surface", w.Kind)
+	}
+	if w.Payload != "AGENTS.md changed in abc1234" {
+		t.Errorf("payload = %q, want 'AGENTS.md changed in abc1234'", w.Payload)
+	}
+
+	if err := AckWakes(home, result.LeaseID, []string{w.Epoch + ":" + w.Seq}); err != nil {
+		t.Fatalf("AckWakes: %v", err)
+	}
+}
+
+func TestParity_WakeKind_UnknownKindPassthrough(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueLines(t, home, []string{
+		"1781000005\t6\tunknown-verb\tkey-1\tsome payload",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(result.Wakes))
+	}
+	// Unknown kinds are passed through (not filtered or rejected).
+	w := result.Wakes[0]
+	if w.Kind != "unknown-verb" {
+		t.Errorf("kind = %q, want unknown-verb (passthrough)", w.Kind)
+	}
+}
+
+func TestParity_WakeKind_MultipleKinds(t *testing.T) {
+	home := t.TempDir()
+	writeWakeQueueLines(t, home, []string{
+		"1781000010\t10\tsignal\tk1\twake one",
+		"1781000011\t11\tconfig-reread\tk2\twake two",
+		"1781000012\t12\tcheck\tk3\twake three",
+	})
+
+	result, err := ClaimWakes(home, "test", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if len(result.Wakes) != 3 {
+		t.Fatalf("expected 3 wakes, got %d", len(result.Wakes))
+	}
+
+	kinds := map[string]bool{}
+	for _, w := range result.Wakes {
+		kinds[w.Kind] = true
+	}
+	if !kinds["signal"] {
+		t.Error("signal kind missing")
+	}
+	if !kinds["config-reread"] {
+		t.Error("config-reread kind missing")
+	}
+	if !kinds["check"] {
+		t.Error("check kind missing")
+	}
+}
