@@ -1,61 +1,14 @@
 package mailbox
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/marker"
-	"github.com/minhtri2710/munsu/internal/session"
-	"github.com/minhtri2710/munsu/internal/task"
+	"time"
 )
-
-type fakeBackend struct {
-	alive    bool
-	sent     []string
-	sendErr  error
-	windowID string
-}
-
-func (f *fakeBackend) NewWindow(session, name string) (string, error) {
-	return f.windowID, nil
-}
-func (f *fakeBackend) SendKeys(windowID, text string) error {
-	if f.sendErr != nil {
-		return f.sendErr
-	}
-	f.sent = append(f.sent, text)
-	return nil
-}
-func (f *fakeBackend) Capture(windowID string, lines int) (string, error) {
-	return "", nil
-}
-func (f *fakeBackend) Alive(windowID string) bool { return f.alive }
-func (f *fakeBackend) Teardown(windowID string) error {
-	return nil
-}
-
-func installFakeBackend(t *testing.T, bk session.Backend) {
-	t.Helper()
-	orig := backendForTask
-	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
-		return bk, "fake", nil
-	}
-	t.Cleanup(func() { backendForTask = orig })
-}
-
-func writeFakeMeta(t *testing.T, home, taskID, window string) {
-	t.Helper()
-	meta := map[string]string{
-		"kind":    "captain",
-		"window":  window,
-		"backend": "fake",
-	}
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
-		t.Fatal(err)
-	}
-}
 
 // --- Envelope creation and validation ---
 
@@ -110,17 +63,16 @@ func TestValidateEnvelope_ValidTransitions(t *testing.T) {
 		receiver  Rank
 		wantError bool
 	}{
-		{"general→captain", RankGeneral, RankCaptain, false},
-		{"captain→general", RankCaptain, RankGeneral, false},
-		{"captain→soldier", RankCaptain, RankSoldier, false},
-		{"soldier→captain", RankSoldier, RankCaptain, false},
-		{"general→soldier", RankGeneral, RankSoldier, true},
-		{"general→general", RankGeneral, RankGeneral, true},
-		{"captain→captain", RankCaptain, RankCaptain, true},
-		{"soldier→general", RankSoldier, RankGeneral, true},
-		{"soldier→soldier", RankSoldier, RankSoldier, true},
+		{"general->captain", RankGeneral, RankCaptain, false},
+		{"captain->general", RankCaptain, RankGeneral, false},
+		{"captain->soldier", RankCaptain, RankSoldier, false},
+		{"soldier->captain", RankSoldier, RankCaptain, false},
+		{"general->soldier", RankGeneral, RankSoldier, true},
+		{"general->general", RankGeneral, RankGeneral, true},
+		{"captain->captain", RankCaptain, RankCaptain, true},
+		{"soldier->general", RankSoldier, RankGeneral, true},
+		{"soldier->soldier", RankSoldier, RankSoldier, true},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env := &Envelope{
@@ -143,10 +95,81 @@ func TestValidateEnvelope_ValidTransitions(t *testing.T) {
 	}
 }
 
-// --- NewEnvelope (write to receiver's inbox) ---
+// --- Immutability ---
 
-func TestNewEnvelope_WritesToReceiverInbox(t *testing.T) {
-	receiverHome := t.TempDir()
+func TestEnvelope_ImmutableStruct(t *testing.T) {
+	// The Envelope struct has no mutable delivery/ack fields.
+	// This test verifies the struct shape: no DeliveryStatus, State, etc.
+	env := &Envelope{
+		MessageID:      "test-id",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "task:1",
+		Key:            "my-key",
+		Payload:        "done: work",
+		PayloadHash:    PayloadHashHex("done: work"),
+		CreatedAt:      1000,
+	}
+	// Verify that a round-trip through JSON preserves all fields and adds none.
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded Envelope
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.MessageID != env.MessageID {
+		t.Errorf("MessageID mismatch")
+	}
+	if decoded.SenderRank != env.SenderRank {
+		t.Errorf("SenderRank mismatch")
+	}
+	if decoded.SenderIdentity != env.SenderIdentity {
+		t.Errorf("SenderIdentity mismatch")
+	}
+	if decoded.ReceiverRank != env.ReceiverRank {
+		t.Errorf("ReceiverRank mismatch")
+	}
+	if decoded.ReceiverID != env.ReceiverID {
+		t.Errorf("ReceiverID mismatch")
+	}
+	if decoded.TaskID != env.TaskID {
+		t.Errorf("TaskID mismatch")
+	}
+	if decoded.Key != env.Key {
+		t.Errorf("Key mismatch")
+	}
+	if decoded.Payload != env.Payload {
+		t.Errorf("Payload mismatch")
+	}
+	if decoded.PayloadHash != env.PayloadHash {
+		t.Errorf("PayloadHash mismatch")
+	}
+	if decoded.CreatedAt != env.CreatedAt {
+		t.Errorf("CreatedAt mismatch")
+	}
+	// SchemaVersion is preserved through JSON round-trip.
+	if decoded.SchemaVersion != "" {
+		t.Logf("SchemaVersion in raw struct: %q (OK if empty)", decoded.SchemaVersion)
+	}
+	// Verify no fields named delivery_status, state, etc. exist in output.
+	forbidden := []string{"delivery_status", "state", "delivery_attempts", "last_attempt_at", "acked_at"}
+	for _, f := range forbidden {
+		if strings.Contains(string(data), f) {
+			t.Errorf("output contains forbidden field %q", f)
+		}
+	}
+}
+
+// --- Store.WriteEnvelope / ReadEnvelope ---
+
+func TestStore_WriteEnvelope_WritesToReceiverInbox(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
 	env := &Envelope{
 		SenderRank:     RankSoldier,
 		SenderIdentity: "soldier-task-1",
@@ -154,13 +177,11 @@ func TestNewEnvelope_WritesToReceiverInbox(t *testing.T) {
 		ReceiverID:     "captain-munsu",
 		Payload:        "done: task complete",
 	}
-
-	if err := NewEnvelope(receiverHome, env); err != nil {
-		t.Fatalf("NewEnvelope: %v", err)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
 	}
 
-	// Verify in inbox.
-	inboxDir := ReceiverInboxDir(receiverHome, env.SenderIdentity)
+	inboxDir := filepath.Join(home, "state", InboxDir, env.SenderIdentity)
 	entries, err := os.ReadDir(inboxDir)
 	if err != nil {
 		t.Fatalf("reading inbox dir: %v", err)
@@ -172,19 +193,12 @@ func TestNewEnvelope_WritesToReceiverInbox(t *testing.T) {
 		t.Errorf("expected .json file, got %s", entries[0].Name())
 	}
 
-	// Read back and verify.
-	got, err := GetInboxEnvelope(receiverHome, env.SenderIdentity, env.MessageID)
+	got, err := store.ReadEnvelope(env.SenderIdentity, env.MessageID)
 	if err != nil {
-		t.Fatalf("GetInboxEnvelope: %v", err)
+		t.Fatalf("ReadEnvelope: %v", err)
 	}
 	if got == nil {
 		t.Fatal("envelope not found")
-	}
-	if got.SchemaVersion != SchemaVersion {
-		t.Errorf("schema=%q", got.SchemaVersion)
-	}
-	if got.DeliveryStatus != StatusPending {
-		t.Errorf("status=%q, want pending", got.DeliveryStatus)
 	}
 	if got.Payload != "done: task complete" {
 		t.Errorf("payload=%q", got.Payload)
@@ -194,8 +208,8 @@ func TestNewEnvelope_WritesToReceiverInbox(t *testing.T) {
 	}
 }
 
-func TestNewEnvelope_AutoGeneratesID(t *testing.T) {
-	receiverHome := t.TempDir()
+func TestStore_WriteEnvelope_AutoGeneratesID(t *testing.T) {
+	store := NewStore(t.TempDir())
 	env := &Envelope{
 		SenderRank:     RankCaptain,
 		SenderIdentity: "captain-1",
@@ -203,239 +217,656 @@ func TestNewEnvelope_AutoGeneratesID(t *testing.T) {
 		ReceiverID:     "general-main",
 		Payload:        "report",
 	}
-	if err := NewEnvelope(receiverHome, env); err != nil {
-		t.Fatalf("NewEnvelope: %v", err)
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
 	}
 	if env.MessageID == "" {
 		t.Fatal("MessageID should be auto-generated")
 	}
 }
 
-// --- Sender pending records ---
-
-func TestSaveSenderPending_PersistsRecord(t *testing.T) {
-	senderHome := t.TempDir()
-	env := &Envelope{
-		MessageID:      "test-id-1234567890abcdef",
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "test",
-		PayloadHash:    PayloadHashHex("test"),
-	}
-
-	path, err := SaveSenderPending(senderHome, env)
+func TestStore_ReadEnvelope_NotFound(t *testing.T) {
+	store := NewStore(t.TempDir())
+	got, err := store.ReadEnvelope("sender-1", "nonexistent-id")
 	if err != nil {
-		t.Fatalf("SaveSenderPending: %v", err)
+		t.Fatalf("ReadEnvelope: %v", err)
 	}
-	if path == "" {
-		t.Fatal("expected non-empty path")
+	if got != nil {
+		t.Fatal("expected nil for nonexistent envelope")
+	}
+}
+
+// --- Atomic write (no partial JSON) ---
+
+func TestStore_AtomicWrite_NoPartialJSON(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env := &Envelope{
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "complete payload",
+	}
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
 	}
 
-	// Verify file exists.
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("pending file not created: %v", err)
-	}
-
-	// List pending.
-	pending, err := ListSenderPending(senderHome)
+	// Read the file directly and verify it's valid JSON.
+	path := filepath.Join(home, "state", InboxDir, "soldier-1", env.MessageID+".json")
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("ListSenderPending: %v", err)
+		t.Fatalf("reading file: %v", err)
 	}
-	if len(pending) != 1 {
-		t.Fatalf("expected 1 pending, got %d", len(pending))
-	}
-}
-
-func TestRemoveSenderPending_ClearsRecord(t *testing.T) {
-	senderHome := t.TempDir()
-	env := &Envelope{
-		MessageID:      "test-id",
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "test",
-		PayloadHash:    PayloadHashHex("test"),
+	if !json.Valid(data) {
+		t.Fatal("written file is not valid JSON")
 	}
 
-	SaveSenderPending(senderHome, env)
-	if err := RemoveSenderPending(senderHome, env.MessageID); err != nil {
-		t.Fatalf("RemoveSenderPending: %v", err)
+	// Verify no temp files remain.
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("stale temp file found: %s", e.Name())
+		}
 	}
 
-	pending, _ := ListSenderPending(senderHome)
-	if len(pending) != 0 {
-		t.Fatalf("expected 0 pending after remove, got %d", len(pending))
+	// Verify a concurrent write doesn't produce partial content.
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			e := &Envelope{
+				SenderRank:     RankSoldier,
+				SenderIdentity: "soldier-1",
+				ReceiverRank:   RankCaptain,
+				ReceiverID:     "captain-1",
+				Payload:        "payload",
+			}
+			store.WriteEnvelope(e) // error intentionally ignored in goroutine
+		}(i)
 	}
-}
+	wg.Wait()
 
-// --- Delivery: happy path ---
-
-func TestDeliverEnvelope_AliveEndpoint(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@w"
-
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: task complete",
+	// All envelope files must be valid JSON.
+	inboxDir := filepath.Join(home, "state", InboxDir, "soldier-1")
+	entries, err = os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("reading inbox: %v", err)
 	}
-	NewEnvelope(receiverHome, env)
-	SaveSenderPending(senderHome, env)
-
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := DeliverEnvelope(receiverHome, env.SenderIdentity, env, meta)
-
-	if result.Err != nil {
-		t.Fatalf("DeliverEnvelope: %v", result.Err)
-	}
-	if !result.PromptSent {
-		t.Error("expected prompt sent")
-	}
-	if len(fake.sent) != 1 {
-		t.Fatalf("sent=%d, want 1", len(fake.sent))
-	}
-	if fake.sent[0] != "done: task complete" {
-		t.Errorf("message=%q", fake.sent[0])
-	}
-
-	// Verify inbox status.
-	got, _ := GetInboxEnvelope(receiverHome, env.SenderIdentity, env.MessageID)
-	if got.DeliveryStatus != StatusDelivered {
-		t.Errorf("status=%q, want delivered", got.DeliveryStatus)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(inboxDir, e.Name()))
+		if err != nil {
+			t.Errorf("reading %s: %v", e.Name(), err)
+			continue
+		}
+		if !json.Valid(data) {
+			t.Errorf("file %s is not valid JSON", e.Name())
+		}
 	}
 }
 
-func TestDeliverEnvelope_DeadEndpoint(t *testing.T) {
-	receiverHome := t.TempDir()
-	window := "@dead"
+// --- Identity path isolation ---
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: task complete",
-	}
-	NewEnvelope(receiverHome, env)
+func TestStore_Pending_IdentityPathIsolation(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
 
-	fake := &fakeBackend{alive: false, windowID: window}
-	installFakeBackend(t, fake)
-
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := DeliverEnvelope(receiverHome, env.SenderIdentity, env, meta)
-
-	if result.Err == nil {
-		t.Fatal("expected error for dead endpoint")
-	}
-	if !strings.Contains(result.Err.Error(), "not alive") {
-		t.Errorf("error should mention not alive: %v", result.Err)
-	}
-	if result.PromptSent {
-		t.Error("should not have sent to dead endpoint")
-	}
-
-	// Envelope should still be pending.
-	got, _ := GetInboxEnvelope(receiverHome, env.SenderIdentity, env.MessageID)
-	if got.DeliveryStatus != StatusPending {
-		t.Errorf("status=%q, want pending", got.DeliveryStatus)
-	}
-}
-
-// --- Ack semantics ---
-
-func TestMarkProcessed_WritesAck(t *testing.T) {
-	receiverHome := t.TempDir()
-
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "report",
-	}
-	NewEnvelope(receiverHome, env)
-
-	if err := MarkProcessed(receiverHome, env.SenderIdentity, env.MessageID); err != nil {
-		t.Fatalf("MarkProcessed: %v", err)
-	}
-
-	if !IsAcked(receiverHome, env.SenderIdentity, env.MessageID) {
-		t.Error("envelope should be acked")
-	}
-
-	// Verify ack file.
-	ackPath := receiverInboxAckPath(receiverHome, env.SenderIdentity, env.MessageID)
-	if _, err := os.Stat(ackPath); err != nil {
-		t.Errorf("ack file not created: %v", err)
-	}
-
-	// Verify envelope status updated.
-	got, _ := GetInboxEnvelope(receiverHome, env.SenderIdentity, env.MessageID)
-	if got.DeliveryStatus != StatusAcked {
-		t.Errorf("status=%q, want acked", got.DeliveryStatus)
-	}
-	if got.AckedAt == 0 {
-		t.Error("AckedAt should be set")
-	}
-}
-
-func TestIsAcked_NoAck(t *testing.T) {
-	receiverHome := t.TempDir()
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "report",
-	}
-	NewEnvelope(receiverHome, env)
-
-	if IsAcked(receiverHome, env.SenderIdentity, env.MessageID) {
-		t.Error("should not be acked before MarkProcessed")
-	}
-}
-
-func TestListPendingInbox_ExcludesAcked(t *testing.T) {
-	receiverHome := t.TempDir()
-
+	// Two different sender identities share the same home.
 	env1 := &Envelope{
+		MessageID:      "msg-1",
 		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+		SenderIdentity: "soldier-alpha",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
-		Payload:        "first",
+		Payload:        "report from alpha",
 	}
 	env2 := &Envelope{
+		MessageID:      "msg-2",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-beta",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "report from beta",
+	}
+
+	if err := store.WritePending(env1); err != nil {
+		t.Fatalf("WritePending alpha: %v", err)
+	}
+	if err := store.WritePending(env2); err != nil {
+		t.Fatalf("WritePending beta: %v", err)
+	}
+
+	// Each identity should have exactly one pending in its own directory.
+	alphaPending, err := store.ListPending("soldier-alpha")
+	if err != nil {
+		t.Fatalf("ListPending alpha: %v", err)
+	}
+	if len(alphaPending) != 1 || alphaPending[0].SenderIdentity != "soldier-alpha" {
+		t.Errorf("alpha pending: expected 1 for alpha, got %d", len(alphaPending))
+	}
+
+	betaPending, err := store.ListPending("soldier-beta")
+	if err != nil {
+		t.Fatalf("ListPending beta: %v", err)
+	}
+	if len(betaPending) != 1 || betaPending[0].SenderIdentity != "soldier-beta" {
+		t.Errorf("beta pending: expected 1 for beta, got %d", len(betaPending))
+	}
+
+	// Write ack files so RemovePendingAfterAck can validate.
+	pending1, _ := store.ReadPending("soldier-alpha", "msg-1")
+	ack1 := &ProcessingAck{
+		MessageID: pending1.MessageID, SenderRank: pending1.SenderRank,
+		SenderIdentity: pending1.SenderIdentity, ReceiverRank: pending1.ReceiverRank,
+		ReceiverID: pending1.ReceiverID, PayloadHash: pending1.PayloadHash,
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	store.WriteAck(ack1)
+
+	// Removing alpha's pending should not affect beta's.
+	if err := store.RemovePendingAfterAck("soldier-alpha", "msg-1", ack1); err != nil {
+		t.Fatalf("RemovePendingAfterAck alpha: %v", err)
+	}
+	alphaPending, _ = store.ListPending("soldier-alpha")
+	if len(alphaPending) != 0 {
+		t.Error("alpha pending should be empty after remove")
+	}
+	betaPending, _ = store.ListPending("soldier-beta")
+	if len(betaPending) != 1 {
+		t.Error("beta pending should still have 1 after alpha remove")
+	}
+}
+
+// --- ProcessingAck ---
+
+func TestStore_WriteAck_AndRead(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	ack := &ProcessingAck{
+		MessageID:      "msg-1",
 		SenderRank:     RankSoldier,
 		SenderIdentity: "soldier-1",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
-		Payload:        "second",
+		TaskID:         "task:1",
+		Key:            "my-key",
+		PayloadHash:    PayloadHashHex("done: work"),
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "done",
 	}
-	NewEnvelope(receiverHome, env1)
-	NewEnvelope(receiverHome, env2)
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
 
-	// Process env1.
-	MarkProcessed(receiverHome, env1.SenderIdentity, env1.MessageID)
-
-	pending, err := ListPendingInbox(receiverHome, "soldier-1")
+	got, err := store.ReadAck("soldier-1", "msg-1")
 	if err != nil {
-		t.Fatalf("ListPendingInbox: %v", err)
+		t.Fatalf("ReadAck: %v", err)
+	}
+	if got == nil {
+		t.Fatal("ack not found")
+	}
+	if got.MessageID != ack.MessageID {
+		t.Errorf("MessageID: %q != %q", got.MessageID, ack.MessageID)
+	}
+	if got.Outcome != "done" {
+		t.Errorf("Outcome: %q != %q", got.Outcome, "done")
+	}
+	if got.SchemaVersion != AckSchemaVersion {
+		t.Errorf("SchemaVersion: %q != %q", got.SchemaVersion, AckSchemaVersion)
+	}
+}
+
+func TestStore_IsAcked(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	ack := &ProcessingAck{
+		MessageID:      "msg-1",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		PayloadHash:    PayloadHashHex("done"),
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "done",
+	}
+
+	if store.IsAcked("soldier-1", "msg-1") {
+		t.Error("should not be acked before WriteAck")
+	}
+
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	if !store.IsAcked("soldier-1", "msg-1") {
+		t.Error("should be acked after WriteAck")
+	}
+}
+
+// --- Exact ack validation ---
+
+func TestValidateAck_ExactMatch(t *testing.T) {
+	env := &Envelope{
+		MessageID:      "msg-1",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "task:1",
+		Key:            "my-key",
+		Payload:        "done: work",
+		PayloadHash:    PayloadHashHex("done: work"),
+	}
+	ack := &ProcessingAck{
+		MessageID:      "msg-1",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "task:1",
+		Key:            "my-key",
+		PayloadHash:    PayloadHashHex("done: work"),
+		Outcome:        "done",
+	}
+	if err := ValidateAck(env, ack); err != nil {
+		t.Fatalf("ValidateAck exact match: %v", err)
+	}
+}
+
+func TestValidateAck_WrongMessageID(t *testing.T) {
+	env := &Envelope{MessageID: "msg-1", PayloadHash: PayloadHashHex("x")}
+	ack := &ProcessingAck{MessageID: "msg-2", PayloadHash: PayloadHashHex("x")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "message ID") {
+		t.Errorf("expected message ID mismatch error, got: %v", err)
+	}
+}
+
+func TestValidateAck_WrongSenderRank(t *testing.T) {
+	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
+	ack := &ProcessingAck{MessageID: "m", SenderRank: RankCaptain, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender rank") {
+		t.Errorf("expected sender rank error, got: %v", err)
+	}
+}
+
+func TestValidateAck_WrongSenderIdentity(t *testing.T) {
+	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
+	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "soldier-2", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "sender identity") {
+		t.Errorf("expected sender identity error, got: %v", err)
+	}
+}
+
+func TestValidateAck_WrongReceiverRank(t *testing.T) {
+	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
+	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankGeneral, ReceiverID: "r", PayloadHash: PayloadHashHex("x")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver rank") {
+		t.Errorf("expected receiver rank error, got: %v", err)
+	}
+}
+
+func TestValidateAck_WrongReceiverID(t *testing.T) {
+	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "captain-1", PayloadHash: PayloadHashHex("x")}
+	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "captain-2", PayloadHash: PayloadHashHex("x")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "receiver ID") {
+		t.Errorf("expected receiver ID error, got: %v", err)
+	}
+}
+
+func TestValidateAck_WrongTaskID(t *testing.T) {
+	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", TaskID: "task:1", PayloadHash: PayloadHashHex("x")}
+	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", TaskID: "task:2", PayloadHash: PayloadHashHex("x")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "task ID") {
+		t.Errorf("expected task ID error, got: %v", err)
+	}
+}
+
+func TestValidateAck_WrongKey(t *testing.T) {
+	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", Key: "key-a", PayloadHash: PayloadHashHex("x")}
+	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", Key: "key-b", PayloadHash: PayloadHashHex("x")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "key") {
+		t.Errorf("expected key error, got: %v", err)
+	}
+}
+
+func TestValidateAck_WrongPayloadHash(t *testing.T) {
+	env := &Envelope{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", Payload: "hello", PayloadHash: PayloadHashHex("hello")}
+	ack := &ProcessingAck{MessageID: "m", SenderRank: RankSoldier, SenderIdentity: "s", ReceiverRank: RankCaptain, ReceiverID: "r", PayloadHash: PayloadHashHex("world")}
+	if err := ValidateAck(env, ack); err == nil || !strings.Contains(err.Error(), "payload hash") {
+		t.Errorf("expected payload hash error, got: %v", err)
+	}
+}
+
+// --- ValidOutcome ---
+
+func TestValidOutcome(t *testing.T) {
+	if !ValidOutcome("done") {
+		t.Error("done should be valid")
+	}
+	if !ValidOutcome("failed") {
+		t.Error("failed should be valid")
+	}
+	if !ValidOutcome("needs-decision") {
+		t.Error("needs-decision should be valid")
+	}
+	if !ValidOutcome("blocked") {
+		t.Error("blocked should be valid")
+	}
+	if !ValidOutcome("paused") {
+		t.Error("paused should be valid")
+	}
+	if ValidOutcome("") {
+		t.Error("empty should not be valid")
+	}
+	if ValidOutcome("invalid") {
+		t.Error("invalid should not be valid")
+	}
+}
+
+// --- ValidateProcessingAck ---
+
+func TestValidateProcessingAck_Valid(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 1000,
+		Outcome:     "done",
+	}
+	if err := ValidateProcessingAck(ack); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_ProcessedAtZero(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 0,
+		Outcome:     "done",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
+		t.Errorf("expected processed_at error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_ProcessedAtNegative(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: -1,
+		Outcome:     "done",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
+		t.Errorf("expected processed_at error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_InvalidOutcome(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 1000,
+		Outcome:     "invalid",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("expected outcome error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_EmptyOutcome(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 1000,
+		Outcome:     "",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("expected outcome error, got: %v", err)
+	}
+}
+
+// --- ValidatePathComponent ---
+
+func TestValidatePathComponent_Valid(t *testing.T) {
+	tests := []string{
+		"alpha",
+		"soldier-1",
+		"captain_main",
+		"msg.id",
+		"a",
+		"0123456789abcdef0123456789abcdef",
+	}
+	for _, tc := range tests {
+		t.Run(tc, func(t *testing.T) {
+			if err := ValidatePathComponent(tc, "test"); err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidatePathComponent_Slash(t *testing.T) {
+	if err := ValidatePathComponent("a/b", "test"); err == nil || !strings.Contains(err.Error(), "slash") {
+		t.Errorf("expected slash error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_Backslash(t *testing.T) {
+	if err := ValidatePathComponent("a\\b", "test"); err == nil || !strings.Contains(err.Error(), "backslash") {
+		t.Errorf("expected backslash error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_DotDot(t *testing.T) {
+	if err := ValidatePathComponent("..", "test"); err == nil || !strings.Contains(err.Error(), "relative path") {
+		t.Errorf("expected relative path error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_Empty(t *testing.T) {
+	if err := ValidatePathComponent("", "test"); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Errorf("expected empty error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_Colon(t *testing.T) {
+	if err := ValidatePathComponent("a:b", "test"); err == nil || !strings.Contains(err.Error(), "colon") {
+		t.Errorf("expected colon error, got: %v", err)
+	}
+}
+
+// --- Idempotent envelope write ---
+
+func TestStore_WriteEnvelope_Idempotent_SameContent(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	env := &Envelope{
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "done: same content",
+	}
+	// Write twice with same content — must be idempotent.
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("first WriteEnvelope: %v", err)
+	}
+	msgID := env.MessageID
+	env2 := &Envelope{
+		MessageID:      msgID,
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "done: same content",
+	}
+	if err := store.WriteEnvelope(env2); err != nil {
+		t.Fatalf("second WriteEnvelope (same content): %v", err)
+	}
+}
+
+func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	env := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "first content",
+	}
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("first WriteEnvelope: %v", err)
+	}
+
+	// Same message ID, different payload — must fail.
+	env2 := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "different content",
+	}
+	if err := store.WriteEnvelope(env2); err == nil {
+		t.Fatal("expected conflict error, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+
+	// Different receiver ID with same message ID — must fail.
+	env3 := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-2",
+		Payload:        "first content",
+	}
+	if err := store.WriteEnvelope(env3); err == nil {
+		t.Fatal("expected conflict error for different receiver ID, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+
+	// Different sender rank with same message ID — must fail.
+	env4 := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankCaptain,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankGeneral,
+		ReceiverID:     "captain-1",
+		Payload:        "first content",
+	}
+	if err := store.WriteEnvelope(env4); err == nil {
+		t.Fatal("expected conflict error for different rank, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+}
+
+// --- Idempotent ack ---
+
+func TestStore_WriteAck_Conflict(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	ack := &ProcessingAck{
+		MessageID:      "msg-conflict",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		PayloadHash:    PayloadHashHex("first"),
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "done",
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("first WriteAck: %v", err)
+	}
+
+	// Different outcome — must fail.
+	ack2 := &ProcessingAck{
+		MessageID:      "msg-conflict",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		PayloadHash:    PayloadHashHex("first"),
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "failed",
+	}
+	if err := store.WriteAck(ack2); err == nil {
+		t.Fatal("expected conflict error, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+}
+
+func TestStore_WriteAck_Idempotent(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	ack := &ProcessingAck{
+		MessageID:      "msg-1",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		PayloadHash:    PayloadHashHex("work"),
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "done",
+	}
+	// Write same ack twice.
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("first WriteAck: %v", err)
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("second WriteAck: %v", err)
+	}
+
+	got, err := store.ReadAck("soldier-1", "msg-1")
+	if err != nil {
+		t.Fatalf("ReadAck: %v", err)
+	}
+	if got == nil {
+		t.Fatal("ack not found after second write")
+	}
+	if got.MessageID != "msg-1" {
+		t.Errorf("MessageID: %q", got.MessageID)
+	}
+}
+
+// --- ListInbox excludes acked ---
+
+func TestStore_ListInbox_ExcludesAcked(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env1 := &Envelope{SenderRank: RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: RankCaptain, ReceiverID: "captain-1", Payload: "first"}
+	env2 := &Envelope{SenderRank: RankSoldier, SenderIdentity: "soldier-1", ReceiverRank: RankCaptain, ReceiverID: "captain-1", Payload: "second"}
+	if err := store.WriteEnvelope(env1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteEnvelope(env2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ack env1.
+	ack := &ProcessingAck{
+		MessageID: env1.MessageID, SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: env1.PayloadHash,
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	pending, err := store.ListInbox("soldier-1")
+	if err != nil {
+		t.Fatalf("ListInbox: %v", err)
 	}
 	if len(pending) != 1 {
 		t.Fatalf("expected 1 pending (env2), got %d", len(pending))
@@ -445,37 +876,302 @@ func TestListPendingInbox_ExcludesAcked(t *testing.T) {
 	}
 }
 
-// --- Rank ownership ---
+// --- v1 read compatibility ---
 
-func TestEnvelope_OwnershipMismatch(t *testing.T) {
-	err := OwnershipError("captain-1", "captain-2")
-	if err == nil {
-		t.Fatal("expected ownership error")
+func TestStore_ReadEnvelope_V1Compat(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	// Write a v1-style envelope with extra mutable fields.
+	v1Data := `{
+		"schema_version": "munsu.mailbox-envelope/v1",
+		"message_id": "v1-msg",
+		"sender_rank": "soldier",
+		"sender_identity": "soldier-1",
+		"receiver_rank": "captain",
+		"receiver_id": "captain-1",
+		"receiver_home": "",
+		"task_id": "task:1",
+		"key": "",
+		"state": "done",
+		"payload": "done: legacy",
+		"payload_hash": "` + PayloadHashHex("done: legacy") + `",
+		"created_at": 1000,
+		"delivery_status": "acked",
+		"delivery_attempts": 1,
+		"last_attempt_at": 1001,
+		"acked_at": 1002
+	}`
+	inboxDir := filepath.Join(home, "state", InboxDir, "soldier-1")
+	if err := os.MkdirAll(inboxDir, 0755); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "ownership mismatch") {
-		t.Errorf("error should mention ownership: %v", err)
+	if err := os.WriteFile(filepath.Join(inboxDir, "v1-msg.json"), []byte(v1Data), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := store.ReadEnvelope("soldier-1", "v1-msg")
+	if err != nil {
+		t.Fatalf("ReadEnvelope v1: %v", err)
+	}
+	if env == nil {
+		t.Fatal("envelope not found")
+	}
+	if env.MessageID != "v1-msg" {
+		t.Errorf("MessageID: %q", env.MessageID)
+	}
+	if env.SenderRank != RankSoldier {
+		t.Errorf("SenderRank: %q", env.SenderRank)
+	}
+	if env.SenderIdentity != "soldier-1" {
+		t.Errorf("SenderIdentity: %q", env.SenderIdentity)
+	}
+	if env.Payload != "done: legacy" {
+		t.Errorf("Payload: %q", env.Payload)
+	}
+	if env.PayloadHash != PayloadHashHex("done: legacy") {
+		t.Errorf("PayloadHash mismatch")
+	}
+	if env.CreatedAt != 1000 {
+		t.Errorf("CreatedAt: %d", env.CreatedAt)
+	}
+	// v1 schema version is preserved on read (not dropped).
+	if env.SchemaVersion != "munsu.mailbox-envelope/v1" {
+		t.Errorf("SchemaVersion should match v1 on read: %q", env.SchemaVersion)
+	}
+}
+
+func TestStore_ReadPending_V1Compat(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	v1Data := `{
+		"schema_version": "munsu.mailbox-envelope/v1",
+		"message_id": "v1-pending",
+		"sender_rank": "soldier",
+		"sender_identity": "soldier-1",
+		"receiver_rank": "captain",
+		"receiver_id": "captain-1",
+		"payload": "done: legacy pending",
+		"payload_hash": "` + PayloadHashHex("done: legacy pending") + `",
+		"created_at": 2000,
+		"delivery_status": "pending",
+		"delivery_attempts": 0
+	}`
+	pendingDir := filepath.Join(home, "state", OutboxDir, "soldier-1")
+	if err := os.MkdirAll(pendingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pendingDir, "v1-pending.pending"), []byte(v1Data), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := store.ReadPending("soldier-1", "v1-pending")
+	if err != nil {
+		t.Fatalf("ReadPending v1: %v", err)
+	}
+	if env == nil {
+		t.Fatal("pending not found")
+	}
+	if env.MessageID != "v1-pending" {
+		t.Errorf("MessageID: %q", env.MessageID)
+	}
+	if env.SenderIdentity != "soldier-1" {
+		t.Errorf("SenderIdentity: %q", env.SenderIdentity)
+	}
+	if env.Payload != "done: legacy pending" {
+		t.Errorf("Payload: %q", env.Payload)
+	}
+	if env.CreatedAt != 2000 {
+		t.Errorf("CreatedAt: %d", env.CreatedAt)
+	}
+}
+
+// --- Pending: round-trip write → read → remove ---
+
+func TestStore_Pending_RoundTrip(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env := &Envelope{
+		MessageID:      "pending-1",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "done: pending test",
+		PayloadHash:    PayloadHashHex("done: pending test"),
+	}
+	if err := store.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+
+	got, err := store.ReadPending("soldier-1", "pending-1")
+	if err != nil {
+		t.Fatalf("ReadPending: %v", err)
+	}
+	if got == nil {
+		t.Fatal("pending not found")
+	}
+	if got.Payload != "done: pending test" {
+		t.Errorf("Payload: %q", got.Payload)
+	}
+
+	list, err := store.ListPending("soldier-1")
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 pending, got %d", len(list))
+	}
+
+	// Write matching ack so RemovePendingAfterAck can validate.
+	ack := &ProcessingAck{
+		MessageID: "pending-1", SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("done: pending test"),
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	store.WriteAck(ack)
+
+	if err := store.RemovePendingAfterAck("soldier-1", "pending-1", ack); err != nil {
+		t.Fatalf("RemovePendingAfterAck: %v", err)
+	}
+	got, _ = store.ReadPending("soldier-1", "pending-1")
+	if got != nil {
+		t.Error("pending should be nil after remove")
+	}
+}
+
+// --- Full flow: envelope → pending → ack → validate → remove pending ---
+
+func TestStore_FullFlow(t *testing.T) {
+	receiverHome := t.TempDir()
+	senderHome := t.TempDir()
+	receiverStore := NewStore(receiverHome)
+	senderStore := NewStore(senderHome)
+
+	env := &Envelope{
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		TaskID:         "task:1",
+		Key:            "report-key",
+		Payload:        "done: full flow",
+	}
+
+	// Write envelope to receiver's inbox.
+	if err := receiverStore.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+
+	// Write pending on sender side.
+	if err := senderStore.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+
+	// Verify envelope can be read.
+	got, err := receiverStore.ReadEnvelope("soldier-1", env.MessageID)
+	if err != nil || got == nil {
+		t.Fatal("envelope not found after WriteEnvelope")
+	}
+
+	// Write ack on receiver side.
+	ack := &ProcessingAck{
+		MessageID:      env.MessageID,
+		SenderRank:     env.SenderRank,
+		SenderIdentity: env.SenderIdentity,
+		ReceiverRank:   env.ReceiverRank,
+		ReceiverID:     env.ReceiverID,
+		TaskID:         env.TaskID,
+		Key:            env.Key,
+		PayloadHash:    env.PayloadHash,
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "done",
+	}
+	if err := receiverStore.WriteAck(ack); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	// Validate ack on sender side.
+	readAck, err := receiverStore.ReadAck("soldier-1", env.MessageID)
+	if err != nil {
+		t.Fatalf("ReadAck: %v", err)
+	}
+	if readAck == nil {
+		t.Fatal("ack not found")
+	}
+	if err := ValidateAck(env, readAck); err != nil {
+		t.Fatalf("ValidateAck: %v", err)
+	}
+
+	// Remove pending after validated ack.
+	if err := senderStore.RemovePendingAfterAck("soldier-1", env.MessageID, readAck); err != nil {
+		t.Fatalf("RemovePendingAfterAck: %v", err)
+	}
+	pending, _ := senderStore.ListPending("soldier-1")
+	if len(pending) != 0 {
+		t.Error("pending should be empty after validated ack and remove")
+	}
+}
+
+// --- ListAllPending across identities ---
+
+func TestStore_ListAllPending(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	envs := []*Envelope{
+		{MessageID: "a-1", SenderIdentity: "alpha", Payload: "a1"},
+		{MessageID: "a-2", SenderIdentity: "alpha", Payload: "a2"},
+		{MessageID: "b-1", SenderIdentity: "beta", Payload: "b1"},
+	}
+	for _, e := range envs {
+		e.SenderRank = RankSoldier
+		e.ReceiverRank = RankCaptain
+		e.ReceiverID = "captain-1"
+		if err := store.WritePending(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := store.ListAllPending()
+	if err != nil {
+		t.Fatalf("ListAllPending: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 pending total, got %d", len(all))
 	}
 }
 
 // --- Recovery ---
 
 func TestRecoverInbox_AlreadyAcked(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderIdentity := "soldier-1"
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: senderIdentity,
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		MessageID:      "test-id",
-		Payload:        "done: test",
-	}
-	NewEnvelope(receiverHome, env)
-	MarkProcessed(receiverHome, senderIdentity, env.MessageID)
+	home := t.TempDir()
+	store := NewStore(home)
 
-	attempt := RecoverInbox(receiverHome, env)
+	env := &Envelope{
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		MessageID: "test-id", Payload: "done: test",
+	}
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatal(err)
+	}
+	ack := &ProcessingAck{
+		MessageID: env.MessageID, SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: env.PayloadHash,
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatal(err)
+	}
+
+	attempt := RecoverInbox(home, env)
 	if !attempt.AlreadyAck {
-		t.Error("expected AlreadyAck for processed envelope")
+		t.Error("expected AlreadyAck for acked envelope")
 	}
 	if attempt.Delivered {
 		t.Error("should not deliver already-acked envelope")
@@ -483,31 +1179,29 @@ func TestRecoverInbox_AlreadyAcked(t *testing.T) {
 }
 
 func TestRecoverInbox_SkipOnMarker(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderIdentity := "soldier-1"
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: senderIdentity,
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		MessageID:      "test-id-skip",
-		Payload:        "done: test",
-	}
-	NewEnvelope(receiverHome, env)
+	home := t.TempDir()
+	store := NewStore(home)
 
-	// Write recovery marker.
-	markerPath := RecoveryMarkerPath(receiverHome, env.MessageID)
+	env := &Envelope{
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		MessageID: "test-id-skip", Payload: "done: test",
+	}
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatal(err)
+	}
+
+	markerPath := RecoveryMarkerPath(home, env.MessageID)
 	os.WriteFile(markerPath, []byte("recovered\n"), 0644)
 
-	attempt := RecoverInbox(receiverHome, env)
+	attempt := RecoverInbox(home, env)
 	if !attempt.Skipped {
 		t.Error("expected Skipped when marker exists")
 	}
 }
 
 func TestRecoverAllInboxes_EmptyDir(t *testing.T) {
-	home := t.TempDir()
-	attempts, err := RecoverAllInboxes(home)
+	attempts, err := RecoverAllInboxes(t.TempDir())
 	if err != nil {
 		t.Fatalf("RecoverAllInboxes: %v", err)
 	}
@@ -516,253 +1210,17 @@ func TestRecoverAllInboxes_EmptyDir(t *testing.T) {
 	}
 }
 
-// --- SendReport (happy path integration) ---
-
-func TestSendReport_HappyPath(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@w"
-
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: task complete",
-	}
-
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := SendReport(env, receiverHome, senderHome, meta)
-
-	if result.Err != nil {
-		t.Fatalf("SendReport: %v", result.Err)
-	}
-	if !result.PromptSent {
-		t.Error("expected prompt sent")
-	}
-
-	// Verify envelope in inbox.
-	got, err := GetInboxEnvelope(receiverHome, "soldier-1", env.MessageID)
-	if err != nil || got == nil {
-		t.Fatal("envelope not found in inbox")
-	}
-	if got.DeliveryStatus != StatusDelivered {
-		t.Errorf("status=%q, want delivered", got.DeliveryStatus)
-	}
-
-	// Verify sender pending record.
-	pending, err := ListSenderPending(senderHome)
-	if err != nil || len(pending) != 1 {
-		t.Fatal("sender pending record not found")
-	}
-
-	// Mark processed and verify ack.
-	if err := MarkProcessed(receiverHome, "soldier-1", env.MessageID); err != nil {
-		t.Fatalf("MarkProcessed: %v", err)
-	}
-	if !IsAcked(receiverHome, "soldier-1", env.MessageID) {
-		t.Error("expected ack after MarkProcessed")
-	}
-
-	// Remove sender pending after ack.
-	if err := RemoveSenderPending(senderHome, env.MessageID); err != nil {
-		t.Fatalf("RemoveSenderPending: %v", err)
-	}
-	pending, _ = ListSenderPending(senderHome)
-	if len(pending) != 0 {
-		t.Error("sender pending should be empty after ack")
-	}
-}
-
-func TestSendReport_DeadEndpoint(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@dead"
-
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: offline",
-	}
-
-	fake := &fakeBackend{alive: false, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := SendReport(env, receiverHome, senderHome, meta)
-
-	if result.Err == nil {
-		t.Fatal("expected error for dead endpoint")
-	}
-
-	// Envelope should be in inbox but still pending.
-	got, err := GetInboxEnvelope(receiverHome, "soldier-1", env.MessageID)
-	if err != nil || got == nil {
-		t.Fatal("envelope must be in inbox even on delivery failure")
-	}
-	if got.DeliveryStatus != StatusPending {
-		t.Errorf("status=%q, want pending (dead endpoint should not change status)", got.DeliveryStatus)
-	}
-
-	// Sender must have pending record.
-	pending, err := ListSenderPending(senderHome)
-	if err != nil || len(pending) != 1 {
-		t.Fatal("sender must have pending record for undelivered envelope")
-	}
-}
-
-// --- General→Captain with marker ---
-
-func TestSendReport_GeneralToCaptain(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@w"
-
-	markedMsg := marker.MarkFromGeneral("run deploy")
-	env := &Envelope{
-		SenderRank:     RankGeneral,
-		SenderIdentity: "general-main",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        markedMsg,
-	}
-
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := SendReport(env, receiverHome, senderHome, meta)
-
-	if result.Err != nil {
-		t.Fatalf("SendReport: %v", result.Err)
-	}
-	if !result.PromptSent {
-		t.Error("expected prompt sent")
-	}
-
-	if len(fake.sent) != 1 {
-		t.Fatalf("sent=%d, want 1", len(fake.sent))
-	}
-	if !marker.IsFromGeneral(fake.sent[0]) {
-		t.Error("delivered message must carry from-general marker")
-	}
-}
-
-// --- Recovery: target offline/restart ---
-
-func TestRecoverInbox_RetriesDelivery(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderIdentity := "soldier-1"
-	window := "@w"
-
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: senderIdentity,
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: recovered",
-	}
-	NewEnvelope(receiverHome, env)
-	SaveSenderPending(receiverHome, env) // not used here but mirrors real flow
-
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	attempt := RecoverInbox(receiverHome, env)
-	if attempt.Err != nil {
-		t.Fatalf("RecoverInbox: %v", attempt.Err)
-	}
-	if !attempt.Delivered {
-		t.Error("expected delivered")
-	}
-	if len(fake.sent) != 1 {
-		t.Fatalf("sent=%d, want 1", len(fake.sent))
-	}
-	if fake.sent[0] != "done: recovered" {
-		t.Errorf("message=%q", fake.sent[0])
-	}
-
-	// Envelope should be delivered in inbox.
-	got, _ := GetInboxEnvelope(receiverHome, senderIdentity, env.MessageID)
-	if got.DeliveryStatus != StatusDelivered {
-		t.Errorf("status=%q, want delivered", got.DeliveryStatus)
-	}
-
-	// Second recovery attempt should skip (marker exists).
-	attempt2 := RecoverInbox(receiverHome, env)
-	if !attempt2.Skipped {
-		t.Error("second recovery should be skipped")
-	}
-
-	// Should not send again.
-	if len(fake.sent) != 1 {
-		t.Fatalf("should not send again, got %d sends", len(fake.sent))
-	}
-}
-
-// --- Dedup: same envelope, two deliveries ---
-
-func TestSendReport_DuplicateMessageID(t *testing.T) {
-	receiverHome := t.TempDir()
-
-	// Two envelopes with the same message ID — second NewEnvelope should overwrite
-	// (idempotent at the file level: last write wins).
-	env := &Envelope{
-		MessageID:      "dup-id-1234567890abcdef",
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "first",
-	}
-	NewEnvelope(receiverHome, env)
-	env.Payload = "second"
-	NewEnvelope(receiverHome, env)
-
-	// Only one envelope with this ID.
-	got, _ := GetInboxEnvelope(receiverHome, "soldier-1", env.MessageID)
-	if got == nil {
-		t.Fatal("envelope not found")
-	}
-	// The second write overwrites the first (payload hash is always recomputed).
-	if got.Payload != "second" {
-		t.Errorf("payload=%q, want 'second' (last write wins)", got.Payload)
-	}
-	if got.PayloadHash == PayloadHashHex("first") {
-		t.Error("payload hash should have been recomputed for second write")
-	}
-}
-
-// --- Cleanup markers ---
-
 func TestCleanRecoveryMarkers(t *testing.T) {
 	home := t.TempDir()
-	stateDir := home + "/state"
+	stateDir := filepath.Join(home, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	// Create marker files.
-	os.WriteFile(stateDir+"/.recovered-msg1", []byte("ok"), 0644)
-	os.WriteFile(stateDir+"/.recovered-msg2", []byte("ok"), 0644)
+	os.WriteFile(filepath.Join(stateDir, ".recovered-msg1"), []byte("ok"), 0644)
+	os.WriteFile(filepath.Join(stateDir, ".recovered-msg2"), []byte("ok"), 0644)
 
-	// Clean with 0 max age — all markers should be removed.
 	if err := CleanRecoveryMarkers(home, 0); err != nil {
 		t.Fatalf("CleanRecoveryMarkers: %v", err)
 	}
-
 	entries, _ := os.ReadDir(stateDir)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".recovered-") {
@@ -771,327 +1229,151 @@ func TestCleanRecoveryMarkers(t *testing.T) {
 	}
 }
 
-// --- Direct idle and busy submission, no watcher ---
+// --- Legacy standalone helpers delegation ---
 
-func TestAwaitedSendReport_IdleSubmission(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@w"
+func TestLegacyGetInboxEnvelope(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
 
 	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "working: idle test",
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		Payload: "legacy test",
 	}
+	store.WriteEnvelope(env)
 
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := AwaitedSendReport(env, receiverHome, senderHome, meta)
-
-	if result.Err != nil {
-		t.Fatalf("AwaitedSendReport: %v", result.Err)
+	got, err := GetInboxEnvelope(home, "soldier-1", env.MessageID)
+	if err != nil {
+		t.Fatalf("GetInboxEnvelope: %v", err)
 	}
-	if !result.PromptSent {
-		t.Error("expected prompt sent")
-	}
-	// Process ack should initially be false (processed in next turn).
-	if result.ProcessAcked {
-		t.Log("process ack already true (receiver may have processed)")
-	}
-
-	// Now simulate receiver processing.
-	if err := MarkProcessed(receiverHome, "soldier-1", env.MessageID); err != nil {
-		t.Fatalf("MarkProcessed: %v", err)
-	}
-
-	if !IsAcked(receiverHome, "soldier-1", env.MessageID) {
-		t.Error("expected ack after processing")
+	if got == nil || got.Payload != "legacy test" {
+		t.Error("GetInboxEnvelope delegation failed")
 	}
 }
 
-// --- General watcher with legacy/general pending state ---
-
-func TestGeneralWatcher_NoParentWarning(t *testing.T) {
-	// General should never emit parent-home diagnostics.
-	// This test verifies the inbox design: a General home's inbox
-	// contains incoming envelopes from Captains.
-	// The General DOES NOT have config/parent-home.
-	generalHome := t.TempDir()
-
-	// Create incoming envelopes (Captain→General).
+func TestLegacySaveSenderPending(t *testing.T) {
+	home := t.TempDir()
 	env := &Envelope{
-		SenderRank:     RankCaptain,
-		SenderIdentity: "captain-1",
-		ReceiverRank:   RankGeneral,
-		ReceiverID:     "general-main",
-		Payload:        "needs-decision: approve deploy",
+		MessageID: "legacy-pending", SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", Payload: "test",
+		PayloadHash: PayloadHashHex("test"),
 	}
-	NewEnvelope(generalHome, env)
-
-	// Verify the envelope is in General's inbox.
-	got, err := GetInboxEnvelope(generalHome, "captain-1", env.MessageID)
-	if err != nil || got == nil {
-		t.Fatal("envelope should be in General inbox")
+	path, err := SaveSenderPending(home, env)
+	if err != nil {
+		t.Fatalf("SaveSenderPending: %v", err)
 	}
-	if got.SenderRank != RankCaptain || got.ReceiverRank != RankGeneral {
-		t.Errorf("rank mismatch: sender=%s receiver=%s", got.SenderRank, got.ReceiverRank)
+	if path == "" {
+		t.Fatal("expected non-empty path")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("pending file not created: %v", err)
 	}
 }
 
-// --- Captain missing parent does not affect local Soldier→Captain ---
-
-func TestCaptainMissingParent_LocalSoldierToCaptain(t *testing.T) {
-	captainHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@w"
-
-	// Soldier sends to Captain (no parent configured).
+func TestLegacyListSenderPending(t *testing.T) {
+	home := t.TempDir()
 	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: local-only",
+		MessageID: "list-test", SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", Payload: "test",
+		PayloadHash: PayloadHashHex("test"),
 	}
+	NewStore(home).WritePending(env)
 
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, captainHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(captainHome, "captain:1")
-	result := SendReport(env, captainHome, senderHome, meta)
-
-	if result.Err != nil {
-		t.Fatalf("SendReport should work without parent: %v", result.Err)
+	pending, err := ListSenderPending(home, "soldier-1")
+	if err != nil {
+		t.Fatalf("ListSenderPending: %v", err)
 	}
-	if !result.PromptSent {
-		t.Error("expected prompt sent")
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending, got %d", len(pending))
 	}
+}
 
-	// Also test Captain→General pending remains durable.
-	generalHome := t.TempDir()
-	captainToGenEnv := &Envelope{
-		SenderRank:     RankCaptain,
-		SenderIdentity: "captain-1",
-		ReceiverRank:   RankGeneral,
-		ReceiverID:     "general-main",
-		Payload:        "done: captain report",
+func TestLegacyRemoveSenderPending(t *testing.T) {
+	home := t.TempDir()
+	env := &Envelope{
+		MessageID: "remove-test", SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", Payload: "test",
+		PayloadHash: PayloadHashHex("test"),
 	}
-	NewEnvelope(generalHome, captainToGenEnv)
-
-	if !IsAcked(generalHome, "captain-1", captainToGenEnv.MessageID) {
-		// Should not be acked yet.
+	store := NewStore(home)
+	store.WritePending(env)
+	// Write matching ack so RemoveSenderPending (which delegates to
+	// RemovePendingAfterAck) can validate.
+	ack := &ProcessingAck{
+		MessageID: "remove-test", SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("test"),
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	}
+	store.WriteAck(ack)
+	if err := RemoveSenderPending(home, "soldier-1", "remove-test"); err != nil {
+		t.Fatalf("RemoveSenderPending: %v", err)
+	}
+	got, _ := store.ReadPending("soldier-1", "remove-test")
+	if got != nil {
+		t.Error("pending should be nil after remove")
+	}
+}
 
-	// Should be visible in health (listable).
-	pending, err := ListPendingInbox(generalHome, "captain-1")
+func TestLegacyNewEnvelope(t *testing.T) {
+	home := t.TempDir()
+	env := &Envelope{
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		Payload: "legacy new",
+	}
+	if err := NewEnvelope(home, env); err != nil {
+		t.Fatalf("NewEnvelope: %v", err)
+	}
+	got, _ := NewStore(home).ReadEnvelope("soldier-1", env.MessageID)
+	if got == nil || got.Payload != "legacy new" {
+		t.Error("NewEnvelope delegation failed")
+	}
+}
+
+func TestLegacyListPendingInbox(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+	store.WriteEnvelope(&Envelope{
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		Payload: "inbox test",
+	})
+	pending, err := ListPendingInbox(home, "soldier-1")
 	if err != nil {
 		t.Fatalf("ListPendingInbox: %v", err)
 	}
 	if len(pending) != 1 {
-		t.Fatalf("expected 1 pending Captain→General envelope, got %d", len(pending))
+		t.Fatalf("expected 1 pending inbox, got %d", len(pending))
 	}
 }
 
-// --- Existing receipt compatibility ---
-
-func TestTurnendReceiptsMigration(t *testing.T) {
-	// Verify that the turnend package's receipt format (used in legacy path)
-	// is compatible with the mailbox system. The new mailbox does NOT
-	// require migration of existing receipts — they co-exist.
-	// Existing turnend receipts under state/.terminal-receipts/ remain valid.
-	// The new mailbox system uses state/.inbox/ independently.
-	captainHome := t.TempDir()
-
-	// Legacy turnend receipt path.
-	turnendDir := captainHome + "/state/.terminal-receipts"
-	os.MkdirAll(turnendDir, 0755)
-	receiptContent := "task_id=old-task\nkey=old-key\nstate=done\nmsg=legacy\ntimestamp=123\n"
-	os.WriteFile(turnendDir+"/old-task.old-key.receipt", []byte(receiptContent), 0644)
-
-	// New mailbox - should not interfere with legacy.
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "new-soldier",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "done: new-style",
-	}
-	NewEnvelope(captainHome, env)
-	MarkProcessed(captainHome, "new-soldier", env.MessageID)
-
-	// Legacy receipt should still exist.
-	if _, err := os.Stat(turnendDir + "/old-task.old-key.receipt"); err != nil {
-		t.Error("legacy receipt should still exist after mailbox operations")
-	}
-}
-
-// TestDirectDurableMailbox_NoWatcherRouting proves that the happy-path
-// report/send flow (sender writes envelope to receiver's inbox, marks as
-// delivered, sender retains pending record) does NOT require a watcher
-// process, any watcher routing, or ListPendingReceipts-style normal routing.
-// The watcher is recovery-only; this test proves the happy path is pure
-// durable-file + acknowledged agent-prompt with zero watcher involvement.
-func TestDirectDurableMailbox_NoWatcherRouting(t *testing.T) {
-	// Use temp dirs only — no watcher process, no watcher beat, no watcher
-	// identity file. This is a pure file-based durable mailbox test.
-	receiverHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@w"
-
-	// 1. Envelope creation — no watcher exists.
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-no-watcher",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: task complete without watcher",
-	}
-
-	// 2. Write to receiver's inbox (direct write, no watcher needed).
-	if err := NewEnvelope(receiverHome, env); err != nil {
-		t.Fatalf("NewEnvelope without watcher: %v", err)
-	}
-
-	// 3. Save sender pending record (direct write, no watcher needed).
-	if _, err := SaveSenderPending(senderHome, env); err != nil {
-		t.Fatalf("SaveSenderPending without watcher: %v", err)
-	}
-
-	// 4. Deliver with a fake backend (simulates agent prompt, no watcher).
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, receiverHome, "captain:1", window)
-
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := DeliverEnvelope(receiverHome, env.SenderIdentity, env, meta)
-
-	if result.Err != nil {
-		t.Fatalf("DeliverEnvelope without watcher: %v", result.Err)
-	}
-	if !result.PromptSent {
-		t.Fatal("prompt must be sent without watcher")
-	}
-
-	// 5. Verify envelope is delivered in inbox.
-	got, _ := GetInboxEnvelope(receiverHome, env.SenderIdentity, env.MessageID)
-	if got == nil {
-		t.Fatal("envelope must exist in inbox after delivery")
-	}
-	if got.DeliveryStatus != StatusDelivered {
-		t.Errorf("envelope status = %q, want delivered", got.DeliveryStatus)
-	}
-
-	// 6. Receiver marks processed (acknowledged agent-prompt).
-	if err := MarkProcessed(receiverHome, env.SenderIdentity, env.MessageID); err != nil {
-		t.Fatalf("MarkProcessed without watcher: %v", err)
-	}
-
-	// 7. Verify ack.
-	if !IsAcked(receiverHome, env.SenderIdentity, env.MessageID) {
-		t.Fatal("envelope must be acked without watcher")
-	}
-
-	// 8. Sender removes pending record after ack.
-	if err := RemoveSenderPending(senderHome, env.MessageID); err != nil {
-		t.Fatalf("RemoveSenderPending: %v", err)
-	}
-	pending, _ := ListSenderPending(senderHome)
-	if len(pending) != 0 {
-		t.Error("pending must be empty after ack")
-	}
-
-	// 9. Verify no watcher artifacts created.
-	watcherArtifacts := []string{
-		filepath.Join(receiverHome, "state", ".last-watcher-beat"),
-		filepath.Join(receiverHome, "state", ".watcher-identity"),
-		filepath.Join(receiverHome, "state", ".inbox", env.SenderIdentity, ".recovered-"+env.MessageID),
-	}
-	for _, path := range watcherArtifacts {
-		if _, err := os.Stat(path); err == nil {
-			t.Errorf("watcher artifact should not exist after direct mailbox path: %s", path)
-		}
-	}
-
-	// 10. Verify no parent-home wake storms — no wake queue was created.
-	wakeQueuePath := filepath.Join(receiverHome, "state", ".wake-queue")
-	if _, err := os.Stat(wakeQueuePath); err == nil {
-		t.Error("wake queue should not exist after direct mailbox delivery")
-	}
-
-	// 11. Verify no ListPendingReceipts-style routing.
-	// The old pattern would check state/.terminal-receipts/ — ensure no such
-	// routing side effect happened.
-	receiptsDir := filepath.Join(receiverHome, "state", ".terminal-receipts")
-	if entries, err := os.ReadDir(receiptsDir); err == nil && len(entries) > 0 {
-		t.Errorf("no terminal-receipts should be created by direct mailbox, got %d entries", len(entries))
-	}
-}
-
-// TestDirectMailbox_NoWatcherDuringSendReport proves the combined
-// SendReport path (create envelope + save pending + deliver) works
-// without any watcher process running.
-func TestDirectMailbox_NoWatcherDuringSendReport(t *testing.T) {
-	receiverHome := t.TempDir()
-	senderHome := t.TempDir()
-	window := "@w"
+func TestLegacyIsAcked(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
 
 	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-direct",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		TaskID:         "captain:1",
-		Payload:        "done: direct durable mailbox",
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		Payload: "ack test",
+	}
+	store.WriteEnvelope(env)
+
+	if IsAcked(home, "soldier-1", env.MessageID) {
+		t.Error("should not be acked before WriteAck")
 	}
 
-	fake := &fakeBackend{alive: true, windowID: window}
-	installFakeBackend(t, fake)
-	writeFakeMeta(t, receiverHome, "captain:1", window)
+	store.WriteAck(&ProcessingAck{
+		MessageID: env.MessageID, SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: env.PayloadHash,
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	})
 
-	meta, _ := task.ReadMeta(receiverHome, "captain:1")
-	result := SendReport(env, receiverHome, senderHome, meta)
-
-	if result.Err != nil {
-		t.Fatalf("SendReport without watcher: %v", result.Err)
-	}
-	if !result.PromptSent {
-		t.Fatal("SendReport must send prompt without watcher")
-	}
-	if len(fake.sent) != 1 {
-		t.Fatalf("expected 1 prompt sent, got %d", len(fake.sent))
-	}
-
-	// Verify envelope is in inbox and delivered.
-	got, _ := GetInboxEnvelope(receiverHome, "soldier-direct", env.MessageID)
-	if got == nil {
-		t.Fatal("envelope must exist in inbox")
-	}
-	if got.DeliveryStatus != StatusDelivered {
-		t.Errorf("status = %q, want delivered", got.DeliveryStatus)
-	}
-
-	// Verify sender pending record exists.
-	pending, _ := ListSenderPending(senderHome)
-	if len(pending) != 1 {
-		t.Fatal("sender must have pending record")
-	}
-
-	// Verify prompt message content (agent-prompt acknowledgement).
-	if !strings.Contains(fake.sent[0], "done: direct durable mailbox") {
-		t.Errorf("prompt must contain original payload, got: %s", fake.sent[0])
-	}
-
-	// Verify no watcher artifacts created.
-	if _, err := os.Stat(filepath.Join(receiverHome, "state", ".last-watcher-beat")); err == nil {
-		t.Error("watcher beat must not exist after direct SendReport")
+	if !IsAcked(home, "soldier-1", env.MessageID) {
+		t.Error("should be acked after WriteAck")
 	}
 }
