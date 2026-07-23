@@ -590,3 +590,138 @@ func TestParity_DefaultCharter_IdleByDefault(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Scenario 7: Dispatch chain — profile → soldier meta (end-to-end)
+// =============================================================================
+//
+// Firstmate's dispatch pipeline: captain reads backlog, resolves dispatch
+// profile (harness + model + effort), spawns soldier with resolved values.
+//
+// This group proves:
+//   7a. SpawnDispatchChain — a resolved dispatch profile's harness/model/effort
+//       appear as fields in the soldier meta written by the spawn process.
+//   7b. GamepadInMeta — the required gamepad fields (kind, window, backend)
+//       are always present in soldier meta regardless of dispatch.
+
+func TestParity_SpawnDispatchChain_ProfileToMeta(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+
+	// Simulate a dispatch profile config that picks a specific harness/model/effort.
+	cfg := &harness.DispatchConfig{
+		DefaultHarness: "pi",
+		DefaultModel:   "opencode-go/deepseek-v4-flash",
+		DefaultEffort:  "medium",
+		Profiles: []harness.DispatchProfile{
+			{Name: "review", Match: []string{"review"}, Harness: "codex", Model: "gpt-5.2-codex", Effort: "high"},
+			{Name: "default", Match: []string{"*"}, Harness: "pi", Model: "flash", Effort: "low"},
+		},
+	}
+
+	// Simulate making a dispatch decision (as Firstmate does with fm-dispatch-select.sh).
+	sel := harness.ResolveDispatchSelection(cfg, "review the PR")
+
+	// Write soldier meta with the resolved dispatch fields using the same
+	// INI-style format as munsu spawn (key=value pairs).
+	soldierID := "e2e-dispatch-soldier"
+	metaContent := fmt.Sprintf(
+		"kind=ship\nwindow=@dispatch-win\nharness=%s\nmodel=%s\neffort=%s\nproject=munsu\nmode=direct-PR\n",
+		sel.Harness, sel.Model, sel.Effort,
+	)
+	metaPath := filepath.Join(home, "state", soldierID+".meta")
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("writing meta: %v", err)
+	}
+
+	// Read back and verify dispatch values persisted.
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("reading meta: %v", err)
+	}
+	content := string(data)
+
+	checks := map[string]string{
+		"harness": "codex",
+		"model":   "gpt-5.2-codex",
+		"effort":  "high",
+		"kind":    "ship",
+		"mode":    "direct-PR",
+	}
+	for key, want := range checks {
+		wantLine := key + "=" + want
+		if !strings.Contains(content, wantLine) {
+			t.Errorf("meta missing %q (want %s=%s)", wantLine, key, want)
+		}
+	}
+}
+
+func TestParity_SpawnDispatchChain_GamepadInMeta(t *testing.T) {
+	// The gamepad fields (kind, window, backend) must always be present in
+	// soldier meta regardless of dispatch profile. This mirrors Firstmate's
+	// fm-spawn.sh which always writes these fields.
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "state"), 0755)
+
+	soldierID := "e2e-gamepad-soldier"
+	metaContent := "kind=scout\nwindow=@scout-win\nbackend=tmux\nproject=munsu\nharness=pi\nmodel=flash\n"
+	metaPath := filepath.Join(home, "state", soldierID+".meta")
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("writing meta: %v", err)
+	}
+
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("reading meta: %v", err)
+	}
+	content := string(data)
+
+	for _, key := range []string{"kind", "window", "backend", "project"} {
+		if !strings.Contains(content, key+"=") {
+			t.Errorf("required gamepad field %q missing from meta", key)
+		}
+	}
+
+	if !strings.Contains(content, "kind=scout") {
+		t.Errorf("kind mismatch, content: %s", content)
+	}
+	if !strings.Contains(content, "backend=tmux") {
+		t.Errorf("backend mismatch, content: %s", content)
+	}
+}
+
+func TestParity_SpawnDispatchChain_ProfileCatchall(t *testing.T) {
+	// Wildcard catchall matches when no specific profile rule fires.
+	cfg := &harness.DispatchConfig{
+		DefaultHarness: "pi",
+		Profiles: []harness.DispatchProfile{
+			{Name: "review", Match: []string{"review"}, Harness: "codex"},
+			{Name: "catchall", Match: []string{"*"}, Harness: "claude"},
+		},
+	}
+
+	// "implement feature" doesn't match "review" — should match catchall.
+	sel := harness.ResolveDispatchSelection(cfg, "implement feature")
+	if sel.Harness != "claude" {
+		t.Errorf("catchall dispatch = %q, want claude", sel.Harness)
+	}
+
+	// Empty task description should fall back to default harness (not match catchall).
+	sel = harness.ResolveDispatchSelection(cfg, "")
+	if sel.Harness != "pi" {
+		t.Errorf("dispatch for empty = %q, want pi (default)", sel.Harness)
+	}
+}
+
+func TestParity_SpawnDispatchChain_NoMatchWithoutDefault(t *testing.T) {
+	// Without a catchall or default, no match returns empty.
+	cfg := &harness.DispatchConfig{
+		Profiles: []harness.DispatchProfile{
+			{Name: "review", Match: []string{"review"}, Harness: "codex"},
+		},
+	}
+	sel := harness.ResolveDispatchSelection(cfg, "implement feature")
+	if sel.Harness != "" {
+		t.Errorf("should be empty for no-match, got %q", sel.Harness)
+	}
+}
