@@ -1,0 +1,214 @@
+[00:30:50] MUNSU_HOME: /tmp/munsu-e2e-home.gz5hTP
+[00:30:50] PROJ_DIR:   /tmp/munsu-e2e-proj.aiqiOc
+[00:30:50] Temp git project initialized at /tmp/munsu-e2e-proj.aiqiOc
+
+=== Phase 1: Session start ===
+[00:30:51] --- Bootstrap Diagnostics ---
+  FOUND: git at /opt/homebrew/bin/git
+  FOUND: tmux at /opt/homebrew/bin/tmux
+  MISSING: zellij (install instructions vary)
+  FOUND: treehouse at /Users/beowulf/.local/bin/treehouse
+  FOUND: no-mistakes at /Users/beowulf/.local/bin/no-mistakes
+  FOUND: tasks-axi at /Users/beowulf/.local/share/mise/installs/node/lts/bin/tasks-axi
+  FOUND: gh-axi at /Users/beowulf/.local/share/mise/installs/node/lts/bin/gh-axi
+  FOUND: gh at /opt/homebrew/bin/gh
+  GH_AUTH: authenticated
+  BACKEND_CONFIG: auto
+  BACKEND_RESOLVED: herdr (source: active HERDR_ENV)
+
+Missing tools -- install with: munsu bootstrap install <tool>
+
+--- Integration Matrix (role: soldier) ---
+    worktree_state: current (inside a git worktree)
+    pipeline_readiness: current (direct-PR mode (no require-no-mistakes))
+    soldier_brief: absent (.soldier-brief.md not found in cwd)
+
+--- Fleet Sync ---
+
+--- Captain Liveness ---
+  (no captains registered)
+
+--- Watcher Ensure ---
+  idle: no in-flight tasks; watcher not started
+
+--- Backlog Digest ---
+  (backlog empty or absent)
+
+--- Context ---
+  ABSENT (data/general.md)
+  ABSENT (data/learnings.md)
+  ABSENT (data/projects.md)
+  ABSENT (data/captains.md)
+
+--- Fleet State ---
+  (no in-flight tasks)
+
+--- AFK Drain ---
+  (no queued wakes)
+
+--- Supervision ---
+primary harness: pi
+supervision mode: persistent daemon
+lock: acquired — this session owns normal supervision.
+
+Daemon:  munsu watch ensure (idempotent start or attach)
+Inspect: munsu watch run (one poll cycle)
+Claim:   munsu wake claim --consumer <id>  (lease signal wakes from return channel)
+Drain:   munsu wake-drain  (legacy full drain; prefer claim)
+Repair:  munsu watch ensure
+Guard:   munsu guard
+
+--- Session Start Complete ---
+Lock: acquired
+schema_version: "munsu.orchestration/v2"
+kind: session.start
+status: success
+data:
+  lock: acquired
+  watcher: idle
+  bootstrap_ok: true
+  fleet_sync_ok: true
+  message: "Session started. Lock: acquired. Watcher: idle."
+  PASS: Lock file created
+  PASS: Lock file contains numeric PID
+  PASS: State directory exists
+  PASS: Session start: lock acquired, state bootstrapped
+
+=== Phase 2: Task add + brief ===
+  PASS: Task meta file created
+  PASS: Task kind is ship
+  PASS: Task description stored
+  PASS: Brief file created
+  PASS: Brief contains task ID
+  PASS: Brief contains setup section
+  PASS: Task add + brief: meta and brief file created
+
+=== Phase 3: Soldier spawn (simulated) ===
+  PASS: Project registered
+  PASS: Project name in registry
+[00:30:52] Simulated spawn: wrote task meta
+  PASS: Simulated spawn: meta written, launch artifacts created
+  PASS: Spawn meta has kind
+  PASS: Spawn meta has project
+
+=== Phase 4: Soldier supervision (simulated) ===
+  PASS: Status file created
+  PASS: First status line written
+  PASS: Status contains resolved key
+  PASS: Turn-end signal created
+  PASS: Final status is done
+  PASS: Soldier supervision: status and turn-end artifacts verified
+
+=== Phase 5: Delivery (simulated) ===
+  PASS: Delivery check artifact created
+  PASS: Check artifact is executable
+  PASS: Delivery: check artifact verified
+
+=== Phase 6: Teardown ===
+[00:30:52] schema_version: "munsu.orchestration/v2"
+kind: teardown
+status: success
+data:
+  message: "Teardown e2e-test completed:\n  - evidence preserved to state/.backup/e2e-test (--force)\n  - task meta removed\n  - residual e2e-test.status removed\n  - residual e2e-test.check removed\n  - residual e2e-test.turnend removed\n  - residual e2e-test.check.sh removed\n  - residual e2e-test.turn-ended removed\n  - residual e2e-test.pi-ext.ts removed\n  - task obligations cleared\n  - data dir removed (--force)"
+  noop: false
+  PASS: Task meta removed after teardown
+  PASS: Status file removed after teardown
+  PASS: Turn-end artifact removed after teardown
+  PASS: Data directory removed after teardown
+  PASS: Teardown: all state artifacts cleaned up
+
+=== Phase 7: Fleet idle check ===
+[00:30:52] # Fleet View — 2026-07-22T17:30:52Z
+
+Tasks: 0
+  PASS: Fleet view reports 0 tasks
+[00:30:52] # Bearings — 2026-07-22T17:30:52Z
+
+No in-flight ship/scout tasks. Fleet is idle.
+  PASS: Fleet bearings reports idle
+  PASS: Task list shows no tasks
+  PASS: Fleet idle: zero soldiers, healthy state
+
+=== Phase 8: Session end (lock release) ===
+[00:30:52] WARNING: stale session lock from dead PID 87019 — clearing
+--- Bootstrap Diagnostics ---
+  FOUND: git at /opt/homebrew/bin/git
+  FOUND: tmux at /opt/homebrew/bin/tmux
+  MISSING: zellij (install instructions vary)
+  FOUND: treehouse at /Users/beowulf/.local/bin/treehouse
+  FOUND: no-mistakes at /Users/beowulf/.local/bin/no-mistakes
+  FOUND: tasks-axi at /Users/beowulf/.local/share/mise/installs/node/lts/bin/tasks-axi
+  FOUND: gh-axi at /Users/beowulf/.local/share/mise/installs/node/lts/bin/gh-axi
+  FOUND: gh at /opt/homebrew/bin/gh
+  GH_AUTH: authenticated
+  BACKEND_CONFIG: auto
+  BACKEND_RESOLVED: herdr (source: active HERDR_ENV)
+
+Missing tools -- install with: munsu bootstrap install <tool>
+
+--- Integration Matrix (role: soldier) ---
+    worktree_state: current (inside a git worktree)
+    pipeline_readiness: current (direct-PR mode (no require-no-mistakes))
+    soldier_brief: absent (.soldier-brief.md not found in cwd)
+
+--- Fleet Sync ---
+  STUCK: munsu-e2e-proj.aiqiOc: fetch failed: fatal: 'origin' does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+
+--- Captain Liveness ---
+  (no captains registered)
+
+--- Watcher Ensure ---
+  idle: no in-flight tasks; watcher not started
+
+--- Backlog Digest ---
+  (backlog empty or absent)
+
+--- Context ---
+  ABSENT (data/general.md)
+  ABSENT (data/learnings.md)
+=== data/projects.md ===
+  - test-project - /tmp/munsu-e2e-proj.aiqiOc (added 2026-07-23)
+
+  ABSENT (data/captains.md)
+
+--- Fleet State ---
+  (no in-flight tasks)
+
+--- AFK Drain ---
+  (no queued wakes)
+
+--- Supervision ---
+primary harness: pi
+supervision mode: persistent daemon
+lock: acquired — this session owns normal supervision.
+
+Daemon:  munsu watch ensure (idempotent start or attach)
+Inspect: munsu watch run (one poll cycle)
+Claim:   munsu wake claim --consumer <id>  (lease signal wakes from return channel)
+Drain:   munsu wake-drain  (legacy full drain; prefer claim)
+Repair:  munsu watch ensure
+Guard:   munsu guard
+
+--- Session Start Complete ---
+Lock: acquired
+schema_version: "munsu.orchestration/v2"
+kind: session.start
+status: success
+data:
+  lock: acquired
+  watcher: idle
+  bootstrap_ok: true
+  fleet_sync_ok: true
+  message: "Session started. Lock: acquired. Watcher: idle."
+  PASS: Session-start can re-enter
+  PASS: Home structure intact after session
+  PASS: Session end: lock released, home clean
+
+============================================
+  Lifecycle E2E Test Results
+  PASS: 29  FAIL: 0
+============================================
