@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -201,7 +199,8 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSele
 		if p.SelectStrategy == "quota-balanced" {
 			// Prefer candidates from this profile's Use list; else all profiles.
 			if len(p.Use) > 0 {
-				picked := selectQuotaBalancedCandidates(p.Use)
+				selQuota := newQuotaSelector("quota-balanced")
+				picked := selQuota.selectCandidate(p.Use)
 				sel.Harness = picked.Harness
 				if picked.Model != "" {
 					sel.Model = picked.Model
@@ -215,19 +214,24 @@ func ResolveDispatchSelection(cfg *DispatchConfig, taskDesc string) DispatchSele
 				}
 				return sel
 			}
-			h := SelectProfile(cfg.Profiles, p.SelectStrategy)
-			sel.Harness = h
-			// Fill model/effort from the profile that owns the chosen harness.
+			// No Use list: resolve across all profiles.
+			cands := make([]DispatchCandidate, 0, len(cfg.Profiles))
 			for _, q := range cfg.Profiles {
-				if q.Harness == h {
-					if q.Model != "" {
-						sel.Model = q.Model
-					}
-					if q.Effort != "" {
-						sel.Effort = q.Effort
-					}
-					break
-				}
+				cands = append(cands, DispatchCandidate{
+					Harness: q.Harness,
+					Model:   q.Model,
+					Effort:  q.Effort,
+				})
+			}
+			selQuota := newQuotaSelector("quota-balanced")
+			picked := selQuota.selectCandidate(cands)
+			sel.Harness = picked.Harness
+			// Fill model/effort from the pick directly.
+			if picked.Model != "" {
+				sel.Model = picked.Model
+			}
+			if picked.Effort != "" {
+				sel.Effort = picked.Effort
 			}
 			return sel
 		}
@@ -323,238 +327,23 @@ func matchesProfile(rules []string, taskLower string, taskWords []string) bool {
 
 // SelectProfile resolves the target harness from a list of profiles using
 // the given selection strategy. Currently supports "quota-balanced".
-// When quota-axi is unavailable or the strategy is unrecognized, returns
-// the first profile's harness (graceful degradation).
+// When the strategy is unrecognized, returns the first profile's harness
+// (graceful degradation).
 func SelectProfile(profiles []DispatchProfile, strategy string) string {
 	if len(profiles) == 0 {
 		return ""
 	}
 
-	switch strategy {
-	case "quota-balanced":
-		cands := make([]DispatchCandidate, 0, len(profiles))
-		for _, p := range profiles {
-			cands = append(cands, DispatchCandidate{
-				Harness: p.Harness,
-				Model:   p.Model,
-				Effort:  p.Effort,
-			})
-		}
-		return selectQuotaBalancedCandidates(cands).Harness
-	default:
-		// Unknown strategy: return first profile's harness.
-		return profiles[0].Harness
-	}
-}
-
-// selectQuotaBalancedCandidates picks among candidates using the same rules as
-// selectQuotaBalanced, returning the full candidate (harness/model/effort).
-func selectQuotaBalancedCandidates(cands []DispatchCandidate) DispatchCandidate {
-	if len(cands) == 0 {
-		return DispatchCandidate{}
-	}
-	// Reuse harness-only selection by projecting to profiles, then map back.
-	profiles := make([]DispatchProfile, len(cands))
-	for i, c := range cands {
-		profiles[i] = DispatchProfile{Harness: c.Harness, Model: c.Model, Effort: c.Effort}
-	}
-	h := selectQuotaBalanced(profiles)
-	for _, c := range cands {
-		if c.Harness == h {
-			return c
-		}
-	}
-	return cands[0]
-}
-
-// quotaProvider maps harness names to their quota-axi provider identifiers.
-var quotaProvider = map[string]string{
-	"claude": "claude",
-	"codex":  "codex",
-	"pi":     "pi",
-	"grok":   "grok",
-}
-
-// generalWindowIDs maps harness names to their GENERAL quota window IDs
-// (model-scoped windows like "model:codex_bengalfox:*" are excluded).
-var generalWindowIDs = map[string][]string{
-	"claude": {"five_hour", "seven_day"},
-	"codex":  {"five_hour", "weekly"},
-	"pi":     {"five_hour", "seven_day"},
-	"grok":   {"five_hour", "seven_day"},
-}
-
-// quotaData represents the JSON output from quota-axi --json.
-type quotaData struct {
-	Providers []quotaProviderData `json:"providers"`
-}
-
-// quotaProviderData represents one provider's quota state.
-type quotaProviderData struct {
-	Provider string            `json:"provider"`
-	State    quotaState        `json:"state"`
-	Windows  []quotaWindowData `json:"windows"`
-}
-
-// quotaState represents the state sub-object.
-type quotaState struct {
-	Status string `json:"status"`
-}
-
-// quotaWindowData represents a quota window.
-type quotaWindowData struct {
-	ID               string  `json:"id"`
-	Kind             string  `json:"kind"`
-	PercentRemaining float64 `json:"percentRemaining"`
-}
-
-// selectQuotaBalanced picks the harness profile with the highest minimum
-// remaining GENERAL quota. Falls back to the first profile when quota-axi
-// is not on PATH, returns unparseable JSON, or no candidate is usable.
-func selectQuotaBalanced(profiles []DispatchProfile) string {
-	if len(profiles) == 0 {
-		return ""
-	}
-
-	quotaJSON, err := runQuotaAxi()
-	if err != nil {
-		// quota-axi missing or failed: use first profile.
-		return profiles[0].Harness
-	}
-
-	var qd quotaData
-	if err := json.Unmarshal([]byte(quotaJSON), &qd); err != nil {
-		return profiles[0].Harness
-	}
-
-	if len(qd.Providers) == 0 {
-		return profiles[0].Harness
-	}
-
-	type candidate struct {
-		index int
-		min   float64
-		fresh bool
-	}
-
-	var candidates []candidate
-	for i, p := range profiles {
-		providerName, ok := quotaProvider[p.Harness]
-		if !ok {
-			continue
-		}
-
-		// Find the provider in quota data.
-		var provider *quotaProviderData
-		for j := range qd.Providers {
-			if qd.Providers[j].Provider == providerName {
-				provider = &qd.Providers[j]
-				break
-			}
-		}
-		if provider == nil {
-			continue
-		}
-
-		// Get general window IDs for this harness.
-		genIDs := generalWindowIDs[p.Harness]
-		if len(genIDs) == 0 {
-			continue
-		}
-
-		// Collect percentRemaining for matching GENERAL windows.
-		var remaining []float64
-		for _, w := range provider.Windows {
-			if w.Kind == "model" {
-				continue // skip model-scoped windows
-			}
-			for _, gid := range genIDs {
-				if w.ID == gid {
-					remaining = append(remaining, w.PercentRemaining)
-					break
-				}
-			}
-		}
-
-		if len(remaining) == 0 {
-			continue // no usable windows
-		}
-
-		// Compute minimum remaining across GENERAL windows.
-		min := remaining[0]
-		for _, r := range remaining[1:] {
-			if r < min {
-				min = r
-			}
-		}
-
-		candidates = append(candidates, candidate{
-			index: i,
-			min:   min,
-			fresh: provider.State.Status == "fresh",
+	sel := newQuotaSelector(strategy)
+	cands := make([]DispatchCandidate, 0, len(profiles))
+	for _, p := range profiles {
+		cands = append(cands, DispatchCandidate{
+			Harness: p.Harness,
+			Model:   p.Model,
+			Effort:  p.Effort,
 		})
 	}
-
-	if len(candidates) == 0 {
-		return profiles[0].Harness
-	}
-
-	// Separate fresh and stale candidates.
-	var freshCands, staleCands []candidate
-	for _, c := range candidates {
-		if c.fresh {
-			freshCands = append(freshCands, c)
-		} else {
-			staleCands = append(staleCands, c)
-		}
-	}
-
-	// Sort fresh candidates by min descending, then index ascending.
-	sort.Slice(freshCands, func(i, j int) bool {
-		if freshCands[i].min != freshCands[j].min {
-			return freshCands[i].min > freshCands[j].min
-		}
-		return freshCands[i].index < freshCands[j].index
-	})
-
-	// Sort stale candidates similarly.
-	sort.Slice(staleCands, func(i, j int) bool {
-		if staleCands[i].min != staleCands[j].min {
-			return staleCands[i].min > staleCands[j].min
-		}
-		return staleCands[i].index < staleCands[j].index
-	})
-
-	var best candidate
-	if len(freshCands) > 0 && len(staleCands) > 0 {
-		// A stale candidate wins only if its min is at least 20 points
-		// higher than the best fresh candidate's min.
-		margin := 20.0
-		if staleCands[0].min >= freshCands[0].min+margin {
-			best = staleCands[0]
-		} else {
-			best = freshCands[0]
-		}
-	} else if len(freshCands) > 0 {
-		best = freshCands[0]
-	} else if len(staleCands) > 0 {
-		best = staleCands[0]
-	} else {
-		return profiles[0].Harness
-	}
-
-	return profiles[best.index].Harness
-}
-
-// runQuotaAxi executes quota-axi --json and returns the JSON output.
-// Returns an error if quota-axi is not on PATH or exits non-zero.
-func runQuotaAxi() (string, error) {
-	cmd := exec.Command("quota-axi", "--json")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("quota-axi: %w", err)
-	}
-	return string(output), nil
+	return sel.selectCandidate(cands).Harness
 }
 
 // DispatchPath returns the path to soldier-dispatch.json under home.
