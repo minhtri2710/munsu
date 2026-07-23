@@ -798,6 +798,10 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 	// Override doArmBackground to start a new watcher with empty commit.
 	savedArm := doArmBackground
 	doArmBackground = func(dir string, restart bool) error {
+		// Clear the old identity before starting the subprocess so that
+		// buildHandshakeError never reads stale state even when the 50ms
+		// timeout elapses before the subprocess writes.
+		supervision.ClearIdentity(dir)
 		// Start a subprocess that writes identity with empty commit SHA.
 		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperNewWatcher$")
 		cmd.Env = append(os.Environ(),
@@ -831,6 +835,67 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 		if he.IdentityOK {
 			t.Error("IdentityOK should be false for empty commit in identity")
 		}
+	}
+}
+
+// --- Regression: identity isolation under repeated/shuffled execution ---
+
+// TestEmptyCommitIdentityCleanup_Repeated verifies that IdentityCommitSHA
+// is always empty in the HandshakeError when the old identity is cleared
+// before arm, even under repeated execution. This is a deterministic
+// regression for the race condition where buildHandshakeError reads stale
+// "oldcommit" from the identity file before the subprocess overwrites it.
+func TestEmptyCommitIdentityCleanup_Repeated(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
+			defer setHandshakeTimeout(30 * time.Millisecond)()
+			defer setHeartBeatPoll(10 * time.Millisecond)()
+
+			home := t.TempDir()
+			repo := t.TempDir()
+			initMunsuRepo(t, repo, "main")
+
+			// Write old identity with known commit.
+			id := supervision.NewIdentity(home)
+			id.BuildVersion = "0.1.0-dev+oldcommit"
+			id.CommitSHA = "oldcommit"
+			supervision.WriteIdentity(home, id)
+			lifecycle.WriteBeat(home)
+
+			savedUpdateIn := doUpdateIn
+			doUpdateIn = func(string) error { return nil }
+			defer func() { doUpdateIn = savedUpdateIn }()
+
+			savedResolve := resolveInstalledVersion
+			resolveInstalledVersion = func(snap *WatcherSnapshot) {
+				snap.InstalledPath = "/tmp/fake"
+				snap.InstalledVersion = "0.1.0-dev+newcommit"
+				snap.InstalledCommitSHA = "newcommit"
+			}
+			defer func() { resolveInstalledVersion = savedResolve }()
+
+			savedArm := doArmBackground
+			doArmBackground = func(dir string, restart bool) error {
+				// Fix: clear old identity before background write.
+				supervision.ClearIdentity(dir)
+				return nil
+			}
+			defer func() { doArmBackground = savedArm }()
+
+			_, err := UpdateWithHandshake(home)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			var he *HandshakeError
+			if errors.As(err, &he) {
+				if he.IdentityCommitSHA != "" {
+					t.Errorf("IdentityCommitSHA = %q, want empty (iter %d)", he.IdentityCommitSHA, i)
+				}
+				if he.IdentityOK {
+					t.Error("IdentityOK should be false")
+				}
+			}
+		})
 	}
 }
 

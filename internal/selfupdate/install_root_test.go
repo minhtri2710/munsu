@@ -2,6 +2,7 @@
 package selfupdate
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -339,6 +340,24 @@ func TestVerifyMunsuModule_NoGoMod(t *testing.T) {
 	}
 }
 
+// gitDirCleanup ensures the .git directory tree is writable before TempDir
+// cleanup. Some git operations create objects and refs with 0444 permissions
+// that os.RemoveAll cannot always handle on certain platforms/CI environments.
+func gitDirCleanup(t *testing.T, root string) {
+	t.Helper()
+	gitDir := filepath.Join(root, ".git")
+	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+		return
+	}
+	filepath.Walk(gitDir, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		os.Chmod(path, 0755)
+		return nil
+	})
+}
+
 // --- TestUpdateIn_Safety ---
 
 // TestUpdateIn_DirtyRefuses verifies that a dirty worktree is rejected.
@@ -361,6 +380,7 @@ func TestUpdateIn_DirtyRefuses(t *testing.T) {
 	os.Chmod(fakeBin, 0755)
 
 	err := UpdateIn(repo)
+	gitDirCleanup(t, repo)
 	if err == nil {
 		t.Fatal("expected error for dirty worktree")
 	}
@@ -386,6 +406,7 @@ func TestUpdateIn_DetachedHeadRefuses(t *testing.T) {
 	os.Chmod(fakeBin, 0755)
 
 	err := UpdateIn(repo)
+	gitDirCleanup(t, repo)
 	if err == nil {
 		t.Fatal("expected error for detached HEAD")
 	}
@@ -406,8 +427,72 @@ func TestUpdateIn_NonDefaultBranchRefuses(t *testing.T) {
 	os.Chmod(fakeBin, 0755)
 
 	err := UpdateIn(repo)
+	gitDirCleanup(t, repo)
 	if err == nil {
 		t.Fatal("expected error for non-default branch")
+	}
+}
+
+// --- Regression: repeated TempDir cleanup after git operations ---
+
+// TestUpdateIn_DetachedHeadRefuses_Repeated runs the detached-head safety
+// path repeatedly with explicit .git cleanup, verifying that TempDir can
+// always clean up after git operations leave read-only objects.
+func TestUpdateIn_DetachedHeadRefuses_Repeated(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
+			repo := t.TempDir()
+			initMunsuRepo(t, repo, "main")
+
+			writeFile(t, repo, "a.go", "package a\n")
+			runCmd(t, repo, "git", "add", "a.go")
+			runCmd(t, repo, "git", "commit", "-m", "add a")
+			runCmd(t, repo, "git", "checkout", "--detach")
+
+			fakeBin := filepath.Join(repo, "munsu")
+			writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
+			os.Chmod(fakeBin, 0755)
+
+			err := UpdateIn(repo)
+			// Direct test of the TempDir cleanup fix: run chmod before
+			// os.RemoveAll to ensure .git can be fully removed.
+			gitDirCleanup(t, repo)
+			if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
+				t.Fatalf(".git cleanup failed (iter %d): %v", i, err)
+			}
+			if err == nil {
+				t.Fatal("expected error for detached HEAD")
+			}
+		})
+	}
+}
+
+// TestUpdateIn_DirtyRefuses_Repeated runs the dirty-worktree safety path
+// repeatedly to stress TempDir cleanup.
+func TestUpdateIn_DirtyRefuses_Repeated(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		t.Run(fmt.Sprintf("iter_%d", i), func(t *testing.T) {
+			repo := t.TempDir()
+			initMunsuRepo(t, repo, "main")
+
+			writeFile(t, repo, "foo.go", "package foo\n")
+			runCmd(t, repo, "git", "add", "foo.go")
+			runCmd(t, repo, "git", "commit", "-m", "add foo")
+			writeFile(t, repo, "foo.go", "package foo\n// dirty\n")
+
+			fakeBin := filepath.Join(repo, "munsu")
+			writeFile(t, repo, "munsu", "#!/bin/sh\necho fake")
+			os.Chmod(fakeBin, 0755)
+
+			err := UpdateIn(repo)
+			gitDirCleanup(t, repo)
+			if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
+				t.Fatalf(".git cleanup failed (iter %d): %v", i, err)
+			}
+			if err == nil {
+				t.Fatal("expected error for dirty worktree")
+			}
+		})
 	}
 }
 
