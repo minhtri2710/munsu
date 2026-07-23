@@ -362,9 +362,19 @@ func TestStore_Pending_IdentityPathIsolation(t *testing.T) {
 		t.Errorf("beta pending: expected 1 for beta, got %d", len(betaPending))
 	}
 
+	// Write ack files so RemovePendingAfterAck can validate.
+	pending1, _ := store.ReadPending("soldier-alpha", "msg-1")
+	ack1 := &ProcessingAck{
+		MessageID: pending1.MessageID, SenderRank: pending1.SenderRank,
+		SenderIdentity: pending1.SenderIdentity, ReceiverRank: pending1.ReceiverRank,
+		ReceiverID: pending1.ReceiverID, PayloadHash: pending1.PayloadHash,
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	store.WriteAck(ack1)
+
 	// Removing alpha's pending should not affect beta's.
-	if err := store.RemovePending("soldier-alpha", "msg-1"); err != nil {
-		t.Fatalf("RemovePending alpha: %v", err)
+	if err := store.RemovePendingAfterAck("soldier-alpha", "msg-1", ack1); err != nil {
+		t.Fatalf("RemovePendingAfterAck alpha: %v", err)
 	}
 	alphaPending, _ = store.ListPending("soldier-alpha")
 	if len(alphaPending) != 0 {
@@ -427,6 +437,7 @@ func TestStore_IsAcked(t *testing.T) {
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		PayloadHash:    PayloadHashHex("done"),
+		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "done",
 	}
 
@@ -537,7 +548,261 @@ func TestValidateAck_WrongPayloadHash(t *testing.T) {
 	}
 }
 
+// --- ValidOutcome ---
+
+func TestValidOutcome(t *testing.T) {
+	if !ValidOutcome("done") {
+		t.Error("done should be valid")
+	}
+	if !ValidOutcome("failed") {
+		t.Error("failed should be valid")
+	}
+	if !ValidOutcome("needs-decision") {
+		t.Error("needs-decision should be valid")
+	}
+	if !ValidOutcome("blocked") {
+		t.Error("blocked should be valid")
+	}
+	if !ValidOutcome("paused") {
+		t.Error("paused should be valid")
+	}
+	if ValidOutcome("") {
+		t.Error("empty should not be valid")
+	}
+	if ValidOutcome("invalid") {
+		t.Error("invalid should not be valid")
+	}
+}
+
+// --- ValidateProcessingAck ---
+
+func TestValidateProcessingAck_Valid(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 1000,
+		Outcome:     "done",
+	}
+	if err := ValidateProcessingAck(ack); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_ProcessedAtZero(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 0,
+		Outcome:     "done",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
+		t.Errorf("expected processed_at error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_ProcessedAtNegative(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: -1,
+		Outcome:     "done",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "processed_at") {
+		t.Errorf("expected processed_at error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_InvalidOutcome(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 1000,
+		Outcome:     "invalid",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("expected outcome error, got: %v", err)
+	}
+}
+
+func TestValidateProcessingAck_EmptyOutcome(t *testing.T) {
+	ack := &ProcessingAck{
+		ProcessedAt: 1000,
+		Outcome:     "",
+	}
+	if err := ValidateProcessingAck(ack); err == nil || !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("expected outcome error, got: %v", err)
+	}
+}
+
+// --- ValidatePathComponent ---
+
+func TestValidatePathComponent_Valid(t *testing.T) {
+	tests := []string{
+		"alpha",
+		"soldier-1",
+		"captain_main",
+		"msg.id",
+		"a",
+		"0123456789abcdef0123456789abcdef",
+	}
+	for _, tc := range tests {
+		t.Run(tc, func(t *testing.T) {
+			if err := ValidatePathComponent(tc, "test"); err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidatePathComponent_Slash(t *testing.T) {
+	if err := ValidatePathComponent("a/b", "test"); err == nil || !strings.Contains(err.Error(), "slash") {
+		t.Errorf("expected slash error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_Backslash(t *testing.T) {
+	if err := ValidatePathComponent("a\\b", "test"); err == nil || !strings.Contains(err.Error(), "backslash") {
+		t.Errorf("expected backslash error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_DotDot(t *testing.T) {
+	if err := ValidatePathComponent("..", "test"); err == nil || !strings.Contains(err.Error(), "relative path") {
+		t.Errorf("expected relative path error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_Empty(t *testing.T) {
+	if err := ValidatePathComponent("", "test"); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Errorf("expected empty error, got: %v", err)
+	}
+}
+
+func TestValidatePathComponent_Colon(t *testing.T) {
+	if err := ValidatePathComponent("a:b", "test"); err == nil || !strings.Contains(err.Error(), "colon") {
+		t.Errorf("expected colon error, got: %v", err)
+	}
+}
+
+// --- Idempotent envelope write ---
+
+func TestStore_WriteEnvelope_Idempotent_SameContent(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	env := &Envelope{
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "done: same content",
+	}
+	// Write twice with same content — must be idempotent.
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("first WriteEnvelope: %v", err)
+	}
+	msgID := env.MessageID
+	env2 := &Envelope{
+		MessageID:      msgID,
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "done: same content",
+	}
+	if err := store.WriteEnvelope(env2); err != nil {
+		t.Fatalf("second WriteEnvelope (same content): %v", err)
+	}
+}
+
+func TestStore_WriteEnvelope_Idempotent_Conflict(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	env := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "first content",
+	}
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("first WriteEnvelope: %v", err)
+	}
+
+	// Same message ID, different payload — must fail.
+	env2 := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "different content",
+	}
+	if err := store.WriteEnvelope(env2); err == nil {
+		t.Fatal("expected conflict error, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+
+	// Different receiver ID with same message ID — must fail.
+	env3 := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-2",
+		Payload:        "first content",
+	}
+	if err := store.WriteEnvelope(env3); err == nil {
+		t.Fatal("expected conflict error for different receiver ID, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+
+	// Different sender rank with same message ID — must fail.
+	env4 := &Envelope{
+		MessageID:      "fixed-id",
+		SenderRank:     RankCaptain,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankGeneral,
+		ReceiverID:     "captain-1",
+		Payload:        "first content",
+	}
+	if err := store.WriteEnvelope(env4); err == nil {
+		t.Fatal("expected conflict error for different rank, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+}
+
 // --- Idempotent ack ---
+
+func TestStore_WriteAck_Conflict(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	ack := &ProcessingAck{
+		MessageID:      "msg-conflict",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		PayloadHash:    PayloadHashHex("first"),
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "done",
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("first WriteAck: %v", err)
+	}
+
+	// Different outcome — must fail.
+	ack2 := &ProcessingAck{
+		MessageID:      "msg-conflict",
+		SenderRank:     RankSoldier,
+		SenderIdentity: "soldier-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		PayloadHash:    PayloadHashHex("first"),
+		ProcessedAt:    time.Now().UnixNano(),
+		Outcome:        "failed",
+	}
+	if err := store.WriteAck(ack2); err == nil {
+		t.Fatal("expected conflict error, got nil")
+	} else if !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("expected conflict error, got: %v", err)
+	}
+}
 
 func TestStore_WriteAck_Idempotent(t *testing.T) {
 	home := t.TempDir()
@@ -550,6 +815,7 @@ func TestStore_WriteAck_Idempotent(t *testing.T) {
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		PayloadHash:    PayloadHashHex("work"),
+		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "done",
 	}
 	// Write same ack twice.
@@ -592,7 +858,7 @@ func TestStore_ListInbox_ExcludesAcked(t *testing.T) {
 		MessageID: env1.MessageID, SenderRank: RankSoldier,
 		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
 		ReceiverID: "captain-1", PayloadHash: env1.PayloadHash,
-		Outcome: "done",
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	}
 	if err := store.WriteAck(ack); err != nil {
 		t.Fatalf("WriteAck: %v", err)
@@ -759,8 +1025,17 @@ func TestStore_Pending_RoundTrip(t *testing.T) {
 		t.Fatalf("expected 1 pending, got %d", len(list))
 	}
 
-	if err := store.RemovePending("soldier-1", "pending-1"); err != nil {
-		t.Fatalf("RemovePending: %v", err)
+	// Write matching ack so RemovePendingAfterAck can validate.
+	ack := &ProcessingAck{
+		MessageID: "pending-1", SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("done: pending test"),
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	store.WriteAck(ack)
+
+	if err := store.RemovePendingAfterAck("soldier-1", "pending-1", ack); err != nil {
+		t.Fatalf("RemovePendingAfterAck: %v", err)
 	}
 	got, _ = store.ReadPending("soldier-1", "pending-1")
 	if got != nil {
@@ -812,6 +1087,7 @@ func TestStore_FullFlow(t *testing.T) {
 		TaskID:         env.TaskID,
 		Key:            env.Key,
 		PayloadHash:    env.PayloadHash,
+		ProcessedAt:    time.Now().UnixNano(),
 		Outcome:        "done",
 	}
 	if err := receiverStore.WriteAck(ack); err != nil {
@@ -831,8 +1107,8 @@ func TestStore_FullFlow(t *testing.T) {
 	}
 
 	// Remove pending after validated ack.
-	if err := senderStore.RemovePending("soldier-1", env.MessageID); err != nil {
-		t.Fatalf("RemovePending: %v", err)
+	if err := senderStore.RemovePendingAfterAck("soldier-1", env.MessageID, readAck); err != nil {
+		t.Fatalf("RemovePendingAfterAck: %v", err)
 	}
 	pending, _ := senderStore.ListPending("soldier-1")
 	if len(pending) != 0 {
@@ -887,7 +1163,7 @@ func TestRecoverInbox_AlreadyAcked(t *testing.T) {
 		MessageID: env.MessageID, SenderRank: RankSoldier,
 		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
 		ReceiverID: "captain-1", PayloadHash: env.PayloadHash,
-		Outcome: "done",
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	}
 	if err := store.WriteAck(ack); err != nil {
 		t.Fatal(err)
@@ -1022,11 +1298,21 @@ func TestLegacyRemoveSenderPending(t *testing.T) {
 		ReceiverID: "captain-1", Payload: "test",
 		PayloadHash: PayloadHashHex("test"),
 	}
-	NewStore(home).WritePending(env)
+	store := NewStore(home)
+	store.WritePending(env)
+	// Write matching ack so RemoveSenderPending (which delegates to
+	// RemovePendingAfterAck) can validate.
+	ack := &ProcessingAck{
+		MessageID: "remove-test", SenderRank: RankSoldier,
+		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("test"),
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	store.WriteAck(ack)
 	if err := RemoveSenderPending(home, "soldier-1", "remove-test"); err != nil {
 		t.Fatalf("RemoveSenderPending: %v", err)
 	}
-	got, _ := NewStore(home).ReadPending("soldier-1", "remove-test")
+	got, _ := store.ReadPending("soldier-1", "remove-test")
 	if got != nil {
 		t.Error("pending should be nil after remove")
 	}
@@ -1084,7 +1370,7 @@ func TestLegacyIsAcked(t *testing.T) {
 		MessageID: env.MessageID, SenderRank: RankSoldier,
 		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
 		ReceiverID: "captain-1", PayloadHash: env.PayloadHash,
-		Outcome: "done",
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	})
 
 	if !IsAcked(home, "soldier-1", env.MessageID) {

@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 // SchemaVersion is the stable schema identifier for all mailbox envelopes.
@@ -23,6 +24,25 @@ const SchemaVersion = "munsu.mailbox-envelope/v1"
 
 // AckSchemaVersion is the schema identifier for mailbox ack records.
 const AckSchemaVersion = "munsu.mailbox-ack/v1"
+
+// Allowed outcomes for ProcessingAck.
+const (
+	OutcomeDone         = "done"
+	OutcomeFailed       = "failed"
+	OutcomeNeedsDecisio = "needs-decision"
+	OutcomeBlocked      = "blocked"
+	OutcomePaused       = "paused"
+)
+
+// ValidOutcome returns true if the outcome is a known value.
+func ValidOutcome(o string) bool {
+	switch o {
+	case OutcomeDone, OutcomeFailed, OutcomeNeedsDecisio, OutcomeBlocked, OutcomePaused:
+		return true
+	default:
+		return false
+	}
+}
 
 // InboxDir is the receiver-owned inbox subdirectory under state/.
 const InboxDir = ".inbox"
@@ -102,6 +122,28 @@ func PayloadHashHex(payload string) string {
 
 // --- Validation ---
 
+// ValidatePathComponent rejects path components that could be used for
+// directory traversal. Valid components contain only alphanumerics, hyphens,
+// underscores, and dots (no slashes, colons, or path separators).
+func ValidatePathComponent(component, label string) error {
+	if component == "" {
+		return fmt.Errorf("%s: empty", label)
+	}
+	if strings.Contains(component, "/") {
+		return fmt.Errorf("%s: contains slash: %q", label, component)
+	}
+	if strings.Contains(component, "\\") {
+		return fmt.Errorf("%s: contains backslash: %q", label, component)
+	}
+	if strings.Contains(component, "..") {
+		return fmt.Errorf("%s: contains relative path: %q", label, component)
+	}
+	if strings.Contains(component, ":") {
+		return fmt.Errorf("%s: contains colon: %q", label, component)
+	}
+	return nil
+}
+
 // ValidateEnvelope checks that the envelope has valid rank, identity, and payload.
 func ValidateEnvelope(env *Envelope) error {
 	if env.MessageID == "" {
@@ -170,6 +212,17 @@ func ValidateAck(env *Envelope, ack *ProcessingAck) error {
 	}
 	if ack.PayloadHash != env.PayloadHash {
 		return fmt.Errorf("ack: payload hash mismatch: %q != %q", ack.PayloadHash, env.PayloadHash)
+	}
+	return nil
+}
+
+// ValidateProcessingAck validates the ack's own fields (processed_at, outcome).
+func ValidateProcessingAck(ack *ProcessingAck) error {
+	if ack.ProcessedAt <= 0 {
+		return fmt.Errorf("ack: processed_at must be > 0, got %d", ack.ProcessedAt)
+	}
+	if !ValidOutcome(ack.Outcome) {
+		return fmt.Errorf("ack: invalid outcome %q", ack.Outcome)
 	}
 	return nil
 }
