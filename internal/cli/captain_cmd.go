@@ -209,7 +209,7 @@ State-only homes (no git worktree) return state-only-skipped rather than failing
 	convergeCmd := &cobra.Command{
 		Use:   "converge",
 		Short: "Converge all registered captains",
-		Long: `Locked convergence sweep: validate registry/provenance, flush send outbox,
+		Long: `Locked convergence sweep: validate registry/provenance, check for stale legacy records,
 retry pending nudges, safe local fast-forward, inheritance push, liveness check, and instruction
 surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -235,7 +235,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	recoverCmd := &cobra.Command{
 		Use:   "recover <captain-id>",
 		Short: "Run structured recovery transaction for a captain",
-		Long: `Run the full recovery transaction for one captain: provenance → config → integration → launch readiness → relaunch pane → watcher ensure → outbox flush → nudge retry.
+		Long: `Run the full recovery transaction for one captain: provenance → config → integration → launch readiness → relaunch pane → watcher ensure → legacy guard → nudge retry.
 	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

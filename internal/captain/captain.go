@@ -187,9 +187,24 @@ type Info struct {
 	Added   string
 }
 
+// CaptainIDFromTask resolves the registry/sm id for a captain task.
+// Prefers meta sm_id; falls back to stripping the captain: task-id prefix.
+func CaptainIDFromTask(taskID string, meta map[string]string) string {
+	if meta != nil {
+		if id := strings.TrimSpace(meta["sm_id"]); id != "" {
+			return id
+		}
+	}
+	return strings.TrimPrefix(taskID, "captain:")
+}
+
 // --- Injectable seams for testing ---
 
 var lookPath = exec.LookPath
+
+// backendForTask resolves a session backend for task meta.
+// Overridden in tests to inject a fake backend.
+var backendForTask = session.BackendForTask
 
 // newSessionBackend resolves and returns a session backend for the parent home.
 // Override in tests to inject a fake backend.
@@ -269,6 +284,47 @@ func sha256Content(data []byte) string {
 // taskIDForCaptain returns the task ID used in state metadata for a captain.
 func taskIDForCaptain(smID string) string {
 	return "captain:" + smID
+}
+
+// checkStaleLegacyRecords is a read-only fail-closed guard that checks for
+// stale legacy command transport records that were never migrated.
+// The legacy .captain-send-outbox and .command-envelope transport is removed;
+// this function detects any remaining records and returns an actionable error
+// with exact paths. It never writes, migrates, marks, or deletes anything.
+func checkStaleLegacyRecords(parentHome, captainID string) error {
+	// Check .captain-send-outbox directory (legacy outbox).
+	outboxDir := filepath.Join(parentHome, "state", ".captain-send-outbox", captainID)
+	entries, err := os.ReadDir(outboxDir)
+	if err == nil {
+		var stale []string
+		for _, e := range entries {
+			if !e.IsDir() {
+				stale = append(stale, filepath.Join(outboxDir, e.Name()))
+			}
+		}
+		if len(stale) > 0 {
+			paths := strings.Join(stale, "\n  ")
+			return fmt.Errorf("stale legacy .captain-send-outbox records found:\n  %s\nUpgrade: run the last migration-capable release to migrate these records, then retry.", paths)
+		}
+	}
+
+	// Check .command-envelope directory (legacy envelopes).
+	envDir := filepath.Join(parentHome, "state", ".command-envelope")
+	envEntries, err := os.ReadDir(envDir)
+	if err == nil {
+		var stale []string
+		for _, e := range envEntries {
+			if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				stale = append(stale, filepath.Join(envDir, e.Name()))
+			}
+		}
+		if len(stale) > 0 {
+			paths := strings.Join(stale, "\n  ")
+			return fmt.Errorf("stale legacy .command-envelope records found:\n  %s\nUpgrade: run the last migration-capable release to migrate these records, then retry.", paths)
+		}
+	}
+
+	return nil
 }
 
 // --- Seed / Provenance ---
@@ -2103,14 +2159,15 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		}
 		result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeOK, Detail: "valid"})
 
-		// b. Legacy transport drain (one-shot migration to mailbox).
-		// Retires .captain-send-outbox and .command-envelope records deterministically.
-		// After migration, new command sends use only mailbox envelope/pending/processing ack.
-		if drainErr := DrainLegacyCommandTransport(parentHome, sm); drainErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport drain", Status: ConvergeFailed, Detail: drainErr.Error()})
-			errs = append(errs, drainErr.Error())
+		// b. Stale legacy transport guard (read-only fail-closed).
+		// The legacy .captain-send-outbox and .command-envelope transport is removed.
+		// If any stale records remain, report the exact paths and fail with
+		// an actionable upgrade instruction. Never writes, migrates, or deletes.
+		if guardErr := checkStaleLegacyRecords(parentHome, sm.ID); guardErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport guard", Status: ConvergeFailed, Detail: guardErr.Error()})
+			errs = append(errs, guardErr.Error())
 		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport drain", Status: ConvergeOK, Detail: "ok"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport guard", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// c. Nudge retry.

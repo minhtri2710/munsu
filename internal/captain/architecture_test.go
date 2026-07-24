@@ -105,53 +105,6 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 	})
 }
 
-// TestStructuredState_FlushSendOutboxValidatesMetaBeforeSend proves that
-// FlushSendOutbox checks structured meta fields before attempting to deliver
-// queued messages. It does not deliver when meta is missing, wrong kind,
-// or wrong sm_id — it returns a descriptive error and retains the outbox.
-func TestStructuredState_FlushSendOutboxValidatesMetaBeforeSend(t *testing.T) {
-	parent := t.TempDir()
-	smHome := seedCaptainForTest(t, parent, "test-sm")
-
-	// Enqueue a message.
-	msg := "some queued message"
-	if err := EnqueueSendOutbox(parent, "test-sm", msg); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("refuses delivery when meta is missing", func(t *testing.T) {
-		err := FlushSendOutbox(parent, Info{ID: "test-sm", Home: smHome})
-		if err == nil {
-			t.Fatal("expected error for missing meta")
-		}
-		if !strings.Contains(err.Error(), "no task meta") {
-			t.Errorf("error = %v, want meta-not-found error", err)
-		}
-		// Outbox retained.
-		paths, _ := listSendOutboxPaths(parent, "test-sm")
-		if len(paths) == 0 {
-			t.Fatal("outbox should be retained when meta is missing")
-		}
-	})
-
-	t.Run("refuses delivery when meta kind is wrong", func(t *testing.T) {
-		canon, _ := canonicalHome(smHome)
-		task.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
-			"kind":   "ship",
-			"sm_id":  "test-sm",
-			"home":   canon,
-			"window": "w1",
-		})
-		err := FlushSendOutbox(parent, Info{ID: "test-sm", Home: smHome})
-		if err == nil {
-			t.Fatal("expected error for wrong meta kind")
-		}
-		if !strings.Contains(err.Error(), "kind=") {
-			t.Errorf("error = %v, want kind mismatch error", err)
-		}
-	})
-}
-
 // TestStructuredState_MetaHomeComparedCanonically proves that
 // Meta home comparison is done against the canonical (symlink-resolved)
 // home path, not the raw path from pane text.
