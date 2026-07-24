@@ -407,10 +407,9 @@ func TestReconcileMailboxPending_NoAckRetries(t *testing.T) {
 	}
 }
 
-// TestInboxProcessCmd_ProcessRef tests that `munsu inbox process <ref>`
-// processes a NotificationRef and writes the ack via the Receiver.
-func TestInboxProcessCmd_ProcessRef(t *testing.T) {
-	// This test simulates the captain agent calling inbox process.
+// TestInboxAckCmd_AckRef tests that the captain can ack a NotificationRef
+// and the ack outcome is "accepted".
+func TestInboxAckCmd_AckRef(t *testing.T) {
 	captainHome := filepath.Join(t.TempDir(), "test-captain")
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -434,7 +433,7 @@ func TestInboxProcessCmd_ProcessRef(t *testing.T) {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
 
-	// Create receiver and process the notification ref.
+	// Create receiver and ack the notification ref.
 	recv, err := mailbox.NewReceiver(captainHome)
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
@@ -443,43 +442,46 @@ func TestInboxProcessCmd_ProcessRef(t *testing.T) {
 		MessageID:      env.MessageID,
 		SenderIdentity: "general-main",
 	}
-	res := recv.Process(ref, "done")
-	if !res.Ok() {
-		t.Fatalf("Process: %v", res.Err)
+	ack, err := recv.Ack(ref)
+	if err != nil {
+		t.Fatalf("Ack: %v", err)
 	}
-	if res.Ack == nil {
+	if ack == nil {
 		t.Fatal("expected non-nil ack")
 	}
-	if res.Ack.Outcome != "done" {
-		t.Errorf("ack outcome=%q", res.Ack.Outcome)
+	if ack.Outcome != mailbox.OutcomeAccepted {
+		t.Errorf("ack outcome=%q, want %q", ack.Outcome, mailbox.OutcomeAccepted)
 	}
 
 	// Verify ack file was written on disk.
-	ack, err := captainStore.ReadAck("general-main", env.MessageID)
+	ack2, err := captainStore.ReadAck("general-main", env.MessageID)
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}
-	if ack == nil {
+	if ack2 == nil {
 		t.Fatal("ack not found on disk")
 	}
-	if ack.MessageID != env.MessageID {
-		t.Errorf("ack MessageID=%q", ack.MessageID)
+	if ack2.MessageID != env.MessageID {
+		t.Errorf("ack MessageID=%q", ack2.MessageID)
+	}
+	if ack2.Outcome != mailbox.OutcomeAccepted {
+		t.Errorf("ack outcome=%q, want %q", ack2.Outcome, mailbox.OutcomeAccepted)
 	}
 
-	// Processing the same ref again must be idempotent.
-	res2 := recv.Process(ref, "done")
-	if !res2.Ok() {
-		t.Fatalf("second Process: %v", res2.Err)
+	// Acking the same ref again must be idempotent.
+	ack3, err := recv.Ack(ref)
+	if err != nil {
+		t.Fatalf("second Ack: %v", err)
 	}
 	// Original timestamp preserved.
-	if res2.Ack.ProcessedAt != res.Ack.ProcessedAt {
-		t.Errorf("timestamp not preserved: %d vs %d", res2.Ack.ProcessedAt, res.Ack.ProcessedAt)
+	if ack3.ProcessedAt != ack.ProcessedAt {
+		t.Errorf("timestamp not preserved: %d vs %d", ack3.ProcessedAt, ack.ProcessedAt)
 	}
 }
 
-// TestInboxProcessCmd_InvalidRef verifies that processing an invalid
+// TestInboxAckCmd_InvalidRef verifies that acking an invalid
 // NotificationRef fails closed.
-func TestInboxProcessCmd_InvalidRef(t *testing.T) {
+func TestInboxAckCmd_InvalidRef(t *testing.T) {
 	captainHome := filepath.Join(t.TempDir(), "test-captain")
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -494,8 +496,8 @@ func TestInboxProcessCmd_InvalidRef(t *testing.T) {
 	}
 
 	// Empty ref should fail.
-	res := recv.Process(mailbox.NotificationRef{}, "done")
-	if res.Ok() {
+	_, err = recv.Ack(mailbox.NotificationRef{})
+	if err == nil {
 		t.Fatal("expected error for empty ref")
 	}
 }

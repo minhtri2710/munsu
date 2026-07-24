@@ -15,6 +15,7 @@ import (
 
 // newInboxCmd creates the `munsu inbox` command.
 // It shows a convenience view for the General: actionable wakes and last captain status lines.
+// Also provides captain-side subcommands: receive (validate/load, no ack) and ack (accepted).
 func newInboxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inbox",
@@ -25,9 +26,14 @@ func newInboxCmd() *cobra.Command {
   - Last captain status lines (state/captain:<id>.status) that are general-relevant
 
 No behavior change to the watcher. Use 'munsu inbox' before 'munsu wake claim' or
-'munsu wake-drain' to preview what needs attention.`,
+'munsu wake-drain' to preview what needs attention.
+
+Captain-side subcommands:
+  receive <ref>  — validate/load a mailbox envelope (no ack)
+  ack <ref>      — accept a mailbox notification into agent context (writes accepted ack)`,
 	}
-	cmd.AddCommand(newInboxProcessCmd())
+	cmd.AddCommand(newInboxReceiveCmd())
+	cmd.AddCommand(newInboxAckCmd())
 	// The default "show" behavior is the existing inbox view.
 	cmd.RunE = withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 		return renderInbox(ctx.Home, cmd.OutOrStdout())
@@ -35,31 +41,34 @@ No behavior change to the watcher. Use 'munsu inbox' before 'munsu wake claim' o
 	return cmd
 }
 
-// newInboxProcessCmd creates the `munsu inbox process` subcommand.
-// The captain agent calls this to process an incoming NotificationRef:
-// reads the envelope from its own inbox and writes the ProcessingAck.
+// newInboxReceiveCmd creates the `munsu inbox receive` subcommand.
+// The captain agent calls this to validate and load an incoming NotificationRef:
+// reads the envelope from its own inbox, validates all provenance fields,
+// and returns the envelope payload. Writes NO ack.
 //
-// This is the smallest internal adapter for the captain to complete the
-// mailbox processing loop. Used by the captain agent (Pi/Claude) when it
-// receives a NotificationRef via marked pane input.
-func newInboxProcessCmd() *cobra.Command {
-	var outcome string
-
+// Usage by captain agent (after receiving NotificationRef via SubmitPrompt):
+//   munsu inbox receive '{"message_id":"...","sender_identity":"..."}'
+//
+// This is the first step of the two-step inbox protocol:
+//   1. munsu inbox receive <ref>  — inspect the incoming command
+//   2. munsu inbox ack <ref>      — accept into context (after reading payload)
+func newInboxReceiveCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "process <notification-ref>",
-		Short: "Process a mailbox NotificationRef (captain-side ack adapter)",
-		Long: `Process a mailbox NotificationRef by reading the envelope from the
-receiver's inbox, validating all provenance fields, and writing a ProcessingAck.
+		Use:   "receive <notification-ref>",
+		Short: "Validate and load a mailbox envelope, returning the payload (no ack)",
+		Long: `Receive a mailbox NotificationRef: reads the envelope from the
+receiver's inbox, validates all provenance fields, and outputs the envelope
+payload. Writes NO acknowledgment — call 'munsu inbox ack <ref>' separately
+after the command has been accepted into agent context.
 
 Called by the captain agent when it receives a NotificationRef via marked pane
 input from the General. The envelope payload is the actual command; the ref
 points to the envelope in the captain's own inbox.
 
 Usage:
-  munsu inbox process '{"message_id":"...","sender_identity":"..."}'
+  munsu inbox receive '{"message_id":"...","sender_identity":"..."}'
 
-The outcome flag defaults to "done". Valid outcomes: done, failed, needs-decision,
-blocked, paused.`,
+This produces output with kind=inbox.receive.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			refJSON := args[0]
@@ -78,26 +87,94 @@ blocked, paused.`,
 					fmt.Sprintf("creating receiver: %v", err))
 			}
 
-			res := recv.Process(ref, outcome)
-			if !res.Ok() {
-				return operationError("process_failed",
+			env, err := recv.Receive(ref)
+			if err != nil {
+				return operationError("receive_failed",
 					"Check that the envelope exists in state/.inbox/<sender>/<id>.json",
-					fmt.Sprintf("processing notification: %v", res.Err))
+					fmt.Sprintf("receiving notification: %v", err))
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
+			return writeContract(cmd, contract.Response[contract.InboxReceiveResult]{
 				SchemaVersion: contract.SchemaVersion,
-				Kind:          "inbox.process",
+				Kind:          "inbox.receive",
 				Status:        "success",
-				Data: contract.MessageResult{
-					Message: fmt.Sprintf("processed message %s from %s (outcome=%s)", ref.MessageID, ref.SenderIdentity, outcome),
+				Data: contract.InboxReceiveResult{
+					MessageID:      env.MessageID,
+					SenderIdentity: env.SenderIdentity,
+					Payload:        env.Payload,
 				},
 			})
 		}),
 	}
 
 	configureContractCommand(cmd)
-	cmd.Flags().StringVar(&outcome, "outcome", "done", "Processing outcome (done, failed, needs-decision, blocked, paused)")
+	return cmd
+}
+
+// newInboxAckCmd creates the `munsu inbox ack` subcommand.
+// The captain agent calls this to write the "accepted" ProcessingAck after
+// taking the command into its agent context.
+//
+// Usage by captain agent (after reading the payload via inbox receive):
+//   munsu inbox ack '{"message_id":"...","sender_identity":"..."}'
+//
+// The ack means the command was accepted into agent context — NOT that it
+// completed. Completion is tracked through separate report/relay flows.
+func newInboxAckCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ack <notification-ref>",
+		Short: "Accept a mailbox notification into agent context (writes accepted ack)",
+		Long: `Acknowledge a mailbox NotificationRef: validates the envelope and
+writes a fixed "accepted" ProcessingAck. The captain agent calls this after
+it has taken the incoming command into its context.
+
+Idempotent: calling multiple times with the same ref is safe and preserves
+original timestamp. Any conflicting existing outcome fails closed.
+
+The ack means "accepted into agent context", NOT "completed". Completion
+is tracked through 'munsu report' flows.
+
+Usage:
+  munsu inbox ack '{"message_id":"...","sender_identity":"..."}'
+
+This produces output with kind=inbox.ack.`,
+		Args: ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			refJSON := args[0]
+
+			ref, err := mailbox.ParseNotificationRef(refJSON)
+			if err != nil {
+				return usageError("invalid_ref",
+					"NotificationRef must be valid JSON with message_id and sender_identity fields",
+					fmt.Sprintf("parsing NotificationRef: %v", err))
+			}
+
+			recv, err := mailbox.NewReceiver(ctx.Home)
+			if err != nil {
+				return operationError("receiver_init_failed",
+					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",
+					fmt.Sprintf("creating receiver: %v", err))
+			}
+
+			ack, err := recv.Ack(ref)
+			if err != nil {
+				return operationError("ack_failed",
+					"Check that the envelope exists and hasn't been acked with a different outcome",
+					fmt.Sprintf("acknowledging notification: %v", err))
+			}
+
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "inbox.ack",
+				Status:        "success",
+				Data: contract.MessageResult{
+					Message: fmt.Sprintf("accepted message %s from %s (outcome=%s)", ref.MessageID, ref.SenderIdentity, ack.Outcome),
+				},
+			})
+		}),
+	}
+
+	configureContractCommand(cmd)
 	return cmd
 }
 

@@ -27,6 +27,7 @@ const AckSchemaVersion = "munsu.mailbox-ack/v1"
 
 // Allowed outcomes for ProcessingAck.
 const (
+	OutcomeAccepted     = "accepted"
 	OutcomeDone         = "done"
 	OutcomeFailed       = "failed"
 	OutcomeNeedsDecisio = "needs-decision"
@@ -37,7 +38,7 @@ const (
 // ValidOutcome returns true if the outcome is a known value.
 func ValidOutcome(o string) bool {
 	switch o {
-	case OutcomeDone, OutcomeFailed, OutcomeNeedsDecisio, OutcomeBlocked, OutcomePaused:
+	case OutcomeAccepted, OutcomeDone, OutcomeFailed, OutcomeNeedsDecisio, OutcomeBlocked, OutcomePaused:
 		return true
 	default:
 		return false

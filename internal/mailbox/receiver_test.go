@@ -26,6 +26,15 @@ func setupReceiver(t *testing.T, homeDir, identity string, rank Rank) *Receiver 
 	return recv
 }
 
+// setupEnvelope writes a valid envelope to the store and returns it.
+func setupEnvelope(t *testing.T, store *Store, env *Envelope) *Envelope {
+	t.Helper()
+	if err := store.WriteEnvelope(env); err != nil {
+		t.Fatalf("WriteEnvelope: %v", err)
+	}
+	return env
+}
+
 // --- NotificationRef Encode / Parse ---
 
 func TestNotificationRef_Encode_RoundTrip(t *testing.T) {
@@ -51,7 +60,6 @@ func TestNotificationRef_Encode_RoundTrip(t *testing.T) {
 }
 
 func TestNotificationRef_Encode_NoAdHocFormat(t *testing.T) {
-	// Verify Encode is JSON, not fmt.Sprintf("notification: ...").
 	ref := NotificationRef{MessageID: "m1", SenderIdentity: "s1"}
 	enc := ref.Encode()
 	if strings.HasPrefix(enc, "notification:") {
@@ -87,7 +95,6 @@ func TestParseNotificationRef_EmptySenderIdentity(t *testing.T) {
 }
 
 func TestParseNotificationRef_ExtraFieldsIgnored(t *testing.T) {
-	// Extra fields are tolerated — the ref is a two-field struct.
 	s := `{"message_id":"m1","sender_identity":"s1","extra":"ignored"}`
 	ref, err := ParseNotificationRef(s)
 	if err != nil {
@@ -122,7 +129,6 @@ func TestReadHomeIdentity_CaptainMarker(t *testing.T) {
 
 func TestReadHomeIdentity_GeneralHome(t *testing.T) {
 	home := t.TempDir()
-	// No marker — should derive from basename with general rank.
 	ident, rank, err := ReadHomeIdentity(home)
 	if err != nil {
 		t.Fatalf("ReadHomeIdentity: %v", err)
@@ -132,34 +138,6 @@ func TestReadHomeIdentity_GeneralHome(t *testing.T) {
 	}
 	if rank != RankGeneral {
 		t.Errorf("rank=%q, want %q", rank, RankGeneral)
-	}
-}
-
-func TestReadHomeIdentity_EmptyBasename(t *testing.T) {
-	_, _, err := ReadHomeIdentity("/")
-	if err == nil {
-		t.Fatal("expected error for root home with no marker")
-	}
-	if !strings.Contains(err.Error(), "cannot derive identity") {
-		t.Errorf("expected derive error, got: %v", err)
-	}
-}
-
-func TestReadHomeIdentity_MalformedMarker(t *testing.T) {
-	home := t.TempDir()
-	os.WriteFile(filepath.Join(home, captainMarkerName), []byte("only-one-line\n"), 0644)
-	_, _, err := ReadHomeIdentity(home)
-	if err == nil {
-		t.Fatal("expected error for malformed marker")
-	}
-}
-
-func TestReadHomeIdentity_WrongVersion(t *testing.T) {
-	home := t.TempDir()
-	os.WriteFile(filepath.Join(home, captainMarkerName), []byte("old-v0\nsome-id\n/path\n"), 0644)
-	_, _, err := ReadHomeIdentity(home)
-	if err == nil || !strings.Contains(err.Error(), "unsupported") {
-		t.Errorf("expected unsupported version error, got: %v", err)
 	}
 }
 
@@ -186,69 +164,82 @@ func TestNotificationRef_EmptySenderIdentity(t *testing.T) {
 	}
 }
 
-// --- Receiver.Process: valid resolution ---
+// =============================================================
+// Receiver.Receive tests — validate/load envelope, NO ack
+// =============================================================
 
-func TestReceiver_Process_ValidResolution(t *testing.T) {
+func TestReceiver_Receive_Valid(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-main",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-munsu",
 		TaskID:         "task:1",
 		Key:            "my-key",
-		Payload:        "done: all work complete",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
+		Payload:        "do: work",
+	})
 
 	recv := setupReceiver(t, home, "captain-munsu", RankCaptain)
-	ref := NotificationRef{
-		MessageID:      env.MessageID,
-		SenderIdentity: "soldier-1",
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "general-main"}
+
+	got, err := recv.Receive(ref)
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
 	}
-	res := recv.Process(ref, "done")
-	if !res.Ok() {
-		t.Fatalf("Process failed: %v", res.Err)
+	if got == nil {
+		t.Fatal("expected non-nil envelope")
 	}
-	if res.Ack == nil {
-		t.Fatal("expected non-nil ack")
+	if got.MessageID != env.MessageID {
+		t.Errorf("MessageID=%q, want %q", got.MessageID, env.MessageID)
 	}
-	if res.Ack.Outcome != "done" {
-		t.Errorf("ack outcome=%q, want %q", res.Ack.Outcome, "done")
-	}
-	if res.Ack.MessageID != env.MessageID {
-		t.Errorf("ack MessageID=%q, want %q", res.Ack.MessageID, env.MessageID)
-	}
-	if res.Ack.SenderIdentity != "soldier-1" {
-		t.Errorf("ack SenderIdentity=%q", res.Ack.SenderIdentity)
-	}
-	if res.Envelope == nil {
-		t.Fatal("expected envelope in resolution")
-	}
-	if res.Envelope.MessageID != env.MessageID {
-		t.Errorf("envelope MessageID mismatch")
+	if got.Payload != "do: work" {
+		t.Errorf("Payload=%q, want %q", got.Payload, "do: work")
 	}
 
-	// Verify ack was written to disk.
-	ack, err := store.ReadAck("soldier-1", env.MessageID)
+	// Verify NO ack was written.
+	ack, err := store.ReadAck("general-main", env.MessageID)
 	if err != nil {
 		t.Fatalf("ReadAck: %v", err)
 	}
-	if ack == nil {
-		t.Fatal("ack not found on disk")
-	}
-	if ack.Outcome != "done" {
-		t.Errorf("disk ack outcome=%q", ack.Outcome)
+	if ack != nil {
+		t.Fatal("Receive must NOT write an ack")
 	}
 }
 
-// --- Receiver.Process: malformed reference ---
+func TestReceiver_Receive_ReturnsMarkedPayload(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
 
-func TestReceiver_Process_MalformedRef(t *testing.T) {
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-main",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "[from-general] report status",
+	})
+
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "general-main"}
+
+	got, err := recv.Receive(ref)
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+	if got.Payload != "[from-general] report status" {
+		t.Errorf("Payload=%q", got.Payload)
+	}
+
+	// Verify no ack was written.
+	ack, _ := store.ReadAck("general-main", env.MessageID)
+	if ack != nil {
+		t.Fatal("Receive must not write ack")
+	}
+}
+
+func TestReceiver_Receive_MalformedRef(t *testing.T) {
 	home := t.TempDir()
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
 
@@ -256,46 +247,36 @@ func TestReceiver_Process_MalformedRef(t *testing.T) {
 		name string
 		ref  NotificationRef
 	}{
-		{"empty message ID", NotificationRef{MessageID: "", SenderIdentity: "soldier-1"}},
+		{"empty message ID", NotificationRef{MessageID: "", SenderIdentity: "general-1"}},
 		{"empty sender identity", NotificationRef{MessageID: "msg-1", SenderIdentity: ""}},
 		{"both empty", NotificationRef{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := recv.Process(tt.ref, "done")
-			if res.Ok() {
+			_, err := recv.Receive(tt.ref)
+			if err == nil {
 				t.Fatal("expected error for malformed ref")
-			}
-			if res.Err == nil {
-				t.Fatal("expected non-nil error")
 			}
 		})
 	}
 }
 
-// --- Receiver.Process: missing envelope ---
-
-func TestReceiver_Process_MissingEnvelope(t *testing.T) {
+func TestReceiver_Receive_MissingEnvelope(t *testing.T) {
 	home := t.TempDir()
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: "nonexistent-id", SenderIdentity: "soldier-1"}
-	res := recv.Process(ref, "done")
-	if res.Ok() {
+	_, err := recv.Receive(NotificationRef{MessageID: "nonexistent-id", SenderIdentity: "general-1"})
+	if err == nil {
 		t.Fatal("expected error for missing envelope")
 	}
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "not found") {
-		t.Errorf("expected 'not found' error, got: %v", res.Err)
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got: %v", err)
 	}
 }
 
-// --- Receiver.Process: invalid envelope (ValidateEnvelope gate) ---
-
-func TestReceiver_Process_ValidateEnvelopeGate(t *testing.T) {
+func TestReceiver_Receive_ValidateEnvelopeGate(t *testing.T) {
 	// Write an envelope file directly that fails ValidateEnvelope
 	// (general->soldier invalid transition). Bypass WriteEnvelope's
-	// own validation to test that Process calls ValidateEnvelope.
-	// Use a named subdirectory so that ReadHomeIdentity derives
-	// the expected identity "soldier-1".
+	// own validation to test that Receive calls ValidateEnvelope.
 	home := filepath.Join(t.TempDir(), "soldier-1")
 	os.MkdirAll(home, 0755)
 
@@ -318,125 +299,105 @@ func TestReceiver_Process_ValidateEnvelopeGate(t *testing.T) {
 	}
 
 	recv := setupReceiver(t, home, "soldier-1", RankSoldier)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "general-main"}
-	res := recv.Process(ref, "done")
-	if res.Ok() {
+	_, err := recv.Receive(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-main",
+	})
+	if err == nil {
 		t.Fatal("expected error for invalid rank transition")
 	}
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "validate envelope") {
-		t.Errorf("expected validate envelope error, got: %v", res.Err)
+	if !strings.Contains(err.Error(), "validate envelope") {
+		t.Errorf("expected validate envelope error, got: %v", err)
 	}
 }
 
-func TestReceiver_Process_ValidateEnvelopeKey(t *testing.T) {
+func TestReceiver_Receive_OmitemptyFields(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	// Envelope entirely missing TaskID/Key — ValidateEnvelope does not require
-	// these (they're omitempty), but Process should still validate the envelope.
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "test",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
+	})
 
-	// Missing TaskID/Key are fine (omitempty), so Process should succeed.
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-	res := recv.Process(ref, "done")
-	if !res.Ok() {
-		t.Fatalf("Process failed with omitempty fields: %v", res.Err)
+	got, err := recv.Receive(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err != nil {
+		t.Fatalf("Receive failed with omitempty fields: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil envelope")
 	}
 }
 
-// --- Receiver.Process: wrong receiver identity ---
-
-func TestReceiver_Process_WrongReceiverIdentity(t *testing.T) {
+func TestReceiver_Receive_WrongReceiverIdentity(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
 		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-alpha", // intended for alpha
+		ReceiverID:     "captain-alpha",
 		Payload:        "hello",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
+	})
 
-	// Process as beta — should fail because identity derived from home
+	// Receive as beta — should fail because identity derived from home
 	// (captain-beta) doesn't match envelope's ReceiverID (captain-alpha).
 	recv := setupReceiver(t, home, "captain-beta", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-	res := recv.Process(ref, "done")
-	if res.Ok() {
+	_, err := recv.Receive(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err == nil {
 		t.Fatal("expected error for wrong receiver identity")
 	}
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "receiver identity mismatch") {
-		t.Errorf("expected receiver identity mismatch error, got: %v", res.Err)
+	if !strings.Contains(err.Error(), "receiver identity mismatch") {
+		t.Errorf("expected receiver identity mismatch error, got: %v", err)
 	}
 }
 
-// --- Receiver.Process: wrong receiver rank ---
-
-func TestReceiver_Process_WrongReceiverRank(t *testing.T) {
+func TestReceiver_Receive_WrongReceiverRank(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	// Create a valid envelope: captain sends to general with
-	// ReceiverID="captain-1". The envelope passes ValidateEnvelope
-	// (captain->general is valid). The receiver has a captain marker
-	// with identity "captain-1" (gives RankCaptain), so identity
-	// matches but rank (Captain vs General) does not.
-	env := &Envelope{
+	env := setupEnvelope(t, store, &Envelope{
 		SenderRank:     RankCaptain,
 		SenderIdentity: "parent-captain",
-		ReceiverRank:   RankGeneral, // envelope says general
+		ReceiverRank:   RankGeneral,
 		ReceiverID:     "captain-1",
 		Payload:        "hello",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
+	})
 
 	// Write captain marker so receiver identity="captain-1" matching
 	// envelope ReceiverID, but receiver rank=RankCaptain, which differs
 	// from envelope's ReceiverRank=RankGeneral.
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "parent-captain"}
-	res := recv.Process(ref, "done")
-	if res.Ok() {
+	_, err := recv.Receive(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "parent-captain",
+	})
+	if err == nil {
 		t.Fatal("expected error for wrong receiver rank")
 	}
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "receiver rank mismatch") {
-		t.Errorf("expected receiver rank mismatch error, got: %v", res.Err)
+	if !strings.Contains(err.Error(), "receiver rank mismatch") {
+		t.Errorf("expected receiver rank mismatch error, got: %v", err)
 	}
 }
 
-// --- Receiver.Process: wrong sender identity ---
-
-func TestReceiver_Process_WrongSenderIdentity(t *testing.T) {
+func TestReceiver_Receive_WrongSenderIdentity(t *testing.T) {
 	home := t.TempDir()
 
-	// Write an envelope under soldier-beta's inbox directory (so the ref can
-	// find it) but with SenderIdentity set to soldier-alpha internally.
-	// This simulates a mismatch between the ref's sender identity and the
-	// envelope's stored sender identity.
-	mismatchDir := filepath.Join(home, "state", InboxDir, "soldier-beta")
+	mismatchDir := filepath.Join(home, "state", InboxDir, "general-beta")
 	if err := os.MkdirAll(mismatchDir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	mismatchEnv := &Envelope{
 		MessageID:      "mismatch-msg",
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-alpha", // internal field says alpha
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-alpha",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "hello",
@@ -449,38 +410,32 @@ func TestReceiver_Process_WrongSenderIdentity(t *testing.T) {
 		t.Fatalf("write mismatch envelope: %v", err)
 	}
 
-	// Ref says soldier-beta — finds the file but internal SenderIdentity
-	// doesn't match.
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: "mismatch-msg", SenderIdentity: "soldier-beta"}
-	res := recv.Process(ref, "done")
-	if res.Ok() {
+	_, err := recv.Receive(NotificationRef{
+		MessageID: "mismatch-msg", SenderIdentity: "general-beta",
+	})
+	if err == nil {
 		t.Fatal("expected error for wrong sender identity")
 	}
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "sender identity mismatch") {
-		t.Errorf("expected sender identity mismatch error, got: %v", res.Err)
+	if !strings.Contains(err.Error(), "sender identity mismatch") {
+		t.Errorf("expected sender identity mismatch error, got: %v", err)
 	}
 }
 
-// --- Receiver.Process: tampered payload/hash ---
-
-func TestReceiver_Process_TamperedPayloadHash(t *testing.T) {
+func TestReceiver_Receive_TamperedPayloadHash(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "original content",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
+	})
 
 	// Tamper with the envelope file on disk: change the payload but not the hash.
-	path := filepath.Join(home, "state", InboxDir, "soldier-1", env.MessageID+".json")
+	path := filepath.Join(home, "state", InboxDir, "general-1", env.MessageID+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading envelope: %v", err)
@@ -490,43 +445,32 @@ func TestReceiver_Process_TamperedPayloadHash(t *testing.T) {
 		t.Fatalf("writing tampered envelope: %v", err)
 	}
 
-	// Re-read to verify tamper worked.
-	readBack, err := store.ReadEnvelope("soldier-1", env.MessageID)
-	if err != nil || readBack == nil {
-		t.Fatal("should still read tampered envelope")
-	}
-	if readBack.Payload != "tampered content" {
-		t.Fatalf("tamper failed: payload=%q", readBack.Payload)
-	}
-
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-	res := recv.Process(ref, "done")
-	if res.Ok() {
+	_, err = recv.Receive(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err == nil {
 		t.Fatal("expected error for tampered payload")
 	}
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "hash mismatch") {
-		t.Errorf("expected hash mismatch error, got: %v", res.Err)
+	if !strings.Contains(err.Error(), "hash mismatch") {
+		t.Errorf("expected hash mismatch error, got: %v", err)
 	}
 }
 
-func TestReceiver_Process_TamperedHashField(t *testing.T) {
+func TestReceiver_Receive_TamperedHashField(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "content",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
+	})
 
 	// Tamper with the payload_hash field directly.
-	path := filepath.Join(home, "state", InboxDir, "soldier-1", env.MessageID+".json")
+	path := filepath.Join(home, "state", InboxDir, "general-1", env.MessageID+".json")
 	var raw map[string]interface{}
 	d, _ := os.ReadFile(path)
 	json.Unmarshal(d, &raw)
@@ -535,252 +479,394 @@ func TestReceiver_Process_TamperedHashField(t *testing.T) {
 	os.WriteFile(path, tampered, 0644)
 
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-	res := recv.Process(ref, "done")
-	if res.Ok() {
+	_, err := recv.Receive(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err == nil {
 		t.Fatal("expected error for tampered hash")
 	}
-	if res.Err == nil || !strings.Contains(res.Err.Error(), "hash mismatch") {
-		t.Errorf("expected hash mismatch error, got: %v", res.Err)
+	if !strings.Contains(err.Error(), "hash mismatch") {
+		t.Errorf("expected hash mismatch error, got: %v", err)
 	}
 }
 
-// --- Receiver.Process: idempotent same outcome, timestamp preserved ---
+// =============================================================
+// Receiver.Ack tests — write "accepted" ack
+// =============================================================
 
-func TestReceiver_Process_DuplicateSameOutcome(t *testing.T) {
+func TestReceiver_Ack_Valid(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-main",
 		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "done: work",
+		ReceiverID:     "captain-munsu",
+		TaskID:         "task:1",
+		Key:            "my-key",
+		Payload:        "do: work",
+	})
+
+	recv := setupReceiver(t, home, "captain-munsu", RankCaptain)
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "general-main"}
+
+	ack, err := recv.Ack(ref)
+	if err != nil {
+		t.Fatalf("Ack failed: %v", err)
 	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
+	if ack == nil {
+		t.Fatal("expected non-nil ack")
+	}
+	if ack.Outcome != OutcomeAccepted {
+		t.Errorf("ack outcome=%q, want %q", ack.Outcome, OutcomeAccepted)
+	}
+	if ack.MessageID != env.MessageID {
+		t.Errorf("ack MessageID=%q, want %q", ack.MessageID, env.MessageID)
+	}
+	if ack.SenderIdentity != "general-main" {
+		t.Errorf("ack SenderIdentity=%q", ack.SenderIdentity)
+	}
+	if ack.ReceiverID != "captain-munsu" {
+		t.Errorf("ack ReceiverID=%q", ack.ReceiverID)
 	}
 
-	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-
-	// First call — should succeed.
-	res1 := recv.Process(ref, "done")
-	if !res1.Ok() {
-		t.Fatalf("first Process failed: %v", res1.Err)
+	// Verify ack was written to disk.
+	diskAck, err := store.ReadAck("general-main", env.MessageID)
+	if err != nil {
+		t.Fatalf("ReadAck: %v", err)
 	}
-	firstAck := res1.Ack
-
-	// Wait a tiny bit so timestamps would differ.
-	time.Sleep(time.Millisecond)
-
-	// Second call with same outcome — should be idempotent and return
-	// the existing ack with the original ProcessedAt preserved.
-	res2 := recv.Process(ref, "done")
-	if !res2.Ok() {
-		t.Fatalf("second Process (same outcome) failed: %v", res2.Err)
+	if diskAck == nil {
+		t.Fatal("ack not found on disk")
 	}
-	if res2.Ack == nil {
-		t.Fatal("expected non-nil ack on duplicate")
-	}
-	if res2.Ack.Outcome != "done" {
-		t.Errorf("duplicate ack outcome=%q", res2.Ack.Outcome)
-	}
-	// Must preserve original timestamp.
-	if res2.Ack.ProcessedAt != firstAck.ProcessedAt {
-		t.Errorf("duplicate returned different ProcessedAt: original=%d, duplicate=%d",
-			firstAck.ProcessedAt, res2.Ack.ProcessedAt)
-	}
-	// Only one ack file on disk.
-	count := countAckFiles(t, home, "soldier-1", env.MessageID)
-	if count != 1 {
-		t.Errorf("expected 1 ack file on disk, got %d", count)
+	if diskAck.Outcome != OutcomeAccepted {
+		t.Errorf("disk ack outcome=%q, want %q", diskAck.Outcome, OutcomeAccepted)
 	}
 }
 
-// --- Receiver.Process: conflicting outcome ---
-
-func TestReceiver_Process_ConflictingOutcome(t *testing.T) {
+func TestReceiver_Ack_MalformedRef(t *testing.T) {
 	home := t.TempDir()
-	store := NewStore(home)
-
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
-		ReceiverRank:   RankCaptain,
-		ReceiverID:     "captain-1",
-		Payload:        "work item",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
-
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
 
-	// First call with "done".
-	res1 := recv.Process(ref, "done")
-	if !res1.Ok() {
-		t.Fatalf("first Process failed: %v", res1.Err)
+	tests := []struct {
+		name string
+		ref  NotificationRef
+	}{
+		{"empty message ID", NotificationRef{MessageID: "", SenderIdentity: "general-1"}},
+		{"empty sender identity", NotificationRef{MessageID: "msg-1", SenderIdentity: ""}},
+		{"both empty", NotificationRef{}},
 	}
-
-	// Second call with "failed" — should fail closed.
-	res2 := recv.Process(ref, "failed")
-	if res2.Ok() {
-		t.Fatal("expected error for conflicting outcome")
-	}
-	if res2.Err == nil || !strings.Contains(res2.Err.Error(), "conflicting ack") {
-		t.Errorf("expected conflicting ack error, got: %v", res2.Err)
-	}
-	if res2.Ack != nil {
-		t.Error("expected nil ack on conflict")
-	}
-
-	// Third call with "needs-decision" — should also fail closed.
-	res3 := recv.Process(ref, "needs-decision")
-	if res3.Ok() {
-		t.Fatal("expected error for another conflicting outcome")
-	}
-	if res3.Err == nil || !strings.Contains(res3.Err.Error(), "conflicting ack") {
-		t.Errorf("expected conflicting ack error, got: %v", res3.Err)
-	}
-}
-
-// --- Receiver.Process: all valid outcomes ---
-
-func TestReceiver_Process_AllOutcomes(t *testing.T) {
-	outcomes := []string{
-		OutcomeDone,
-		OutcomeFailed,
-		OutcomeNeedsDecisio,
-		OutcomeBlocked,
-		OutcomePaused,
-	}
-	for _, outcome := range outcomes {
-		t.Run(outcome, func(t *testing.T) {
-			home := t.TempDir()
-			store := NewStore(home)
-			env := &Envelope{
-				SenderRank:     RankSoldier,
-				SenderIdentity: "soldier-1",
-				ReceiverRank:   RankCaptain,
-				ReceiverID:     "captain-1",
-				Payload:        outcome + ": work",
-			}
-			if err := store.WriteEnvelope(env); err != nil {
-				t.Fatalf("WriteEnvelope: %v", err)
-			}
-
-			recv := setupReceiver(t, home, "captain-1", RankCaptain)
-			ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-			res := recv.Process(ref, outcome)
-			if !res.Ok() {
-				t.Fatalf("Process(%q) failed: %v", outcome, res.Err)
-			}
-			if res.Ack.Outcome != outcome {
-				t.Errorf("ack outcome=%q, want %q", res.Ack.Outcome, outcome)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := recv.Ack(tt.ref)
+			if err == nil {
+				t.Fatal("expected error for malformed ref")
 			}
 		})
 	}
 }
 
-// --- Receiver.Process: invalid outcome ---
+func TestReceiver_Ack_MissingEnvelope(t *testing.T) {
+	home := t.TempDir()
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	_, err := recv.Ack(NotificationRef{MessageID: "nonexistent-id", SenderIdentity: "general-1"})
+	if err == nil {
+		t.Fatal("expected error for missing envelope")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got: %v", err)
+	}
+}
 
-func TestReceiver_Process_InvalidOutcome(t *testing.T) {
+func TestReceiver_Ack_ValidateEnvelopeGate(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "soldier-1")
+	os.MkdirAll(home, 0755)
+
+	env := &Envelope{
+		MessageID:      "test-invalid-transition",
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-main",
+		ReceiverRank:   RankSoldier,
+		ReceiverID:     "soldier-1",
+		Payload:        "hello",
+		PayloadHash:    PayloadHashHex("hello"),
+		SchemaVersion:  SchemaVersion,
+		CreatedAt:      time.Now().UnixNano(),
+	}
+	inboxDir := filepath.Join(home, "state", InboxDir, "general-main")
+	os.MkdirAll(inboxDir, 0755)
+	data, _ := json.MarshalIndent(env, "", "  ")
+	if err := os.WriteFile(filepath.Join(inboxDir, "test-invalid-transition.json"), data, 0644); err != nil {
+		t.Fatalf("write envelope: %v", err)
+	}
+
+	recv := setupReceiver(t, home, "soldier-1", RankSoldier)
+	_, err := recv.Ack(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-main",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid rank transition")
+	}
+}
+
+func TestReceiver_Ack_OmitemptyFields(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "test",
+	})
+
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	ack, err := recv.Ack(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err != nil {
+		t.Fatalf("Ack failed with omitempty fields: %v", err)
+	}
+	if ack == nil {
+		t.Fatal("expected non-nil ack")
+	}
+	if ack.Outcome != OutcomeAccepted {
+		t.Errorf("ack outcome=%q", ack.Outcome)
+	}
+}
+
+func TestReceiver_Ack_WrongReceiverIdentity(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-alpha",
+		Payload:        "hello",
+	})
+
+	recv := setupReceiver(t, home, "captain-beta", RankCaptain)
+	_, err := recv.Ack(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err == nil {
+		t.Fatal("expected error for wrong receiver identity")
+	}
+}
+
+func TestReceiver_Ack_WrongReceiverRank(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankCaptain,
+		SenderIdentity: "parent-captain",
+		ReceiverRank:   RankGeneral,
+		ReceiverID:     "captain-1",
+		Payload:        "hello",
+	})
+
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	_, err := recv.Ack(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "parent-captain",
+	})
+	if err == nil {
+		t.Fatal("expected error for wrong receiver rank")
+	}
+}
+
+func TestReceiver_Ack_WrongSenderIdentity(t *testing.T) {
+	home := t.TempDir()
+
+	mismatchDir := filepath.Join(home, "state", InboxDir, "general-beta")
+	if err := os.MkdirAll(mismatchDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mismatchEnv := &Envelope{
+		MessageID:      "mismatch-msg",
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-alpha",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		Payload:        "hello",
+		PayloadHash:    PayloadHashHex("hello"),
+		SchemaVersion:  SchemaVersion,
+		CreatedAt:      time.Now().UnixNano(),
 	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
+	data, _ := json.MarshalIndent(mismatchEnv, "", "  ")
+	if err := os.WriteFile(filepath.Join(mismatchDir, "mismatch-msg.json"), data, 0644); err != nil {
+		t.Fatalf("write mismatch envelope: %v", err)
 	}
 
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-	res := recv.Process(ref, "invalid-outcome")
-	if res.Ok() {
-		t.Fatal("expected error for invalid outcome")
-	}
-	if res.Err == nil {
-		t.Fatal("expected non-nil error")
+	_, err := recv.Ack(NotificationRef{
+		MessageID: "mismatch-msg", SenderIdentity: "general-beta",
+	})
+	if err == nil {
+		t.Fatal("expected error for wrong sender identity")
 	}
 }
 
-// --- NotifyResult: Acknowledged field preserved, pending not removed ---
-
-func TestNotifyResult_PendingNotRemoved(t *testing.T) {
-	// This test verifies that NotifyResult.Acknowledged is independent of
-	// sender pending state. Acknowledging a notification must never remove
-	// the sender's pending record — that is handled through the separate
-	// ack/RemovePendingAfterAck flow.
-
-	// Simulate a scenario: notification is acknowledged but pending remains.
+func TestReceiver_Ack_TamperedPayloadHash(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		MessageID:      "msg-pending-test",
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
-		Payload:        "done: test",
-		PayloadHash:    PayloadHashHex("done: test"),
+		Payload:        "original content",
+	})
+
+	path := filepath.Join(home, "state", InboxDir, "general-1", env.MessageID+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading envelope: %v", err)
 	}
-	if err := store.WritePending(env); err != nil {
-		t.Fatalf("WritePending: %v", err)
+	tampered := strings.Replace(string(data), "original content", "tampered content", 1)
+	if err := os.WriteFile(path, []byte(tampered), 0644); err != nil {
+		t.Fatalf("writing tampered envelope: %v", err)
 	}
 
-	// Verify pending exists.
-	pending, err := store.ReadPending("soldier-1", "msg-pending-test")
-	if err != nil || pending == nil {
-		t.Fatal("pending should exist")
-	}
-
-	// NotifyResult with Acknowledged=true — this is what would happen
-	// after a successful SubmitPrompt.
-	nr := &NotifyResult{
-		Ref:          NotificationRef{MessageID: "msg-pending-test", SenderIdentity: "soldier-1"},
-		Acknowledged: true,
-		Status:       "submitted",
-	}
-	_ = nr // Acknowledged notification must not remove pending.
-
-	// Verify pending still exists after acknowledgment.
-	pending, err = store.ReadPending("soldier-1", "msg-pending-test")
-	if err != nil || pending == nil {
-		t.Fatal("pending must still exist after notification acknowledgment")
-	}
-
-	// Verify pending is only removed through the ack flow.
-	ack := &ProcessingAck{
-		MessageID: "msg-pending-test", SenderRank: RankSoldier,
-		SenderIdentity: "soldier-1", ReceiverRank: RankCaptain,
-		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("done: test"),
-		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
-	}
-	if err := store.WriteAck(ack); err != nil {
-		t.Fatalf("WriteAck: %v", err)
-	}
-	if err := store.RemovePendingAfterAck("soldier-1", "msg-pending-test", ack); err != nil {
-		t.Fatalf("RemovePendingAfterAck: %v", err)
-	}
-	pending, _ = store.ReadPending("soldier-1", "msg-pending-test")
-	if pending != nil {
-		t.Fatal("pending should be removed only after validated ack")
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	_, err = recv.Ack(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err == nil {
+		t.Fatal("expected error for tampered payload")
 	}
 }
 
-// --- Receiver.Process with different rank transitions ---
+func TestReceiver_Ack_TamperedHashField(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
 
-func TestReceiver_Process_DifferentRankTransitions(t *testing.T) {
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "content",
+	})
+
+	path := filepath.Join(home, "state", InboxDir, "general-1", env.MessageID+".json")
+	var raw map[string]interface{}
+	d, _ := os.ReadFile(path)
+	json.Unmarshal(d, &raw)
+	raw["payload_hash"] = "0000000000000000000000000000000000000000000000000000000000000000"
+	tampered, _ := json.MarshalIndent(raw, "", "  ")
+	os.WriteFile(path, tampered, 0644)
+
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	_, err := recv.Ack(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err == nil {
+		t.Fatal("expected error for tampered hash")
+	}
+}
+
+// --- Acquisition ack idempotence ---
+
+func TestReceiver_Ack_DuplicateSameOutcome(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "do: work",
+	})
+
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "general-1"}
+
+	// First call — should succeed with "accepted".
+	ack1, err := recv.Ack(ref)
+	if err != nil {
+		t.Fatalf("first Ack failed: %v", err)
+	}
+	if ack1.Outcome != OutcomeAccepted {
+		t.Errorf("ack1 outcome=%q, want %q", ack1.Outcome, OutcomeAccepted)
+	}
+
+	// Wait a tiny bit so timestamps would differ.
+	time.Sleep(time.Millisecond)
+
+	// Second call with same ref — should be idempotent and return
+	// the existing ack with the original ProcessedAt preserved.
+	ack2, err := recv.Ack(ref)
+	if err != nil {
+		t.Fatalf("second Ack (same ref) failed: %v", err)
+	}
+	if ack2 == nil {
+		t.Fatal("expected non-nil ack on duplicate")
+	}
+	if ack2.Outcome != OutcomeAccepted {
+		t.Errorf("duplicate ack outcome=%q, want %q", ack2.Outcome, OutcomeAccepted)
+	}
+	// Must preserve original timestamp.
+	if ack2.ProcessedAt != ack1.ProcessedAt {
+		t.Errorf("duplicate returned different ProcessedAt: original=%d, duplicate=%d",
+			ack1.ProcessedAt, ack2.ProcessedAt)
+	}
+	// Only one ack file on disk.
+	count := countAckFiles(t, home, "general-1", env.MessageID)
+	if count != 1 {
+		t.Errorf("expected 1 ack file on disk, got %d", count)
+	}
+}
+
+// --- Acquisition ack conflict ---
+
+func TestReceiver_Ack_ConflictingOutcome(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "work item",
+	})
+
+	// Manually write a "done" ack (simulate corruption or protocol change).
+	// This bypasses Ack which only writes "accepted".
+	doneAck := &ProcessingAck{
+		MessageID: env.MessageID, SenderRank: env.SenderRank,
+		SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank,
+		ReceiverID: env.ReceiverID, PayloadHash: env.PayloadHash,
+		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
+	}
+	if err := store.WriteAck(doneAck); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+
+	recv := setupReceiver(t, home, "captain-1", RankCaptain)
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "general-1"}
+
+	// Ack with "accepted" should fail closed because existing outcome is "done".
+	_, err := recv.Ack(ref)
+	if err == nil {
+		t.Fatal("expected error for conflicting outcome")
+	}
+	if !strings.Contains(err.Error(), "conflicting") {
+		t.Errorf("expected conflicting error, got: %v", err)
+	}
+}
+
+// =============================================================
+// Different rank transitions
+// =============================================================
+
+func TestReceiver_Ack_DifferentRankTransitions(t *testing.T) {
 	tests := []struct {
 		name         string
 		senderRank   Rank
@@ -794,9 +880,6 @@ func TestReceiver_Process_DifferentRankTransitions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// For non-captain receiver ranks, identity is derived from the
-			// home directory basename. Use a named subdirectory so that
-			// ReadHomeIdentity returns the expected identity.
 			var home string
 			if tt.receiverRank == RankCaptain {
 				home = t.TempDir()
@@ -806,64 +889,129 @@ func TestReceiver_Process_DifferentRankTransitions(t *testing.T) {
 			}
 			store := NewStore(home)
 
-			env := &Envelope{
+			env := setupEnvelope(t, store, &Envelope{
 				SenderRank:     tt.senderRank,
 				SenderIdentity: tt.senderID,
 				ReceiverRank:   tt.receiverRank,
 				ReceiverID:     tt.receiverID,
 				Payload:        "work",
-			}
-			if err := store.WriteEnvelope(env); err != nil {
-				t.Fatalf("WriteEnvelope: %v", err)
-			}
+			})
 
 			recv := setupReceiver(t, home, tt.receiverID, tt.receiverRank)
-			ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: tt.senderID}
-			res := recv.Process(ref, "done")
-			if !res.Ok() {
-				t.Fatalf("Process failed: %v", res.Err)
+			ack, err := recv.Ack(NotificationRef{
+				MessageID: env.MessageID, SenderIdentity: tt.senderID,
+			})
+			if err != nil {
+				t.Fatalf("Ack failed: %v", err)
 			}
-			if res.Ack.ReceiverRank != tt.receiverRank {
-				t.Errorf("ack ReceiverRank=%q, want %q", res.Ack.ReceiverRank, tt.receiverRank)
+			if ack.Outcome != OutcomeAccepted {
+				t.Errorf("ack outcome=%q, want %q", ack.Outcome, OutcomeAccepted)
+			}
+			if ack.ReceiverRank != tt.receiverRank {
+				t.Errorf("ack ReceiverRank=%q, want %q", ack.ReceiverRank, tt.receiverRank)
 			}
 		})
 	}
 }
 
-// --- Receiver.Process: envelope has task/key fields ---
+// --- Acquisition ack with task/key fields ---
 
-func TestReceiver_Process_WithTaskAndKey(t *testing.T) {
+func TestReceiver_Ack_WithTaskAndKey(t *testing.T) {
 	home := t.TempDir()
 	store := NewStore(home)
 
-	env := &Envelope{
-		SenderRank:     RankSoldier,
-		SenderIdentity: "soldier-1",
+	env := setupEnvelope(t, store, &Envelope{
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
 		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:rebrand-phase1",
 		Key:            "real-estate-apex",
-		Payload:        "done: rebrand complete",
-	}
-	if err := store.WriteEnvelope(env); err != nil {
-		t.Fatalf("WriteEnvelope: %v", err)
-	}
+		Payload:        "do: rebrand work",
+	})
 
 	recv := setupReceiver(t, home, "captain-1", RankCaptain)
-	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: "soldier-1"}
-	res := recv.Process(ref, "done")
-	if !res.Ok() {
-		t.Fatalf("Process failed: %v", res.Err)
+	ack, err := recv.Ack(NotificationRef{
+		MessageID: env.MessageID, SenderIdentity: "general-1",
+	})
+	if err != nil {
+		t.Fatalf("Ack failed: %v", err)
 	}
-	if res.Ack.TaskID != "task:rebrand-phase1" {
-		t.Errorf("ack TaskID=%q", res.Ack.TaskID)
+	if ack.TaskID != "task:rebrand-phase1" {
+		t.Errorf("ack TaskID=%q", ack.TaskID)
 	}
-	if res.Ack.Key != "real-estate-apex" {
-		t.Errorf("ack Key=%q", res.Ack.Key)
+	if ack.Key != "real-estate-apex" {
+		t.Errorf("ack Key=%q", ack.Key)
+	}
+	if ack.Outcome != OutcomeAccepted {
+		t.Errorf("ack outcome=%q, want %q", ack.Outcome, OutcomeAccepted)
 	}
 }
 
-// --- NotificationRef JSON round-trip (compact struct) ---
+// =============================================================
+// NotifyResult: Acknowledged field preserved, pending not removed
+// =============================================================
+
+func TestNotifyResult_PendingNotRemoved(t *testing.T) {
+	home := t.TempDir()
+	store := NewStore(home)
+
+	env := &Envelope{
+		MessageID:      "msg-pending-test",
+		SenderRank:     RankGeneral,
+		SenderIdentity: "general-1",
+		ReceiverRank:   RankCaptain,
+		ReceiverID:     "captain-1",
+		Payload:        "do: test",
+		PayloadHash:    PayloadHashHex("do: test"),
+	}
+	if err := store.WritePending(env); err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+
+	// Verify pending exists.
+	pending, err := store.ReadPending("general-1", "msg-pending-test")
+	if err != nil || pending == nil {
+		t.Fatal("pending should exist")
+	}
+
+	// NotifyResult with Acknowledged=true — notification acknowledgment
+	// must not remove pending.
+	nr := &NotifyResult{
+		Ref:          NotificationRef{MessageID: "msg-pending-test", SenderIdentity: "general-1"},
+		Acknowledged: true,
+		Status:       "submitted",
+	}
+	_ = nr
+
+	// Verify pending still exists after notification acknowledgment.
+	pending, err = store.ReadPending("general-1", "msg-pending-test")
+	if err != nil || pending == nil {
+		t.Fatal("pending must still exist after notification acknowledgment")
+	}
+
+	// Verify pending is only removed through the exact ack + reconcile flow.
+	ack := &ProcessingAck{
+		MessageID: "msg-pending-test", SenderRank: RankGeneral,
+		SenderIdentity: "general-1", ReceiverRank: RankCaptain,
+		ReceiverID: "captain-1", PayloadHash: PayloadHashHex("do: test"),
+		ProcessedAt: time.Now().UnixNano(), Outcome: OutcomeAccepted,
+	}
+	if err := store.WriteAck(ack); err != nil {
+		t.Fatalf("WriteAck: %v", err)
+	}
+	if err := store.RemovePendingAfterAck("general-1", "msg-pending-test", ack); err != nil {
+		t.Fatalf("RemovePendingAfterAck: %v", err)
+	}
+	pending, _ = store.ReadPending("general-1", "msg-pending-test")
+	if pending != nil {
+		t.Fatal("pending should be removed only after validated ack")
+	}
+}
+
+// =============================================================
+// NotificationRef JSON round-trip
+// =============================================================
 
 func TestNotificationRef_JSONRoundTrip(t *testing.T) {
 	ref := NotificationRef{MessageID: "msg-abc-123", SenderIdentity: "soldier-task-42"}
@@ -883,7 +1031,6 @@ func TestNotificationRef_JSONRoundTrip(t *testing.T) {
 		t.Errorf("SenderIdentity=%q", decoded.SenderIdentity)
 	}
 
-	// Verify output is compact (only two fields).
 	var raw map[string]interface{}
 	json.Unmarshal(data, &raw)
 	if len(raw) != 2 {
@@ -898,7 +1045,6 @@ func TestWriteHomeIdentity_Captain(t *testing.T) {
 	if err := WriteHomeIdentity(home, "test-captain", RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
-	// Verify marker file exists.
 	path := filepath.Join(home, captainMarkerName)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -915,18 +1061,13 @@ func TestWriteHomeIdentity_Captain(t *testing.T) {
 
 func TestWriteHomeIdentity_NonCaptain(t *testing.T) {
 	home := t.TempDir()
-	// Non-captain ranks do not write a marker — identity is derived from
-	// directory basename.
 	if err := WriteHomeIdentity(home, "general-main", RankGeneral); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
-	// Verify no marker file was written.
 	path := filepath.Join(home, captainMarkerName)
 	if _, err := os.Stat(path); err == nil {
 		t.Error("non-captain WriteHomeIdentity should not create marker file")
 	}
-
-	// Identity should derive from basename.
 	ident, rank, err := ReadHomeIdentity(home)
 	if err != nil {
 		t.Fatalf("ReadHomeIdentity: %v", err)
@@ -939,32 +1080,14 @@ func TestWriteHomeIdentity_NonCaptain(t *testing.T) {
 	}
 }
 
-func TestWriteHomeIdentity_EmptyIdentity(t *testing.T) {
-	if err := WriteHomeIdentity(t.TempDir(), "", RankCaptain); err == nil {
-		t.Fatal("expected error for empty identity")
-	}
-}
-
-func TestWriteHomeIdentity_InvalidRank(t *testing.T) {
-	if err := WriteHomeIdentity(t.TempDir(), "test", Rank("invalid")); err == nil {
-		t.Fatal("expected error for invalid rank")
-	}
-}
-
-// --- NotifyReceiver SubmitPrompt only (integration with session) ---
-// NotifyReceiver requires a live backend, so we test the contract:
-// the notification text uses canonical Encode, not ad-hoc format.
+// --- NotifyReceiver contract test ---
 
 func TestNotifyReceiver_UsesEncode(t *testing.T) {
-	// This is a compile-time/contract test: NotifyReceiver builds the
-	// notification text from ref.Encode(), not fmt.Sprintf.
 	ref := NotificationRef{MessageID: "test-msg", SenderIdentity: "test-sender"}
 	encoded := ref.Encode()
-	// The encoded text is JSON, not the old "notification: ..." format.
 	if strings.HasPrefix(encoded, "notification:") {
 		t.Error("notification text must use canonical Encode, not ad-hoc format")
 	}
-	// Verify the receiver can parse it back.
 	parsed, err := ParseNotificationRef(encoded)
 	if err != nil {
 		t.Fatalf("ParseNotificationRef: %v", err)

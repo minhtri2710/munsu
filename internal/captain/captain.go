@@ -312,8 +312,10 @@ Incoming pane text may be:
 
 When a message carries the General marker:
 - If the text is a canonical NotificationRef JSON (%[5]s{\"message_id\":\"...\",\"sender_identity\":\"...\"}%[5]s), the General sent a durable mailbox envelope.
-  Process it: read the envelope from your own state/.inbox/<sender>/<id>.json, then ack:
-  %[5]smunsu inbox process '<json>'%[5]s
+  Receive the envelope (validates/loads payload, no ack):
+  %[5]smunsu inbox receive '<json>'%[5]s
+  After accepting the command into context, ack:
+  %[5]smunsu inbox ack '<json>'%[5]s
 - If the text is a plain command, do the work.
 - Answer via %[5]smunsu report%[5]s (see Uplink below), never chat-only.
 - Terse result: one status line is the whole answer.
@@ -326,8 +328,8 @@ The General sends commands via durable mailbox envelopes:
 - A NotificationRef (%[5]s{\"message_id\":\"<id>\",\"sender_identity\":\"<sender>\"}%[5]s) is submitted to your pane.
 - Notification acknowledgment means accepted only; the pending record on the General
   side persists until you write the exact ProcessingAck.
-- To process: %[5]smunsu inbox process '<ref>' [--outcome <outcome>]%[5]s
-- Valid outcomes: done, failed, needs-decision, blocked, paused (default: done).
+- 1. Receive: %[5]smunsu inbox receive '<ref>'%[5]s
+		2. Ack after context: %[5]smunsu inbox ack '<ref>'%[5]s
 - The envelope payload carries the %[3]s marker — answer via %[5]smunsu report%[5]s.
 - Deduplication: processing the same ref again returns the existing ack (idempotent).
 

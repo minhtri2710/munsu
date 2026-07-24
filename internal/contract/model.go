@@ -300,6 +300,13 @@ type MessageResult struct {
 	WatcherIdentity   string            `json:"watcher_identity,omitempty"`
 }
 
+// InboxReceiveResult carries the loaded envelope payload from inbox receive.
+type InboxReceiveResult struct {
+	MessageID      string `json:"message_id"`
+	SenderIdentity string `json:"sender_identity"`
+	Payload        string `json:"payload"`
+}
+
 // EmptyResult makes an empty collection definitive.
 type EmptyResult struct {
 	Count   int    `json:"count"`
