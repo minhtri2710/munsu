@@ -20,6 +20,18 @@ import (
 
 // --- BuildLaunchArgs tests (preserved from PR1) ---
 
+func TestCaptainIDFromTask(t *testing.T) {
+	if got := CaptainIDFromTask("captain:munsu", map[string]string{"sm_id": "munsu"}); got != "munsu" {
+		t.Errorf("got %q", got)
+	}
+	if got := CaptainIDFromTask("captain:munsu", nil); got != "munsu" {
+		t.Errorf("prefix fallback got %q", got)
+	}
+	if got := CaptainIDFromTask("captain:other", map[string]string{"sm_id": "real"}); got != "real" {
+		t.Errorf("sm_id prefer got %q", got)
+	}
+}
+
 func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
@@ -2901,6 +2913,25 @@ func TestEnsureCaptainPiExtensions_RefusesUnmarked(t *testing.T) {
 }
 
 // --- Recover tests ---
+
+// writeCaptainMeta writes a captain task meta for test purposes.
+func writeCaptainMeta(t *testing.T, parent, smID, smHome, window string) {
+	t.Helper()
+	canon, err := canonicalHome(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := map[string]string{
+		"kind":    "captain",
+		"sm_id":   smID,
+		"home":    canon,
+		"window":  window,
+		"backend": "fake",
+	}
+	if err := task.WriteMeta(parent, taskIDForCaptain(smID), meta); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // seedCaptainForTest creates a captain home with provenance marker and optional AGENTS.md.
 func seedCaptainForTest(t *testing.T, parent, id string) string {

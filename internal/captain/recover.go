@@ -58,7 +58,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 			StepResult{Name: "launch-readiness", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "watcher-ensure", State: StepSkipped, Detail: "skipped: provenance failed"},
-			StepResult{Name: "outbox-flush", State: StepSkipped, Detail: "skipped: provenance failed"},
+			StepResult{Name: "legacy-guard", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "skipped: provenance failed"},
 			StepResult{Name: "nudge-retry", State: StepSkipped, Detail: "skipped: provenance failed"},
 		)
@@ -91,8 +91,8 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	// Step f: watcher ensure — only when config is OK
 	res.Steps = append(res.Steps, tx.stepWatcherEnsure(sm, configOk))
 
-	// Step g: outbox flush — only when config is OK
-	res.Steps = append(res.Steps, tx.stepLegacyDrain(parentHome, sm, configOk))
+	// Step g: stale legacy transport guard — only when config is OK
+	res.Steps = append(res.Steps, tx.stepLegacyGuard(parentHome, sm, configOk))
 
 	// Step h: terminal receipt reconciliation — relay pending soldier
 	// terminal reports to General. Runs only when config is OK.
@@ -305,16 +305,16 @@ func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResu
 		Detail: "watcher not needed (no child work)"}
 }
 
-func (tx *RecoverTransaction) stepLegacyDrain(parentHome string, sm Info, configOk bool) StepResult {
+func (tx *RecoverTransaction) stepLegacyGuard(parentHome string, sm Info, configOk bool) StepResult {
 	if !configOk {
-		return StepResult{Name: "legacy-drain", State: StepSkipped,
+		return StepResult{Name: "legacy-guard", State: StepSkipped,
 			Detail: "skipped: config validation failed"}
 	}
-	if err := DrainLegacyCommandTransport(parentHome, sm); err != nil {
-		return StepResult{Name: "legacy-drain", State: StepFailed,
+	if err := checkStaleLegacyRecords(parentHome, sm.ID); err != nil {
+		return StepResult{Name: "legacy-guard", State: StepFailed,
 			Detail: err.Error()}
 	}
-	return StepResult{Name: "legacy-drain", State: StepOk, Detail: "legacy transport drained or clean"}
+	return StepResult{Name: "legacy-guard", State: StepOk, Detail: "no stale legacy records"}
 }
 
 func (tx *RecoverTransaction) stepTerminalReconcile(parentHome string, sm Info, configOk bool) StepResult {
