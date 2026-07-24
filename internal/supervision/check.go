@@ -96,14 +96,17 @@ func DiscoverAllChecks(homeDir string) ([]CheckPlugin, error) {
 	return append(perTask, global...), nil
 }
 
-// ValidateCheck ensures the check script exists, is executable,
-// and starts with a valid shebang.
+// ValidateCheck ensures the check script exists, is a regular file (no symlinks),
+// is executable, and starts with a valid shebang.
 func ValidateCheck(path string) error {
-	fi, err := os.Stat(path)
+	// Use Lstat to reject symlinks.
+	fi, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("check not found: %w", err)
 	}
-	// Must be a regular file
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("check is a symlink (refused): %s", path)
+	}
 	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("check is not a regular file: %s", path)
 	}
