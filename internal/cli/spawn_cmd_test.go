@@ -101,8 +101,8 @@ func TestSendCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error (herdr not on PATH), got nil")
 	}
-	if !strings.Contains(err.Error(), "herdr") {
-		t.Errorf("expected error mentioning 'herdr' (from config fallback), got: %v", err)
+	if !strings.Contains(err.Error(), "not alive") {
+		t.Errorf("expected error mentioning 'not alive' (herdr resolved from config but not executable), got: %v", err)
 	}
 }
 
