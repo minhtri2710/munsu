@@ -592,7 +592,7 @@ func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
 }
 
 // AgentPrompt submits a prompt to the target agent using herdr agent prompt
-// with --wait and a 120-second timeout. Returns typed PromptResult.
+// without --wait, returning immediately on acceptance. Returns typed PromptResult.
 //
 // Preconditions checked before submission:
 //  1. Server protocol version >= 17 (otherwise returns PromptUnsupported).
@@ -600,9 +600,10 @@ func (h *HerdrBackend) IsRecognizedAgent(windowID string) (bool, string) {
 //  2. Target is a recognized live agent (otherwise returns PromptEndpointDead
 //     or PromptUnsupported if pane exists but is not an agent).
 //
-// If submission succeeds, the result distinguishes:
-//   - submitted: agent accepted and started processing
-//   - queued-while-busy: agent was already working, prompt queued
+// On success, returns PromptSubmitted with the agent status in detail.
+// Submission acknowledgment means accepted/queued only, never processing
+// completion. Do not use AgentPrompt when settled agent lifecycle state is
+// needed — use a separate explicit wait operation for that.
 //
 // On stalled/error:
 //   - agent_prompt_stalled → PromptStalled (NO fallback)
@@ -628,7 +629,7 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 	pid := herdrPaneID(windowID)
 
 	// Precondition: target is a recognized live agent.
-	recognized, status := h.IsRecognizedAgent(windowID)
+	recognized, _ := h.IsRecognizedAgent(windowID)
 	if !recognized {
 		// agent_not_found: check if pane exists to distinguish dead from non-agent.
 		alive, aliveErr := h.CheckAlive(windowID)
@@ -659,14 +660,11 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		}
 	}
 
-	// Check pre-submission status for queued-while-busy detection.
-	wasBusy := status == "working"
-
-	// Submit prompt with --wait and 120s timeout. Use herdrCaptureForWindow
-	// to preserve stdout even on non-zero exit (stalled returns exit 1 with
-	// JSON error in stdout).
-	out, err := h.herdrCaptureForWindow(windowID, "agent", "prompt", pid, text,
-		"--wait", "--timeout", "120000")
+	// Submit prompt without --wait. Returns immediately on acceptance;
+	// the agent may be idle or still working on a previous prompt.
+	// Use herdrCaptureForWindow to preserve stdout even on non-zero exit
+	// (stalled returns exit 1 with JSON error in stdout).
+	out, err := h.herdrCaptureForWindow(windowID, "agent", "prompt", pid, text)
 	if err != nil {
 		// If stdout is empty or unparseable, it's a true backend failure.
 		if out == "" {
@@ -731,18 +729,13 @@ func (h *HerdrBackend) AgentPrompt(windowID, text string) PromptResult {
 		}
 	}
 
-	// Determine result based on pre-submission status and response.
+	// Return PromptSubmitted with agent status from response.
+	// Without --wait we do not infer queued-while-busy; the submission
+	// acknowledgment means accepted/queued only.
 	if successResp.Result.Agent != nil {
-		postStatus := successResp.Result.Agent.AgentStatus
-		if wasBusy {
-			return PromptResult{
-				Status: PromptQueuedWhileBusy,
-				Detail: fmt.Sprintf("agent was working, post-status: %s", postStatus),
-			}
-		}
 		return PromptResult{
 			Status: PromptSubmitted,
-			Detail: fmt.Sprintf("agent-status: %s", postStatus),
+			Detail: fmt.Sprintf("agent-status: %s", successResp.Result.Agent.AgentStatus),
 		}
 	}
 
