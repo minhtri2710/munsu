@@ -17,7 +17,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -1561,10 +1560,19 @@ func isGitTracked(dir, name string) bool {
 
 // ConfigPush copies inheritable config from the parent home to the captain,
 // mirrors deletions, pushes data/general-shared.md and data/projects.md,
-// and logs actions.
+// and logs actions. Legacy caller; use ConfigPushWithResult for generation
+// tracking result.
 func ConfigPush(parentHome, captainHome string) error {
+	_, err := ConfigPushWithResult(parentHome, captainHome)
+	return err
+}
+
+// ConfigPushWithResult copies inheritable config like ConfigPush and also
+// returns the ConfigPushResult with generation tracking. Returns nil result
+// on early failure (before generation tracking runs).
+func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, error) {
 	if _, err := ValidateProvenance(captainHome); err != nil {
-		return fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
+		return nil, fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
 	}
 
 	inheritable := getInheritableList()
@@ -1573,7 +1581,7 @@ func ConfigPush(parentHome, captainHome string) error {
 	os.MkdirAll(filepath.Dir(logPath), 0755)
 	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("opening config-push.log: %w", err)
+		return nil, fmt.Errorf("opening config-push.log: %w", err)
 	}
 	defer logF.Close()
 
@@ -1597,14 +1605,14 @@ func ConfigPush(parentHome, captainHome string) error {
 			if _, err := os.Stat(srcPath); os.IsNotExist(err) {
 				dstPath := filepath.Join(configDir, name)
 				if !isSafeConfigPath(dstPath, parentHome, captainHome) {
-					return fmt.Errorf("mirror deletion: %s path escapes captain container — refuse", name)
+					return nil, fmt.Errorf("mirror deletion: %s path escapes captain container — refuse", name)
 				}
 				if isGitTracked(configDir, name) {
-					return fmt.Errorf("mirror deletion: %s is tracked in captain git — must be gitignored", name)
+					return nil, fmt.Errorf("mirror deletion: %s is tracked in captain git — must be gitignored", name)
 				}
 				if err := os.Remove(dstPath); err != nil {
 					log("delete-failed", name+" — "+err.Error())
-					return fmt.Errorf("mirror deletion: removing %s: %w", name, err)
+					return nil, fmt.Errorf("mirror deletion: removing %s: %w", name, err)
 				}
 				log("deleted", name)
 			}
@@ -1616,47 +1624,62 @@ func ConfigPush(parentHome, captainHome string) error {
 	if _, err := os.Stat(filepath.Join(parentHome, "data", "general-shared.md")); os.IsNotExist(err) {
 		if _, err := os.Stat(sharedDst); err == nil {
 			if !isSafeConfigPath(sharedDst, parentHome, captainHome) {
-				return fmt.Errorf("mirror deletion: general-shared.md path escapes captain container — refuse")
+				return nil, fmt.Errorf("mirror deletion: general-shared.md path escapes captain container — refuse")
 			}
 			if isGitTracked(filepath.Dir(sharedDst), filepath.Base(sharedDst)) {
-				return fmt.Errorf("mirror deletion: general-shared.md is tracked in captain git — must be gitignored")
+				return nil, fmt.Errorf("mirror deletion: general-shared.md is tracked in captain git — must be gitignored")
 			}
 			if err := os.Remove(sharedDst); err != nil {
 				log("delete-failed", "general-shared.md — "+err.Error())
-				return fmt.Errorf("mirror deletion: removing general-shared.md: %w", err)
+				return nil, fmt.Errorf("mirror deletion: removing general-shared.md: %w", err)
 			}
 			log("deleted", "general-shared.md")
 		}
 	}
 	for _, name := range inheritable {
 		if err := pushConfigFile(parentHome, captainHome, name, log); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := pushSharedFile(parentHome, captainHome, log); err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := pushProjectsRegistry(parentHome, captainHome, log); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Refresh parent-home config so the captain always has a durable reference to its General.
 	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
-		return fmt.Errorf("refreshing parent-home: %w", err)
+		return nil, fmt.Errorf("refreshing parent-home: %w", err)
 	}
 
 	// Refresh the canonical .captain-charter.md so it stays current on every config-push cycle.
 	if err := RefreshCharter(captainHome, parentHome); err != nil {
-		return fmt.Errorf("refreshing captain charter: %w", err)
+		return nil, fmt.Errorf("refreshing captain charter: %w", err)
 	}
 
 	if err := EnsureCaptainPiExtensions(captainHome); err != nil {
-		return fmt.Errorf("installing captain pi extensions: %w", err)
+		return nil, fmt.Errorf("installing captain pi extensions: %w", err)
 	}
 
-	return nil
+	// Generation tracking: advance the config reread generation if inherited
+	// surface changed. This runs AFTER all propagation succeeds, so a partial
+	// failure never writes a generation that doesn't match the actual files.
+	// On failure, return the error but do not roll back propagation (the
+	// generation file is optional tracking, not the authoritative config).
+	changed, newGen, oldDigest, newDigest, genErr := AdvanceConfigRereadGen(captainHome)
+	if genErr != nil {
+		return nil, fmt.Errorf("advancing config-reread generation: %w", genErr)
+	}
+
+	return &ConfigPushResult{
+		Changed:    changed,
+		Generation: newGen,
+		OldDigest:  oldDigest,
+		NewDigest:  newDigest,
+	}, nil
 }
 
 // RefreshCharter re-generates and writes the .captain-charter.md for a captain home
@@ -2148,15 +2171,42 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeOK, Detail: "no change"})
 		}
 
-		// e. Inheritance push.
-		if err := ConfigPush(parentHome, sm.Home); err != nil {
+		// e. Inheritance push with generation tracking and mailbox notification.
+		if res, err := ConfigPushWithResult(parentHome, sm.Home); err != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeFailed, Detail: err.Error()})
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
 		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: "ok"})
-			// Notification continuity: enqueue a config-reread wake so the captain's
-			// watcher continuity system picks up the config change as a notifiable event.
-			_ = lifecycle.EnqueueWake(sm.Home, "config", "config-reread", "config refreshed via converge")
+			detail := "ok"
+			if res.Changed {
+				detail = fmt.Sprintf("generation=%d", res.Generation)
+			}
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: detail})
+
+			// Legacy artifacts: reconcile before creating new requirement.
+			if legErr := ReconcileLegacyConfigReread(parentHome, sm.Home); legErr != nil {
+				errs = append(errs, fmt.Sprintf("%s: legacy config-reread reconciliation failed: %v", sm.ID, legErr))
+			}
+
+			// Create canonical mailbox config-reread requirement when generation advanced.
+			if res.Changed {
+				if mbErr := EnsureConfigRereadRequirement(parentHome, sm.Home, res.Generation, res.NewDigest); mbErr != nil {
+					// Mailbox write failed; the requirement is not persisted.
+					// Converge will retry on the next cycle. The generation
+					// is tracked durably so we can recreate the requirement.
+					result.Steps = append(result.Steps, ConvergeStepResult{
+						Name:   sm.ID + ": config-reread requirement",
+						Status: ConvergeFailed,
+						Detail: mbErr.Error(),
+					})
+					errs = append(errs, fmt.Sprintf("%s: config-reread requirement: %v", sm.ID, mbErr))
+				} else {
+					result.Steps = append(result.Steps, ConvergeStepResult{
+						Name:   sm.ID + ": config-reread requirement",
+						Status: ConvergeOK,
+						Detail: fmt.Sprintf("gen=%d", res.Generation),
+					})
+				}
+			}
 		}
 
 		// e2. Charter refresh — ensure .captain-charter.md is current.
@@ -2178,6 +2228,14 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent"})
+		}
+
+		// i. Config-reread pending reconciliation.
+		if mbErr := ReconcileConfigRereadPending(parentHome, sm.Home); mbErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread pending reconciliation", Status: ConvergeFailed, Detail: mbErr.Error()})
+			errs = append(errs, mbErr.Error())
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread pending reconciliation", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// g. Terminal receipt relay (Captain → General)
