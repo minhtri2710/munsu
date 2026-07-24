@@ -12,11 +12,79 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
+	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
+
+// fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
+// by TestMain. Tests that need the real PATH can restore it.
+var fakeBinDir string
+var origPath string
+
+// TestMain creates fake pi and munsu binaries in a temp PATH fixture so captain
+// unit tests never depend on the installed Pi binary. Tests that explicitly
+// validate an installed Pi (e.g., runtime integration tests) should restore
+// the original PATH via t.Setenv("PATH", origPath).
+func TestMain(m *testing.M) {
+	var cleanup func()
+	fakeBinDir, cleanup = setupFakeBins()
+	origPath = os.Getenv("PATH")
+	os.Setenv("PATH", fakeBinDir+string(filepath.ListSeparator)+origPath)
+
+	// Shorten Pi capability probe timeout so seeded tests don't wait 30s on
+	// slow PATH lookups. Tests that need the default timeout restore it.
+	integrate.SetProbeTimeout(5 * time.Second)
+
+	// Override the Pi extension installer to no-op so ordinary captain tests
+	// never create .pi/extensions/ in managed worktree fixtures. Tests that
+	// explicitly validate Pi installation (e.g., TestEnsureCaptainPiExtensions)
+	// call EnsureCaptainPiExtensions directly, bypassing this seam.
+	origEnsurePi := ensurePiExtensions
+	ensurePiExtensions = func(string) error { return nil }
+
+	code := m.Run()
+
+	ensurePiExtensions = origEnsurePi
+	cleanup()
+	os.Setenv("PATH", origPath)
+	os.Exit(code)
+}
+
+// setupFakeBins creates executable shims for pi and munsu in a temp directory
+// and returns the directory path and a cleanup function.
+func setupFakeBins() (string, func()) {
+	dir, err := os.MkdirTemp("", "captain-test-bins-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "captain TestMain: creating temp dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Fake pi: returns a supported version.
+	piShim := filepath.Join(dir, "pi")
+	if err := os.WriteFile(piShim, []byte("#!/bin/sh\necho '0.79.0'\n"), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "captain TestMain: writing pi shim: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Fake node: returns "API probe passed" so probePiAPIs succeeds.
+	nodeShim := filepath.Join(dir, "node")
+	if err := os.WriteFile(nodeShim, []byte("#!/bin/sh\necho 'API probe passed'\n"), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "captain TestMain: writing node shim: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Fake munsu: needed by EnsureCaptainPiExtensions for path resolution.
+	munsuShim := filepath.Join(dir, "munsu")
+	if err := os.WriteFile(munsuShim, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "captain TestMain: writing munsu shim: %v\n", err)
+		os.Exit(1)
+	}
+
+	return dir, func() { os.RemoveAll(dir) }
+}
 
 // --- BuildLaunchArgs tests (preserved from PR1) ---
 
@@ -3350,6 +3418,53 @@ func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 	// Worktree seed on an existing state-only home must fail.
 	if err := SeedFromWorktree("existing-sm", homePath, project, parent, "", false, ""); err == nil {
 		t.Fatal("expected error for state-only home, got nil")
+	}
+}
+
+// TestSeedFromWorktree_ManagedWorktreeClean verifies that Seed followed by
+// ConfigPush on a managed worktree leaves no unexpected untracked files.
+// Regression: the Captain Pi-extension installer must not create .pi/extensions/
+// in managed worktree fixtures under hermetic TestMain.
+func TestSeedFromWorktree_ManagedWorktreeClean(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	// Pre-populate parent config so ConfigPush has something to push.
+	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// Seed the managed worktree.
+	if err := SeedFromWorktree(id, homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run ConfigPush — must not create .pi/ artifacts.
+	if err := ConfigPush(parent, homePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the managed worktree has no unexpected tracked/untracked files.
+	// Allowed untracked files: state/, data/, config/, projects/, .captain-charter.md,
+	// .munsu-captain-home, .captain-launch.sh are excluded via info/exclude.
+	// Anything else (e.g., .pi/) must not appear.
+	out, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v\n%s", err, out)
+	}
+	status := strings.TrimSpace(string(out))
+	if status != "" {
+		t.Errorf("managed worktree has unexpected git status:\n%s", status)
+	}
+
+	// Also verify .pi/ does not exist.
+	if _, err := os.Stat(filepath.Join(homePath, ".pi")); err == nil {
+		t.Error(".pi/ directory should not exist in managed worktree after hermetic Seed/ConfigPush")
 	}
 }
 
