@@ -294,7 +294,7 @@ func TestResolveIntegration(t *testing.T) {
 }
 
 func TestIsValidStatusState(t *testing.T) {
-	valid := []string{"working", "needs-decision", "blocked", "paused", "resolved", "done", "failed"}
+	valid := []string{"working", "review-ready", "amending", "needs-decision", "blocked", "paused", "resolved", "done", "failed"}
 	for _, s := range valid {
 		if !IsValidStatusState(s) {
 			t.Errorf("%q should be a valid status state", s)
@@ -311,7 +311,7 @@ func TestIsValidStatusState(t *testing.T) {
 
 func TestValidStatusStates(t *testing.T) {
 	expected := []string{
-		"working", "needs-decision", "blocked", "paused",
+		"working", "review-ready", "amending", "needs-decision", "blocked", "paused",
 		"awaiting_approval", "resolved", "done", "failed",
 	}
 	if len(ValidStatusStates) != len(expected) {
