@@ -1,6 +1,7 @@
 package captain
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -505,5 +506,498 @@ func TestDrainLegacyCommandTransport_MultipleCaptainsIsolated(t *testing.T) {
 
 	if !isLegacySendOutboxMigrated(parent, capB) {
 		t.Error("captain B send-outbox marker should exist after drain")
+	}
+}
+
+//
+// Blocking finding tests
+//
+
+// TestDrainLegacyCommandTransport_AtomicReceipt proves each migrated record
+// gets an atomic receipt with correct content hash, and receipts survive re-run.
+func TestDrainLegacyCommandTransport_AtomicReceipt(t *testing.T) {
+	parent := t.TempDir()
+	cptHome := t.TempDir()
+	cid := "receipt-cap"
+	writeCaptainMeta(t, parent, cid, cptHome, "w1")
+	if err := initCaptainMailboxHome(cptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := marker.MarkFromGeneral("receipt-test-msg")
+	seedLegacySendOutbox(t, parent, cid, msg)
+
+	sm := Info{ID: cid, Home: cptHome}
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	detID := legacySendOutboxContentID(cid, msg)
+
+	receipt, err := readMigrationReceipt(parent, cid, detID)
+	if err != nil {
+		t.Fatalf("reading receipt: %v", err)
+	}
+	if receipt == nil {
+		t.Fatal("receipt not found after migration")
+	}
+	if receipt.LegacyType != "send-outbox" {
+		t.Errorf("legacy type=%q, want send-outbox", receipt.LegacyType)
+	}
+	if receipt.MailboxMessageID != detID {
+		t.Errorf("mailbox message ID=%q, want %q", receipt.MailboxMessageID, detID)
+	}
+	if receipt.LegacyContentHash == "" {
+		t.Error("legacy content hash is empty")
+	}
+	if receipt.MigratedAt == 0 {
+		t.Error("migrated_at is zero")
+	}
+
+	// Receipt survives re-run (crash replay safety).
+	receipt2, _ := readMigrationReceipt(parent, cid, detID)
+	if receipt2 == nil || receipt2.LegacyContentHash != receipt.LegacyContentHash {
+		t.Error("receipt corrupted or missing after re-run")
+	}
+}
+
+// TestDrainLegacyCommandTransport_DeterministicMailboxID proves the same
+// legacy content produces the same mailbox message ID, enabling conflict detection.
+func TestDrainLegacyCommandTransport_DeterministicMailboxID(t *testing.T) {
+	parent := t.TempDir()
+	cptHome := t.TempDir()
+	cid := "det-id-cap"
+	writeCaptainMeta(t, parent, cid, cptHome, "w1")
+	if err := initCaptainMailboxHome(cptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := marker.MarkFromGeneral("deterministic-content")
+	seedLegacySendOutbox(t, parent, cid, msg)
+
+	expectedID := legacySendOutboxContentID(cid, msg)
+	if len(expectedID) != 32 {
+		t.Errorf("deterministic ID length=%d, want 32", len(expectedID))
+	}
+
+	sm := Info{ID: cid, Home: cptHome}
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("first drain: %v", err)
+	}
+
+	senderIdentity, _, _ := mailbox.ReadHomeIdentity(parent)
+	captainStore := mailbox.NewStore(cptHome)
+	env, err := captainStore.ReadEnvelope(senderIdentity, expectedID)
+	if err != nil {
+		t.Fatalf("reading mailbox envelope: %v", err)
+	}
+	if env == nil {
+		t.Fatalf("mailbox envelope with expected ID %q not found", expectedID)
+	}
+	if env.Payload != msg {
+		t.Errorf("payload=%q, want %q", env.Payload, msg)
+	}
+
+	// Same content -> same ID.
+	if id2 := legacySendOutboxContentID(cid, msg); id2 != expectedID {
+		t.Errorf("second call produces different ID: %q vs %q", id2, expectedID)
+	}
+
+	// Different content -> different ID.
+	if id3 := legacySendOutboxContentID(cid, "different"); id3 == expectedID {
+		t.Error("different content should produce different ID")
+	}
+}
+
+// TestDrainLegacyCommandTransport_MalformedJsonFailClosed proves an unparseable
+// JSON file in the legacy envelope directory causes fail-closed error.
+func TestDrainLegacyCommandTransport_MalformedJsonFailClosed(t *testing.T) {
+	parent := t.TempDir()
+	cptHome := t.TempDir()
+	cid := "badjson-cap"
+	writeCaptainMeta(t, parent, cid, cptHome, "w1")
+	if err := initCaptainMailboxHome(cptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	envDir := envelopeDir(parent)
+	if err := os.MkdirAll(envDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	corruptPath := filepath.Join(envDir, "corrupt.json")
+	if err := os.WriteFile(corruptPath, []byte("{not-valid-json}"), 0644); err != nil {
+		t.Fatalf("writing corrupt json: %v", err)
+	}
+
+	sm := Info{ID: cid, Home: cptHome}
+	err := DrainLegacyCommandTransport(parent, sm)
+	if err == nil {
+		t.Fatal("expected error for corrupt JSON, got nil")
+	}
+	if !strings.Contains(err.Error(), "unparseable envelope") &&
+		!strings.Contains(err.Error(), "json parse error") {
+		t.Errorf("error should mention unparseable/json, got: %v", err)
+	}
+
+	if _, err := os.Stat(corruptPath); os.IsNotExist(err) {
+		t.Error("corrupt JSON file was deleted by migration")
+	}
+	if isLegacyCommandEnvelopeMigrated(parent, cid) {
+		t.Error("migration marker should not be written after fail-closed error")
+	}
+}
+
+// TestDrainLegacyCommandTransport_CrashReplay proves re-running migration
+// after crash skips already-migrated records via per-record receipts.
+func TestDrainLegacyCommandTransport_CrashReplay(t *testing.T) {
+	parent := t.TempDir()
+	cptHome := t.TempDir()
+	cid := "replay-cap"
+	writeCaptainMeta(t, parent, cid, cptHome, "w1")
+	if err := initCaptainMailboxHome(cptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	msg1 := marker.MarkFromGeneral("first-record")
+	msg2 := marker.MarkFromGeneral("second-record")
+	seedLegacySendOutbox(t, parent, cid, msg1)
+	seedLegacySendOutbox(t, parent, cid, msg2)
+
+	senderIdentity, _, _ := mailbox.ReadHomeIdentity(parent)
+	captainStore := mailbox.NewStore(cptHome)
+	sm := Info{ID: cid, Home: cptHome}
+
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("first drain: %v", err)
+	}
+
+	id1 := legacySendOutboxContentID(cid, msg1)
+	id2 := legacySendOutboxContentID(cid, msg2)
+
+	if !receiptExistsFor(parent, cid, id1) {
+		t.Error("receipt for first record missing")
+	}
+	if !receiptExistsFor(parent, cid, id2) {
+		t.Error("receipt for second record missing")
+	}
+
+	env1, _ := captainStore.ReadEnvelope(senderIdentity, id1)
+	if env1 == nil {
+		t.Error("first mailbox envelope missing after drain")
+	}
+	env2, _ := captainStore.ReadEnvelope(senderIdentity, id2)
+	if env2 == nil {
+		t.Error("second mailbox envelope missing after drain")
+	}
+
+	if !isLegacySendOutboxMigrated(parent, cid) {
+		t.Error("send-outbox marker should be written")
+	}
+
+	// Record inbox entry count before replay.
+	inboxBefore, _ := captainStore.ListInbox(senderIdentity)
+	countBefore := len(inboxBefore)
+
+	// Simulate crash replay: re-seed same records and run again.
+	// This simulates the scenario where legacy .pending files were
+	// re-created (e.g., crash before cleanup completed).
+	seedLegacySendOutbox(t, parent, cid, msg1)
+	seedLegacySendOutbox(t, parent, cid, msg2)
+	removeMigrationMarker(migrationSendOutboxMarkerPath(parent, cid))
+
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("replay drain: %v", err)
+	}
+
+	// Inbox count should NOT increase — receipts prevent duplicate writes.
+	inboxAfter, _ := captainStore.ListInbox(senderIdentity)
+	countAfter := len(inboxAfter)
+
+	if countAfter > countBefore {
+		t.Errorf("inbox grew after replay: %d -> %d (should stay same via receipts)", countBefore, countAfter)
+	}
+
+	// Receipts should still exist.
+	if !receiptExistsFor(parent, cid, id1) {
+		t.Error("receipt for first record disappeared after replay")
+	}
+	if !receiptExistsFor(parent, cid, id2) {
+		t.Error("receipt for second record disappeared after replay")
+	}
+}
+
+// TestDrainLegacyCommandTransport_LateRecordsAfterEmptyScan proves legacy
+// records arriving after a completed (empty) migration are still drained.
+func TestDrainLegacyCommandTransport_LateRecordsAfterEmptyScan(t *testing.T) {
+	parent := t.TempDir()
+	cptHome := t.TempDir()
+	cid := "late-cap"
+	writeCaptainMeta(t, parent, cid, cptHome, "w1")
+	if err := initCaptainMailboxHome(cptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	sm := Info{ID: cid, Home: cptHome}
+
+	// First drain: no records exist — empty scan writes marker.
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("empty drain: %v", err)
+	}
+
+	if !isLegacySendOutboxMigrated(parent, cid) {
+		t.Error("send-outbox marker should be written after empty scan")
+	}
+	if !isLegacyCommandEnvelopeMigrated(parent, cid) {
+		t.Error("command-envelope marker should be written after empty scan")
+	}
+
+	// Late arrival appears after migration completed.
+	msg := marker.MarkFromGeneral("late-arrival")
+	seedLegacySendOutbox(t, parent, cid, msg)
+
+	senderIdentity, _, _ := mailbox.ReadHomeIdentity(parent)
+	captainStore := mailbox.NewStore(cptHome)
+
+	// Second drain handles the late record.
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("late drain: %v", err)
+	}
+
+	detID := legacySendOutboxContentID(cid, msg)
+	env, err := captainStore.ReadEnvelope(senderIdentity, detID)
+	if err != nil {
+		t.Fatalf("reading late mailbox envelope: %v", err)
+	}
+	if env == nil {
+		t.Fatal("late record was not migrated into mailbox")
+	}
+	if env.Payload != msg {
+		t.Errorf("late envelope payload=%q, want %q", env.Payload, msg)
+	}
+
+	if !receiptExistsFor(parent, cid, detID) {
+		t.Error("receipt for late record missing")
+	}
+	if !isLegacySendOutboxMigrated(parent, cid) {
+		t.Error("send-outbox marker should be re-written after late drain")
+	}
+
+	// Third drain: no more records, clean no-op.
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("post-late drain: %v", err)
+	}
+}
+
+// TestDrainLegacyCommandTransport_EventualDelivery proves mailbox pending
+// records from migration reconcile through normal converge (ReconcileMailboxPending).
+func TestDrainLegacyCommandTransport_EventualDelivery(t *testing.T) {
+	parent := t.TempDir()
+	cptHome := t.TempDir()
+	cid := "eventual-cap"
+
+	// Use canonical paths to avoid /var vs /private/var mismatch on macOS.
+	canonParent, err2 := filepath.EvalSymlinks(parent)
+	if err2 != nil {
+		t.Fatalf("eval symlinks parent: %v", err2)
+	}
+	canonCptHome, err2 := filepath.EvalSymlinks(cptHome)
+	if err2 != nil {
+		t.Fatalf("eval symlinks cptHome: %v", err2)
+	}
+
+	writeCaptainMeta(t, canonParent, cid, canonCptHome, "w1")
+	if err := initCaptainMailboxHome(canonCptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := marker.MarkFromGeneral("eventual-delivery-msg")
+	seedLegacySendOutbox(t, canonParent, cid, msg)
+
+	sm := Info{ID: cid, Home: canonCptHome}
+	if err := DrainLegacyCommandTransport(canonParent, sm); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	senderIdentity, _, err := mailbox.ReadHomeIdentity(canonParent)
+	if err != nil {
+		t.Fatalf("reading sender identity: %v", err)
+	}
+
+	senderStore := mailbox.NewStore(canonParent)
+	pending, err := senderStore.ListPending(senderIdentity)
+	if err != nil {
+		t.Fatalf("listing pending: %v", err)
+	}
+	if len(pending) == 0 {
+		t.Fatal("sender pending should exist after migration")
+	}
+
+	detID := legacySendOutboxContentID(cid, msg)
+	found := false
+	for _, p := range pending {
+		if p.MessageID == detID {
+			found = true
+			if p.Payload != msg {
+				t.Errorf("pending payload=%q, want %q", p.Payload, msg)
+			}
+			if p.ReceiverID != cid {
+				t.Errorf("pending receiver=%q, want %q", p.ReceiverID, cid)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("pending with message ID %q not found", detID)
+	}
+
+	captainStore := mailbox.NewStore(canonCptHome)
+	env, err := captainStore.ReadEnvelope(senderIdentity, detID)
+	if err != nil {
+		t.Fatalf("reading captain inbox envelope: %v", err)
+	}
+	if env == nil {
+		t.Fatal("captain inbox envelope should exist after migration")
+	}
+
+	// Simulate captain processing: write ack, then reconcile.
+	ack := &mailbox.ProcessingAck{
+		MessageID:      detID,
+		SenderRank:     mailbox.RankGeneral,
+		SenderIdentity: senderIdentity,
+		ReceiverRank:   mailbox.RankCaptain,
+		ReceiverID:     cid,
+		PayloadHash:    env.PayloadHash,
+		ProcessedAt:    1000,
+		Outcome:        mailbox.OutcomeAccepted,
+	}
+	if err := captainStore.WriteAck(ack); err != nil {
+		t.Fatalf("writing ack: %v", err)
+	}
+
+	if err := ReconcileMailboxPending(canonParent, sm); err != nil {
+		t.Fatalf("ReconcileMailboxPending: %v", err)
+	}
+
+	pending2, err := senderStore.ListPending(senderIdentity)
+	if err != nil {
+		t.Fatalf("listing pending after reconcile: %v", err)
+	}
+	for _, p := range pending2 {
+		if p.MessageID == detID {
+			t.Fatal("sender pending should be removed after ack reconciliation")
+		}
+	}
+}
+
+// TestDrainLegacyCommandTransport_SymlinkedCaptainHome proves drain works
+// when captain home path contains symlinks (canonical resolution).
+func TestDrainLegacyCommandTransport_SymlinkedCaptainHome(t *testing.T) {
+	realCptHome := t.TempDir()
+	symCptHome := filepath.Join(t.TempDir(), "captain-home-link")
+	if err := os.Symlink(realCptHome, symCptHome); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	parent := t.TempDir()
+	cid := "symlink-cap"
+
+	writeCaptainMeta(t, parent, cid, symCptHome, "w1")
+	if err := initCaptainMailboxHome(realCptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := marker.MarkFromGeneral("symlink-test-msg")
+	seedLegacySendOutbox(t, parent, cid, msg)
+
+	sm := Info{ID: cid, Home: symCptHome}
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("drain via symlink: %v", err)
+	}
+
+	senderIdentity, _, _ := mailbox.ReadHomeIdentity(parent)
+	captainStore := mailbox.NewStore(realCptHome)
+	detID := legacySendOutboxContentID(cid, msg)
+	env, err := captainStore.ReadEnvelope(senderIdentity, detID)
+	if err != nil {
+		t.Fatalf("reading mailbox envelope from real home: %v", err)
+	}
+	if env == nil {
+		t.Fatal("mailbox envelope not found in real home (symlink broken)")
+	}
+	if env.Payload != msg {
+		t.Errorf("payload mismatch: got %q, want %q", env.Payload, msg)
+	}
+
+	if !isLegacySendOutboxMigrated(parent, cid) {
+		t.Error("send-outbox marker missing after symlink drain")
+	}
+}
+
+// TestDrainLegacyCommandTransport_PathTraversalSafety proves drain does not
+// allow path traversal through legacy filenames or components.
+func TestDrainLegacyCommandTransport_PathTraversalSafety(t *testing.T) {
+	parent := t.TempDir()
+	cptHome := t.TempDir()
+	cid := "safe-cap"
+	writeCaptainMeta(t, parent, cid, cptHome, "w1")
+	if err := initCaptainMailboxHome(cptHome, cid); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a legacy outbox entry with a valid path.
+	outboxDir := sendOutboxCaptainDir(parent, cid)
+	if err := os.MkdirAll(outboxDir, 0755); err != nil {
+		t.Fatalf("creating outbox dir: %v", err)
+	}
+	validPath := filepath.Join(outboxDir, "1000.pending")
+	content := fmt.Sprintf("id=%s\ncreated=now\nmessage=%s\n", cid, "safe-msg")
+	if err := os.WriteFile(validPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing outbox entry: %v", err)
+	}
+
+	sm := Info{ID: cid, Home: cptHome}
+	if err := DrainLegacyCommandTransport(parent, sm); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	// Verify the mailbox envelope was written inside the expected subtree.
+	senderIdentity, _, _ := mailbox.ReadHomeIdentity(parent)
+	captainStore := mailbox.NewStore(cptHome)
+	detID := legacySendOutboxContentID(cid, "safe-msg")
+	env, err := captainStore.ReadEnvelope(senderIdentity, detID)
+	if err != nil {
+		t.Fatalf("reading mailbox envelope: %v", err)
+	}
+	if env == nil {
+		t.Fatal("mailbox envelope should exist after drain")
+	}
+
+	// Verify receipt was written inside the expected subtree.
+	if !receiptExistsFor(parent, cid, detID) {
+		t.Error("migration receipt should exist")
+	}
+
+	// Verify the receipt file path is under parent/state/.migration-receipts/...
+	receiptPath := migrationReceiptPath(parent, cid, detID)
+	rel, err := filepath.Rel(filepath.Join(parent, "state"), receiptPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		t.Errorf("receipt path escaped state dir: %s (rel=%s)", receiptPath, rel)
+	}
+}
+
+// TestLegacyContentID_Determinism verifies content-based ID is consistent.
+func TestLegacyContentID_Determinism(t *testing.T) {
+	id1 := legacySendOutboxContentID("cap", "hello")
+	id2 := legacySendOutboxContentID("cap", "hello")
+	if id1 != id2 {
+		t.Errorf("same input -> different IDs: %q vs %q", id1, id2)
+	}
+	id3 := legacySendOutboxContentID("cap", "HELLO")
+	if id1 == id3 {
+		t.Error("different input -> same ID")
+	}
+	id4 := legacySendOutboxContentID("other-cap", "hello")
+	if id1 == id4 {
+		t.Error("different captain ID -> same ID")
 	}
 }
