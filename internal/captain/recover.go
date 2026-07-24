@@ -92,7 +92,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	res.Steps = append(res.Steps, tx.stepWatcherEnsure(sm, configOk))
 
 	// Step g: outbox flush — only when config is OK
-	res.Steps = append(res.Steps, tx.stepOutboxFlush(parentHome, sm, configOk))
+	res.Steps = append(res.Steps, tx.stepLegacyDrain(parentHome, sm, configOk))
 
 	// Step h: terminal receipt reconciliation — relay pending soldier
 	// terminal reports to General. Runs only when config is OK.
@@ -305,16 +305,16 @@ func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResu
 		Detail: "watcher not needed (no child work)"}
 }
 
-func (tx *RecoverTransaction) stepOutboxFlush(parentHome string, sm Info, configOk bool) StepResult {
+func (tx *RecoverTransaction) stepLegacyDrain(parentHome string, sm Info, configOk bool) StepResult {
 	if !configOk {
-		return StepResult{Name: "outbox-flush", State: StepSkipped,
+		return StepResult{Name: "legacy-drain", State: StepSkipped,
 			Detail: "skipped: config validation failed"}
 	}
-	if err := FlushSendOutbox(parentHome, sm); err != nil {
-		return StepResult{Name: "outbox-flush", State: StepFailed,
+	if err := DrainLegacyCommandTransport(parentHome, sm); err != nil {
+		return StepResult{Name: "legacy-drain", State: StepFailed,
 			Detail: err.Error()}
 	}
-	return StepResult{Name: "outbox-flush", State: StepOk, Detail: "outbox flushed or empty"}
+	return StepResult{Name: "legacy-drain", State: StepOk, Detail: "legacy transport drained or clean"}
 }
 
 func (tx *RecoverTransaction) stepTerminalReconcile(parentHome string, sm Info, configOk bool) StepResult {

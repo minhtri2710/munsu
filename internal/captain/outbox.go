@@ -26,8 +26,9 @@ func sendOutboxCaptainDir(parentHome, smID string) string {
 }
 
 // EnqueueSendOutbox persists a marked captain send for later delivery.
-// message must already include the from-general marker when required.
-// Entries survive dead panes; Converge flushes them once the endpoint is alive.
+// Deprecated: Replaced by SendMailboxToCaptain (mailbox envelope/pending/ack).
+// This function is retained for one-shot migration (DrainLegacyCommandTransport)
+// and should not be used for new writes.
 func EnqueueSendOutbox(parentHome, smID, message string) error {
 	if strings.TrimSpace(smID) == "" {
 		return fmt.Errorf("enqueue send outbox: empty captain id")
@@ -108,6 +109,8 @@ func listSendOutboxPaths(parentHome, smID string) ([]string, error) {
 // acknowledged (stalled, endpoint dead, backend failure), entries remain and a clear
 // error is returned. Partial flush stops on first unacknowledged result (earlier
 // entries already removed stay delivered).
+// Deprecated: Replaced by SendMailboxToCaptain and ReconcileMailboxPending.
+// This function is retained only for one-shot migration via DrainLegacyCommandTransport.
 func FlushSendOutbox(parentHome string, sm Info) error {
 	paths, err := listSendOutboxPaths(parentHome, sm.ID)
 	if err != nil {

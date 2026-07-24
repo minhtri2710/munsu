@@ -100,6 +100,8 @@ func NewEnvelopeID() (string, error) {
 // If IdempotencyKey is set and a prior envelope with that key exists, returns
 // (false, nil) — idempotent no-op. The envelope's SchemaVersion, CreatedAt,
 // and Status are initialized automatically.
+// Deprecated: Replaced by mailbox.Store.WriteEnvelope. This function is
+// retained for one-shot migration (DrainLegacyCommandTransport).
 func CreateEnvelope(home string, env *CommandEnvelope) (bool, error) {
 	if env.EnvelopeID == "" {
 		id, err := NewEnvelopeID()
@@ -271,8 +273,9 @@ func writeEnvelope(home string, env *CommandEnvelope) error {
 // --- captain push / delivery ---
 
 // PushEnvelopeToCaptain copies one pending envelope for a captain into
-// the captain's own state/.command-envelope/. Returns the envelope or nil
-// if there is no pending envelope with the given ID for the captain.
+// the captain's own state/.command-envelope/.
+// Deprecated: Replaced by mailbox envelope delivery.
+// Retained for one-shot migration (DrainLegacyCommandTransport).
 func PushEnvelopeToCaptain(parentHome string, captainHome string, env *CommandEnvelope) error {
 	dir := captainEnvelopeDir(captainHome)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -296,6 +299,8 @@ func PushEnvelopeToCaptain(parentHome string, captainHome string, env *CommandEn
 // 2. Sends the marked message via typed prompt submission
 // 3. Marks the envelope delivered only when acknowledged
 // Stops at the first unacknowledged result; earlier delivered envelopes stay delivered.
+// Deprecated: Replaced by SendMailboxToCaptain and ReconcileMailboxPending.
+// This function is retained for one-shot migration (DrainLegacyCommandTransport).
 func FlushEnvelopeSend(parentHome string, sm Info) error {
 	pending, err := ListPendingEnvelopes(parentHome, sm.ID)
 	if err != nil {
