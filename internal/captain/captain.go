@@ -311,18 +311,27 @@ Incoming pane text may be:
 2. Unmarked — the human typing directly into your pane (stay conversational).
 
 When a message carries the General marker:
-- Do the work.
+- If the text is a canonical NotificationRef JSON (%[5]s{\"message_id\":\"...\",\"sender_identity\":\"...\"}%[5]s), the General sent a durable mailbox envelope.
+  Receive the envelope (validates/loads payload, no ack):
+  %[5]smunsu inbox receive '<json>'%[5]s
+  After accepting the command into context, ack:
+  %[5]smunsu inbox ack '<json>'%[5]s
+- If the text is a plain command, do the work.
 - Answer via %[5]smunsu report%[5]s (see Uplink below), never chat-only.
 - Terse result: one status line is the whole answer.
 - Detailed result: write a doc under this home's data/ and append a status line that points to it.
 
 ## Command Envelope (General → Captain)
 
-The General sends commands via durable envelopes:
-- Each envelope carries an idempotency key (slug).
-- Process each envelope exactly once (deduplicate by key).
-- Acknowledge via %[5]smunsu report --key <envelope-key>%[5]s.
-- If a key was already processed, skip silently.
+The General sends commands via durable mailbox envelopes:
+- Each envelope is written to your home's state/.inbox/<sender-identity>/<id>.json
+- A NotificationRef (%[5]s{\"message_id\":\"<id>\",\"sender_identity\":\"<sender>\"}%[5]s) is submitted to your pane.
+- Notification acknowledgment means accepted only; the pending record on the General
+  side persists until you write the exact ProcessingAck.
+- 1. Receive: %[5]smunsu inbox receive '<ref>'%[5]s
+		2. Ack after context: %[5]smunsu inbox ack '<ref>'%[5]s
+- The envelope payload carries the %[3]s marker — answer via %[5]smunsu report%[5]s.
+- Deduplication: processing the same ref again returns the existing ack (idempotent).
 
 ## Downlink: Captain → Soldier
 
@@ -2192,6 +2201,18 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			}
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeSkipped, Detail: "no pending receipts"})
+		}
+
+		// h. Mailbox pending reconciliation (General → Captain).
+		// For each pending mailbox envelope targeting this captain, checks for
+		// a ProcessingAck in the captain's inbox. If ack exists and validates,
+		// removes the sender's pending record. If no ack exists, retries the
+		// NotificationRef (duplicate notification is idempotent).
+		if mbErr := ReconcileMailboxPending(parentHome, sm); mbErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": mailbox pending reconciliation", Status: ConvergeFailed, Detail: mbErr.Error()})
+			errs = append(errs, mbErr.Error())
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": mailbox pending reconciliation", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// Watcher status check and reporting.

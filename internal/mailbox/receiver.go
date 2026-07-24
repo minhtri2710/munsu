@@ -57,21 +57,6 @@ func (ref NotificationRef) Validate() error {
 	return nil
 }
 
-// Resolution is the outcome of receiver processing one notification.
-type Resolution struct {
-	Ref      NotificationRef
-	Envelope *Envelope
-	Outcome  string
-	Ack      *ProcessingAck
-	Err      error
-}
-
-// Ok returns true when processing succeeded (ack was written or was already
-// present with the same outcome).
-func (r *Resolution) Ok() bool {
-	return r.Err == nil && r.Ack != nil
-}
-
 // Receiver provides receiver-side processing for one receiver identity.
 // It loads envelopes from the receiver's own inbox and validates all
 // provenance fields before writing acks.
@@ -80,6 +65,13 @@ func (r *Resolution) Ok() bool {
 // rather than trusting caller-provided strings. Captain homes carry a
 // .munsu-captain-home provenance marker; other homes derive identity
 // from the directory basename with general rank.
+//
+// The Receiver exposes two independent operations:
+//   - Receive: validate and load the envelope, returning the payload.
+//     Writes NO ack. Used by the captain agent to inspect what was sent.
+//   - Ack: write the exact "accepted" ack after the agent has taken
+//     the command into its context. Pending remains until the sender
+//     reconciles via converge. Always writes outcome "accepted".
 type Receiver struct {
 	identity string
 	rank     Rank
@@ -168,103 +160,157 @@ func WriteHomeIdentity(homeDir, identity string, rank Rank) error {
 	return nil
 }
 
-// Process loads the envelope from the receiver's own inbox, validates all
-// provenance fields (receiver identity, receiver rank, sender identity,
-// payload hash), and writes an ack with the given outcome.
+// Receive validates and loads an envelope from the receiver's inbox for the
+// given NotificationRef. It validates all provenance fields (receiver identity,
+// receiver rank, sender identity, payload hash) and returns the envelope.
 //
-// Idempotent: calling with the same outcome for the same message is OK
-// and returns the existing ack (with original timestamp preserved).
-// Conflicting outcome fails closed.
+// Writes NO ack — this is purely a read/validate operation. The captain agent
+// calls Receive to inspect the incoming envelope payload, then independently
+// calls Ack once the command has been accepted into agent context.
 //
 // Validation order:
 //  1. ref.MessageID and ref.SenderIdentity are non-empty
 //  2. Envelope exists in the receiver's inbox for (ref.SenderIdentity, ref.MessageID)
-//  3. Full ValidateEnvelope (rank transition, task/key, payload hash completeness)
+//  3. Full ValidateEnvelope (rank transition, task/key, hash completeness)
 //  4. Envelope ReceiverID matches receiver identity (home provenance)
 //  5. Envelope ReceiverRank matches receiver rank (home provenance)
 //  6. Envelope SenderIdentity matches ref.SenderIdentity
 //  7. Payload hash matches envelope payload (redundant after ValidateEnvelope)
-//  8. Existing ack: same outcome = idempotent (original timestamp preserved),
-//     different outcome = conflict (fail closed)
-func (r *Receiver) Process(ref NotificationRef, outcome string) *Resolution {
-	res := &Resolution{
-		Ref:     ref,
-		Outcome: outcome,
-	}
-
+//  8. No ack is written — that is a separate Ack() call
+func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 	// 1. Validate ref.
 	if err := ref.Validate(); err != nil {
-		res.Err = err
-		return res
+		return nil, fmt.Errorf("receive: %w", err)
 	}
 
 	// 2. Load envelope from own inbox.
 	env, err := r.store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
-		res.Err = fmt.Errorf("read envelope: %w", err)
-		return res
+		return nil, fmt.Errorf("receive read envelope: %w", err)
 	}
 	if env == nil {
-		res.Err = fmt.Errorf("envelope not found: sender=%s msg=%s",
+		return nil, fmt.Errorf("receive envelope not found: sender=%s msg=%s",
 			ref.SenderIdentity, ref.MessageID)
-		return res
 	}
-	res.Envelope = env
 
 	// 3. Call full ValidateEnvelope for rank transition, task/key, hash completeness.
 	if err := ValidateEnvelope(env); err != nil {
-		res.Err = fmt.Errorf("validate envelope: %w", err)
-		return res
+		return nil, fmt.Errorf("receive validate envelope: %w", err)
 	}
 
 	// 4. Validate receiver identity (home provenance).
 	if env.ReceiverID != r.identity {
-		res.Err = fmt.Errorf("receiver identity mismatch: envelope has %q, receiver is %q",
+		return nil, fmt.Errorf("receive receiver identity mismatch: envelope has %q, receiver is %q",
 			env.ReceiverID, r.identity)
-		return res
 	}
 
 	// 5. Validate receiver rank.
 	if env.ReceiverRank != r.rank {
-		res.Err = fmt.Errorf("receiver rank mismatch: envelope has %q, receiver is %q",
+		return nil, fmt.Errorf("receive receiver rank mismatch: envelope has %q, receiver is %q",
 			env.ReceiverRank, r.rank)
-		return res
 	}
 
 	// 6. Validate sender identity matches ref.
 	if env.SenderIdentity != ref.SenderIdentity {
-		res.Err = fmt.Errorf("sender identity mismatch: envelope has %q, ref has %q",
+		return nil, fmt.Errorf("receive sender identity mismatch: envelope has %q, ref has %q",
 			env.SenderIdentity, ref.SenderIdentity)
-		return res
 	}
 
 	// 7. Validate payload hash (detect tampering).
 	// This is redundant after ValidateEnvelope but kept as defense-in-depth.
 	if env.PayloadHash != PayloadHashHex(env.Payload) {
-		res.Err = fmt.Errorf("tampered payload: hash mismatch")
-		return res
+		return nil, fmt.Errorf("receive tampered payload: hash mismatch")
+	}
+
+	// 8. No ack is written — call Ack() separately after accepting into context.
+	return env, nil
+}
+
+// Ack writes a fixed "accepted" ProcessingAck for the given NotificationRef,
+// independently performing the same full validation as Receive.
+//
+// The ack means the captain agent has taken the command into its agent
+// context — NOT that the command completed. Completion is tracked through
+// separate report/relay flows (munsu report).
+//
+// Calling Ack without calling Receive first is valid — Ack performs its own
+// validation independent of Receive. Each call is self-contained.
+//
+// Idempotent: calling with the same "accepted" outcome for the same message
+// is OK and returns the existing ack (with original timestamp preserved).
+// Any conflicting outcome on disk fails closed.
+//
+// Validation order:
+//  1. ref.MessageID and ref.SenderIdentity are non-empty
+//  2. Envelope exists in the receiver's inbox
+//  3. Full ValidateEnvelope
+//  4. Envelope ReceiverID matches receiver identity
+//  5. Envelope ReceiverRank matches receiver rank
+//  6. Envelope SenderIdentity matches ref.SenderIdentity
+//  7. Payload hash verification
+//  8. Existing ack: same outcome "accepted" = idempotent, different = conflict (fail closed)
+//  9. Write "accepted" ack
+func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
+	// 1. Validate ref.
+	if err := ref.Validate(); err != nil {
+		return nil, fmt.Errorf("ack: %w", err)
+	}
+
+	// 2. Load envelope from own inbox.
+	env, err := r.store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
+	if err != nil {
+		return nil, fmt.Errorf("ack read envelope: %w", err)
+	}
+	if env == nil {
+		return nil, fmt.Errorf("ack envelope not found: sender=%s msg=%s",
+			ref.SenderIdentity, ref.MessageID)
+	}
+
+	// 3. Call full ValidateEnvelope for rank transition, task/key, hash completeness.
+	if err := ValidateEnvelope(env); err != nil {
+		return nil, fmt.Errorf("ack validate envelope: %w", err)
+	}
+
+	// 4. Validate receiver identity (home provenance).
+	if env.ReceiverID != r.identity {
+		return nil, fmt.Errorf("ack receiver identity mismatch: envelope has %q, receiver is %q",
+			env.ReceiverID, r.identity)
+	}
+
+	// 5. Validate receiver rank.
+	if env.ReceiverRank != r.rank {
+		return nil, fmt.Errorf("ack receiver rank mismatch: envelope has %q, receiver is %q",
+			env.ReceiverRank, r.rank)
+	}
+
+	// 6. Validate sender identity matches ref.
+	if env.SenderIdentity != ref.SenderIdentity {
+		return nil, fmt.Errorf("ack sender identity mismatch: envelope has %q, ref has %q",
+			env.SenderIdentity, ref.SenderIdentity)
+	}
+
+	// 7. Validate payload hash (detect tampering).
+	if env.PayloadHash != PayloadHashHex(env.Payload) {
+		return nil, fmt.Errorf("ack tampered payload: hash mismatch")
 	}
 
 	// 8. Check for existing ack.
 	existing, err := r.store.ReadAck(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
-		res.Err = fmt.Errorf("read existing ack: %w", err)
-		return res
+		return nil, fmt.Errorf("ack read existing ack: %w", err)
 	}
 	if existing != nil {
-		if existing.Outcome == outcome {
+		if existing.Outcome == OutcomeAccepted {
 			// Idempotent: same outcome, return existing ack preserving
 			// the original ProcessedAt timestamp.
-			res.Ack = existing
-			return res
+			return existing, nil
 		}
 		// Conflicting outcome: fail closed.
-		res.Err = fmt.Errorf("conflicting ack: existing outcome %q != new outcome %q",
-			existing.Outcome, outcome)
-		return res
+		return nil, fmt.Errorf("ack conflicting: existing outcome %q != %q",
+			existing.Outcome, OutcomeAccepted)
 	}
 
-	// 9. Build and write ack.
+	// 9. Build and write "accepted" ack.
 	ack := &ProcessingAck{
 		MessageID:      env.MessageID,
 		SenderRank:     env.SenderRank,
@@ -275,14 +321,12 @@ func (r *Receiver) Process(ref NotificationRef, outcome string) *Resolution {
 		Key:            env.Key,
 		PayloadHash:    env.PayloadHash,
 		ProcessedAt:    time.Now().UnixNano(),
-		Outcome:        outcome,
+		Outcome:        OutcomeAccepted,
 	}
 	if err := r.store.WriteAck(ack); err != nil {
-		res.Err = fmt.Errorf("write ack: %w", err)
-		return res
+		return nil, fmt.Errorf("ack write ack: %w", err)
 	}
-	res.Ack = ack
-	return res
+	return ack, nil
 }
 
 // NotifyResult carries the outcome of a notification delivery attempt.

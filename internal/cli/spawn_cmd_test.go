@@ -242,9 +242,10 @@ func TestSendCmd_MarksCaptainLine(t *testing.T) {
 	}
 }
 
-func TestSendCmd_CaptainDeadPaneQueuesOutbox(t *testing.T) {
-	// General sending to a captain whose pane is dead must queue to the outbox,
-	// not be blocked. Only 'send general' (uplink to fleet top) is blocked.
+func TestSendCmd_CaptainSendFailsGracefully(t *testing.T) {
+	// General sending to a captain whose pane is dead or unprovisioned must
+	// fail gracefully (not hit the uplink guard). No outbox for new sends;
+	// pending is retained durably until converge reconciles the ack.
 	tmpDir := t.TempDir()
 	stateDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(stateDir, 0755)
