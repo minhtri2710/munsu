@@ -231,6 +231,9 @@ var launchCmd = func(binPath string, args []string, captainHome string, parentHo
 	return buildLaunchScript(binPath, args, captainHome, parentHome)
 }
 
+// ensurePiExtensions installs Pi captain extensions. Override in tests to no-op.
+var ensurePiExtensions = EnsureCaptainPiExtensions
+
 // --- Helpers ---
 
 // shQuote wraps s in single quotes, escaping any embedded single quotes
@@ -584,7 +587,7 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	}
 
 	// Install project-scoped Pi captain extensions so Launch -e always has files.
-	if err := EnsureCaptainPiExtensions(homePath); err != nil {
+	if err := ensurePiExtensions(homePath); err != nil {
 		return fmt.Errorf("installing captain pi extensions: %w", err)
 	}
 
@@ -1716,7 +1719,7 @@ func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 		return nil, fmt.Errorf("refreshing captain charter: %w", err)
 	}
 
-	if err := EnsureCaptainPiExtensions(captainHome); err != nil {
+	if err := ensurePiExtensions(captainHome); err != nil {
 		return nil, fmt.Errorf("installing captain pi extensions: %w", err)
 	}
 

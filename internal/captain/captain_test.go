@@ -38,8 +38,16 @@ func TestMain(m *testing.M) {
 	// slow PATH lookups. Tests that need the default timeout restore it.
 	integrate.SetProbeTimeout(5 * time.Second)
 
+	// Override the Pi extension installer to no-op so ordinary captain tests
+	// never create .pi/extensions/ in managed worktree fixtures. Tests that
+	// explicitly validate Pi installation (e.g., TestEnsureCaptainPiExtensions)
+	// call EnsureCaptainPiExtensions directly, bypassing this seam.
+	origEnsurePi := ensurePiExtensions
+	ensurePiExtensions = func(string) error { return nil }
+
 	code := m.Run()
 
+	ensurePiExtensions = origEnsurePi
 	cleanup()
 	os.Setenv("PATH", origPath)
 	os.Exit(code)
@@ -3410,6 +3418,53 @@ func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 	// Worktree seed on an existing state-only home must fail.
 	if err := SeedFromWorktree("existing-sm", homePath, project, parent, "", false, ""); err == nil {
 		t.Fatal("expected error for state-only home, got nil")
+	}
+}
+
+// TestSeedFromWorktree_ManagedWorktreeClean verifies that Seed followed by
+// ConfigPush on a managed worktree leaves no unexpected untracked files.
+// Regression: the Captain Pi-extension installer must not create .pi/extensions/
+// in managed worktree fixtures under hermetic TestMain.
+func TestSeedFromWorktree_ManagedWorktreeClean(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	// Pre-populate parent config so ConfigPush has something to push.
+	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	id := "test-captain"
+	homePath := filepath.Join(parent, "captains", id)
+
+	// Seed the managed worktree.
+	if err := SeedFromWorktree(id, homePath, project, parent, "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run ConfigPush — must not create .pi/ artifacts.
+	if err := ConfigPush(parent, homePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the managed worktree has no unexpected tracked/untracked files.
+	// Allowed untracked files: state/, data/, config/, projects/, .captain-charter.md,
+	// .munsu-captain-home, .captain-launch.sh are excluded via info/exclude.
+	// Anything else (e.g., .pi/) must not appear.
+	out, err := exec.Command("git", "-C", homePath, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v\n%s", err, out)
+	}
+	status := strings.TrimSpace(string(out))
+	if status != "" {
+		t.Errorf("managed worktree has unexpected git status:\n%s", status)
+	}
+
+	// Also verify .pi/ does not exist.
+	if _, err := os.Stat(filepath.Join(homePath, ".pi")); err == nil {
+		t.Error(".pi/ directory should not exist in managed worktree after hermetic Seed/ConfigPush")
 	}
 }
 
