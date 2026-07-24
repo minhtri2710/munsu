@@ -2103,20 +2103,14 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		}
 		result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": registry validation", Status: ConvergeOK, Detail: "valid"})
 
-		// b. Send outbox flush.
-		if flushErr := FlushSendOutbox(parentHome, sm); flushErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": send outbox flush", Status: ConvergeFailed, Detail: flushErr.Error()})
-			errs = append(errs, flushErr.Error())
+		// b. Legacy transport drain (one-shot migration to mailbox).
+		// Retires .captain-send-outbox and .command-envelope records deterministically.
+		// After migration, new command sends use only mailbox envelope/pending/processing ack.
+		if drainErr := DrainLegacyCommandTransport(parentHome, sm); drainErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport drain", Status: ConvergeFailed, Detail: drainErr.Error()})
+			errs = append(errs, drainErr.Error())
 		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": send outbox flush", Status: ConvergeOK, Detail: "ok"})
-		}
-
-		// b2. Envelope delivery (durable command envelopes).
-		if envErr := FlushEnvelopeSend(parentHome, sm); envErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": envelope delivery", Status: ConvergeFailed, Detail: envErr.Error()})
-			errs = append(errs, envErr.Error())
-		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": envelope delivery", Status: ConvergeOK, Detail: "ok"})
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": legacy transport drain", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// c. Nudge retry.
