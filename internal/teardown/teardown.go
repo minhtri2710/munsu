@@ -385,6 +385,11 @@ func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error
 //
 // Returns the proof string on success.
 func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *delivery.DeliveryIdentity) (string, error) {
+	// Check lifecycle state if set: require merged state for landed delivery.
+	if ds := meta[delivery.MetaDeliveryState]; ds != "" && ds != string(delivery.DeliveryStateMerged) {
+		return "", fmt.Errorf("delivery lifecycle is in state %q, expected %q (use --force to override)", ds, delivery.DeliveryStateMerged)
+	}
+
 	// Query the provider for the current PR/MR merge status using the
 	// provider-neutral seam that routes by identity provider.
 	status, err := delivery.QueryDeliveryMergeStatus(ident)
@@ -406,9 +411,13 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 	// The live provider HeadSHA must be nonempty and exactly equal to the
 	// stored ident.HeadSHA before accepting. A wrong head must fail even
 	// when the remote head has been deleted.
+	// Require non-empty MergedSHA as merge-result evidence.
 	if status.Merged {
 		if status.HeadSHA == "" {
 			return "", fmt.Errorf("provider returned empty head SHA for merged PR #%d (use --force to override)", ident.Number)
+		}
+		if status.MergedSHA == "" {
+			return "", fmt.Errorf("provider returned no merge-result evidence for merged PR #%d (use --force to override)", ident.Number)
 		}
 		if ident.HeadSHA != "" && status.HeadSHA != ident.HeadSHA {
 			return "", fmt.Errorf("PR head SHA mismatch: stored %s, provider reports %s; the worktree branch may have moved (use --force to override)", ident.HeadSHA, status.HeadSHA)

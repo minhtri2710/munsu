@@ -101,9 +101,21 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// capture and persist delivery identity before any terminal report
 			// success. Provider/identity failure fails closed: no status, receipt,
 			// ack reset, event, or wake is produced. Retry is idempotent.
+			//
+			// Only "done" gates on provider confirmation. Blocked/failed/needs-decision
+			// reports skip identity capture — they are intermediate/error states, not terminal.
 			if role == "soldier" && materialStates[state] {
-				if err := delivery.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
-					return fmt.Errorf("report: %w", err)
+				if state == "done" {
+					if err := delivery.VerifyDoneIdentity(targetHome, taskID, msg); err != nil {
+						return fmt.Errorf("report: %w", err)
+					}
+					if err := delivery.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+						return fmt.Errorf("report: %w", err)
+					}
+				} else if state != "blocked" && state != "failed" && state != "needs-decision" {
+					if err := delivery.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+						return fmt.Errorf("report: %w", err)
+					}
 				}
 			}
 

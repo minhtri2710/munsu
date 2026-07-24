@@ -95,20 +95,50 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	if err != nil {
 		meta = make(map[string]string)
 	}
-	// Ensure identity meta fields are present (they may have been set by pr-check)
-	if _, ok := meta["pr_url"]; !ok {
-		meta["pr_url"] = prURL
+
+	// Re-query provider snapshot after merge to get final state evidence.
+	// Use the stored identity URL for the query.
+	snap, snapErr := FetchProviderSnapshot(ident.URL)
+	if snapErr != nil {
+		return fmt.Errorf("post-merge provider snapshot: %w", snapErr)
 	}
-	// Keep pr/pr_head for backward compatibility but never clear pr_head
-	meta["pr"] = prURL
-	// Write the captured identity again so merge doesn't lose it
-	if ident != nil {
-		for k, v := range ident.ToMeta() {
-			meta[k] = v
-		}
+	if !snap.Merged {
+		return fmt.Errorf("post-merge provider snapshot: PR #%d is not merged (state=%s); retry or investigate manually", snap.Number, snap.State)
 	}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
-		return fmt.Errorf("writing task meta: %w", err)
+	if snap.MergedSHA == "" {
+		return fmt.Errorf("post-merge provider snapshot: PR #%d merged but no merge-result evidence; merge may still be in progress, retry later", snap.Number)
+	}
+
+	// Verify final head equality (provider-reported head must match stored identity)
+	if ident.HeadSHA != "" && snap.HeadSHA != ident.HeadSHA {
+		return fmt.Errorf("post-merge provider snapshot: head SHA mismatch: stored %s, provider reports %s for merged PR #%d",
+			ident.HeadSHA, snap.HeadSHA, snap.Number)
+	}
+
+	// Build updated identity from snapshot evidence
+	finalIdent := &DeliveryIdentity{
+		Provider:   ident.Provider,
+		Owner:      ident.Owner,
+		Repo:       ident.Repo,
+		Number:     ident.Number,
+		URL:        ident.URL,
+		BaseRef:    snap.BaseRef,
+		HeadRef:    snap.HeadRef,
+		HeadSHA:    snap.HeadSHA,
+		CapturedAt: snap.ObservedAt,
+	}
+
+	// CAS: verify identity hasn't changed, then update state to merged
+	checks := identityChecks(ident)
+	checks[MetaDeliveryState] = meta[MetaDeliveryState]
+
+	updates := finalIdent.ToMeta()
+	updates[MetaDeliveryState] = string(DeliveryStateMerged)
+	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
+
+	_, casErr := task.CompareAndSwapMeta(homeDir, id, checks, updates)
+	if casErr != nil {
+		return fmt.Errorf("post-merge cas: %w", casErr)
 	}
 
 	fmt.Printf("PR merged: %s (%s method)\n", ghURL.FormatPRRef(), method)
