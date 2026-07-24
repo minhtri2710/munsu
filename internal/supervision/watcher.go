@@ -323,7 +323,8 @@ func RunCycle(homeDir string) (bool, error) {
 
 // runRecovery executes the one-shot recovery on watcher startup.
 // It retries pending inbox envelopes once with fingerprint dedup,
-// then runs the legacy terminal reconcile hook (if any) once.
+// runs the legacy terminal reconcile hook (if any) once,
+// then completes any pending poll retirements.
 func runRecovery(homeDir string) {
 	if recoveryDone {
 		return
@@ -357,6 +358,19 @@ func runRecovery(homeDir string) {
 func runCycle(homeDir string) (bool, error) {
 	// Run one-shot recovery on first cycle.
 	runRecovery(homeDir)
+
+	// Retirement recovery: scan pending records every cycle.
+	// This handles crashes during the merged-PR retirement sequence.
+	// Runs before check discovery so recovered tasks produce wake signals.
+	resolved, recErrs := RecoverAllPendingRetirements(homeDir)
+	if resolved > 0 || len(recErrs) > 0 {
+		if resolved > 0 {
+			fmt.Fprintf(os.Stderr, "poll retirement recovery: %d resolved\n", resolved)
+		}
+		for _, re := range recErrs {
+			fmt.Fprintf(os.Stderr, "poll retirement recovery error (preserving artifacts): %v\n", re)
+		}
+	}
 
 	emitted := false
 	for _, reason := range scanFleet(homeDir, true) {
@@ -408,6 +422,22 @@ func runCycle(homeDir string) (bool, error) {
 				if prURL, ok := meta["pr_url"]; ok && prURL != "" {
 					msg = fmt.Sprintf("PR poll ready for task %s: %s", plugin.Label, prURL)
 				}
+			}
+
+			// Attempt crash-safe retirement for merged polls.
+			// Uses ValidateCheckWithLstat for symlink rejection.
+			// On success, the poll is removed and a durable status line
+			// is published. The check wake is NOT emitted — the status
+			// scan will surface it as a signal wake on the next cycle.
+			if err := ValidateCheckWithLstat(plugin.Path); err == nil {
+				if retireErr := RetireMergedPoll(homeDir, plugin.Label, plugin.Path); retireErr == nil {
+					// Poll retired successfully. Skip wake emission;
+					// the status signal path will surface the publication.
+					continue
+				}
+				// Retirement failed for a non-crash reason:
+				// open/unmerged/closed PR, provider error, or digest mismatch.
+				// Fall through to normal check wake emission.
 			}
 		}
 
