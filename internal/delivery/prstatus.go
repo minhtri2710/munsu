@@ -120,8 +120,8 @@ func fetchGLMergeStatus(client GitLabClient, ident *DeliveryIdentity) (*PRMergeS
 // GitLab JSON uses snake_case: state, sha, merge_commit (diff_merge_commit).
 func parseGLMergeStatus(data []byte) (*PRMergeStatus, error) {
 	var raw struct {
-		State          string `json:"state"`          // opened, merged, closed
-		SHA            string `json:"sha"`             // diff head SHA
+		State          string `json:"state"`            // opened, merged, closed
+		SHA            string `json:"sha"`              // diff head SHA
 		MergeCommitSHA string `json:"merge_commit_sha"` // flat string, null until merged
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -158,9 +158,6 @@ func parseGLMergeStatus(data []byte) (*PRMergeStatus, error) {
 	case "MERGED":
 		status.Closed = false
 		status.Merged = true
-		if status.MergedSHA == "" {
-			status.MergedSHA = status.HeadSHA
-		}
 	case "CLOSED":
 		status.Closed = true
 		status.Merged = false
@@ -220,10 +217,6 @@ func parsePRMergeStatus(data []byte) (*PRMergeStatus, error) {
 	case "MERGED":
 		status.Closed = false
 		status.Merged = true
-		// Prefer merge commit oid as merged SHA when present.
-		if status.MergedSHA == "" {
-			status.MergedSHA = status.HeadSHA
-		}
 	case "CLOSED":
 		status.Closed = true
 		status.Merged = false

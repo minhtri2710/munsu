@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/teardown"
 	"github.com/spf13/cobra"
 )
@@ -13,13 +14,16 @@ func newDeliveryCmd() *cobra.Command {
 		Use:   "delivery",
 		Short: "Manage delivery operations",
 		Long: `Manage delivery operations: review diffs, check PR status,
-merge PRs, and merge branches locally.`,
+merge PRs, amend PR identities, reconcile stale metadata,
+and merge branches locally.`,
 	}
 	cmd.AddCommand(newReviewDiffCmd())
 	cmd.AddCommand(newPRCheckCmd())
 	cmd.AddCommand(newPRMergeCmd())
 	cmd.AddCommand(newMergeLocalCmd())
 	cmd.AddCommand(newMergeStatusCmd())
+	cmd.AddCommand(newPRAmendCmd())
+	cmd.AddCommand(newReconcileCmd())
 	return cmd
 }
 
@@ -148,4 +152,115 @@ Refuses if the merge is not a clean fast-forward.`,
 			return delivery.MergeLocal(ctx.Home, args[0])
 		}),
 	}
+}
+
+func newPRAmendCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pr-amend <id>",
+		Short: "Amend delivery identity after new push (atomic CAS)",
+		Long: `Begin an amendment and immediately accept it, transitioning the
+delivery lifecycle through amending -> review-ready.
+
+The stored identity is CAS-checked against the current meta. The provider
+is queried for the new head SHA. If the old head is an ancestor of the new
+head (no force-push), the identity is updated atomically.
+
+Use 'delivery reconcile' to recover from already-stale metadata.`,
+		Args: ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			id := args[0]
+
+			// Read worktree from meta
+			wtPath, err := resolveWorktree(ctx.Home, id)
+			if err != nil {
+				return fmt.Errorf("pr-amend: %w", err)
+			}
+
+			// Begin amendment (CAS review-ready -> amending) — idempotent: if already
+			// in amending state (e.g. retry after partial failure), skip begin.
+			currentMeta, err := task.ReadMeta(ctx.Home, id)
+			if err != nil {
+				return fmt.Errorf("pr-amend: reading meta: %w", err)
+			}
+
+			if currentMeta[delivery.MetaDeliveryState] != string(delivery.DeliveryStateAmending) {
+				if _, err := delivery.BeginAmendment(ctx.Home, id); err != nil {
+					return fmt.Errorf("pr-amend: begin: %w", err)
+				}
+			}
+
+			// Accept amendment (verify provider, CAS update identity)
+			newIdent, record, err := delivery.AcceptAmendment(ctx.Home, id, wtPath)
+			if err != nil {
+				return fmt.Errorf("pr-amend: accept: %w", err)
+			}
+
+			fmt.Printf("PR identity amended:\n")
+			fmt.Printf("  PR:   %s/%s#%d\n", newIdent.Owner, newIdent.Repo, newIdent.Number)
+			fmt.Printf("  Old:  %s\n", record.OldHeadSHA)
+			fmt.Printf("  New:  %s\n", record.NewHeadSHA)
+			fmt.Printf("  Reason: %s\n", record.Reason)
+			return nil
+		}),
+	}
+}
+
+func newReconcileCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reconcile <id>",
+		Short: "Reconcile stale delivery metadata from provider",
+		Long: `Query the provider for the current PR/MR state and update the stored
+identity if the PR advanced without a proper amendment cycle.
+
+Requires only the stored identity and provider access. No manual meta
+editing or --force needed.
+
+Supports both open and merged PRs. For merged PRs, sets delivery_state=merged.
+For open PRs with advanced heads, updates the identity and sets state=review-ready.
+
+Rejects force-push, rewritten ancestry, branch replacement, and ambiguous
+state. Use 'pr-check' to recapture from scratch after such events.`,
+		Args: ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			id := args[0]
+
+			// Read worktree from meta
+			wtPath, err := resolveWorktree(ctx.Home, id)
+			if err != nil {
+				return fmt.Errorf("reconcile: %w", err)
+			}
+
+			newIdent, record, err := delivery.ReconcileIdentity(ctx.Home, id, wtPath)
+			if err != nil {
+				return fmt.Errorf("reconcile: %w", err)
+			}
+
+			if record == nil {
+				fmt.Printf("Identity already up to date: %s/%s#%d (head=%s)\n",
+					newIdent.Owner, newIdent.Repo, newIdent.Number, newIdent.HeadSHA)
+				return nil
+			}
+
+			fmt.Printf("Identity reconciled:\n")
+			fmt.Printf("  PR:   %s/%s#%d\n", newIdent.Owner, newIdent.Repo, newIdent.Number)
+			fmt.Printf("  Old:  %s\n", record.OldHeadSHA)
+			fmt.Printf("  New:  %s\n", record.NewHeadSHA)
+			fmt.Printf("  Reason: %s\n", record.Reason)
+			return nil
+		}),
+	}
+}
+
+// resolveWorktree reads the worktree path from task meta for a given task.
+// Returns an error if the worktree is not set in meta.
+func resolveWorktree(homeDir, id string) (string, error) {
+	meta, err := task.ReadMeta(homeDir, id)
+	if err != nil {
+		return "", fmt.Errorf("reading meta: %w", err)
+	}
+	wtPath, ok := meta["worktree"]
+	if !ok || wtPath == "" {
+		return "", fmt.Errorf("no worktree path in meta for task %s", id)
+	}
+	return wtPath, nil
 }

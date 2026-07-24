@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // StateDir returns the path to the state directory under the given homeDir.
@@ -27,8 +28,21 @@ func statusPath(homeDir string, id string) (string, error) {
 
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
 // The map is serialized as key=value lines, one per field.
-// Uses atomic write: temp file + rename to prevent partial writes.
+// Uses atomic write: unique temp file + rename to prevent partial writes.
+// Acquires the advisory lock to prevent races with CompareAndSwapMeta.
 func WriteMeta(homeDir string, id string, meta map[string]string) error {
+	_, unlock, err := acquireMetaLock(homeDir, id)
+	if err != nil {
+		return fmt.Errorf("write meta: %w", err)
+	}
+	defer unlock()
+
+	return writeMetaLocked(homeDir, id, meta)
+}
+
+// writeMetaLocked writes a task meta file while the lock is already held.
+// Uses a unique temp file (os.CreateTemp) for safe atomic writes.
+func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	p, err := metaPath(homeDir, id)
 	if err != nil {
 		return err
@@ -40,11 +54,20 @@ func WriteMeta(homeDir string, id string, meta map[string]string) error {
 	for k, v := range meta {
 		b.WriteString(fmt.Sprintf("%s=%s\n", k, v))
 	}
-	// Atomic write: temp file + rename
-	tmpPath := p + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(b.String()), 0644); err != nil {
+	// Use os.CreateTemp for a unique temp file in the same directory
+	tmpF, err := os.CreateTemp(filepath.Dir(p), id+".meta.*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp meta file: %w", err)
+	}
+	tmpPath := tmpF.Name()
+	if _, err := tmpF.WriteString(b.String()); err != nil {
+		tmpF.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("writing temp meta file: %w", err)
+	}
+	if err := tmpF.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing temp meta file: %w", err)
 	}
 	if err := os.Rename(tmpPath, p); err != nil {
 		os.Remove(tmpPath)
@@ -197,6 +220,9 @@ var ValidMetaFields = []string{
 	"backend", "herdr_session", "herdr_workspace_id", "herdr_tab_id", "herdr_pane_id",
 	"pr_provider", "pr_owner", "pr_repo", "pr_number", "pr_url",
 	"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha", "pr_timestamp",
+	"delivery_state", "pr_identity_revision",
+	"amend_expected_head", "amend_started_at",
+	"amendment_history",
 }
 
 // MetaEntry represents a single task entry from state meta files.
@@ -278,4 +304,86 @@ func pickProject(meta map[string]string) string {
 		return p
 	}
 	return meta["repo"]
+}
+
+// --- Compare-and-swap meta primitive ---
+
+// CASError represents a compare-and-swap conflict.
+type CASError struct {
+	Key      string
+	Expected string
+	Actual   string
+}
+
+func (e *CASError) Error() string {
+	return fmt.Sprintf("cas conflict: key %q expected %q but got %q", e.Key, e.Expected, e.Actual)
+}
+
+// lockPath returns the path to the advisory lock file for a meta file.
+func lockPath(homeDir, id string) string {
+	p, _ := metaPath(homeDir, id)
+	return p + ".lock"
+}
+
+// acquireMetaLock acquires an exclusive advisory lock on the meta lock file.
+// Uses flock(2) which is automatically released when the process exits.
+// Returns the locked file and a cleanup function.
+func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
+	lp := lockPath(homeDir, id)
+	if err := os.MkdirAll(filepath.Dir(lp), 0755); err != nil {
+		return nil, nil, fmt.Errorf("creating state directory for lock: %w", err)
+	}
+	f, err := os.OpenFile(lp, os.O_RDONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening lock file: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, nil, fmt.Errorf("acquiring flock: %w", err)
+	}
+	return f, func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
+// CompareAndSwapMeta atomically reads task meta, checks that all expected
+// key=value pairs match, and applies updates under an advisory lock.
+// Returns the updated meta on success. Returns *CASError on mismatch.
+// The lock is process-scoped and released on process exit.
+func CompareAndSwapMeta(homeDir, id string, checks, updates map[string]string) (map[string]string, error) {
+	_, unlock, err := acquireMetaLock(homeDir, id)
+	if err != nil {
+		return nil, fmt.Errorf("cas: %w", err)
+	}
+	defer unlock()
+
+	meta, err := ReadMeta(homeDir, id)
+	if err != nil {
+		return nil, fmt.Errorf("cas: reading meta: %w", err)
+	}
+
+	for k, expectedV := range checks {
+		actualV, ok := meta[k]
+		if !ok {
+			// Allow empty string checks to match missing keys
+			if expectedV == "" {
+				continue
+			}
+			return nil, &CASError{Key: k, Expected: expectedV, Actual: "<missing>"}
+		}
+		if actualV != expectedV {
+			return nil, &CASError{Key: k, Expected: expectedV, Actual: actualV}
+		}
+	}
+
+	for k, v := range updates {
+		meta[k] = v
+	}
+
+	if err := writeMetaLocked(homeDir, id, meta); err != nil {
+		return nil, fmt.Errorf("cas: writing meta: %w", err)
+	}
+
+	return meta, nil
 }

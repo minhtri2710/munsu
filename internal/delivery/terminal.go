@@ -13,7 +13,101 @@ import (
 // so terminal identity capture is fail-closed on provider absence.
 var captureTerminalIdentity = captureTerminalIdentityViaProvider
 
-// captureTerminalIdentityViaProvider captures identity using the typed
+// VerifyDoneIdentity checks the provider before accepting a terminal done report.
+// It is called from report_cmd for ship tasks reporting done.
+//
+// Returns nil when:
+//   - No PR URL in msg AND no stored delivery identity (non-PR report, skip)
+//   - PR is merged AND final provider head equals stored identity
+//   - Non-ship task (scout/report artifacts exempt)
+//
+// Returns error when:
+//   - Ship task has stored identity but no PR URL in msg (incomplete report)
+//   - PR is open or closed-unmerged (reject)
+//   - PR is merged but head SHA doesn't match stored identity (direct to reconciliation)
+//   - Provider is unavailable or ambiguous
+func VerifyDoneIdentity(homeDir, taskID, msg string) error {
+	// Read meta — may fail if no meta exists (e.g. scout task, no PR identity yet)
+	meta, err := task.ReadMeta(homeDir, taskID)
+	if err != nil {
+		// No meta yet — this is a pre-identity report (scout or early ship).
+		// Only reject if the message contains a PR URL that needs verification;
+		// otherwise skip verification.
+		_, found, extractErr := ExtractPRURL(msg)
+		if extractErr != nil {
+			return fmt.Errorf("terminal done: invalid PR URL: %w", extractErr)
+		}
+		if !found {
+			// No PR URL, no meta — nothing to verify
+			return nil
+		}
+		// Has PR URL but no meta — we need the meta to verify. Try to create
+		// a minimal meta for identity capture downstream to work.
+		return fmt.Errorf("terminal done: no task meta for %s (soldier has not been initialized); run pr-check first", taskID)
+	}
+
+	kind := meta["kind"]
+	if kind != "" && kind != "ship" {
+		// Scout/report artifacts skip provider verification
+		return nil
+	}
+
+	// Extract PR URL from message
+	prURL, found, err := ExtractPRURL(msg)
+	if err != nil {
+		return fmt.Errorf("terminal done: invalid PR URL: %w", err)
+	}
+
+	// Read stored identity (may be nil if no identity has been captured)
+	stored, _ := IdentityFromMeta(meta)
+
+	if !found {
+		// No PR URL in message. If the task has a stored delivery identity,
+		// require the message to include the PR URL for explicit confirmation.
+		if stored != nil && stored.URL != "" {
+			return fmt.Errorf("terminal done: task %s has delivery identity at %s but message does not include 'PR <url>'; include PR URL in done report to confirm delivery", taskID, stored.URL)
+		}
+		// No stored identity either — non-PR ship report, skip verification
+		return nil
+	}
+
+	// Resolve the PR URL to use: prefer the one from the message, but verify
+	// it matches the stored identity if one exists.
+	resolveURL := prURL
+	if stored != nil && stored.URL != "" {
+		if stored.URL != prURL {
+			return fmt.Errorf("terminal done: reported PR URL %q does not match stored identity URL %q", prURL, stored.URL)
+		}
+		resolveURL = stored.URL
+	}
+
+	// Fetch provider snapshot
+	snap, err := FetchProviderSnapshot(resolveURL)
+	if err != nil {
+		return fmt.Errorf("terminal done: provider snapshot: %w", err)
+	}
+
+	// Validate merge-result evidence for merged PRs
+	if snap.Merged && snap.MergedSHA == "" {
+		return fmt.Errorf("terminal done: PR #%d is merged but provider returned no merge-result evidence (empty mergedSHA); cannot confirm delivery", snap.Number)
+	}
+
+	if !snap.Merged {
+		if snap.State == "OPEN" {
+			return fmt.Errorf("terminal done: PR #%d is still open (state=%s): cannot report done until merged", snap.Number, snap.State)
+		}
+		return fmt.Errorf("terminal done: PR #%d is closed but not merged (state=%s): cannot report done", snap.Number, snap.State)
+	}
+
+	// PR is merged. Check head SHA against stored identity.
+	if stored != nil && stored.HeadSHA != "" && snap.HeadSHA != "" && snap.HeadSHA != stored.HeadSHA {
+		return fmt.Errorf("terminal done: PR #%d is merged but provider head SHA %q differs from stored %q; run 'munsu delivery reconcile %s' to update metadata",
+			snap.Number, snap.HeadSHA, stored.HeadSHA, taskID)
+	}
+
+	return nil
+}
+
 // provider client (GitHub via gh-axi or GitLab via glab). Rejects degraded
 // CLI fallback paths — provider absence means fail closed.
 func captureTerminalIdentityViaProvider(prURL string) (*DeliveryIdentity, error) {

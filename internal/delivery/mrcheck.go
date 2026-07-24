@@ -35,8 +35,9 @@ func MRLiveCheck(homeDir string, id, mrURL string) error {
 	for k, v := range ident.ToMeta() {
 		meta[k] = v
 	}
-	meta["pr"] = mrURL              // legacy key for compatibility
-	meta["pr_head"] = ident.HeadSHA // legacy key for compatibility
+	meta["pr"] = mrURL                                         // legacy key for compatibility
+	meta["pr_head"] = ident.HeadSHA                            // legacy key for compatibility
+	meta[MetaDeliveryState] = string(DeliveryStateReviewReady) // initialize lifecycle
 
 	if err := task.WriteMeta(homeDir, id, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
