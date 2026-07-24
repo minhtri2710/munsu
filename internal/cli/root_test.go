@@ -56,6 +56,7 @@ var canonicalCommands = []struct {
 	{name: "manual", use: "manual"},
 	{name: "inbox", use: "inbox"},
 	{name: "turnend", use: "turnend"},
+	{name: "soldier-flush", use: "soldier-flush <id>"},
 }
 // regression gate. It fails whenever a canonical command is missing,
 // has the wrong Use string, or is incorrectly marked hidden.
