@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -164,29 +166,33 @@ func newSendCmd() *cobra.Command {
 				})
 			}
 
-			// Non-captain: direct typed prompt submission (soldier tasks).
-			windowID, ok := meta["window"]
-			if !ok {
-				return fmt.Errorf("task %s has no window endpoint", id)
+			// Non-captain: mailbox-based send with busy-queueing for soldier tasks.
+			// Derive sender identity from the captain/general home.
+			senderIdentity, _, identErr := mailbox.ReadHomeIdentity(ctx.Home)
+			if identErr != nil {
+				// Fallback to home basename.
+				senderIdentity = filepath.Base(ctx.Home)
 			}
 
-			bk, _, err := session.BackendForTask(ctx.Home, meta)
-			if err != nil {
-				return err
+			sendResult := captain.SendToSoldier(ctx.Home, id, senderIdentity, line)
+			if sendResult.Err != nil {
+				return fmt.Errorf("soldier %s: %w", id, sendResult.Err)
 			}
 
-			// Use typed prompt submission when available; falls back to SendKeys
-			// for raw commands and unsupported backends.
-			result := session.SubmitPrompt(bk, windowID, line)
-			if !result.Acknowledged() {
-				return fmt.Errorf("sending to %s: %s", id, result.String())
+			if sendResult.Queued {
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "send",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("queued to %s (message=%s): soldier busy", id, sendResult.MessageID)},
+				})
 			}
 
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "send",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("sent to %s: %s", id, line)},
+				Data:          contract.MessageResult{Message: fmt.Sprintf("sent to %s (message=%s)", id, sendResult.MessageID)},
 			})
 		}),
 	}
@@ -383,5 +389,70 @@ With --force:
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip safety checks")
 
+	return cmd
+}
+
+func newSoldierFlushCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "soldier-flush <id>",
+		Short: "Flush one pending command to a soldier",
+		Long: `Read the captain's pending outbox for the given soldier and
+send the oldest pending command via SubmitPrompt, but only if the soldier
+is not busy. This is triggered by a review-ready event from the soldier.
+
+Idempotent: calling when no pending exists is a no-op.
+Calling when the soldier is busy returns with "still busy".
+`,
+		Args: ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			id := args[0]
+
+			// Derive sender identity from the captain/general home.
+			senderIdentity, _, identErr := mailbox.ReadHomeIdentity(ctx.Home)
+			if identErr != nil {
+				senderIdentity = filepath.Base(ctx.Home)
+			}
+
+			result := captain.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity)
+			if result.Err != nil {
+				return fmt.Errorf("soldier %s flush: %w", id, result.Err)
+			}
+
+			if result.Queued {
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "soldier-flush",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: soldier still busy, pending retained", id)},
+				})
+			}
+
+			if result.MessageID == "" {
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "soldier-flush",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: no pending commands", id)},
+				})
+			}
+
+			if result.Sent {
+				return writeContract(cmd, contract.Response[contract.MessageResult]{
+					SchemaVersion: contract.SchemaVersion,
+					Kind:          "soldier-flush",
+					Status:        "success",
+					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: flushed pending command (message=%s)", id, result.MessageID)},
+				})
+			}
+
+			return writeContract(cmd, contract.Response[contract.MessageResult]{
+				SchemaVersion: contract.SchemaVersion,
+				Kind:          "soldier-flush",
+				Status:        "success",
+				Data:          contract.MessageResult{Message: fmt.Sprintf("%s: no action taken", id)},
+			})
+		}),
+	}
+	configureContractCommand(cmd)
 	return cmd
 }

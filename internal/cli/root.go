@@ -195,6 +195,7 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newSoldierStateCmd())
 	root.AddCommand(newPromoteCmd())
 	root.AddCommand(newTeardownCmd())
+	root.AddCommand(newSoldierFlushCmd())
 	root.AddCommand(newDeliveryCmd())
 	root.AddCommand(newFleetCmd())
 	root.AddCommand(newHerdrCmd())

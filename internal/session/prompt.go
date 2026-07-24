@@ -91,6 +91,17 @@ type PromptSubmitter interface {
 	AgentPrompt(windowID, text string) PromptResult
 }
 
+// BusyChecker is an optional interface that Backend implementations
+// can implement to report whether the target agent is busy processing
+// a previous prompt. This is used by the event-driven delivery system
+// to determine whether to queue a command or send it immediately.
+type BusyChecker interface {
+	// AgentBusy returns true when the agent is currently busy processing.
+	// Returns false when the agent is idle/ready. Returns an error when
+	// the status cannot be determined (dead endpoint, unrecognized agent).
+	AgentBusy(windowID string) (bool, error)
+}
+
 // LegacyPrompt is an optional interface that Backend implementations
 // can implement to explicitly declare support for legacy SendKeys-based
 // prompt submission when typed prompt is unavailable.
