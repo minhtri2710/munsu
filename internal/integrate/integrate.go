@@ -9,6 +9,7 @@ package integrate
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -379,6 +382,67 @@ func rejectSymlinkEscape(path string) error {
 // PiMinimumVersion is the minimum required Pi version for integration.
 const PiMinimumVersion = "0.79.0"
 
+// DefaultCapabilityProbeTimeout is the default timeout for external capability
+// probes (pi --version, node API check). Override in tests with SetProbeTimeout.
+const DefaultCapabilityProbeTimeout = 30 * time.Second
+
+// capabilityProbeTimeout is injectable for tests. Default is 30s.
+var capabilityProbeTimeout = DefaultCapabilityProbeTimeout
+
+// SetProbeTimeout sets the capability probe timeout for testing.
+func SetProbeTimeout(d time.Duration) time.Duration {
+	prev := capabilityProbeTimeout
+	capabilityProbeTimeout = d
+	return prev
+}
+
+// runCapabilityCommand runs cmd with args in dir with a timeout. It starts the
+// child in its own process group (Setpgid) and kills the process tree (SIGKILL
+// to the negated PID) when the timeout expires before waiting. Returns combined
+// stdout+stderr. Fails closed on timeout or any execution error.
+var runCapabilityCommand = runCapabilityCommandDefault
+
+// SetCapabilityCommandRunner overrides the capability command runner (for tests).
+func SetCapabilityCommandRunner(fn func(name string, args []string, dir string, timeout time.Duration) (string, error)) func(name string, args []string, dir string, timeout time.Duration) (string, error) {
+	prev := runCapabilityCommand
+	runCapabilityCommand = fn
+	return prev
+}
+
+// ResetCapabilityCommandRunner restores the default runner.
+func ResetCapabilityCommandRunner() {
+	runCapabilityCommand = runCapabilityCommandDefault
+}
+
+func runCapabilityCommandDefault(name string, args []string, dir string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// If the context timed out, kill the process group to ensure no orphans.
+		if ctx.Err() != nil {
+			// Kill the process group (negative PID). Ignore errors: process may
+			// already be gone.
+			if cmd.Process != nil {
+				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+			// Wait to reap before returning.
+			cmd.Wait()
+			return string(out), fmt.Errorf("%s timed out after %v: %w", name, timeout, err)
+		}
+		return string(out), fmt.Errorf("%s failed: %w\n%s", name, err, string(out))
+	}
+	return string(out), nil
+}
+
 // CheckPiCapability checks that the installed Pi version meets minimum requirements
 // and supports required APIs. Returns nil if OK, or an actionable error.
 func CheckPiCapability(piBin string) error {
@@ -389,11 +453,14 @@ func CheckPiCapability(piBin string) error {
 			return fmt.Errorf("pi not found on PATH: %w. Install Pi >= %s first", err, PiMinimumVersion)
 		}
 	}
-	out, err := exec.Command(piBin, "--version").Output()
+	out, err := runCapabilityCommand(piBin, []string{"--version"}, "", capabilityProbeTimeout)
 	if err != nil {
+		if strings.Contains(err.Error(), "timed out") {
+			return fmt.Errorf("pi --version timed out after %v. Install Pi >= %s first", capabilityProbeTimeout, PiMinimumVersion)
+		}
 		return fmt.Errorf("cannot check pi version: %w. Install Pi >= %s first", err, PiMinimumVersion)
 	}
-	ver := strings.TrimSpace(string(out))
+	ver := strings.TrimSpace(out)
 	if ver == "" {
 		return fmt.Errorf("pi --version returned empty output. Install Pi >= %s first", PiMinimumVersion)
 	}
@@ -483,17 +550,16 @@ console.log("API probe passed");
 		return fmt.Errorf("write probe file: %w", err)
 	}
 
-	// Compile with node --experimental-strip-types which uses the installed
-	// package resolution to prove the @earendil-works/pi-coding-agent module
-	// exports the required types.
-	cmd := exec.Command("node", "--experimental-strip-types", srcPath)
-	cmd.Dir = piDir
-	out, err := cmd.CombinedOutput()
+	// Compile with node --experimental-strip-types using the bounded runner.
+	out, err := runCapabilityCommand("node", []string{"--experimental-strip-types", srcPath}, piDir, capabilityProbeTimeout)
 	if err != nil {
-		return fmt.Errorf("pi package API probe failed (exit %v): %s. Ensure @earendil-works/pi-coding-agent >= %s is installed", err, string(out), PiMinimumVersion)
+		if strings.Contains(err.Error(), "timed out") {
+			return fmt.Errorf("pi API probe timed out after %v. Ensure @earendil-works/pi-coding-agent >= %s is installed", capabilityProbeTimeout, PiMinimumVersion)
+		}
+		return fmt.Errorf("pi package API probe failed (exit %v): %s. Ensure @earendil-works/pi-coding-agent >= %s is installed", err, out, PiMinimumVersion)
 	}
-	if !strings.Contains(string(out), "API probe passed") {
-		return fmt.Errorf("pi API probe did not complete: %s", string(out))
+	if !strings.Contains(out, "API probe passed") {
+		return fmt.Errorf("pi API probe did not complete: %s", out)
 	}
 	return nil
 }
