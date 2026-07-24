@@ -116,8 +116,9 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 		Long: `Push inheritable config to a captain and advance generation tracking.
 
 Reports whether the inherited surface changed and the new generation.
-On change, sends a CONFIG_REREAD nudge through the acknowledged
-agent-prompt seam if the captain session is alive.`,
+On change, creates a durable mailbox config-reread requirement and
+sends a NotificationRef through the AgentPrompt seam. The requirement
+is retried on the next converge cycle on failure.`,
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			res, err := captain.ConfigPushWithResult(ctx.Home, args[0])
@@ -126,15 +127,18 @@ agent-prompt seam if the captain session is alive.`,
 			}
 			if res.Changed {
 				fmt.Printf("inherited config changed: generation=%d\n", res.Generation)
-				// Try to inject CONFIG_REREAD if captain is alive.
-				if err := captain.DeliverConfigReread(ctx.Home, args[0], res.Generation, res.NewDigest); err != nil {
-					fmt.Printf("  note: config-reread inject deferred: %v\n", err)
-					fmt.Printf("  pending nudge marker preserved for next converge\n")
+				// Legacy reconciliation before creating new requirement.
+				if legErr := captain.ReconcileLegacyConfigReread(ctx.Home, args[0]); legErr != nil {
+					fmt.Printf("  note: legacy config-reread reconciliation: %v\n", legErr)
+				}
+				// Create canonical mailbox config-reread requirement.
+				if err := captain.EnsureConfigRereadRequirement(ctx.Home, args[0], res.Generation, res.NewDigest); err != nil {
+					fmt.Printf("  note: config-reread notification deferred: %v\n", err)
 				} else {
-					fmt.Printf("  sent CONFIG_REREAD to captain session\n")
+					fmt.Printf("  sent config-reread gen=%d notification\n", res.Generation)
 				}
 			} else {
-				fmt.Println("inherited config unchanged (no nudge sent)")
+				fmt.Println("inherited config unchanged (no notification sent)")
 			}
 			return nil
 		}),

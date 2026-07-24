@@ -9,17 +9,22 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/composer"
+	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/task"
 )
+
+// ConfigRereadKey is the mailbox envelope Key for config-reread notifications.
+const ConfigRereadKey = "config-reread"
 
 // ConfigRereadGenName is the file name for config reread generation tracking.
 const ConfigRereadGenName = ".config-reread-gen"
 
 // ConfigRereadGenPath returns the path to the config-reread generation file
 // under the captain home. The file lives in state/ alongside other tracking
-// artifacts (instruction surface nudges, send outbox, etc.).
+// artifacts.
 func ConfigRereadGenPath(captainHome string) string {
 	return filepath.Join(captainHome, "state", ConfigRereadGenName)
 }
@@ -119,7 +124,6 @@ func WriteConfigRereadGen(captainHome string, gen int, digest string) error {
 		return fmt.Errorf("creating state dir for config-reread-gen: %w", err)
 	}
 	content := fmt.Sprintf("%d\n%s\n", gen, digest)
-	// Use atomicWriteFile for safe replacement.
 	return atomicWriteFile(path, []byte(content), 0644)
 }
 
@@ -152,36 +156,337 @@ func AdvanceConfigRereadGen(captainHome string) (bool, int, string, string, erro
 	return true, newGen, oldDigest, newDigest, nil
 }
 
-// ConfigRereadNudgePath returns the path for a pending config-reread
-// nudge marker under the captain home. The marker records the generation
-// that has been delivered (or is pending delivery) to the captain session.
-func ConfigRereadNudgePath(captainHome string) string {
-	return filepath.Join(captainHome, "state", ".config-reread-nudge")
+// ConfigRereadMessage builds the canonical CONFIG_REREAD message for a
+// given generation and full 64-character digest.
+func ConfigRereadMessage(gen int, digest string) string {
+	return fmt.Sprintf("CONFIG_REREAD: generation=%d digest=%s", gen, digest)
 }
 
-// WriteConfigRereadNudgeMarker writes a pending notification marker with
-// the generation and digest that were delivered. Written before injection,
-// cleared only after successful delivery.
-func WriteConfigRereadNudgeMarker(captainHome string, gen int, digest string) error {
-	path := ConfigRereadNudgePath(captainHome)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating state dir for nudge marker: %w", err)
+// ConfigRereadEnvelopeID returns a deterministic envelope message ID for a
+// config-reread requirement. The same (sender, captain, generation, digest)
+// always produces the same ID, ensuring idempotent envelope writes.
+func ConfigRereadEnvelopeID(senderIdentity, captainIdentity string, generation int, digest string) string {
+	data := fmt.Sprintf("config-reread:%s:%s:%d:%s", senderIdentity, captainIdentity, generation, digest)
+	h := sha256.Sum256([]byte(data))
+	return fmt.Sprintf("%x", h[:16]) // 32-char hex
+}
+
+// EnsureConfigRereadRequirement creates one canonical durable reread
+// requirement for the current config generation. It:
+//  1. Creates a deterministic mailbox Envelope (General→Captain) with
+//     the config-reread message as payload, using ConfigRereadKey.
+//  2. Removes any stale config-reread inbox envelopes and pending records
+//     (older generations) so only the latest requirement exists.
+//  3. Writes the new envelope to the captain's inbox.
+//  4. Writes a pending record in the General's outbox.
+//  5. Sends the canonical NotificationRef via session.SubmitPrompt (the
+//     AgentPrompt seam, never raw SendKeys for agent turns).
+//
+// On acknowledgment failure (agent not alive, not ready), the pending
+// record persists and converge's ReconcileMailboxPending step retries
+// the notification on the next cycle. On exact ProcessingAck, converge
+// removes the pending.
+//
+// The parentHome-facing converge/captain_cmd caller handles convergence
+// and liveness; this function owns the mailbox write and notification.
+func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, digest string) error {
+	// Validate captain provenance and derive identity.
+	captainIdentity, err := ValidateProvenance(captainHome)
+	if err != nil {
+		return fmt.Errorf("config-reread requirement: %w", err)
 	}
-	content := fmt.Sprintf("gen=%d\ndigest=%s\n", gen, digest)
-	return os.WriteFile(path, []byte(content), 0644)
+
+	// Derive General sender identity from parent home.
+	senderIdentity, senderRank, err := mailbox.ReadHomeIdentity(parentHome)
+	if err != nil {
+		return fmt.Errorf("config-reread requirement: deriving sender identity: %w", err)
+	}
+
+	// Resolve captain task meta for notification delivery (best-effort).
+	// Absent meta means the captain is seeded but never launched — we still
+	// write the durable envelope/pending, but skip live notification.
+	taskID := taskIDForCaptain(captainIdentity)
+	meta, metaErr := task.ReadMeta(parentHome, taskID)
+	if metaErr != nil {
+		fmt.Printf("  %s: no task meta — writing durable requirement only\n", captainIdentity)
+	}
+
+	// Build the message marked for General→Captain routing.
+	msg := ConfigRereadMessage(gen, digest)
+	markedLine := marker.MarkFromGeneral(msg)
+
+	// Create a deterministic envelope.
+	env := &mailbox.Envelope{
+		MessageID:      ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest),
+		SenderRank:     senderRank,
+		SenderIdentity: senderIdentity,
+		ReceiverRank:   mailbox.RankCaptain,
+		ReceiverID:     captainIdentity,
+		TaskID:         taskID,
+		Key:            ConfigRereadKey,
+		Payload:        markedLine,
+	}
+
+	canonCaptain, err := canonicalHome(captainHome)
+	if err != nil {
+		return fmt.Errorf("config-reread requirement: canonicalizing captain home: %w", err)
+	}
+
+	receiverStore := mailbox.NewStore(canonCaptain)
+	senderStore := mailbox.NewStore(parentHome)
+
+	// Remove stale config-reread inbox/pending records (coalesce).
+	if err := removeStaleConfigRereadRecords(canonCaptain, parentHome, senderIdentity, env); err != nil {
+		return fmt.Errorf("config-reread requirement: removing stale: %w", err)
+	}
+
+	// Write envelope to captain's inbox (idempotent if same content).
+	if err := receiverStore.WriteEnvelope(env); err != nil {
+		return fmt.Errorf("config-reread requirement: writing inbox envelope: %w", err)
+	}
+
+	// Write pending in General's outbox.
+	if err := senderStore.WritePending(env); err != nil {
+		return fmt.Errorf("config-reread requirement: writing sender pending: %w", err)
+	}
+
+	// If no task meta, we're done (durable requirement written, no session to notify).
+	if metaErr != nil {
+		return nil
+	}
+
+	// If meta doesn't have required fields, skip notification.
+	if meta["kind"] != "captain" || meta["window"] == "" || meta["sm_id"] != captainIdentity {
+		fmt.Printf("  %s: incomplete task meta — requirement written, notification deferred\n", captainIdentity)
+		return nil
+	}
+
+	windowID := meta["window"]
+	bk, _, bkErr := backendForTask(parentHome, meta)
+	if bkErr != nil {
+		fmt.Printf("  %s: cannot resolve backend — notification deferred: %v\n", captainIdentity, bkErr)
+		return nil
+	}
+
+	// Send NotificationRef via the AgentPrompt seam.
+	ref := mailbox.NotificationRef{
+		MessageID:      env.MessageID,
+		SenderIdentity: senderIdentity,
+	}
+	result := session.SubmitPrompt(bk, windowID, ref.Encode())
+	if !result.Acknowledged() {
+		// Notification not acknowledged — pending remains for converge retry.
+		fmt.Printf("  %s: config-reread notification not acknowledged (status=%s)\n", captainIdentity, result.Status)
+		return nil // Not an error; converge will retry.
+	}
+
+	fmt.Printf("  %s: config-reread gen=%d notified\n", captainIdentity, gen)
+	return nil
 }
 
-// ReadConfigRereadNudgeMarker returns the generation and digest from a
-// pending nudge marker. Returns (0, "", false, nil) when no marker exists.
-func ReadConfigRereadNudgeMarker(captainHome string) (int, string, bool, error) {
-	data, err := os.ReadFile(ConfigRereadNudgePath(captainHome))
+// removeStaleConfigRereadRecords removes any existing config-reread inbox
+// envelopes and pending records for older generations, leaving only the
+// current one. This is best-effort: stale files that cannot be removed
+// (permissions, in-flight I/O) log a diagnostic and do not block.
+func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity string, current *mailbox.Envelope) error {
+	// Clean captain's inbox: remove any config-reread envelope with a
+	// different message ID (older generation).
+	receiverStore := mailbox.NewStore(captainHome)
+	envelopes, err := receiverStore.ListInbox(senderIdentity)
+	if err == nil {
+		for _, env := range envelopes {
+			if env.Key == ConfigRereadKey && env.MessageID != current.MessageID {
+				inboxPath := filepath.Join(
+					captainHome, "state", mailbox.InboxDir, senderIdentity, env.MessageID+".json",
+				)
+				os.Remove(inboxPath) // best-effort
+				ackPath := filepath.Join(
+					captainHome, "state", mailbox.InboxDir, senderIdentity, env.MessageID+".ack",
+				)
+				os.Remove(ackPath)
+			}
+		}
+	}
+
+	// Clean General's outbox: remove any config-reread pending record with
+	// a different message ID (older generation).
+	senderStore := mailbox.NewStore(parentHome)
+	pending, err := senderStore.ListPending(senderIdentity)
+	if err == nil {
+		for _, env := range pending {
+			if env.Key == ConfigRereadKey && env.MessageID != current.MessageID {
+				pendingPath := filepath.Join(
+					parentHome, "state", mailbox.OutboxDir, senderIdentity, env.MessageID+".pending",
+				)
+				os.Remove(pendingPath) // best-effort
+			}
+		}
+	}
+
+	return nil
+}
+
+// ReconcileConfigRereadPending reconciles config-reread mailbox records for
+// one captain. It checks whether the latest config-reread envelope has been
+// acked by the captain, and if so, removes any config-reread pending records
+// for older generations.
+//
+// This is called from converge to ensure config-reread state is clean once
+// the captain has acknowledged the latest config.
+func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
+	captainIdentity, err := ValidateProvenance(captainHome)
+	if err != nil {
+		return fmt.Errorf("reconcile config-reread: %w", err)
+	}
+
+	senderIdentity, _, err := mailbox.ReadHomeIdentity(parentHome)
+	if err != nil {
+		return fmt.Errorf("reconcile config-reread: deriving sender identity: %w", err)
+	}
+
+	// Read the latest generation.
+	gen, digest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil {
+		return fmt.Errorf("reconcile config-reread: reading gen: %w", err)
+	}
+	if !found {
+		return nil // No generation recorded → nothing to reconcile.
+	}
+
+	canonCaptain, err := canonicalHome(captainHome)
+	if err != nil {
+		return fmt.Errorf("reconcile config-reread: canonicalizing: %w", err)
+	}
+
+	// Determine the acked envelope ID for the latest generation.
+	latestID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+	captainStore := mailbox.NewStore(canonCaptain)
+
+	// Check if the latest said is acked.
+	if !captainStore.IsAcked(senderIdentity, latestID) {
+		return nil // Not acked yet — no cleanup.
+	}
+
+	// Latest is acked — clean any stale config-reread pending.
+	senderStore := mailbox.NewStore(parentHome)
+	pending, err := senderStore.ListPending(senderIdentity)
+	if err != nil {
+		return nil
+	}
+	for _, env := range pending {
+		if env.Key == ConfigRereadKey && env.MessageID != latestID {
+			pendingPath := filepath.Join(
+				parentHome, "state", mailbox.OutboxDir, senderIdentity, env.MessageID+".pending",
+			)
+			os.Remove(pendingPath)
+		}
+	}
+
+	return nil
+}
+
+// --- Legacy reconciliation ---
+
+// legacyConfigRereadNudgeName is the old nudge marker filename.
+const legacyConfigRereadNudgeName = ".config-reread-nudge"
+
+// legacyConfigRereadNudgePath returns the path to the old nudge marker.
+func legacyConfigRereadNudgePath(captainHome string) string {
+	return filepath.Join(captainHome, "state", legacyConfigRereadNudgeName)
+}
+
+// legacyConfigRereadQuarantineDir returns the old quarantine directory.
+func legacyConfigRereadQuarantineDir(captainHome string) string {
+	return filepath.Join(captainHome, "state", ".config-reread-quarantine")
+}
+
+// ReconcileLegacyConfigReread migrates legacy config-reread artifacts
+// (.config-reread-nudge, .config-reread-quarantine) into the canonical
+// mailbox-based requirement or removes them if superseded.
+//
+// Rules:
+//   - If a .config-reread-nudge marker exists, parse gen/digest from it,
+//     materialize the equivalent mailbox requirement, then delete the marker.
+//   - If .config-reread-quarantine exists, scan each file for gen/digest,
+//     materialize the latest, then delete the quarantine directory.
+//   - Malformed or unparseable records are left in place with a diagnostic
+//     error returned (fail-closed). Caller must resolve manually.
+//   - If the current generation (from .config-reread-gen) already equals or
+//     exceeds what the legacy artifacts describe, just delete the artifacts.
+func ReconcileLegacyConfigReread(parentHome, captainHome string) error {
+	captainIdentity, err := ValidateProvenance(captainHome)
+	if err != nil {
+		return fmt.Errorf("reconcile legacy config-reread: %w", err)
+	}
+
+	currentGen, _, genFound, genErr := ReadConfigRereadGen(captainHome)
+	if genErr != nil {
+		return fmt.Errorf("reconcile legacy config-reread: reading gen: %w", genErr)
+	}
+
+	// Try to parse a nudge marker.
+	nudgeGen, nudgeDigest, nudgeFound, nudgeErr := readLegacyNudgeMarker(captainHome)
+	if nudgeErr != nil {
+		return fmt.Errorf("reconcile legacy config-reread: reading nudge: %w", nudgeErr)
+	}
+
+	// Try to scan quarantine artifacts.
+	quarantineGen, quarantineDigest, quarantineFound, quarantineErr := readLegacyQuarantineLatest(captainHome)
+	if quarantineErr != nil {
+		return fmt.Errorf("reconcile legacy config-reread: reading quarantine: %w", quarantineErr)
+	}
+
+	// If nothing legacy exists, done.
+	if !nudgeFound && !quarantineFound {
+		return nil
+	}
+
+	// Determine the highest legacy generation/digest to materialize.
+	legacyGen := 0
+	legacyDigest := ""
+	if nudgeFound {
+		legacyGen = nudgeGen
+		legacyDigest = nudgeDigest
+	}
+	if quarantineFound && quarantineGen > legacyGen {
+		legacyGen = quarantineGen
+		legacyDigest = quarantineDigest
+	}
+
+	// If the current generation already covers or exceeds the legacy,
+	// just clean up the legacy artifacts.
+	if genFound && currentGen >= legacyGen {
+		os.Remove(legacyConfigRereadNudgePath(captainHome))
+		os.RemoveAll(legacyConfigRereadQuarantineDir(captainHome))
+		fmt.Printf("  %s: legacy config-reread artifacts superseded by gen=%d, cleaned\n", captainIdentity, currentGen)
+		return nil
+	}
+
+	// Otherwise, materialize the legacy requirement as a mailbox envelope.
+	if legacyGen > 0 && legacyDigest != "" {
+		fmt.Printf("  %s: migrating legacy config-reread gen=%d to mailbox\n", captainIdentity, legacyGen)
+		if err := EnsureConfigRereadRequirement(parentHome, captainHome, legacyGen, legacyDigest); err != nil {
+			return fmt.Errorf("reconcile legacy config-reread: materializing requirement: %w", err)
+		}
+	}
+
+	// Remove legacy artifacts after successful materialisation.
+	os.Remove(legacyConfigRereadNudgePath(captainHome))
+	os.RemoveAll(legacyConfigRereadQuarantineDir(captainHome))
+	fmt.Printf("  %s: legacy config-reread artifacts removed\n", captainIdentity)
+	return nil
+}
+
+// readLegacyNudgeMarker reads the old two-line .config-reread-nudge marker.
+func readLegacyNudgeMarker(captainHome string) (int, string, bool, error) {
+	data, err := os.ReadFile(legacyConfigRereadNudgePath(captainHome))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, "", false, nil
 		}
-		return 0, "", false, fmt.Errorf("reading nudge marker: %w", err)
+		return 0, "", false, fmt.Errorf("reading legacy nudge marker: %w", err)
 	}
+
 	var gen int
 	var digest string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -189,160 +494,63 @@ func ReadConfigRereadNudgeMarker(captainHome string) (int, string, bool, error) 
 		if k, v, ok := strings.Cut(line, "="); ok {
 			switch strings.TrimSpace(k) {
 			case "gen":
-				fmt.Sscanf(strings.TrimSpace(v), "%d", &gen)
+				if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d", &gen); err != nil {
+					return 0, "", false, fmt.Errorf("legacy nudge: invalid gen value %q", v)
+				}
 			case "digest":
 				digest = strings.TrimSpace(v)
 			}
 		}
 	}
 	if digest == "" {
-		return 0, "", false, fmt.Errorf("nudge marker malformed: missing digest")
+		return 0, "", false, fmt.Errorf("legacy nudge marker: malformed — missing digest")
 	}
 	return gen, digest, true, nil
 }
 
-// RemoveConfigRereadNudgeMarker deletes the pending nudge marker.
-func RemoveConfigRereadNudgeMarker(captainHome string) {
-	os.Remove(ConfigRereadNudgePath(captainHome))
-}
-
-// SentinelMark is the sentinel byte used to mark inject payloads for the
-// acknowledged agent-prompt seam. This is the same constant used by the
-// AFK injector. The invisible separator character (U+2063) can be embedded
-// in any text stream without affecting display.
-const SentinelMark = "\u2063"
-
-// QuarantinePath returns the path for quarantined notification artifacts
-// under the captain home. Quarantine preserves the payload for inspection
-// when post-delivery cleanup fails.
-func QuarantinePath(captainHome string, name string) string {
-	return filepath.Join(captainHome, "state", ".config-reread-quarantine", name)
-}
-
-// QuarantineConfigRereadNudge moves a pending nudge marker into quarantine
-// when cleanup fails. Returns the quarantine path or error.
-func QuarantineConfigRereadNudge(captainHome string) (string, error) {
-	src := ConfigRereadNudgePath(captainHome)
-	data, err := os.ReadFile(src)
+// readLegacyQuarantineLatest scans the quarantine directory and returns the
+// highest generation found.
+func readLegacyQuarantineLatest(captainHome string) (int, string, bool, error) {
+	qDir := legacyConfigRereadQuarantineDir(captainHome)
+	entries, err := os.ReadDir(qDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil // nothing to quarantine
+			return 0, "", false, nil
 		}
-		return "", fmt.Errorf("reading nudge marker for quarantine: %w", err)
-	}
-	qPath := QuarantinePath(captainHome, fmt.Sprintf("pending-%d", os.Getpid()))
-	dir := filepath.Dir(qPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("creating quarantine dir: %w", err)
-	}
-	if err := os.WriteFile(qPath, data, 0644); err != nil {
-		return "", fmt.Errorf("writing quarantine artifact: %w", err)
-	}
-	// Remove original only after successful quarantine write.
-	os.Remove(src)
-	return qPath, nil
-}
-
-// ConfigRereadInjectMessage builds the literal CONFIG_REREAD: message
-// for a given generation and digest.
-func ConfigRereadInjectMessage(gen int, digest string) string {
-	return fmt.Sprintf("CONFIG_REREAD: generation=%d digest=%.12s", gen, digest)
-}
-
-// IsPaneSafeForInject checks whether a terminal pane is safe to inject
-// a CONFIG_REREAD message into. Uses the composer package (same logic as
-// the AFK injector) to classify the composite state. Returns true only
-// when the composer is empty (agent is waiting for input).
-func IsPaneSafeForInject(bk session.Backend, windowID string) (bool, string, error) {
-	output, err := bk.Capture(windowID, 4)
-	if err != nil {
-		return false, "", fmt.Errorf("capturing pane %q: %w", windowID, err)
+		return 0, "", false, fmt.Errorf("reading quarantine dir: %w", err)
 	}
 
-	// Normalise and take the last non-empty line (composer row).
-	output = strings.TrimRight(output, "\n\r")
-	lines := strings.Split(output, "\n")
-	composerLine := ""
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			composerLine = lines[i]
-			break
+	bestGen := 0
+	bestDigest := ""
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		fullPath := filepath.Join(qDir, e.Name())
+		data, readErr := os.ReadFile(fullPath)
+		if readErr != nil {
+			continue
+		}
+		var gen int
+		var digest string
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if k, v, ok := strings.Cut(line, "="); ok {
+				switch strings.TrimSpace(k) {
+				case "gen":
+					fmt.Sscanf(strings.TrimSpace(v), "%d", &gen)
+				case "digest":
+					digest = strings.TrimSpace(v)
+				}
+			}
+		}
+		if digest != "" && gen > bestGen {
+			bestGen = gen
+			bestDigest = digest
 		}
 	}
-
-	// Strip ghost text and ANSI for classification.
-	stripped := composer.StripGhost(composerLine)
-	plain := strings.TrimSpace(composer.StripANSI(composerLine))
-	trimmed := strings.TrimSpace(stripped)
-
-	// Determine bordered status (has box-drawing characters).
-	bordered := false
-	for _, line := range lines {
-		if hasBorderChars(line) {
-			bordered = true
-			break
-		}
+	if bestDigest == "" {
+		return 0, "", false, nil
 	}
-	if !bordered && (strings.HasPrefix(plain, "\u276F") || strings.HasPrefix(plain, "\u203A")) {
-		bordered = true
-	}
-	if !bordered && trimmed == "" && plain != "" && !isShellGlyphStart(plain) {
-		bordered = true
-	}
-
-	verdict := composer.ClassifyContent(trimmed, plain, bordered)
-	return verdict == composer.Empty, verdict.String(), nil
-}
-
-func hasBorderChars(s string) bool {
-	chars := []string{"\u250C", "\u2510", "\u2514", "\u2518", "\u2502",
-		"\u256D", "\u256E", "\u2570", "\u256F", "\u251C", "\u2524"}
-	for _, c := range chars {
-		if strings.Contains(s, c) {
-			return true
-		}
-	}
-	return false
-}
-
-func isShellGlyphStart(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	first := string([]rune(s)[0])
-	switch first {
-	case ">", "$", "%", "#":
-		return true
-	}
-	return false
-}
-
-// InjectConfigReread delivers a CONFIG_REREAD message through the
-// acknowledged agent-prompt seam. It checks composer safety (only injects
-// when the agent is waiting for input), sends the message with the sentinel
-// marker, and returns a status string for diagnostic logging.
-//
-// The inject goes through Backend.SendKeys, but is gated by the composer
-// safety check and uses the sentinel marker — this is the acknowledged
-// agent-prompt seam, not raw SendKeys for agent turns.
-//
-// On success, the pending nudge marker is removed. On failure (unsafe,
-// endpoint dead), the marker remains for retry. On post-delivery cleanup
-// failure, the marker is quarantined so durable generation state is not lost.
-func InjectConfigReread(bk session.Backend, windowID string, gen int, digest string) error {
-	safe, verdict, err := IsPaneSafeForInject(bk, windowID)
-	if err != nil {
-		return fmt.Errorf("safety check failed: %w", err)
-	}
-	if !safe {
-		return fmt.Errorf("pane not safe for inject (verdict=%s)", verdict)
-	}
-
-	msg := ConfigRereadInjectMessage(gen, digest)
-	marked := SentinelMark + msg
-
-	if err := bk.SendKeys(windowID, marked); err != nil {
-		return fmt.Errorf("send-keys failed: %w", err)
-	}
-	return nil
+	return bestGen, bestDigest, true, nil
 }

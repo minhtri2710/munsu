@@ -2171,24 +2171,40 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": safe fast-forward", Status: ConvergeOK, Detail: "no change"})
 		}
 
-		// e. Inheritance push with generation tracking.
-		var crResult *ConfigPushResult
+		// e. Inheritance push with generation tracking and mailbox notification.
 		if res, err := ConfigPushWithResult(parentHome, sm.Home); err != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeFailed, Detail: err.Error()})
 			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
 		} else {
-			crResult = res
 			detail := "ok"
 			if res.Changed {
-				detail = fmt.Sprintf("generation=%d digest=%.12s", res.Generation, res.NewDigest)
+				detail = fmt.Sprintf("generation=%d", res.Generation)
 			}
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: detail})
-			// Write pending nudge marker when generation advanced, so the
-			// inject below (after liveness check) can deliver the message.
-			if res.Changed && crResult != nil {
-				if nudgeErr := WriteConfigRereadNudgeMarker(sm.Home, res.Generation, res.NewDigest); nudgeErr != nil {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread nudge", Status: ConvergeFailed, Detail: fmt.Sprintf("writing nudge marker: %v", nudgeErr)})
-					errs = append(errs, fmt.Sprintf("%s: writing config-reread nudge marker: %v", sm.ID, nudgeErr))
+
+			// Legacy artifacts: reconcile before creating new requirement.
+			if legErr := ReconcileLegacyConfigReread(parentHome, sm.Home); legErr != nil {
+				errs = append(errs, fmt.Sprintf("%s: legacy config-reread reconciliation failed: %v", sm.ID, legErr))
+			}
+
+			// Create canonical mailbox config-reread requirement when generation advanced.
+			if res.Changed {
+				if mbErr := EnsureConfigRereadRequirement(parentHome, sm.Home, res.Generation, res.NewDigest); mbErr != nil {
+					// Mailbox write failed; the requirement is not persisted.
+					// Converge will retry on the next cycle. The generation
+					// is tracked durably so we can recreate the requirement.
+					result.Steps = append(result.Steps, ConvergeStepResult{
+						Name:   sm.ID + ": config-reread requirement",
+						Status: ConvergeFailed,
+						Detail: mbErr.Error(),
+					})
+					errs = append(errs, fmt.Sprintf("%s: config-reread requirement: %v", sm.ID, mbErr))
+				} else {
+					result.Steps = append(result.Steps, ConvergeStepResult{
+						Name:   sm.ID + ": config-reread requirement",
+						Status: ConvergeOK,
+						Detail: fmt.Sprintf("gen=%d", res.Generation),
+					})
 				}
 			}
 		}
@@ -2208,39 +2224,18 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, aliveErr))
 			continue
 		}
-		configRereadInjected := false
 		if alive {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
-
-			// If config push changed the inherited surface, inject CONFIG_REREAD
-			// through the acknowledged agent-prompt seam. The nudge marker was
-			// written in step (e); now deliver it.
-			if crResult != nil && crResult.Changed {
-				injectErr := deliverConfigRereadViaBackend(parentHome, sm, crResult.Generation, crResult.NewDigest)
-				if injectErr != nil {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread inject", Status: ConvergeFailed, Detail: injectErr.Error()})
-					errs = append(errs, fmt.Sprintf("%s: config-reread inject: %v", sm.ID, injectErr))
-					// Quarantine the nudge marker so retry is safe and
-					// durable generation state is never lost.
-					if qPath, qErr := QuarantineConfigRereadNudge(sm.Home); qErr != nil {
-						errs = append(errs, fmt.Sprintf("%s: config-reread quarantine failed: %v", sm.ID, qErr))
-					} else if qPath != "" {
-						fmt.Printf("  %s: config-reread nudge quarantined at %s\n", sm.ID, qPath)
-					}
-				} else {
-					configRereadInjected = true
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread inject", Status: ConvergeOK, Detail: fmt.Sprintf("gen=%d", crResult.Generation)})
-				}
-			}
 		} else {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent"})
 		}
 
-		// If CONFIG_REREAD was successfully injected, clear the nudge marker.
-		// Post-delivery cleanup failure is quarantined so durable generation
-		// state remains intact for retry.
-		if configRereadInjected {
-			RemoveConfigRereadNudgeMarker(sm.Home)
+		// i. Config-reread pending reconciliation.
+		if mbErr := ReconcileConfigRereadPending(parentHome, sm.Home); mbErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread pending reconciliation", Status: ConvergeFailed, Detail: mbErr.Error()})
+			errs = append(errs, mbErr.Error())
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread pending reconciliation", Status: ConvergeOK, Detail: "ok"})
 		}
 
 		// g. Terminal receipt relay (Captain → General)
@@ -2294,61 +2289,6 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		return &result, fmt.Errorf("converge completed with %d error(s):\n  %s", len(errs), strings.Join(errs, "\n  "))
 	}
 	return &result, nil
-}
-
-// DeliverConfigReread resolves a captain home to its registry info and
-// delivers a CONFIG_REREAD message through the acknowledged agent-prompt
-// seam. Returns nil when the captain has no task meta (seeded but never
-// launched) or when the endpoint is not alive (nudge preserved for next
-// converge). Returns error on unexpected failures.
-// Public for CLI use.
-func DeliverConfigReread(parentHome, captainHome string, gen int, digest string) error {
-	markerID, err := ValidateProvenance(captainHome)
-	if err != nil {
-		return fmt.Errorf("deliver config-reread: %w", err)
-	}
-	sm := Info{ID: markerID, Home: captainHome}
-	return deliverConfigRereadViaBackend(parentHome, sm, gen, digest)
-}
-
-// deliverConfigRereadViaBackend delivers a CONFIG_REREAD message to the
-// active captain session through the acknowledged agent-prompt seam.
-// It resolves the session backend and window from captain task meta, checks
-// composer safety, and injects the message with the sentinel marker.
-// On failure (endpoint dead, unsafe, send failure), the pending nudge marker
-// remains for retry. Never panics.
-func deliverConfigRereadViaBackend(parentHome string, sm Info, gen int, digest string) error {
-	taskID := taskIDForCaptain(sm.ID)
-	meta, err := task.ReadMeta(parentHome, taskID)
-	if err != nil {
-		return fmt.Errorf("%s: no task meta — nudge retained", sm.ID)
-	}
-
-	if meta["kind"] != "captain" {
-		return fmt.Errorf("%s: meta kind=%q, expected captain", sm.ID, meta["kind"])
-	}
-	if meta["sm_id"] != sm.ID {
-		return fmt.Errorf("%s: meta sm_id=%q does not match", sm.ID, meta["sm_id"])
-	}
-
-	windowID := meta["window"]
-	if windowID == "" {
-		return fmt.Errorf("%s: no window in meta", sm.ID)
-	}
-
-	bk, _, bkErr := backendForTask(parentHome, meta)
-	if bkErr != nil {
-		return fmt.Errorf("%s: cannot resolve backend: %v", sm.ID, bkErr)
-	}
-
-	if !bk.Alive(windowID) {
-		return fmt.Errorf("%s: endpoint not alive", sm.ID)
-	}
-
-	// Inject via acknowledged agent-prompt seam (composer-safe inject with
-	// sentinel marker). This is NOT raw SendKeys for agent turns — it is
-	// gated by composer safety check and uses the sentinel marker.
-	return InjectConfigReread(bk, windowID, gen, digest)
 }
 
 // --- Recover ---
