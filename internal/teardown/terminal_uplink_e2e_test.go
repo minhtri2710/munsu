@@ -53,10 +53,10 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	soldierID := "e2e-test-soldier"
 	termKey := "uplink"
 
-	// Create captain provenance marker so RelayTerminalReceipts can read captain ID
+	// Captain provenance marker (newline-separated, matching SeedProvenance format)
 	captainMarkerPath := filepath.Join(captainHome, captain.ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(captainMarkerPath), 0755)
-	os.WriteFile(captainMarkerPath, []byte("munsu-v2 e2e-captain\n"), 0644)
+	os.WriteFile(captainMarkerPath, []byte("munsu-v2\ne2e-captain\n\n"), 0644)
 
 	// Captain state dir (soldier tasks live in captain's state)
 	captainStateDir := filepath.Join(captainHome, "state")

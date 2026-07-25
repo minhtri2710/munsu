@@ -5,19 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/event"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/wakedelivery"
 	"github.com/spf13/cobra"
 )
 
@@ -29,33 +25,9 @@ var materialStates = map[string]bool{
 	"blocked":        true,
 }
 
-// injectedEvents tracks synthetic event IDs that have already been injected
-// into the parent pane to prevent duplicate injection of the same event.
-var injectedEvents sync.Map
-
-// reportSessionResolver is the seam for resolving a session backend.
-// Production code uses session.Resolve; tests can inject a fake.
-type reportSessionResolver func(string, string) (session.Backend, string, error)
-
-// resolveInjectionTargetHome returns the target home directory for parent pane
-// notification target resolution. Soldiers and captains require MUNSU_PARENT_STATUS;
-// general/local/unknown roles fall back to their own homeDir.
-// Returns an error only when a soldier or captain has no parentHome set.
-func resolveInjectionTargetHome(role, homeDir, parentHome string) (string, error) {
-	switch role {
-	case "soldier", "captain":
-		if parentHome == "" {
-			return "", fmt.Errorf("MUNSU_PARENT_STATUS not set for role %q", role)
-		}
-		return parentHome, nil
-	default:
-		return homeDir, nil
-	}
-}
-
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
-	return newReportCmdWithInjector(injectToParentPane)
+	return newReportCmdWithInjector(wakedelivery.InjectToParentPane)
 }
 
 // newReportCmdWithInjector creates the report command with an injectable injectFn
@@ -106,24 +78,15 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			}
 
 			parentHome := os.Getenv("MUNSU_PARENT_STATUS")
-			statusLine := state + ": " + msg
-			if key != "" {
-				statusLine += " [key=" + key + "]"
-			}
 
-			// Determine target home and event/wake home based on role
+			// Determine target home for identity capture based on role
 			targetHome := homeDir // default: local
-			eventHome := homeDir
-			wakeHome := homeDir
-
 			switch role {
 			case "captain":
 				if parentHome == "" {
 					return fmt.Errorf("report: MUNSU_PARENT_STATUS not set for captain role")
 				}
 				targetHome = parentHome
-				eventHome = parentHome
-				wakeHome = parentHome
 			}
 
 			// 0. For soldier material states with a PR URL in the message:
@@ -148,98 +111,58 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
-			// 1. Durable task status append
-			if err := task.AppendStatus(targetHome, taskID, statusLine); err != nil {
-				return fmt.Errorf("report: appending status: %w", err)
-			}
-
-			// 1.5. For soldier material states: write a durable Captain receipt
-			// and initialize per-task obligations so teardown blocks until relay.
-			// The receipt lives in captain-owned state under parentHome (MUNSU_PARENT_STATUS).
-			if role == "soldier" && materialStates[state] && parentHome != "" {
-				termKey := key
-				if termKey == "" {
-					termKey = "default"
-				}
-				// Write durable receipt in captain-owned state
-				if err := turnend.WriteReceipt(parentHome, taskID, termKey, state, msg); err != nil {
-					return operationError("receipt_write_failed",
-						"Check MUNSU_PARENT_STATUS path permissions and structure",
-						fmt.Sprintf("report: writing captain receipt: %v", err))
-				}
-				// Initialize per-task obligations (idempotent)
-				if err := turnend.InitTaskObligations(parentHome, taskID, termKey); err != nil {
-					return operationError("obligations_init_failed",
-						"Check MUNSU_PARENT_STATUS path permissions and structure",
-						fmt.Sprintf("report: init task obligations: %v", err))
-				}
+			// 1. Deliver wake through the consolidated pipeline:
+			// status → receipt → events → wake. Handles fail-closed ordering
+			// and best-effort event append internally.
+			receipt, err := wakedelivery.DeliverWake(wakedelivery.DeliverRequest{
+				HomeDir:    homeDir,
+				ParentHome: parentHome,
+				TaskID:     taskID,
+				State:      state,
+				Message:    msg,
+				Key:        key,
+				Role:       role,
+			})
+			if err != nil {
+				return fmt.Errorf("report: %w", err)
 			}
 
 			// 1.6. For soldier review-ready/idle states: emit a durable ready event
-			// and flush one pending command automatically. This is the core integration
-			// of event-driven busy soldier delivery: when the soldier reaches a turn
-			// boundary (review-ready), it signals readiness and the next queued command
-			// (if any) is sent via NotificationRef without blocking.
-			//
-			// No polling. No Captain status spam. The ready event marker also allows
-			// converge/consume-ready to find it as a recovery path.
+			// and flush one pending command automatically.
 			if role == "soldier" && state == "review-ready" {
-				// Emit durable ready event marker.
 				meta, metaErr := task.ReadMeta(homeDir, taskID)
 				if metaErr == nil {
 					metaGeneration := meta["generation"]
 					captain.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
 
-					// Flush one pending command (if any). Best-effort: if no pending,
-					// this is a no-op. If backend fails, pending is retained for retry.
 					senderIdentity, _, _ := mailbox.ReadHomeIdentity(homeDir)
 					if senderIdentity == "" {
 						senderIdentity = filepath.Base(homeDir)
 					}
 					if fr := captain.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity); fr.Err != nil {
-						// Failures are expected when there's no pending or backend is
-						// temporarily unavailable. The pending remains for retry on the
-						// next review-ready report or via converge/consume-ready.
 						fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
 					}
 				}
 			}
 
-			// 2. Append to typed event log using synthetic event ID
-			syntheticID := event.SyntheticEventID()
-			if err := event.AppendWithID(eventHome, syntheticID, "task.status", taskID, key, statusLine); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: report: event append: %v\n", err)
-			}
-
-			// 3. For material states, enqueue a wake in the supervisor's queue
-			var enqueueTimestamp int64
-			if materialStates[state] {
-				wakePayload := fmt.Sprintf("%s: %s [event=%d]", taskID, statusLine, syntheticID)
-				enqueueTimestamp = time.Now().Unix()
-				lifecycle.EnqueueWake(wakeHome, "signal", taskID, wakePayload)
-			}
-
-			// 4. Attempt parent pane injection for material states
-			// When ring=ring or ring=auto (and not AFK-batching), inject a sentinel
-			// message into the parent's terminal pane if the composer is empty.
-			// The wake queue is the primary mechanism; injection is best-effort.
+			// 2. Attempt parent pane injection for material states
 			ringDecision := resolveRingPolicy(ring, homeDir)
 			var injectResult *contract.ReportInjection
 			watcherID := identifyWatcher(homeDir)
 			if ringDecision == "ring" && materialStates[state] {
-				result := injectFn(role, homeDir, parentHome, taskID, msg, state, syntheticID)
+				result := injectFn(role, homeDir, parentHome, taskID, msg, state, receipt.EventID)
 				injectResult = &contract.ReportInjection{
 					Outcome: string(result.Outcome),
 					Verdict: result.Verdict,
 					Target:  result.Target,
-					EventID: syntheticID,
+					EventID: receipt.EventID,
 					Error:   result.Error,
 				}
 			}
 
-			// Determine receipt timestamp from the captain receipt (if written).
+			// Receipt timestamp mirrors when the captain receipt was written.
 			var receiptTimestamp int64
-			if role == "soldier" && materialStates[state] && parentHome != "" {
+			if receipt.ReceiptWritten {
 				receiptTimestamp = time.Now().Unix()
 			}
 
@@ -250,7 +173,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				Data: contract.MessageResult{
 					Message:          fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
 					Injection:        injectResult,
-					EnqueueTimestamp: enqueueTimestamp,
+					EnqueueTimestamp: receipt.EnqueueUnix,
 					ReceiptTimestamp: receiptTimestamp,
 					WatcherIdentity:  watcherID,
 				},
@@ -290,72 +213,4 @@ func resolveRingPolicy(ring, homeDir string) string {
 		}
 		return "ring"
 	}
-}
-
-// injectToParentPane resolves the parent pane target and injects a sentinel
-// message. Returns the typed InjectResult with outcome diagnostics.
-func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) afk.InjectResult {
-	return injectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, state, syntheticID, session.Resolve)
-}
-
-// injectToParentPaneWithResolver is the testable core of injectToParentPane.
-// It accepts a reportSessionResolver for dependency injection in tests.
-func injectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64, resolveSession reportSessionResolver) afk.InjectResult {
-	// Dedup: skip if this event was already injected.
-	eventKey := fmt.Sprintf("%s/%s/%d", taskID, state, syntheticID)
-	if _, loaded := injectedEvents.LoadOrStore(eventKey, true); loaded {
-		return afk.InjectResult{Outcome: afk.OutcomeInjected, Target: "(deduped)"}
-	}
-
-	// Resolve the target home for parent pane resolution.
-	// Soldiers and captains require parentHome; general/local falls back to homeDir.
-	targetHome, err := resolveInjectionTargetHome(role, homeDir, parentHome)
-	if err != nil {
-		return afk.InjectResult{
-			Outcome: afk.OutcomeEndpointDead,
-			Error:   fmt.Sprintf("target home resolution: %v", err),
-		}
-	}
-
-	target, err := afk.ResolveTargetWithSource(targetHome)
-	if err != nil || target.Handle == "" || target.Source == afk.Unsupported {
-		return afk.InjectResult{
-			Outcome: afk.OutcomeEndpointDead,
-			Target:  target.Handle,
-			Error:   fmt.Sprintf("target resolution from %s: %v no-handle=%v unsupported=%v", targetHome, err, target.Handle == "", target.Source == afk.Unsupported),
-		}
-	}
-
-	// Obtain a session backend for SendKeys and Capture.
-	bk, _, err := resolveSession(homeDir, "")
-	if err != nil {
-		return afk.InjectResult{
-			Outcome: afk.OutcomeEndpointDead,
-			Target:  target.Handle,
-			Error:   fmt.Sprintf("backend resolve: %v", err),
-		}
-	}
-
-	// session.Backend satisfies afk.PaneCapture.
-	var afkCap afk.PaneCapture = bk
-
-	injectMsg := fmt.Sprintf("[report] %s: %s (task=%s)", state, msg, taskID)
-	markedMsg := afk.Mark(injectMsg)
-	if syntheticID > 0 {
-		markedMsg = fmt.Sprintf("%s [event=%d]", markedMsg, syntheticID)
-	}
-
-	safe, verdict, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
-	if err != nil {
-		return afk.InjectResult{Outcome: afk.OutcomeEndpointDead, Verdict: verdict.String(), Target: target.Handle, Error: err.Error()}
-	}
-	if !safe {
-		return afk.InjectResult{Outcome: afk.OutcomeUnsafe, Verdict: verdict.String(), Target: target.Handle}
-	}
-
-	result := session.SubmitPrompt(bk, target.Handle, markedMsg)
-	if !result.Acknowledged() {
-		return afk.InjectResult{Outcome: afk.OutcomeBackendFailed, Verdict: verdict.String(), Target: target.Handle, Error: string(result.Status)}
-	}
-	return afk.InjectResult{Outcome: afk.OutcomeInjected, Verdict: verdict.String(), Target: target.Handle}
 }
