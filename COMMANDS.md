@@ -71,6 +71,8 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 |---------|-------------|
 | `munsu watch` | Run the event-driven watcher loop. Singleton-safe via home-scoped lock. Exits with a wake reason when an actionable event is found. |
 | `munsu watch-arm [--restart]` | Arm the watcher as a background process. With `--restart`, signal existing watcher first. |
+| `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. |
+| `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
 | `munsu wake-drain` | Drain all queued wake records and print them. |
 | `munsu guard` | Warn on tangle (non-default branch in primary checkout) or stale watcher beat. |
 | `munsu afk` | Enter away-mode supervision daemon; polls at reduced cadence; stops on SIGTERM/SIGINT. |
@@ -84,9 +86,22 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 | `munsu fleet view` | Render fleet view from snapshot. |
 | `munsu fleet bearings [<project-dir>]` | Compact resume report. |
 | `munsu captain seed <id> <home-path>` | Seed a captain home with charter. |
-| `munsu captain launch <captain-home>` | Launch a captain in its home. |
-| `munsu captain retire <captain-home>` | Retire a captain. |
+| `munsu captain launch <captain-home>` | Launch a captain in its home (session-backed). |
+| `munsu captain retire <captain-home>` | Retire a captain. Refuses with in-flight soldiers unless `--force`. |
 | `munsu captain list` | List registered captains. |
+| `munsu captain recover <captain-id>` | Run structured 11-step recovery: provenance, config, integration, charter-refresh, config-push, launch-readiness, relaunch-pane, watcher-ensure, legacy transport guard, terminal-reconcile, nudge-retry. Each step reports ok/failed/skipped. |
+| `munsu captain converge` | Locked convergence sweep: validate registry/provenance, stale legacy records, nudge retry, fast-forward, inheritance push, liveness check, instruction surface tracking. |
+| `munsu captain update <captain-home>` | Safe fast-forward of a captain clone with typed outcome (already-current, fast-forwarded, state-only-skipped, etc.). |
+| `munsu captain migrate <captain-home> <id>` | Migrate a state-only home to managed worktree. Use `--repo` for transactional git-worktree migration. |
+| `munsu captain validate <captain-home>` | Validate a captain home structure and provenance. |
+| `munsu captain config-push <captain-home>` | Push inheritable config to a captain and advance generation tracking. Creates config-reread requirement on change. |
+| `munsu captain handoff <captain-home> <item-key...>` | Hand off queued backlog items to a captain (keys must be queued). |
+
+### Recovery paths
+
+CLI `munsu captain recover <captain-id>` runs an 11-step transactional recovery against a single captain — designed for operator-triggered repair.
+
+Session-start `Recover()` (invoked via `munsu session-start` with captain liveness recovery) sweeps all registered captains with a lightweight 4-outcome model: alive, seeded (never launched), relaunched, or failed. Designed for automatic boot-time recovery.
 
 ## Delivery
 
