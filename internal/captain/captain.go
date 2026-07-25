@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -2271,7 +2272,7 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": charter refresh", Status: ConvergeOK, Detail: "ok"})
 		}
 
-		// f. Liveness check.
+		// f. Liveness check + auto-recover.
 		alive, aliveErr := checkAliveViaBackend(parentHome, sm)
 		if aliveErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: aliveErr.Error()})
@@ -2281,7 +2282,23 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		if alive {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
 		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent"})
+			// Not alive. Check if launched (meta has window) to distinguish
+			// dead captain (auto-recover) from not-yet-launched (seeded).
+			taskID := taskIDForCaptain(sm.ID)
+			meta, mErr := task.ReadMeta(parentHome, taskID)
+			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
+			if launched {
+				// Launched-but-dead: auto-recover via Launch.
+				if lErr := Launch(sm.Home, parentHome); lErr != nil {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
+					errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
+				} else {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
+					fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
+				}
+			} else {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent (seeded)"})
+			}
 		}
 
 		// i. Config-reread pending reconciliation.
@@ -2555,6 +2572,9 @@ func SetFleetCaptainStatus(fn func(parentHome, captainID, homeDir string) string
 
 // checkAliveViaBackend checks if a captain is alive using the session backend.
 // It reads task meta, validates kind/sm_id/home before use, and uses backend.Alive.
+// When the backend implements session.AgentAwareBackend, it uses CheckAgentAlive
+// so that panes without a registered agent are treated as "not alive" for
+// recovery purposes.
 func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
@@ -2584,6 +2604,23 @@ func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
 	bk, _, bkErr := backendForTask(parentHome, meta)
 	if bkErr != nil {
 		return false, fmt.Errorf("resolving backend: %w", bkErr)
+	}
+
+	// Use agent-aware check when available.
+	if aaBk, ok := bk.(session.AgentAwareBackend); ok {
+		alive, agentAlive, aaErr := aaBk.CheckAgentAlive(windowID)
+		if aaErr != nil {
+			// Fail closed on backend errors (e.g. protocol mismatch).
+			// ErrPaneNotFound is NOT an error for recovery — it means the pane
+			// is confirmed absent, which is the same as the old binary Alive().
+			if errors.Is(aaErr, session.ErrPaneNotFound) {
+				return false, nil
+			}
+			return false, aaErr
+		}
+		// Pane exists but no registered agent → dead captain, return false
+		// so the caller (Recover/Converge) can take recovery action.
+		return alive && agentAlive, nil
 	}
 
 	return bk.Alive(windowID), nil

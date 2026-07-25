@@ -1704,6 +1704,21 @@ func (f *fakeBackend) MetaExtras() map[string]string {
 	return f.ExtraMeta
 }
 
+// fakeAgentAwareBackend extends fakeBackend with session.AgentAwareBackend support.
+// CheckAgentAliveFn controls the agent-aware check; when nil, panes are agent-alive.
+type fakeAgentAwareBackend struct {
+	fakeBackend
+	CheckAgentAliveFn func(windowID string) (bool, bool, error)
+}
+
+func (f *fakeAgentAwareBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
+	if f.CheckAgentAliveFn != nil {
+		return f.CheckAgentAliveFn(windowID)
+	}
+	// Default: pane exists with agent.
+	return true, true, nil
+}
+
 func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
@@ -3118,6 +3133,95 @@ func TestRecover_DeadLaunchedRelaunches(t *testing.T) {
 	}
 	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverRelaunched {
 		t.Errorf("entry = %+v, want RecoverRelaunched", res.Entries)
+	}
+}
+
+func TestRecover_DeadLaunchedNoAgentRelaunches(t *testing.T) {
+	parent := t.TempDir()
+	smHome := seedCaptainForTest(t, parent, "sm-agent-dead")
+	writeCaptainMeta(t, parent, "sm-agent-dead", smHome, "win-no-agent")
+
+	// captain-harness config so Launch resolves pi.
+	configDir := filepath.Join(parent, "config")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644)
+
+	origBK := newSessionBackend
+	origLP := lookPath
+	origBF := backendForTask
+	defer func() {
+		newSessionBackend = origBK
+		lookPath = origLP
+		backendForTask = origBF
+	}()
+
+	// Agent-aware backend: pane exists but NO agent registered.
+	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
+		return &fakeAgentAwareBackend{
+			CheckAgentAliveFn: func(windowID string) (bool, bool, error) {
+				return true, false, nil // pane exists, but no agent
+			},
+		}, "herdr", nil
+	}
+	// Launch uses this fresh backend (new window).
+	newSessionBackend = func(string) (session.Backend, string, error) {
+		return &fakeBackend{
+			NewWindowFn: func(_, _ string) (string, error) { return "win-new", nil },
+			AliveFn:     func(string) bool { return true },
+		}, "herdr", nil
+	}
+	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
+
+	res, err := Recover(parent, []Info{{ID: "sm-agent-dead", Home: smHome}})
+	if err != nil {
+		t.Fatalf("Recover error: %v", err)
+	}
+	if res.Relaunched != 1 || res.Failed != 0 {
+		t.Errorf("counts = %+v, want relaunched=1 (pane exists, no agent → dead captain)", res)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverRelaunched {
+		t.Errorf("entry = %+v, want RecoverRelaunched", res.Entries)
+	}
+}
+
+func TestRecover_AliveWithAgentNotRelaunched(t *testing.T) {
+	parent := t.TempDir()
+	smHome := seedCaptainForTest(t, parent, "sm-alive-agent")
+	writeCaptainMeta(t, parent, "sm-alive-agent", smHome, "win-alive")
+
+	origBF := backendForTask
+	defer func() { backendForTask = origBF }()
+
+	// Agent-aware backend: pane exists with registered agent.
+	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
+		return &fakeAgentAwareBackend{
+			CheckAgentAliveFn: func(windowID string) (bool, bool, error) {
+				return true, true, nil // pane exists with agent
+			},
+		}, "herdr", nil
+	}
+
+	// Track launches: none should happen.
+	launchCalls := 0
+	origLP := lookPath
+	defer func() { lookPath = origLP }()
+	lookPath = func(string) (string, error) {
+		launchCalls++
+		return "/usr/local/bin/pi", nil
+	}
+
+	res, err := Recover(parent, []Info{{ID: "sm-alive-agent", Home: smHome}})
+	if err != nil {
+		t.Fatalf("Recover error: %v", err)
+	}
+	if launchCalls != 0 {
+		t.Errorf("expected no launch, got %d", launchCalls)
+	}
+	if res.Alive != 1 || res.Relaunched != 0 {
+		t.Errorf("counts = %+v, want alive=1", res)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverAlive {
+		t.Errorf("entry = %+v, want RecoverAlive", res.Entries)
 	}
 }
 
