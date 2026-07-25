@@ -8,11 +8,11 @@ metadata:
 
 # harness-adapters — launch templates and harness detection
 
-Thin agent-only wrapper for `docs/skills/harness-adapters.md`. The canonical full doc at that path covers the launch template table (model flag and effort flag per harness), harness detection via env markers and process ancestry, and turn-end hooks mechanics.
+Agent-only wrapper for the bundled `REFERENCE.md`, covering launch templates, harness detection, and turn-end hooks.
 
 ## Launch templates per harness
 
-Consult `docs/skills/harness-adapters.md` for the complete table of model flags and effort flags for claude, codex, opencode, pi, and grok harnesses.
+Consult `REFERENCE.md` for the complete model and effort flag table.
 
 ## Harness detection
 
@@ -20,8 +20,8 @@ The canonical doc covers env marker checks (CLAUDE_CODE, GITHUB_COPILOT, OPENCOD
 
 ## Turn-end hooks
 
-See `docs/skills/harness-adapters.md` for turn-end guard installation and removal details.
+See `REFERENCE.md` for turn-end guard and dispatch details.
 
 ---
 
-See `docs/skills/harness-adapters.md` for the complete reference.
+See `REFERENCE.md` for the complete reference.

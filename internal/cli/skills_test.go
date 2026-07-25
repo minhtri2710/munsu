@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestEmbeddedSkillNames(t *testing.T) {
@@ -162,6 +164,123 @@ func TestInitCmdHasSkillFlag(t *testing.T) {
 	if flag.DefValue != "" {
 		t.Errorf("expected empty default for --skill, got %q", flag.DefValue)
 	}
+}
+
+func TestEmbeddedSkillReferencesResolve(t *testing.T) {
+	if err := validateSkillBundle(skillFiles, "skills"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMunsuOpsAgentMirrorMatchesCanonical(t *testing.T) {
+	canonical := filepath.Join("internal", "cli", "skills", "munsu-ops")
+	mirror := filepath.Join(".agents", "skills", "munsu-ops")
+	compareSkillDirectories(t, os.DirFS(filepath.Join("..", "..")), canonical, mirror)
+}
+
+func TestInstalledMunsuOpsReferencesResolve(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "skills")
+	installed, err := installAllSkills(dest, nil)
+	if err != nil {
+		t.Fatalf("installAllSkills: %v", err)
+	}
+	if len(installed) == 0 {
+		t.Fatal("expected embedded skills to install")
+	}
+	for _, name := range []string{"SKILL.md", "COMMANDS.md", "SUPERVISION.md"} {
+		if _, err := os.Stat(filepath.Join(dest, "munsu-ops", name)); err != nil {
+			t.Fatalf("installed companion %s: %v", name, err)
+		}
+	}
+	if err := validateSkillBundle(os.DirFS(dest), "."); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateSkillBundleReferences(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   fstest.MapFS
+		wantErr string
+	}{
+		{name: "valid companion", files: fstest.MapFS{
+			"skills/main/SKILL.md":     {Data: []byte("See `REFERENCE.md` and [commands](COMMANDS.md).")},
+			"skills/main/REFERENCE.md": {Data: []byte("reference")},
+			"skills/main/COMMANDS.md":  {Data: []byte("commands")},
+		}},
+		{name: "missing reference", files: fstest.MapFS{
+			"skills/main/SKILL.md": {Data: []byte("See `REFERENCE.md`.")},
+		}, wantErr: "resolves to missing"},
+		{name: "path escape", files: fstest.MapFS{
+			"skills/main/SKILL.md": {Data: []byte("See [outside](../outside.md).")},
+		}, wantErr: "escapes skill module"},
+		{name: "external and anchor ignored", files: fstest.MapFS{
+			"skills/main/SKILL.md": {Data: []byte("[web](https://example.com/x.md) [section](#local)")},
+		}},
+		{name: "inline reference after fence", files: fstest.MapFS{
+			"skills/main/SKILL.md": {Data: []byte("```sh\necho docs/ignored.md\n```\nSee `docs/missing.md`.")},
+		}, wantErr: "resolves to missing"},
+		{name: "unknown skill show target", files: fstest.MapFS{
+			"skills/main/SKILL.md": {Data: []byte("Run `munsu skill show absent-skill`.")},
+		}, wantErr: "is not embedded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSkillBundle(tt.files, "skills")
+			if tt.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("error=%v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func compareSkillDirectories(t *testing.T, fsys fs.FS, left, right string) {
+	t.Helper()
+	leftFiles := readSkillDirectory(t, fsys, left)
+	rightFiles := readSkillDirectory(t, fsys, right)
+	if len(leftFiles) != len(rightFiles) {
+		t.Fatalf("file count differs: canonical=%d mirror=%d", len(leftFiles), len(rightFiles))
+	}
+	for name, leftData := range leftFiles {
+		rightData, ok := rightFiles[name]
+		if !ok {
+			t.Errorf("mirror missing %s", name)
+			continue
+		}
+		if string(leftData) != string(rightData) {
+			t.Errorf("mirror content differs for %s", name)
+		}
+	}
+}
+
+func readSkillDirectory(t *testing.T, fsys fs.FS, root string) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	err := fs.WalkDir(fsys, root, func(filename string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(fsys, filename)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, filename)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = data
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
 }
 
 func TestSkillCmdRegistration(t *testing.T) {

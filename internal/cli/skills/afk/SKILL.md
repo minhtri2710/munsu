@@ -35,7 +35,7 @@ echo $?   # 0 = clean, 1 = actionable items remain
 
 ## Contract
 
-See `docs/skills/afk.md` for the full contract:
+See `REFERENCE.md` for the bundled contract:
 
 - Consent flag (`state/.afk`) — durable away-mode marker
 - Identity lock (`state/.afk.lock`) — prevents duplicate daemons per home
@@ -51,4 +51,4 @@ See `docs/skills/afk.md` for the full contract:
 1. All AFK operations are scoped to a single `MUNSU_HOME` — never touches sibling homes
 2. Inject requires consent flag + configured target + Empty composer (triple gate)
 3. Return is idempotent — safe to call on clean state
-4. See `docs/skills/afk.md` for full safety invariants
+4. See `REFERENCE.md` for the full safety invariants

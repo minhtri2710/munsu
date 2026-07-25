@@ -235,4 +235,4 @@ Every captain charter (AGENTS.md) **must** encode the idle-by-default contract. 
 - `internal/captain/captain.go` — authoritative Go implementation of all lifecycle operations
 - `internal/cli/root.go` — CLI verb registration for `munsu captain *`
 - `internal/harness/harness.go` — harness resolution chain for captain launch
-- `docs/port-mapping.md` — module map and port assignments
+- `munsu skill show captain-provisioning` — bundled lifecycle contract; use `munsu captain --help` for the current command surface.

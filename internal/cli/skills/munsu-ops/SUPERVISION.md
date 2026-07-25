@@ -1,4 +1,4 @@
-# Supervision loop — watch / wake-drain / guard / afk
+# Supervision loop — watch / wake / guard / afk
 
 This document details the soldier supervision loop. For the high-level step, see `SKILL.md` step 5.
 
@@ -7,17 +7,22 @@ This document details the soldier supervision loop. For the high-level step, see
 The watcher is a singleton persistent event-driven daemon. It queues actionable wake reasons and continues polling until stopped.
 
 - **Ensure:** `munsu watch ensure [--restart]`
-- **Run once:** `munsu watch` (exits with wake reason or does nothing)
+- **Run once:** `munsu watch run`
+- **Status:** `munsu watch status`
+- **Stop:** `munsu watch stop`
 - **Singleton:** Home-scoped lock prevents multiple concurrent watchers.
 
-## Wake handling (`munsu wake-drain`)
+## Wake handling (`munsu wake`)
 
-When the watcher fires, a wake is queued. The operator drains it:
+When the watcher queues actionable events, prefer lease-based handling:
 
 ```sh
-munsu wake-drain    # process all queued wakes
-munsu soldier-state <id>  # read ground truth (not raw status tail)
+munsu wake claim <consumer-id>       # claim a bounded batch under a lease
+munsu soldier-state <id>             # read ground truth, not a raw status tail
+munsu wake ack <lease-id> <event-id> # acknowledge each processed event
 ```
+
+`munsu wake drain` and the `munsu wake-drain` alias remain legacy alternatives that drain all pending wakes without lease management.
 
 After handling actionable wakes, confirm the persistent watcher remains healthy if tasks are still in flight:
 
@@ -43,7 +48,7 @@ This sets an AFK flag and polls the fleet at a reduced cadence. Only general-rel
 
 ## Stuck soldier recovery
 
-If a soldier is unresponsive, do not re-implement recovery logic here. Consult `docs/skills/stuck-soldier-recovery.md` for the escalation ladder:
+If a soldier is unresponsive, do not re-implement recovery logic here. Run `munsu skill show stuck-soldier-recovery` for the full escalation ladder:
 
 1. `munsu peek <id>` — read last N lines.
 2. `munsu send <id> "<instruction>"` — steer.

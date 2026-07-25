@@ -54,7 +54,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 - On wake: prefer `munsu wake claim <consumer-id>` with lease management;
   `munsu wake-drain` is the simpler legacy alternative that drains all pending wakes.
 - Ground truth: `munsu soldier-state <id>` (not raw status tail).
-- Steer as needed: `munsu send <id> "<line>"` (downlink only -- fails on captain:*/general).
+- Steer as needed: `munsu send <id> "<line>"` (downlink only; Soldier and Captain targets are valid, while uplink to `general` is refused).
 - Uplink status: `munsu report <state> "<msg>"` reports up the hierarchy (soldier/captain/general).
   Use `munsu notify` as an alias.
 - **inbox** — preview: `munsu inbox` lists pending wakes and last captain status lines side by side.
@@ -64,9 +64,9 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 **Context pointer:** If a soldier is unresponsive or stuck, run `munsu skill show stuck-soldier-recovery` and follow its escalation ladder (peek -> steer -> interrupt -> relaunch -> fail).
 
-**Context pointer:** Supervision behavior varies by harness. Run `munsu skill show harness-adapters`
-for launch templates. The per-harness supervision protocols at `docs/supervision-protocols/`
-describe the exact arm/wake/drain/guard loop for each supported harness (claude, codex, grok, pi, opencode).
+**Context pointer:** Supervision behavior varies by harness. Run `munsu skill show harness-adapters` for launch templates, and see `SUPERVISION.md` for the canonical watch/wake/guard loop.
+
+### 6. Deliver
 
 Delivery mode is set at spawn time (`--mode`). Act according to mode:
 
@@ -89,11 +89,11 @@ munsu teardown <id> [--force]
 ### Fleet-wide checks
 
 - `munsu fleet view` — see the full fleet.
-- `munsu captain converge` — flush send outbox after captain lifecycle changes
+- `munsu captain converge` — reconcile mailbox pending records, terminal receipts, nudges, and inherited config after Captain lifecycle changes.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
 - `munsu fleet bearings` — compact resume report.
 - `munsu inbox` — preview pending wakes and captain status lines in one view.
-- `munsu stow --general <text...>` — capture general preferences (data/learnings.md); created lazily if absent.
+- `munsu stow --general <text...>` — capture General preferences (`data/general.md`); created lazily if absent.
 - `munsu stow --kind general <text...>` — same as --general.
 
 ## Reference rules
@@ -108,6 +108,6 @@ munsu teardown <id> [--force]
 ## See also
 
 - `COMMANDS.md` — full command map grouped by lifecycle phase.
-- `docs/supervision-protocols/` — per-harness supervision protocol docs.
-- `docs/skills/decision-hold-lifecycle.md` — decision-hold lifecycle canonical reference.
+- `SUPERVISION.md` — canonical watch/wake/guard/AFK loop.
+- `munsu skill show decision-hold-lifecycle` — decision-hold lifecycle reference.
 - `munsu doctor` — toolchain diagnostics with fix commands.

@@ -59,9 +59,9 @@ The agent performs the semantic inventory — scripts must not infer decisions f
 
 ## See also
 
-- `docs/skills/decision-hold-lifecycle.md` — canonical reference with detailed mechanism.
-- Munsu's decision-hold Go module (`internal/decisionhold/`) in PR sequence D will add structured `munsu decision-hold` commands.
+- `REFERENCE.md` — bundled canonical mechanism.
+- Structured `munsu decision-hold` commands are preferred when available.
 
 ---
 
-See `docs/skills/decision-hold-lifecycle.md` for the complete reference.
+See `REFERENCE.md` for the complete reference.

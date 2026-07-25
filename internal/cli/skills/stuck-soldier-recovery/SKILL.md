@@ -8,7 +8,7 @@ metadata:
 
 # stuck-soldier-recovery — soldier recovery escalation
 
-Thin agent-only wrapper for `docs/skills/stuck-soldier-recovery.md`. The canonical full doc at that path covers the full escalation ladder and condition-based guidance for deciding which level to apply.
+Agent-only wrapper for the bundled `REFERENCE.md`, covering the escalation ladder and condition-based guidance.
 
 ## Escalation ladder
 
@@ -20,8 +20,8 @@ Thin agent-only wrapper for `docs/skills/stuck-soldier-recovery.md`. The canonic
 
 ## When to use each level
 
-Consult `docs/skills/stuck-soldier-recovery.md` for the condition table mapping situations (no status writes, repeated questions, rate limits, stale output, pipeline stalls, unreachable models) to the appropriate action.
+Consult `REFERENCE.md` for the condition table mapping symptoms to the appropriate action.
 
 ---
 
-See `docs/skills/stuck-soldier-recovery.md` for the complete reference.
+See `REFERENCE.md` for the complete reference.

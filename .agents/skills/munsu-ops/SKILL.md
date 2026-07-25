@@ -19,11 +19,12 @@ Run `munsu home` to check whether the munsu home directory exists. The resolutio
 
 ### 2. Session start
 
-Run `munsu session-start` to lock, bootstrap, and print the session-start digest. The digest has four sections:
+Run `munsu session-start` to lock, bootstrap, and print the session-start digest. The digest has five sections:
 1. **Bootstrap Diagnostics** — toolchain readiness lines (see context pointer below).
-2. **Context** — content of `data/general.md`, `data/learnings.md`, `data/projects.md`, and `data/captains.md` (first 20 lines each).
-3. **Fleet State** — in-flight tasks with last status line and pane liveness.
-4. **Supervision** — wake-handling reminder block.
+2. **Backlog Digest** — bounded, metadata-only summary of queued/in-flight/blocked tasks (IDs only, no bodies).
+3. **Context** — content of `data/general.md`, `data/learnings.md`, `data/projects.md`, and `data/captains.md` (first 20 lines each).
+4. **Fleet State** — in-flight tasks with last status line and pane liveness.
+5. **Supervision** — wake-handling reminder block.
 **Completion:** Digest understood; lock status known. Do not re-bulk-read what the digest already printed.
 
 **Context pointer:** Bootstrap diagnostics lines (`MISSING:`, `NEEDS_GH_AUTH`, `TANGLE:`, `SOLDIER_HARNESS:`, `SOLDIER_DISPATCH:`, `FLEET_SYNC:`, `SECOND_SYNC:`, `SECOND_LIVENESS:`, `TASKS_AXI:`) are handled by the auxiliary skill — run `munsu skill show bootstrap-diagnostics`. Review the Context and Fleet State sections — they replace reading those files by hand.
@@ -49,16 +50,21 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 ### 5. Supervise
 
-- Arm the watcher: `munsu watch-arm [--restart]`.
-- On wake: `munsu wake-drain` then `munsu soldier-state <id>` (not raw status tail) as ground truth.
-- Steer as needed: `munsu send <id> "<line>"`.
-- Peek at output: `munsu peek <id> [--lines N]`.
+- Ensure the watcher: `munsu watch ensure [--restart]`.
+- On wake: prefer `munsu wake claim <consumer-id>` with lease management;
+  `munsu wake-drain` is the simpler legacy alternative that drains all pending wakes.
+- Ground truth: `munsu soldier-state <id>` (not raw status tail).
+- Steer as needed: `munsu send <id> "<line>"` (downlink only; Soldier and Captain targets are valid, while uplink to `general` is refused).
+- Uplink status: `munsu report <state> "<msg>"` reports up the hierarchy (soldier/captain/general).
+  Use `munsu notify` as an alias.
+- **inbox** — preview: `munsu inbox` lists pending wakes and last captain status lines side by side.
+  Use before `munsu wake claim` or `munsu wake-drain` to preview what needs attention.
 
-**Completion:** Actionable wakes handled; watcher re-armed if tasks are still in flight.
+**Completion:** Actionable wakes handled; persistent watcher remains healthy while tasks are in flight.
 
 **Context pointer:** If a soldier is unresponsive or stuck, run `munsu skill show stuck-soldier-recovery` and follow its escalation ladder (peek -> steer -> interrupt -> relaunch -> fail).
 
-**Supervision loop details:** See `SUPERVISION.md` for watch/wake-drain/guard/afk loop mechanics.
+**Context pointer:** Supervision behavior varies by harness. Run `munsu skill show harness-adapters` for launch templates, and see `SUPERVISION.md` for the canonical watch/wake/guard loop.
 
 ### 6. Deliver
 
@@ -83,10 +89,11 @@ munsu teardown <id> [--force]
 ### Fleet-wide checks
 
 - `munsu fleet view` — see the full fleet.
+- `munsu captain converge` — reconcile mailbox pending records, terminal receipts, nudges, and inherited config after Captain lifecycle changes.
 - `munsu guard` — run after every fleet action to catch tangle or stale watcher.
 - `munsu fleet bearings` — compact resume report.
-- `munsu stow <text...>` — capture durable learnings (data/learnings.md); inspect-then-update: matching entries are replaced, not duplicated.
-- `munsu stow --general <text...>` — capture general preferences (data/general.md); created lazily if absent.
+- `munsu inbox` — preview pending wakes and captain status lines in one view.
+- `munsu stow --general <text...>` — capture General preferences (`data/general.md`); created lazily if absent.
 - `munsu stow --kind general <text...>` — same as --general.
 
 ## Reference rules
@@ -95,8 +102,12 @@ munsu teardown <id> [--force]
 - Heed `blocked:`, `needs-decision:`, and `paused:` statuses from soldiers.
 - Run `munsu guard` after every fleet action.
 - The seeded orchestrator manual at `<home>/AGENTS.md` is the authoritative per-project operator guide.
+- Before marking a scout or review complete, load the `decision-hold-lifecycle` auxiliary skill
+  via `munsu skill show decision-hold-lifecycle` to durably track unresolved general decisions.
 
 ## See also
 
 - `COMMANDS.md` — full command map grouped by lifecycle phase.
-- `SUPERVISION.md` — watch/wake-drain/guard/afk loop details.
+- `SUPERVISION.md` — canonical watch/wake/guard/AFK loop.
+- `munsu skill show decision-hold-lifecycle` — decision-hold lifecycle reference.
+- `munsu doctor` — toolchain diagnostics with fix commands.
