@@ -356,6 +356,10 @@ func runRecovery(homeDir string) {
 }
 
 func runCycle(homeDir string) (bool, error) {
+	// Snapshot recovery state before the call — prevents double invocation
+	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
+	recoveryWasDone := recoveryDone
+
 	// Run one-shot recovery on first cycle.
 	runRecovery(homeDir)
 
@@ -372,7 +376,8 @@ func runCycle(homeDir string) (bool, error) {
 		}
 	}
 
-	// Per-cycle terminal receipt reconciliation.
+	// Per-cycle terminal receipt reconciliation (cycles after startup only;
+	// startup recovery already handles the first cycle via runRecovery).
 	// Catches receipts that arrive after the one-shot startup recovery
 	// (e.g., soldier finishes mid-cycle). Uses the same
 	// TerminalReconcileHook as startup recovery — the underlying
@@ -381,7 +386,7 @@ func runCycle(homeDir string) (bool, error) {
 	// exactly-once relay.
 	// On error, the error is logged and the cycle continues (bounded
 	// failure) — partial failure must not falsely ack/close obligations.
-	if TerminalReconcileHook != nil {
+	if recoveryWasDone && TerminalReconcileHook != nil {
 		if err := TerminalReconcileHook(homeDir); err != nil {
 			fmt.Fprintf(os.Stderr, "terminal reconcile cycle: %v\n", err)
 		}
