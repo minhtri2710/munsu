@@ -374,6 +374,49 @@ func MarkActivationSeen(captainHome, taskID, termKey string) error {
 	return os.WriteFile(p, []byte(content), 0644)
 }
 
+// resolveCaptainActivationTarget resolves the authoritative captain agent pane
+// from captain task meta stored in the parent General home. This is the
+// authoritative pane source — NOT the inherited HERDR_PANE_ID from the
+// watcher/launcher environment.
+//
+// Returns the target result with the handle in "session:pane_id" format, or
+// an error if the meta cannot be read or has no herdr_pane_id.
+func resolveCaptainActivationTarget(captainHome, parentHome string) (afk.TargetResult, error) {
+	if parentHome == "" {
+		return afk.TargetResult{}, fmt.Errorf("no parent home for captain meta lookup")
+	}
+
+	captainID, err := readCaptainID(captainHome)
+	if err != nil {
+		return afk.TargetResult{}, fmt.Errorf("reading captain id: %w", err)
+	}
+
+	taskID := "captain:" + captainID
+	meta, err := task.ReadMeta(parentHome, taskID)
+	if err != nil {
+		return afk.TargetResult{}, fmt.Errorf("reading captain meta %s: %w", taskID, err)
+	}
+
+	paneID := strings.TrimSpace(meta["herdr_pane_id"])
+	if paneID == "" {
+		return afk.TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
+	}
+
+	session := strings.TrimSpace(meta["herdr_session"])
+	if session == "" {
+		session = "default"
+	}
+
+	handle := session + ":" + paneID
+
+	return afk.TargetResult{
+		Source:       afk.RuntimeSource,
+		Handle:       handle,
+		Session:      session,
+		SourceDetail: "captain task meta: " + taskID,
+	}, nil
+}
+
 // listAllReceipts scans the receipts directory and returns ALL receipt files
 // (regardless of ack status). This is used by ActivateOnReceipt to find
 // receipts that may already be acked (relayed) but not yet activation-seen.
@@ -424,25 +467,48 @@ func listAllReceipts(homeDir string) ([]turnend.PendingReceipt, error) {
 // not yet activation-seen, attempts a safe, idempotent activation nudge to
 // the captain agent pane.
 //
+// The activation target is resolved from captain task meta in the parent
+// General home (authoritative herdr_pane_id/herdr_session), NOT from the
+// inherited HERDR_PANE_ID environment variable which may reflect the
+// watcher/launcher pane instead of the captain agent pane.
+//
 // Unlike ReconcilePending (which only processes un-acked receipts), this
 // function processes ALL receipts because the activation nudge is independent
 // of the General relay lifecycle — a receipt may be relayed (acked) but still
 // need the captain agent pane nudged.
 //
 // Safe inject guards are honored: if the captain agent pane is busy or the
-// inject target is unsafe, the nudge is skipped (not retried for this receipt
-// on subsequent cycles — the marker is still written to prevent infinite
-// retries on an unsafe target).
+// inject target is unsafe, the nudge is skipped and retried on the next cycle.
+// Activation-seen is written ONLY after successful acknowledged submission.
 //
 // Returns the number of activation nudges that were successfully injected.
 // Idempotent: safe to call repeatedly. Already activation-seen receipts are
 // skipped without examining the pane target again.
-func ActivateOnReceipt(captainHome string) int {
+func ActivateOnReceipt(captainHome, parentHome string) int {
 	allReceipts, err := listAllReceipts(captainHome)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: listing receipts for activation: %v\n", err)
 		return 0
 	}
+
+	// Resolve the authoritative captain agent pane from captain task meta.
+	// This uses the pane record from metadata (written at launch), never the
+	// inherited HERDR_PANE_ID which may reflect the watcher/launcher pane.
+	target, err := resolveCaptainActivationTarget(captainHome, parentHome)
+	if err != nil || target.Handle == "" {
+		// No authoritative target available. Do NOT mark activation-seen
+		// so retries remain possible if meta becomes available later.
+		return 0
+	}
+
+	// Obtain a session backend for injection.
+	bk, _, err := session.Resolve(captainHome, "")
+	if err != nil {
+		// No backend available. Do NOT mark activation-seen.
+		return 0
+	}
+
+	var afkCap afk.PaneCapture = bk
 
 	count := 0
 	for _, pr := range allReceipts {
@@ -451,41 +517,15 @@ func ActivateOnReceipt(captainHome string) int {
 			continue
 		}
 
-		// Resolve the captain agent pane target from the captain home.
-		target, err := afk.ResolveTargetWithSource(captainHome)
-		if err != nil || target.Handle == "" || target.Source == afk.Unsupported {
-			// No target configured — mark as seen to avoid retry.
-			if merr := MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey); merr != nil {
-				fmt.Fprintf(os.Stderr, "warning: marking activation-seen for %s/%s: %v\n",
-					pr.TaskID, pr.TermKey, merr)
-			}
-			continue
-		}
-
-		// Obtain a session backend for injection.
-		bk, _, err := session.Resolve(captainHome, "")
-		if err != nil {
-			// No backend available — mark as seen to avoid retry.
-			if merr := MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey); merr != nil {
-				fmt.Fprintf(os.Stderr, "warning: marking activation-seen for %s/%s: %v\n",
-					pr.TaskID, pr.TermKey, merr)
-			}
-			continue
-		}
-
-		var afkCap afk.PaneCapture = bk
-
 		// Check inject safety: composer must be empty (agent waiting).
 		safe, _, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
 		if err != nil {
-			// Capture failure — mark as seen to avoid retry.
-			MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey)
+			// Capture failure. Do NOT mark activation-seen — preserve retry.
 			continue
 		}
 		if !safe {
 			// Unsafe target (composer busy, unknown verdict).
-			// Still mark as seen so we don't retry every cycle.
-			MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey)
+			// Do NOT mark activation-seen — preserve retry.
 			continue
 		}
 
@@ -495,17 +535,16 @@ func ActivateOnReceipt(captainHome string) int {
 
 		result := session.SubmitPrompt(bk, target.Handle, markedMsg)
 		if !result.Acknowledged() {
-			// Injection failed — still mark as seen to avoid retry.
-			MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey)
+			// Submit failed (backend failure, endpoint dead, etc.).
+			// Do NOT mark activation-seen — preserve retry.
 			continue
 		}
 
-		// Mark as activation-seen after successful injection.
+		// Only mark activation-seen after successful acknowledged submission.
 		if err := MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: marking activation-seen for %s/%s: %v\n",
 				pr.TaskID, pr.TermKey, err)
 		}
-
 		count++
 	}
 	return count

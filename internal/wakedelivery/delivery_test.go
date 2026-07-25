@@ -1,6 +1,7 @@
 package wakedelivery
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -796,13 +797,35 @@ func TestActivationSeen_MarkerDirect(t *testing.T) {
 	}
 }
 
+// parentHomeWithMeta creates a parent home with captain meta containing
+// herdr_pane_id and writes a provenance marker to captainHome.
+func parentHomeWithMeta(t *testing.T, captainHome, captainID, paneID, session string) string {
+	t.Helper()
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+
+	// Write provenance marker to captain home.
+	initProvenance(t, captainHome, captainID)
+
+	// Write captain task meta to parent home (mimics Launch).
+	taskID := "captain:" + captainID
+	metaContent := fmt.Sprintf("kind=captain\nherdr_pane_id=%s\nherdr_session=%s\nbackend=herdr\n", paneID, session)
+	metaPath := filepath.Join(parentHome, "state", taskID+".meta")
+	if err := os.WriteFile(metaPath, []byte(metaContent), 0644); err != nil {
+		t.Fatalf("writing captain meta: %v", err)
+	}
+
+	return parentHome
+}
+
 // TestActivateOnReceipt_NoReceipts verifies that ActivateOnReceipt returns 0
 // when there are no pending receipts.
 func TestActivateOnReceipt_NoReceipts(t *testing.T) {
 	captainHome := receiptEnv(t)
+	parentHome := parentHomeWithMeta(t, captainHome, "test-captain", "p1", "w1")
 
 	// No receipt files at all.
-	count := ActivateOnReceipt(captainHome)
+	count := ActivateOnReceipt(captainHome, parentHome)
 	if count != 0 {
 		t.Errorf("expected 0 activations with no receipts, got %d", count)
 	}
@@ -812,6 +835,7 @@ func TestActivateOnReceipt_NoReceipts(t *testing.T) {
 // activation-seen do not trigger duplicate nudges.
 func TestActivateOnReceipt_AllAlreadySeen(t *testing.T) {
 	captainHome := receiptEnv(t)
+	parentHome := parentHomeWithMeta(t, captainHome, "test-captain", "p1", "w1")
 	taskID, termKey := "already-seen", "seen-key"
 
 	// Write receipt and mark it as activation-seen.
@@ -822,7 +846,7 @@ func TestActivateOnReceipt_AllAlreadySeen(t *testing.T) {
 		t.Fatalf("MarkActivationSeen: %v", err)
 	}
 
-	count := ActivateOnReceipt(captainHome)
+	count := ActivateOnReceipt(captainHome, parentHome)
 	if count != 0 {
 		t.Errorf("expected 0 activations for already-seen receipt, got %d", count)
 	}
@@ -834,33 +858,34 @@ func TestActivateOnReceipt_AllAlreadySeen(t *testing.T) {
 }
 
 // TestActivateOnReceipt_NoBackend verifies that when no session backend is
-// available, ActivateOnReceipt gracefully returns 0 and marks the receipt
-// as activation-seen (avoids retry every cycle).
+// available, ActivateOnReceipt gracefully returns 0 and does NOT mark the
+// receipt as activation-seen (preserves retry).
 func TestActivateOnReceipt_NoBackend(t *testing.T) {
 	captainHome := receiptEnv(t)
+	parentHome := parentHomeWithMeta(t, captainHome, "test-captain", "p1", "w1")
 	taskID, termKey := "no-backend", "no-bk-key"
 
-	// Write a receipt (no config/general-pane, no tmux, no herdr).
 	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
 
-	count := ActivateOnReceipt(captainHome)
+	count := ActivateOnReceipt(captainHome, parentHome)
 	if count != 0 {
 		t.Errorf("expected 0 activations with no backend, got %d", count)
 	}
 
-	// Receipt should be marked as activation-seen so it isn't retried.
-	if !IsActivationSeen(captainHome, taskID, termKey) {
-		t.Error("receipt should be activation-seen after failed activation attempt")
+	// Receipt must NOT be activation-seen — retries must remain possible.
+	if IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("receipt should NOT be activation-seen after failed activation attempt")
 	}
 }
 
 // TestActivateOnReceipt_OnlyNewAreActivated verifies that when there are
-// multiple receipts (some seen, some new), only new receipts trigger
-// activation attempts. This tests idempotent partial progress.
+// multiple receipts (some seen, some new), only new receipts are candidates
+// for activation. Without a backend, no new marker is written.
 func TestActivateOnReceipt_OnlyNewAreActivated(t *testing.T) {
 	captainHome := receiptEnv(t)
+	parentHome := parentHomeWithMeta(t, captainHome, "test-captain", "p1", "w1")
 
 	// Receipt 1: already seen.
 	if err := turnend.WriteReceipt(captainHome, "seen-task", "seen-key", "done", ""); err != nil {
@@ -875,17 +900,14 @@ func TestActivateOnReceipt_OnlyNewAreActivated(t *testing.T) {
 		t.Fatalf("WriteReceipt new: %v", err)
 	}
 
-	count := ActivateOnReceipt(captainHome)
-	// New receipt will fail to activate (no backend) but should still be counted.
-	// Since there's no backend, activation will fail -> count=0.
-	// The important check: the new receipt is marked as activation-seen.
+	count := ActivateOnReceipt(captainHome, parentHome)
 	if count != 0 {
 		t.Errorf("expected 0 activations (no backend), got %d", count)
 	}
 
-	// New receipt must be activation-seen after the attempt.
-	if !IsActivationSeen(captainHome, "new-task", "new-key") {
-		t.Error("new receipt should be activation-seen after activation attempt")
+	// New receipt must NOT be activation-seen — no backend means no submission.
+	if IsActivationSeen(captainHome, "new-task", "new-key") {
+		t.Error("new receipt should NOT be activation-seen when no backend")
 	}
 
 	// Seen receipt must remain activation-seen.
@@ -894,24 +916,102 @@ func TestActivateOnReceipt_OnlyNewAreActivated(t *testing.T) {
 	}
 }
 
-// TestActivateOnReceipt_NoGeneralPaneConfig verifies behavior when the captain
-// home has no config/general-pane file (no target configured).
-func TestActivateOnReceipt_NoGeneralPaneConfig(t *testing.T) {
+// TestActivateOnReceipt_NoMeta verifies that when no captain meta exists
+// (no parent home or no herdr_pane_id), ActivateOnReceipt returns 0 and
+// does NOT write activation-seen (retries remain possible).
+func TestActivateOnReceipt_NoMeta(t *testing.T) {
 	captainHome := receiptEnv(t)
-	taskID, termKey := "no-pane-config", "no-pane-key"
+	taskID, termKey := "no-meta-task", "no-meta-key"
 
 	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
 
-	// No config/general-pane file exists.
-	count := ActivateOnReceipt(captainHome)
+	// No parent home set, no captain meta exists.
+	count := ActivateOnReceipt(captainHome, "")
 	if count != 0 {
-		t.Errorf("expected 0 activations with no pane config, got %d", count)
+		t.Errorf("expected 0 activations with no meta, got %d", count)
 	}
 
-	// Receipt should still be marked as seen (avoids retry).
-	if !IsActivationSeen(captainHome, taskID, termKey) {
-		t.Error("receipt should be activation-seen after failed activation")
+	// Receipt must NOT be marked activation-seen.
+	if IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("receipt should NOT be activation-seen when no meta available")
+	}
+}
+
+// TestActivateOnReceipt_EnvMismatchRegression verifies that when the
+// process environment has a wrong HERDR_PANE_ID (inherited from watcher),
+// but captain meta has the correct herdr_pane_id, the meta value is used.
+func TestActivateOnReceipt_EnvMismatchRegression(t *testing.T) {
+	captainHome := receiptEnv(t)
+	// Captain meta has pane "p2" in session "w76".
+	parentHome := parentHomeWithMeta(t, captainHome, "test-captain", "p2", "w76")
+	taskID, termKey := "env-mismatch", "mm-key"
+
+	// Set the inherited env to a DIFFERENT pane (simulating watcher inheritance).
+	t.Setenv("HERDR_PANE_ID", "w1K:p1")
+	t.Setenv("HERDR_ENV", "1")
+
+	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+
+	// Verify that resolveCaptainActivationTarget returns the META pane, not the env pane.
+	target, err := resolveCaptainActivationTarget(captainHome, parentHome)
+	if err != nil {
+		t.Fatalf("resolveCaptainActivationTarget: %v", err)
+	}
+	if target.Handle != "w76:p2" {
+		t.Errorf("expected target handle 'w76:p2' from meta, got %q", target.Handle)
+	}
+}
+
+// TestActivateOnReceipt_MetaWithMissingSession verifies that when meta has
+// herdr_pane_id but no herdr_session, the session defaults to "default".
+func TestActivateOnReceipt_MetaWithMissingSession(t *testing.T) {
+	captainHome := receiptEnv(t)
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+	initProvenance(t, captainHome, "test-captain")
+
+	taskID := "captain:test-captain"
+	metaContent := "kind=captain\nherdr_pane_id=p1\nbackend=herdr\n"
+	metaPath := filepath.Join(parentHome, "state", taskID+".meta")
+	os.WriteFile(metaPath, []byte(metaContent), 0644)
+
+	target, err := resolveCaptainActivationTarget(captainHome, parentHome)
+	if err != nil {
+		t.Fatalf("resolveCaptainActivationTarget: %v", err)
+	}
+	if target.Handle != "default:p1" {
+		t.Errorf("expected target handle 'default:p1', got %q", target.Handle)
+	}
+	if target.Session != "default" {
+		t.Errorf("expected session 'default', got %q", target.Session)
+	}
+}
+
+// TestActivateOnReceipt_EmptyParentHome verifies that an empty parentHome
+// causes resolveCaptainActivationTarget to fail gracefully.
+func TestActivateOnReceipt_EmptyParentHome(t *testing.T) {
+	captainHome := receiptEnv(t)
+
+	_, err := resolveCaptainActivationTarget(captainHome, "")
+	if err == nil {
+		t.Error("expected error with empty parentHome")
+	}
+}
+
+// TestActivateOnReceipt_MissingCaptainMeta verifies behavior when the captain
+// meta file does not exist in the parent home.
+func TestActivateOnReceipt_MissingCaptainMeta(t *testing.T) {
+	captainHome := receiptEnv(t)
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+	initProvenance(t, captainHome, "test-captain")
+
+	_, err := resolveCaptainActivationTarget(captainHome, parentHome)
+	if err == nil {
+		t.Error("expected error when meta file does not exist")
 	}
 }

@@ -46,7 +46,7 @@ func captainActivationHook(homeDir string) {
 	if parentHome == "" {
 		return
 	}
-	wakedelivery.ActivateOnReceipt(homeDir)
+	wakedelivery.ActivateOnReceipt(homeDir, parentHome)
 }
 
 // reconcileHook is the supervision-watcher recovery hook running inside a
