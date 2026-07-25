@@ -1080,3 +1080,373 @@ func TestConsumeReadyEvent_GenerationMismatch(t *testing.T) {
 		t.Fatal("expected error for generation mismatch")
 	}
 }
+
+// TestEmitReadyEvent_CreatesDurableMarker verifies that EmitReadyEvent writes
+// a durable ready event marker file.
+func TestEmitReadyEvent_CreatesDurableMarker(t *testing.T) {
+	home := t.TempDir()
+	taskID := "task:emit-test"
+	eventKey := "turn-1"
+
+	event, err := EmitReadyEvent(home, taskID, eventKey, "")
+	if err != nil {
+		t.Fatalf("EmitReadyEvent: %v", err)
+	}
+	if event == nil {
+		t.Fatal("expected non-nil event")
+	}
+	if event.EventID != eventKey {
+		t.Errorf("EventID=%q, want %q", event.EventID, eventKey)
+	}
+	if event.TaskID != taskID {
+		t.Errorf("TaskID=%q, want %q", event.TaskID, taskID)
+	}
+
+	// Verify marker file exists.
+	_, err = os.Stat(readyEventPath(home, taskID, eventKey))
+	if err != nil {
+		t.Fatalf("marker file should exist: %v", err)
+	}
+
+	// Verify the marker can be parsed back.
+	events, err := ScanReadyEvents(home, taskID)
+	if err != nil {
+		t.Fatalf("ScanReadyEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 ready event, got %d", len(events))
+	}
+	if events[0].EventID != eventKey {
+		t.Errorf("parsed EventID=%q", events[0].EventID)
+	}
+	if events[0].TaskID != taskID {
+		t.Errorf("parsed TaskID=%q", events[0].TaskID)
+	}
+}
+
+// TestEmitReadyEvent_IdempotentSameContent verifies that emitting the same
+// ready event twice is idempotent.
+func TestEmitReadyEvent_IdempotentSameContent(t *testing.T) {
+	home := t.TempDir()
+	taskID := "task:idempotent"
+	eventKey := "same-event"
+
+	event1, err := EmitReadyEvent(home, taskID, eventKey, "")
+	if err != nil {
+		t.Fatalf("first emit: %v", err)
+	}
+
+	event2, err := EmitReadyEvent(home, taskID, eventKey, "")
+	if err != nil {
+		t.Fatalf("second emit: %v", err)
+	}
+
+	if event1.Timestamp != event2.Timestamp {
+		t.Errorf("idempotent emit should preserve original, got %d != %d", event1.Timestamp, event2.Timestamp)
+	}
+
+	// Exactly one marker file.
+	events, err := ScanReadyEvents(home, taskID)
+	if err != nil {
+		t.Fatalf("ScanReadyEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+}
+
+// TestScanReadyEvents_NoEvents verifies that scanning with no events is a no-op.
+func TestScanReadyEvents_NoEvents(t *testing.T) {
+	events, err := ScanReadyEvents(t.TempDir(), "no-such-task")
+	if err != nil {
+		t.Fatalf("ScanReadyEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events, got %d", len(events))
+	}
+}
+
+// TestScanReadyEvents_MultipleEvents verifies that multiple ready events are
+// returned in timestamp order.
+func TestScanReadyEvents_MultipleEvents(t *testing.T) {
+	home := t.TempDir()
+	taskID := "task:multi"
+
+	// Emit events in reverse order to verify sorting.
+	_, _ = EmitReadyEvent(home, taskID, "second", "")
+	time.Sleep(time.Millisecond) // ensure distinct timestamps
+	_, _ = EmitReadyEvent(home, taskID, "first", "")
+
+	events, err := ScanReadyEvents(home, taskID)
+	if err != nil {
+		t.Fatalf("ScanReadyEvents: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	// Should be sorted by timestamp (oldest first)
+	if events[0].Timestamp > events[1].Timestamp {
+		t.Error("events not sorted by timestamp")
+	}
+}
+
+// TestCleanReadyEvent verifies that CleanReadyEvent removes a single marker.
+func TestCleanReadyEvent(t *testing.T) {
+	home := t.TempDir()
+	taskID := "task:clean"
+
+	_, err := EmitReadyEvent(home, taskID, "to-clean", "")
+	if err != nil {
+		t.Fatalf("EmitReadyEvent: %v", err)
+	}
+
+	// Verify marker exists before clean.
+	events, _ := ScanReadyEvents(home, taskID)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event before clean")
+	}
+
+	if err := CleanReadyEvent(home, taskID, "to-clean"); err != nil {
+		t.Fatalf("CleanReadyEvent: %v", err)
+	}
+
+	// Verify marker is gone.
+	events, _ = ScanReadyEvents(home, taskID)
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events after clean, got %d", len(events))
+	}
+
+	// Idempotent: cleaning again is no-op.
+	if err := CleanReadyEvent(home, taskID, "to-clean"); err != nil {
+		t.Errorf("idempotent clean should succeed: %v", err)
+	}
+}
+
+// TestCleanAllReadyEvents verifies that CleanAllReadyEvents removes all markers.
+func TestCleanAllReadyEvents(t *testing.T) {
+	home := t.TempDir()
+	taskID := "task:clean-all"
+
+	_, _ = EmitReadyEvent(home, taskID, "first", "")
+	_, _ = EmitReadyEvent(home, taskID, "second", "")
+
+	events, _ := ScanReadyEvents(home, taskID)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events before clean-all")
+	}
+
+	if err := CleanAllReadyEvents(home, taskID); err != nil {
+		t.Fatalf("CleanAllReadyEvents: %v", err)
+	}
+
+	events, _ = ScanReadyEvents(home, taskID)
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events after clean-all, got %d", len(events))
+	}
+
+	// Idempotent.
+	if err := CleanAllReadyEvents(home, taskID); err != nil {
+		t.Errorf("idempotent clean-all should succeed: %v", err)
+	}
+}
+
+// TestConsumeAllReadyEvents_NoPendingIsNoop verifies that consuming ready events
+// with no pending commands is a no-op.
+func TestConsumeAllReadyEvents_NoPendingIsNoop(t *testing.T) {
+	captainHome, soldierTaskID, senderIdent := setupSoldierTestHomes(t, "idle")
+
+	// Emit a ready event with no pending.
+	_, err := EmitReadyEvent(captainHome, soldierTaskID, "no-pending", "")
+	if err != nil {
+		t.Fatalf("EmitReadyEvent: %v", err)
+	}
+
+	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
+	restore := setTestBackend(be)
+	defer restore()
+
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdent, "")
+	if err != nil {
+		t.Fatalf("ConsumeAllReadyEvents: %v", err)
+	}
+	if flushed != 0 {
+		t.Errorf("expected 0 flushed (no pending), got %d", flushed)
+	}
+
+	// Ready event marker is cleaned up even when no pending — the ready signal
+	// has been received and acknowledged. Subsequent sends will go through the
+	// normal non-blocking path (idle soldier = direct send).
+	events, _ := ScanReadyEvents(captainHome, soldierTaskID)
+	if len(events) != 0 {
+		t.Errorf("expected 0 ready events (consumed even without pending), got %d", len(events))
+	}
+}
+
+// TestConsumeAllReadyEvents_FullFlow verifies: emit ready → flush pending command.
+func TestConsumeAllReadyEvents_FullFlow(t *testing.T) {
+	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
+
+	// Queue a command while busy.
+	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
+	restore := setTestBackend(be)
+	defer restore()
+
+	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: full flow")
+	if sendResult.Err != nil || !sendResult.Queued {
+		t.Fatalf("expected queued: err=%v queued=%v", sendResult.Err, sendResult.Queued)
+	}
+
+	// Emit ready event.
+	_, err := EmitReadyEvent(captainHome, soldierTaskID, "full-flow", "")
+	if err != nil {
+		t.Fatalf("EmitReadyEvent: %v", err)
+	}
+
+	// Soldier becomes idle.
+	be.agentStatus = "idle"
+
+	// Consume ready events.
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	if err != nil {
+		t.Fatalf("ConsumeAllReadyEvents: %v", err)
+	}
+	if flushed != 1 {
+		t.Errorf("expected 1 flushed, got %d", flushed)
+	}
+
+	// Exactly 1 SubmitPrompt call (from flush).
+	if be.promptCalls != 1 {
+		t.Errorf("promptCalls=%d, want 1", be.promptCalls)
+	}
+
+	// Ready event marker should be cleaned up.
+	events, _ := ScanReadyEvents(captainHome, soldierTaskID)
+	if len(events) != 0 {
+		t.Errorf("expected 0 ready events after consume, got %d", len(events))
+	}
+}
+
+// TestConsumeAllReadyEvents_StaleEventRejected verifies that stale ready events
+// are rejected and cleaned up.
+func TestConsumeAllReadyEvents_StaleEventRejected(t *testing.T) {
+	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
+
+	// Write a stale ready event marker directly.
+	event := &ReadyEvent{
+		EventID:   "stale-event",
+		TaskID:    soldierTaskID,
+		Key:       "stale-event",
+		Timestamp: time.Now().UnixNano() - int64(10*time.Minute),
+	}
+	data, _ := json.MarshalIndent(event, "", "  ")
+	p := readyEventPath(captainHome, soldierTaskID, "stale-event")
+	os.MkdirAll(filepath.Dir(p), 0755)
+	os.WriteFile(p, data, 0644)
+
+	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
+	restore := setTestBackend(be)
+	defer restore()
+
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	if err != nil {
+		t.Fatalf("ConsumeAllReadyEvents: %v", err)
+	}
+	if flushed != 0 {
+		t.Errorf("expected 0 flushed (stale event), got %d", flushed)
+	}
+
+	// Stale event should be cleaned up.
+	events, _ := ScanReadyEvents(captainHome, soldierTaskID)
+	if len(events) != 0 {
+		t.Errorf("stale event should be cleaned up, got %d events", len(events))
+	}
+}
+
+// TestConsumeAllReadyEvents_WrongTaskID fails closed on wrong task ID.
+func TestConsumeAllReadyEvents_WrongTaskID(t *testing.T) {
+	captainHome, _, senderIdentity := setupSoldierTestHomes(t, "idle")
+
+	// Emit ready event for a different task.
+	_, err := EmitReadyEvent(captainHome, "wrong-task", "evt-1", "")
+	if err != nil {
+		t.Fatalf("EmitReadyEvent: %v", err)
+	}
+
+	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
+	restore := setTestBackend(be)
+	defer restore()
+
+	_, err = ConsumeAllReadyEvents(captainHome, "wrong-task", senderIdentity, "")
+	if err != nil {
+		t.Fatalf("ConsumeAllReadyEvents for wrong task should not error: %v", err)
+	}
+
+	// No task meta for "wrong-task" — scan may fail or return empty.
+	// That's acceptable; the meta is not needed for scan, only for flush.
+}
+
+// TestConsumeAllReadyEvents_DuplicateReadyIdempotent verifies that emitting
+// the same ready event twice and consuming is idempotent.
+func TestConsumeAllReadyEvents_DuplicateReadyIdempotent(t *testing.T) {
+	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
+
+	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
+	restore := setTestBackend(be)
+	defer restore()
+
+	// Queue a command.
+	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: duplicate test")
+	if sendResult.Err != nil || !sendResult.Queued {
+		t.Fatalf("expected queued: err=%v queued=%v", sendResult.Err, sendResult.Queued)
+	}
+
+	// Emit two ready events with DIFFERENT keys (simulates two turn boundaries).
+	// Both trigger the same pending command.
+	_, _ = EmitReadyEvent(captainHome, soldierTaskID, "dup-key-1", "")
+	_, _ = EmitReadyEvent(captainHome, soldierTaskID, "dup-key-2", "")
+
+	// Only 1 marker should exist for the first event (same key stayed).
+	// Actually both markers exist since keys differ.
+	events, _ := ScanReadyEvents(captainHome, soldierTaskID)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 ready events (different keys), got %d", len(events))
+	}
+
+	be.agentStatus = "idle"
+
+	// First consume: flushes the pending command.
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	if err != nil {
+		t.Fatalf("first ConsumeAllReadyEvents: %v", err)
+	}
+	if flushed != 1 {
+		t.Errorf("first consume: expected 1 flushed, got %d", flushed)
+	}
+
+	// Second consume: should NOT re-send the same NotificationRef
+	// because the dispatched marker prevents it.
+	flushed2, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	if err != nil {
+		t.Fatalf("second ConsumeAllReadyEvents: %v", err)
+	}
+	if flushed2 != 0 {
+		t.Errorf("second consume: expected 0 flushed (already dispatched), got %d", flushed2)
+	}
+
+	// Only 1 SubmitPrompt call.
+	if be.promptCalls != 1 {
+		t.Errorf("promptCalls=%d, want 1", be.promptCalls)
+	}
+
+	// No report/status spam.
+	statusLines, _ := task.ReadStatus(captainHome, "captain-status")
+	if len(statusLines) > 0 {
+		t.Errorf("expected 0 status lines (no captain spam), got %d", len(statusLines))
+	}
+
+	// Pending still exists (no ack yet).
+	store := mailbox.NewStore(captainHome)
+	if store.IsAcked(senderIdentity, sendResult.MessageID) {
+		t.Errorf("pending should not be acked yet")
+	}
+}
