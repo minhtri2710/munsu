@@ -704,6 +704,15 @@ func TestReportCmd_SubmitPromptAcknowledgment_Distinct(t *testing.T) {
 	homeDir := t.TempDir()
 	parentHome := t.TempDir()
 
+	// Install config/general-pane on parentHome so target resolution succeeds.
+	configDir := filepath.Join(parentHome, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("mkdir parent config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("captain-session:captain-pane\n"), 0644); err != nil {
+		t.Fatalf("write parent general-pane: %v", err)
+	}
+
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "test-ack-distinct")
 	t.Setenv("MUNSU_ROLE", "soldier")
