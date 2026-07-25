@@ -4,6 +4,7 @@ package captain
 import (
 	"os"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/wakedelivery"
 )
@@ -13,14 +14,36 @@ func init() {
 	supervision.CaptainActivationHook = captainActivationHook
 }
 
+// resolveParentHome resolves the parent home directory for a captain context.
+// Precedence:
+//  1. MUNSU_PARENT_STATUS env var (if set and not equal to homeDir)
+//  2. config/parent-home (if set and not equal to homeDir)
+//  3. empty string (no parent)
+//
+// The function is safe to call from watcher hooks that may not inherit the
+// original process environment (crash restart, plain `munsu watch --home`).
+// It never returns homeDir as a valid parent (self-referencing guard).
+func resolveParentHome(homeDir string) string {
+	// 1. Check env var
+	if p := os.Getenv("MUNSU_PARENT_STATUS"); p != "" && p != homeDir {
+		return p
+	}
+
+	// 2. Fall back to config/parent-home (durable, survives env loss)
+	if p, err := config.Get(homeDir, "parent-home"); err == nil && p != "" && p != homeDir {
+		return p
+	}
+
+	// 3. No parent
+	return ""
+}
+
 // captainActivationHook is the per-cycle activation hook running inside a
 // captain home. It nudges the captain agent pane when new soldier receipts
 // arrive, without waiting for General round-trip.
 func captainActivationHook(homeDir string) {
-	// Only activate in a captain context: parent home must be set
-	// (captain has a General parent) and different from our own home.
-	parentHome := os.Getenv("MUNSU_PARENT_STATUS")
-	if parentHome == "" || parentHome == homeDir {
+	parentHome := resolveParentHome(homeDir)
+	if parentHome == "" {
 		return
 	}
 	wakedelivery.ActivateOnReceipt(homeDir)
@@ -30,8 +53,8 @@ func captainActivationHook(homeDir string) {
 // captain home. It delegates to wakedelivery.ReconcilePending via
 // ReconcileTerminalReceipts for backward compatibility.
 func reconcileHook(homeDir string) error {
-	parentHome := os.Getenv("MUNSU_PARENT_STATUS")
-	if parentHome == "" || parentHome == homeDir {
+	parentHome := resolveParentHome(homeDir)
+	if parentHome == "" {
 		return nil
 	}
 	_, err := ReconcileTerminalReceipts(homeDir, parentHome)
