@@ -20,8 +20,8 @@ func setupRelayTest(t *testing.T) (captainHome, generalHome string) {
 	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
 	// General state dir
 	os.MkdirAll(filepath.Join(generalHome, "state"), 0755)
-	// Captain provenance marker
-	os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("munsu-v2 test-captain\n"), 0644)
+	// Captain provenance marker (newline-separated, matching SeedProvenance format)
+	os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("munsu-v2\ntest-captain\n\n"), 0644)
 
 	return captainHome, generalHome
 }

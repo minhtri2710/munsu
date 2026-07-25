@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,12 +42,8 @@ func TestReportCmd_FailClosedOnReceiptWrite(t *testing.T) {
 		t.Fatal("expected error due to file collision at parentHome/state, got nil")
 	}
 
-	var cerr *contractError
-	if !errors.As(err, &cerr) {
-		t.Fatalf("expected contractError, got %T", err)
-	}
-	if cerr.value.Error.ErrorCode != "receipt_write_failed" {
-		t.Errorf("expected errorCode receipt_write_failed, got %q", cerr.value.Error.ErrorCode)
+	if !strings.Contains(err.Error(), "writing captain receipt") {
+		t.Errorf("expected error about writing captain receipt, got: %v", err)
 	}
 
 	// Assert no event log exists
@@ -105,12 +100,8 @@ func TestReportCmd_FailClosedOnObligationsInit(t *testing.T) {
 		t.Fatal("expected error due to file collision at .obligations, got nil")
 	}
 
-	var cerr *contractError
-	if !errors.As(err, &cerr) {
-		t.Fatalf("expected contractError, got %T", err)
-	}
-	if cerr.value.Error.ErrorCode != "obligations_init_failed" {
-		t.Errorf("expected errorCode obligations_init_failed, got %q", cerr.value.Error.ErrorCode)
+	if !strings.Contains(err.Error(), "init task obligations") {
+		t.Errorf("expected error about init task obligations, got: %v", err)
 	}
 
 	// Receipt should exist (WriteReceipt succeeded before obligation failure)

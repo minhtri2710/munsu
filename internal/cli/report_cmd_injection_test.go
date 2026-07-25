@@ -17,6 +17,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/wakedelivery"
 	"github.com/spf13/cobra"
 )
 
@@ -100,7 +101,7 @@ func TestResolveInjectionTargetHome(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveInjectionTargetHome(tt.role, tt.homeDir, tt.parentHome)
+			got, err := wakedelivery.ResolveInjectionTargetHome(tt.role, tt.homeDir, tt.parentHome)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -170,8 +171,8 @@ func (f *fakeInjectBackend) AgentPrompt(windowID, text string) session.PromptRes
 // session.Backend interface satisfaction check.
 var _ session.Backend = (*fakeInjectBackend)(nil)
 
-// fakeResolver creates a reportSessionResolver that returns the given backend.
-func fakeResolver(bk session.Backend) reportSessionResolver {
+// fakeResolver creates a ReportSessionResolver that returns the given backend.
+func fakeResolver(bk session.Backend) wakedelivery.ReportSessionResolver {
 	return func(_ string, _ string) (session.Backend, string, error) {
 		return bk, "test", nil
 	}
@@ -215,7 +216,7 @@ func TestInjectToParentPaneWithResolver_SoldierUsesParentHome(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR #1", "done", 100, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR #1", "done", 100, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeInjected {
 		t.Errorf("outcome = %q, want %q: error=%s", result.Outcome, afk.OutcomeInjected, result.Error)
@@ -240,7 +241,7 @@ func TestInjectToParentPaneWithResolver_SoldierUsesParentHome_AllMaterialStates(
 			}
 			taskID := fmt.Sprintf("task-all-states-%s", state)
 			eventID := uint64(999000 + i)
-			result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, taskID, state+": msg", state, eventID, fakeResolver(fake))
+			result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, taskID, state+": msg", state, eventID, fakeResolver(fake))
 
 			if result.Outcome != afk.OutcomeInjected {
 				t.Errorf("%s: outcome = %q, want %q: error=%s", state, result.Outcome, afk.OutcomeInjected, result.Error)
@@ -260,7 +261,7 @@ func TestInjectToParentPaneWithResolver_CaptainUsesParentHome(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("captain", homeDir, parentHome, "task-1", "done: PR", "done", 200, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("captain", homeDir, parentHome, "task-1", "done: PR", "done", 200, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeInjected {
 		t.Errorf("outcome = %q, want %q: error=%s", result.Outcome, afk.OutcomeInjected, result.Error)
@@ -285,7 +286,7 @@ func TestInjectToParentPaneWithResolver_GeneralUsesHomeDir(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("general", homeDir, parentHome, "task-1", "done: PR", "done", 300, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("general", homeDir, parentHome, "task-1", "done: PR", "done", 300, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeInjected {
 		t.Errorf("outcome = %q, want %q: error=%s", result.Outcome, afk.OutcomeInjected, result.Error)
@@ -303,7 +304,7 @@ func TestInjectToParentPaneWithResolver_GeneralNoParent(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("general", homeDir, "", "task-1", "done: PR", "done", 400, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("general", homeDir, "", "task-1", "done: PR", "done", 400, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeInjected {
 		t.Errorf("outcome = %q, want %q: error=%s", result.Outcome, afk.OutcomeInjected, result.Error)
@@ -321,7 +322,7 @@ func TestInjectToParentPaneWithResolver_SoldierMissingParent(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, "", "task-1", "done: PR", "done", 500, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, "", "task-1", "done: PR", "done", 500, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeEndpointDead {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeEndpointDead)
@@ -343,7 +344,7 @@ func TestInjectToParentPaneWithResolver_CaptainMissingParent(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("captain", homeDir, "", "task-1", "done: PR", "done", 600, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("captain", homeDir, "", "task-1", "done: PR", "done", 600, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeEndpointDead {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeEndpointDead)
@@ -368,7 +369,7 @@ func TestInjectToParentPaneWithResolver_ParentTargetUnresolvable(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 700, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 700, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeEndpointDead {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeEndpointDead)
@@ -384,7 +385,7 @@ func TestInjectToParentPaneWithResolver_DeadCapture(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 800, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 800, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeEndpointDead {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeEndpointDead)
@@ -402,7 +403,7 @@ func TestInjectToParentPaneWithResolver_UnsafeComposer(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 900, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 900, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeUnsafe {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeUnsafe)
@@ -417,7 +418,7 @@ func TestInjectToParentPaneWithResolver_BusyComposer(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1000, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1000, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeUnsafe {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeUnsafe)
@@ -427,7 +428,7 @@ func TestInjectToParentPaneWithResolver_BusyComposer(t *testing.T) {
 func TestInjectToParentPaneWithResolver_BackendDead(t *testing.T) {
 	homeDir, parentHome, _ := setupInjectionTest(t)
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1100,
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1100,
 		func(_ string, _ string) (session.Backend, string, error) {
 			return nil, "", fmt.Errorf("no backend available")
 		})
@@ -448,7 +449,7 @@ func TestInjectToParentPaneWithResolver_SubmitPromptStalled(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptStalled},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1200, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1200, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeBackendFailed {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeBackendFailed)
@@ -466,7 +467,7 @@ func TestInjectToParentPaneWithResolver_SubmitPromptQueuedWhileBusy(t *testing.T
 		promptResult:  session.PromptResult{Status: session.PromptQueuedWhileBusy},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1300, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1300, fakeResolver(fake))
 
 	// Queued-while-busy IS acknowledged (like submitted)
 	if result.Outcome != afk.OutcomeInjected {
@@ -482,7 +483,7 @@ func TestInjectToParentPaneWithResolver_SubmitPromptEndpointDead(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptEndpointDead},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1400, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1400, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeBackendFailed {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeBackendFailed)
@@ -504,20 +505,20 @@ func TestInjectToParentPaneWithResolver_Dedup(t *testing.T) {
 	eventID := uint64(99999)
 
 	// First call should succeed
-	result1 := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-dedup", "done: PR", "done", eventID, fakeResolver(fake))
+	result1 := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-dedup", "done: PR", "done", eventID, fakeResolver(fake))
 	if result1.Outcome != afk.OutcomeInjected {
 		t.Errorf("first call: outcome = %q, want %q", result1.Outcome, afk.OutcomeInjected)
 	}
 
 	// Second call with same event ID should be deduped
-	result2 := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-dedup", "done: PR", "done", eventID, fakeResolver(fake))
+	result2 := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-dedup", "done: PR", "done", eventID, fakeResolver(fake))
 	if result2.Outcome != afk.OutcomeInjected || result2.Target != "(deduped)" {
 		t.Errorf("second call: outcome = %q, target = %q, want injected/(deduped)", result2.Outcome, result2.Target)
 	}
 
 	// Different event ID should succeed
 	eventID3 := eventID + 1
-	result3 := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-dedup", "done: PR", "done", eventID3, fakeResolver(fake))
+	result3 := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-dedup", "done: PR", "done", eventID3, fakeResolver(fake))
 	if result3.Outcome != afk.OutcomeInjected {
 		t.Errorf("third call (different eventID): outcome = %q, want %q", result3.Outcome, afk.OutcomeInjected)
 	}
@@ -720,7 +721,7 @@ func TestReportCmd_SubmitPromptAcknowledgment_Distinct(t *testing.T) {
 
 	// Use a real injectFn but with a fake resolver that returns PromptSubmitted
 	cmd := newReportCmdWithInjector(func(role, hd, ph, tid, msg, state string, sid uint64) afk.InjectResult {
-		return injectToParentPaneWithResolver(role, hd, ph, tid, msg, state, sid, fakeResolver(
+		return wakedelivery.InjectToParentPaneWithResolver(role, hd, ph, tid, msg, state, sid, fakeResolver(
 			&fakeInjectBackend{
 				captureResult: "\u276F \n",
 				promptResult:  session.PromptResult{Status: session.PromptSubmitted},
@@ -805,7 +806,7 @@ func TestReportCmd_NoRing_SkipsInjection(t *testing.T) {
 // paths does not panic and returns typed endpoint-dead.
 func TestInjectToParentPaneWithResolver_SoldierMissingParent_NoPanicOnEmptyPaths(t *testing.T) {
 	// Both empty — worst case
-	result := injectToParentPaneWithResolver("soldier", "", "", "task-1", "done: PR", "done", 1500,
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", "", "", "task-1", "done: PR", "done", 1500,
 		func(_ string, _ string) (session.Backend, string, error) {
 			return nil, "", errors.New("no backend")
 		})
@@ -834,7 +835,7 @@ func TestInjectToParentPaneWithResolver_InvalidTargetSource(t *testing.T) {
 		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
 	}
 
-	result := injectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1600, fakeResolver(fake))
+	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1600, fakeResolver(fake))
 
 	if result.Outcome != afk.OutcomeEndpointDead {
 		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeEndpointDead)
