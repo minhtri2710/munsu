@@ -1301,6 +1301,108 @@ func TestRunCycle_PerCycleReconcileNoHookIsNoop(t *testing.T) {
 	_ = emitted2
 }
 
+// --- CaptainActivationHook tests ---
+
+// TestRunCycle_CaptainActivationNotCalledOnCycle1 verifies that the
+// CaptainActivationHook is NOT called during the first cycle (recovery is
+// responsible for startup activation). Only per-cycle hooks after recovery
+// call it.
+func TestRunCycle_CaptainActivationNotCalledOnCycle1(t *testing.T) {
+	tmp := setupRunCycleTest(t)
+
+	callCount := 0
+	origHook := CaptainActivationHook
+	CaptainActivationHook = func(homeDir string) {
+		callCount++
+	}
+	defer func() { CaptainActivationHook = origHook }()
+	resetRecovery()
+
+	// Cycle 1 — recovery guard should prevent hook call.
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("first runCycle: %v", err)
+	}
+	_ = emitted
+
+	if callCount != 0 {
+		t.Errorf("expected 0 CaptainActivationHook calls on cycle 1, got %d", callCount)
+	}
+
+	// Cycle 2 — after recovery, hook should be called.
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle: %v", err)
+	}
+	_ = emitted2
+
+	if callCount != 1 {
+		t.Errorf("expected 1 CaptainActivationHook call on cycle 2, got %d", callCount)
+	}
+}
+
+// TestRunCycle_CaptainActivationEveryCycleAfterRecovery verifies that after
+// recovery, the CaptainActivationHook is called exactly once per cycle.
+func TestRunCycle_CaptainActivationEveryCycleAfterRecovery(t *testing.T) {
+	tmp := setupRunCycleTest(t)
+
+	callCount := 0
+	origHook := CaptainActivationHook
+	CaptainActivationHook = func(homeDir string) {
+		callCount++
+	}
+	defer func() { CaptainActivationHook = origHook }()
+	resetRecovery()
+
+	// Cycle 1 — recovery, no hook call.
+	runCycle(tmp)
+	if callCount != 0 {
+		t.Fatalf("expected 0 after cycle 1, got %d", callCount)
+	}
+
+	// Cycle 2 — hook called once.
+	runCycle(tmp)
+	if callCount != 1 {
+		t.Fatalf("expected 1 after cycle 2, got %d", callCount)
+	}
+
+	// Cycle 3 — hook called once more.
+	runCycle(tmp)
+	if callCount != 2 {
+		t.Fatalf("expected 2 after cycle 3, got %d", callCount)
+	}
+
+	// Cycle 4 — hook called once more.
+	runCycle(tmp)
+	if callCount != 3 {
+		t.Fatalf("expected 3 after cycle 4, got %d", callCount)
+	}
+}
+
+// TestRunCycle_CaptainActivationNilHookIsNoop verifies that a nil
+// CaptainActivationHook is a no-op and does not affect the cycle.
+func TestRunCycle_CaptainActivationNilHookIsNoop(t *testing.T) {
+	tmp := setupRunCycleTest(t)
+
+	origHook := CaptainActivationHook
+	CaptainActivationHook = nil
+	defer func() { CaptainActivationHook = origHook }()
+	resetRecovery()
+
+	// Skip cycle 1 (recovery), check cycle 2.
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("first runCycle with nil hook: %v", err)
+	}
+	_ = emitted
+
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle with nil hook: %v", err)
+	}
+	_ = emitted2
+}
+
 // TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher proves that when the
 // watcher beat is stale and material wakes are pending, a scan produces
 // actionable condition codes for recovery.

@@ -312,6 +312,13 @@ func scanTask(homeDir, id string) *WakeReason {
 // Set by the captain package during init.
 var TerminalReconcileHook func(homeDir string) error
 
+// CaptainActivationHook is called every watcher cycle (after startup recovery)
+// to give the captain a chance to nudge/activate its agent pane when new
+// soldier receipts arrive. Set by the captain package during init.
+// Idempotent: the implementation must guard against duplicate nudges.
+// Nil hook = no-op.
+var CaptainActivationHook func(homeDir string)
+
 // recoveryDone tracks whether the one-shot recovery has completed.
 var recoveryDone bool
 
@@ -390,6 +397,15 @@ func runCycle(homeDir string) (bool, error) {
 		if err := TerminalReconcileHook(homeDir); err != nil {
 			fmt.Fprintf(os.Stderr, "terminal reconcile cycle: %v\n", err)
 		}
+	}
+
+	// Per-cycle captain agent activation on receipt discovery.
+	// After startup recovery (cycle 1), each subsequent cycle checks
+	// for new soldier receipts that haven't yet triggered an activation
+	// nudge to the captain agent pane. Idempotent: already-seen receipts
+	// are skipped via durable markers. Nil hook = no-op.
+	if recoveryWasDone && CaptainActivationHook != nil {
+		CaptainActivationHook(homeDir)
 	}
 
 	emitted := false

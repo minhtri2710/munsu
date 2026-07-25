@@ -10,6 +10,20 @@ import (
 
 func init() {
 	supervision.TerminalReconcileHook = reconcileHook
+	supervision.CaptainActivationHook = captainActivationHook
+}
+
+// captainActivationHook is the per-cycle activation hook running inside a
+// captain home. It nudges the captain agent pane when new soldier receipts
+// arrive, without waiting for General round-trip.
+func captainActivationHook(homeDir string) {
+	// Only activate in a captain context: parent home must be set
+	// (captain has a General parent) and different from our own home.
+	parentHome := os.Getenv("MUNSU_PARENT_STATUS")
+	if parentHome == "" || parentHome == homeDir {
+		return
+	}
+	wakedelivery.ActivateOnReceipt(homeDir)
 }
 
 // reconcileHook is the supervision-watcher recovery hook running inside a
