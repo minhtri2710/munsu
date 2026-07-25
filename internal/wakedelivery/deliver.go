@@ -614,11 +614,11 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 		}
 
 		// Context-aware safety fix: when the content heuristic returns
-		// Unknown (e.g., pi captain showing ">" which is classified as
-		// a dead shell prompt), but the backend confirms the target IS
-		// a recognized agent, do a secondary check: capture the composer
-		// directly and treat a bare prompt glyph as Empty.
-		if !safe && verdict.String() == "unknown" && targetIsAgent {
+		// Unknown or Pending (e.g., pi captain showing "Press any key" or
+		// "> " which the heuristic misclassifies), but the backend confirms
+		// the target IS a recognized agent, do a secondary check: capture the
+		// composer directly and treat a bare prompt glyph as Empty.
+		if !safe && targetIsAgent && (verdict.String() == "unknown" || verdict.String() == "pending") {
 			// Re-capture and check if the composer is empty except for
 			// a known prompt glyph. This handles pi's ">" prompt which
 			// the heuristic treats as a shell prompt (Unknown).
@@ -693,21 +693,39 @@ func checkAgentComposerSafe(cap afk.PaneCapture, paneHandle string) bool {
 		}
 	}
 
-	// Strip ANSI and ghost text.
+	// Strip ANSI and also ghost text (dim/faint SGR 2, dark truecolor).
 	plain := strings.TrimSpace(composer.StripANSI(composerLine))
+	ghostStripped := strings.TrimSpace(composer.StripGhost(composerLine))
+
+	// Check for busy indicators in plain text first (busy trumps everything).
+	busyPrefixes := []string{"Working", "Thinking", "Running", "Processing"}
+	for _, prefix := range busyPrefixes {
+		if strings.Contains(plain, prefix) {
+			return false
+		}
+	}
 
 	// Agent is idle if the composer shows ONLY a known prompt glyph.
-	// Known agent prompt glyphs: ❯ (claude), › (codex), > (pi).
+	// Known agent prompt glyphs: \u276F (claude), \u203A (codex), > (pi).
 	// Also accept empty composer (no content at all — appearing agent).
 	if plain == "" || plain == "\u276F" || plain == "\u203A" || plain == ">" {
 		return true
 	}
 
-	// If there's content after the prompt glyph, it might be a busy indicator.
-	// Check for common busy patterns.
-	busyPrefixes := []string{"Working", "Thinking", "Running", "Processing"}
-	for _, prefix := range busyPrefixes {
-		if strings.Contains(plain, prefix) {
+	// After ghost-stripping, check the remaining visible content.
+	if ghostStripped == "" || ghostStripped == "\u276F" || ghostStripped == "\u203A" || ghostStripped == ">" {
+		return true
+	}
+
+	// For recognized agents with a prompt prefix, strip it and check
+	// whether only whitespace remains after the glyph.
+	for _, glyph := range []string{"\u276F ", "\u203A ", "> ", "o ", "\u276F", "\u203A", ">"} {
+		if strings.HasPrefix(ghostStripped, glyph) {
+			after := strings.TrimSpace(strings.TrimPrefix(ghostStripped, glyph))
+			if after == "" {
+				return true
+			}
+			// Non-empty content after glyph — not safe (typed input or busy).
 			return false
 		}
 	}

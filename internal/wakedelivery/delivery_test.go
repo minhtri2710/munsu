@@ -1309,6 +1309,70 @@ func TestActivateOnReceipt_PendingContentNotSafe(t *testing.T) {
 	}
 }
 
+// TestActivateOnReceipt_IdlePiAgentPendingVerdict verifies that an idle pi
+// captain with ANSI-colored ">" and dim ghost placeholder content (which
+// produces a Pending verdict from IsSafeInjectTarget due to ANSI on the
+// glyph) is correctly treated as safe via the checkAgentComposerSafe
+// fallback when the backend confirms the target is a recognized agent.
+func TestActivateOnReceipt_IdlePiAgentPendingVerdict(t *testing.T) {
+	// Content: ANSI-bold " > " + dim "Type a message..."
+	// This produces Pending from IsSafeInjectTarget because the ESC codes
+	// on the " > " prefix prevent prompt-glyph detection in ClassifyContent,
+	// but checkAgentComposerSafe sees the ghost-stripped " > " as idle.
+	content := "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n"
+	bak := &fakeActivationBackend{
+		captureContent: content,
+		agentAlive:     true,
+		paneExists:     true,
+		submitResult: session.PromptResult{
+			Status: session.PromptSubmitted,
+			Detail: "agent-status: idle",
+		},
+	}
+	captainHome, parentHome := activationEnv(t, bak)
+
+	if err := turnend.WriteReceipt(captainHome, "task-pi-pend", "key-pi-pend", "done", ""); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+
+	count := ActivateOnReceipt(captainHome, parentHome)
+	if count != 1 {
+		t.Errorf("expected 1 activation for idle pi with pending verdict, got %d", count)
+	}
+	if !IsActivationSeen(captainHome, "task-pi-pend", "key-pi-pend") {
+		t.Error("activation-seen should be written for idle pi with pending verdict")
+	}
+}
+
+// TestActivateOnReceipt_IdlePiAgentPendingVerdict_Unsafe verifies that
+// real pending content (actual typed input) is NOT treated as safe even
+// when the Pending override matches. This is the negative regression test
+// for the Pending verdict override.
+func TestActivateOnReceipt_IdlePiAgentPendingVerdict_Unsafe(t *testing.T) {
+	// Content: ANSI-colored "> " + actual typed text (non-dim).
+	// This produces Pending from IsSafeInjectTarget AND checkAgentComposerSafe
+	// should correctly identify the typed content and return unsafe.
+	content := "\x1b[1m> \x1b[0mactual typed command\n"
+	bak := &fakeActivationBackend{
+		captureContent: content,
+		agentAlive:     true,
+		paneExists:     true,
+	}
+	captainHome, parentHome := activationEnv(t, bak)
+
+	if err := turnend.WriteReceipt(captainHome, "task-pi-unsafe", "key-pi-unsafe", "done", ""); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+
+	count := ActivateOnReceipt(captainHome, parentHome)
+	if count != 0 {
+		t.Errorf("expected 0 activations for typed content, got %d", count)
+	}
+	if IsActivationSeen(captainHome, "task-pi-unsafe", "key-pi-unsafe") {
+		t.Error("activation-seen should NOT be written with typed content")
+	}
+}
+
 // TestActivateOnReceipt_AlreadySeenIdempotent verifies that already-seen
 // receipts are not re-processed even when the backend would be safe.
 func TestActivateOnReceipt_AlreadySeenIdempotent(t *testing.T) {
@@ -1389,6 +1453,14 @@ func TestCheckAgentComposerSafe(t *testing.T) {
 		{"busy-thinking", "Thinking...\n", false},
 		{"pending-text", "> git push\n", false},
 		{"non-ansi-empty", "\n\n\n\n", true},  // empty lines only → safe
+
+		// Ghost-stripping: dim placeholder text after prompt glyph should be
+		// stripped, leaving just the glyph → idle → safe.
+		{"pi-with-dim-ghost", "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n", true},
+		{"claude-with-dim-ghost", "\x1b[1m\u276F \x1b[0m\x1b[2mType a message...\x1b[0m\n", true},
+
+		// Non-dim content after glyph is typed input → unsafe.
+		{"pi-with-typed-text-after-glyph", "\x1b[1m> \x1b[0mnpm test\n", false},
 	}
 
 	for _, tt := range tests {
