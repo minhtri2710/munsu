@@ -5,9 +5,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/supervision"
 )
 
 // axiBinaryPath caches the path to the built munsu binary for the test run.
@@ -45,6 +52,67 @@ func buildMunsuBinary(t *testing.T) string {
 	return binPath
 }
 
+func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
+	t.Helper()
+	pid := launchedPID
+	if pid <= 0 {
+		id := supervision.ReadIdentity(home)
+		_, beatPID, beatOK := lifecycle.ReadBeat(home)
+		if id != nil {
+			pid = id.PID
+		} else if beatOK {
+			pid = beatPID
+		}
+	}
+
+	if err := supervision.Stop(home); err != nil {
+		t.Errorf("stop test watcher: %v", err)
+	}
+	if pid <= 0 {
+		return
+	}
+
+	dead := func() bool {
+		proc, err := os.FindProcess(pid)
+		if err != nil || proc.Signal(syscall.Signal(0)) != nil {
+			return true
+		}
+		out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
+		return err != nil || strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !dead() && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !dead() {
+		if proc, err := os.FindProcess(pid); err == nil {
+			_ = proc.Signal(syscall.SIGKILL)
+		}
+		deadline = time.Now().Add(time.Second)
+		for !dead() && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
+	if !dead() {
+		t.Errorf("test watcher PID %d survived cleanup", pid)
+	}
+}
+
+var watchIDPIDPattern = regexp.MustCompile(`watch-(\d+)`)
+
+func watchPIDFromOutput(t *testing.T, output string) int {
+	t.Helper()
+	match := watchIDPIDPattern.FindStringSubmatch(output)
+	if len(match) != 2 {
+		t.Fatalf("watch output does not contain a PID-bearing watch_id: %s", output)
+	}
+	pid, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatalf("parse watcher PID: %v", err)
+	}
+	return pid
+}
+
 func findGoModRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -78,6 +146,21 @@ func runMunsu(t *testing.T, homeDir string, args []string) (string, error) {
 	cmd := exec.Command(binary, cmdArgs...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func TestCleanupTestWatcher_RecordedPIDWithoutBeacon(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process signal test not supported on Windows")
+	}
+	home := t.TempDir()
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+	cleanupTestWatcher(t, home, cmd.Process.Pid)
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("expected terminated helper process")
+	}
 }
 
 // TestBinaryGuardContract_TOON verifies the guard command outputs contract-shaped
@@ -207,6 +290,8 @@ func TestBinaryWatchEnsure_NoopContract(t *testing.T) {
 	}
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	launchedPID := 0
+	t.Cleanup(func() { cleanupTestWatcher(t, home, launchedPID) })
 
 	out, err := runMunsu(t, home, []string{"watch", "ensure"})
 	if err != nil {
@@ -215,6 +300,7 @@ func TestBinaryWatchEnsure_NoopContract(t *testing.T) {
 	if !strings.Contains(out, "kind: watch.ensure") {
 		t.Errorf("output must contain kind: watch.ensure, got: %s", out)
 	}
+	launchedPID = watchPIDFromOutput(t, out)
 }
 
 // TestBinaryWatchEnsure_JSON verifies watch ensure JSON output contract.
@@ -224,6 +310,8 @@ func TestBinaryWatchEnsure_JSON(t *testing.T) {
 	}
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	launchedPID := 0
+	t.Cleanup(func() { cleanupTestWatcher(t, home, launchedPID) })
 
 	out, err := runMunsu(t, home, []string{"watch", "ensure", "--output", "json"})
 	if err != nil {
@@ -243,6 +331,7 @@ func TestBinaryWatchEnsure_JSON(t *testing.T) {
 	if resp.Kind != "watch.ensure" {
 		t.Errorf("kind = %q, want watch.ensure", resp.Kind)
 	}
+	launchedPID = watchPIDFromOutput(t, out)
 }
 
 // TestBinaryReport_StructuredError verifies the report command fails closed

@@ -37,6 +37,29 @@ func newWatchEnsureCmd() *cobra.Command {
 	return cmd
 }
 
+// startWatcherProcess is a test seam for the detached watcher launch.
+var startWatcherProcess = defaultStartWatcherProcess
+
+var watcherBeaconTimeout = 3 * time.Second
+
+func defaultStartWatcherProcess(homeDir string) (int, error) {
+	execPath, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+
+	cmd := exec.Command(execPath, "watch", "--home", homeDir)
+	cmd.Dir = homeDir
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Env = append(os.Environ(), "MUNSU_HOME="+homeDir)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	return cmd.Process.Pid, nil
+}
+
 // ensureWatcher checks the watcher state and starts one if needed.
 func ensureWatcher(homeDir string, restart bool) contract.Response[contract.WatchEnsure] {
 	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
@@ -73,8 +96,8 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		}
 	}
 
-	// Start the watcher
-	execPath, err := os.Executable()
+	// Start the watcher.
+	pid, err := startWatcherProcess(homeDir)
 	if err != nil {
 		return contract.Response[contract.WatchEnsure]{
 			SchemaVersion: contract.SchemaVersion,
@@ -88,30 +111,9 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		}
 	}
 
-	cmd := exec.Command(execPath, "watch", "--home", homeDir)
-	cmd.Dir = homeDir
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Env = append(os.Environ(), "MUNSU_HOME="+homeDir)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := cmd.Start(); err != nil {
-		return contract.Response[contract.WatchEnsure]{
-			SchemaVersion: contract.SchemaVersion,
-			Kind:          "watch.ensure",
-			Status:        "success",
-			Data: contract.WatchEnsure{
-				WatchID: "",
-				State:   "failed",
-				Noop:    false,
-			},
-		}
-	}
-
-	pid := cmd.Process.Pid
 	// Poll until beat + identity ownership land, or timeout. A single short sleep
 	// races the child process and caused false "started"/NEVER STARTED reports.
-	afterStatus, validated := waitForWatcherBeacon(homeDir, pid, 3*time.Second)
+	afterStatus, validated := waitForWatcherBeacon(homeDir, pid, watcherBeaconTimeout)
 
 	state := "started"
 	if validated {

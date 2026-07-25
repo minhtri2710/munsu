@@ -50,6 +50,14 @@ func TestStopWatcher_AlreadyStopped(t *testing.T) {
 func TestEnsureWatcher_ReturnsContract(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
+	savedStarter := startWatcherProcess
+	savedTimeout := watcherBeaconTimeout
+	startWatcherProcess = func(string) (int, error) { return os.Getpid(), nil }
+	watcherBeaconTimeout = 10 * time.Millisecond
+	t.Cleanup(func() {
+		startWatcherProcess = savedStarter
+		watcherBeaconTimeout = savedTimeout
+	})
 	resp := ensureWatcher(home, false)
 	if resp.Kind != "watch.ensure" {
 		t.Fatalf("kind=%q", resp.Kind)
@@ -114,6 +122,14 @@ func TestEnsureWatcher_CrossHomeDoesNotAttach(t *testing.T) {
 	captain := t.TempDir()
 	os.MkdirAll(filepath.Join(general, "state"), 0755)
 	os.MkdirAll(filepath.Join(captain, "state"), 0755)
+	savedStarter := startWatcherProcess
+	savedTimeout := watcherBeaconTimeout
+	startWatcherProcess = func(string) (int, error) { return os.Getpid(), nil }
+	watcherBeaconTimeout = 10 * time.Millisecond
+	t.Cleanup(func() {
+		startWatcherProcess = savedStarter
+		watcherBeaconTimeout = savedTimeout
+	})
 
 	pid := os.Getpid()
 	// Captain home has a fresh beat for this PID, but identity claims general home.
