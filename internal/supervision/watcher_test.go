@@ -1127,6 +1127,497 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 	_ = emitted
 }
 
+// --- Per-cycle terminal reconciliation tests ---
+//
+// These tests verify that terminal receipts arriving AFTER startup recovery
+// are relayed on subsequent watcher cycles without manual converge/restart.
+// The same TerminalReconcileHook is used; ReconcileTerminalReceipts is
+// idempotent (skips already-acked receipts), so calling it every cycle
+// produces exactly-once relay.
+
+// TestRunCycle_PerCycleTerminalReconcile verifies that a terminal receipt
+// written AFTER the startup recovery cycle is relayed on the next cycle
+// without requiring manual converge/restart.
+func TestRunCycle_PerCycleTerminalReconcile(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+
+	taskID := "per-cycle-soldier"
+	termKey := "per-cycle-key"
+	captainID := "test-captain"
+
+	// Write provenance marker
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
+
+	// Set MUNSU_PARENT_STATUS for relay
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	// Install a hook that calls RelayPendingReceipts (same underlying seam)
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		ph := os.Getenv("MUNSU_PARENT_STATUS")
+		if ph == "" || ph == homeDir {
+			return nil
+		}
+		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		return err
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+
+	recoveryDone = false
+
+	// First cycle — no receipts yet, startup recovery runs (no-op)
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("first runCycle: %v", err)
+	}
+	_ = emitted
+
+	// Simulate a soldier completing AFTER startup: write receipt now
+	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "post-startup complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// Second cycle — per-cycle reconcile should relay the receipt
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle: %v", err)
+	}
+	_ = emitted2
+
+	// Verify receipt was acked
+	if !turnend.IsReceiptAcked(tmp, taskID, termKey) {
+		t.Error("receipt should be acked after per-cycle reconcile")
+	}
+
+	// Verify General received relay status
+	relayStatusPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
+	data, err := os.ReadFile(relayStatusPath)
+	if err != nil {
+		t.Fatalf("parent relay status should exist: %v", err)
+	}
+	if !strings.Contains(string(data), "done") {
+		t.Errorf("relay status should contain 'done', got: %s", string(data))
+	}
+
+	// Verify obligation is closed
+	open, err := turnend.IsTaskReportRelayOpen(tmp, taskID)
+	if err != nil {
+		t.Fatalf("IsTaskReportRelayOpen: %v", err)
+	}
+	if open {
+		t.Error("ReportRelay should be closed after per-cycle reconcile")
+	}
+}
+
+// TestRunCycle_PerCycleReconcileIdempotent verifies that once a receipt is
+// relayed by per-cycle reconcile, subsequent cycles do NOT re-relay it
+// (exactly-once relay / no duplicate wake).
+func TestRunCycle_PerCycleReconcileIdempotent(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+
+	taskID := "idempotent-task"
+	termKey := "idempotent-key"
+	captainID := "test-captain"
+
+	// Write provenance marker
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
+
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		ph := os.Getenv("MUNSU_PARENT_STATUS")
+		if ph == "" || ph == homeDir {
+			return nil
+		}
+		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		return err
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+
+	recoveryDone = false
+
+	// Set up receipt BEFORE first cycle (startup recovery path will relay it)
+	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "first relay"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// First cycle — startup recovery relays the receipt
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("first runCycle: %v", err)
+	}
+	_ = emitted
+
+	// Verify receipt was acked
+	if !turnend.IsReceiptAcked(tmp, taskID, termKey) {
+		t.Fatal("receipt should be acked after first cycle")
+	}
+
+	// Verify General received the relay status exactly once
+	relayStatusPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
+	data1, err := os.ReadFile(relayStatusPath)
+	if err != nil {
+		t.Fatalf("relay status should exist: %v", err)
+	}
+	lines1 := len(strings.Split(strings.TrimSpace(string(data1)), "\n"))
+
+	// Second cycle — should NOT re-relay (already acked)
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle: %v", err)
+	}
+	_ = emitted2
+
+	// Verify no duplicate relay status line was appended
+	data2, err := os.ReadFile(relayStatusPath)
+	if err != nil {
+		t.Fatalf("relay status should still exist: %v", err)
+	}
+	lines2 := len(strings.Split(strings.TrimSpace(string(data2)), "\n"))
+	if lines2 != lines1 {
+		t.Errorf("relay status grew from %d to %d lines (duplicate relay)", lines1, lines2)
+	}
+
+	// Receipt must still be acked (state unchanged)
+	if !turnend.IsReceiptAcked(tmp, taskID, termKey) {
+		t.Error("receipt should remain acked after second cycle")
+	}
+}
+
+// TestRunCycle_PerCycleReconcileStartupPathStillWorks verifies that the
+// one-shot startup recovery path still works alongside the new per-cycle
+// reconcile. This is a regression guard.
+func TestRunCycle_PerCycleReconcileStartupPathStillWorks(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+
+	taskID := "startup-soldier"
+	termKey := "startup-key"
+	captainID := "startup-captain"
+
+	// Write provenance marker
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
+
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		ph := os.Getenv("MUNSU_PARENT_STATUS")
+		if ph == "" || ph == homeDir {
+			return nil
+		}
+		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		return err
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+
+	recoveryDone = false
+
+	// Write receipt BEFORE first cycle (simulating pending from prior crash)
+	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "startup pending"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// First cycle — startup recovery relays, per-cycle reconcile is idempotent
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("first runCycle: %v", err)
+	}
+	_ = emitted
+
+	// Verify receipt was acked
+	if !turnend.IsReceiptAcked(tmp, taskID, termKey) {
+		t.Fatal("receipt should be acked after startup recovery")
+	}
+
+	// Verify relay status in General
+	relayStatusPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
+	data, err := os.ReadFile(relayStatusPath)
+	if err != nil {
+		t.Fatalf("relay status should exist: %v", err)
+	}
+	if !strings.Contains(string(data), "done") {
+		t.Errorf("relay status should contain 'done', got: %s", string(data))
+	}
+
+	// Verify obligation is closed
+	open, err := turnend.IsTaskReportRelayOpen(tmp, taskID)
+	if err != nil {
+		t.Fatalf("IsTaskReportRelayOpen: %v", err)
+	}
+	if open {
+		t.Error("ReportRelay should be closed after startup recovery")
+	}
+
+	// Verify per-cycle reconcile did NOT duplicate the relay
+	lines := len(strings.Split(strings.TrimSpace(string(data)), "\n"))
+	if lines != 1 {
+		t.Errorf("expected 1 relay status line, got %d (duplicate relay)", lines)
+	}
+}
+
+// TestRunCycle_PerCycleReconcileErrorDoesNotExit verifies that when the
+// terminal reconcile hook returns an error during per-cycle reconcile,
+// the watcher cycle logs the error and continues rather than failing fatally.
+// Partial failure must not falsely ack/close obligations.
+func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	t.Setenv("MUNSU_PARENT_STATUS", "/nonexistent")
+
+	// Install a hook that always returns an error
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		return fmt.Errorf("simulated reconcile error")
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+
+	recoveryDone = false
+
+	// Run a cycle — must NOT fail fatally despite hook error
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("runCycle should not exit on hook error: %v", err)
+	}
+	_ = emitted
+
+	// Second cycle should also continue despite hook error
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle should also not exit on hook error: %v", err)
+	}
+	_ = emitted2
+}
+
+// TestRunCycle_PerCycleReconcileNoHookIsNoop verifies that when no
+// TerminalReconcileHook is installed, the per-cycle reconcile is a no-op
+// and does not cause any issues.
+func TestRunCycle_PerCycleReconcileNoHookIsNoop(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	// Explicitly set hook to nil
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = nil
+	defer func() { TerminalReconcileHook = origHook }()
+
+	recoveryDone = false
+
+	// Run a cycle — must work fine with no hook
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("runCycle should work with nil hook: %v", err)
+	}
+	_ = emitted
+
+	// Second cycle also fine
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle should work with nil hook: %v", err)
+	}
+	_ = emitted2
+}
+
+// TestRunCycle_PerCycleReconcileMultipleWrites verifies that receipts written
+// in different cycles are each relayed in their respective cycle, not just the
+// first batch.
+func TestRunCycle_PerCycleReconcileMultipleWrites(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+
+	captainID := "multi-write-captain"
+
+	// Write provenance marker
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
+
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		ph := os.Getenv("MUNSU_PARENT_STATUS")
+		if ph == "" || ph == homeDir {
+			return nil
+		}
+		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		return err
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+
+	recoveryDone = false
+
+	// First cycle — no receipts (startup recovery)
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("first runCycle: %v", err)
+	}
+	_ = emitted
+
+	// Write first receipt
+	task1 := "soldier-1"
+	key1 := "key-1"
+	if err := turnend.WriteReceipt(tmp, task1, key1, "done", "first"); err != nil {
+		t.Fatalf("WriteReceipt 1: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, task1, key1); err != nil {
+		t.Fatalf("InitTaskObligations 1: %v", err)
+	}
+
+	// Second cycle — should relay first receipt
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle: %v", err)
+	}
+	_ = emitted2
+
+	if !turnend.IsReceiptAcked(tmp, task1, key1) {
+		t.Fatal("first receipt should be acked after second cycle")
+	}
+
+	// Write second receipt (simulating another soldier finishing)
+	task2 := "soldier-2"
+	key2 := "key-2"
+	if err := turnend.WriteReceipt(tmp, task2, key2, "done", "second"); err != nil {
+		t.Fatalf("WriteReceipt 2: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, task2, key2); err != nil {
+		t.Fatalf("InitTaskObligations 2: %v", err)
+	}
+
+	// Third cycle — should relay second receipt (first is already acked)
+	emitted3, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("third runCycle: %v", err)
+	}
+	_ = emitted3
+
+	if !turnend.IsReceiptAcked(tmp, task2, key2) {
+		t.Fatal("second receipt should be acked after third cycle")
+	}
+
+	// Verify both relay statuses exist in General
+	for _, pair := range [][2]string{{"soldier-1", "key-1"}, {"soldier-2", "key-2"}} {
+		tID, k := pair[0], pair[1]
+		relayPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+tID+".status")
+		if _, err := os.Stat(relayPath); os.IsNotExist(err) {
+			t.Errorf("relay status for %s/%s should exist", tID, k)
+		}
+	}
+}
+
+// TestRunCycle_PerCycleReconcile_CaptainReceipt_Race verifies that a receipt
+// arriving mid-cycle (between recovery and per-cycle reconcile) is still
+// picked up. The per-cycle reconcile runs after recovery on the same cycle,
+// so a receipt written before the first cycle should be relayed by either path.
+func TestRunCycle_PerCycleReconcile_CaptainReceipt_Race(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+
+	captainID := "race-captain"
+
+	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
+
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	// Use an instrumented hook that tracks how many times it was called
+	callCount := 0
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		callCount++
+		ph := os.Getenv("MUNSU_PARENT_STATUS")
+		if ph == "" || ph == homeDir {
+			return nil
+		}
+		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		return err
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+
+	recoveryDone = false
+
+	// Write receipt
+	taskID := "race-task"
+	termKey := "race-key"
+	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "race receipt"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations: %v", err)
+	}
+
+	// Run cycle — both recovery and per-cycle call the hook, but only one relays
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("runCycle: %v", err)
+	}
+	_ = emitted
+
+	// Hook was called at least once (recovery + per-cycle, or just per-cycle)
+	if callCount < 1 {
+		t.Error("hook should have been called at least once")
+	}
+
+	// Receipt must be acked exactly once
+	if !turnend.IsReceiptAcked(tmp, taskID, termKey) {
+		t.Fatal("receipt should be acked")
+	}
+
+	// Relay status must have exactly 1 line (no duplicate)
+	relayPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
+	data, err := os.ReadFile(relayPath)
+	if err != nil {
+		t.Fatalf("relay status should exist: %v", err)
+	}
+	lines := len(strings.Split(strings.TrimSpace(string(data)), "\n"))
+	if lines != 1 {
+		t.Errorf("expected 1 relay status line, got %d (duplicate relay)", lines)
+	}
+}
+
 // TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher proves that when the
 // watcher beat is stale and material wakes are pending, a scan produces
 // actionable condition codes for recovery.

@@ -372,6 +372,21 @@ func runCycle(homeDir string) (bool, error) {
 		}
 	}
 
+	// Per-cycle terminal receipt reconciliation.
+	// Catches receipts that arrive after the one-shot startup recovery
+	// (e.g., soldier finishes mid-cycle). Uses the same
+	// TerminalReconcileHook as startup recovery — the underlying
+	// ReconcileTerminalReceipts is idempotent (skips already-acked
+	// receipts), so calling it every cycle is safe and produces
+	// exactly-once relay.
+	// On error, the error is logged and the cycle continues (bounded
+	// failure) — partial failure must not falsely ack/close obligations.
+	if TerminalReconcileHook != nil {
+		if err := TerminalReconcileHook(homeDir); err != nil {
+			fmt.Fprintf(os.Stderr, "terminal reconcile cycle: %v\n", err)
+		}
+	}
+
 	emitted := false
 	for _, reason := range scanFleet(homeDir, true) {
 		if len(reason.TaskIDs) == 0 {
@@ -458,12 +473,13 @@ func runCycle(homeDir string) (bool, error) {
 		emitted = true
 	}
 
-	// Recovery-only: mailbox inbox recovery and legacy terminal reconcile
-	// are handled in runRecovery, called once at startup. No per-cycle
-	// routing of pending receipts or diagnostics. General never requires
-	// parent-home. Pending mailbox counts are visible through health checks
-	// and status queries, not watcher diagnostic wakes.
-	//
+	// Mailbox inbox recovery is handled in runRecovery, called once at
+	// startup. No per-cycle routing of pending mailbox envelopes or
+	// diagnostics. General never requires parent-home. Pending mailbox
+	// counts are visible through health checks and status queries, not
+	// watcher diagnostic wakes.
+	// Per-cycle terminal receipt reconciliation runs above (see comment),
+	// sharing the same TerminalReconcileHook with startup recovery.
 	// The watcher is recovery-only for pending envelope delivery.
 	// Normal rank-aware communication goes directly via mailbox.SendReport.
 
