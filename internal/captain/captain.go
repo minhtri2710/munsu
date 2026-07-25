@@ -435,11 +435,11 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
 
 ## One-Hop Relay (Captain → General)
 
-When a Soldier finishes (done/failed), the relay is driven by Converge which invokes %[5]sRelayTerminalReceipts%[5]s:
+When a Soldier finishes (done/failed), the relay is driven by Converge which invokes %[5]sReconcileTerminalReceipts%[5]s:
 
 1. **Terminal receipt**: The soldier's terminal report generates a durable receipt (event/wake) in the captain's state.
 2. **Wake/reconcile**: A wake is raised; the next converge cycle picks it up, reads the receipt, and reconciles with task meta.
-3. **Production relay** (%[5]sRelayTerminalReceipts%[5]s):
+3. **Production relay** (%[5]sReconcileTerminalReceipts%[5]s):
    - Writes a durable relay status + event under the parent General's state (namespace: %[5]scaptain:<id>.relay-<task>%[5]s).
    - Writes an exact task/key acknowledgment in the captain home via %[5]sturnend.WriteAck%[5]s.
    - Completes the %[5]sReportRelay%[5]s obligation via %[5]sturnend.CompleteTaskObligation%[5]s.

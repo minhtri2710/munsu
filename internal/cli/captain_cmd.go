@@ -235,7 +235,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	recoverCmd := &cobra.Command{
 		Use:   "recover <captain-id>",
 		Short: "Run structured recovery transaction for a captain",
-		Long: `Run the full recovery transaction for one captain: provenance → config → integration → launch readiness → relaunch pane → watcher ensure → legacy guard → nudge retry.
+		Long: `Run the full recovery transaction for one captain: provenance → config-validation → integration-status → charter-refresh → config-push → launch-readiness → relaunch-pane → watcher-ensure → legacy transport guard → terminal-reconcile → nudge-retry.
 	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {

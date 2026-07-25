@@ -155,7 +155,7 @@ func TestCharter_BacklogAuthority(t *testing.T) {
 }
 
 // TestCharter_RelaySemantics verifies the one-hop relay section matches the
-// production RelayTerminalReceipts contract:
+// production ReconcileTerminalReceipts contract:
 //   - wake/reconcile invokes production relay
 //   - durable parent write must succeed BEFORE local ack
 //   - teardown allowed ONLY after local exact ack / closed obligation
@@ -163,9 +163,9 @@ func TestCharter_BacklogAuthority(t *testing.T) {
 func TestCharter_RelaySemantics(t *testing.T) {
 	charter := DefaultCharter("relay-test", t.TempDir())
 
-	// Must mention RelayTerminalReceipts by name.
-	if !strings.Contains(charter, "RelayTerminalReceipts") {
-		t.Error("DefaultCharter must mention RelayTerminalReceipts in relay section")
+	// Must mention ReconcileTerminalReceipts by name.
+	if !strings.Contains(charter, "ReconcileTerminalReceipts") {
+		t.Error("DefaultCharter must mention ReconcileTerminalReceipts in relay section")
 	}
 
 	// Must mention durable parent write / status write BEFORE local ack.
