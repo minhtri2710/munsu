@@ -747,3 +747,171 @@ func initProvenance(t *testing.T, home, captainID string) {
 	os.WriteFile(filepath.Join(home, turnend.ProvenanceMarkerName),
 		[]byte("munsu-v2\n"+captainID+"\n"), 0644)
 }
+
+// --- ActivateOnReceipt tests ---
+
+// receiptEnv creates a captain home with receipt infrastructure.
+func receiptEnv(t *testing.T) string {
+	t.Helper()
+	captainHome := t.TempDir()
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+	return captainHome
+}
+
+// TestActivationSeen_MarkerDirect tests the IsActivationSeen / MarkActivationSeen
+// marker lifecycle directly.
+func TestActivationSeen_MarkerDirect(t *testing.T) {
+	captainHome := receiptEnv(t)
+	taskID, termKey := "test-task", "test-key"
+
+	// Initially not activation-seen.
+	if IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("receipt should NOT be activation-seen before marking")
+	}
+
+	// Mark as seen.
+	if err := MarkActivationSeen(captainHome, taskID, termKey); err != nil {
+		t.Fatalf("MarkActivationSeen: %v", err)
+	}
+
+	// Now it should be seen.
+	if !IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("receipt SHOULD be activation-seen after marking")
+	}
+
+	// Marker should be in the receipts directory.
+	markerPath := ActivationSeenPath(captainHome, taskID, termKey)
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("reading marker: %v", err)
+	}
+	if !strings.Contains(string(data), "task_id="+taskID) {
+		t.Errorf("marker should contain task_id=%s, got: %s", taskID, string(data))
+	}
+	if !strings.Contains(string(data), "key="+termKey) {
+		t.Errorf("marker should contain key=%s, got: %s", termKey, string(data))
+	}
+	if !strings.Contains(string(data), "activated_at=") {
+		t.Error("marker should contain activated_at=")
+	}
+}
+
+// TestActivateOnReceipt_NoReceipts verifies that ActivateOnReceipt returns 0
+// when there are no pending receipts.
+func TestActivateOnReceipt_NoReceipts(t *testing.T) {
+	captainHome := receiptEnv(t)
+
+	// No receipt files at all.
+	count := ActivateOnReceipt(captainHome)
+	if count != 0 {
+		t.Errorf("expected 0 activations with no receipts, got %d", count)
+	}
+}
+
+// TestActivateOnReceipt_AllAlreadySeen verifies that receipts already
+// activation-seen do not trigger duplicate nudges.
+func TestActivateOnReceipt_AllAlreadySeen(t *testing.T) {
+	captainHome := receiptEnv(t)
+	taskID, termKey := "already-seen", "seen-key"
+
+	// Write receipt and mark it as activation-seen.
+	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+	if err := MarkActivationSeen(captainHome, taskID, termKey); err != nil {
+		t.Fatalf("MarkActivationSeen: %v", err)
+	}
+
+	count := ActivateOnReceipt(captainHome)
+	if count != 0 {
+		t.Errorf("expected 0 activations for already-seen receipt, got %d", count)
+	}
+
+	// Marker should still exist.
+	if !IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("activation-seen marker should persist after ActivateOnReceipt")
+	}
+}
+
+// TestActivateOnReceipt_NoBackend verifies that when no session backend is
+// available, ActivateOnReceipt gracefully returns 0 and marks the receipt
+// as activation-seen (avoids retry every cycle).
+func TestActivateOnReceipt_NoBackend(t *testing.T) {
+	captainHome := receiptEnv(t)
+	taskID, termKey := "no-backend", "no-bk-key"
+
+	// Write a receipt (no config/general-pane, no tmux, no herdr).
+	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "task complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+
+	count := ActivateOnReceipt(captainHome)
+	if count != 0 {
+		t.Errorf("expected 0 activations with no backend, got %d", count)
+	}
+
+	// Receipt should be marked as activation-seen so it isn't retried.
+	if !IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("receipt should be activation-seen after failed activation attempt")
+	}
+}
+
+// TestActivateOnReceipt_OnlyNewAreActivated verifies that when there are
+// multiple receipts (some seen, some new), only new receipts trigger
+// activation attempts. This tests idempotent partial progress.
+func TestActivateOnReceipt_OnlyNewAreActivated(t *testing.T) {
+	captainHome := receiptEnv(t)
+
+	// Receipt 1: already seen.
+	if err := turnend.WriteReceipt(captainHome, "seen-task", "seen-key", "done", ""); err != nil {
+		t.Fatalf("WriteReceipt seen: %v", err)
+	}
+	if err := MarkActivationSeen(captainHome, "seen-task", "seen-key"); err != nil {
+		t.Fatalf("MarkActivationSeen: %v", err)
+	}
+
+	// Receipt 2: new (not seen).
+	if err := turnend.WriteReceipt(captainHome, "new-task", "new-key", "failed", "error"); err != nil {
+		t.Fatalf("WriteReceipt new: %v", err)
+	}
+
+	count := ActivateOnReceipt(captainHome)
+	// New receipt will fail to activate (no backend) but should still be counted.
+	// Since there's no backend, activation will fail -> count=0.
+	// The important check: the new receipt is marked as activation-seen.
+	if count != 0 {
+		t.Errorf("expected 0 activations (no backend), got %d", count)
+	}
+
+	// New receipt must be activation-seen after the attempt.
+	if !IsActivationSeen(captainHome, "new-task", "new-key") {
+		t.Error("new receipt should be activation-seen after activation attempt")
+	}
+
+	// Seen receipt must remain activation-seen.
+	if !IsActivationSeen(captainHome, "seen-task", "seen-key") {
+		t.Error("already-seen receipt must remain activation-seen")
+	}
+}
+
+// TestActivateOnReceipt_NoGeneralPaneConfig verifies behavior when the captain
+// home has no config/general-pane file (no target configured).
+func TestActivateOnReceipt_NoGeneralPaneConfig(t *testing.T) {
+	captainHome := receiptEnv(t)
+	taskID, termKey := "no-pane-config", "no-pane-key"
+
+	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+
+	// No config/general-pane file exists.
+	count := ActivateOnReceipt(captainHome)
+	if count != 0 {
+		t.Errorf("expected 0 activations with no pane config, got %d", count)
+	}
+
+	// Receipt should still be marked as seen (avoids retry).
+	if !IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("receipt should be activation-seen after failed activation")
+	}
+}

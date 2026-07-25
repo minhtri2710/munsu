@@ -12,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/wakedelivery"
 )
 
 // --- WatcherStatusSummary tests ---
@@ -486,5 +487,142 @@ func TestCaptainPerCycle_RealHook_TwoWatchersIsolated(t *testing.T) {
 	cross2 := filepath.Join(gen1, "state", "captain:test-captain.relay-"+task2+".status")
 	if _, err := os.Stat(cross2); err == nil {
 		t.Error("watcher 2 receipt must NOT appear in watcher 1's general")
+	}
+}
+
+// --- Captain activation-on-receipt integration tests ---
+
+// TestCaptainActivationOnReceipt_HookWired verifies that the captain init()
+// correctly wires CaptainActivationHook and that calling RunCycle with a
+// captain context (MUNSU_PARENT_STATUS set) triggers ActivateOnReceipt,
+// which writes activation-seen markers for pending receipts.
+func TestCaptainActivationOnReceipt_HookWired(t *testing.T) {
+	cptHome, genHome := setupE2E(t)
+	defer setParentStatus(genHome)()
+	taskID, termKey := "activation-e2e", "e2e-key"
+
+	// Write a pending receipt (captain has received soldier report).
+	writeReceiptAndObligation(t, cptHome, taskID, termKey, "done", "activation test")
+
+	// Run cycles to get past startup recovery and trigger per-cycle hooks.
+	supervision.RunCycle(cptHome)
+	supervision.RunCycle(cptHome)
+
+	// Activation-seen MUST be written (even if activation fails due to
+	// no pane config/backend in test environment, the marker prevents retry).
+	if !wakedelivery.IsActivationSeen(cptHome, taskID, termKey) {
+		t.Error("activation-seen should be written after per-cycle hook runs")
+	}
+
+	// Another cycle — idempotency: the hook must not panic or error.
+	supervision.RunCycle(cptHome)
+
+	// Marker must still exist.
+	if !wakedelivery.IsActivationSeen(cptHome, taskID, termKey) {
+		t.Error("activation-seen marker must persist")
+	}
+}
+
+// TestCaptainActivationOnReceipt_IdempotentSegregation verifies that
+// activation-seen markings are independent of ack/relay markers. Receipts
+// already marked activation-seen are not re-processed, while new receipts
+// receive an activation attempt.
+func TestCaptainActivationOnReceipt_IdempotentSegregation(t *testing.T) {
+	cptHome, genHome := setupE2E(t)
+	defer setParentStatus(genHome)()
+
+	taskSeen := "seen-task"
+	keySeen := "seen-key"
+	taskNotSeen := "not-seen-task"
+	keyNotSeen := "not-seen-key"
+
+	// First receipt: write + mark activation-seen.
+	writeReceiptAndObligation(t, cptHome, taskSeen, keySeen, "done", "seen")
+	if err := wakedelivery.MarkActivationSeen(cptHome, taskSeen, keySeen); err != nil {
+		t.Fatalf("MarkActivationSeen: %v", err)
+	}
+
+	// Second receipt: write but do NOT mark activation-seen.
+	writeReceiptAndObligation(t, cptHome, taskNotSeen, keyNotSeen, "failed", "not seen")
+
+	// Run cycles until the per-cycle hook fires (at least 2 cycles to
+	// get past recovery guard).
+	supervision.RunCycle(cptHome)
+	supervision.RunCycle(cptHome)
+
+	// First receipt should still be activation-seen (pre-written marker).
+	if !wakedelivery.IsActivationSeen(cptHome, taskSeen, keySeen) {
+		t.Error("first receipt should remain activation-seen")
+	}
+
+	// Second receipt should now be activation-seen (attempt made).
+	if !wakedelivery.IsActivationSeen(cptHome, taskNotSeen, keyNotSeen) {
+		t.Error("second receipt should be activation-seen after per-cycle hook")
+	}
+
+	// Both should become acked by the terminal reconcile hook.
+	if !turnend.IsReceiptAcked(cptHome, taskSeen, keySeen) {
+		t.Error("first receipt should be acked")
+	}
+	if !turnend.IsReceiptAcked(cptHome, taskNotSeen, keyNotSeen) {
+		t.Error("second receipt should be acked")
+	}
+}
+
+// TestCaptainActivationOnReceipt_NoParentContext verifies that when
+// MUNSU_PARENT_STATUS equals the home dir (not a real captain context),
+// the captainActivationHook is a no-op and does not attempt activation.
+func TestCaptainActivationOnReceipt_NoParentContext(t *testing.T) {
+	captainHome := t.TempDir()
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+	if err := SeedProvenance(captainHome, "test-captain"); err != nil {
+		t.Fatalf("SeedProvenance: %v", err)
+	}
+	taskID, termKey := "no-parent", "nop-key"
+
+	writeReceiptAndObligation(t, captainHome, taskID, termKey, "done", "no parent context")
+
+	// Set MUNSU_PARENT_STATUS to captainHome itself (not a real parent).
+	defer setParentStatus(captainHome)()
+
+	// Cycle 1 (recovery).
+	supervision.RunCycle(captainHome)
+
+	// Cycle 2 (per-cycle) — hook should see parent == home and skip.
+	supervision.RunCycle(captainHome)
+
+	// Activation-seen should NOT be written because the hook short-circuits
+	// when parentHome == homeDir.
+	if wakedelivery.IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("activation-seen should NOT be written when parentHome == homeDir")
+	}
+}
+
+// TestCaptainActivationOnReceipt_NoParentEnv verifies that when
+// MUNSU_PARENT_STATUS is not set, the captainActivationHook is a no-op.
+func TestCaptainActivationOnReceipt_NoParentEnv(t *testing.T) {
+	captainHome := t.TempDir()
+	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
+	if err := SeedProvenance(captainHome, "test-captain"); err != nil {
+		t.Fatalf("SeedProvenance: %v", err)
+	}
+	taskID, termKey := "no-env", "noenv-key"
+
+	writeReceiptAndObligation(t, captainHome, taskID, termKey, "done", "no parent env")
+
+	// Ensure MUNSU_PARENT_STATUS is not set (clean up any prior value).
+	oldParent := os.Getenv("MUNSU_PARENT_STATUS")
+	os.Unsetenv("MUNSU_PARENT_STATUS")
+	defer os.Setenv("MUNSU_PARENT_STATUS", oldParent)
+
+	// Cycle 1 (recovery).
+	supervision.RunCycle(captainHome)
+
+	// Cycle 2 (per-cycle) — hook should see empty parent and skip.
+	supervision.RunCycle(captainHome)
+
+	// Activation-seen should NOT be written.
+	if wakedelivery.IsActivationSeen(captainHome, taskID, termKey) {
+		t.Error("activation-seen should NOT be written when MUNSU_PARENT_STATUS is unset")
 	}
 }

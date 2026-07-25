@@ -343,6 +343,174 @@ func reconcileOne(captainHome, parentHome string, pr turnend.PendingReceipt) Rec
 	return base
 }
 
+// --- Activation on receipt (captain agent pane nudge) ---
+
+// activationSeenSuffix is the suffix appended to the receipt-name base to
+// form the activation-seen marker. Markers live in the same directory as
+// receipts (state/.terminal-receipts/).
+const activationSeenSuffix = ".activation-seen"
+
+// ActivationSeenPath returns the path for an activation-seen marker.
+func ActivationSeenPath(captainHome, taskID, termKey string) string {
+	return filepath.Join(turnend.ReceiptDir(captainHome), taskID+"."+termKey+activationSeenSuffix)
+}
+
+// IsActivationSeen checks whether a receipt has already triggered an
+// activation nudge (idempotency guard).
+func IsActivationSeen(captainHome, taskID, termKey string) bool {
+	_, err := os.Stat(ActivationSeenPath(captainHome, taskID, termKey))
+	return err == nil
+}
+
+// MarkActivationSeen writes a durable marker that a receipt has triggered
+// an activation nudge, preventing duplicate nudges on subsequent cycles.
+func MarkActivationSeen(captainHome, taskID, termKey string) error {
+	p := ActivationSeenPath(captainHome, taskID, termKey)
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("creating activation-seen dir: %w", err)
+	}
+	content := fmt.Sprintf("task_id=%s\nkey=%s\nactivated_at=%d\n",
+		taskID, termKey, time.Now().UnixNano())
+	return os.WriteFile(p, []byte(content), 0644)
+}
+
+// listAllReceipts scans the receipts directory and returns ALL receipt files
+// (regardless of ack status). This is used by ActivateOnReceipt to find
+// receipts that may already be acked (relayed) but not yet activation-seen.
+func listAllReceipts(homeDir string) ([]turnend.PendingReceipt, error) {
+	dir := turnend.ReceiptDir(homeDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading receipts dir: %w", err)
+	}
+
+	var results []turnend.PendingReceipt
+	seen := make(map[string]bool)
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".receipt") || e.IsDir() {
+			continue
+		}
+		core := strings.TrimSuffix(name, ".receipt")
+		taskID, termKey, ok := strings.Cut(core, ".")
+		if !ok || taskID == "" || termKey == "" {
+			continue
+		}
+		key := taskID + "/" + termKey
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		// Read the receipt content to extract state.
+		state := ""
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if k, v, ok := strings.Cut(line, "="); ok && k == "state" {
+					state = strings.TrimSpace(v)
+				}
+			}
+		}
+
+		results = append(results, turnend.PendingReceipt{TaskID: taskID, TermKey: termKey, State: state})
+	}
+	return results, nil
+}
+
+// ActivateOnReceipt scans captain-owned receipt files and for each one
+// not yet activation-seen, attempts a safe, idempotent activation nudge to
+// the captain agent pane.
+//
+// Unlike ReconcilePending (which only processes un-acked receipts), this
+// function processes ALL receipts because the activation nudge is independent
+// of the General relay lifecycle — a receipt may be relayed (acked) but still
+// need the captain agent pane nudged.
+//
+// Safe inject guards are honored: if the captain agent pane is busy or the
+// inject target is unsafe, the nudge is skipped (not retried for this receipt
+// on subsequent cycles — the marker is still written to prevent infinite
+// retries on an unsafe target).
+//
+// Returns the number of activation nudges that were successfully injected.
+// Idempotent: safe to call repeatedly. Already activation-seen receipts are
+// skipped without examining the pane target again.
+func ActivateOnReceipt(captainHome string) int {
+	allReceipts, err := listAllReceipts(captainHome)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: listing receipts for activation: %v\n", err)
+		return 0
+	}
+
+	count := 0
+	for _, pr := range allReceipts {
+		// Skip if already activation-seen (idempotency guard).
+		if IsActivationSeen(captainHome, pr.TaskID, pr.TermKey) {
+			continue
+		}
+
+		// Resolve the captain agent pane target from the captain home.
+		target, err := afk.ResolveTargetWithSource(captainHome)
+		if err != nil || target.Handle == "" || target.Source == afk.Unsupported {
+			// No target configured — mark as seen to avoid retry.
+			if merr := MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey); merr != nil {
+				fmt.Fprintf(os.Stderr, "warning: marking activation-seen for %s/%s: %v\n",
+					pr.TaskID, pr.TermKey, merr)
+			}
+			continue
+		}
+
+		// Obtain a session backend for injection.
+		bk, _, err := session.Resolve(captainHome, "")
+		if err != nil {
+			// No backend available — mark as seen to avoid retry.
+			if merr := MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey); merr != nil {
+				fmt.Fprintf(os.Stderr, "warning: marking activation-seen for %s/%s: %v\n",
+					pr.TaskID, pr.TermKey, merr)
+			}
+			continue
+		}
+
+		var afkCap afk.PaneCapture = bk
+
+		// Check inject safety: composer must be empty (agent waiting).
+		safe, _, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
+		if err != nil {
+			// Capture failure — mark as seen to avoid retry.
+			MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey)
+			continue
+		}
+		if !safe {
+			// Unsafe target (composer busy, unknown verdict).
+			// Still mark as seen so we don't retry every cycle.
+			MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey)
+			continue
+		}
+
+		// Build the activation nudge message.
+		nudge := fmt.Sprintf("[receipt] %s: soldier %s [key=%s]", pr.State, pr.TaskID, pr.TermKey)
+		markedMsg := afk.Mark(nudge)
+
+		result := session.SubmitPrompt(bk, target.Handle, markedMsg)
+		if !result.Acknowledged() {
+			// Injection failed — still mark as seen to avoid retry.
+			MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey)
+			continue
+		}
+
+		// Mark as activation-seen after successful injection.
+		if err := MarkActivationSeen(captainHome, pr.TaskID, pr.TermKey); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: marking activation-seen for %s/%s: %v\n",
+				pr.TaskID, pr.TermKey, err)
+		}
+
+		count++
+	}
+	return count
+}
+
 // readCaptainID reads the captain ID from the provenance marker file.
 // Falls back to the directory basename if no marker exists.
 func readCaptainID(captainHome string) (string, error) {
