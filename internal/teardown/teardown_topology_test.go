@@ -1300,3 +1300,84 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testi
 		t.Errorf("expected 'cannot verify merge status' error, got: %v", err)
 	}
 }
+
+// --- DeliveryState merged acceptance tests ---
+
+func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
+	// When delivery_state=merged and provider confirms merge,
+	// teardown should accept without --force.
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	meta := fixtureMeta(wt, true)
+	meta["pr_head"] = headSHA
+	meta["pr_head_sha"] = headSHA
+	meta[delivery.MetaDeliveryState] = string(delivery.DeliveryStateMerged)
+
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:    true,
+		MergedSHA: headSHA,
+		HeadSHA:   headSHA,
+		State:     "MERGED",
+	}, nil)
+	defer cleanup()
+
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err != nil {
+		t.Fatalf("merged with delivery_state=merged should pass: %v", err)
+	}
+}
+
+func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.T) {
+	// When delivery_state=review-ready (not merged), teardown MUST reject
+	// without --force even when provider says merged.
+	tmp := t.TempDir()
+	wt, _ := setupTopologyRepo(t, tmp)
+
+	gitEnv := topologyGitEnv(wt)
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	shaCmd.Dir = wt
+	shaCmd.Env = gitEnv
+	shaOut, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("getting head SHA: %v", err)
+	}
+	headSHA := strings.TrimSpace(string(shaOut))
+
+	meta := fixtureMeta(wt, true)
+	meta["pr_head"] = headSHA
+	meta["pr_head_sha"] = headSHA
+	meta[delivery.MetaDeliveryState] = string(delivery.DeliveryStateReviewReady)
+
+	cleanup := applyMockPRStatus(t, &delivery.PRMergeStatus{
+		Merged:    true,
+		MergedSHA: headSHA,
+		HeadSHA:   headSHA,
+		State:     "MERGED",
+	}, nil)
+	defer cleanup()
+
+	_, err = shipSafetyCheck(Options{ID: "test"}, meta)
+	if err == nil {
+		t.Fatal("expected error for delivery_state=review-ready (not merged)")
+	}
+	if !strings.Contains(err.Error(), "delivery lifecycle is in state") {
+		t.Fatalf("expected delivery lifecycle error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "review-ready") {
+		t.Fatalf("expected error mentioning review-ready, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("expected error mentioning --force, got: %v", err)
+	}
+}

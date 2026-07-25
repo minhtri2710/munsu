@@ -1492,3 +1492,196 @@ func TestValidateCheck_LstatRejectsSymlink(t *testing.T) {
 		t.Fatalf("expected symlink error, got: %v", err)
 	}
 }
+
+// --- DeliveryState merge transition tests ---
+
+func TestRetireMergedPoll_SetsDeliveryStateMerged(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	if err := RetireMergedPoll(home, taskID, checkPath); err != nil {
+		t.Fatalf("RetireMergedPoll: %v", err)
+	}
+
+	// Verify delivery_state is merged in meta.
+	meta, err := task.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if meta[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, meta[delivery.MetaDeliveryState])
+	}
+
+	// Verify other meta is preserved.
+	if meta["kind"] != "ship" {
+		t.Fatal("meta kind should be preserved")
+	}
+}
+
+func TestRetireMergedPoll_SetsDeliveryStateMergedFromReviewReady(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	// Add delivery_state=review-ready to meta.
+	meta, err := task.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	meta[delivery.MetaDeliveryState] = string(delivery.DeliveryStateReviewReady)
+	if err := task.WriteMeta(home, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	if err := RetireMergedPoll(home, taskID, checkPath); err != nil {
+		t.Fatalf("RetireMergedPoll: %v", err)
+	}
+
+	result, err := task.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if result[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, result[delivery.MetaDeliveryState])
+	}
+}
+
+func TestRecoverPendingRetirement_SetsDeliveryStateMerged(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	// Install mock so CAS in recovery also uses it (not needed for CAS, but
+	// for identity consistency). Using the same mock as the main path.
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	// Simulate crash after record write but before CAS.
+	digest, err := pollContentDigest(checkPath)
+	if err != nil {
+		t.Fatalf("pollContentDigest: %v", err)
+	}
+
+	rec := &PollRetirementRecord{
+		SchemaVersion:   1,
+		TaskID:          taskID,
+		PollPath:        taskID + ".check",
+		PollDigest:      digest,
+		Provider:        "github",
+		Owner:           "testowner",
+		Repo:            "testrepo",
+		Number:          42,
+		URL:             "https://github.com/testowner/testrepo/pull/42",
+		BaseRef:         "main",
+		HeadRef:         "feature-branch",
+		HeadSHA:         "0000111122223333444455556666777788889999",
+		CapturedAt:      "2024-01-01T00:00:00Z",
+		MergedSHA:       "aaaabbbbccccddddeeeeffff0000111122223333",
+		PublicationLine: publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "aaaabbbbccccddddeeeeffff0000111122223333"),
+		DiscoveredAt:    "2024-01-01T00:01:00Z",
+		RecordedAt:      "2024-01-01T00:01:00Z",
+	}
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatalf("WriteRetirementRecord: %v", err)
+	}
+
+	// Recovery should set delivery_state to merged.
+	resolved, err := RecoverPendingRetirement(home, taskID)
+	if err != nil {
+		t.Fatalf("RecoverPendingRetirement: %v", err)
+	}
+	if !resolved {
+		t.Fatal("expected resolved=true")
+	}
+
+	result, err := task.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if result[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, result[delivery.MetaDeliveryState])
+	}
+}
+
+func TestRecoverPendingRetirement_IdempotentDeliveryState(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	// Successful full retirement.
+	if err := RetireMergedPoll(home, taskID, checkPath); err != nil {
+		t.Fatalf("RetireMergedPoll: %v", err)
+	}
+
+	// Check delivery_state is merged.
+	result, err := task.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if result[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, result[delivery.MetaDeliveryState])
+	}
+
+	// Recovery with nothing pending should be idempotent.
+	resolved, err := RecoverPendingRetirement(home, taskID)
+	if err != nil {
+		t.Fatalf("RecoverPendingRetirement: %v", err)
+	}
+	if !resolved {
+		t.Fatal("expected resolved=true")
+	}
+
+	// delivery_state should still be merged.
+	result2, err := task.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if result2[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state to remain %q", delivery.DeliveryStateMerged)
+	}
+}
+
+func TestRetireMergedPoll_MarkMergedCASFailurePreservesRecord(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	// Break the seam: make markDeliveryMerged always fail.
+	saved := markDeliveryMerged
+	markDeliveryMerged = func(_, _ string, _ *delivery.DeliveryIdentity) error {
+		return fmt.Errorf("simulated CAS failure")
+	}
+	defer func() { markDeliveryMerged = saved }()
+
+	err := RetireMergedPoll(home, taskID, checkPath)
+	if err == nil {
+		t.Fatal("expected error from simulated markDeliveryMerged failure")
+	}
+	if !strings.Contains(err.Error(), "simulated CAS failure") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Poll should still exist (retirement did not complete).
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatal("check should be preserved on MarkMerged failure")
+	}
+
+	// Retirement record should exist (pending for recovery).
+	rec := readRetirementRecordOrNil(t, home, taskID)
+	if rec == nil {
+		t.Fatal("retirement record should exist for recovery")
+	}
+
+	// delivery_state should NOT be merged.
+	meta, err := task.ReadMeta(home, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if meta[delivery.MetaDeliveryState] == string(delivery.DeliveryStateMerged) {
+		t.Fatal("delivery_state should NOT be merged after failed MarkMerged")
+	}
+}
