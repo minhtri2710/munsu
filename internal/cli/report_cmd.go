@@ -3,15 +3,18 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
@@ -143,6 +146,36 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					return operationError("obligations_init_failed",
 						"Check MUNSU_PARENT_STATUS path permissions and structure",
 						fmt.Sprintf("report: init task obligations: %v", err))
+				}
+			}
+
+			// 1.6. For soldier review-ready/idle states: emit a durable ready event
+			// and flush one pending command automatically. This is the core integration
+			// of event-driven busy soldier delivery: when the soldier reaches a turn
+			// boundary (review-ready), it signals readiness and the next queued command
+			// (if any) is sent via NotificationRef without blocking.
+			//
+			// No polling. No Captain status spam. The ready event marker also allows
+			// converge/consume-ready to find it as a recovery path.
+			if role == "soldier" && state == "review-ready" {
+				// Emit durable ready event marker.
+				meta, metaErr := task.ReadMeta(homeDir, taskID)
+				if metaErr == nil {
+					metaGeneration := meta["generation"]
+					captain.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
+
+					// Flush one pending command (if any). Best-effort: if no pending,
+					// this is a no-op. If backend fails, pending is retained for retry.
+					senderIdentity, _, _ := mailbox.ReadHomeIdentity(homeDir)
+					if senderIdentity == "" {
+						senderIdentity = filepath.Base(homeDir)
+					}
+					if fr := captain.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity); fr.Err != nil {
+						// Failures are expected when there's no pending or backend is
+						// temporarily unavailable. The pending remains for retry on the
+						// next review-ready report or via converge/consume-ready.
+						fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
+					}
 				}
 			}
 
