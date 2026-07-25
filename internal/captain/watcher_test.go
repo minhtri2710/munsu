@@ -494,8 +494,9 @@ func TestCaptainPerCycle_RealHook_TwoWatchersIsolated(t *testing.T) {
 
 // TestCaptainActivationOnReceipt_HookWired verifies that the captain init()
 // correctly wires CaptainActivationHook and that calling RunCycle with a
-// captain context (MUNSU_PARENT_STATUS set) triggers ActivateOnReceipt,
-// which writes activation-seen markers for pending receipts.
+// captain context (MUNSU_PARENT_STATUS set) triggers ActivateOnReceipt.
+// Without captain meta (no parent meta with herdr_pane_id), activation-seen
+// markers are NOT written — retries remain possible.
 func TestCaptainActivationOnReceipt_HookWired(t *testing.T) {
 	cptHome, genHome := setupE2E(t)
 	defer setParentStatus(genHome)()
@@ -508,25 +509,20 @@ func TestCaptainActivationOnReceipt_HookWired(t *testing.T) {
 	supervision.RunCycle(cptHome)
 	supervision.RunCycle(cptHome)
 
-	// Activation-seen MUST be written (even if activation fails due to
-	// no pane config/backend in test environment, the marker prevents retry).
-	if !wakedelivery.IsActivationSeen(cptHome, taskID, termKey) {
-		t.Error("activation-seen should be written after per-cycle hook runs")
+	// Without captain meta (genHome has no captain:<id>.meta with herdr_pane_id),
+	// activation-seen must NOT be written — retries must remain possible.
+	if wakedelivery.IsActivationSeen(cptHome, taskID, termKey) {
+		t.Error("activation-seen should NOT be written without captain meta")
 	}
 
 	// Another cycle — idempotency: the hook must not panic or error.
 	supervision.RunCycle(cptHome)
-
-	// Marker must still exist.
-	if !wakedelivery.IsActivationSeen(cptHome, taskID, termKey) {
-		t.Error("activation-seen marker must persist")
-	}
 }
 
 // TestCaptainActivationOnReceipt_IdempotentSegregation verifies that
 // activation-seen markings are independent of ack/relay markers. Receipts
 // already marked activation-seen are not re-processed, while new receipts
-// receive an activation attempt.
+// receive an activation attempt only when meta provides a target.
 func TestCaptainActivationOnReceipt_IdempotentSegregation(t *testing.T) {
 	cptHome, genHome := setupE2E(t)
 	defer setParentStatus(genHome)()
@@ -555,9 +551,10 @@ func TestCaptainActivationOnReceipt_IdempotentSegregation(t *testing.T) {
 		t.Error("first receipt should remain activation-seen")
 	}
 
-	// Second receipt should now be activation-seen (attempt made).
-	if !wakedelivery.IsActivationSeen(cptHome, taskNotSeen, keyNotSeen) {
-		t.Error("second receipt should be activation-seen after per-cycle hook")
+	// Without captain meta (no herdr_pane_id in genHome meta),
+	// second receipt must NOT be activation-seen.
+	if wakedelivery.IsActivationSeen(cptHome, taskNotSeen, keyNotSeen) {
+		t.Error("second receipt should NOT be activation-seen without captain meta")
 	}
 
 	// Both should become acked by the terminal reconcile hook.
