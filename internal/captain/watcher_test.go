@@ -216,8 +216,15 @@ func setupE2E(t *testing.T) (captainHome, generalHome string) {
 	if err := SeedProvenance(cptHome, "test-captain"); err != nil {
 		t.Fatalf("SeedProvenance: %v", err)
 	}
-	t.Setenv("MUNSU_PARENT_STATUS", genHome)
 	return cptHome, genHome
+}
+
+// setParentStatus sets MUNSU_PARENT_STATUS to parentHome and returns a
+// cleanup function that restores the previous value.
+func setParentStatus(parentHome string) func() {
+	old := os.Getenv("MUNSU_PARENT_STATUS")
+	os.Setenv("MUNSU_PARENT_STATUS", parentHome)
+	return func() { os.Setenv("MUNSU_PARENT_STATUS", old) }
 }
 
 // writeReceiptAndObligation writes a receipt and initializes obligations.
@@ -239,6 +246,7 @@ func TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt(t *testing.T) {
 	cptHome, genHome := setupE2E(t)
 	taskID := "e2e-post-startup"
 	termKey := "e2e-key"
+	defer setParentStatus(genHome)()
 
 	// First cycle — startup recovery (no receipts pending).
 	// The real reconcileHook is already installed via init().
@@ -290,6 +298,8 @@ func TestCaptainPerCycle_RealHook_ExactlyOneWake(t *testing.T) {
 	cptHome, genHome := setupE2E(t)
 	taskID := "e2e-exactly-one"
 	termKey := "e2e-one-key"
+
+	defer setParentStatus(genHome)()
 
 	// Write receipt BEFORE first cycle (startup recovery will relay it).
 	writeReceiptAndObligation(t, cptHome, taskID, termKey, "done", "startup pending")
@@ -343,6 +353,7 @@ func TestCaptainPerCycle_RealHook_ExactlyOneWake(t *testing.T) {
 // receipts written in sequence across cycles are each relayed by the real hook.
 func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
 	cptHome, genHome := setupE2E(t)
+	defer setParentStatus(genHome)()
 
 	task1 := "e2e-multi-1"
 	key1 := "mk-1"
@@ -391,5 +402,89 @@ func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
 		if _, err := os.Stat(relayPath); os.IsNotExist(err) {
 			t.Errorf("relay status for %s should exist", tID)
 		}
+	}
+}
+
+// TestCaptainPerCycle_RealHook_TwoWatchersIsolated verifies that two
+// independent watchers (separate homes, separate generals) each process
+// their own terminal receipts using the real reconcileHook, without
+// interfering with each other. This tests the same-binary two-watcher
+// isolation contract: both watchers run from the same binary/process
+// but operate on independent file-system homes.
+func TestCaptainPerCycle_RealHook_TwoWatchersIsolated(t *testing.T) {
+	// Create two independent captain+general pairs.
+	cpt1, gen1 := setupE2E(t)
+	task1 := "two-watcher-1"
+	cpt2, gen2 := setupE2E(t)
+	task2 := "two-watcher-2"
+
+	// Run initial cycle on both watchers (startup recovery — no receipts).
+	// Each watcher runs with its own MUNSU_PARENT_STATUS set.
+	func() {
+		defer setParentStatus(gen1)()
+		if _, err := supervision.RunCycle(cpt1); err != nil {
+			t.Errorf("watcher 1 first cycle: %v", err)
+		}
+	}()
+	func() {
+		defer setParentStatus(gen2)()
+		if _, err := supervision.RunCycle(cpt2); err != nil {
+			t.Errorf("watcher 2 first cycle: %v", err)
+		}
+	}()
+
+	// Write receipts for both watchers (post-startup).
+	writeReceiptAndObligation(t, cpt1, task1, "key-1", "done", "watcher 1 complete")
+	writeReceiptAndObligation(t, cpt2, task2, "key-2", "done", "watcher 2 complete")
+
+	// Run per-cycle reconcile on both watchers (sequentially, each with own parent).
+	func() {
+		defer setParentStatus(gen1)()
+		if _, err := supervision.RunCycle(cpt1); err != nil {
+			t.Errorf("watcher 1 second cycle: %v", err)
+		}
+	}()
+	func() {
+		defer setParentStatus(gen2)()
+		if _, err := supervision.RunCycle(cpt2); err != nil {
+			t.Errorf("watcher 2 second cycle: %v", err)
+		}
+	}()
+
+	// Verify watcher 1's receipt was acked (isolated from watcher 2).
+	if !turnend.IsReceiptAcked(cpt1, task1, "key-1") {
+		t.Error("watcher 1 receipt should be acked (isolation from watcher 2)")
+	}
+	if !turnend.IsReceiptAcked(cpt2, task2, "key-2") {
+		t.Error("watcher 2 receipt should be acked (isolation from watcher 1)")
+	}
+
+	// Verify watcher 1's obligation is closed in its own general, watcher 2 in its own.
+	for _, pair := range [][3]string{
+		{cpt1, gen1, task1},
+		{cpt2, gen2, task2},
+	} {
+		cpt, gen, tid := pair[0], pair[1], pair[2]
+		relayPath := filepath.Join(gen, "state", "captain:test-captain.relay-"+tid+".status")
+		if _, err := os.Stat(relayPath); os.IsNotExist(err) {
+			t.Errorf("relay status for %s should exist in its own general", tid)
+		}
+		open, err := turnend.IsTaskReportRelayOpen(cpt, tid)
+		if err != nil {
+			t.Fatalf("IsTaskReportRelayOpen(%s): %v", tid, err)
+		}
+		if open {
+			t.Errorf("ReportRelay for %s should be closed", tid)
+		}
+	}
+
+	// Additional isolation check: watcher 1's receipt must NOT appear in watcher 2's space.
+	cross1 := filepath.Join(gen2, "state", "captain:test-captain.relay-"+task1+".status")
+	if _, err := os.Stat(cross1); err == nil {
+		t.Error("watcher 1 receipt must NOT appear in watcher 2's general")
+	}
+	cross2 := filepath.Join(gen1, "state", "captain:test-captain.relay-"+task2+".status")
+	if _, err := os.Stat(cross2); err == nil {
+		t.Error("watcher 2 receipt must NOT appear in watcher 1's general")
 	}
 }
