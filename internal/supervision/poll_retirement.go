@@ -331,9 +331,10 @@ func ValidateCheckWithLstat(path string) error {
 //  2. Query provider merge status via QueryDeliveryMergeStatus.
 //  3. Require Merged == true, nonempty provider head, provider-head == stored HeadSHA.
 //  4. Persist the pending retirement record BEFORE publication.
-//  5. Durably publish one deterministic keyed status line.
-//  6. Remove the exact poll artifact (with digest revalidation).
-//  7. Remove the pending retirement record.
+//  5. Atomically transition delivery_state to merged via MarkMerged.
+//  6. Durably publish one deterministic keyed status line.
+//  7. Remove the exact poll artifact (with digest revalidation).
+//  8. Remove the pending retirement record.
 //
 // Fail-closed on any validation step: preserves poll and all artifacts.
 func RetireMergedPoll(homeDir, taskID, checkPath string) error {
@@ -416,7 +417,16 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 		return fmt.Errorf("persisting retirement record: %w", err)
 	}
 
-	// Step 5: Durable publication. Only appends if exact evidence is absent.
+	// Step 5: Atomically transition delivery_state to merged.
+	// This ensures teardown accepts without --force after external merge.
+	// Fail-closed: if CAS fails, the retirement record stays pending and
+	// the next cycle retries via recovery. The publication and poll removal
+	// below do NOT proceed until meta is consistent.
+	if err := markDeliveryMerged(homeDir, taskID, ident); err != nil {
+		return fmt.Errorf("delivery_state CAS failed (pending record exists): %w", err)
+	}
+
+	// Step 6: Durable publication. Only appends if exact evidence is absent.
 	appended, err := durableAppendStatus(homeDir, taskID, pubLine)
 	if err != nil {
 		// Publication failed; record is pending for recovery.
@@ -427,7 +437,7 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 		// Continue to poll removal.
 	}
 
-	// Step 6: Revalidate poll path and digest, then remove.
+	// Step 7: Revalidate poll path and digest, then remove.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
 		// Poll was removed or became invalid between discovery and retirement.
 		// Check if publication evidence exists (recovery step handles this).
@@ -461,12 +471,46 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 		}
 	}
 
-	// Step 7: Remove the pending retirement record.
+	// Step 8: Remove the pending retirement record.
 	if err := RemoveRetirementRecord(homeDir, taskID); err != nil {
 		return fmt.Errorf("removing retirement record: %w", err)
 	}
 
 	return nil
+}
+
+// removePollWithValidation validates a poll path against an expected digest
+// and removes it. Returns os.ErrNotExist if the file is already gone.
+func removePollWithValidation(checkPath, expectedDigest string) error {
+	if err := ValidateCheckWithLstat(checkPath); err != nil {
+		return err
+	}
+	currentDigest, err := pollContentDigest(checkPath)
+	if err != nil {
+		return err
+	}
+	if currentDigest != expectedDigest {
+		return fmt.Errorf("poll digest changed: old=%q new=%q", expectedDigest, currentDigest)
+	}
+	return os.Remove(checkPath)
+}
+
+// markDeliveryMerged is a seam over delivery.MarkMerged, replaceable in tests.
+var markDeliveryMerged = delivery.MarkMerged
+
+// recordToIdentity builds a DeliveryIdentity from a PollRetirementRecord for
+// use in the recovery path's MarkMerged call.
+func recordToIdentity(rec *PollRetirementRecord) *delivery.DeliveryIdentity {
+	return &delivery.DeliveryIdentity{
+		Provider: rec.Provider,
+		Owner:    rec.Owner,
+		Repo:     rec.Repo,
+		Number:   rec.Number,
+		URL:      rec.URL,
+		BaseRef:  rec.BaseRef,
+		HeadRef:  rec.HeadRef,
+		HeadSHA:  rec.HeadSHA,
+	}
 }
 
 // RecoverPendingRetirement completes a crashed retirement sequence for one
@@ -515,6 +559,16 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 		}
 		if currentHead := currentMeta["pr_head_sha"]; currentHead != "" && currentHead != rec.HeadSHA {
 			return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", currentHead, rec.HeadSHA)
+		}
+
+		// Atomically transition delivery_state to merged.
+		// This heals orphaned retirement records and is idempotent
+		// (no-op if already merged). Fail-closed: preserves record
+		// and poll for the next recovery cycle.
+		if currentMeta[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
+			if err := markDeliveryMerged(homeDir, taskID, recordToIdentity(rec)); err != nil {
+				return false, fmt.Errorf("recovery: delivery_state CAS failed: %w", err)
+			}
 		}
 	}
 
