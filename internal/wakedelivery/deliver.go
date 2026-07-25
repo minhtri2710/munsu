@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/composer"
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -345,9 +346,53 @@ func reconcileOne(captainHome, parentHome string, pr turnend.PendingReceipt) Rec
 
 // --- Activation on receipt (captain agent pane nudge) ---
 
-// activationSeenSuffix is the suffix appended to the receipt-name base to
-// form the activation-seen marker. Markers live in the same directory as
-// receipts (state/.terminal-receipts/).
+// ActivationDiagnostic captures a structured record of one activation
+// attempt (resolved target, capture, safety verdict, submit result).
+// It is written to stderr with a standard prefix for log inspection.
+type ActivationDiagnostic struct {
+	TargetHandle   string
+	ReceiptsFound  int
+	ReceiptSkipped string // reason: "already-seen", "capture-error", "unsafe", "submit-failed", ""
+	CaptureContent string // normalized capture of composer row (ANSI-stripped)
+	SafetyVerdict  string // "empty", "pending", "busy", "unknown"
+	SafetyError    string
+	SubmitStatus   string // "" if not attempted; "submitted", "queued-while-busy", etc.
+	SubmitDetail   string
+	SubmitError    string
+	ActivationSeen bool
+}
+
+// diagLog writes an activation diagnostic to stderr with a structured prefix.
+func diagLog(d ActivationDiagnostic) {
+	prefix := "[activation-diag]"
+	fmt.Fprintf(os.Stderr, "%s target=%q receipts=%d", prefix, d.TargetHandle, d.ReceiptsFound)
+	if d.ReceiptSkipped != "" {
+		fmt.Fprintf(os.Stderr, " skip=%s", d.ReceiptSkipped)
+	}
+	if d.CaptureContent != "" {
+		maxCap := 200
+		if len(d.CaptureContent) > maxCap {
+			fmt.Fprintf(os.Stderr, " capture=%q...", d.CaptureContent[:maxCap])
+		} else {
+			fmt.Fprintf(os.Stderr, " capture=%q", d.CaptureContent)
+		}
+	}
+	fmt.Fprintf(os.Stderr, " verdict=%s", d.SafetyVerdict)
+	if d.SafetyError != "" {
+		fmt.Fprintf(os.Stderr, " safety_err=%q", d.SafetyError)
+	}
+	if d.SubmitStatus != "" {
+		fmt.Fprintf(os.Stderr, " submit=%s", d.SubmitStatus)
+	}
+	if d.SubmitDetail != "" {
+		fmt.Fprintf(os.Stderr, " submit_detail=%q", d.SubmitDetail)
+	}
+	if d.SubmitError != "" {
+		fmt.Fprintf(os.Stderr, " submit_err=%q", d.SubmitError)
+	}
+	fmt.Fprintf(os.Stderr, " activation-seen=%v\n", d.ActivationSeen)
+}
+
 const activationSeenSuffix = ".activation-seen"
 
 // ActivationSeenPath returns the path for an activation-seen marker.
@@ -463,6 +508,10 @@ func listAllReceipts(homeDir string) ([]turnend.PendingReceipt, error) {
 	return results, nil
 }
 
+// activationSessionResolver allows tests to inject a fake session backend
+// for ActivateOnReceipt. When set, it is used instead of session.Resolve.
+var activationSessionResolver func(string, string) (session.Backend, string, error)
+
 // ActivateOnReceipt scans captain-owned receipt files and for each one
 // not yet activation-seen, attempts a safe, idempotent activation nudge to
 // the captain agent pane.
@@ -498,17 +547,48 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 	if err != nil || target.Handle == "" {
 		// No authoritative target available. Do NOT mark activation-seen
 		// so retries remain possible if meta becomes available later.
+		diagLog(ActivationDiagnostic{
+			TargetHandle:  target.Handle,
+			ReceiptsFound: len(allReceipts),
+			ReceiptSkipped: "no-target",
+			SafetyVerdict: "unknown",
+			SafetyError:   fmt.Sprintf("resolve target: %v", err),
+		})
 		return 0
 	}
 
 	// Obtain a session backend for injection.
-	bk, _, err := session.Resolve(captainHome, "")
+	resolveSession := session.Resolve
+	if activationSessionResolver != nil {
+		resolveSession = activationSessionResolver
+	}
+	bk, _, err := resolveSession(captainHome, "")
 	if err != nil {
+		diagLog(ActivationDiagnostic{
+			TargetHandle:  target.Handle,
+			ReceiptsFound: len(allReceipts),
+			ReceiptSkipped: "no-backend",
+			SafetyError:   fmt.Sprintf("session.Resolve: %v", err),
+		})
 		// No backend available. Do NOT mark activation-seen.
 		return 0
 	}
 
 	var afkCap afk.PaneCapture = bk
+
+	// Determine whether the backend supports agent registration lookup.
+	agentAware, hasAgentAware := bk.(session.AgentAwareBackend)
+
+	// Pre-flight agent recognition: if agent-aware, check if target is a
+	// recognized agent. We use this later to distinguish pi/grok agent
+	// prompts (like ">") from dead shell prompts.
+	targetIsAgent := false
+	if hasAgentAware {
+		alive, agentAlive, agentErr := agentAware.CheckAgentAlive(target.Handle)
+		if agentErr == nil && alive && agentAlive {
+			targetIsAgent = true
+		}
+	}
 
 	count := 0
 	for _, pr := range allReceipts {
@@ -518,12 +598,42 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 		}
 
 		// Check inject safety: composer must be empty (agent waiting).
-		safe, _, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
-		if err != nil {
+		safe, verdict, sErr := afk.IsSafeInjectTarget(afkCap, target.Handle)
+		diag := ActivationDiagnostic{
+			TargetHandle:  target.Handle,
+			ReceiptsFound: len(allReceipts),
+			SafetyVerdict: verdict.String(),
+		}
+
+		if sErr != nil {
+			diag.ReceiptSkipped = "capture-error"
+			diag.SafetyError = sErr.Error()
+			diagLog(diag)
 			// Capture failure. Do NOT mark activation-seen — preserve retry.
 			continue
 		}
-		if !safe {
+
+		// Context-aware safety fix: when the content heuristic returns
+		// Unknown (e.g., pi captain showing ">" which is classified as
+		// a dead shell prompt), but the backend confirms the target IS
+		// a recognized agent, do a secondary check: capture the composer
+		// directly and treat a bare prompt glyph as Empty.
+		if !safe && verdict.String() == "unknown" && targetIsAgent {
+			// Re-capture and check if the composer is empty except for
+			// a known prompt glyph. This handles pi's ">" prompt which
+			// the heuristic treats as a shell prompt (Unknown).
+			safe = checkAgentComposerSafe(afkCap, target.Handle)
+			if safe {
+				diag.SafetyVerdict = "empty"
+				diag.CaptureContent = "(agent-override: bare prompt glyph)"
+			} else {
+				diag.CaptureContent = "(agent-override: non-empty composer)"
+			}
+		}
+
+		if sErr == nil && !safe {
+			diag.ReceiptSkipped = "unsafe"
+			diagLog(diag)
 			// Unsafe target (composer busy, unknown verdict).
 			// Do NOT mark activation-seen — preserve retry.
 			continue
@@ -534,7 +644,15 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 		markedMsg := afk.Mark(nudge)
 
 		result := session.SubmitPrompt(bk, target.Handle, markedMsg)
+		diag.SubmitStatus = string(result.Status)
+		diag.SubmitDetail = result.Detail
+		if result.Err != nil {
+			diag.SubmitError = result.Err.Error()
+		}
+
 		if !result.Acknowledged() {
+			diag.ReceiptSkipped = "submit-failed"
+			diagLog(diag)
 			// Submit failed (backend failure, endpoint dead, etc.).
 			// Do NOT mark activation-seen — preserve retry.
 			continue
@@ -545,9 +663,57 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 			fmt.Fprintf(os.Stderr, "warning: marking activation-seen for %s/%s: %v\n",
 				pr.TaskID, pr.TermKey, err)
 		}
+		diag.ActivationSeen = true
+		diagLog(diag)
 		count++
 	}
 	return count
+}
+
+// checkAgentComposerSafe captures the composer row and checks whether it is
+// empty except for a known agent prompt glyph. This is a fallback safety
+// check for recognized agents whose prompt glyph (e.g., ">" for pi) is
+// classified as Unknown by the generic composer heuristic.
+//
+// Returns true when the composer shows only a prompt glyph and whitespace
+// (agent is idle and ready for input). Returns false for any real typed
+// content, busy actions, or capture failure.
+func checkAgentComposerSafe(cap afk.PaneCapture, paneHandle string) bool {
+	output, err := cap.Capture(paneHandle, 4)
+	if err != nil {
+		return false
+	}
+	output = strings.TrimRight(output, "\n\r")
+	lines := strings.Split(output, "\n")
+	composerLine := ""
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			composerLine = lines[i]
+			break
+		}
+	}
+
+	// Strip ANSI and ghost text.
+	plain := strings.TrimSpace(composer.StripANSI(composerLine))
+
+	// Agent is idle if the composer shows ONLY a known prompt glyph.
+	// Known agent prompt glyphs: ❯ (claude), › (codex), > (pi).
+	// Also accept empty composer (no content at all — appearing agent).
+	if plain == "" || plain == "\u276F" || plain == "\u203A" || plain == ">" {
+		return true
+	}
+
+	// If there's content after the prompt glyph, it might be a busy indicator.
+	// Check for common busy patterns.
+	busyPrefixes := []string{"Working", "Thinking", "Running", "Processing"}
+	for _, prefix := range busyPrefixes {
+		if strings.Contains(plain, prefix) {
+			return false
+		}
+	}
+
+	// Content after prompt glyph that is not busy → pending input. Not safe.
+	return false
 }
 
 // readCaptainID reads the captain ID from the provenance marker file.
