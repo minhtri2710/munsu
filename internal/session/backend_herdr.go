@@ -346,6 +346,65 @@ func (h *HerdrBackend) Capture(windowID string, lines int) (string, error) {
 	return h.herdrForWindow(windowID, "pane", "read", herdrPaneID(windowID), "--source", "recent", "--lines", fmt.Sprintf("%d", lines))
 }
 
+// CheckAgentAlive implements session.AgentAwareBackend.
+// Returns:
+//
+//	(true, true, nil)  — pane exists and agent is registered
+//	(true, false, nil) — pane exists but no agent (bare shell / dead agent)
+//	(false, false, ErrPaneNotFound) — pane confirmed absent
+//	(false, false, err) — backend resolution failure (fail closed)
+func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
+	// First verify pane exists.
+	alive, err := h.CheckAlive(windowID)
+	if err != nil {
+		return false, false, err
+	}
+	if !alive {
+		return false, false, ErrPaneNotFound
+	}
+
+	// Pane exists; now check agent registration.
+	pid := herdrPaneID(windowID)
+	out, agentErr := h.herdrCaptureForWindow(windowID, "agent", "get", pid)
+	if agentErr != nil {
+		// Try to parse JSON error from output.
+		if out != "" {
+			var errResp struct {
+				Error *struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if jsonErr := json.Unmarshal([]byte(out), &errResp); jsonErr == nil && errResp.Error != nil {
+				if errResp.Error.Code == "agent_not_found" {
+					return true, false, nil
+				}
+			}
+		}
+		// Other agent get errors: fail closed.
+		return false, false, agentErr
+	}
+
+	var resp herdrAgentGetResponse
+	if jsonErr := json.Unmarshal([]byte(out), &resp); jsonErr != nil {
+		return false, false, fmt.Errorf("parsing agent get response: %w", jsonErr)
+	}
+
+	if resp.Error != nil && resp.Error.Code == "agent_not_found" {
+		return true, false, nil
+	}
+	if resp.Error != nil {
+		return false, false, fmt.Errorf("agent get error: %s", resp.Error.Message)
+	}
+
+	if resp.Result == nil || resp.Result.Agent.AgentStatus == "" {
+		// Pane exists but no agent status in response.
+		return true, false, nil
+	}
+
+	return true, true, nil
+}
+
 // CheckAlive checks whether the pane still exists via herdr pane get.
 // Returns (true, nil) if confirmed alive.
 // Returns (false, ErrPaneNotFound) if confirmed absent (e.g. pane_not_found).

@@ -18,6 +18,11 @@ import (
 // ErrPaneNotFound is returned by session backends when a pane is confirmed not found or dead.
 var ErrPaneNotFound = errors.New("pane not found")
 
+// ErrAgentNotFound is returned by agent-aware backends when a pane exists but
+// has no registered agent (bare shell or agent process missing). Recovery-critical
+// paths should treat this as "not alive for agent purposes" to trigger auto-recover.
+var ErrAgentNotFound = errors.New("agent not found in pane")
+
 // Backend defines the operations for managing agent session windows.
 type Backend interface {
 	NewWindow(session, name string) (string, error)
@@ -25,6 +30,19 @@ type Backend interface {
 	Capture(windowID string, lines int) (string, error)
 	Alive(windowID string) bool
 	Teardown(windowID string) error
+}
+
+// AgentAwareBackend is an optional interface that extends Backend with
+// agent-aware liveness checking. Backends that support agent registration
+// (e.g., Herdr) should implement this to provide recovery-grade ground truth.
+//
+// CheckAgentAlive returns:
+//   (true, true, nil)  — pane exists and agent is registered (recovery: alive)
+//   (true, false, nil) — pane exists but no agent (recovery: dead agent → auto-recover)
+//   (false, false, ErrPaneNotFound) — pane confirmed absent
+//   (false, false, err) — backend resolution failure (recovery: fail closed)
+type AgentAwareBackend interface {
+	CheckAgentAlive(windowID string) (alive bool, agentAlive bool, err error)
 }
 
 // BackendMetaExtras is an optional interface that a Backend can implement

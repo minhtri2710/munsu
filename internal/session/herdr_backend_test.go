@@ -244,6 +244,105 @@ func TestHerdrBackend_Alive_ReturnsFalseWhenNotFound(t *testing.T) {
 	}
 }
 
+// writeFakeHerdrWithAgent creates a fake herdr that handles both pane get and agent get.
+// When agentStatus is empty, agent get returns agent_not_found (no agent).
+// When agentStatus is non-empty, agent get returns that status (e.g. "idle", "working").
+func writeFakeHerdrWithAgent(t *testing.T, dir string, agentStatus string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "herdr")
+
+	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "--session" ]; then` + "\n" +
+		`  SESSION="$2"` + "\n" +
+		`  shift 2` + "\n" +
+		`fi` + "\n" +
+		`if [ -z "$SESSION" ]; then` + "\n" +
+		`  >&2 echo 'fake herdr: --session missing'` + "\n" +
+		`  exit 1` + "\n" +
+		`fi` + "\n" +
+		`case "$1" in` + "\n" +
+		"  agent)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n"
+	if agentStatus == "" {
+		script += `      >&2 echo '{"error":{"code":"agent_not_found","message":"no agent in pane"}}'` + "\n" +
+			"      exit 1\n" +
+			"    fi\n"
+	} else {
+		jsonStr := `{"result":{"agent":{"agent_status":"` + agentStatus + `"}}}`
+		script += "      echo '" + jsonStr + "'\n" +
+			"      exit 0\n" +
+			"    fi\n"
+	}
+	script += "    ;;\n" +
+		"  pane)\n" +
+		`    if [ "$2" = "get" ]; then` + "\n" +
+		`      echo '{"id":"cli:pane:get","result":{"pane_id":"'"$3"'"}}'` + "\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 1\n"
+
+	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestHerdrBackend_CheckAgentAlive_WithAgent(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrWithAgent(t, tmp, "working")
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
+	h := NewHerdrBackend("test-s")
+	alive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
+	if err != nil {
+		t.Fatalf("CheckAgentAlive error: %v", err)
+	}
+	if !alive {
+		t.Error("CheckAgentAlive alive=false, want true")
+	}
+	if !agentAlive {
+		t.Error("CheckAgentAlive agentAlive=false, want true")
+	}
+}
+
+func TestHerdrBackend_CheckAgentAlive_NoAgent(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrWithAgent(t, tmp, "") // agent_not_found
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
+	h := NewHerdrBackend("test-s")
+	alive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
+	if err != nil {
+		t.Fatalf("CheckAgentAlive error: %v", err)
+	}
+	if !alive {
+		t.Error("CheckAgentAlive alive=false, want true (pane exists)")
+	}
+	if agentAlive {
+		t.Error("CheckAgentAlive agentAlive=true, want false")
+	}
+}
+
+func TestHerdrBackend_CheckAgentAlive_PaneNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrNotFound(t, tmp)
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
+	h := NewHerdrBackend("test-s")
+	alive, agentAlive, err := h.CheckAgentAlive("nonexistent")
+	if alive {
+		t.Error("CheckAgentAlive alive=true, want false")
+	}
+	if agentAlive {
+		t.Error("CheckAgentAlive agentAlive=true, want false")
+	}
+	if !errors.Is(err, ErrPaneNotFound) {
+		t.Errorf("CheckAgentAlive error = %v, want ErrPaneNotFound", err)
+	}
+}
+
 func TestParseWindow(t *testing.T) {
 	tests := []struct {
 		handle      string
