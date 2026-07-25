@@ -33,8 +33,34 @@ var materialStates = map[string]bool{
 // into the parent pane to prevent duplicate injection of the same event.
 var injectedEvents sync.Map
 
+// reportSessionResolver is the seam for resolving a session backend.
+// Production code uses session.Resolve; tests can inject a fake.
+type reportSessionResolver func(string, string) (session.Backend, string, error)
+
+// resolveInjectionTargetHome returns the target home directory for parent pane
+// notification target resolution. Soldiers and captains require MUNSU_PARENT_STATUS;
+// general/local/unknown roles fall back to their own homeDir.
+// Returns an error only when a soldier or captain has no parentHome set.
+func resolveInjectionTargetHome(role, homeDir, parentHome string) (string, error) {
+	switch role {
+	case "soldier", "captain":
+		if parentHome == "" {
+			return "", fmt.Errorf("MUNSU_PARENT_STATUS not set for role %q", role)
+		}
+		return parentHome, nil
+	default:
+		return homeDir, nil
+	}
+}
+
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
+	return newReportCmdWithInjector(injectToParentPane)
+}
+
+// newReportCmdWithInjector creates the report command with an injectable injectFn
+// for deterministic testing of injection outcomes.
+func newReportCmdWithInjector(injectFn func(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) afk.InjectResult) *cobra.Command {
 	var key string
 	var ring string // "auto" | "ring" | "no-ring"
 
@@ -201,7 +227,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			var injectResult *contract.ReportInjection
 			watcherID := identifyWatcher(homeDir)
 			if ringDecision == "ring" && materialStates[state] {
-				result := injectToParentPane(role, homeDir, parentHome, taskID, msg, state, syntheticID)
+				result := injectFn(role, homeDir, parentHome, taskID, msg, state, syntheticID)
 				injectResult = &contract.ReportInjection{
 					Outcome: string(result.Outcome),
 					Verdict: result.Verdict,
@@ -269,30 +295,39 @@ func resolveRingPolicy(ring, homeDir string) string {
 // injectToParentPane resolves the parent pane target and injects a sentinel
 // message. Returns the typed InjectResult with outcome diagnostics.
 func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) afk.InjectResult {
+	return injectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, state, syntheticID, session.Resolve)
+}
+
+// injectToParentPaneWithResolver is the testable core of injectToParentPane.
+// It accepts a reportSessionResolver for dependency injection in tests.
+func injectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64, resolveSession reportSessionResolver) afk.InjectResult {
 	// Dedup: skip if this event was already injected.
 	eventKey := fmt.Sprintf("%s/%s/%d", taskID, state, syntheticID)
 	if _, loaded := injectedEvents.LoadOrStore(eventKey, true); loaded {
 		return afk.InjectResult{Outcome: afk.OutcomeInjected, Target: "(deduped)"}
 	}
 
-	// Resolve the parent pane target.
-	// For captains, resolve from the general's home (parentHome).
-	// For soldiers, resolve from the current home (the soldier's home).
-	targetHome := homeDir
-	if role == "captain" && parentHome != "" {
-		targetHome = parentHome
+	// Resolve the target home for parent pane resolution.
+	// Soldiers and captains require parentHome; general/local falls back to homeDir.
+	targetHome, err := resolveInjectionTargetHome(role, homeDir, parentHome)
+	if err != nil {
+		return afk.InjectResult{
+			Outcome: afk.OutcomeEndpointDead,
+			Error:   fmt.Sprintf("target home resolution: %v", err),
+		}
 	}
+
 	target, err := afk.ResolveTargetWithSource(targetHome)
 	if err != nil || target.Handle == "" || target.Source == afk.Unsupported {
 		return afk.InjectResult{
 			Outcome: afk.OutcomeEndpointDead,
 			Target:  target.Handle,
-			Error:   fmt.Sprintf("target resolution: %v no-handle=%v unsupported=%v", err, target.Handle == "", target.Source == afk.Unsupported),
+			Error:   fmt.Sprintf("target resolution from %s: %v no-handle=%v unsupported=%v", targetHome, err, target.Handle == "", target.Source == afk.Unsupported),
 		}
 	}
 
 	// Obtain a session backend for SendKeys and Capture.
-	bk, _, err := session.Resolve(homeDir, "")
+	bk, _, err := resolveSession(homeDir, "")
 	if err != nil {
 		return afk.InjectResult{
 			Outcome: afk.OutcomeEndpointDead,
@@ -323,5 +358,4 @@ func injectToParentPane(role, homeDir, parentHome, taskID, msg, state string, sy
 		return afk.InjectResult{Outcome: afk.OutcomeBackendFailed, Verdict: verdict.String(), Target: target.Handle, Error: string(result.Status)}
 	}
 	return afk.InjectResult{Outcome: afk.OutcomeInjected, Verdict: verdict.String(), Target: target.Handle}
-
 }
