@@ -2,6 +2,7 @@ package supervision
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1125,6 +1126,179 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 		t.Fatalf("runCycle should not error on invalid parent: %v", err)
 	}
 	_ = emitted
+}
+
+// --- Per-cycle terminal reconciliation tests (supervision-level) ---
+//
+// These tests verify that the per-cycle terminal reconciliation hook in
+// runCycle is invoked correctly from the supervision side:
+//   - No double-call on cycle 1 (recovery handles startup)
+//   - Error does not exit the watcher and is observable on stderr
+//   - No hook = no-op
+//
+// Real-hook E2E tests (invoking supervision.RunCycle against the real captain
+// reconcileHook) live in internal/captain/watcher_test.go.
+
+// setupRunCycleTest creates a home with state dir for runCycle tests.
+func setupRunCycleTest(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
+	return tmp
+}
+
+// writeProvenanceMarker writes a munsu-v2 provenance marker for terminal
+// receipt reconciliation tests.
+func writeProvenanceMarker(t *testing.T, home, captainID string) {
+	t.Helper()
+	markerPath := filepath.Join(home, turnend.ProvenanceMarkerName)
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+home+"\n"), 0644)
+}
+
+// installRelayHook installs a TerminalReconcileHook that relays pending
+// receipts via turnend.RelayPendingReceipts. Returns a cleanup function.
+func installRelayHook(t *testing.T) func() {
+	t.Helper()
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		ph := os.Getenv("MUNSU_PARENT_STATUS")
+		if ph == "" || ph == homeDir {
+			return nil
+		}
+		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		return err
+	}
+	return func() { TerminalReconcileHook = origHook }
+}
+
+// setupParentStatusTest creates a captain home and general (parent) home
+// with provenance marker and sets MUNSU_PARENT_STATUS. Returns both paths.
+func setupParentStatusTest(t *testing.T) (captainHome, generalHome string) {
+	t.Helper()
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
+	parentHome := t.TempDir()
+	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
+	writeProvenanceMarker(t, tmp, "test-captain")
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+	return tmp, parentHome
+}
+
+// resetRecovery resets recoveryDone for test isolation.
+func resetRecovery() {
+	recoveryDone = false
+}
+
+// TestRunCycle_NoDoubleCallOnCycle1 proves that runCycle does NOT invoke the
+// TerminalReconcileHook twice on cycle 1. Recovery handles startup; per-cycle
+// reconcile is skipped on the first cycle via the recoveryWasDone guard.
+func TestRunCycle_NoDoubleCallOnCycle1(t *testing.T) {
+	tmp := setupRunCycleTest(t)
+
+	callCount := 0
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		callCount++
+		return nil
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+	resetRecovery()
+
+	// Cycle 1 — recovery calls the hook once; per-cycle is skipped.
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("first runCycle: %v", err)
+	}
+	_ = emitted
+
+	if callCount != 1 {
+		t.Errorf("expected exactly 1 hook call on cycle 1 (recovery only), got %d", callCount)
+	}
+
+	// Cycle 2 — recovery is already done; per-cycle calls the hook once.
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle: %v", err)
+	}
+	_ = emitted2
+
+	if callCount != 2 {
+		t.Errorf("expected exactly 2 hook calls after cycle 2 (1 recovery + 1 per-cycle), got %d", callCount)
+	}
+}
+
+// TestRunCycle_PerCycleReconcileErrorDoesNotExit verifies that when the
+// terminal reconcile hook returns an error during per-cycle reconcile,
+// the watcher cycle logs the error on stderr and continues rather than
+// failing fatally. Partial failure must not falsely ack/close obligations.
+func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
+	tmp := setupRunCycleTest(t)
+
+	t.Setenv("MUNSU_PARENT_STATUS", "/nonexistent")
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string) error {
+		return fmt.Errorf("simulated reconcile error")
+	}
+	defer func() { TerminalReconcileHook = origHook }()
+	resetRecovery()
+
+	// Capture stderr to verify error message is observable.
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = stderrW
+
+	// Run a cycle — must NOT fail fatally despite hook error.
+	emitted, cycleErr := runCycle(tmp)
+	// Restore stderr before any assertions.
+	stderrW.Close()
+	os.Stderr = origStderr
+	stderrOut, _ := io.ReadAll(stderrR)
+	_ = stderrR.Close()
+
+	if cycleErr != nil {
+		t.Fatalf("runCycle should not exit on hook error: %v", cycleErr)
+	}
+	_ = emitted
+
+	// Verify error message is observable on stderr.
+	if !strings.Contains(string(stderrOut), "simulated reconcile error") {
+		t.Errorf("expected 'simulated reconcile error' on stderr, got: %s", string(stderrOut))
+	}
+
+	// Second cycle should also continue despite hook error.
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle should also not exit on hook error: %v", err)
+	}
+	_ = emitted2
+}
+
+// TestRunCycle_PerCycleReconcileNoHookIsNoop verifies that when no
+// TerminalReconcileHook is installed, the per-cycle reconcile is a no-op
+// and does not cause any issues.
+func TestRunCycle_PerCycleReconcileNoHookIsNoop(t *testing.T) {
+	tmp := setupRunCycleTest(t)
+
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = nil
+	defer func() { TerminalReconcileHook = origHook }()
+	resetRecovery()
+
+	emitted, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("runCycle should work with nil hook: %v", err)
+	}
+	_ = emitted
+
+	emitted2, err := runCycle(tmp)
+	if err != nil {
+		t.Fatalf("second runCycle should work with nil hook: %v", err)
+	}
+	_ = emitted2
 }
 
 // TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher proves that when the

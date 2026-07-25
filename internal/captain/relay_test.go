@@ -615,3 +615,52 @@ func TestReconcileTerminalReceipts_ReconcileOneCleanPath(t *testing.T) {
 		t.Fatalf("expected termKey %q, got %q", termKey, result.Outcomes[0].TermKey)
 	}
 }
+
+// --- reconcileHook guard tests ---
+//
+// These tests verify that reconcileHook returns nil (no relay) when:
+//   - MUNSU_PARENT_STATUS is empty (standalone / General home)
+//   - MUNSU_PARENT_STATUS equals homeDir (self-referencing)
+
+// TestReconcileHook_ReturnsNilWhenParentStatusEmpty verifies that
+// reconcileHook returns nil when MUNSU_PARENT_STATUS is not set (standalone
+// or General home — no parent to relay to).
+func TestReconcileHook_ReturnsNilWhenParentStatusEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", "")
+
+	err := reconcileHook(tmp)
+	if err != nil {
+		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty, got: %v", err)
+	}
+}
+
+// TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir verifies that
+// reconcileHook returns nil when MUNSU_PARENT_STATUS equals homeDir (a
+// non-Captain/General guard against self-referencing parent).
+func TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", tmp)
+
+	err := reconcileHook(tmp)
+	if err != nil {
+		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir, got: %v", err)
+	}
+}
+
+// TestReconcileHook_ReturnsErrorWhenParentSet verifies that reconcileHook
+// returns an error (or nil with no-op result) when MUNSU_PARENT_STATUS points
+// to a valid but empty parent home (no pending receipts to relay). This is a
+// smoke test for the happy path where parent is configured.
+func TestReconcileHook_ReturnsNoErrorWhenParentSetAndNoReceipts(t *testing.T) {
+	tmp := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
+	SeedProvenance(tmp, "test-captain")
+
+	err := reconcileHook(tmp)
+	if err != nil {
+		t.Errorf("expected nil when parent set with no pending receipts, got: %v", err)
+	}
+}

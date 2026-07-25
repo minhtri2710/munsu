@@ -3,6 +3,7 @@ package captain
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // --- WatcherStatusSummary tests ---
@@ -192,5 +194,202 @@ func TestInFlightSoldierPath_IgnoresNonShip(t *testing.T) {
 
 	if inFlightSoldierPath(tmp) {
 		t.Error("expected false for non-ship/scout meta")
+	}
+}
+
+// --- Real-hook E2E: per-cycle terminal reconciliation via reconcileHook ---
+//
+// These tests invoke supervision.RunCycle against the REAL captain
+// reconcileHook (relay.go:31), NOT a test-local turnend.RelayPendingReceipts
+// substitute. They verify receipt ACK + obligation closure, then assert
+// exactly-once wake relay after repeated cycles.
+
+// setupE2E creates a captain home (with state dir and provenance marker),
+// a general (parent) home (with state dir), sets MUNSU_PARENT_STATUS, and
+// seeds provenance. Returns (captainHome, generalHome).
+func setupE2E(t *testing.T) (captainHome, generalHome string) {
+	t.Helper()
+	cptHome := t.TempDir()
+	genHome := t.TempDir()
+	os.MkdirAll(filepath.Join(cptHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(genHome, "state"), 0755)
+	if err := SeedProvenance(cptHome, "test-captain"); err != nil {
+		t.Fatalf("SeedProvenance: %v", err)
+	}
+	t.Setenv("MUNSU_PARENT_STATUS", genHome)
+	return cptHome, genHome
+}
+
+// writeReceiptAndObligation writes a receipt and initializes obligations.
+func writeReceiptAndObligation(t *testing.T, home, taskID, termKey, state, msg string) {
+	t.Helper()
+	if err := turnend.WriteReceipt(home, taskID, termKey, state, msg); err != nil {
+		t.Fatalf("WriteReceipt(%s): %v", taskID, err)
+	}
+	if err := turnend.InitTaskObligations(home, taskID, termKey); err != nil {
+		t.Fatalf("InitTaskObligations(%s): %v", taskID, err)
+	}
+}
+
+// TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt verifies that the
+// real reconcileHook relays a terminal receipt that arrives AFTER the startup
+// recovery cycle. This is the core E2E: post-startup receipt → per-cycle
+// reconcile → ACK → General wake — without manual converge/restart.
+func TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt(t *testing.T) {
+	cptHome, genHome := setupE2E(t)
+	taskID := "e2e-post-startup"
+	termKey := "e2e-key"
+
+	// First cycle — startup recovery (no receipts pending).
+	// The real reconcileHook is already installed via init().
+	emitted, err := supervision.RunCycle(cptHome)
+	if err != nil {
+		t.Fatalf("first RunCycle: %v", err)
+	}
+	_ = emitted
+
+	// Soldier completes AFTER startup: write receipt now.
+	writeReceiptAndObligation(t, cptHome, taskID, termKey, "done", "post-startup complete")
+
+	// Second cycle — per-cycle reconcile via real hook should relay the receipt.
+	emitted2, err := supervision.RunCycle(cptHome)
+	if err != nil {
+		t.Fatalf("second RunCycle: %v", err)
+	}
+	_ = emitted2
+
+	// Verify receipt was acked.
+	if !turnend.IsReceiptAcked(cptHome, taskID, termKey) {
+		t.Error("receipt should be acked after per-cycle reconcile")
+	}
+
+	// Verify General received the relay status.
+	relayPath := filepath.Join(genHome, "state", "captain:test-captain.relay-"+taskID+".status")
+	data, err := os.ReadFile(relayPath)
+	if err != nil {
+		t.Fatalf("General relay status should exist: %v", err)
+	}
+	if !strings.Contains(string(data), "done") {
+		t.Errorf("relay status should contain 'done', got: %s", string(data))
+	}
+
+	// Verify obligation is closed.
+	open, err := turnend.IsTaskReportRelayOpen(cptHome, taskID)
+	if err != nil {
+		t.Fatalf("IsTaskReportRelayOpen: %v", err)
+	}
+	if open {
+		t.Error("ReportRelay should be closed after per-cycle reconcile")
+	}
+}
+
+// TestCaptainPerCycle_RealHook_ExactlyOneWake verifies that multiple cycles
+// after a single receipt produce exactly one relay and no duplicate General
+// wake. This proves idempotency of the real reconcileHook.
+func TestCaptainPerCycle_RealHook_ExactlyOneWake(t *testing.T) {
+	cptHome, genHome := setupE2E(t)
+	taskID := "e2e-exactly-one"
+	termKey := "e2e-one-key"
+
+	// Write receipt BEFORE first cycle (startup recovery will relay it).
+	writeReceiptAndObligation(t, cptHome, taskID, termKey, "done", "startup pending")
+
+	// First cycle — startup recovery relays via real hook.
+	emitted, err := supervision.RunCycle(cptHome)
+	if err != nil {
+		t.Fatalf("first RunCycle: %v", err)
+	}
+	_ = emitted
+
+	// Verify receipt acked.
+	if !turnend.IsReceiptAcked(cptHome, taskID, termKey) {
+		t.Fatal("receipt should be acked after startup recovery")
+	}
+
+	// Read initial relay status line count.
+	relayPath := filepath.Join(genHome, "state", "captain:test-captain.relay-"+taskID+".status")
+	data1, err := os.ReadFile(relayPath)
+	if err != nil {
+		t.Fatalf("relay status should exist: %v", err)
+	}
+	lines1 := len(strings.Split(strings.TrimSpace(string(data1)), "\n"))
+
+	// Run 3 more cycles — no duplicate relay should occur.
+	for i := 0; i < 3; i++ {
+		emittedN, err := supervision.RunCycle(cptHome)
+		if err != nil {
+			t.Fatalf("cycle %d: %v", i+2, err)
+		}
+		_ = emittedN
+	}
+
+	// Verify line count did not grow.
+	data2, err := os.ReadFile(relayPath)
+	if err != nil {
+		t.Fatalf("relay status should still exist: %v", err)
+	}
+	lines2 := len(strings.Split(strings.TrimSpace(string(data2)), "\n"))
+	if lines2 != lines1 {
+		t.Errorf("relay status grew from %d to %d lines (duplicate relay after %d idle cycles)", lines1, lines2, 3)
+	}
+
+	// Receipt remains acked.
+	if !turnend.IsReceiptAcked(cptHome, taskID, termKey) {
+		t.Error("receipt should remain acked after multiple cycles")
+	}
+}
+
+// TestCaptainPerCycle_RealHook_MultipleReceipts verifies that multiple
+// receipts written in sequence across cycles are each relayed by the real hook.
+func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
+	cptHome, genHome := setupE2E(t)
+
+	task1 := "e2e-multi-1"
+	key1 := "mk-1"
+	task2 := "e2e-multi-2"
+	key2 := "mk-2"
+
+	// First cycle — no receipts (startup recovery is no-op).
+	emitted, err := supervision.RunCycle(cptHome)
+	if err != nil {
+		t.Fatalf("first RunCycle: %v", err)
+	}
+	_ = emitted
+
+	// Write first receipt.
+	writeReceiptAndObligation(t, cptHome, task1, key1, "done", "first")
+
+	// Second cycle — should relay first receipt via real hook.
+	emitted2, err := supervision.RunCycle(cptHome)
+	if err != nil {
+		t.Fatalf("second RunCycle: %v", err)
+	}
+	_ = emitted2
+
+	if !turnend.IsReceiptAcked(cptHome, task1, key1) {
+		t.Fatal("first receipt should be acked after second cycle")
+	}
+
+	// Write second receipt (simulating another soldier finishing later).
+	writeReceiptAndObligation(t, cptHome, task2, key2, "done", "second")
+
+	// Third cycle — should relay second receipt; first is already acked.
+	emitted3, err := supervision.RunCycle(cptHome)
+	if err != nil {
+		t.Fatalf("third RunCycle: %v", err)
+	}
+	_ = emitted3
+
+	if !turnend.IsReceiptAcked(cptHome, task2, key2) {
+		t.Fatal("second receipt should be acked after third cycle")
+	}
+
+	// Both relay statuses exist in General.
+	for _, pair := range [][2]string{{task1, key1}, {task2, key2}} {
+		tID := pair[0]
+		relayPath := filepath.Join(genHome, "state", "captain:test-captain.relay-"+tID+".status")
+		if _, err := os.Stat(relayPath); os.IsNotExist(err) {
+			t.Errorf("relay status for %s should exist", tID)
+		}
 	}
 }
