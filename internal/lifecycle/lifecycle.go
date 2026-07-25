@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -293,6 +294,8 @@ func ReadBeatStatus(homeDir string, now time.Time) BeatStatus {
 
 // --- Queue operations ---
 
+var wakeSeqCounter int64
+
 // EnqueueWake appends a wake record to the durable wake queue.
 func EnqueueWake(homeDir, kind, key, payload string) error {
 	qPath := QueuePath(homeDir)
@@ -302,7 +305,8 @@ func EnqueueWake(homeDir, kind, key, payload string) error {
 		return err
 	}
 	defer f.Close()
-	line := fmt.Sprintf("%d\t%d\t%s\t%s\t%s\n", time.Now().Unix(), os.Getpid(), kind, key, payload)
+	seq := fmt.Sprintf("%d-%d", os.Getpid(), atomic.AddInt64(&wakeSeqCounter, 1))
+	line := fmt.Sprintf("%d\t%s\t%s\t%s\t%s\n", time.Now().Unix(), seq, kind, key, payload)
 	_, err = f.WriteString(line)
 	return err
 }
