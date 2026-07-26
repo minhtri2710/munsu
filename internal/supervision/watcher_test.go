@@ -981,7 +981,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 
 	// Install a TerminalReconcileHook that relays receipts (simulating captain init)
 	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string) error {
+	TerminalReconcileHook = func(homeDir string, startup bool) error {
 		ph := os.Getenv("MUNSU_PARENT_STATUS")
 		if ph == "" || ph == homeDir {
 			return nil
@@ -991,7 +991,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	}
 	defer func() { TerminalReconcileHook = origHook }()
 
-	recoveryDone = false // reset for test isolation
+	recoveryDone = sync.Map{} // reset for test isolation
 
 	// Run one cycle — recovery should trigger and relay the pending receipt
 	emitted, err := runCycle(tmp)
@@ -1025,7 +1025,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	}
 
 	// Second runCycle should NOT trigger recovery again (recoveryDone=true)
-	recoveryDone = false
+	recoveryDone = sync.Map{}
 	emitted2, err2 := runCycle(tmp)
 	if err2 != nil {
 		t.Fatalf("second runCycle: %v", err2)
@@ -1059,7 +1059,7 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	origHook := TerminalReconcileHook
 	TerminalReconcileHook = nil
 	defer func() { TerminalReconcileHook = origHook }()
-	recoveryDone = false
+	recoveryDone = sync.Map{}
 
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
@@ -1118,7 +1118,7 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 	origHook := TerminalReconcileHook
 	TerminalReconcileHook = nil
 	defer func() { TerminalReconcileHook = origHook }()
-	recoveryDone = false
+	recoveryDone = sync.Map{}
 
 	// Run one cycle — should NOT fail fatally
 	emitted, err := runCycle(tmp)
@@ -1161,7 +1161,7 @@ func writeProvenanceMarker(t *testing.T, home, captainID string) {
 func installRelayHook(t *testing.T) func() {
 	t.Helper()
 	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string) error {
+	TerminalReconcileHook = func(homeDir string, startup bool) error {
 		ph := os.Getenv("MUNSU_PARENT_STATUS")
 		if ph == "" || ph == homeDir {
 			return nil
@@ -1187,18 +1187,38 @@ func setupParentStatusTest(t *testing.T) (captainHome, generalHome string) {
 
 // resetRecovery resets recoveryDone for test isolation.
 func resetRecovery() {
-	recoveryDone = false
+	recoveryDone = sync.Map{}
 }
 
 // TestRunCycle_NoDoubleCallOnCycle1 proves that runCycle does NOT invoke the
 // TerminalReconcileHook twice on cycle 1. Recovery handles startup; per-cycle
 // reconcile is skipped on the first cycle via the recoveryWasDone guard.
+func TestRunCycle_StartupRecoveryIsIndependentPerHome(t *testing.T) {
+	homeA := setupRunCycleTest(t)
+	homeB := setupRunCycleTest(t)
+	calls := map[string]int{}
+	origHook := TerminalReconcileHook
+	TerminalReconcileHook = func(homeDir string, startup bool) error { calls[homeDir]++; return nil }
+	defer func() { TerminalReconcileHook = origHook }()
+	recoveryDone = sync.Map{}
+
+	if _, err := runCycle(homeA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runCycle(homeB); err != nil {
+		t.Fatal(err)
+	}
+	if calls[homeA] != 1 || calls[homeB] != 1 {
+		t.Fatalf("startup calls = %#v, want one per home", calls)
+	}
+}
+
 func TestRunCycle_NoDoubleCallOnCycle1(t *testing.T) {
 	tmp := setupRunCycleTest(t)
 
 	callCount := 0
 	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string) error {
+	TerminalReconcileHook = func(homeDir string, startup bool) error {
 		callCount++
 		return nil
 	}
@@ -1237,7 +1257,7 @@ func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
 
 	t.Setenv("MUNSU_PARENT_STATUS", "/nonexistent")
 	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string) error {
+	TerminalReconcileHook = func(homeDir string, startup bool) error {
 		return fmt.Errorf("simulated reconcile error")
 	}
 	defer func() { TerminalReconcileHook = origHook }()

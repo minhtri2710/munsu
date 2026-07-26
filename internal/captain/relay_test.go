@@ -751,7 +751,7 @@ func TestResolveParentHome_HookConsistency_ConfigFallback(t *testing.T) {
 	}
 
 	// reconcileHook should now resolve parent from config and proceed
-	err := reconcileHook(tmp)
+	err := reconcileHook(tmp, false)
 	if err != nil {
 		t.Errorf("reconcileHook should not return error when config fallback resolves parent, got: %v", err)
 	}
@@ -792,7 +792,7 @@ func TestReconcileHook_ReturnsNilWhenParentStatusEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	err := reconcileHook(tmp)
+	err := reconcileHook(tmp, false)
 	if err != nil {
 		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty, got: %v", err)
 	}
@@ -805,7 +805,7 @@ func TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", tmp)
 
-	err := reconcileHook(tmp)
+	err := reconcileHook(tmp, false)
 	if err != nil {
 		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir, got: %v", err)
 	}
@@ -822,7 +822,7 @@ func TestReconcileHook_ReturnsNoErrorWhenParentSetAndNoReceipts(t *testing.T) {
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
 	SeedProvenance(tmp, "test-captain")
 
-	err := reconcileHook(tmp)
+	err := reconcileHook(tmp, false)
 	if err != nil {
 		t.Errorf("expected nil when parent set with no pending receipts, got: %v", err)
 	}

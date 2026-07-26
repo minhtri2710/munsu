@@ -154,43 +154,29 @@ func TestCharter_BacklogAuthority(t *testing.T) {
 	}
 }
 
-// TestCharter_RelaySemantics verifies the one-hop relay section matches the
-// production ReconcileTerminalReceipts contract:
-//   - wake/reconcile invokes production relay
-//   - durable parent write must succeed BEFORE local ack
-//   - teardown allowed ONLY after local exact ack / closed obligation
-//   - NO wording about waiting for General munsu-send/wake acknowledgment
+// TestCharter_RelaySemantics verifies the mailbox-only one-hop Uplink Report contract.
 func TestCharter_RelaySemantics(t *testing.T) {
 	charter := DefaultCharter("relay-test", t.TempDir())
 
-	// Must mention ReconcileTerminalReceipts by name.
-	if !strings.Contains(charter, "ReconcileTerminalReceipts") {
-		t.Error("DefaultCharter must mention ReconcileTerminalReceipts in relay section")
+	for _, required := range []string{
+		"One-Hop Uplink Report",
+		"immutable envelope",
+		"NotificationRef",
+		"inbox receive",
+		"inbox ack",
+		"Processing Ack",
+		"after 60 seconds",
+		"latest material report supersedes",
+		"Teardown is allowed only after",
+	} {
+		if !strings.Contains(charter, required) {
+			t.Errorf("DefaultCharter must mention %q", required)
+		}
 	}
-
-	// Must mention durable parent write / status write BEFORE local ack.
-	if !strings.Contains(charter, "durable parent write") && !strings.Contains(charter, "parent write") {
-		t.Error("DefaultCharter must mention durable parent write succeeds before local ack")
-	}
-
-	// Must mention local exact ack / turnend.WriteAck.
-	if !strings.Contains(charter, "WriteAck") {
-		t.Error("DefaultCharter must mention turnend.WriteAck for local ack")
-	}
-
-	// Must mention ReportRelay obligation / CompleteTaskObligation.
-	if !strings.Contains(charter, "ReportRelay") || !strings.Contains(charter, "CompleteTaskObligation") {
-		t.Error("DefaultCharter must mention ReportRelay/CompleteTaskObligation")
-	}
-
-	// Must require teardown only after obligation closed.
-	if !strings.Contains(charter, "obligation is closed") {
-		t.Error("DefaultCharter must require teardown only after obligation is closed")
-	}
-
-	// Must NOT mention waiting for General acknowledgment via munsu send.
-	if strings.Contains(charter, "wait for General") {
-		t.Error("DefaultCharter must NOT say 'wait for General' — production relay does not wait")
+	for _, legacy := range []string{"ReconcileTerminalReceipts", "turnend.WriteAck", "CompleteTaskObligation"} {
+		if strings.Contains(charter, legacy) {
+			t.Errorf("DefaultCharter must not prescribe legacy relay %q", legacy)
+		}
 	}
 }
 

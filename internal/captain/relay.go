@@ -5,7 +5,9 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/uplink"
 	"github.com/minhtri2710/munsu/internal/wakedelivery"
 )
 
@@ -52,11 +54,31 @@ func captainActivationHook(homeDir string) {
 // reconcileHook is the supervision-watcher recovery hook running inside a
 // captain home. It delegates to wakedelivery.ReconcilePending via
 // ReconcileTerminalReceipts for backward compatibility.
-func reconcileHook(homeDir string) error {
+func reconcileHook(homeDir string, startup bool) error {
 	parentHome := resolveParentHome(homeDir)
 	if parentHome == "" {
 		return nil
 	}
+	if _, err := uplink.Recover(uplink.RecoverRequest{
+		SenderHome: homeDir, ReceiverHome: homeDir,
+		ReceiverRank: mailbox.RankCaptain, ForceNotify: startup,
+		Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
+			return uplink.NotifyParent(homeDir, homeDir, ref)
+		},
+	}); err != nil {
+		return err
+	}
+	if _, err := uplink.Recover(uplink.RecoverRequest{
+		SenderHome: homeDir, ReceiverHome: parentHome,
+		ReceiverRank: mailbox.RankGeneral, ForceNotify: startup,
+		Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
+			return uplink.NotifyParent(homeDir, parentHome, ref)
+		},
+	}); err != nil {
+		return err
+	}
+	// Legacy read compatibility: drain terminal receipts created before the
+	// mailbox-only uplink path. New reports no longer create these artifacts.
 	_, err := ReconcileTerminalReceipts(homeDir, parentHome)
 	return err
 }
@@ -66,11 +88,11 @@ func reconcileHook(homeDir string) error {
 type TerminalUplinkOutcome string
 
 const (
-	OutcomeNoPending           TerminalUplinkOutcome = "no-pending"
-	OutcomeRelayed             TerminalUplinkOutcome = "relayed"
-	OutcomeAlreadyAcked        TerminalUplinkOutcome = "already-acked"
-	OutcomeRelayFailed         TerminalUplinkOutcome = "relay-failed"
-	OutcomeAckFailed           TerminalUplinkOutcome = "ack-failed"
+	OutcomeNoPending             TerminalUplinkOutcome = "no-pending"
+	OutcomeRelayed               TerminalUplinkOutcome = "relayed"
+	OutcomeAlreadyAcked          TerminalUplinkOutcome = "already-acked"
+	OutcomeRelayFailed           TerminalUplinkOutcome = "relay-failed"
+	OutcomeAckFailed             TerminalUplinkOutcome = "ack-failed"
 	OutcomeObligationCloseFailed TerminalUplinkOutcome = "obligation-close-failed"
 )
 

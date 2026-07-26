@@ -191,11 +191,19 @@ func InjectToParentPane(role, homeDir, parentHome, taskID, msg, state string, sy
 
 // InjectToParentPaneWithResolver is the testable core of InjectToParentPane.
 func InjectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64, resolveSession ReportSessionResolver) afk.InjectResult {
-	// Dedup: skip if this event was already injected.
+	// Atomically claim the event so concurrent attempts cannot inject twice.
+	// Failed or unsafe attempts release the claim so the same durable event ID
+	// remains retryable.
 	eventKey := fmt.Sprintf("%s/%s/%d", taskID, state, syntheticID)
 	if _, loaded := injectedEvents.LoadOrStore(eventKey, true); loaded {
 		return afk.InjectResult{Outcome: afk.OutcomeInjected, Target: "(deduped)"}
 	}
+	retainClaim := false
+	defer func() {
+		if !retainClaim {
+			injectedEvents.Delete(eventKey)
+		}
+	}()
 
 	// Resolve the target home for parent pane resolution.
 	targetHome, err := ResolveInjectionTargetHome(role, homeDir, parentHome)
@@ -245,6 +253,7 @@ func InjectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, stat
 	if !result.Acknowledged() {
 		return afk.InjectResult{Outcome: afk.OutcomeBackendFailed, Verdict: verdict.String(), Target: target.Handle, Error: string(result.Status)}
 	}
+	retainClaim = true
 	return afk.InjectResult{Outcome: afk.OutcomeInjected, Verdict: verdict.String(), Target: target.Handle}
 }
 
@@ -548,11 +557,11 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 		// No authoritative target available. Do NOT mark activation-seen
 		// so retries remain possible if meta becomes available later.
 		diagLog(ActivationDiagnostic{
-			TargetHandle:  target.Handle,
-			ReceiptsFound: len(allReceipts),
+			TargetHandle:   target.Handle,
+			ReceiptsFound:  len(allReceipts),
 			ReceiptSkipped: "no-target",
-			SafetyVerdict: "unknown",
-			SafetyError:   fmt.Sprintf("resolve target: %v", err),
+			SafetyVerdict:  "unknown",
+			SafetyError:    fmt.Sprintf("resolve target: %v", err),
 		})
 		return 0
 	}
@@ -565,10 +574,10 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 	bk, _, err := resolveSession(captainHome, "")
 	if err != nil {
 		diagLog(ActivationDiagnostic{
-			TargetHandle:  target.Handle,
-			ReceiptsFound: len(allReceipts),
+			TargetHandle:   target.Handle,
+			ReceiptsFound:  len(allReceipts),
 			ReceiptSkipped: "no-backend",
-			SafetyError:   fmt.Sprintf("session.Resolve: %v", err),
+			SafetyError:    fmt.Sprintf("session.Resolve: %v", err),
 		})
 		// No backend available. Do NOT mark activation-seen.
 		return 0

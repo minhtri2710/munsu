@@ -490,19 +490,19 @@ func TestReconcilePending_NoReceipts(t *testing.T) {
 
 func TestReconcilePending_Single(t *testing.T) {
 	runRelayTest(t, runReq{
-		taskIDs:   []string{"test-soldier-1"},
-		termKeys:  []string{"test-key"},
-		eRelayed:  1,
-		eFailed:   0,
+		taskIDs:  []string{"test-soldier-1"},
+		termKeys: []string{"test-key"},
+		eRelayed: 1,
+		eFailed:  0,
 	})
 }
 
 func TestReconcilePending_Multiple(t *testing.T) {
 	runRelayTest(t, runReq{
-		taskIDs:   []string{"task-a", "task-b", "task-c"},
-		termKeys:  []string{"key-a", "key-b", "key-c"},
-		eRelayed:  3,
-		eFailed:   0,
+		taskIDs:  []string{"task-a", "task-b", "task-c"},
+		termKeys: []string{"key-a", "key-b", "key-c"},
+		eRelayed: 3,
+		eFailed:  0,
 	})
 }
 
@@ -656,11 +656,11 @@ func TestReconcilePending_GeneralStateUnwritable(t *testing.T) {
 // Test non-material state receipt is still relayed.
 func TestReconcilePending_NonMaterialState(t *testing.T) {
 	runRelayTest(t, runReq{
-		taskIDs:   []string{"working-task"},
-		termKeys:  []string{"working-key"},
-		state:     []string{"working"},
-		eRelayed:  1,
-		eFailed:   0,
+		taskIDs:  []string{"working-task"},
+		termKeys: []string{"working-key"},
+		state:    []string{"working"},
+		eRelayed: 1,
+		eFailed:  0,
 	})
 }
 
@@ -1186,6 +1186,41 @@ func TestActivateOnReceipt_IdleClaudeAgent(t *testing.T) {
 	}
 }
 
+func TestActivateOnReceipt_RetriesWhenPaneBecomesIdle(t *testing.T) {
+	bak := &fakeActivationBackend{
+		captureContent: "Working...\n",
+		agentAlive:     true,
+		paneExists:     true,
+		submitResult: session.PromptResult{
+			Status: session.PromptSubmitted,
+		},
+	}
+	captainHome, parentHome := activationEnv(t, bak)
+	taskID, termKey := "retry-idle", "retry-key"
+
+	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "complete"); err != nil {
+		t.Fatalf("WriteReceipt: %v", err)
+	}
+
+	if count := ActivateOnReceipt(captainHome, parentHome); count != 0 {
+		t.Fatalf("busy pane should not activate, got %d", count)
+	}
+	if IsActivationSeen(captainHome, taskID, termKey) {
+		t.Fatal("busy attempt must preserve the receipt for retry")
+	}
+
+	bak.captureContent = "> \n"
+	if count := ActivateOnReceipt(captainHome, parentHome); count != 1 {
+		t.Fatalf("idle retry should activate once, got %d", count)
+	}
+	if !IsActivationSeen(captainHome, taskID, termKey) {
+		t.Fatal("successful idle retry should mark activation-seen")
+	}
+	if !strings.Contains(bak.submittedText, taskID) {
+		t.Fatalf("idle retry should submit the receipt notification, got %q", bak.submittedText)
+	}
+}
+
 // TestActivateOnReceipt_BusyPiAgent verifies that a busy pi agent (showing
 // "Working...") is NOT classified as safe, even when the backend confirms
 // it is a recognized agent.
@@ -1452,7 +1487,7 @@ func TestCheckAgentComposerSafe(t *testing.T) {
 		{"busy-working", "Working...\n", false},
 		{"busy-thinking", "Thinking...\n", false},
 		{"pending-text", "> git push\n", false},
-		{"non-ansi-empty", "\n\n\n\n", true},  // empty lines only → safe
+		{"non-ansi-empty", "\n\n\n\n", true}, // empty lines only → safe
 
 		// Ghost-stripping: dim placeholder text after prompt glyph should be
 		// stripped, leaving just the glyph → idle → safe.

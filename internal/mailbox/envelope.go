@@ -61,6 +61,7 @@ type Envelope struct {
 	SenderIdentity string `json:"sender_identity"`
 	ReceiverRank   Rank   `json:"receiver_rank"`
 	ReceiverID     string `json:"receiver_id"`
+	Kind           string `json:"kind,omitempty"`
 	TaskID         string `json:"task_id,omitempty"`
 	Key            string `json:"key,omitempty"`
 	Payload        string `json:"payload"`

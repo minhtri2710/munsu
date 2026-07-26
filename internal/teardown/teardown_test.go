@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -741,6 +744,62 @@ func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
 		if strings.Contains(step, "closed keyed phase") {
 			t.Errorf("unexpected phase close with no status file: %s", step)
 		}
+	}
+}
+
+func TestUplinkCheck_MailboxOnlyKeyedOpenBlocks(t *testing.T) {
+	home, receiver := t.TempDir(), t.TempDir()
+	_, err := uplink.Report(uplink.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier", ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain", TaskID: "task:1", Key: "release", State: "done", Message: "complete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uplinkCheck(Options{HomeDir: home, ID: "task:1"}); err == nil {
+		t.Fatal("keyed open report must block")
+	}
+}
+
+func TestUplinkCheck_MailboxOnlyPendingWithoutOpenEvidenceBlocks(t *testing.T) {
+	home := t.TempDir()
+	env := &mailbox.Envelope{Kind: "uplink-report", SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier", ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain", TaskID: "task:partial", Key: "x", Payload: "done"}
+	if err := mailbox.NewStore(home).WriteEnvelope(env); err != nil {
+		t.Fatal(err)
+	}
+	if err := mailbox.NewStore(home).WritePending(env); err != nil {
+		t.Fatal(err)
+	}
+	if err := uplinkCheck(Options{HomeDir: home, ID: "task:partial"}); err == nil {
+		t.Fatal("pending-only crash state must block")
+	}
+}
+
+func TestUplinkCheck_WrongAckBlocksExactAckOpens(t *testing.T) {
+	home, receiver := t.TempDir(), t.TempDir()
+	result, err := uplink.Report(uplink.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier", ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain", TaskID: "task:ack", Key: "default", State: "done", Message: "complete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _ := mailbox.NewStore(receiver).ReadEnvelope("soldier", result.MessageID)
+	wrong := &mailbox.ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: mailbox.PayloadHashHex("wrong"), ProcessedAt: time.Now().UnixNano(), Outcome: mailbox.OutcomeAccepted}
+	if err := mailbox.NewStore(receiver).WriteAck(wrong); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uplink.Recover(uplink.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err == nil {
+		t.Fatal("wrong ack should fail")
+	}
+	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err == nil {
+		t.Fatal("wrong ack must block")
+	}
+	os.Remove(filepath.Join(receiver, "state", mailbox.InboxDir, "soldier", result.MessageID+".ack"))
+	exact := *wrong
+	exact.PayloadHash = env.PayloadHash
+	if err := mailbox.NewStore(receiver).WriteAck(&exact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uplink.Recover(uplink.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err != nil {
+		t.Fatalf("exact ack should open teardown: %v", err)
 	}
 }
 

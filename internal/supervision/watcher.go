@@ -310,7 +310,7 @@ func scanTask(homeDir, id string) *WakeReason {
 // TerminalReconcileHook is a recovery-only hook for terminal receipt retry.
 // It is called ONCE when the watcher starts, not every cycle.
 // Set by the captain package during init.
-var TerminalReconcileHook func(homeDir string) error
+var TerminalReconcileHook func(homeDir string, startup bool) error
 
 // CaptainActivationHook is called every watcher cycle (after startup recovery)
 // to give the captain a chance to nudge/activate its agent pane when new
@@ -319,8 +319,8 @@ var TerminalReconcileHook func(homeDir string) error
 // Nil hook = no-op.
 var CaptainActivationHook func(homeDir string)
 
-// recoveryDone tracks whether the one-shot recovery has completed.
-var recoveryDone bool
+// recoveryDone tracks one-shot recovery independently for each watched home.
+var recoveryDone sync.Map
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
@@ -333,10 +333,9 @@ func RunCycle(homeDir string) (bool, error) {
 // runs the legacy terminal reconcile hook (if any) once,
 // then completes any pending poll retirements.
 func runRecovery(homeDir string) {
-	if recoveryDone {
+	if _, loaded := recoveryDone.LoadOrStore(homeDir, true); loaded {
 		return
 	}
-	recoveryDone = true
 
 	// Recovery step 1: retry pending inbox envelopes via mailbox recovery.
 	attempts, err := mailbox.RecoverAllInboxes(homeDir)
@@ -356,7 +355,7 @@ func runRecovery(homeDir string) {
 	// This catches any remaining turnend receipts that were not migrated
 	// to the new mailbox format.
 	if TerminalReconcileHook != nil {
-		if err := TerminalReconcileHook(homeDir); err != nil {
+		if err := TerminalReconcileHook(homeDir, true); err != nil {
 			fmt.Fprintf(os.Stderr, "terminal reconcile recovery: %v\n", err)
 		}
 	}
@@ -365,9 +364,9 @@ func runRecovery(homeDir string) {
 func runCycle(homeDir string) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
-	recoveryWasDone := recoveryDone
+	_, recoveryWasDone := recoveryDone.Load(homeDir)
 
-	// Run one-shot recovery on first cycle.
+	// Run one-shot recovery on first cycle for this home.
 	runRecovery(homeDir)
 
 	// Retirement recovery: scan pending records every cycle.
@@ -394,7 +393,7 @@ func runCycle(homeDir string) (bool, error) {
 	// On error, the error is logged and the cycle continues (bounded
 	// failure) — partial failure must not falsely ack/close obligations.
 	if recoveryWasDone && TerminalReconcileHook != nil {
-		if err := TerminalReconcileHook(homeDir); err != nil {
+		if err := TerminalReconcileHook(homeDir, false); err != nil {
 			fmt.Fprintf(os.Stderr, "terminal reconcile cycle: %v\n", err)
 		}
 	}

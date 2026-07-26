@@ -18,10 +18,12 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
@@ -415,7 +417,7 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
   %[5]stasks-axi ready --file <backlog>%[5]s → %[5]stasks-axi start <key> --file <backlog>%[5]s → %[5]smunsu brief <id> <project>%[5]s → %[5]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[5]s
 - kind: ship (default) | scout — mode: no-mistakes | direct-PR | local-only (empty = auto-detect)
 - After spawning, monitor soldier progress through their task state.
-- When a soldier completes (done/failed), relay the result to General (see One-Hop Relay).
+- When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).
 - If a soldier is stuck, use the ladder: %[5]smunsu peek <id>%[5]s → %[5]smunsu send <id> ...%[5]s → interrupt → relaunch → fail.
 - After a ship PR is merged, run %[5]smunsu teardown <soldier-id>%[5]s.
 - Never launch another Captain.
@@ -426,27 +428,25 @@ Spawn Soldiers to do work from this home. The dispatch ordering is:
 - Usage: %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s
 - States: working, needs-decision, blocked, paused, done, failed, resolved.
 - Material phases get [key=<slug>] so later done/failed/resolved supersede them.
-- Uplink generates durable receipts/events/wakes for the General.
-- Wake-driven supervision: General drains wakes then reads soldier-state.
+- Material Uplink Reports write a durable envelope, sender pending evidence, and a receiver wake before sending a NotificationRef.
+- General explicitly runs inbox receive, accepts the report into context, then runs inbox ack to write the Processing Ack.
 - NEVER poll the General for work. NEVER sleep-loop.
 - %[5]smunsu peek%[5]s is only for stuck recovery (see Soldier Lifecycle).
 - Provider polling only after terminal PR notification — no early polling.
 - Fallback (only when %[5]smunsu report%[5]s is unavailable):
     echo "{state}: {one short line}" >> %[4]s
 
-## One-Hop Relay (Captain → General)
+## One-Hop Uplink Report
 
-When a Soldier finishes (done/failed), the relay is driven by Converge which invokes %[5]sReconcileTerminalReceipts%[5]s:
+Material reports (%[5]sdone%[5]s, %[5]sfailed%[5]s, %[5]sblocked%[5]s, %[5]sneeds-decision%[5]s) use the mailbox-only Uplink Report flow:
 
-1. **Terminal receipt**: The soldier's terminal report generates a durable receipt (event/wake) in the captain's state.
-2. **Wake/reconcile**: A wake is raised; the next converge cycle picks it up, reads the receipt, and reconciles with task meta.
-3. **Production relay** (%[5]sReconcileTerminalReceipts%[5]s):
-   - Writes a durable relay status + event under the parent General's state (namespace: %[5]scaptain:<id>.relay-<task>%[5]s).
-   - Writes an exact task/key acknowledgment in the captain home via %[5]sturnend.WriteAck%[5]s.
-   - Completes the %[5]sReportRelay%[5]s obligation via %[5]sturnend.CompleteTaskObligation%[5]s.
-4. **Safety invariant**: The durable parent write (General status + event) MUST succeed BEFORE the local ack is written. If the parent write fails, the local ack is withheld and the receipt remains pending.
-5. **Teardown**: You may run %[5]smunsu teardown <soldier-id>%[5]s ONLY after the local exact ack is written and the obligation is closed. Do NOT teardown while a receipt is still pending.
-6. **Stop hooks**: If General sends a stop (via command envelope with matching task key), stop the soldier immediately — do not wait for completion.
+1. %[5]smunsu report%[5]s writes an immutable envelope to the parent inbox, sender pending evidence, and a parent wake before attempting live notification.
+2. The pane receives only a NotificationRef. Read it with %[5]smunsu inbox receive '<ref>'%[5]s.
+3. After the report is accepted into context, write the exact Processing Ack with %[5]smunsu inbox ack '<ref>'%[5]s.
+4. A failed or busy live notification remains queued. Recovery retries once after watcher restart and otherwise after 60 seconds.
+5. For the same task and key, the latest material report supersedes older unacknowledged reports. Different keys remain independent.
+6. Teardown is allowed only after the parent Processing Ack has been reconciled into durable accepted evidence. Prompt submission alone is not an Ack.
+7. **Stop hooks**: If General sends a stop with a matching task key, stop the soldier immediately — do not wait for completion.
 
 ## Delivery / Merge Authorization
 
@@ -2309,7 +2309,22 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread pending reconciliation", Status: ConvergeOK, Detail: "ok"})
 		}
 
-		// g. Terminal receipt relay (Captain → General)
+		// g. Mailbox-only Captain → General Uplink Report reconciliation.
+		if ur, urErr := uplink.Recover(uplink.RecoverRequest{
+			SenderHome: sm.Home, ReceiverHome: parentHome,
+			ReceiverRank: mailbox.RankGeneral,
+			Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
+				return uplink.NotifyParent(sm.Home, parentHome, ref)
+			},
+		}); urErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeFailed, Detail: urErr.Error()})
+			errs = append(errs, fmt.Sprintf("%s: uplink reconciliation failed: %v", sm.ID, urErr))
+		} else {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeOK, Detail: fmt.Sprintf("accepted=%d notified=%d queued=%d", ur.Accepted, ur.Notified, ur.Queued)})
+		}
+
+		// Legacy read compatibility only: drain receipts created before mailbox-only uplink.
+		// This is not the report path for new material reports.
 		// Scans the captain home for un-acked soldier terminal reports
 		// and relays each one to the General's state using the shared
 		// reconciliation seam.
