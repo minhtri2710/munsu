@@ -38,6 +38,12 @@ func RecoverInbox(receiverHome string, env *Envelope) *RecoveryAttempt {
 	ra := &RecoveryAttempt{
 		MessageID: env.MessageID,
 	}
+	// Uplink Reports have a dedicated recovery module that resolves the parent
+	// endpoint independently from TaskID and submits only NotificationRef.
+	if env.Kind == "uplink-report" {
+		ra.Skipped = true
+		return ra
+	}
 
 	markerPath := RecoveryMarkerPath(receiverHome, env.MessageID)
 	if _, err := os.Stat(markerPath); err == nil {

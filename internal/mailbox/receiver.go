@@ -182,6 +182,9 @@ func (r *Receiver) Receive(ref NotificationRef) (*Envelope, error) {
 	if err := ref.Validate(); err != nil {
 		return nil, fmt.Errorf("receive: %w", err)
 	}
+	if r.store.IsSuperseded(ref.SenderIdentity, ref.MessageID) {
+		return nil, fmt.Errorf("receive envelope superseded: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
+	}
 
 	// 2. Load envelope from own inbox.
 	env, err := r.store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
@@ -254,6 +257,9 @@ func (r *Receiver) Ack(ref NotificationRef) (*ProcessingAck, error) {
 	// 1. Validate ref.
 	if err := ref.Validate(); err != nil {
 		return nil, fmt.Errorf("ack: %w", err)
+	}
+	if r.store.IsSuperseded(ref.SenderIdentity, ref.MessageID) {
+		return nil, fmt.Errorf("ack envelope superseded: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
 	}
 
 	// 2. Load envelope from own inbox.

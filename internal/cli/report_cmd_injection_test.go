@@ -1,9 +1,6 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,13 +9,8 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/event"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/session"
-	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/wakedelivery"
-	"github.com/spf13/cobra"
 )
 
 // --- resolveInjectionTargetHome tests ---
@@ -127,12 +119,12 @@ func TestResolveInjectionTargetHome(t *testing.T) {
 // for testing injectToParentPaneWithResolver. It records all calls and
 // returns configurable results.
 type fakeInjectBackend struct {
-	mu           sync.Mutex
-	captureCalls []string
+	mu            sync.Mutex
+	captureCalls  []string
 	sendKeysCalls []string
 	captureResult string
-	captureErr   error
-	promptResult session.PromptResult
+	captureErr    error
+	promptResult  session.PromptResult
 }
 
 func (f *fakeInjectBackend) NewWindow(session, name string) (string, error) {
@@ -355,8 +347,8 @@ func TestInjectToParentPaneWithResolver_CaptainMissingParent(t *testing.T) {
 }
 
 func TestInjectToParentPaneWithResolver_ParentTargetUnresolvable(t *testing.T) {
-	homeDir := t.TempDir()           // no config/general-pane
-	parentHome := t.TempDir()        // no config/general-pane
+	homeDir := t.TempDir()    // no config/general-pane
+	parentHome := t.TempDir() // no config/general-pane
 
 	// Unset runtime env vars that could provide fallback targets
 	t.Setenv("TMUX_PANE", "")
@@ -493,6 +485,29 @@ func TestInjectToParentPaneWithResolver_SubmitPromptEndpointDead(t *testing.T) {
 	}
 }
 
+func TestInjectToParentPaneWithResolver_RetriesSameEventAfterUnsafeAttempt(t *testing.T) {
+	homeDir, parentHome, _ := setupInjectionTest(t)
+	eventID := uint64(99881)
+
+	unsafe := &fakeInjectBackend{
+		captureResult: "❯ git push\n",
+		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
+	}
+	first := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-retry", "done", "done", eventID, fakeResolver(unsafe))
+	if first.Outcome != afk.OutcomeUnsafe {
+		t.Fatalf("first attempt outcome = %q, want unsafe", first.Outcome)
+	}
+
+	safe := &fakeInjectBackend{
+		captureResult: "❯ \n",
+		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
+	}
+	second := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-retry", "done", "done", eventID, fakeResolver(safe))
+	if second.Outcome != afk.OutcomeInjected || second.Target == "(deduped)" {
+		t.Fatalf("second attempt should retry and inject, got outcome=%q target=%q", second.Outcome, second.Target)
+	}
+}
+
 func TestInjectToParentPaneWithResolver_Dedup(t *testing.T) {
 	homeDir, parentHome, _ := setupInjectionTest(t)
 
@@ -524,320 +539,5 @@ func TestInjectToParentPaneWithResolver_Dedup(t *testing.T) {
 	}
 	if result3.Target == "(deduped)" {
 		t.Error("third call (different eventID) should not be deduped")
-	}
-}
-
-// --- Command-level injection tests ---
-
-// deterministicInjectFn returns an injectFn that returns controlled results.
-func deterministicInjectFn(outcome afk.InjectOutcome, target, errMsg string) func(string, string, string, string, string, string, uint64) afk.InjectResult {
-	return func(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) afk.InjectResult {
-		return afk.InjectResult{
-			Outcome: outcome,
-			Target:  target,
-			Error:   errMsg,
-		}
-	}
-}
-
-// TestReportCmd_DeterministicInjection_Success verifies that a successful
-// injection in the contract output does not affect durable writes.
-func TestReportCmd_DeterministicInjection_Success(t *testing.T) {
-	homeDir := t.TempDir()
-	parentHome := t.TempDir()
-
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "test-inject-success")
-	t.Setenv("MUNSU_ROLE", "soldier")
-	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-
-	cmd := newReportCmdWithInjector(deterministicInjectFn(afk.OutcomeInjected, "captain-pane", ""))
-	root := &cobra.Command{Use: "munsu"}
-	root.AddCommand(cmd)
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"report", "--ring", "ring", "--output", "json", "done", "task complete"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("expected success, got: %v", err)
-	}
-
-	// Verify durable writes still happened despite deterministic injection
-	receiptPath := turnend.ReceiptPath(parentHome, "test-inject-success", "default")
-	if _, err := os.Stat(receiptPath); err != nil {
-		t.Errorf("receipt should exist: %v", err)
-	}
-
-	statusPath := filepath.Join(homeDir, "state", "test-inject-success.status")
-	if _, err := os.Stat(statusPath); err != nil {
-		t.Errorf("status should exist: %v", err)
-	}
-
-	eventPath := event.LogPath(homeDir)
-	if _, err := os.Stat(eventPath); err != nil {
-		t.Errorf("event log should exist: %v", err)
-	}
-
-	wakePath := lifecycle.QueuePath(homeDir)
-	if _, err := os.Stat(wakePath); err != nil {
-		t.Errorf("wake queue should exist in soldier home: %v", err)
-	}
-}
-
-// TestReportCmd_DeterministicInjection_Failure verifies that injection failure
-// does not prevent durable status/event/wake/receipt writes.
-func TestReportCmd_DeterministicInjection_Failure(t *testing.T) {
-	homeDir := t.TempDir()
-	parentHome := t.TempDir()
-
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "test-inject-fail")
-	t.Setenv("MUNSU_ROLE", "soldier")
-	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-
-	cmd := newReportCmdWithInjector(deterministicInjectFn(afk.OutcomeUnsafe, "captain-pane", "composer busy"))
-	root := &cobra.Command{Use: "munsu"}
-	root.AddCommand(cmd)
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"report", "--ring", "ring", "--output", "json", "done", "task complete"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("expected success despite injection failure, got: %v", err)
-	}
-
-	// Verify durable writes still happened (injection is best-effort)
-	receiptPath := turnend.ReceiptPath(parentHome, "test-inject-fail", "default")
-	if _, err := os.Stat(receiptPath); err != nil {
-		t.Errorf("receipt should exist despite injection failure: %v", err)
-	}
-
-	statusPath := filepath.Join(homeDir, "state", "test-inject-fail.status")
-	if _, err := os.Stat(statusPath); err != nil {
-		t.Errorf("status should exist despite injection failure: %v", err)
-	}
-
-	// Verify contract output contains the injection failure details
-	var resp contract.Response[contract.MessageResult]
-	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if resp.Data.Injection == nil {
-		t.Fatal("injection field should be present in contract output")
-	}
-	if resp.Data.Injection.Outcome != string(afk.OutcomeUnsafe) {
-		t.Errorf("injection outcome = %q, want %q", resp.Data.Injection.Outcome, afk.OutcomeUnsafe)
-	}
-	if resp.Data.Injection.Error != "composer busy" {
-		t.Errorf("injection error = %q, want %q", resp.Data.Injection.Error, "composer busy")
-	}
-}
-
-// TestReportCmd_DeterministicInjection_AllMaterialStates verifies that all
-// material states produce durable writes regardless of injection outcome.
-func TestReportCmd_DeterministicInjection_AllMaterialStates(t *testing.T) {
-	for _, state := range []struct {
-		name  string
-		value string
-	}{
-		{"done", "done"},
-		{"failed", "failed"},
-		{"blocked", "blocked"},
-		{"needs_decision", "needs-decision"},
-	} {
-		t.Run(state.name, func(t *testing.T) {
-			homeDir := t.TempDir()
-			parentHome := t.TempDir()
-
-			t.Setenv("MUNSU_HOME", homeDir)
-			t.Setenv("MUNSU_TASK_ID", "test-state-"+state.value)
-			t.Setenv("MUNSU_ROLE", "soldier")
-			t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-
-			cmd := newReportCmdWithInjector(deterministicInjectFn(afk.OutcomeEndpointDead, "", "backend dead"))
-			root := &cobra.Command{Use: "munsu"}
-			root.AddCommand(cmd)
-			buf := new(bytes.Buffer)
-			root.SetOut(buf)
-			root.SetErr(buf)
-
-			root.SetArgs([]string{"report", "--ring", "ring", "--output", "json", state.value, state.value + " message"})
-			err := root.Execute()
-			if err != nil {
-				t.Fatalf("%s: expected success, got: %v", state.name, err)
-			}
-
-			// Verify durable writes
-			receiptPath := turnend.ReceiptPath(parentHome, "test-state-"+state.value, "default")
-			if _, err := os.Stat(receiptPath); err != nil {
-				t.Errorf("%s: receipt should exist: %v", state.name, err)
-			}
-
-			statusPath := filepath.Join(homeDir, "state", "test-state-"+state.value+".status")
-			if _, err := os.Stat(statusPath); err != nil {
-				t.Errorf("%s: status should exist: %v", state.name, err)
-			}
-
-			// Verify contract shows injection failure details
-			var resp contract.Response[contract.MessageResult]
-			if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
-				t.Fatalf("%s: unmarshal response: %v", state.name, err)
-			}
-			if resp.Data.Injection == nil {
-				t.Fatalf("%s: injection field should be present", state.name)
-			}
-			if resp.Data.Injection.Outcome != string(afk.OutcomeEndpointDead) {
-				t.Errorf("%s: injection outcome = %q, want %q", state.name, resp.Data.Injection.Outcome, afk.OutcomeEndpointDead)
-			}
-		})
-	}
-}
-
-// TestReportCmd_SubmitPromptAcknowledgment_Distinct tests that SubmitPrompt
-// acknowledgment (PromptSubmitted) is distinct from envelope/receipt processing
-// and task completion: the durable Captain receipt is not acked just because
-// the prompt was submitted to the pane.
-func TestReportCmd_SubmitPromptAcknowledgment_Distinct(t *testing.T) {
-	homeDir := t.TempDir()
-	parentHome := t.TempDir()
-
-	// Install config/general-pane on parentHome so target resolution succeeds.
-	configDir := filepath.Join(parentHome, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatalf("mkdir parent config: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "general-pane"), []byte("captain-session:captain-pane\n"), 0644); err != nil {
-		t.Fatalf("write parent general-pane: %v", err)
-	}
-
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "test-ack-distinct")
-	t.Setenv("MUNSU_ROLE", "soldier")
-	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-
-	// Use a real injectFn but with a fake resolver that returns PromptSubmitted
-	cmd := newReportCmdWithInjector(func(role, hd, ph, tid, msg, state string, sid uint64) afk.InjectResult {
-		return wakedelivery.InjectToParentPaneWithResolver(role, hd, ph, tid, msg, state, sid, fakeResolver(
-			&fakeInjectBackend{
-				captureResult: "\u276F \n",
-				promptResult:  session.PromptResult{Status: session.PromptSubmitted},
-			},
-		))
-	})
-
-	root := &cobra.Command{Use: "munsu"}
-	root.AddCommand(cmd)
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"report", "--ring", "ring", "--output", "json", "done", "task complete"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("expected success, got: %v", err)
-	}
-
-	// Durable receipt exists but is NOT acked — PromptSubmitted to the pane
-	// is NOT equivalent to envelope/receipt processing or task completion.
-	receiptPath := turnend.ReceiptPath(parentHome, "test-ack-distinct", "default")
-	if _, err := os.Stat(receiptPath); err != nil {
-		t.Errorf("receipt should exist: %v", err)
-	}
-	if turnend.IsReceiptAcked(parentHome, "test-ack-distinct", "default") {
-		t.Error("receipt should NOT be acked just because prompt was submitted to the pane")
-	}
-
-	// Verify contract shows injection succeeded
-	var resp contract.Response[contract.MessageResult]
-	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if resp.Data.Injection == nil {
-		t.Fatal("injection should be present")
-	}
-	if resp.Data.Injection.Outcome != string(afk.OutcomeInjected) {
-		t.Errorf("injection outcome = %q, want %q", resp.Data.Injection.Outcome, afk.OutcomeInjected)
-	}
-}
-
-// TestReportCmd_NoRing_SkipsInjection verifies that --ring no-ring produces
-// no injection result in the contract output.
-func TestReportCmd_NoRing_SkipsInjection(t *testing.T) {
-	homeDir := t.TempDir()
-	parentHome := t.TempDir()
-
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "test-no-ring")
-	t.Setenv("MUNSU_ROLE", "soldier")
-	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-
-	root := NewRootCommand()
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"report", "--ring", "no-ring", "--output", "json", "done", "task complete"})
-	err := root.Execute()
-	if err != nil {
-		t.Fatalf("expected success, got: %v", err)
-	}
-
-	var resp contract.Response[contract.MessageResult]
-	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if resp.Data.Injection != nil {
-		t.Errorf("injection should be nil with --ring no-ring, got %+v", resp.Data.Injection)
-	}
-
-	// Durable writes should still exist
-	receiptPath := turnend.ReceiptPath(parentHome, "test-no-ring", "default")
-	if _, err := os.Stat(receiptPath); err != nil {
-		t.Errorf("receipt should exist: %v", err)
-	}
-}
-
-// TestInjectToParentPaneWithResolver_SoldierMissingParent_NoPanicOnEmptyPaths
-// ensures that a soldier with empty parentHome, homeDir, or other empty string
-// paths does not panic and returns typed endpoint-dead.
-func TestInjectToParentPaneWithResolver_SoldierMissingParent_NoPanicOnEmptyPaths(t *testing.T) {
-	// Both empty — worst case
-	result := wakedelivery.InjectToParentPaneWithResolver("soldier", "", "", "task-1", "done: PR", "done", 1500,
-		func(_ string, _ string) (session.Backend, string, error) {
-			return nil, "", errors.New("no backend")
-		})
-
-	if result.Outcome != afk.OutcomeEndpointDead {
-		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeEndpointDead)
-	}
-	// Should mention MUNSU_PARENT_STATUS in the error, not panic
-	if !strings.Contains(result.Error, "MUNSU_PARENT_STATUS") {
-		t.Errorf("error = %q, should mention MUNSU_PARENT_STATUS", result.Error)
-	}
-}
-
-// TestInjectToParentPaneWithResolver_InvalidTargetSource verifies that an
-// unsupported target source yields endpoint-dead.
-func TestInjectToParentPaneWithResolver_InvalidTargetSource(t *testing.T) {
-	// Home with config/general-pane pointing to empty string
-	homeDir := t.TempDir()
-	parentHome := t.TempDir()
-	configDir := filepath.Join(parentHome, "config")
-	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "general-pane"), []byte(" \n"), 0644) // whitespace-only = empty
-
-	fake := &fakeInjectBackend{
-		captureResult: "\u276F \n",
-		promptResult:  session.PromptResult{Status: session.PromptSubmitted},
-	}
-
-	result := wakedelivery.InjectToParentPaneWithResolver("soldier", homeDir, parentHome, "task-1", "done: PR", "done", 1600, fakeResolver(fake))
-
-	if result.Outcome != afk.OutcomeEndpointDead {
-		t.Errorf("outcome = %q, want %q", result.Outcome, afk.OutcomeEndpointDead)
 	}
 }

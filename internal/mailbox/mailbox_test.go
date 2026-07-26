@@ -1200,6 +1200,18 @@ func TestRecoverInbox_SkipOnMarker(t *testing.T) {
 	}
 }
 
+func TestRecoverInbox_SkipsUplinkEnvelope(t *testing.T) {
+	for _, env := range []*Envelope{
+		{MessageID: "soldier-up", Kind: "uplink-report", SenderRank: RankSoldier, ReceiverRank: RankCaptain},
+		{MessageID: "captain-up", Kind: "uplink-report", SenderRank: RankCaptain, ReceiverRank: RankGeneral},
+	} {
+		attempt := RecoverInbox(t.TempDir(), env)
+		if !attempt.Skipped || attempt.Delivered {
+			t.Fatalf("attempt=%+v, want skipped uplink", attempt)
+		}
+	}
+}
+
 func TestRecoverAllInboxes_EmptyDir(t *testing.T) {
 	attempts, err := RecoverAllInboxes(t.TempDir())
 	if err != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/uplink"
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
 
@@ -618,6 +619,11 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 //
 // The check is idempotent after ReportRelay is completed. Use --force to bypass.
 func uplinkCheck(opts Options) error {
+	if uplink.HasPendingReport(opts.HomeDir, opts.ID) || uplink.HasAnyOpenReport(opts.HomeDir, opts.ID) {
+		return fmt.Errorf("uplink report not acknowledged: Processing Ack is still pending for task %s (use --force to override)", opts.ID)
+	}
+
+	// Legacy read compatibility: check the former ReportRelay obligation.
 	// Check if per-task ReportRelay obligation is still open.
 	// Per-task obligations are bound to exact taskID+terminalKey, not global role.
 	open, err := turnend.IsTaskReportRelayOpen(opts.HomeDir, opts.ID)

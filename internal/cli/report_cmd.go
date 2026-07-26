@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/uplink"
 	"github.com/minhtri2710/munsu/internal/wakedelivery"
 	"github.com/spf13/cobra"
 )
@@ -27,12 +28,10 @@ var materialStates = map[string]bool{
 
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
-	return newReportCmdWithInjector(wakedelivery.InjectToParentPane)
+	return newReportCmdWithNotifier(uplink.NotifyParent)
 }
 
-// newReportCmdWithInjector creates the report command with an injectable injectFn
-// for deterministic testing of injection outcomes.
-func newReportCmdWithInjector(injectFn func(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) afk.InjectResult) *cobra.Command {
+func newReportCmdWithNotifier(notify func(senderHome, receiverHome string, ref mailbox.NotificationRef) uplink.NotifyResult) *cobra.Command {
 	var key string
 	var ring string // "auto" | "ring" | "no-ring"
 
@@ -111,20 +110,48 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
-			// 1. Deliver wake through the consolidated pipeline:
-			// status → receipt → events → wake. Handles fail-closed ordering
-			// and best-effort event append internally.
-			receipt, err := wakedelivery.DeliverWake(wakedelivery.DeliverRequest{
-				HomeDir:    homeDir,
-				ParentHome: parentHome,
-				TaskID:     taskID,
-				State:      state,
-				Message:    msg,
-				Key:        key,
-				Role:       role,
-			})
-			if err != nil {
-				return fmt.Errorf("report: %w", err)
+			var receipt *wakedelivery.WakeReceipt
+			var uplinkResult *uplink.ReportResult
+			if materialStates[state] && (role == "soldier" || role == "captain") {
+				senderIdentity := strings.NewReplacer(":", "_", "/", "_", "\\", "_").Replace(taskID)
+				senderRank := mailbox.Rank(role)
+				if role == "captain" {
+					if identity, _, err := mailbox.ReadHomeIdentity(homeDir); err == nil {
+						senderIdentity = identity
+					}
+				}
+				receiverIdentity, _, err := mailbox.ReadHomeIdentity(parentHome)
+				if err != nil {
+					return fmt.Errorf("report: deriving receiver identity: %w", err)
+				}
+				receiverRank := mailbox.RankCaptain
+				if role == "captain" {
+					receiverRank = mailbox.RankGeneral
+				}
+				uplinkResult, err = uplink.Report(uplink.ReportRequest{
+					SenderHome: senderHomeForRole(role, homeDir, parentHome), ReceiverHome: parentHome,
+					SenderRank: senderRank, SenderIdentity: senderIdentity,
+					ReceiverRank: receiverRank, ReceiverID: receiverIdentity,
+					TaskID: taskID, Key: key, State: state, Message: msg,
+					Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
+						if resolveRingPolicy(ring, homeDir) == "no-ring" {
+							return uplink.NotifyResult{Queued: true}
+						}
+						return notify(homeDir, parentHome, ref)
+					},
+				})
+				if err != nil {
+					return fmt.Errorf("report: %w", err)
+				}
+			} else {
+				var err error
+				receipt, err = wakedelivery.DeliverWake(wakedelivery.DeliverRequest{
+					HomeDir: targetHome, ParentHome: parentHome, TaskID: taskID,
+					State: state, Message: msg, Key: key, Role: role,
+				})
+				if err != nil {
+					return fmt.Errorf("report: %w", err)
+				}
 			}
 
 			// 1.6. For soldier review-ready/idle states: emit a durable ready event
@@ -145,25 +172,21 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
-			// 2. Attempt parent pane injection for material states
-			ringDecision := resolveRingPolicy(ring, homeDir)
 			var injectResult *contract.ReportInjection
 			watcherID := identifyWatcher(homeDir)
-			if ringDecision == "ring" && materialStates[state] {
-				result := injectFn(role, homeDir, parentHome, taskID, msg, state, receipt.EventID)
-				injectResult = &contract.ReportInjection{
-					Outcome: string(result.Outcome),
-					Verdict: result.Verdict,
-					Target:  result.Target,
-					EventID: receipt.EventID,
-					Error:   result.Error,
+			var enqueueTimestamp, receiptTimestamp int64
+			if uplinkResult != nil {
+				outcome := "queued"
+				if uplinkResult.Notified {
+					outcome = "notified"
 				}
-			}
-
-			// Receipt timestamp mirrors when the captain receipt was written.
-			var receiptTimestamp int64
-			if receipt.ReceiptWritten {
+				injectResult = &contract.ReportInjection{Outcome: outcome}
 				receiptTimestamp = time.Now().Unix()
+			} else if receipt != nil {
+				enqueueTimestamp = receipt.EnqueueUnix
+				if receipt.ReceiptWritten {
+					receiptTimestamp = time.Now().Unix()
+				}
 			}
 
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
@@ -173,7 +196,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				Data: contract.MessageResult{
 					Message:          fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
 					Injection:        injectResult,
-					EnqueueTimestamp: receipt.EnqueueUnix,
+					EnqueueTimestamp: enqueueTimestamp,
 					ReceiptTimestamp: receiptTimestamp,
 					WatcherIdentity:  watcherID,
 				},
@@ -199,6 +222,13 @@ func newNotifyCmd() *cobra.Command {
 	}
 	notifyCmd.Flags().AddFlagSet(reportCmd.Flags())
 	return notifyCmd
+}
+
+func senderHomeForRole(role, homeDir, parentHome string) string {
+	if role == "soldier" {
+		return parentHome
+	}
+	return homeDir
 }
 
 func resolveRingPolicy(ring, homeDir string) string {

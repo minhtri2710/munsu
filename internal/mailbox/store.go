@@ -60,6 +60,22 @@ func (s *Store) pendingDir(senderIdentity string) string {
 	return filepath.Join(s.homeDir, "state", OutboxDir, senderIdentity)
 }
 
+func (s *Store) SupersededPath(senderIdentity, messageID string) string {
+	return filepath.Join(s.inboxDir(senderIdentity), messageID+".superseded")
+}
+
+func (s *Store) MarkSuperseded(senderIdentity, messageID string) error {
+	if err := os.MkdirAll(s.inboxDir(senderIdentity), 0755); err != nil {
+		return err
+	}
+	return atomicWrite(s.SupersededPath(senderIdentity, messageID), []byte("superseded\n"))
+}
+
+func (s *Store) IsSuperseded(senderIdentity, messageID string) bool {
+	_, err := os.Stat(s.SupersededPath(senderIdentity, messageID))
+	return err == nil
+}
+
 func (s *Store) pendingPath(senderIdentity, messageID string) string {
 	if err := ValidatePathComponent(messageID, "message ID"); err != nil {
 		return filepath.Join(s.pendingDir(senderIdentity), "_invalid_.pending")
@@ -138,6 +154,7 @@ func (s *Store) WriteEnvelope(env *Envelope) error {
 				old.SenderIdentity != env.SenderIdentity ||
 				old.ReceiverRank != env.ReceiverRank ||
 				old.ReceiverID != env.ReceiverID ||
+				old.Kind != env.Kind ||
 				old.TaskID != env.TaskID ||
 				old.Key != env.Key ||
 				old.Payload != env.Payload {
