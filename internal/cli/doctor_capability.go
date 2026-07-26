@@ -190,8 +190,10 @@ func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 	// Compare via CommitSHA first; fall back to display-version comparison
 	// for backward compatibility with watcher identity files that predate
 	// the CommitSHA field.
-	if id.CommitSHA != "" && CommitSHA != "" {
-		d.VersionMatched = supervision.NewBuildIdentity(id.CommitSHA).Matches(supervision.NewBuildIdentity(CommitSHA))
+	// Use supervision.CommitSHA (the linker-injected value) rather than the
+	// CLI-local CommitSHA, because ldflags set supervision.CommitSHA directly.
+	if id.CommitSHA != "" && supervision.CommitSHA != "" {
+		d.VersionMatched = supervision.NewBuildIdentity(id.CommitSHA).Matches(supervision.NewBuildIdentity(supervision.CommitSHA))
 	} else if version != "" && id.BuildVersion != "" {
 		d.VersionMatched = id.BuildVersion == version
 	}

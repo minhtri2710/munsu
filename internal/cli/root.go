@@ -20,8 +20,12 @@ var CommitSHA = ""
 
 func init() {
 	// Propagate version and commit SHA to supervision for watcher identity.
+	// Only propagate CommitSHA if the CLI explicitly provides one, to avoid
+	// clobbering the linker-injected supervision.CommitSHA with an empty value.
 	supervision.BuildVersion = Version
-	supervision.CommitSHA = CommitSHA
+	if CommitSHA != "" {
+		supervision.CommitSHA = CommitSHA
+	}
 }
 
 var (
