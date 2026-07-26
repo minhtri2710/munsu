@@ -92,13 +92,93 @@ func TestCollectCapabilities_WatcherVersionMatch(t *testing.T) {
 
 	capResult := CollectCapabilities(home, ".", testVersion)
 
-	// VersionMatched should be true (same version)
+	// VersionMatched should be true (same version, no CommitSHA set)
 	if !capResult.Watcher.VersionMatched {
 		t.Errorf("expected VersionMatched=true for same version %q", testVersion)
 	}
 	// But Running should be false (no such PID)
 	if capResult.Watcher.Running {
 		t.Error("expected Running=false for non-live PID")
+	}
+}
+
+// TestCollectCapabilities_WatcherCommitSHAMatch verifies that matching
+// CommitSHAs prevent VERSION MISMATCH even when display versions differ.
+// This regression test covers the watcher-version-identity-fix.
+func TestCollectCapabilities_WatcherCommitSHAMatch(t *testing.T) {
+	// Save and restore package-level supervision.CommitSHA
+	origCommitSHA := supervision.CommitSHA
+	defer func() { supervision.CommitSHA = origCommitSHA }()
+	supervision.CommitSHA = "abc1234def5678abc1234def5678abc1234def5"
+
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Identity has the same CommitSHA but a different display version
+	id := supervision.WatcherIdentity{
+		Home:            home,
+		PID:             999999,
+		ProcessStart:    "1234567890",
+		Executable:      "/fake/munsu",
+		BuildVersion:    "0.0.1-watcher", // differs from CLI version
+		ProtocolVersion: 2,
+		StartTime:       1000000,
+		CommitSHA:       "abc1234", // short SHA prefix matches
+	}
+	if err := supervision.WriteIdentity(home, id); err != nil {
+		t.Fatal(err)
+	}
+
+	// CLI version string is different, but supervision.CommitSHA matches
+	capResult := CollectCapabilities(home, ".", "0.1.0-cli")
+
+	if !capResult.Watcher.VersionMatched {
+		t.Errorf("expected VersionMatched=true when CommitSHAs match despite differing display versions; got VersionMatched=false")
+	}
+	if capResult.Watcher.Running {
+		t.Error("expected Running=false for non-live PID")
+	}
+	s := capResult.Watcher.String()
+	if s == "" {
+		t.Error("expected non-empty Watcher diagnostic string")
+	}
+}
+
+// TestCollectCapabilities_WatcherCommitSHADifferent verifies that different
+// CommitSHAs correctly report VERSION MISMATCH.
+func TestCollectCapabilities_WatcherCommitSHADifferent(t *testing.T) {
+	origCommitSHA := supervision.CommitSHA
+	defer func() { supervision.CommitSHA = origCommitSHA }()
+	supervision.CommitSHA = "abc1234def5678abc1234def5678abc1234def5"
+
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Identity has a different CommitSHA
+	id := supervision.WatcherIdentity{
+		Home:            home,
+		PID:             999999,
+		ProcessStart:    "1234567890",
+		Executable:      "/fake/munsu",
+		BuildVersion:    "0.0.1-watcher",
+		ProtocolVersion: 2,
+		StartTime:       1000000,
+		CommitSHA:       "xyz7890", // different from supervision.CommitSHA
+	}
+	if err := supervision.WriteIdentity(home, id); err != nil {
+		t.Fatal(err)
+	}
+
+	capResult := CollectCapabilities(home, ".", "0.1.0-cli")
+
+	if capResult.Watcher.VersionMatched {
+		t.Error("expected VersionMatched=false when CommitSHAs differ")
 	}
 }
 
