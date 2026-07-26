@@ -43,7 +43,6 @@ var canonicalCommands = []struct {
 	{name: "event", use: "event"},
 	{name: "watch-arm", use: "watch-arm"},
 	{name: "wake", use: "wake"},
-	{name: "wake-drain", use: "wake-drain"},
 	{name: "guard", use: "guard"},
 	{name: "doctor", use: "doctor"},
 	{name: "stow", use: "stow [text...]"},

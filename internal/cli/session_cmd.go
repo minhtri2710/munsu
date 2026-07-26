@@ -21,7 +21,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
-	"github.com/minhtri2710/munsu/internal/waker"
 	"github.com/spf13/cobra"
 )
 
@@ -265,20 +264,6 @@ func newWatchArmCmd() *cobra.Command {
 	return cmd
 }
 
-func newWakeDrainCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "wake-drain",
-		Short: "Drain queued wakes",
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			records, err := waker.Drain(ctx.Home)
-			if err != nil {
-				return err
-			}
-			waker.PrintRecords(records)
-			return nil
-		}),
-	}
-}
 
 // runGuardClaude implements the Claude Stop hook guard.
 // It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)

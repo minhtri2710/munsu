@@ -6,7 +6,7 @@
     "task_id": "phase-0",
     "status": "working",
     "description": "Writing contract fixtures",
-    "branch": "fm/phase-0",
+    "branch": "mu/phase-0",
     "pane_alive": true,
     "no_mistakes_step": "test"
   },

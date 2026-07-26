@@ -243,7 +243,7 @@ Flow:
 4. Call `munsu wake ack <lease-id> <event-id>` to release each processed wake.
 5. Renew the lease before expiry with a new claim, or let it expire.
 
-`munsu wake-drain` remains available as a simpler alternative that drains all pending wakes without lease management.
+`munsu wake claim` is the authoritative API for durable wake queue processing with lease lock protection.
 
 ### Away mode
 

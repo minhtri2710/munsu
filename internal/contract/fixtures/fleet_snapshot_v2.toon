@@ -6,7 +6,7 @@ data:
   count: 2
   total: 2
   soldiers[2]{task_id,status,branch}:
-    phase-0,working,fm/phase-0
+    phase-0,working,mu/phase-0
     docs,done,docs/cleanup
   captains[1]{id,scope,status}:
     sm-alpha,domain-a,alive
