@@ -80,7 +80,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | `munsu backlog list` | List all backlog entries. |
 | `munsu backlog show <id>` | Show a backlog entry. |
 | `munsu backlog block <id>` | Block a task on a dependency. |
-| `munsu backlog ready|unblock <id>` | Mark a blocked task as ready again. |
+| `munsu backlog ready|unblock <id>` | Mark a blocked task as ready again (unblock). Use `tasks-axi ready --file <backlog>` to **list** ready dispatchable items. |
 | `munsu backlog paths` | Show separate development and runtime backlog paths. |
 | `munsu backlog done <id>` | Mark a task as done in backlog. |
 | `munsu task observe <id> [--fields description,branch,pane_alive,no_mistakes_step]` | Observe one task using the orchestration contract. |
