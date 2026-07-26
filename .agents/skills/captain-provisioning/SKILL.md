@@ -349,5 +349,4 @@ When moving a captain to a new home or upgrading its infrastructure:
 - `internal/captain/captain.go` — authoritative Go implementation of all lifecycle operations
 - `internal/cli/root.go` — CLI verb registration for `munsu captain *`
 - `internal/harness/harness.go` — harness resolution chain for captain launch
-- `docs/self-hosting.md` — self-hosting manual for munsu
 - `munsu skill show captain-provisioning` — bundled lifecycle contract; use `munsu captain --help` for the current command surface.
