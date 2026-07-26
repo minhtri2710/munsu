@@ -12,7 +12,7 @@ func TestShipBriefTemplateNoMistakes(t *testing.T) {
 
 	checks := []string{
 		"Task brief: test-task-1",
-		"git checkout -b fm/",
+		"git checkout -b mu/",
 		"no-mistakes doctor",
 		"Delivery mode: no-mistakes",
 		"no-mistakes axi respond",

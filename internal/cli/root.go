@@ -222,6 +222,7 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newManualCmd())
 	root.AddCommand(newInboxCmd())
 	root.AddCommand(newTurnendCmd())
+	root.AddCommand(newContextCmd())
 
 	return root
 }

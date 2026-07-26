@@ -338,7 +338,7 @@ func TestSoldier_SoldierHarnessDefaultIgnored(t *testing.T) {
 	}
 
 	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
-	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT"} {
+	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT", "AGY_CONVERSATION_ID", "ANTIGRAVITY_AGENT", "ANTIGRAVITY_CLI", "ANTIGRAVITY_LS_ADDRESS"} {
 		t.Setenv(env, "")
 	}
 	t.Setenv("CLAUDE_CODE", "1")
@@ -367,7 +367,7 @@ func TestCaptain_DefaultSentinelsIgnored(t *testing.T) {
 
 	t.Setenv("MUNSU_CAPTAIN-HARNESS_OVERRIDE", "")
 	t.Setenv("MUNSU_CREW-HARNESS_OVERRIDE", "")
-	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT"} {
+	for _, env := range []string{"CODECLIMB", "OPENCODE", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT", "GROK_VM_ID", "GROK_AGENT", "AGY_CONVERSATION_ID", "ANTIGRAVITY_AGENT", "ANTIGRAVITY_CLI", "ANTIGRAVITY_LS_ADDRESS"} {
 		t.Setenv(env, "")
 	}
 	t.Setenv("CLAUDE_CODE", "1")

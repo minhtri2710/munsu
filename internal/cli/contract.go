@@ -58,7 +58,7 @@ func configureContractCommand(cmd *cobra.Command) {
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return usageError("unknown_flag", fmt.Sprintf("Run `%s --help`", commandPath(cmd)), strings.ReplaceAll(err.Error(), "error: ", ""))
+		return usageError("unknown_flag", fmt.Sprintf("Run `%s --help` (Expected syntax: %s %s)", commandPath(cmd), commandPath(cmd), cmd.Use), strings.ReplaceAll(err.Error(), "error: ", ""))
 	})
 	cmd.Flags().String("output", contract.OutputTOON, "Output format (toon|json)")
 }

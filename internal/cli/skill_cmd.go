@@ -2,10 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/spf13/cobra"
 )
 
@@ -57,7 +59,11 @@ auxiliary skills (bootstrap-diagnostics, harness-adapters, munsu-update,
 captain-provisioning, stuck-soldier-recovery).`,
 		Args: ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			content, err := readEmbeddedSkill(args[0])
+			name := args[0]
+			if os.Getenv("MUNSU_ROLE") == "soldier" && soldier.SoldierSkillDenied[name] {
+				return fmt.Errorf("access denied: soldier role cannot inspect management skill %q", name)
+			}
+			content, err := readEmbeddedSkill(name)
 			if err != nil {
 				return err
 			}
