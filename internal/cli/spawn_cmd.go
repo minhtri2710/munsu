@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -200,7 +199,13 @@ func newSendCmd() *cobra.Command {
 	return cmd
 }
 
-func newPeekCmd() *cobra.Command {
+type BoundCapture interface {
+	Capture(homeDir string, meta map[string]string, lines int) (string, error)
+}
+
+func newPeekCmd() *cobra.Command { return newPeekCmdWithCapture(sessionBoundCapture{}) }
+
+func newPeekCmdWithCapture(capture BoundCapture) *cobra.Command {
 	var lines int
 
 	cmd := &cobra.Command{
@@ -215,16 +220,14 @@ func newPeekCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
-			windowID, ok := meta["window"]
-			if !ok {
+			if _, ok := meta["window"]; !ok {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.BackendForTask(ctx.Home, meta)
-			if err != nil {
-				return err
+			if capture == nil {
+				return fmt.Errorf("task-bound capture is not configured")
 			}
-			out, err := bk.Capture(windowID, lines)
+			out, err := capture.Capture(ctx.Home, meta, lines)
 			if err != nil {
 				return fmt.Errorf("capturing from %s: %w", id, err)
 			}

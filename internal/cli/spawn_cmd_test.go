@@ -189,9 +189,9 @@ func TestPeekCmd_UsesMetaBackend(t *testing.T) {
 	}
 }
 
-// TestPeekCmd_UsesConfigBackendWhenMetaHasNone verifies that peek falls back to
-// global config when task meta does not specify a backend.
-func TestPeekCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
+// TestPeekCmd_RejectsMetaWithoutBoundBackend verifies that peek does not fall
+// back to mutable global config for an existing bound endpoint.
+func TestPeekCmd_RejectsMetaWithoutBoundBackend(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Write global config saying "herdr"
@@ -222,10 +222,10 @@ func TestPeekCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
 	err := root.Execute()
 
 	if err == nil {
-		t.Fatal("expected error (herdr not on PATH), got nil")
+		t.Fatal("expected missing bound backend error")
 	}
-	if !strings.Contains(err.Error(), "herdr") {
-		t.Errorf("expected error mentioning 'herdr' (from config fallback), got: %v", err)
+	if !strings.Contains(err.Error(), "bound capture identity is incomplete") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
