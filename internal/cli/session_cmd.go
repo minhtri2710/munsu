@@ -24,7 +24,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
 func newBriefCmd() *cobra.Command {
 	var scout bool
 	var force bool
@@ -213,7 +212,7 @@ func newWatchCmd() *cobra.Command {
 		Short: "Run the persistent watcher daemon",
 		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			reason, err := supervision.Run(ctx.Home)
+			reason, err := supervision.RunWithProbe(ctx.Home, runtimeTaskEndpointProbe())
 			if err != nil {
 				return err
 			}
@@ -263,7 +262,6 @@ func newWatchArmCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&restart, "restart", false, "Restart existing watcher before arming")
 	return cmd
 }
-
 
 // runGuardClaude implements the Claude Stop hook guard.
 // It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)

@@ -16,9 +16,9 @@ type WakeRecord = lifecycle.WakeRecord
 type BeatStatus = lifecycle.BeatStatus
 type WakerRecord = waker.Record
 
-func BeatPath(homeDir string) string { return lifecycle.BeatPath(homeDir) }
+func BeatPath(homeDir string) string  { return lifecycle.BeatPath(homeDir) }
 func QueuePath(homeDir string) string { return lifecycle.QueuePath(homeDir) }
-func LockPath(homeDir string) string { return lifecycle.LockPath(homeDir) }
+func LockPath(homeDir string) string  { return lifecycle.LockPath(homeDir) }
 
 func EnqueueWake(homeDir, kind, key, payload string) error {
 	return lifecycle.EnqueueWake(homeDir, kind, key, payload)
@@ -34,6 +34,10 @@ func HasQueuedWakes(homeDir string) bool {
 
 func RunWatcher(homeDir string) (*supervision.WakeReason, error) {
 	return supervision.Run(homeDir)
+}
+
+func RunWatcherWithProbe(homeDir string, probe supervision.TaskEndpointProbe) (*supervision.WakeReason, error) {
+	return supervision.RunWithProbe(homeDir, probe)
 }
 
 // StartAFK starts the AFK away-mode daemon.

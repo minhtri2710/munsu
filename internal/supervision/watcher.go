@@ -32,8 +32,24 @@ type WakeReason struct {
 
 // Run starts the persistent watcher daemon. It records actionable conditions in
 // the durable wake queue and continues polling until SIGTERM or SIGINT.
+type TaskEndpointProbe interface {
+	Probe(homeDir string, meta map[string]string) (bool, error)
+}
+type legacyTaskEndpointProbe struct{}
+
+func (legacyTaskEndpointProbe) Probe(homeDir string, meta map[string]string) (bool, error) {
+	bk, _, err := session.BackendForTask(homeDir, meta)
+	if err != nil {
+		return false, err
+	}
+	return bk.Alive(meta["window"]), nil
+}
+
 func Run(homeDir string) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel())
+	return RunWithProbe(homeDir, legacyTaskEndpointProbe{})
+}
+func RunWithProbe(homeDir string, probe TaskEndpointProbe) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -42,7 +58,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe) (*WakeReason, error) {
 	acquired, err := lifecycle.AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -69,7 +85,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
 			lifecycle.WriteBeat(homeDir)
-			if _, err := runCycle(homeDir); err != nil {
+			if _, err := runCycleWithProbe(homeDir, probe); err != nil {
 				return nil, err
 			}
 		}
@@ -172,7 +188,7 @@ var (
 
 // ScanFleet checks all live tasks for the first actionable condition.
 func ScanFleet(homeDir string) *WakeReason {
-	reasons := scanFleet(homeDir, false)
+	reasons := scanFleetWithProbe(homeDir, false, legacyTaskEndpointProbe{})
 	if len(reasons) == 0 {
 		return nil
 	}
@@ -180,6 +196,9 @@ func ScanFleet(homeDir string) *WakeReason {
 }
 
 func scanFleet(homeDir string, clearResolved bool) []*WakeReason {
+	return scanFleetWithProbe(homeDir, clearResolved, legacyTaskEndpointProbe{})
+}
+func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe) []*WakeReason {
 	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
 	if err != nil {
 		return nil
@@ -206,7 +225,7 @@ func scanFleet(homeDir string, clearResolved bool) []*WakeReason {
 			// Status signal already actionable for this id; skip stale scan.
 			continue
 		}
-		reason := scanTask(homeDir, id)
+		reason := scanTaskWithProbe(homeDir, id, probe)
 		if reason == nil {
 			if clearResolved {
 				clearWakeMarker(homeDir, id)
@@ -254,6 +273,9 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 }
 
 func scanTask(homeDir, id string) *WakeReason {
+	return scanTaskWithProbe(homeDir, id, legacyTaskEndpointProbe{})
+}
+func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe) *WakeReason {
 	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil
@@ -269,11 +291,13 @@ func scanTask(homeDir, id string) *WakeReason {
 		return nil
 	}
 
-	taskBackend, _, err := session.BackendForTask(homeDir, meta)
-	if err != nil {
-		return nil
+	if probe == nil {
+		return &WakeReason{Kind: "check", TaskIDs: []string{id}, Message: "endpoint probe is not configured"}
 	}
-	paneAlive := taskBackend.Alive(windowID)
+	paneAlive, err := probe.Probe(homeDir, meta)
+	if err != nil {
+		return &WakeReason{Kind: "check", TaskIDs: []string{id}, Message: fmt.Sprintf("endpoint probe failed: %v", err)}
+	}
 	if !paneAlive {
 		if isStatusGeneralRelevant(homeDir, id) {
 			// Signal path already covers general-relevant; if we still reach
@@ -325,7 +349,10 @@ var recoveryDone sync.Map
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
 func RunCycle(homeDir string) (bool, error) {
-	return runCycle(homeDir)
+	return RunCycleWithProbe(homeDir, legacyTaskEndpointProbe{})
+}
+func RunCycleWithProbe(homeDir string, probe TaskEndpointProbe) (bool, error) {
+	return runCycleWithProbe(homeDir, probe)
 }
 
 // runRecovery executes the one-shot recovery on watcher startup.
@@ -362,6 +389,9 @@ func runRecovery(homeDir string) {
 }
 
 func runCycle(homeDir string) (bool, error) {
+	return runCycleWithProbe(homeDir, legacyTaskEndpointProbe{})
+}
+func runCycleWithProbe(homeDir string, probe TaskEndpointProbe) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
@@ -408,7 +438,7 @@ func runCycle(homeDir string) (bool, error) {
 	}
 
 	emitted := false
-	for _, reason := range scanFleet(homeDir, true) {
+	for _, reason := range scanFleetWithProbe(homeDir, true, probe) {
 		if len(reason.TaskIDs) == 0 {
 			continue
 		}

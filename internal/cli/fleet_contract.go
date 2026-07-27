@@ -11,8 +11,13 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
+	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/spf13/cobra"
 )
+
+func runtimeTaskEndpointProbe() supervision.TaskEndpointProbe {
+	return cliEndpointProbe{resolve: session.BackendForTask}
+}
 
 type cliEndpointProbe struct {
 	resolve func(string, map[string]string) (session.Backend, string, error)
