@@ -544,7 +544,7 @@ func TestConverge_StateOnlyHomeDoesNotFail(t *testing.T) {
 	// Converge with the state-only home.
 	result, err := Converge(parent, []Info{
 		{ID: "state-only-sm", Home: smHome},
-	})
+	}, &captainNotificationTransport{acknowledged: true})
 
 	// The overall converge must complete (may return partial/failed from safeFF,
 	// but the important thing is it doesn't crash or hang).
@@ -707,7 +707,6 @@ func TestUpdate_WorktreeHomeAlreadyCurrent(t *testing.T) {
 		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
 	}
 }
-
 
 // TestUpdate_UnmarkedHomeReturnsInvalidProvenance proves that Update()
 // on a home without provenance marker returns InvalidProvenance, not a

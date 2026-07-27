@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // setupRelayTest creates a captain home and a general home with a provenance
@@ -732,6 +734,16 @@ func TestResolveParentHome_ConfigEmptyDoesNotCrash(t *testing.T) {
 	}
 }
 
+type captainNotificationTransport struct {
+	acknowledged bool
+	calls        int
+}
+
+func (t *captainNotificationTransport) Notify(string, afk.TargetResult, string) uplink.NotifyResult {
+	t.calls++
+	return uplink.NotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
+}
+
 // TestResolveParentHome_HookConsistency_ConfigFallback verifies that when
 // reconcileHook is called with env empty but config/parent-home set, it
 // proceeds to relay (no silent no-op) — integrating the resolver with the hook.
@@ -751,7 +763,7 @@ func TestResolveParentHome_HookConsistency_ConfigFallback(t *testing.T) {
 	}
 
 	// reconcileHook should now resolve parent from config and proceed
-	err := reconcileHook(tmp, false)
+	err := reconcileHook(tmp, false, &captainNotificationTransport{acknowledged: true})
 	if err != nil {
 		t.Errorf("reconcileHook should not return error when config fallback resolves parent, got: %v", err)
 	}
@@ -791,7 +803,7 @@ func TestReconcileHook_ReturnsNilWhenParentStatusEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	err := reconcileHook(tmp, false)
+	err := reconcileHook(tmp, false, nil)
 	if err != nil {
 		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty, got: %v", err)
 	}
@@ -804,25 +816,21 @@ func TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", tmp)
 
-	err := reconcileHook(tmp, false)
+	err := reconcileHook(tmp, false, nil)
 	if err != nil {
 		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir, got: %v", err)
 	}
 }
 
-// TestReconcileHook_ReturnsErrorWhenParentSet verifies that reconcileHook
-// returns an error (or nil with no-op result) when MUNSU_PARENT_STATUS points
-// to a valid but empty parent home (no pending receipts to relay). This is a
-// smoke test for the happy path where parent is configured.
-func TestReconcileHook_ReturnsNoErrorWhenParentSetAndNoReceipts(t *testing.T) {
+func TestReconcileHook_RequiresNotificationTransportWhenParentSet(t *testing.T) {
 	tmp := t.TempDir()
 	parentHome := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
 	SeedProvenance(tmp, "test-captain")
 
-	err := reconcileHook(tmp, false)
-	if err != nil {
-		t.Errorf("expected nil when parent set with no pending receipts, got: %v", err)
+	err := reconcileHook(tmp, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "uplink notification transport capability is required") {
+		t.Fatalf("error = %v, want missing transport capability", err)
 	}
 }

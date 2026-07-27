@@ -2132,7 +2132,10 @@ func removeNudgeMarker(parentHome, smID string) {
 // Order: lock, validate registry/provenance, flush send outbox, retry pending
 // nudges, safe ff, inheritance push, ownership-backed backend Alive check,
 // watcher status check, and reread nudge only if instruction surface advanced.
-func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
+func Converge(parentHome string, registered []Info, notification uplink.NotificationTransport) (*ConvergeResult, error) {
+	if len(registered) > 0 && notification == nil {
+		return nil, fmt.Errorf("uplink notification transport capability is required")
+	}
 	release, err := convergeLockAcquire(parentHome)
 	if err != nil {
 		return nil, fmt.Errorf("acquiring converge lock: %w", err)
@@ -2314,12 +2317,11 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		}
 
 		// g. Mailbox-only Captain → General Uplink Report reconciliation.
-		uplinkTransport := newSessionUplinkTransport()
 		if ur, urErr := uplink.Recover(uplink.RecoverRequest{
 			SenderHome: sm.Home, ReceiverHome: parentHome,
 			ReceiverRank: mailbox.RankGeneral,
 			Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
-				return uplink.NotifyParentWithTransport(sm.Home, parentHome, ref, uplinkTransport)
+				return uplink.NotifyParentWithTransport(sm.Home, parentHome, ref, notification)
 			},
 		}); urErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeFailed, Detail: urErr.Error()})

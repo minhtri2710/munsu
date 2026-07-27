@@ -28,7 +28,7 @@ func (captainTestSender) Send(string, map[string]string, string) mailbox.BoundSe
 }
 
 func captainRunCycle(home string) (bool, error) {
-	return supervision.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewWatcherHooks(nil))
+	return supervision.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil))
 }
 
 // --- WatcherStatusSummary tests ---
@@ -266,7 +266,7 @@ func TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt(t *testing.T) {
 	defer setParentStatus(genHome)()
 
 	// First cycle — startup recovery (no receipts pending).
-	// The real reconcileHook is already installed via init().
+	// The real reconcileHook is passed explicitly to RunCycleWithProbeAndSender.
 	emitted, err := captainRunCycle(cptHome)
 	if err != nil {
 		t.Fatalf("first RunCycle: %v", err)

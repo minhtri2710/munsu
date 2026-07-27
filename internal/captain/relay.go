@@ -2,6 +2,7 @@
 package captain
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -12,14 +13,15 @@ import (
 )
 
 type watcherHooks struct {
-	activation wakedelivery.ActivationTransport
+	notification uplink.NotificationTransport
+	activation   wakedelivery.ActivationTransport
 }
 
-func NewWatcherHooks(activation wakedelivery.ActivationTransport) supervision.WatcherHooks {
-	return watcherHooks{activation: activation}
+func NewWatcherHooks(notification uplink.NotificationTransport, activation wakedelivery.ActivationTransport) supervision.WatcherHooks {
+	return watcherHooks{notification: notification, activation: activation}
 }
-func (watcherHooks) Reconcile(homeDir string, startup bool) error {
-	return reconcileHook(homeDir, startup)
+func (h watcherHooks) Reconcile(homeDir string, startup bool) error {
+	return reconcileHook(homeDir, startup, h.notification)
 }
 func (h watcherHooks) Activate(homeDir string) { captainActivationHook(homeDir, h.activation) }
 
@@ -58,14 +60,15 @@ func captainActivationHook(homeDir string, activation wakedelivery.ActivationTra
 	wakedelivery.ActivateOnReceiptWithTransport(homeDir, parentHome, activation)
 }
 
-// reconcileHook is the supervision-watcher recovery hook running inside a
-// captain home. It delegates to wakedelivery.ReconcilePending via
-// ReconcileTerminalReceipts for backward compatibility.
-func reconcileHook(homeDir string, startup bool) error {
+// reconcileHook recovers mailbox uplinks and legacy terminal receipts for a
+// captain home on watcher startup and each polling cycle.
+func reconcileHook(homeDir string, startup bool, transport uplink.NotificationTransport) error {
 	parentHome := resolveParentHome(homeDir)
-	transport := newSessionUplinkTransport()
 	if parentHome == "" {
 		return nil
+	}
+	if transport == nil {
+		return fmt.Errorf("uplink notification transport capability is required")
 	}
 	if _, err := uplink.Recover(uplink.RecoverRequest{
 		SenderHome: homeDir, ReceiverHome: homeDir,

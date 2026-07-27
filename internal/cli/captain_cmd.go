@@ -119,7 +119,7 @@ Reports whether the inherited surface changed and the new generation.
 On change, creates a durable mailbox config-reread requirement and
 sends a NotificationRef through the AgentPrompt seam. The requirement
 is retried on the next converge cycle on failure.`,
-		Args:  ExactArgs(1),
+		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			res, err := captain.ConfigPushWithResult(ctx.Home, args[0])
 			if err != nil {
@@ -217,7 +217,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := captain.Converge(ctx.Home, registered)
+			result, convergeErr := captain.Converge(ctx.Home, registered, newSessionUplinkTransport())
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
