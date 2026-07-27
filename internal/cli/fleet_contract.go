@@ -13,15 +13,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type cliEndpointProbe struct{}
+
+func (cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.EndpointStatus, error) {
+	bk, err := session.Select(endpoint.Backend)
+	if err != nil {
+		return fleet.EndpointStatus{}, err
+	}
+	return fleet.EndpointStatus{Alive: bk.Alive(endpoint.Handle)}, nil
+}
+
 func init() {
-	// Fleet receives a typed probe port; adapter wiring remains at composition root.
-	fleet.SetPaneAliveProbe(func(parentHome string, meta map[string]string) (bool, error) {
-		bk, _, err := session.BackendForTask(parentHome, meta)
-		if err != nil {
-			return false, err
-		}
-		return bk.Alive(meta["window"]), nil
-	})
+	// Fleet receives a typed probe port; session adapter wiring remains at the CLI composition root.
+	fleet.SetEndpointProbe(cliEndpointProbe{})
 	captain.SetFleetCaptainStatus(fleet.CaptainStatus)
 	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
 		st, err := soldierstate.Read(homeDir, id)
