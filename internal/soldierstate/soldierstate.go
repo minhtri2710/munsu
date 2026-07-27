@@ -50,9 +50,27 @@ type State struct {
 	BacklogState string `json:"backlog_state,omitempty"`
 }
 
+type EndpointProbe interface {
+	Probe(homeDir string, meta map[string]string) (bool, error)
+}
+
+type legacyEndpointProbe struct{}
+
+func (legacyEndpointProbe) Probe(homeDir string, meta map[string]string) (bool, error) {
+	bk, _, err := session.BackendForTask(homeDir, meta)
+	if err != nil {
+		return false, err
+	}
+	return bk.Alive(meta["window"]), nil
+}
+
 // Read reads and synthesizes the current soldier state using the
 // precedence hierarchy: backlog > meta/last-report > PR state > typed events > status fallback.
 func Read(homeDir string, id string) (*State, error) {
+	return ReadWithProbe(homeDir, id, legacyEndpointProbe{})
+}
+
+func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 
 	// Read meta (always needed for context)
@@ -178,12 +196,9 @@ func Read(homeDir string, id string) (*State, error) {
 	// --- Pane liveness (diagnostic only) ---
 	// Terminal output is NOT truth. Pane liveness is captured for diagnostic
 	// display but never used as current-state authority.
-	if windowID, ok := meta["window"]; ok && windowID != "" {
-		if bk, _, err := session.BackendForTask(homeDir, meta); err == nil && bk != nil {
-			s.PaneAlive = bk.Alive(windowID)
-		} else {
-			s.PaneAlive = false
-		}
+	if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {
+		alive, err := probe.Probe(homeDir, meta)
+		s.PaneAlive = err == nil && alive
 	}
 
 	return s, nil

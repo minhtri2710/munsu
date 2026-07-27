@@ -17,6 +17,14 @@ type cliEndpointProbe struct {
 	resolve func(string, map[string]string) (session.Backend, string, error)
 }
 
+func (p cliEndpointProbe) Probe(home string, meta map[string]string) (bool, error) {
+	bk, _, err := p.resolve(home, meta)
+	if err != nil {
+		return false, err
+	}
+	return bk.Alive(meta["window"]), nil
+}
+
 func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.EndpointStatus, error) {
 	meta := map[string]string{
 		"backend":            endpoint.Backend,
@@ -42,7 +50,7 @@ func init() {
 	fleet.SetEndpointProbe(cliEndpointProbe{resolve: session.BackendForTask})
 	captain.SetFleetCaptainStatus(fleet.CaptainStatus)
 	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
-		st, err := soldierstate.Read(homeDir, id)
+		st, err := soldierstate.ReadWithProbe(homeDir, id, cliEndpointProbe{resolve: session.BackendForTask})
 		if err != nil {
 			return nil, err
 		}
