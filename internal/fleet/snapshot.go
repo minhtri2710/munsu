@@ -363,8 +363,12 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 
 // EndpointProbe is the narrow backend port used by fleet projections.
 type EndpointRef struct {
-	Backend string
-	Handle  string
+	Backend      string
+	Handle       string
+	SessionOwner string
+	WorkspaceID  string
+	TabID        string
+	Home         string
 }
 
 type EndpointStatus struct{ Alive bool }
@@ -387,7 +391,11 @@ func SetPaneAliveProbe(fn func(parentHome string, meta map[string]string) (bool,
 
 func probeEndpoint(parentHome string, meta map[string]string) (bool, error) {
 	if endpointProbe != nil {
-		status, err := endpointProbe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"]})
+		ownerHome := meta["home"]
+		if ownerHome == "" {
+			ownerHome = parentHome
+		}
+		status, err := endpointProbe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome})
 		return status.Alive, err
 	}
 	return paneAliveForCaptain(parentHome, meta)

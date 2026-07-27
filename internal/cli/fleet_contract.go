@@ -13,10 +13,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type cliEndpointProbe struct{}
+type cliEndpointProbe struct {
+	resolve func(string, map[string]string) (session.Backend, string, error)
+}
 
-func (cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.EndpointStatus, error) {
-	bk, err := session.Select(endpoint.Backend)
+func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.EndpointStatus, error) {
+	meta := map[string]string{
+		"backend":            endpoint.Backend,
+		"window":             endpoint.Handle,
+		"herdr_session":      endpoint.SessionOwner,
+		"herdr_workspace_id": endpoint.WorkspaceID,
+		"herdr_tab_id":       endpoint.TabID,
+		"home":               endpoint.Home,
+	}
+	resolve := p.resolve
+	if resolve == nil {
+		resolve = session.BackendForTask
+	}
+	bk, _, err := resolve(endpoint.Home, meta)
 	if err != nil {
 		return fleet.EndpointStatus{}, err
 	}
@@ -25,7 +39,7 @@ func (cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpoin
 
 func init() {
 	// Fleet receives a typed probe port; session adapter wiring remains at the CLI composition root.
-	fleet.SetEndpointProbe(cliEndpointProbe{})
+	fleet.SetEndpointProbe(cliEndpointProbe{resolve: session.BackendForTask})
 	captain.SetFleetCaptainStatus(fleet.CaptainStatus)
 	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
 		st, err := soldierstate.Read(homeDir, id)
