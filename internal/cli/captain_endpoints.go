@@ -118,10 +118,11 @@ func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload
 
 type sessionRetireEndpoint struct {
 	resolve func(string, map[string]string) (session.Backend, string, error)
+	sleep   func(time.Duration)
 }
 
 func newSessionRetireEndpoint() sessionRetireEndpoint {
-	return sessionRetireEndpoint{resolve: session.BackendForTask}
+	return sessionRetireEndpoint{resolve: session.BackendForTask, sleep: time.Sleep}
 }
 
 func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error {
@@ -134,7 +135,9 @@ func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error
 		if err := bk.SendKeys(window, "/quit"); err != nil {
 			return err
 		}
-		time.Sleep(500 * time.Millisecond)
+		if e.sleep != nil {
+			e.sleep(500 * time.Millisecond)
+		}
 		if !bk.Alive(window) {
 			return nil
 		}
