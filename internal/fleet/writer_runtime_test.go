@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
@@ -84,6 +85,9 @@ func TestRetireArtifactRejectsUnexpectedPath(t *testing.T) {
 
 func TestWriterKindForArgsParsesHomeFormsAndCanonicalAliases(t *testing.T) {
 	h := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(h, "data"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	canonical, err := home.CanonicalPath(h)
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +102,9 @@ func TestWriterKindForArgsParsesHomeFormsAndCanonicalAliases(t *testing.T) {
 		{"equals", []string{"munsu", "afk", "--home=" + h}, "afk"},
 		{"alias", []string{"munsu", "watch", "--home", alias}, "watcher"},
 		{"substring", []string{"munsu", "watch", "--note", h, "--home", t.TempDir()}, ""},
+		{"tasks-axi-file", []string{"/usr/local/bin/tasks-axi", "list", "--file", filepath.Join(h, "data", "backlog.md")}, "tasks-axi"},
+		{"tasks-axi-equals", []string{"/usr/local/bin/tasks-axi", "list", "--file=" + filepath.Join(h, "data", "backlog.md")}, "tasks-axi"},
+		{"tasks-axi-path", []string{"tasks-axi", "list", "--path=" + filepath.Join(h, "data", "backlog.md")}, "tasks-axi"},
 		{"unrelated", []string{"echo", h, "watch"}, ""},
 	}
 	for _, tc := range cases {

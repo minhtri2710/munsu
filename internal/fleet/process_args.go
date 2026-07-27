@@ -53,6 +53,9 @@ func writerKindForArgs(args []string, expectedHome string) string {
 		return ""
 	}
 	kind := ""
+	if filepath.Base(args[0]) == "tasks-axi" {
+		kind = "tasks-axi"
+	}
 	for _, arg := range args[1:] {
 		if arg == "watch" {
 			kind = "watcher"
@@ -77,6 +80,12 @@ func writerKindForArgs(args []string, expectedHome string) string {
 		}
 		if kind == "tasks-axi" && (args[i] == "--file" || args[i] == "--path") && i+1 < len(args) {
 			value = filepath.Dir(args[i+1])
+		}
+		if kind == "tasks-axi" && strings.HasPrefix(args[i], "--file=") {
+			value = filepath.Dir(strings.TrimPrefix(args[i], "--file="))
+		}
+		if kind == "tasks-axi" && strings.HasPrefix(args[i], "--path=") {
+			value = filepath.Dir(strings.TrimPrefix(args[i], "--path="))
 		}
 		if value == "" {
 			continue

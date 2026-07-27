@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,8 +9,9 @@ import (
 
 type endpointFake struct {
 	endpoints [][]BoundEndpoint
-	disposed  []string
-	alive     bool
+	probes    []EndpointStatus
+	probeErrs []error
+	disposed  []BoundEndpoint
 }
 
 func (f *endpointFake) ScanEndpoints(string) ([]BoundEndpoint, error) {
@@ -18,71 +20,111 @@ func (f *endpointFake) ScanEndpoints(string) ([]BoundEndpoint, error) {
 	return s, nil
 }
 func (f *endpointFake) ProbeBoundEndpoint(BoundEndpoint) (EndpointStatus, error) {
-	return EndpointStatus{Alive: f.alive}, nil
+	s := f.probes[0]
+	f.probes = f.probes[1:]
+	var err error
+	if len(f.probeErrs) > 0 {
+		err = f.probeErrs[0]
+		f.probeErrs = f.probeErrs[1:]
+	}
+	return s, err
 }
 func (f *endpointFake) DisposeBoundEndpoint(e BoundEndpoint) error {
-	f.disposed = append(f.disposed, e.TaskID)
+	f.disposed = append(f.disposed, e)
 	return nil
 }
-func TestTaskEndpointScannerReadsBoundMetadata(t *testing.T) {
+func endpoint(home string) BoundEndpoint {
+	return BoundEndpoint{TaskID: "task", Backend: "herdr", Handle: "pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", CanonicalHome: home}
+}
+
+func TestTaskEndpointScannerReadsFullBoundMetadata(t *testing.T) {
 	h := t.TempDir()
 	os.MkdirAll(filepath.Join(h, "state"), 0700)
-	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("backend=tmux\nwindow=@1\nherdr_session=s1\n"), 0600)
+	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("backend=herdr\nwindow=pane-1\nherdr_session=session-1\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab-1\n"), 0600)
 	got, err := (TaskEndpointScanner{}).ScanEndpoints(h)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
-	if got[0].TaskID != "task" || got[0].Handle != "@1" || got[0].SessionOwner != "s1" {
-		t.Fatalf("got=%+v", got[0])
+	want := endpoint(h)
+	want.MetaPath = filepath.Join(h, "state", "task.meta")
+	if !sameBoundEndpoint(got[0], want) {
+		t.Fatalf("got=%+v want=%+v", got[0], want)
 	}
 }
 
 type endpointService struct {
-	probe                EndpointStatus
-	probeErr, disposeErr error
-	disposed             string
+	gotProbe, gotDispose BoundEndpoint
+	status               EndpointStatus
+	err                  error
 }
 
-func (s *endpointService) ProbeEndpoint(string, string) (EndpointStatus, error) {
-	return s.probe, s.probeErr
+func (s *endpointService) ProbeEndpoint(e BoundEndpoint) (EndpointStatus, error) {
+	s.gotProbe = e
+	return s.status, s.err
 }
-func (s *endpointService) DisposeEndpoint(_, handle string) error {
-	s.disposed = handle
-	return s.disposeErr
-}
-
-func TestServiceEndpointControllerUsesBoundBackend(t *testing.T) {
-	service := &endpointService{probe: EndpointStatus{Alive: true}}
+func (s *endpointService) DisposeEndpoint(e BoundEndpoint) error { s.gotDispose = e; return s.err }
+func TestServiceEndpointControllerPreservesFullIdentity(t *testing.T) {
+	h := t.TempDir()
+	e := endpoint(h)
+	service := &endpointService{status: EndpointStatus{Alive: true}}
 	controller := ServiceEndpointController{Service: service}
-	status, err := controller.ProbeBoundEndpoint(BoundEndpoint{Backend: "tmux", Handle: "@1"})
-	if err != nil || !status.Alive {
-		t.Fatalf("status=%+v err=%v", status, err)
-	}
-	if err := controller.DisposeBoundEndpoint(BoundEndpoint{Backend: "tmux", Handle: "@1"}); err != nil {
+	if _, err := controller.ProbeBoundEndpoint(e); err != nil {
 		t.Fatal(err)
 	}
+	if err := controller.DisposeBoundEndpoint(e); err != nil {
+		t.Fatal(err)
+	}
+	if !sameBoundEndpoint(service.gotProbe, e) || !sameBoundEndpoint(service.gotDispose, e) {
+		t.Fatalf("probe=%+v dispose=%+v", service.gotProbe, service.gotDispose)
+	}
 }
-func TestServiceEndpointControllerFailsClosedOnUnknownBackend(t *testing.T) {
-	controller := ServiceEndpointController{}
-	if _, err := controller.ProbeBoundEndpoint(BoundEndpoint{Backend: "missing", Handle: "@1"}); err == nil {
+func TestServiceEndpointControllerFailsClosedOnIncompleteIdentity(t *testing.T) {
+	controller := ServiceEndpointController{Service: &endpointService{}}
+	if _, err := controller.ProbeBoundEndpoint(BoundEndpoint{Backend: "herdr", Handle: "pane"}); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestFenceEndpointsDisposesAliveAndRescans(t *testing.T) {
+func TestFenceEndpointsRetainsMetadataWhenEndpointIsDead(t *testing.T) {
 	h := t.TempDir()
-	e := BoundEndpoint{TaskID: "task", Backend: "tmux", Handle: "@1", CanonicalHome: h}
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {}}, alive: true}
+	e := endpoint(h)
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{{Alive: true}, {Alive: false}}}
 	got, err := fenceEndpoints(h, f, f)
 	if err != nil || len(got) != 1 || len(f.disposed) != 1 {
 		t.Fatalf("got=%v disposed=%v err=%v", got, f.disposed, err)
 	}
 }
-func TestFenceEndpointsFailsWhenEndpointRemains(t *testing.T) {
+func TestFenceEndpointsFailsWhenStillAlive(t *testing.T) {
 	h := t.TempDir()
-	e := BoundEndpoint{TaskID: "task", Backend: "tmux", Handle: "@1", CanonicalHome: h}
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, alive: true}
+	e := endpoint(h)
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{{Alive: true}, {Alive: true}}}
 	if _, err := fenceEndpoints(h, f, f); err == nil {
-		t.Fatal("expected remain error")
+		t.Fatal("expected error")
+	}
+}
+func TestFenceEndpointsFailsWhenEndpointResurfaces(t *testing.T) {
+	h := t.TempDir()
+	e := endpoint(h)
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{}, {e}}, probes: nil}
+	if _, err := fenceEndpoints(h, f, f); err == nil {
+		t.Fatal("expected error")
+	}
+}
+func TestFenceEndpointsFailsOnIdentityReplacement(t *testing.T) {
+	h := t.TempDir()
+	before := endpoint(h)
+	after := before
+	after.Handle = "pane-2"
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{before}, {after}}, probes: []EndpointStatus{{Alive: true}}}
+	if _, err := fenceEndpoints(h, f, f); err == nil {
+		t.Fatal("expected error")
+	}
+}
+func TestFenceEndpointsFailsOnPostDisposalProbeError(t *testing.T) {
+	h := t.TempDir()
+	e := endpoint(h)
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{{Alive: true}, {}}, probeErrs: []error{nil, errors.New("probe failed")}}
+	if _, err := fenceEndpoints(h, f, f); err == nil {
+		t.Fatal("expected error")
 	}
 }
