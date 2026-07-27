@@ -3,12 +3,8 @@ package mailbox
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
-
-// backendForTask is the session backend resolver, overridable in tests.
-var backendForTask = session.BackendForTask
 
 // DeliveryResult describes the outcome of trying to deliver an envelope.
 type DeliveryResult struct {
@@ -25,29 +21,30 @@ type DeliveryResult struct {
 // The sender must have already written the envelope to the receiver's inbox
 // and saved their own pending record.
 func DeliverEnvelope(receiverHome, senderIdentity string, env *Envelope, meta map[string]string) *DeliveryResult {
+	return DeliverEnvelopeWithSender(defaultBoundSender, receiverHome, senderIdentity, env, meta)
+}
+func DeliverEnvelopeWithSender(sender BoundSender, receiverHome, senderIdentity string, env *Envelope, meta map[string]string) *DeliveryResult {
 	result := &DeliveryResult{
 		MessageID: env.MessageID,
 	}
 
-	bk, _, err := backendForTask(receiverHome, meta)
+	alive, err := sender.Alive(receiverHome, meta)
 	if err != nil {
-		result.Err = fmt.Errorf("resolve backend: %w", err)
+		result.Err = fmt.Errorf("resolve bound sender: %w", err)
 		return result
 	}
-
-	windowID := meta["window"]
-	if windowID == "" {
-		result.Err = fmt.Errorf("no window in meta")
-		return result
-	}
-
-	if !bk.Alive(windowID) {
+	if !alive {
 		result.Err = fmt.Errorf("endpoint not alive")
 		return result
 	}
 
-	if err := bk.SendKeys(windowID, env.Payload); err != nil {
-		result.Err = fmt.Errorf("send: %w", err)
+	sent := sender.Send(receiverHome, meta, env.Payload)
+	if sent.Err != nil {
+		result.Err = fmt.Errorf("send: %w", sent.Err)
+		return result
+	}
+	if !sent.Acknowledged {
+		result.Err = fmt.Errorf("send status %s: %s", sent.Status, sent.Detail)
 		return result
 	}
 

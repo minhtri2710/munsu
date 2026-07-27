@@ -35,6 +35,9 @@ func RecoveryMarkerPath(receiverHome, messageID string) string {
 // It checks if the envelope was already acked and skips if so.
 // It writes a fingerprint marker on completion to prevent repeated retries.
 func RecoverInbox(receiverHome string, env *Envelope) *RecoveryAttempt {
+	return RecoverInboxWithSender(defaultBoundSender, receiverHome, env)
+}
+func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelope) *RecoveryAttempt {
 	ra := &RecoveryAttempt{
 		MessageID: env.MessageID,
 	}
@@ -65,25 +68,23 @@ func RecoverInbox(receiverHome string, env *Envelope) *RecoveryAttempt {
 		return ra
 	}
 
-	bk, _, err := backendForTask(receiverHome, meta)
+	alive, err := sender.Alive(receiverHome, meta)
 	if err != nil {
-		ra.Err = fmt.Errorf("resolving backend for recovery: %w", err)
+		ra.Err = fmt.Errorf("resolving bound sender for recovery: %w", err)
 		return ra
 	}
-
-	windowID := meta["window"]
-	if windowID == "" {
-		ra.Err = fmt.Errorf("no window in meta for recovery")
-		return ra
-	}
-
-	if !bk.Alive(windowID) {
+	if !alive {
 		ra.Err = fmt.Errorf("endpoint not alive for recovery")
 		return ra
 	}
 
-	if err := bk.SendKeys(windowID, env.Payload); err != nil {
-		ra.Err = fmt.Errorf("recovery send failed: %w", err)
+	sent := sender.Send(receiverHome, meta, env.Payload)
+	if sent.Err != nil {
+		ra.Err = fmt.Errorf("recovery send failed: %w", sent.Err)
+		return ra
+	}
+	if !sent.Acknowledged {
+		ra.Err = fmt.Errorf("recovery send status %s: %s", sent.Status, sent.Detail)
 		return ra
 	}
 

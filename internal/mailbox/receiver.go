@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/session"
 )
 
 // captainMarkerName is the provenance marker file used by captain homes.
@@ -352,17 +350,13 @@ type NotifyResult struct {
 // pending record. Pending records are managed separately through the ack
 // flow via the sender's RemovePendingAfterAck.
 func NotifyReceiver(receiverHome string, ref NotificationRef, meta map[string]string) *NotifyResult {
+	return NotifyReceiverWithSender(defaultBoundSender, receiverHome, ref, meta)
+}
+func NotifyReceiverWithSender(sender BoundSender, receiverHome string, ref NotificationRef, meta map[string]string) *NotifyResult {
 	nr := &NotifyResult{Ref: ref}
 
-	bk, _, err := session.BackendForTask(receiverHome, meta)
-	if err != nil {
-		nr.Err = fmt.Errorf("resolve backend: %w", err)
-		return nr
-	}
-
-	windowID := meta["window"]
-	if windowID == "" {
-		nr.Err = fmt.Errorf("no window in meta")
+	if _, err := sender.Alive(receiverHome, meta); err != nil {
+		nr.Err = fmt.Errorf("resolve bound sender: %w", err)
 		return nr
 	}
 
@@ -370,12 +364,7 @@ func NotifyReceiver(receiverHome string, ref NotificationRef, meta map[string]st
 	// payload included. Raw payload is not routing authority.
 	text := ref.Encode()
 
-	result := session.SubmitPrompt(bk, windowID, text)
-	nr.Acknowledged = result.Acknowledged()
-	nr.Status = string(result.Status)
-	nr.Detail = result.Detail
-	if result.Err != nil {
-		nr.Err = result.Err
-	}
+	sent := sender.Send(receiverHome, meta, text)
+	nr.Acknowledged, nr.Status, nr.Detail, nr.Err = sent.Acknowledged, sent.Status, sent.Detail, sent.Err
 	return nr
 }
