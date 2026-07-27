@@ -14,7 +14,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/session"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,13 +25,13 @@ type Args struct {
 	Mode                string // --mode flag value; empty=auto-detect
 	ProjectMode         string // project registry mode (raw, not defaulted); empty = resolve from registry
 	Yolo                bool
-	Force               bool            // --force flag; bypass captain backlog authority checks
-	Backend             string          // --backend flag value; empty = auto-detect
-	HarnessFlag         string          // --harness flag value; empty = resolve from config
-	ModelFlag           string          // --model flag; empty = dispatch/template default
-	EffortFlag          string          // --effort flag; empty = dispatch/template default
-	HomeDir             string          // if empty, resolved via home.Resolve
-	Session             session.Backend // injectable session backend; nil = resolve at runtime
+	Force               bool                 // --force flag; bypass captain backlog authority checks
+	Backend             string               // --backend flag value; empty = auto-detect
+	HarnessFlag         string               // --harness flag value; empty = resolve from config
+	ModelFlag           string               // --model flag; empty = dispatch/template default
+	EffortFlag          string               // --effort flag; empty = dispatch/template default
+	HomeDir             string               // if empty, resolved via home.Resolve
+	Endpoints           EndpointCapabilities // required endpoint lifecycle capability
 	Arm                 bool
 	Reopen              bool                       // allow spawning a done/blocked/already-live task
 	ArmFunc             func(homeDir string) error // injectable arm function; nil = no auto-arm

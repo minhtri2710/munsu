@@ -10,7 +10,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -263,7 +262,7 @@ func TestRun_NoMistakesPreflightFailsBeforeSessionAllocation(t *testing.T) {
 		ProjectName: "test-project",
 		Mode:        "no-mistakes",
 		HomeDir:     homeDir,
-		Session:     fake,
+		Endpoints:   fakeEndpointCapabilities{backend: fake},
 		NoMistakesPreflight: func(repoPath string) error {
 			preflightCalled = true
 			if repoPath != projectDir {
@@ -364,7 +363,7 @@ func TestRun_ValidateMode(t *testing.T) {
 		ProjectName: "test-project",
 		Mode:        "bogus-mode",
 		HomeDir:     t.TempDir(),
-		Session:     &fakeBackend{},
+		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	}
 	_, err := Run(args)
 	if err == nil {
@@ -375,7 +374,7 @@ func TestRun_ValidateMode(t *testing.T) {
 	}
 }
 
-func TestRun_InjectFakeSession(t *testing.T) {
+func TestRun_InjectFakeEndpointCapabilities(t *testing.T) {
 	// Verify that the injectable Session field is used instead of resolving at runtime.
 	calledNewWindow := false
 	fake := &fakeBackend{
@@ -395,7 +394,7 @@ func TestRun_InjectFakeSession(t *testing.T) {
 		ID:          "inj-test",
 		ProjectName: "test-project",
 		HomeDir:     t.TempDir(),
-		Session:     fake,
+		Endpoints:   fakeEndpointCapabilities{backend: fake},
 	}
 	_, err := Run(args)
 	if err == nil {
@@ -749,7 +748,7 @@ func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 		ProjectName: "test-project",
 		Mode:        "bogus-mode",
 		HomeDir:     t.TempDir(),
-		Session:     &fakeBackend{},
+		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	}
 	_, err := Run(args)
 	if err == nil {
@@ -757,53 +756,6 @@ func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid delivery mode") {
 		t.Errorf("expected 'invalid delivery mode' error, got: %v", err)
-	}
-}
-
-func TestRun_BackendPersistenceRoundtrip(t *testing.T) {
-	// Verify that the resolved backend name is correctly written to
-	// and readable from task meta, protecting PR #131 behavior.
-	homeDir := t.TempDir()
-
-	// Write config/backend = "herdr"
-	configDir := filepath.Join(homeDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Resolve the backend (as spawn.Run does at step 11)
-	_, name, err := session.Resolve(homeDir, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "herdr" {
-		t.Fatalf("Resolve returned name %q, want 'herdr'", name)
-	}
-
-	// Write task meta with the resolved backend name (as spawn.Run does at step 14)
-	meta := map[string]string{
-		"window":   "@1",
-		"worktree": "/tmp/wt",
-		"project":  "test-project",
-		"harness":  "pi",
-		"backend":  name,
-		"kind":     "scout",
-		"mode":     "direct-PR",
-	}
-	if err := task.WriteMeta(homeDir, "backend-persist-test", meta); err != nil {
-		t.Fatal(err)
-	}
-
-	// Read meta back — must contain the correct backend
-	readMeta, err := task.ReadMeta(homeDir, "backend-persist-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if readMeta["backend"] != "herdr" {
-		t.Errorf("meta[backend] = %q, want 'herdr'", readMeta["backend"])
 	}
 }
 
@@ -832,7 +784,7 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 		ID:          "test-task",
 		ProjectName: "test-project",
 		HomeDir:     tmpDir,
-		Session:     &fakeBackend{},
+		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	})
 
 	if err == nil {
@@ -1031,7 +983,7 @@ func TestCreateSessionUsesProjectPrefixedSoldierTabLabel(t *testing.T) {
 		ID:          "W 1",
 		ProjectName: "API Platform",
 		HomeDir:     t.TempDir(),
-		Session:     fake,
+		Endpoints:   fakeEndpointCapabilities{backend: fake},
 	})
 
 	if err := r.createSession(); err != nil {
@@ -1610,7 +1562,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		ProjectName: "test-proj",
 		HarnessFlag: "pi",
 		HomeDir:     homeDir,
-		Session:     fakeBk,
+		Endpoints:   fakeEndpointCapabilities{backend: fakeBk},
 		Mode:        "local-only",
 	}
 

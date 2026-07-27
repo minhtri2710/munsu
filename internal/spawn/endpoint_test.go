@@ -2,8 +2,8 @@ package spawn
 
 type fakeEndpointCapabilities struct{ backend *fakeBackend }
 
-func (f fakeEndpointCapabilities) Create(CreateRequest) (CreatedEndpoint, error) {
-	id, err := f.backend.NewWindow("", "")
+func (f fakeEndpointCapabilities) Create(req CreateRequest) (CreatedEndpoint, error) {
+	id, err := f.backend.NewWindow(req.WorkspaceName, req.TabName)
 	return CreatedEndpoint{Backend: "test", Handle: id}, err
 }
 func (f fakeEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error {

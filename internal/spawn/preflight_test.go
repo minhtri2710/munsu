@@ -42,7 +42,7 @@ func TestRun_PreflightBlocksBeforeWorktreeAllocation(t *testing.T) {
 		ProjectName: "test-project",
 		HarnessFlag: "codex", // known harness, but binary won't be on sanitized PATH
 		HomeDir:     homeDir,
-		Session:     fake,
+		Endpoints:   fakeEndpointCapabilities{backend: fake},
 	})
 	r.projPath = projectDir
 	r.effectiveMode = "direct-PR"

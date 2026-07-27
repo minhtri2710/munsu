@@ -82,6 +82,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				ModelFlag:   modelFlag,
 				EffortFlag:  effortFlag,
 				HomeDir:     homeOverride,
+				Endpoints:   newSpawnSessionEndpoints(),
 				Arm:         arm,
 			})
 			if err != nil {
@@ -370,7 +371,7 @@ With --force:
 				Force:   force,
 			}
 
-			result, err := teardown.Run(opts)
+			result, err := teardown.RunWithBackend(opts, newSessionBoundTeardown())
 			if err != nil {
 				return err
 			}

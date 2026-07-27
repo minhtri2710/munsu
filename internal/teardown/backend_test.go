@@ -25,6 +25,16 @@ func teardownFixture(t *testing.T) (Options, string) {
 	os.WriteFile(meta, []byte("kind=ship\nbackend=tmux\nwindow=pane-1\n"), 0600)
 	return Options{HomeDir: h, ID: "task", Force: true}, meta
 }
+func TestRunRequiresEndpointCapabilityAndPreservesMeta(t *testing.T) {
+	opts, meta := teardownFixture(t)
+	if _, err := Run(opts); err == nil {
+		t.Fatal("expected endpoint capability error")
+	}
+	if _, err := os.Stat(meta); err != nil {
+		t.Fatalf("meta removed: %v", err)
+	}
+}
+
 func TestRunWithBackendPreservesMetaOnProbeError(t *testing.T) {
 	opts, meta := teardownFixture(t)
 	if _, err := RunWithBackend(opts, fakeTeardown{probeErr: errors.New("probe failed")}); err == nil {

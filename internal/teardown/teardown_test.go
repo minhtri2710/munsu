@@ -372,7 +372,7 @@ func TestRun_NoMeta(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	_, err := Run(Options{HomeDir: tmp, ID: "nonexistent"})
+	_, err := RunWithBackend(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{})
 	if err == nil {
 		t.Fatal("should fail for nonexistent task")
 	}
@@ -390,7 +390,7 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "nonexistent.meta"), []byte(metaContent), 0644)
 
 	// With --force, it should try to proceed (will fail at session/return steps but not at safety)
-	result, err := Run(Options{HomeDir: tmp, ID: "nonexistent", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("with --force should not fail at safety: %v", err)
 	}
@@ -410,13 +410,13 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Without --force, should fail
-	_, err := Run(Options{HomeDir: tmp, ID: "scout-test", Force: false})
+	_, err := RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{})
 	if err == nil {
 		t.Fatal("should fail for scout without report without --force")
 	}
 
 	// With --force, should proceed
-	result, err := Run(Options{HomeDir: tmp, ID: "scout-test", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 
 	// Run teardown with --force to skip safety
-	result, err := Run(Options{HomeDir: tmp, ID: "test-residual", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -511,7 +511,7 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	}
 
 	// Run teardown with --force
-	result, err := Run(Options{HomeDir: tmp, ID: "legacy-test", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -614,7 +614,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 
 	// Without --force, should fail due to unresolved holds.
-	_, err = Run(Options{HomeDir: tmp, ID: "scout-test", Force: false})
+	_, err = RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{})
 	if err == nil {
 		t.Fatal("should fail for scout with unresolved holds without --force")
 	}
@@ -623,7 +623,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 
 	// With --force, should proceed past safety checks.
-	result, err := Run(Options{HomeDir: tmp, ID: "scout-test", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}
@@ -663,7 +663,7 @@ working [key=phase3]: Phase 3 in progress`
 	}
 
 	// Run teardown with --force to skip safety checks and reach cleanup
-	result, err := Run(Options{HomeDir: tmp, ID: "test-task", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-task", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -709,7 +709,7 @@ resolved [key=phase2]: Phase 2 done`
 	}
 
 	// Run teardown -- should not emit any close events
-	result, err := Run(Options{HomeDir: tmp, ID: "test-task", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-task", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -734,7 +734,7 @@ func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
 	}
 
 	// Run teardown -- should not error on missing status file
-	result, err := Run(Options{HomeDir: tmp, ID: "test-task", Force: true})
+	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-task", Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -913,7 +913,7 @@ func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 
 	// Teardown should fail because uplink is not acknowledged
-	_, err := Run(Options{HomeDir: home, ID: id, Force: false})
+	_, err := RunWithBackend(Options{HomeDir: home, ID: id, Force: false}, fakeTeardown{})
 	if err == nil {
 		t.Fatal("teardown should fail with material status and open ReportRelay")
 	}
@@ -939,7 +939,7 @@ func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
 	os.WriteFile(filepath.Join(receiptsDir, id+".uplink.receipt"), []byte("state=done\n"), 0644)
 
 	// With --force, teardown should proceed but preserve evidence
-	result, err := Run(Options{HomeDir: home, ID: id, Force: true})
+	result, err := RunWithBackend(Options{HomeDir: home, ID: id, Force: true}, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("with --force should preserve evidence: %v", err)
 	}

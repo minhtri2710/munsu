@@ -1,10 +1,5 @@
 package teardown
 
-import (
-	"fmt"
-	"github.com/minhtri2710/munsu/internal/session"
-)
-
 type EndpointStatus struct{ Alive bool }
 type DisposeRequest struct {
 	Backend, Handle, SessionOwner, WorkspaceID, TabID, Home, TaskID string
@@ -14,55 +9,3 @@ type BoundTeardown interface {
 	Probe(homeDir string, meta map[string]string) (EndpointStatus, error)
 	Dispose(homeDir string, meta map[string]string, request DisposeRequest) error
 }
-type sessionTeardown struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
-}
-
-func (s sessionTeardown) resolveBound(home string, meta map[string]string) (session.Backend, string, error) {
-	if home == "" || meta["backend"] == "" || meta["window"] == "" {
-		return nil, "", fmt.Errorf("bound teardown identity is incomplete")
-	}
-	bk, name, err := s.resolve(home, meta)
-	if err != nil {
-		return nil, "", err
-	}
-	if name != meta["backend"] {
-		return nil, "", fmt.Errorf("bound backend resolved as %q", name)
-	}
-	if name == "herdr" && meta["herdr_session"] != "" {
-		hs, _ := session.ParseWindow(meta["window"])
-		if hs != "" && hs != meta["herdr_session"] {
-			return nil, "", fmt.Errorf("herdr session ownership mismatch")
-		}
-	}
-	return bk, name, nil
-}
-func (s sessionTeardown) Probe(home string, meta map[string]string) (EndpointStatus, error) {
-	bk, _, err := s.resolveBound(home, meta)
-	if err != nil {
-		return EndpointStatus{}, err
-	}
-	return EndpointStatus{Alive: bk.Alive(meta["window"])}, nil
-}
-func (s sessionTeardown) Dispose(home string, meta map[string]string, req DisposeRequest) error {
-	if req.Home != home || req.Backend != meta["backend"] || req.Handle != meta["window"] || req.SessionOwner != meta["herdr_session"] || req.WorkspaceID != meta["herdr_workspace_id"] || req.TabID != meta["herdr_tab_id"] {
-		return fmt.Errorf("dispose request does not match bound endpoint metadata")
-	}
-	bk, name, err := s.resolveBound(home, meta)
-	if err != nil {
-		return err
-	}
-	if req.DenyWorkspaceClose {
-		if name != "herdr" || req.WorkspaceID == "" {
-			return fmt.Errorf("workspace-close denial is invalid for backend %q", name)
-		}
-		hb, ok := bk.(*session.HerdrBackend)
-		if !ok {
-			return fmt.Errorf("herdr workspace-close policy is unsupported by resolved adapter")
-		}
-		hb.DenyCloseWorkspaceIDs = []string{req.WorkspaceID}
-	}
-	return bk.Teardown(req.Handle)
-}
-
-var defaultTeardown BoundTeardown = sessionTeardown{resolve: session.BackendForTask}

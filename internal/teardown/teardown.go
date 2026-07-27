@@ -36,8 +36,11 @@ type TeardownResult struct {
 	Proofs []string // merge-proof evidence emitted by safety checks
 }
 
-// Run performs a soldier teardown.
-func Run(opts Options) (*TeardownResult, error) { return RunWithBackend(opts, defaultTeardown) }
+// Run fails closed because teardown requires a task-bound endpoint capability.
+// Production callers must compose that capability through RunWithBackend.
+func Run(Options) (*TeardownResult, error) {
+	return nil, fmt.Errorf("teardown endpoint capability is required; use RunWithBackend")
+}
 func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error) {
 	result := &TeardownResult{}
 

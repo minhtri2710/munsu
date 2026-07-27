@@ -51,7 +51,7 @@ type Runner struct {
 
 // NewRunner creates a Runner for the given Args.
 func NewRunner(args Args) *Runner {
-	return &Runner{args: args, endpoints: newSessionEndpoints(args.Session)}
+	return &Runner{args: args, endpoints: args.Endpoints}
 }
 
 // Run executes the full spawn orchestration sequence.
@@ -615,6 +615,9 @@ func labelComponent(value string) string {
 
 // Phase 11: createSession creates a session window for the soldier.
 func (r *Runner) createSession() error {
+	if r.endpoints == nil {
+		return fmt.Errorf("spawn endpoint capabilities are required")
+	}
 	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.args.Backend, WorkspaceName: hometag.WorkspaceTag(r.homeDir), TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
 	if err != nil {
 		return err

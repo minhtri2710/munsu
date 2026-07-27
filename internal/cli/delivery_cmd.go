@@ -122,11 +122,11 @@ Without --teardown, the command prints the exact teardown invocation to run next
 				return nil
 			}
 			fmt.Printf("Running teardown for %s in %s after merge...\n", id, taskHome)
-			result, err := teardown.Run(teardown.Options{
+			result, err := teardown.RunWithBackend(teardown.Options{
 				HomeDir: taskHome,
 				ID:      id,
 				Force:   false,
-			})
+			}, newSessionBoundTeardown())
 			if err != nil {
 				return fmt.Errorf("post-merge teardown %s: %w", id, err)
 			}
