@@ -16,7 +16,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
@@ -38,7 +37,8 @@ type TeardownResult struct {
 }
 
 // Run performs a soldier teardown.
-func Run(opts Options) (*TeardownResult, error) {
+func Run(opts Options) (*TeardownResult, error) { return RunWithBackend(opts, defaultTeardown) }
+func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
@@ -107,24 +107,18 @@ func Run(opts Options) (*TeardownResult, error) {
 	// 1. Kill session window
 	var wtPath string
 	if windowID, ok := meta["window"]; ok && windowID != "" {
-		bk, bkName, err := session.BackendForTask(opts.HomeDir, meta)
+		status, err := backend.Probe(opts.HomeDir, meta)
 		if err != nil {
 			result.Steps = append(result.Steps, fmt.Sprintf("session backend unavailable: %v", err))
 		} else {
-			// For herdr backends, deny workspace close if another task references it
-			if bkName == "herdr" {
-				if hb, ok := bk.(*session.HerdrBackend); ok {
-					if wsID := meta["herdr_workspace_id"]; wsID != "" {
-						if refs := otherWorkspaceRefs(opts.HomeDir, opts.ID, wsID); len(refs) > 0 {
-							hb.DenyCloseWorkspaceIDs = append(hb.DenyCloseWorkspaceIDs, wsID)
-						}
-					}
-				}
-			}
-			if !bk.Alive(windowID) {
+			if !status.Alive {
 				result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", windowID))
 			}
-			if err := bk.Teardown(windowID); err != nil {
+			request := DisposeRequest{Backend: meta["backend"], Handle: windowID, SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: opts.HomeDir, TaskID: opts.ID}
+			if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
+				request.DenyWorkspaceClose = true
+			}
+			if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
 				result.Steps = append(result.Steps, fmt.Sprintf("session teardown %s: %v", windowID, err))
 			} else {
 				result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", windowID))
