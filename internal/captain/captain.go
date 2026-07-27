@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -2018,25 +2017,30 @@ func acquireExclusiveLock(lockPath string) (func(), error) {
 		return nil, err
 	}
 
-	// Exclusive flock with LOCK_NB — fail fast, never block.
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	// Exclusive nonblocking lock — fail fast, never block.
+	acquired, err := tryLockFile(f)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("acquiring converge lock: %w", err)
+	}
+	if !acquired {
 		f.Close()
 		// NEVER remove lockPath on failed acquisition — that would unlink
 		// the owner's lock and permit a third party to acquire.
-		return nil, fmt.Errorf("converge lock is held by another process — try again later: %w", err)
+		return nil, fmt.Errorf("converge lock is held by another process — try again later")
 	}
 
 	// Generate a cryptographically random token for generation-safe release.
 	token := make([]byte, 32)
 	if _, err := rand.Read(token); err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = unlockFile(f)
 		f.Close()
 		return nil, fmt.Errorf("generating random token: %w", err)
 	}
 	tokenHex := fmt.Sprintf("%x", token)
 
 	if _, err := fmt.Fprintf(f, "%s\n", tokenHex); err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = unlockFile(f)
 		f.Close()
 		return nil, fmt.Errorf("writing token to lock: %w", err)
 	}
@@ -2049,7 +2053,7 @@ func acquireExclusiveLock(lockPath string) (func(), error) {
 		}
 		released = true
 		defer func() {
-			syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+			_ = unlockFile(f)
 			f.Close()
 		}()
 

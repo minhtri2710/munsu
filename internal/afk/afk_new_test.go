@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -329,8 +328,10 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 		t.Fatal("consent flag was not created within 200ms")
 	}
 
-	// Send SIGTERM
-	syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	// Stop the daemon through the platform process seam.
+	if err := stopProcess(os.Getpid()); err != nil {
+		t.Skipf("self-termination unavailable on this platform: %v", err)
+	}
 
 	select {
 	case err := <-done:

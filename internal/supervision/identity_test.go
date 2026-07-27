@@ -147,10 +147,24 @@ func TestWriteIdentity_TempCleanup(t *testing.T) {
 	if err := WriteIdentity(home, id); err != nil {
 		t.Fatalf("WriteIdentity: %v", err)
 	}
-	// Verify no .tmp file is left behind
-	tmpFiles, _ := filepath.Glob(filepath.Join(home, "state", ".watcher-identity.tmp"))
+	// Verify no temporary file is left behind.
+	tmpFiles, _ := filepath.Glob(filepath.Join(home, "state", ".watcher-identity.tmp-*"))
 	if len(tmpFiles) > 0 {
 		t.Error("temp file should not exist after successful write")
+	}
+}
+
+func TestWriteIdentityUsesPrivatePermissions(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteIdentity(home, NewIdentity(home)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(identityPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("identity mode = %o, want 600", got)
 	}
 }
 
@@ -679,9 +693,9 @@ func TestCommitSHA_BackwardCompatV1(t *testing.T) {
 	// that parseIdentity returns a WatcherIdentity with empty CommitSHA.
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	// 7-field format used in protocol v1
-	content := "hometest\t12345\tstartts\t/usr/bin/munsu\tv1.0.0\t1\t1700000000\n"
-	os.WriteFile(filepath.Join(home, "state", ".watcher-identity"), []byte(content), 0644)
+	// Generic JSON identity without an optional commit SHA.
+	content := fmt.Sprintf(`{"schema_version":1,"kind":"watcher","pid":12345,"start_token":"startts","executable_path":"/usr/bin/munsu","canonical_home":%q,"build_version":"v1.0.0","protocol_version":1,"started_at":1700000000}`, hometag.Canonical(home))
+	os.WriteFile(filepath.Join(home, "state", ".watcher-identity"), []byte(content), 0600)
 
 	read := ReadIdentity(home)
 	if read == nil {

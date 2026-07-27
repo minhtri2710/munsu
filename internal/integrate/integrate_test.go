@@ -1,3 +1,5 @@
+//go:build !windows
+
 package integrate
 
 import (
@@ -1064,14 +1066,6 @@ func TestClaudeStatusDriftDetection(t *testing.T) {
 	if !status.Drifted {
 		t.Error("expected Drifted=true after hook removal")
 	}
-}
-
-type testMunsuResolver struct {
-	path string
-}
-
-func (r testMunsuResolver) Resolve() (string, error) {
-	return r.path, nil
 }
 
 // -- Grok adapter tests --

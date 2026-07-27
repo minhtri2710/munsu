@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // StateDir returns the path to the state directory under the given homeDir.
@@ -337,12 +336,12 @@ func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening lock file: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockExclusive(f); err != nil {
 		f.Close()
 		return nil, nil, fmt.Errorf("acquiring flock: %w", err)
 	}
 	return f, func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		unlockFile(f)
 		f.Close()
 	}, nil
 }

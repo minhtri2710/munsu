@@ -71,6 +71,12 @@ func (d *Daemon) Start(homeDir string) error {
 		return fmt.Errorf("afk daemon already running (lock held)")
 	}
 	d.lock = lock
+	identity, err := publishDaemonIdentity(homeDir)
+	if err != nil {
+		d.lock.Release()
+		return fmt.Errorf("publishing afk identity: %w", err)
+	}
+	defer clearDaemonIdentity(homeDir, identity)
 
 	// 2. Set consent flag.
 	flagPath := filepath.Join(homeDir, afkFlagFile)
@@ -89,7 +95,7 @@ func (d *Daemon) Start(homeDir string) error {
 		fmt.Fprintf(os.Stderr, "afk: stale artifact clear error (non-fatal): %v\n", err)
 	}
 
-// Initialize digester and wedge detector.
+	// Initialize digester and wedge detector.
 	d.digester = NewDigester(homeDir)
 	d.wedge = NewWedgeDetector(homeDir)
 

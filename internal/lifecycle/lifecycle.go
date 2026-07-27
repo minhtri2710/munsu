@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -86,7 +85,7 @@ func AcquireSession(homeDir string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("opening lock file %s: %w", path, err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(f, true); err != nil {
 		f.Close()
 		return false, nil
 	}
@@ -128,7 +127,7 @@ func ReleaseSession(homeDir string) error {
 		return fmt.Errorf("opening lock file %s: %w", path, err)
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+	if err := unlockFile(f); err != nil {
 		return fmt.Errorf("unlocking %s: %w", path, err)
 	}
 	return nil
@@ -142,10 +141,10 @@ func IsSessionLocked(homeDir string) bool {
 		return false
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(f, true); err != nil {
 		return true // someone else holds it
 	}
-	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	unlockFile(f)
 	return false
 }
 
@@ -173,7 +172,7 @@ func AcquireWatch(homeDir string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("opening watch lock file %s: %w", path, err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(f, true); err != nil {
 		f.Close()
 		return false, nil
 	}
@@ -194,7 +193,7 @@ func ReleaseWatch(homeDir string) error {
 		return fmt.Errorf("opening watch lock file %s: %w", path, err)
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+	if err := unlockFile(f); err != nil {
 		return fmt.Errorf("unlocking %s: %w", path, err)
 	}
 	return nil
@@ -208,10 +207,10 @@ func IsWatchLocked(homeDir string) bool {
 		return false
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(f, true); err != nil {
 		return true // someone else holds it
 	}
-	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	unlockFile(f)
 	return false
 }
 

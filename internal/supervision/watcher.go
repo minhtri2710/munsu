@@ -92,7 +92,7 @@ func defaultStartWatcher(homeDir string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Env = append(os.Environ(), "MUNSU_HOME="+homeDir)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	configureWatcherProcess(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting watcher: %w", err)

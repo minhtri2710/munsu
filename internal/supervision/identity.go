@@ -1,6 +1,7 @@
 package supervision
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/hometag"
 )
 
@@ -79,7 +81,7 @@ func (id *WatcherIdentity) BuildIdentity() BuildIdentity {
 
 // identityPath returns the path to the watcher identity file.
 func identityPath(homeDir string) string {
-	return filepath.Join(homeDir, "state", ".watcher-identity")
+	return home.WriterIdentityPath(homeDir, "watcher")
 }
 
 // BuildVersion holds the watcher build version for human-readable display.
@@ -144,82 +146,52 @@ func resolveExecPath() string {
 	return resolved
 }
 
-// WriteIdentity persists the watcher identity atomically to the state directory.
+// WriteIdentity persists the watcher identity through the generic durable writer identity store.
 func WriteIdentity(homeDir string, id WatcherIdentity) error {
-	path := identityPath(homeDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating identity directory: %w", err)
+	canonicalIdentityHome, err := home.CanonicalPath(id.Home)
+	if err != nil {
+		return fmt.Errorf("canonicalizing watcher identity home: %w", err)
 	}
-	content := formatIdentity(id)
-	// Write via temp file + rename for atomicity
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("writing identity temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming identity file: %w", err)
-	}
-	return nil
+	return home.PublishWriterIdentity(homeDir, "watcher", home.WriterIdentity{
+		SchemaVersion: 1, Kind: "watcher", PID: id.PID, StartToken: id.ProcessStart,
+		ExecutablePath: id.Executable, CanonicalHome: canonicalIdentityHome, BuildVersion: id.BuildVersion,
+		ProtocolVersion: id.ProtocolVersion, StartedAt: id.StartTime, CommitSHA: id.CommitSHA,
+	})
 }
 
-// ReadIdentity reads the watcher identity from the state directory.
-// Returns nil if no identity file exists or it cannot be parsed.
+// ReadIdentity reads the watcher identity from the generic durable writer identity store.
 func ReadIdentity(homeDir string) *WatcherIdentity {
-	data, err := os.ReadFile(identityPath(homeDir))
+	record, err := home.ReadWriterIdentity(homeDir, "watcher")
 	if err != nil {
 		return nil
 	}
-	return parseIdentity(string(data))
+	return &WatcherIdentity{Home: record.CanonicalHome, PID: record.PID, ProcessStart: record.StartToken,
+		Executable: record.ExecutablePath, BuildVersion: record.BuildVersion, ProtocolVersion: record.ProtocolVersion,
+		StartTime: record.StartedAt, CommitSHA: record.CommitSHA}
 }
 
 // ClearIdentity removes the watcher identity file.
-func ClearIdentity(homeDir string) {
-	os.Remove(identityPath(homeDir))
-}
+func ClearIdentity(homeDir string) { os.Remove(home.WriterIdentityPath(homeDir, "watcher")) }
 
 // ClearIdentityIfMatches removes only the identity written by this process generation.
 func ClearIdentityIfMatches(homeDir string, expected WatcherIdentity) {
-	current := ReadIdentity(homeDir)
-	if current == nil || current.PID != expected.PID || current.ProcessStart != expected.ProcessStart {
-		return
-	}
-	os.Remove(identityPath(homeDir))
+	_, _ = home.RemoveWriterIdentityIfMatches(homeDir, "watcher", home.WriterIdentity{
+		SchemaVersion: 1, Kind: "watcher", PID: expected.PID, StartToken: expected.ProcessStart,
+		ExecutablePath: expected.Executable, CanonicalHome: expected.Home,
+	})
 }
 
-// formatIdentity serialises a WatcherIdentity to a tab-delimited line.
-// Protocol v1: 7 fields (no CommitSHA).
-// Protocol v2: 8 fields (includes CommitSHA as last field).
 func formatIdentity(id WatcherIdentity) string {
-	return fmt.Sprintf("%s\t%d\t%s\t%s\t%s\t%d\t%d\t%s\n",
-		id.Home, id.PID, id.ProcessStart, id.Executable,
-		id.BuildVersion, id.ProtocolVersion, id.StartTime, id.CommitSHA)
+	data, _ := json.Marshal(id)
+	return string(append(data, '\n'))
 }
 
-// parseIdentity deserialises a tab-delimited identity line.
-// Handles both 7-field (protocol v1) and 8-field (protocol v2) formats.
 func parseIdentity(data string) *WatcherIdentity {
-	line := strings.TrimSpace(data)
-	parts := strings.SplitN(line, "\t", 8)
-	if len(parts) < 7 {
+	var id WatcherIdentity
+	if json.Unmarshal([]byte(strings.TrimSpace(data)), &id) != nil || id.PID <= 0 || id.Home == "" || id.ProcessStart == "" || id.Executable == "" {
 		return nil
 	}
-	id := &WatcherIdentity{
-		Home:            parts[0],
-		Executable:      parts[3],
-		BuildVersion:    parts[4],
-		ProtocolVersion: 0,
-		StartTime:       0,
-	}
-	fmt.Sscanf(parts[1], "%d", &id.PID)
-	id.ProcessStart = parts[2]
-	fmt.Sscanf(parts[5], "%d", &id.ProtocolVersion)
-	fmt.Sscanf(parts[6], "%d", &id.StartTime)
-	// 8th field is CommitSHA (protocol v2); empty if not present.
-	if len(parts) >= 8 {
-		id.CommitSHA = parts[7]
-	}
-	return id
+	return &id
 }
 
 // ValidatePIDOwnership checks whether the given PID provably belongs to the

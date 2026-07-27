@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -79,14 +78,17 @@ func Return(homeDir string) (*ReturnReport, error) {
 	if daemonPID > 0 {
 		if isProcessAlive(daemonPID) {
 			fmt.Fprintf(os.Stderr, "afk: return: stopping daemon PID %d\n", daemonPID)
-			if err := syscall.Kill(daemonPID, syscall.SIGTERM); err != nil {
-				fmt.Fprintf(os.Stderr, "afk: return: sending SIGTERM to PID %d: %v\n", daemonPID, err)
+			if err := stopProcess(daemonPID); err != nil {
+				return report, fmt.Errorf("stopping AFK daemon PID %d: %w", daemonPID, err)
 			}
 			// Brief grace period for the daemon to clean up flag and lock.
 			time.Sleep(300 * time.Millisecond)
+			if isProcessAlive(daemonPID) {
+				return report, fmt.Errorf("AFK daemon PID %d remained alive after stop request", daemonPID)
+			}
 		}
 	}
-	// Always attempt lock cleanup regardless of whether a PID was parsed.
+	// Only a confirmed stopped daemon may have its lock and consent cleared.
 	lockPath := filepath.Join(homeDir, afkLockFile)
 	os.Remove(lockPath)
 

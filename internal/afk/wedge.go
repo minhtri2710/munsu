@@ -10,7 +10,7 @@ import (
 
 const (
 	defaultStaleBeatThreshold = 5 * time.Minute
-	defaultWakeCountMax      = 3
+	defaultWakeCountMax       = 3
 )
 
 // WedgeAlarm describes a detected wedge condition that prevents the AFK daemon
@@ -27,6 +27,7 @@ type WedgeAlarm struct {
 //   - Missing watcher beat entirely
 //   - Repeated identical stale wake (same wake key arriving back-to-back)
 //   - Digest stuck (entries accumulated beyond max-defer threshold)
+//
 // WedgeDetector monitors for wedge conditions:
 //   - Stale watcher beat (beat too old beyond threshold)
 //   - Missing watcher beat entirely

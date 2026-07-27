@@ -201,8 +201,8 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			Source:   source,
 		}
 		if w := meta["window"]; w != "" {
-			if paneAliveForCaptain != nil {
-				alive, err := paneAliveForCaptain(taskHome, meta)
+			if endpointProbe != nil || paneAliveForCaptain != nil {
+				alive, err := probeEndpoint(taskHome, meta)
 				if err != nil {
 					ts.PaneAlive = false
 					ts.PaneAliveUnknown = true
@@ -348,10 +348,10 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 		return "seeded"
 	}
 
-	if paneAliveForCaptain == nil {
+	if endpointProbe == nil && paneAliveForCaptain == nil {
 		return "unknown"
 	}
-	alive, aliveErr := paneAliveForCaptain(parentHome, meta)
+	alive, aliveErr := probeEndpoint(parentHome, meta)
 	if aliveErr != nil {
 		return "dead"
 	}
@@ -361,12 +361,34 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 	return "dead"
 }
 
-// paneAliveForCaptain probes endpoint liveness from parent meta.
-// Wired by SetPaneAliveProbe (CLI) so fleet does not import session (cycle).
-// Nil means no probe is wired → unknown when meta has a window.
+// EndpointProbe is the narrow backend port used by fleet projections.
+type EndpointRef struct {
+	Backend string
+	Handle  string
+}
+
+type EndpointStatus struct{ Alive bool }
+
+type EndpointProbe interface {
+	ProbeEndpoint(EndpointRef) (EndpointStatus, error)
+}
+
+var endpointProbe EndpointProbe
+
+// SetEndpointProbe installs the typed endpoint probe at the composition root.
+func SetEndpointProbe(probe EndpointProbe) { endpointProbe = probe }
+
+// paneAliveForCaptain remains only as a test seam while existing fleet tests are cut over.
 var paneAliveForCaptain func(parentHome string, meta map[string]string) (bool, error)
 
-// SetPaneAliveProbe installs the session-backend Alive probe used by CaptainStatus.
 func SetPaneAliveProbe(fn func(parentHome string, meta map[string]string) (bool, error)) {
 	paneAliveForCaptain = fn
+}
+
+func probeEndpoint(parentHome string, meta map[string]string) (bool, error) {
+	if endpointProbe != nil {
+		status, err := endpointProbe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"]})
+		return status.Alive, err
+	}
+	return paneAliveForCaptain(parentHome, meta)
 }

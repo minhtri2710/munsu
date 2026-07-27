@@ -11,44 +11,24 @@ import (
 	"github.com/minhtri2710/munsu/internal/worktree"
 )
 
-// Re-export session interfaces and errors
-type Backend = session.Backend
-type AgentAwareBackend = session.AgentAwareBackend
-type BackendMetaExtras = session.BackendMetaExtras
-
-var ErrPaneNotFound = session.ErrPaneNotFound
-var ErrAgentNotFound = session.ErrAgentNotFound
-
-// Resolve returns the configured session backend for homeDir with resilient fallback to tmux.
+// Temporary compatibility during caller cutover; remove once all callers use Service.
 func Resolve(homeDir string, backendOverride string) (session.Backend, string, error) {
 	bk, name, err := session.Resolve(homeDir, backendOverride)
 	if err == nil && bk != nil {
 		return bk, name, nil
 	}
-
-	// Resilient fallback to tmux when non-tmux backend fails
 	if backendOverride != "tmux" && backendOverride != "" {
 		fmt.Fprintf(os.Stderr, "munsu: warning: backend %q failed resolution (%v); falling back to tmux\n", backendOverride, err)
-		if tmuxBk, errTmux := session.Select("tmux"); errTmux == nil {
+		if tmuxBk, fallbackErr := session.Select("tmux"); fallbackErr == nil {
 			return tmuxBk, "tmux", nil
 		}
 	}
 	return nil, "", fmt.Errorf("session backend resolution failed: %w", err)
 }
 
-// BackendForTask resolves the session backend for a specific task using its metadata,
-// falling back to tmux if the specified backend is unavailable.
+// Temporary compatibility during caller cutover; task-bound fallback remains legacy behavior.
 func BackendForTask(homeDir string, meta map[string]string) (session.Backend, string, error) {
-	bk, name, err := session.BackendForTask(homeDir, meta)
-	if err == nil && bk != nil {
-		return bk, name, nil
-	}
-
-	// Fallback to tmux
-	if tmuxBk, errTmux := session.Select("tmux"); errTmux == nil {
-		return tmuxBk, "tmux", nil
-	}
-	return nil, "", fmt.Errorf("task session backend resolution failed: %w", err)
+	return session.BackendForTask(homeDir, meta)
 }
 
 // Worktree helpers re-exported for convenience

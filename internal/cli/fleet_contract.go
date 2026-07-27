@@ -14,6 +14,7 @@ import (
 )
 
 func init() {
+	// Fleet receives a typed probe port; adapter wiring remains at composition root.
 	fleet.SetPaneAliveProbe(func(parentHome string, meta map[string]string) (bool, error) {
 		bk, _, err := session.BackendForTask(parentHome, meta)
 		if err != nil {

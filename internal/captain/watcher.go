@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"syscall"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -88,7 +87,7 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 			cmd.Env = append(cmd.Env, "MUNSU_PARENT_STATUS="+parentHome)
 		}
 
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		configureWatcherProcess(cmd)
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("starting watcher for captain home %s: %w", captainHome, err)
 		}

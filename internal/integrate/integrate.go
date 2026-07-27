@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -420,10 +419,7 @@ func runCapabilityCommandDefault(name string, args []string, dir string, timeout
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.Setpgid = true
+	setProcessIsolation(cmd)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -432,7 +428,7 @@ func runCapabilityCommandDefault(name string, args []string, dir string, timeout
 			// Kill the process group (negative PID). Ignore errors: process may
 			// already be gone.
 			if cmd.Process != nil {
-				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+				killProcessTree(cmd.Process.Pid)
 			}
 			// Wait to reap before returning.
 			cmd.Wait()

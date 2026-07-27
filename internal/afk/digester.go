@@ -72,17 +72,17 @@ type BatchedEscalation struct {
 // a BatchedEscalation to durable state when the window expires.
 // Safe for concurrent use.
 type Digester struct {
-	mu              sync.Mutex
-	entries         []BatchedEntry
-	routineCount    int
-	escalatedCount  int
-	firstAt         time.Time
-	lastFlush       time.Time
-	homeDir         string
-	safeTarget      *bool
-	targetVerdict   string
-	window          time.Duration // batch window, defaults to defaultWindow
-	maxDefer        time.Duration // max time before emitting defer alarm
+	mu             sync.Mutex
+	entries        []BatchedEntry
+	routineCount   int
+	escalatedCount int
+	firstAt        time.Time
+	lastFlush      time.Time
+	homeDir        string
+	safeTarget     *bool
+	targetVerdict  string
+	window         time.Duration // batch window, defaults to defaultWindow
+	maxDefer       time.Duration // max time before emitting defer alarm
 }
 
 // NewDigester creates a Digester scoped to the given home directory.

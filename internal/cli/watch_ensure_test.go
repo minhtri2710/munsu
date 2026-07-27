@@ -175,8 +175,8 @@ func TestStopWatcher_CrossHomeIdentityMismatch(t *testing.T) {
 	if _, gotPID, ok := lifecycle.ReadBeat(captain); !ok || gotPID != pid {
 		t.Fatal("beat should remain after refused stop")
 	}
-	if supervision.ReadIdentity(captain) == nil {
-		t.Fatal("identity should remain after refused stop")
+	if _, err := os.Stat(filepath.Join(captain, "state", ".watcher-identity")); err != nil {
+		t.Fatalf("identity should remain after refused stop: %v", err)
 	}
 }
 

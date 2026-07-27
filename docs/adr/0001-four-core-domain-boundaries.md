@@ -1,6 +1,6 @@
 # 0001. Restructure 44 Packages into 4 Core Domain Boundaries and Apply Clean Break Branch Prefix (`mu/`)
 
-* **Status:** Accepted
+* **Status:** Superseded in detail by ADR-0002; four-core/five-infra direction reaffirmed
 * **Date:** 2026-07-26
 * **Deciders:** munsu core architecture team
 

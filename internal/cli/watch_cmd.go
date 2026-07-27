@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/contract"
@@ -53,7 +52,7 @@ func defaultStartWatcherProcess(homeDir string) (int, error) {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Env = append(os.Environ(), "MUNSU_HOME="+homeDir)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	configureWatchProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
@@ -70,7 +69,7 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 		if ok && pid > 0 && supervision.ValidatePIDOwnership(homeDir, pid) {
 			proc, err := os.FindProcess(pid)
 			if err == nil {
-				proc.Signal(syscall.SIGTERM)
+				_ = signalWatchProcess(proc)
 				time.Sleep(500 * time.Millisecond)
 			}
 		}
@@ -327,14 +326,14 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 	// Find and signal the process
 	proc, err := os.FindProcess(pid)
 	if err == nil {
-		proc.Signal(syscall.SIGTERM)
+		_ = signalWatchProcess(proc)
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Check if process is still alive
 	alive := false
 	if proc != nil {
-		if err := proc.Signal(syscall.Signal(0)); err == nil {
+		if processIsAlive(proc) {
 			alive = true
 		}
 	}
