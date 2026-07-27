@@ -2,11 +2,11 @@
 //
 // These tests verify that after removal of the legacy General->Captain command
 // transport:
-//   1. Stale legacy records produce an actionable error with exact paths.
-//   2. Guard execution leaves stale files byte-for-byte untouched.
-//   3. Normal operations create no legacy directories, receipts, or markers.
-//   4. Forbidden runtime symbols are absent (compile-time check).
-//   5. Mailbox delivery and recovery remain functional.
+//  1. Stale legacy records produce an actionable error with exact paths.
+//  2. Guard execution leaves stale files byte-for-byte untouched.
+//  3. Normal operations create no legacy directories, receipts, or markers.
+//  4. Forbidden runtime symbols are absent (compile-time check).
+//  5. Mailbox delivery and recovery remain functional.
 package captain
 
 import (

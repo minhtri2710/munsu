@@ -43,7 +43,7 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 	smHome := seedCaptainForTest(t, parent, "test-sm")
 
 	t.Run("returns false when no meta exists (not yet launched)", func(t *testing.T) {
-		alive, err := checkAliveViaBackend(parent, Info{ID: "test-sm", Home: smHome})
+		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for missing meta, got: %v", err)
 		}
@@ -61,7 +61,7 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 			"home":   canon,
 			"window": "w1",
 		})
-		alive, err := checkAliveViaBackend(parent, Info{ID: "test-sm", Home: smHome})
+		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for wrong kind, got: %v", err)
 		}
@@ -78,7 +78,7 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 			"home":   canon,
 			"window": "w1",
 		})
-		alive, err := checkAliveViaBackend(parent, Info{ID: "test-sm", Home: smHome})
+		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for wrong sm_id, got: %v", err)
 		}
@@ -95,7 +95,7 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 			"home":   canon,
 			"window": "",
 		})
-		alive, err := checkAliveViaBackend(parent, Info{ID: "test-sm", Home: smHome})
+		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for empty window, got: %v", err)
 		}
@@ -122,7 +122,7 @@ func TestStructuredState_MetaHomeComparedCanonically(t *testing.T) {
 	}
 
 	// checkAliveViaBackend uses canonical home internally.
-	alive, err := checkAliveViaBackend(parent, Info{ID: "test-sm", Home: symlinkHome})
+	alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: symlinkHome}, &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}})
 	if err != nil {
 		t.Fatalf("checkAliveViaBackend via symlink: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 		smHome := filepath.Join(parent, "captains", "test-sm")
 		Seed("test-sm", smHome, "# charter")
 		t.Setenv("MUNSU_ROLE", "captain")
-		err := Launch(smHome, parent)
+		err := Launch(smHome, parent, testLaunchEndpoint{})
 		if err == nil {
 			t.Fatal("expected nested captain launch refusal")
 		}
@@ -170,7 +170,7 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 		smHome := filepath.Join(t.TempDir(), "child-sm")
 		Seed("child-sm", smHome, "# charter")
 		t.Setenv("MUNSU_ROLE", "")
-		err := Launch(smHome, parent)
+		err := Launch(smHome, parent, testLaunchEndpoint{})
 		if err == nil {
 			t.Fatal("expected launch refusal from captain parent")
 		}
@@ -301,8 +301,9 @@ func TestRetries_RecoverRelaunchesDeadCaptain(t *testing.T) {
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
 
+	probe := &testProbeEndpoint{results: []ProbeResult{{PaneAlive: false}, {PaneAlive: true, AgentAlive: true}}}
 	// First Recover: dead -> relaunched.
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: probe})
 	if err != nil {
 		t.Fatalf("first Recover: %v", err)
 	}
@@ -316,7 +317,7 @@ func TestRetries_RecoverRelaunchesDeadCaptain(t *testing.T) {
 	}
 
 	// Second Recover: alive -> no action.
-	res, err = Recover(parent, []Info{{ID: "test-sm", Home: smHome}})
+	res, err = Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: probe})
 	if err != nil {
 		t.Fatalf("second Recover: %v", err)
 	}
@@ -339,7 +340,7 @@ func TestRetries_RecoverNoOpOnAliveCaptain(t *testing.T) {
 		return &fakeBackend{AliveFn: func(string) bool { return true }}, "herdr", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -356,7 +357,7 @@ func TestRetries_RecoverSkipSeededCaptain(t *testing.T) {
 	smHome := seedCaptainForTest(t, parent, "test-sm")
 	// No task meta written => seeded but not launched.
 
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -544,7 +545,7 @@ func TestConverge_StateOnlyHomeDoesNotFail(t *testing.T) {
 	// Converge with the state-only home.
 	result, err := Converge(parent, []Info{
 		{ID: "state-only-sm", Home: smHome},
-	}, &captainNotificationTransport{acknowledged: true}, &captainTestMailboxSender{})
+	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 
 	// The overall converge must complete (may return partial/failed from safeFF,
 	// but the important thing is it doesn't crash or hang).

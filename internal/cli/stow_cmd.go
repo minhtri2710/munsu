@@ -180,7 +180,7 @@ Install root resolution (in order):
 				return nil
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Fast-forwarding captains and nudging...")
-			result, convergeErr := captain.Converge(ctx.Home, registered, newSessionUplinkTransport(), newSessionMailboxSender())
+			result, convergeErr := captain.Converge(ctx.Home, registered, captain.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %-50s %s\n", step.Name+":", step.Status)

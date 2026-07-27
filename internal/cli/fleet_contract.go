@@ -71,7 +71,6 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 func init() {
 	// Fleet receives a typed probe port; session adapter wiring remains at the CLI composition root.
 	fleet.SetEndpointProbe(cliEndpointProbe{resolve: session.BackendForTask})
-	captain.SetFleetCaptainStatus(fleet.CaptainStatus)
 	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
 		st, err := soldierstate.ReadWithProbe(homeDir, id, cliEndpointProbe{resolve: session.BackendForTask})
 		if err != nil {

@@ -39,7 +39,7 @@ type ConfigDiagnostic struct {
 // RecoverTransaction sequences a structured captain recovery for one captain.
 // Each step runs in order and produces a StepResult with ok/failed/skipped,
 // so partial failures never block the entire recovery.
-type RecoverTransaction struct{}
+type RecoverTransaction struct{ Capabilities RecoverCapabilities }
 
 // Recover runs the full recovery transaction for a single captain.
 func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult {
@@ -240,7 +240,7 @@ func (tx *RecoverTransaction) stepLaunchReadiness(sm Info) StepResult {
 }
 
 func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResult {
-	alive, aliveErr := checkAliveViaBackend(parentHome, sm)
+	alive, aliveErr := checkAliveWithProbe(parentHome, sm, tx.Capabilities.Probe)
 	if aliveErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("alive check failed: %v", aliveErr)}
@@ -262,7 +262,7 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 	}
 
 	// Launched-but-dead: relaunch.
-	if lErr := Launch(sm.Home, parentHome); lErr != nil {
+	if lErr := Launch(sm.Home, parentHome, tx.Capabilities.Launch); lErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("relaunch failed: %v", lErr)}
 	}

@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1053,7 +1052,7 @@ func refuseNestedCaptainLaunch(parentHome string) error {
 // It validates provenance, resolves the harness, creates a new window via
 // the session backend, sends a shell-safe launch script, then writes task
 // meta with kind=captain and endpoint metadata only after launch succeeds.
-func Launch(captainHome, parentHome string) error {
+func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	if err := refuseNestedCaptainLaunch(parentHome); err != nil {
 		return err
 	}
@@ -1082,9 +1081,8 @@ func Launch(captainHome, parentHome string) error {
 		return err
 	}
 
-	bk, bkName, err := newSessionBackend(parentHome)
-	if err != nil {
-		return fmt.Errorf("resolving session backend: %w", err)
+	if endpoint == nil {
+		return fmt.Errorf("captain launch endpoint capability is required")
 	}
 
 	markerID, err := ValidateProvenance(captainHome)
@@ -1096,56 +1094,41 @@ func Launch(captainHome, parentHome string) error {
 		return fmt.Errorf("canonicalizing captain home: %w", err)
 	}
 
-	containerLabel := hometag.WorkspaceTag(canonicalCaptainHome)
-	if hb, ok := bk.(*session.HerdrBackend); ok {
-		hb.Cwd = canonicalCaptainHome
-	}
-	windowID, err := bk.NewWindow(containerLabel, "mu-captain-"+markerID)
-	if err != nil {
-		return fmt.Errorf("creating captain window: %w", err)
-	}
-
 	binPath, err := lookPath(binName)
 	if err != nil {
-		bk.Teardown(windowID)
 		return fmt.Errorf("%s harness not found on PATH: %w", binName, err)
 	}
-
-	// Build and send shell-safe launch script.
 	cmdLine, err := launchCmd(binPath, args, canonicalCaptainHome, parentHome)
 	if err != nil {
-		bk.Teardown(windowID)
 		return fmt.Errorf("building launch script: %w", err)
 	}
-	if err := bk.SendKeys(windowID, cmdLine); err != nil {
-		bk.Teardown(windowID)
-		return fmt.Errorf("sending launch command: %w", err)
+	launched, err := endpoint.Launch(parentHome, LaunchRequest{ContainerLabel: hometag.WorkspaceTag(canonicalCaptainHome), WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome})
+	if err != nil {
+		return fmt.Errorf("launching captain endpoint: %w", err)
 	}
 
 	// Persist task meta only after successful launch.
 	meta := map[string]string{
 		"kind":    "captain",
 		"home":    canonicalCaptainHome,
-		"window":  windowID,
-		"backend": bkName,
+		"window":  launched.Window,
+		"backend": launched.Backend,
 		"harness": h,
 		"sm_id":   markerID,
 	}
 
-	if me, ok := bk.(session.BackendMetaExtras); ok {
-		for k, v := range me.MetaExtras() {
-			meta[k] = v
-		}
+	for k, v := range launched.Meta {
+		meta[k] = v
 	}
 
 	taskID := taskIDForCaptain(markerID)
 	if err := task.WriteMeta(parentHome, taskID, meta); err != nil {
-		bk.Teardown(windowID)
+		_ = endpoint.Cleanup(parentHome, launched)
 		return fmt.Errorf("writing captain task meta: %w", err)
 	}
 
 	fmt.Printf("Launched captain %s (window=%s, harness=%s) in %s\n",
-		markerID, windowID, binName, captainHome)
+		markerID, launched.Window, binName, captainHome)
 	return nil
 }
 
@@ -2132,7 +2115,15 @@ func removeNudgeMarker(parentHome, smID string) {
 // Order: lock, validate registry/provenance, flush send outbox, retry pending
 // nudges, safe ff, inheritance push, ownership-backed backend Alive check,
 // watcher status check, and reread nudge only if instruction surface advanced.
-func Converge(parentHome string, registered []Info, notification uplink.NotificationTransport, sender mailbox.BoundSender) (*ConvergeResult, error) {
+type ConvergeCapabilities struct {
+	Notification uplink.NotificationTransport
+	Mailbox      mailbox.BoundSender
+	Launch       LaunchEndpoint
+	Probe        ProbeEndpoint
+}
+
+func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (*ConvergeResult, error) {
+	notification, sender := caps.Notification, caps.Mailbox
 	if len(registered) > 0 && notification == nil {
 		return nil, fmt.Errorf("uplink notification transport capability is required")
 	}
@@ -2283,7 +2274,7 @@ func Converge(parentHome string, registered []Info, notification uplink.Notifica
 		}
 
 		// f. Liveness check + auto-recover.
-		alive, aliveErr := checkAliveViaBackend(parentHome, sm)
+		alive, aliveErr := checkAliveWithProbe(parentHome, sm, caps.Probe)
 		if aliveErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: aliveErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, aliveErr))
@@ -2299,7 +2290,7 @@ func Converge(parentHome string, registered []Info, notification uplink.Notifica
 			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
 			if launched {
 				// Launched-but-dead: auto-recover via Launch.
-				if lErr := Launch(sm.Home, parentHome); lErr != nil {
+				if lErr := Launch(sm.Home, parentHome, caps.Launch); lErr != nil {
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
 					errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
 				} else {
@@ -2466,7 +2457,7 @@ func (r *RecoverResult) StepsString() string {
 // recorded on the entry) and continues with the remaining captains. Seeded-but-never-
 // launched captains are reported but not launched. The sweep holds the converge lock so
 // it does not race with an in-flight converge.
-func Recover(parentHome string, registered []Info) (*RecoverResult, error) {
+func Recover(parentHome string, registered []Info, capabilities RecoverCapabilities) (*RecoverResult, error) {
 	res := &RecoverResult{}
 	if len(registered) == 0 {
 		return res, nil
@@ -2504,7 +2495,7 @@ func Recover(parentHome string, registered []Info) (*RecoverResult, error) {
 			continue
 		}
 
-		alive, aliveErr := checkAliveViaBackend(parentHome, sm)
+		alive, aliveErr := checkAliveWithProbe(parentHome, sm, capabilities.Probe)
 		if aliveErr != nil {
 			// Backend resolution failure: cannot prove liveness, cannot safely relaunch.
 			entry.Outcome = RecoverFailed
@@ -2535,7 +2526,7 @@ func Recover(parentHome string, registered []Info) (*RecoverResult, error) {
 		}
 
 		// Launched-but-dead: relaunch. Fail-closed on unknown harness inside Launch.
-		if lErr := Launch(sm.Home, parentHome); lErr != nil {
+		if lErr := Launch(sm.Home, parentHome, capabilities.Launch); lErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = lErr.Error()
 			res.Failed++
@@ -2551,7 +2542,7 @@ func Recover(parentHome string, registered []Info) (*RecoverResult, error) {
 // ProbeLiveness reports each registered captain as alive/dead/seeded/unknown without
 // mutating anything. Used by session-start to surface dead endpoints. Never relaunches.
 // Returns entries in registry order.
-func ProbeLiveness(parentHome string, registered []Info) []LivenessProbe {
+func ProbeLiveness(parentHome string, registered []Info, probe ProbeEndpoint) []LivenessProbe {
 	if len(registered) == 0 {
 		return nil
 	}
@@ -2569,7 +2560,16 @@ func ProbeLiveness(parentHome string, registered []Info) []LivenessProbe {
 			continue
 		}
 		// CaptainStatus: alive | dead | seeded | unknown.
-		p.Status = fleetCaptainStatus(parentHome, sm.ID, sm.Home)
+		alive, err := checkAliveWithProbe(parentHome, sm, probe)
+		if err != nil {
+			p.Status = "unknown"
+		} else if alive {
+			p.Status = "alive"
+		} else if _, metaErr := task.ReadMeta(parentHome, taskIDForCaptain(sm.ID)); metaErr != nil {
+			p.Status = "seeded"
+		} else {
+			p.Status = "dead"
+		}
 		probes = append(probes, p)
 	}
 	return probes
@@ -2582,73 +2582,31 @@ type LivenessProbe struct {
 	Status string // alive | dead | seeded | unknown
 }
 
-// fleetCaptainStatus is a package-level seam over fleet.CaptainStatus so this file does
-// not import fleet (avoid cycles). Wired by the CLI layer via SetFleetCaptainStatus.
-// Falls back to "unknown" when unwired.
-var fleetCaptainStatus = func(parentHome, captainID, homeDir string) string {
-	return "unknown"
-}
-
-// SetFleetCaptainStatus installs the fleet.CaptainStatus probe used by ProbeLiveness.
-// Called from the CLI layer (internal/cli) to avoid an import cycle.
-func SetFleetCaptainStatus(fn func(parentHome, captainID, homeDir string) string) {
-	fleetCaptainStatus = fn
-}
-
-// checkAliveViaBackend checks if a captain is alive using the session backend.
-// It reads task meta, validates kind/sm_id/home before use, and uses backend.Alive.
-// When the backend implements session.AgentAwareBackend, it uses CheckAgentAlive
-// so that panes without a registered agent are treated as "not alive" for
-// recovery purposes.
-func checkAliveViaBackend(parentHome string, sm Info) (bool, error) {
+// checkAliveWithProbe validates Captain endpoint metadata before probing.
+func checkAliveWithProbe(parentHome string, sm Info, probe ProbeEndpoint) (bool, error) {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
-		return false, nil // not yet launched
-	}
-
-	if meta["kind"] != "captain" {
 		return false, nil
 	}
-	if meta["sm_id"] != sm.ID {
+	if meta["kind"] != "captain" || meta["sm_id"] != sm.ID {
 		return false, nil
 	}
 	canonSM, err := canonicalHome(sm.Home)
 	if err != nil {
 		return false, fmt.Errorf("canonicalizing captain home: %w", err)
 	}
-	if meta["home"] != canonSM {
+	if meta["home"] != canonSM || meta["window"] == "" {
 		return false, nil
 	}
-
-	windowID := meta["window"]
-	if windowID == "" {
-		return false, nil
+	if probe == nil {
+		return false, fmt.Errorf("captain probe endpoint capability is required")
 	}
-
-	bk, _, bkErr := backendForTask(parentHome, meta)
-	if bkErr != nil {
-		return false, fmt.Errorf("resolving backend: %w", bkErr)
+	result, err := probe.Probe(parentHome, meta)
+	if err != nil {
+		return false, err
 	}
-
-	// Use agent-aware check when available.
-	if aaBk, ok := bk.(session.AgentAwareBackend); ok {
-		alive, agentAlive, aaErr := aaBk.CheckAgentAlive(windowID)
-		if aaErr != nil {
-			// Fail closed on backend errors (e.g. protocol mismatch).
-			// ErrPaneNotFound is NOT an error for recovery — it means the pane
-			// is confirmed absent, which is the same as the old binary Alive().
-			if errors.Is(aaErr, session.ErrPaneNotFound) {
-				return false, nil
-			}
-			return false, aaErr
-		}
-		// Pane exists but no registered agent → dead captain, return false
-		// so the caller (Recover/Converge) can take recovery action.
-		return alive && agentAlive, nil
-	}
-
-	return bk.Alive(windowID), nil
+	return result.PaneAlive && result.AgentAlive, nil
 }
 
 // instructionSurfaceDigest returns a deterministic digest of the tracked instruction

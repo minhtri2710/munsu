@@ -1324,7 +1324,7 @@ func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 		t.Fatal("test setup: parent-home should NOT exist before recover")
 	}
 
-	tx := &RecoverTransaction{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	sm := Info{ID: "state-only-sm", Home: captainHome}
 	res := tx.Recover(parent, sm)
 
@@ -1727,7 +1727,7 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
 
-	err := Launch(smHome, tmp)
+	err := Launch(smHome, tmp, testLaunchEndpoint{})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -1741,7 +1741,7 @@ func TestLaunch_RefusesCaptainRole(t *testing.T) {
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	Seed("test-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "captain")
-	err := Launch(smHome, tmp)
+	err := Launch(smHome, tmp, testLaunchEndpoint{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch other captains") {
 		t.Fatalf("Launch() error = %v, want nested-captain refusal", err)
 	}
@@ -1755,7 +1755,7 @@ func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 	smHome := filepath.Join(t.TempDir(), "child-sm")
 	Seed("child-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "")
-	err := Launch(smHome, parent)
+	err := Launch(smHome, parent, testLaunchEndpoint{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch another captain") {
 		t.Fatalf("Launch() error = %v, want parent-captain refusal", err)
 	}
@@ -1795,7 +1795,7 @@ func TestLaunch_FailsGracefullyOnLookPathFailure(t *testing.T) {
 		return "", os.ErrNotExist
 	}
 
-	err := Launch(smHome, tmp)
+	err := Launch(smHome, tmp, testLaunchEndpoint{})
 	if err == nil {
 		t.Fatal("expected error when harness binary not on PATH")
 	}
@@ -1859,7 +1859,7 @@ func TestLaunch_SessionBackedWithMeta(t *testing.T) {
 
 	// No launchCmd override — uses production buildLaunchScript.
 
-	err := Launch(smHome, tmp)
+	err := Launch(smHome, tmp, testLaunchEndpoint{})
 	if err != nil {
 		t.Fatalf("Launch() error: %v", err)
 	}
@@ -1967,7 +1967,7 @@ func TestLaunch_MetaOnlyAfterSuccess(t *testing.T) {
 
 	// No launchCmd override — uses production buildLaunchScript.
 
-	if err := Launch(smHome, tmp); err != nil {
+	if err := Launch(smHome, tmp, testLaunchEndpoint{}); err != nil {
 		t.Fatalf("Launch() error: %v", err)
 	}
 
@@ -2629,11 +2629,11 @@ func TestAcquireExclusiveLock_NoRemoveOnFailure(t *testing.T) {
 
 func TestConverge_EmptyRegistry(t *testing.T) {
 	parent := t.TempDir()
-	_, err := Converge(parent, nil, nil, nil)
+	_, err := Converge(parent, nil, ConvergeCapabilities{Notification: nil, Mailbox: nil})
 	if err != nil {
 		t.Fatalf("Converge(nil) error: %v", err)
 	}
-	_, err = Converge(parent, []Info{}, nil, nil)
+	_, err = Converge(parent, []Info{}, ConvergeCapabilities{Notification: nil, Mailbox: nil})
 	if err != nil {
 		t.Fatalf("Converge(empty) error: %v", err)
 	}
@@ -2644,7 +2644,7 @@ func TestConverge_RefusesUnmarkedHome(t *testing.T) {
 
 	_, err := Converge(parent, []Info{
 		{ID: "test-sm", Home: "/nonexistent"},
-	}, &captainNotificationTransport{acknowledged: true}, &captainTestMailboxSender{})
+	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -2678,7 +2678,7 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	_, err := Converge(parent, []Info{
 		{ID: "sm-alpha", Home: sm1},
 		{ID: "sm-beta", Home: sm2},
-	}, &captainNotificationTransport{acknowledged: true}, &captainTestMailboxSender{})
+	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 
 	// State-only homes skip safeFF gracefully; converge should succeed.
 	if err != nil {
@@ -2730,7 +2730,7 @@ func TestConverge_ReconcilesCaptainUplinkWithoutWatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Converge(parent, []Info{{ID: "sm-one", Home: captainHome}}, &captainNotificationTransport{acknowledged: true}, &captainTestMailboxSender{}); err != nil {
+	if _, err := Converge(parent, []Info{{ID: "sm-one", Home: captainHome}}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}}); err != nil {
 		t.Fatal(err)
 	}
 	if !uplink.HasAcceptedReport(captainHome, "captain:sm-one", "default") {
@@ -2755,7 +2755,7 @@ func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	// But registry says "wrong-id".
 	_, err := Converge(parent, []Info{
 		{ID: "wrong-id", Home: smHome},
-	}, &captainNotificationTransport{acknowledged: true}, &captainTestMailboxSender{})
+	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 	if err == nil {
 		t.Fatal("expected error for ID mismatch")
 	}
@@ -3072,7 +3072,7 @@ func seedCaptainForTest(t *testing.T, parent, id string) string {
 }
 
 func TestRecover_EmptyRegistry(t *testing.T) {
-	res, err := Recover(t.TempDir(), nil)
+	res, err := Recover(t.TempDir(), nil, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover(nil) error: %v", err)
 	}
@@ -3101,7 +3101,7 @@ func TestRecover_AliveCaptainNotRelaunched(t *testing.T) {
 		return "/usr/local/bin/pi", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "sm-alive", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "sm-alive", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3121,7 +3121,7 @@ func TestRecover_SeededCaptainNotLaunched(t *testing.T) {
 	smHome := seedCaptainForTest(t, parent, "sm-seeded")
 	// No task meta written → checkAliveViaBackend returns (false,nil) but launched=false.
 
-	res, err := Recover(parent, []Info{{ID: "sm-seeded", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "sm-seeded", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3165,7 +3165,7 @@ func TestRecover_DeadLaunchedRelaunches(t *testing.T) {
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
 
-	res, err := Recover(parent, []Info{{ID: "sm-dead", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "sm-dead", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3213,7 +3213,7 @@ func TestRecover_DeadLaunchedNoAgentRelaunches(t *testing.T) {
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
 
-	res, err := Recover(parent, []Info{{ID: "sm-agent-dead", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "sm-agent-dead", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3251,7 +3251,7 @@ func TestRecover_AliveWithAgentNotRelaunched(t *testing.T) {
 		return "/usr/local/bin/pi", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "sm-alive-agent", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "sm-alive-agent", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3282,7 +3282,7 @@ func TestRecover_UnknownHarnessFailsClosed(t *testing.T) {
 		return &fakeBackend{AliveFn: func(string) bool { return false }}, "herdr", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "sm-unknown", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "sm-unknown", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3303,7 +3303,7 @@ func TestRecover_BadProvenanceFailsEntry(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "sm-bad")
 	os.MkdirAll(smHome, 0755)
 
-	res, err := Recover(parent, []Info{{ID: "sm-bad", Home: smHome}})
+	res, err := Recover(parent, []Info{{ID: "sm-bad", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3330,25 +3330,21 @@ func TestRecoverResult_String(t *testing.T) {
 
 // --- ProbeLiveness tests ---
 
-func TestProbeLiveness_UsesFleetCaptainStatusSeam(t *testing.T) {
+func TestProbeLiveness_ReportsSeededWithoutMeta(t *testing.T) {
 	parent := t.TempDir()
 	smHome := seedCaptainForTest(t, parent, "sm-x")
 
-	orig := fleetCaptainStatus
-	defer func() { fleetCaptainStatus = orig }()
-	fleetCaptainStatus = func(_, _, _ string) string { return "dead" }
-
-	probes := ProbeLiveness(parent, []Info{{ID: "sm-x", Home: smHome}})
-	if len(probes) != 1 || probes[0].Status != "dead" {
-		t.Errorf("probes = %+v, want one dead", probes)
+	probes := ProbeLiveness(parent, []Info{{ID: "sm-x", Home: smHome}}, &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}})
+	if len(probes) != 1 || probes[0].Status != "seeded" {
+		t.Errorf("probes = %+v, want one seeded", probes)
 	}
 }
 
 func TestProbeLiveness_EmptyAndUnknown(t *testing.T) {
-	if ProbeLiveness(t.TempDir(), nil) != nil {
+	if ProbeLiveness(t.TempDir(), nil, nil) != nil {
 		t.Error("expected nil for empty registry")
 	}
-	probes := ProbeLiveness(t.TempDir(), []Info{{ID: "x", Home: ""}})
+	probes := ProbeLiveness(t.TempDir(), []Info{{ID: "x", Home: ""}}, nil)
 	if len(probes) != 1 || probes[0].Status != "unknown" {
 		t.Errorf("probes = %+v, want unknown for empty home", probes)
 	}

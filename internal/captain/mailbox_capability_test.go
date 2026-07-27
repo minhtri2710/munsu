@@ -51,7 +51,7 @@ func baseIdentity(home string) string {
 
 func TestConvergeRejectsNilMailboxSender(t *testing.T) {
 	parent := t.TempDir()
-	_, err := Converge(parent, []Info{{ID: "captain", Home: t.TempDir()}}, &captainNotificationTransport{acknowledged: true}, nil)
+	_, err := Converge(parent, []Info{{ID: "captain", Home: t.TempDir()}}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}})
 	if err == nil || !strings.Contains(err.Error(), "captain mailbox sender capability is required") {
 		t.Fatalf("error = %v", err)
 	}

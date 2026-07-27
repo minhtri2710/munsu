@@ -44,7 +44,7 @@ func TestRecoverTransaction_FullOk(t *testing.T) {
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
 
-	tx := &RecoverTransaction{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(parent, Info{ID: "sm-ok", Home: smHome})
 
 	if len(res.Steps) != 11 {
@@ -76,7 +76,7 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "sm-bad")
 	os.MkdirAll(smHome, 0755)
 
-	tx := &RecoverTransaction{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(parent, Info{ID: "sm-bad", Home: smHome})
 
 	if len(res.Steps) != 11 {
@@ -97,7 +97,7 @@ func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
 }
 
 func TestRecoverTransaction_EmptyHomeFailed(t *testing.T) {
-	tx := &RecoverTransaction{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	res := tx.Recover(t.TempDir(), Info{ID: "empty", Home: ""})
 
 	if len(res.Steps) != 11 {
@@ -147,7 +147,7 @@ func TestRecoverTransaction_DeadLaunchedRelaunches(t *testing.T) {
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
 
-	tx := &RecoverTransaction{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}}}
 	res := tx.Recover(parent, Info{ID: "sm-dead", Home: smHome})
 
 	if len(res.Steps) != 11 {
