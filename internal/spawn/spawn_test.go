@@ -1184,10 +1184,8 @@ func TestBootstrapWindowExportsSoldierRole(t *testing.T) {
 		launchBin:  "pi",
 		launchArgs: []string{"--model", "gpt-5", "--thinking", "high", "test prompt"},
 		windowID:   "win-1",
-		bk: &fakeBackend{sendKeys: func(windowID, text string) error {
-			sent = text
-			return nil
-		}},
+		endpoints:  fakeEndpointCapabilities{backend: &fakeBackend{sendKeys: func(windowID, text string) error { sent = text; return nil }}},
+		endpoint:   CreatedEndpoint{Backend: "test", Handle: "win-1"},
 	}
 	r.bootstrapWindow()
 
@@ -1264,9 +1262,7 @@ func TestWaitForHarnessReady_FailurePatternDetected(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		harness:  "claude",
-		bk:       fake,
-		windowID: "win-1",
+		harness: "claude", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 	}
 	err := r.waitForHarnessReady(5)
 	if err == nil {
@@ -1284,9 +1280,7 @@ func TestWaitForHarnessReady_ReadyPatternSuccess(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		harness:  "pi",
-		bk:       fake,
-		windowID: "win-1",
+		harness: "pi", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 	}
 	if err := r.waitForHarnessReady(5); err != nil {
 		t.Fatalf("expected ready success, got: %v", err)
@@ -1300,9 +1294,7 @@ func TestWaitForHarnessReady_Timeout(t *testing.T) {
 		},
 	}
 	r := &Runner{
-		harness:  "pi",
-		bk:       fake,
-		windowID: "win-1",
+		harness: "pi", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 	}
 	err := r.waitForHarnessReady(2)
 	if err == nil {
@@ -1328,10 +1320,7 @@ func TestWaitAndInjectBrief_FailurePatternTearsDown(t *testing.T) {
 	dataDir := filepath.Join(homeDir, "data", "handshake-test")
 	_ = os.MkdirAll(dataDir, 0755)
 	r := &Runner{
-		homeDir:   homeDir,
-		harness:   "codex",
-		bk:        fake,
-		windowID:  "win-1",
+		homeDir: homeDir, harness: "codex", endpoints: fakeEndpointCapabilities{backend: fake}, endpoint: CreatedEndpoint{Backend: "test", Handle: "win-1"}, windowID: "win-1",
 		briefData: []byte("# test brief"),
 	}
 	r.args.ID = "handshake-test"
@@ -1651,10 +1640,10 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 // guard for the remove-srcwalk-integration task.
 func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 	tests := []struct {
-		name       string
-		kind       string
-		wantGhAxi  bool
-		wantQmd    bool
+		name      string
+		kind      string
+		wantGhAxi bool
+		wantQmd   bool
 	}{
 		{name: "ship", kind: "ship", wantGhAxi: true, wantQmd: false},
 		{name: "scout", kind: "scout", wantGhAxi: false, wantQmd: true},

@@ -16,7 +16,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/worktree"
@@ -37,8 +36,8 @@ type Runner struct {
 	model         string
 	effort        string
 	launchCmd     string
-	bk            session.Backend
-	bkName        string
+	endpoints     EndpointCapabilities
+	endpoint      CreatedEndpoint
 	briefData     []byte
 	windowID      string
 	spawnRole     string
@@ -52,7 +51,7 @@ type Runner struct {
 
 // NewRunner creates a Runner for the given Args.
 func NewRunner(args Args) *Runner {
-	return &Runner{args: args}
+	return &Runner{args: args, endpoints: newSessionEndpoints(args.Session)}
 }
 
 // Run executes the full spawn orchestration sequence.
@@ -122,9 +121,13 @@ func (r *Runner) Run() (string, error) {
 	if err := r.waitAndInjectBrief(); err != nil {
 		return "", err
 	}
-	if !r.bk.Alive(r.windowID) {
-		_ = r.bk.Teardown(r.windowID)
-		return "", fmt.Errorf("created pane %q failed verification on backend %q before persisting state", r.windowID, r.bkName)
+	status, err := r.endpoints.Probe(r.endpoint)
+	if err != nil || !status.Alive {
+		_ = r.endpoints.Dispose(r.endpoint)
+		if err != nil {
+			return "", fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
+		}
+		return "", fmt.Errorf("created pane %q failed verification on backend %q before persisting state", r.windowID, r.endpoint.Backend)
 	}
 	r.writeTaskMeta()
 	r.appendSpawnedStatus()
@@ -612,35 +615,19 @@ func labelComponent(value string) string {
 
 // Phase 11: createSession creates a session window for the soldier.
 func (r *Runner) createSession() error {
-	var bk session.Backend
-	var bkName string
-	if r.args.Session != nil {
-		bk = r.args.Session
-		bkName = "test"
-	} else {
-		var err error
-		bk, bkName, err = session.Resolve(r.homeDir, r.args.Backend)
-		if err != nil {
-			return err
-		}
-	}
-
-	// If herdr backend, set Cwd so NewWindow can pass --cwd.
-	if hb, ok := bk.(*session.HerdrBackend); ok && r.wtPath != "" {
-		hb.Cwd = r.wtPath
-	}
-
-	windowID, err := bk.NewWindow(hometag.WorkspaceTag(r.homeDir), soldierTabLabel(r.args.ProjectName, r.args.ID))
+	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.args.Backend, WorkspaceName: hometag.WorkspaceTag(r.homeDir), TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
 	if err != nil {
-		return fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", bkName, err)
+		return err
 	}
-	if !bk.Alive(windowID) {
-		_ = bk.Teardown(windowID)
-		return fmt.Errorf("created pane %q failed verification on backend %q", windowID, bkName)
+	status, err := r.endpoints.Probe(ep)
+	if err != nil || !status.Alive {
+		_ = r.endpoints.Dispose(ep)
+		if err != nil {
+			return fmt.Errorf("verifying created pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
+		}
+		return fmt.Errorf("created pane %q failed verification on backend %q", ep.Handle, ep.Backend)
 	}
-	r.bk = bk
-	r.bkName = bkName
-	r.windowID = windowID
+	r.endpoint, r.windowID = ep, ep.Handle
 	return nil
 }
 
@@ -818,7 +805,7 @@ func (r *Runner) bootstrapWindow() {
 		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 	}
 	fullCmd := fmt.Sprintf("bash %s", shQuote(launchScript))
-	if sendErr := r.bk.SendKeys(r.windowID, fullCmd); sendErr != nil {
+	if sendErr := r.endpoints.Submit(r.endpoint, fullCmd); sendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
 	}
 }
@@ -851,13 +838,13 @@ func (r *Runner) waitAndInjectBrief() error {
 	// The prompt was already delivered as a launch argument. We still wait
 	// for harness readiness to catch launch failures early.
 	if err := r.waitForHarnessReady(60); err != nil {
-		capture, _ := r.bk.Capture(r.windowID, 60)
+		capture, _ := r.endpoints.Capture(r.endpoint, 60)
 		_ = task.AppendStatus(r.homeDir, r.args.ID, "failed: harness handshake")
 		dataDir := filepath.Join(r.homeDir, "data", r.args.ID)
 		_ = os.MkdirAll(dataDir, 0755)
 		failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", r.harness, err, capture)
 		_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
-		_ = r.bk.Teardown(r.windowID)
+		_ = r.endpoints.Dispose(r.endpoint)
 		return fmt.Errorf("harness %q handshake failed: %w", r.harness, err)
 	}
 	// No brief injection needed — the complete prompt was already provided
@@ -877,19 +864,23 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 	for {
 		select {
 		case <-deadline:
-			capture, _ := r.bk.Capture(r.windowID, 60)
+			capture, _ := r.endpoints.Capture(r.endpoint, 60)
 			return fmt.Errorf("harness not ready after %ds: last capture: %q", timeoutSec, capture)
 		case <-ticker.C:
-			if !r.bk.Alive(r.windowID) {
+			status, probeErr := r.endpoints.Probe(r.endpoint)
+			if probeErr != nil {
+				return fmt.Errorf("probing bound endpoint: %w", probeErr)
+			}
+			if !status.Alive {
 				return fmt.Errorf("window died while waiting for ready")
 			}
-			capture, err := r.bk.Capture(r.windowID, 60)
+			capture, err := r.endpoints.Capture(r.endpoint, 60)
 			if err != nil {
 				continue
 			}
 			// Dialog handlers: auto-answer trust prompts before checking ready patterns.
 			if !trustHandled && harness.IsTrustPrompt(capture, r.harness) {
-				_ = r.bk.SendKeys(r.windowID, "")
+				_ = r.endpoints.Submit(r.endpoint, "")
 				trustHandled = true
 				continue
 			}
@@ -916,7 +907,7 @@ func (r *Runner) writeTaskMeta() {
 		"project":  r.args.ProjectName,
 		"projpath": r.projPath,
 		"harness":  r.harness,
-		"backend":  r.bkName,
+		"backend":  r.endpoint.Backend,
 		"kind":     r.args.Kind,
 		"mode":     r.effectiveMode,
 		"yolo":     yoloVal,
@@ -928,11 +919,8 @@ func (r *Runner) writeTaskMeta() {
 		meta["effort"] = r.effort
 	}
 
-	// Backend extras: write herdr_* fields when the backend provides them.
-	if ex, ok := r.bk.(session.BackendMetaExtras); ok {
-		for k, v := range ex.MetaExtras() {
-			meta[k] = v
-		}
+	for k, v := range r.endpoint.Metadata {
+		meta[k] = v
 	}
 
 	if err := task.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
