@@ -12,4 +12,5 @@ type ProbeEndpoint interface {
 type RecoverCapabilities struct {
 	Launch LaunchEndpoint
 	Probe  ProbeEndpoint
+	Nudge  NudgeEndpoint
 }

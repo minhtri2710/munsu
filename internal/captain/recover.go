@@ -349,7 +349,7 @@ func (tx *RecoverTransaction) stepNudgeRetry(parentHome string, sm Info, configO
 		return StepResult{Name: "nudge-retry", State: StepSkipped,
 			Detail: "skipped: config validation failed"}
 	}
-	if err := retryNudge(parentHome, sm); err != nil {
+	if err := retryNudge(parentHome, sm, tx.Capabilities.Nudge); err != nil {
 		return StepResult{Name: "nudge-retry", State: StepFailed,
 			Detail: err.Error()}
 	}

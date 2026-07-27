@@ -2,6 +2,9 @@ package captain
 
 import "github.com/minhtri2710/munsu/internal/session"
 
+var backendForTask = session.BackendForTask
+var newSessionBackend = func(home string) (session.Backend, string, error) { return session.Resolve(home, "") }
+
 type fakeSubmitPromptBackend struct {
 	alive, acknowledged bool
 	lastText            string
@@ -74,3 +77,21 @@ func (p *testProbeEndpoint) Probe(string, map[string]string) (ProbeResult, error
 	p.calls++
 	return result, p.err
 }
+
+type testNudgeEndpoint struct {
+	result NudgeResult
+	err    error
+	calls  int
+}
+
+func (n *testNudgeEndpoint) Nudge(string, map[string]string, string) (NudgeResult, error) {
+	n.calls++
+	return n.result, n.err
+}
+
+type testRetireEndpoint struct {
+	err   error
+	calls int
+}
+
+func (r *testRetireEndpoint) Retire(string, map[string]string) error { r.calls++; return r.err }

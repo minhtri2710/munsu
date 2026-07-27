@@ -195,7 +195,7 @@ func TestBlocked_RetireRefusesInFlightSoldiers(t *testing.T) {
 		[]byte("kind=ship\nwindow=w\n"), 0644)
 
 	t.Run("refuses without force", func(t *testing.T) {
-		err := Retire(smHome, parent, false, false)
+		err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 		if err == nil {
 			t.Fatal("expected refuse for in-flight soldiers")
 		}
@@ -210,7 +210,7 @@ func TestBlocked_RetireRefusesInFlightSoldiers(t *testing.T) {
 	})
 
 	t.Run("force allows despite in-flight soldiers", func(t *testing.T) {
-		if err := Retire(smHome, parent, false, true); err != nil {
+		if err := Retire(smHome, parent, false, true, &testRetireEndpoint{}); err != nil {
 			t.Fatalf("force retire: %v", err)
 		}
 		mates, _ := List(parent)
@@ -340,7 +340,7 @@ func TestRetries_RecoverNoOpOnAliveCaptain(t *testing.T) {
 		return &fakeBackend{AliveFn: func(string) bool { return true }}, "herdr", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
+	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestRetries_RecoverSkipSeededCaptain(t *testing.T) {
 	smHome := seedCaptainForTest(t, parent, "test-sm")
 	// No task meta written => seeded but not launched.
 
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
+	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover: %v", err)
 	}

@@ -62,7 +62,7 @@ Flags for worktree provisioning:
 		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from data/captains.md. Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return captain.Retire(args[0], ctx.Home, false, retireForce)
+			return captain.Retire(args[0], ctx.Home, false, retireForce, newSessionRetireEndpoint())
 		}),
 	}
 	retireCmd.Flags().BoolVar(&retireForce, "force", false, "Retire even if captain home has in-flight soldiers")
@@ -217,7 +217,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := captain.Converge(ctx.Home, registered, captain.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint()})
+			result, convergeErr := captain.Converge(ctx.Home, registered, captain.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
@@ -254,7 +254,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if target == nil {
 				return fmt.Errorf("no registered captain with id %q", args[0])
 			}
-			tx := &captain.RecoverTransaction{Capabilities: captain.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint()}}
+			tx := &captain.RecoverTransaction{Capabilities: captain.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()}}
 			res := tx.Recover(ctx.Home, *target)
 			fmt.Println(res.StepsString())
 			return nil
@@ -283,7 +283,7 @@ func captainLivenessForSession(home string, recover bool) session.CaptainLivenes
 	if !recover {
 		return res
 	}
-	rr, _ := captain.Recover(home, registered, captain.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint()})
+	rr, _ := captain.Recover(home, registered, captain.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 	if rr != nil {
 		res.Recover = &session.CaptainRecoverSummary{
 			Relaunched: rr.Relaunched,

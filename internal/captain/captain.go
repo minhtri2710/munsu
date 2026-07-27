@@ -19,7 +19,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/uplink"
 )
@@ -202,16 +201,6 @@ func CaptainIDFromTask(taskID string, meta map[string]string) string {
 // --- Injectable seams for testing ---
 
 var lookPath = exec.LookPath
-
-// backendForTask resolves a session backend for task meta.
-// Overridden in tests to inject a fake backend.
-var backendForTask = session.BackendForTask
-
-// newSessionBackend resolves and returns a session backend for the parent home.
-// Override in tests to inject a fake backend.
-var newSessionBackend = func(parentHome string) (session.Backend, string, error) {
-	return session.Resolve(parentHome, "")
-}
 
 // convergeLockAcquire acquires the converge lock exclusively.
 // Override in tests to avoid fd leaks.
@@ -1171,7 +1160,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 // (state/*.meta with kind ship|scout). force skips that gate.
 // removeHome=true removes the captain home directory after teardown.
 // On success, the captain is unregistered from parent data/captains.md.
-func Retire(captainHome, parentHome string, removeHome, force bool) error {
+func Retire(captainHome, parentHome string, removeHome, force bool, endpoint RetireEndpoint) error {
 	markerID, err := ValidateProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("refusing to retire unowned home %s: %w", captainHome, err)
@@ -1212,27 +1201,13 @@ func Retire(captainHome, parentHome string, removeHome, force bool) error {
 			return fmt.Errorf("refusing to retire: no window in task meta for captain %s", markerID)
 		}
 
-		bk, _, bkErr := session.BackendForTask(parentHome, meta)
-		if bkErr != nil {
-			return fmt.Errorf("refusing to retire: cannot resolve backend for captain %s: %w", markerID, bkErr)
+		if endpoint == nil {
+			return fmt.Errorf("captain retire endpoint capability is required")
+		}
+		if retireErr := endpoint.Retire(parentHome, meta); retireErr != nil {
+			return fmt.Errorf("failed to retire captain %s endpoint: %w", markerID, retireErr)
 		}
 
-		if bk.Alive(windowID) {
-			if sendErr := bk.SendKeys(windowID, "/quit"); sendErr != nil {
-				return fmt.Errorf("failed to send /quit to captain %s: %w", markerID, sendErr)
-			}
-			fmt.Printf("  sent /quit to %s\n", markerID)
-			time.Sleep(500 * time.Millisecond)
-			if bk.Alive(windowID) {
-				if tdErr := bk.Teardown(windowID); tdErr != nil {
-					return fmt.Errorf("failed to teardown captain %s window: %w", markerID, tdErr)
-				}
-			}
-		} else {
-			if tdErr := bk.Teardown(windowID); tdErr != nil {
-				return fmt.Errorf("failed to teardown captain %s window: %w", markerID, tdErr)
-			}
-		}
 		// Clear parent task meta so husk prune and fleet snapshot stop treating this
 		// captain as live. Status log is retained as historical return-channel evidence.
 		metaPath := filepath.Join(parentHome, "state", taskID+".meta")
@@ -2120,6 +2095,7 @@ type ConvergeCapabilities struct {
 	Mailbox      mailbox.BoundSender
 	Launch       LaunchEndpoint
 	Probe        ProbeEndpoint
+	Nudge        NudgeEndpoint
 }
 
 func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (*ConvergeResult, error) {
@@ -2176,7 +2152,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 
 		// c. Nudge retry.
-		if nudgeErr := retryNudge(parentHome, sm); nudgeErr != nil {
+		if nudgeErr := retryNudge(parentHome, sm, caps.Nudge); nudgeErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": nudge retry", Status: ConvergeFailed, Detail: nudgeErr.Error()})
 			errs = append(errs, nudgeErr.Error())
 		} else {
@@ -2215,7 +2191,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 				} else {
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": instruction surface tracking", Status: ConvergeOK, Detail: "nudge written"})
 					// If alive, immediately send.
-					if err := sendNudge(parentHome, sm); err != nil {
+					if err := sendNudge(parentHome, sm, caps.Nudge); err != nil {
 						errs = append(errs, err.Error())
 					}
 				}
@@ -2635,7 +2611,7 @@ func hasSurfaceDiff(home, before, after string) bool {
 // identity, sends the message, removes the pending marker, and
 // updates applied instruction identity only after success.
 // On failure, the marker remains.
-func sendNudge(parentHome string, sm Info) error {
+func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
@@ -2660,15 +2636,6 @@ func sendNudge(parentHome string, sm Info) error {
 	windowID := meta["window"]
 	if windowID == "" {
 		return fmt.Errorf("%s: no window in meta — marker remains", sm.ID)
-	}
-
-	bk, _, bkErr := session.BackendForTask(parentHome, meta)
-	if bkErr != nil {
-		return fmt.Errorf("%s: cannot resolve backend — marker remains: %v", sm.ID, bkErr)
-	}
-
-	if !bk.Alive(windowID) {
-		return fmt.Errorf("%s: endpoint not alive — marker remains", sm.ID)
 	}
 
 	// Read pending marker to validate content before sending.
@@ -2703,9 +2670,14 @@ func sendNudge(parentHome string, sm Info) error {
 		return fmt.Errorf("%s: marker message %q does not match %q — marker remains", sm.ID, marker["message"], expectedMessage)
 	}
 
-	// Send one short re-read message via typed prompt submission. Never send charter content.
-	result := session.SubmitPrompt(bk, windowID, "/re-read-agents")
-	if !result.Acknowledged() {
+	if endpoint == nil {
+		return fmt.Errorf("captain nudge endpoint capability is required")
+	}
+	result, err := endpoint.Nudge(parentHome, meta, "/re-read-agents")
+	if err != nil {
+		return fmt.Errorf("%s: nudge failed — marker remains: %v", sm.ID, err)
+	}
+	if !result.Acknowledged {
 		return fmt.Errorf("%s: send not acknowledged (status=%s) — marker remains", sm.ID, result.Status)
 	}
 
@@ -2728,7 +2700,7 @@ func sendNudge(parentHome string, sm Info) error {
 // to resolve the endpoint and send the re-read message. On success,
 // the marker is removed and applied instruction identity updated.
 // On failure, the marker remains for the next converge cycle.
-func retryNudge(parentHome string, sm Info) error {
+func retryNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	marker, err := readNudgeMarker(parentHome, sm.ID)
 	if err != nil {
 		return fmt.Errorf("%s: reading nudge marker: %v", sm.ID, err)
@@ -2738,7 +2710,7 @@ func retryNudge(parentHome string, sm Info) error {
 	}
 	// Attempt to send. If successful, marker is removed by sendNudge.
 	// On failure, marker remains.
-	return sendNudge(parentHome, sm)
+	return sendNudge(parentHome, sm, endpoint)
 }
 
 // printGitContentDiff prints the content diff for key files between two commits.

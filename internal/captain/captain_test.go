@@ -1324,7 +1324,7 @@ func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 		t.Fatal("test setup: parent-home should NOT exist before recover")
 	}
 
-	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}}}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}}}
 	sm := Info{ID: "state-only-sm", Home: captainHome}
 	res := tx.Recover(parent, sm)
 
@@ -2137,7 +2137,7 @@ func TestRetire_RefusesUnmarkedHome(t *testing.T) {
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 
-	err := Retire(smHome, tmp, false, false)
+	err := Retire(smHome, tmp, false, false, &testRetireEndpoint{})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -2156,7 +2156,7 @@ func TestRetire_RefusesUnmarkedWithRemoveHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := Retire(smHome, tmp, true, false)
+	err := Retire(smHome, tmp, true, false, &testRetireEndpoint{})
 	if err == nil {
 		t.Fatal("expected ownership refusal for unmarked destructive retire")
 	}
@@ -2172,7 +2172,7 @@ func TestRetire_RemoveHome(t *testing.T) {
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := Retire(smHome, parent, true, false); err != nil {
+	if err := Retire(smHome, parent, true, false, &testRetireEndpoint{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2188,7 +2188,7 @@ func TestRetire_KeepHome(t *testing.T) {
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := Retire(smHome, parent, false, false); err != nil {
+	if err := Retire(smHome, parent, false, false, &testRetireEndpoint{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2199,7 +2199,7 @@ func TestRetire_KeepHome(t *testing.T) {
 
 func TestRetire_NonexistentHomeRefused(t *testing.T) {
 	parent := t.TempDir()
-	if err := Retire("/nonexistent/sm", parent, true, false); err == nil {
+	if err := Retire("/nonexistent/sm", parent, true, false, &testRetireEndpoint{}); err == nil {
 		t.Fatal("expected nonexistent unowned home refusal")
 	}
 }
@@ -2218,7 +2218,7 @@ func TestRetire_RefusesWrongKindMeta(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
 		[]byte("kind=not-captain\nsm_id=test-sm\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
 
-	err := Retire(smHome, parent, false, false)
+	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
 		t.Fatal("expected error for wrong meta kind")
 	}
@@ -2239,7 +2239,7 @@ func TestRetire_RefusesMismatchedID(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
 		[]byte("kind=captain\nsm_id=wrong-id\nhome="+smHome+"\nwindow=w\nbackend=tmux\n"), 0644)
 
-	err := Retire(smHome, parent, false, false)
+	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
 		t.Fatal("expected error for mismatched sm_id")
 	}
@@ -2260,7 +2260,7 @@ func TestRetire_RefusesMismatchedHome(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "state", "captain:test-sm.meta"),
 		[]byte("kind=captain\nsm_id=test-sm\nhome=/some/other/path\nwindow=w\nbackend=tmux\n"), 0644)
 
-	err := Retire(smHome, parent, false, false)
+	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
 		t.Fatal("expected error for mismatched home")
 	}
@@ -2902,7 +2902,7 @@ func TestRetire_UnregistersFromRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Retire(smHome, parent, false, false); err != nil {
+	if err := Retire(smHome, parent, false, false, &testRetireEndpoint{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2928,7 +2928,7 @@ func TestRetire_RefusesInFlightWithoutForce(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("kind=ship\nwindow=w\n"), 0644)
 
-	err := Retire(smHome, parent, false, false)
+	err := Retire(smHome, parent, false, false, &testRetireEndpoint{})
 	if err == nil {
 		t.Fatal("expected refuse for in-flight soldiers")
 	}
@@ -2957,7 +2957,7 @@ func TestRetire_ForceAllowsInFlight(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(smHome, "state", "soldier-1.meta"), []byte("kind=ship\nwindow=w\n"), 0644)
 
-	if err := Retire(smHome, parent, false, true); err != nil {
+	if err := Retire(smHome, parent, false, true, &testRetireEndpoint{}); err != nil {
 		t.Fatal(err)
 	}
 	mates, err := List(parent)
@@ -3072,7 +3072,7 @@ func seedCaptainForTest(t *testing.T, parent, id string) string {
 }
 
 func TestRecover_EmptyRegistry(t *testing.T) {
-	res, err := Recover(t.TempDir(), nil, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
+	res, err := Recover(t.TempDir(), nil, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover(nil) error: %v", err)
 	}
@@ -3101,7 +3101,7 @@ func TestRecover_AliveCaptainNotRelaunched(t *testing.T) {
 		return "/usr/local/bin/pi", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "sm-alive", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
+	res, err := Recover(parent, []Info{{ID: "sm-alive", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3121,7 +3121,7 @@ func TestRecover_SeededCaptainNotLaunched(t *testing.T) {
 	smHome := seedCaptainForTest(t, parent, "sm-seeded")
 	// No task meta written → checkAliveViaBackend returns (false,nil) but launched=false.
 
-	res, err := Recover(parent, []Info{{ID: "sm-seeded", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
+	res, err := Recover(parent, []Info{{ID: "sm-seeded", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3165,7 +3165,7 @@ func TestRecover_DeadLaunchedRelaunches(t *testing.T) {
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
 
-	res, err := Recover(parent, []Info{{ID: "sm-dead", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
+	res, err := Recover(parent, []Info{{ID: "sm-dead", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3213,7 +3213,7 @@ func TestRecover_DeadLaunchedNoAgentRelaunches(t *testing.T) {
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
 
-	res, err := Recover(parent, []Info{{ID: "sm-agent-dead", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
+	res, err := Recover(parent, []Info{{ID: "sm-agent-dead", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3251,7 +3251,7 @@ func TestRecover_AliveWithAgentNotRelaunched(t *testing.T) {
 		return "/usr/local/bin/pi", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "sm-alive-agent", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
+	res, err := Recover(parent, []Info{{ID: "sm-alive-agent", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3282,7 +3282,7 @@ func TestRecover_UnknownHarnessFailsClosed(t *testing.T) {
 		return &fakeBackend{AliveFn: func(string) bool { return false }}, "herdr", nil
 	}
 
-	res, err := Recover(parent, []Info{{ID: "sm-unknown", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
+	res, err := Recover(parent, []Info{{ID: "sm-unknown", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: false, AgentAlive: false}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}
@@ -3303,7 +3303,7 @@ func TestRecover_BadProvenanceFailsEntry(t *testing.T) {
 	smHome := filepath.Join(parent, "captains", "sm-bad")
 	os.MkdirAll(smHome, 0755)
 
-	res, err := Recover(parent, []Info{{ID: "sm-bad", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
+	res, err := Recover(parent, []Info{{ID: "sm-bad", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
 	if err != nil {
 		t.Fatalf("Recover error: %v", err)
 	}

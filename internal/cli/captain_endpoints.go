@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/session"
@@ -54,21 +55,89 @@ func newSessionProbeEndpoint() sessionProbeEndpoint {
 	return sessionProbeEndpoint{resolve: session.BackendForTask}
 }
 
-func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (captain.ProbeResult, error) {
-	bk, name, err := e.resolve(home, meta)
+func ownedCaptainBackend(home string, meta map[string]string, resolve func(string, map[string]string) (session.Backend, string, error)) (session.Backend, error) {
+	bk, name, err := resolve(home, meta)
 	if err != nil {
-		return captain.ProbeResult{}, err
+		return nil, err
 	}
 	if expected := meta["backend"]; expected != "" && name != expected {
-		return captain.ProbeResult{}, errors.New("captain backend ownership mismatch")
+		return nil, errors.New("captain backend ownership mismatch")
 	}
+	if name == "herdr" && meta["herdr_session"] != "" {
+		sessionID, _ := session.ParseWindow(meta["window"])
+		if sessionID != "" && sessionID != meta["herdr_session"] {
+			return nil, errors.New("herdr session ownership mismatch")
+		}
+	}
+	return bk, nil
+}
+
+func probeCaptainBackend(bk session.Backend, window string) (captain.ProbeResult, error) {
 	if aware, ok := bk.(session.AgentAwareBackend); ok {
-		pane, agent, err := aware.CheckAgentAlive(meta["window"])
+		pane, agent, err := aware.CheckAgentAlive(window)
 		if errors.Is(err, session.ErrPaneNotFound) {
 			return captain.ProbeResult{}, nil
 		}
 		return captain.ProbeResult{PaneAlive: pane, AgentAlive: agent}, err
 	}
-	alive := bk.Alive(meta["window"])
+	alive := bk.Alive(window)
 	return captain.ProbeResult{PaneAlive: alive, AgentAlive: alive}, nil
+}
+
+func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (captain.ProbeResult, error) {
+	bk, err := ownedCaptainBackend(home, meta, e.resolve)
+	if err != nil {
+		return captain.ProbeResult{}, err
+	}
+	return probeCaptainBackend(bk, meta["window"])
+}
+
+type sessionNudgeEndpoint struct {
+	resolve func(string, map[string]string) (session.Backend, string, error)
+}
+
+func newSessionNudgeEndpoint() sessionNudgeEndpoint {
+	return sessionNudgeEndpoint{resolve: session.BackendForTask}
+}
+
+func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload string) (captain.NudgeResult, error) {
+	bk, err := ownedCaptainBackend(home, meta, e.resolve)
+	if err != nil {
+		return captain.NudgeResult{}, err
+	}
+	result, err := probeCaptainBackend(bk, meta["window"])
+	if err != nil {
+		return captain.NudgeResult{}, err
+	}
+	if !result.PaneAlive || !result.AgentAlive {
+		return captain.NudgeResult{Status: "unavailable"}, nil
+	}
+	prompt := session.SubmitPrompt(bk, meta["window"], payload)
+	return captain.NudgeResult{Status: string(prompt.Status), Detail: prompt.Detail, Acknowledged: prompt.Acknowledged()}, prompt.Err
+}
+
+type sessionRetireEndpoint struct {
+	resolve func(string, map[string]string) (session.Backend, string, error)
+}
+
+func newSessionRetireEndpoint() sessionRetireEndpoint {
+	return sessionRetireEndpoint{resolve: session.BackendForTask}
+}
+
+func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error {
+	bk, err := ownedCaptainBackend(home, meta, e.resolve)
+	if err != nil {
+		return err
+	}
+	window := meta["window"]
+	if bk.Alive(window) {
+		if err := bk.SendKeys(window, "/quit"); err != nil {
+			return err
+		}
+		time.Sleep(500 * time.Millisecond)
+		if !bk.Alive(window) {
+			return nil
+		}
+	}
+	return bk.Teardown(window)
 }
