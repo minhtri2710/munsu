@@ -2132,9 +2132,12 @@ func removeNudgeMarker(parentHome, smID string) {
 // Order: lock, validate registry/provenance, flush send outbox, retry pending
 // nudges, safe ff, inheritance push, ownership-backed backend Alive check,
 // watcher status check, and reread nudge only if instruction surface advanced.
-func Converge(parentHome string, registered []Info, notification uplink.NotificationTransport) (*ConvergeResult, error) {
+func Converge(parentHome string, registered []Info, notification uplink.NotificationTransport, sender mailbox.BoundSender) (*ConvergeResult, error) {
 	if len(registered) > 0 && notification == nil {
 		return nil, fmt.Errorf("uplink notification transport capability is required")
+	}
+	if len(registered) > 0 && sender == nil {
+		return nil, fmt.Errorf("captain mailbox sender capability is required")
 	}
 	release, err := convergeLockAcquire(parentHome)
 	if err != nil {
@@ -2245,13 +2248,13 @@ func Converge(parentHome string, registered []Info, notification uplink.Notifica
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: detail})
 
 			// Legacy artifacts: reconcile before creating new requirement.
-			if legErr := ReconcileLegacyConfigReread(parentHome, sm.Home); legErr != nil {
+			if legErr := ReconcileLegacyConfigReread(parentHome, sm.Home, sender); legErr != nil {
 				errs = append(errs, fmt.Sprintf("%s: legacy config-reread reconciliation failed: %v", sm.ID, legErr))
 			}
 
 			// Create canonical mailbox config-reread requirement when generation advanced.
 			if res.Changed {
-				if mbErr := EnsureConfigRereadRequirement(parentHome, sm.Home, res.Generation, res.NewDigest); mbErr != nil {
+				if mbErr := EnsureConfigRereadRequirement(parentHome, sm.Home, res.Generation, res.NewDigest, sender); mbErr != nil {
 					// Mailbox write failed; the requirement is not persisted.
 					// Converge will retry on the next cycle. The generation
 					// is tracked durably so we can recreate the requirement.
@@ -2359,7 +2362,7 @@ func Converge(parentHome string, registered []Info, notification uplink.Notifica
 		// a ProcessingAck in the captain's inbox. If ack exists and validates,
 		// removes the sender's pending record. If no ack exists, retries the
 		// NotificationRef (duplicate notification is idempotent).
-		if mbErr := ReconcileMailboxPending(parentHome, sm); mbErr != nil {
+		if mbErr := ReconcileMailboxPending(parentHome, sm, sender); mbErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": mailbox pending reconciliation", Status: ConvergeFailed, Detail: mbErr.Error()})
 			errs = append(errs, mbErr.Error())
 		} else {

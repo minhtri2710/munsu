@@ -10,53 +10,20 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // --- Test helpers ---
 
-// fakeSessionBackend is a minimal session.Backend for testing SubmitPrompt.
-type fakeSessionBackend struct {
-	session.Backend // embed nil to satisfy interface TODO: actually test
-	alive           bool
-	acknowledged    bool // whether SubmitPrompt returns acknowledged
-	lastText        string
-}
-
-func (f *fakeSessionBackend) Alive(string) bool { return f.alive }
-
-// fakeSubmitPromptBackend implements PromptSubmitter.
-type fakeSubmitPromptBackend struct {
-	alive        bool
+type captainTestMailboxSender struct {
 	acknowledged bool
-	lastText     string
+	lastPayload  string
 }
 
-func (f *fakeSubmitPromptBackend) Alive(string) bool { return f.alive }
-func (f *fakeSubmitPromptBackend) NewWindow(string, string) (string, error) {
-	return "test-window", nil
-}
-func (f *fakeSubmitPromptBackend) SendKeys(string, string) error { return nil }
-func (f *fakeSubmitPromptBackend) Capture(string, int) (string, error) {
-	return "", nil
-}
-func (f *fakeSubmitPromptBackend) Teardown(string) error { return nil }
-func (f *fakeSubmitPromptBackend) AgentPrompt(windowID, text string) session.PromptResult {
-	f.lastText = text
-	if f.acknowledged {
-		return session.PromptResult{Status: session.PromptSubmitted}
-	}
-	return session.PromptResult{Status: session.PromptStalled}
-}
-
-// Override the package-level backendForTask for testing.
-func setTestBackend(be session.Backend) func() {
-	orig := backendForTask
-	backendForTask = func(homeDir string, meta map[string]string) (session.Backend, string, error) {
-		return be, "test", nil
-	}
-	return func() { backendForTask = orig }
+func (captainTestMailboxSender) Alive(string, map[string]string) (bool, error) { return true, nil }
+func (s *captainTestMailboxSender) Send(_ string, _ map[string]string, payload string) mailbox.BoundSendResult {
+	s.lastPayload = payload
+	return mailbox.BoundSendResult{Status: "submitted", Acknowledged: s.acknowledged}
 }
 
 // setupTestHomes creates a parent (General) home and a captain home with
@@ -115,16 +82,13 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 // 4. Returns acknowledged=true
 // 5. Leaves pending intact (not removed)
 func TestSendMailboxToCaptain_HappyPath(t *testing.T) {
+	sender := &captainTestMailboxSender{acknowledged: true}
 	parentHome, captainHome, captainID := setupTestHomes(t)
-
-	be := &fakeSubmitPromptBackend{alive: true, acknowledged: true}
-	restore := setTestBackend(be)
-	defer restore()
 
 	sm := Info{ID: captainID, Home: captainHome}
 	line := "report status"
 
-	result := SendMailboxToCaptain(sm, parentHome, line)
+	result := SendMailboxToCaptain(sm, parentHome, line, sender)
 	if result.Err != nil {
 		t.Fatalf("SendMailboxToCaptain: %v", result.Err)
 	}
@@ -136,14 +100,14 @@ func TestSendMailboxToCaptain_HappyPath(t *testing.T) {
 	}
 
 	// Verify notification text was NotificationRef, not the raw line.
-	if be.lastText == "" {
+	if sender.lastPayload == "" {
 		t.Fatal("no notification text sent")
 	}
-	if strings.Contains(be.lastText, line) {
+	if strings.Contains(sender.lastPayload, line) {
 		t.Error("notification text must NOT contain the raw line (payload)")
 	}
 	var ref mailbox.NotificationRef
-	if err := json.Unmarshal([]byte(be.lastText), &ref); err != nil {
+	if err := json.Unmarshal([]byte(sender.lastPayload), &ref); err != nil {
 		t.Fatalf("notification text must be valid NotificationRef JSON: %v", err)
 	}
 	if ref.MessageID != result.MessageID {
@@ -190,12 +154,8 @@ func TestSendMailboxToCaptain_HappyPath(t *testing.T) {
 func TestSendMailboxToCaptain_DeadPane(t *testing.T) {
 	parentHome, captainHome, captainID := setupTestHomes(t)
 
-	be := &fakeSubmitPromptBackend{alive: true, acknowledged: false}
-	restore := setTestBackend(be)
-	defer restore()
-
 	sm := Info{ID: captainID, Home: captainHome}
-	result := SendMailboxToCaptain(sm, parentHome, "report status")
+	result := SendMailboxToCaptain(sm, parentHome, "report status", &captainTestMailboxSender{})
 
 	if result.Err == nil {
 		t.Fatal("expected error for unacknowledged prompt")
@@ -243,7 +203,7 @@ func TestSendMailboxToCaptain_InvalidMeta(t *testing.T) {
 	task.WriteMeta(parentHome, taskID, meta)
 
 	sm := Info{ID: captainID, Home: captainHome}
-	result := SendMailboxToCaptain(sm, parentHome, "line")
+	result := SendMailboxToCaptain(sm, parentHome, "line", &captainTestMailboxSender{acknowledged: true})
 
 	if result.Err == nil {
 		t.Fatal("expected error for non-captain meta")
@@ -289,7 +249,7 @@ func TestReconcileMailboxPending_ExactAckRemovesPending(t *testing.T) {
 
 	// Run reconcile.
 	sm := Info{ID: captainID, Home: captainHome}
-	if err := ReconcileMailboxPending(parentHome, sm); err != nil {
+	if err := ReconcileMailboxPending(parentHome, sm, &captainTestMailboxSender{acknowledged: true}); err != nil {
 		t.Fatalf("ReconcileMailboxPending: %v", err)
 	}
 
@@ -339,7 +299,7 @@ func TestReconcileMailboxPending_WrongAckFailsClosed(t *testing.T) {
 
 	// Run reconcile — should fail closed.
 	sm := Info{ID: captainID, Home: captainHome}
-	err := ReconcileMailboxPending(parentHome, sm)
+	err := ReconcileMailboxPending(parentHome, sm, &captainTestMailboxSender{acknowledged: true})
 	if err == nil {
 		t.Fatal("expected error for wrong ack")
 	}
@@ -358,6 +318,7 @@ func TestReconcileMailboxPending_WrongAckFailsClosed(t *testing.T) {
 // ack exists, reconcile retries the NotificationRef (no error returned when
 // backed by a real backend — requires backend integration).
 func TestReconcileMailboxPending_NoAckRetries(t *testing.T) {
+	sender := &captainTestMailboxSender{acknowledged: true}
 	parentHome, captainHome, captainID := setupTestHomes(t)
 
 	// Write envelope and pending.
@@ -378,22 +339,19 @@ func TestReconcileMailboxPending_NoAckRetries(t *testing.T) {
 	}
 
 	// Set up backend that acknowledges the resend.
-	be := &fakeSubmitPromptBackend{alive: true, acknowledged: true}
-	restore := setTestBackend(be)
-	defer restore()
 
 	// Run reconcile — no ack yet, but backend is alive and acknowledges.
 	sm := Info{ID: captainID, Home: captainHome}
-	if err := ReconcileMailboxPending(parentHome, sm); err != nil {
+	if err := ReconcileMailboxPending(parentHome, sm, sender); err != nil {
 		t.Fatalf("ReconcileMailboxPending: %v", err)
 	}
 
 	// Verify the notification was sent (duplicate notification idempotent).
-	if be.lastText == "" {
+	if sender.lastPayload == "" {
 		t.Fatal("expected notification text on retry")
 	}
 	var ref mailbox.NotificationRef
-	if err := json.Unmarshal([]byte(be.lastText), &ref); err != nil {
+	if err := json.Unmarshal([]byte(sender.lastPayload), &ref); err != nil {
 		t.Fatalf("invalid NotificationRef: %v", err)
 	}
 	if ref.MessageID != env.MessageID {
@@ -505,22 +463,19 @@ func TestInboxAckCmd_InvalidRef(t *testing.T) {
 // TestSendMailboxToCaptain_MarkerInPayload verifies that the marker is in
 // the envelope payload, not in the notification text.
 func TestSendMailboxToCaptain_MarkerInPayload(t *testing.T) {
+	sender := &captainTestMailboxSender{acknowledged: true}
 	parentHome, captainHome, captainID := setupTestHomes(t)
-
-	be := &fakeSubmitPromptBackend{alive: true, acknowledged: true}
-	restore := setTestBackend(be)
-	defer restore()
 
 	sm := Info{ID: captainID, Home: captainHome}
 	line := "report status"
 
-	result := SendMailboxToCaptain(sm, parentHome, line)
+	result := SendMailboxToCaptain(sm, parentHome, line, sender)
 	if result.Err != nil {
 		t.Fatalf("SendMailboxToCaptain: %v", result.Err)
 	}
 
 	// Verify notification text does NOT contain the marker.
-	if strings.Contains(be.lastText, marker.FromGeneralLabel) {
+	if strings.Contains(sender.lastPayload, marker.FromGeneralLabel) {
 		t.Error("notification text must NOT contain the marker")
 	}
 
@@ -552,9 +507,6 @@ func TestSendMailboxToCaptain_UnmarkedCaptainHome(t *testing.T) {
 	sm := Info{ID: "unmarked", Home: captainHome}
 
 	// Set up backend.
-	be := &fakeSubmitPromptBackend{alive: true, acknowledged: true}
-	restore := setTestBackend(be)
-	defer restore()
 
 	// Write task meta using canonical path (as Launch would).
 	canonHome, _ := canonicalHome(captainHome)
@@ -564,7 +516,7 @@ func TestSendMailboxToCaptain_UnmarkedCaptainHome(t *testing.T) {
 		"window": "test-window", "backend": "test",
 	})
 
-	result := SendMailboxToCaptain(sm, parentHome, "line")
+	result := SendMailboxToCaptain(sm, parentHome, "line", &captainTestMailboxSender{acknowledged: true})
 	if result.Err == nil {
 		t.Fatal("expected error for unmarked captain home")
 	}
@@ -581,12 +533,12 @@ func TestReconcileMailboxPending_Idempotent(t *testing.T) {
 	sm := Info{ID: captainID, Home: captainHome}
 
 	// First call with no pending — must be no-op.
-	if err := ReconcileMailboxPending(parentHome, sm); err != nil {
+	if err := ReconcileMailboxPending(parentHome, sm, &captainTestMailboxSender{acknowledged: true}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 
 	// Second call also no-op.
-	if err := ReconcileMailboxPending(parentHome, sm); err != nil {
+	if err := ReconcileMailboxPending(parentHome, sm, &captainTestMailboxSender{acknowledged: true}); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 }

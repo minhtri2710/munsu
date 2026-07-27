@@ -128,11 +128,11 @@ is retried on the next converge cycle on failure.`,
 			if res.Changed {
 				fmt.Printf("inherited config changed: generation=%d\n", res.Generation)
 				// Legacy reconciliation before creating new requirement.
-				if legErr := captain.ReconcileLegacyConfigReread(ctx.Home, args[0]); legErr != nil {
+				if legErr := captain.ReconcileLegacyConfigReread(ctx.Home, args[0], newSessionMailboxSender()); legErr != nil {
 					fmt.Printf("  note: legacy config-reread reconciliation: %v\n", legErr)
 				}
 				// Create canonical mailbox config-reread requirement.
-				if err := captain.EnsureConfigRereadRequirement(ctx.Home, args[0], res.Generation, res.NewDigest); err != nil {
+				if err := captain.EnsureConfigRereadRequirement(ctx.Home, args[0], res.Generation, res.NewDigest, newSessionMailboxSender()); err != nil {
 					fmt.Printf("  note: config-reread notification deferred: %v\n", err)
 				} else {
 					fmt.Printf("  sent config-reread gen=%d notification\n", res.Generation)
@@ -217,7 +217,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := captain.Converge(ctx.Home, registered, newSessionUplinkTransport())
+			result, convergeErr := captain.Converge(ctx.Home, registered, newSessionUplinkTransport(), newSessionMailboxSender())
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)

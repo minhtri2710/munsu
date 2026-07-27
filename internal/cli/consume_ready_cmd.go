@@ -49,7 +49,7 @@ Flags:
 			}
 			metaGeneration := meta["generation"]
 
-			flushed, err := captain.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration)
+			flushed, err := captain.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration, newSessionSoldierEndpoints())
 			if err != nil {
 				return fmt.Errorf("consume-ready: %w", err)
 			}

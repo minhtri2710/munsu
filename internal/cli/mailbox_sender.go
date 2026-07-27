@@ -11,7 +11,7 @@ type sessionMailboxSender struct {
 	resolve func(string, map[string]string) (session.Backend, string, error)
 }
 
-func newSessionMailboxSender() mailbox.BoundSender {
+func newSessionMailboxSender() sessionMailboxSender {
 	return sessionMailboxSender{resolve: session.BackendForTask}
 }
 

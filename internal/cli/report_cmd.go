@@ -169,7 +169,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					if senderIdentity == "" {
 						senderIdentity = filepath.Base(homeDir)
 					}
-					if fr := captain.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity); fr.Err != nil {
+					if fr := captain.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity, newSessionSoldierEndpoints()); fr.Err != nil {
 						fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
 					}
 				}

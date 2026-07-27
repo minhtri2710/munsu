@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -179,8 +178,7 @@ func ConfigRereadEnvelopeID(senderIdentity, captainIdentity string, generation i
 //     (older generations) so only the latest requirement exists.
 //  3. Writes the new envelope to the captain's inbox.
 //  4. Writes a pending record in the General's outbox.
-//  5. Sends the canonical NotificationRef via session.SubmitPrompt (the
-//     AgentPrompt seam, never raw SendKeys for agent turns).
+//  5. Sends the canonical NotificationRef through the bound sender capability.
 //
 // On acknowledgment failure (agent not alive, not ready), the pending
 // record persists and converge's ReconcileMailboxPending step retries
@@ -189,7 +187,7 @@ func ConfigRereadEnvelopeID(senderIdentity, captainIdentity string, generation i
 //
 // The parentHome-facing converge/captain_cmd caller handles convergence
 // and liveness; this function owns the mailbox write and notification.
-func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, digest string) error {
+func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, digest string, sender mailbox.BoundSender) error {
 	// Validate captain provenance and derive identity.
 	captainIdentity, err := ValidateProvenance(captainHome)
 	if err != nil {
@@ -261,20 +259,17 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 		return nil
 	}
 
-	windowID := meta["window"]
-	bk, _, bkErr := backendForTask(parentHome, meta)
-	if bkErr != nil {
-		fmt.Printf("  %s: cannot resolve backend — notification deferred: %v\n", captainIdentity, bkErr)
-		return nil
+	if sender == nil {
+		return fmt.Errorf("captain mailbox sender capability is required")
 	}
 
-	// Send NotificationRef via the AgentPrompt seam.
+	// Send the canonical NotificationRef through the bound sender.
 	ref := mailbox.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
-	result := session.SubmitPrompt(bk, windowID, ref.Encode())
-	if !result.Acknowledged() {
+	result := sender.Send(parentHome, meta, ref.Encode())
+	if !result.Acknowledged {
 		// Notification not acknowledged — pending remains for converge retry.
 		fmt.Printf("  %s: config-reread notification not acknowledged (status=%s)\n", captainIdentity, result.Status)
 		return nil // Not an error; converge will retry.
@@ -413,7 +408,7 @@ func legacyConfigRereadQuarantineDir(captainHome string) string {
 //     error returned (fail-closed). Caller must resolve manually.
 //   - If the current generation (from .config-reread-gen) already equals or
 //     exceeds what the legacy artifacts describe, just delete the artifacts.
-func ReconcileLegacyConfigReread(parentHome, captainHome string) error {
+func ReconcileLegacyConfigReread(parentHome, captainHome string, sender mailbox.BoundSender) error {
 	captainIdentity, err := ValidateProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("reconcile legacy config-reread: %w", err)
@@ -465,7 +460,7 @@ func ReconcileLegacyConfigReread(parentHome, captainHome string) error {
 	// Otherwise, materialize the legacy requirement as a mailbox envelope.
 	if legacyGen > 0 && legacyDigest != "" {
 		fmt.Printf("  %s: migrating legacy config-reread gen=%d to mailbox\n", captainIdentity, legacyGen)
-		if err := EnsureConfigRereadRequirement(parentHome, captainHome, legacyGen, legacyDigest); err != nil {
+		if err := EnsureConfigRereadRequirement(parentHome, captainHome, legacyGen, legacyDigest, sender); err != nil {
 			return fmt.Errorf("reconcile legacy config-reread: materializing requirement: %w", err)
 		}
 	}

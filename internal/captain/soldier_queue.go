@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -22,48 +21,9 @@ type SendToSoldierResult struct {
 	Err       error
 }
 
-// IsEndpointBusy checks whether the soldier endpoint is busy processing
-// (agent status is "working" or similar). Returns false, nil when the
-// endpoint is idle/ready. Returns true, nil when busy. Returns false, err
-// when the status cannot be determined.
-//
-// Detection order:
-//  1. Backend implements session.BusyChecker → use AgentBusy.
-//  2. Backend is *session.HerdrBackend → use IsRecognizedAgent.
-//  3. Otherwise → assume not busy. Unknown status fails closed.
-func IsEndpointBusy(bk session.Backend, windowID string) (bool, error) {
-	// 1. Check for BusyChecker interface.
-	if bc, ok := bk.(session.BusyChecker); ok {
-		busy, err := bc.AgentBusy(windowID)
-		if err != nil {
-			return false, fmt.Errorf("busy check failed: %w", err)
-		}
-		return busy, nil
-	}
-
-	// 2. Check for HerdrBackend specifically.
-	if hb, ok := bk.(*session.HerdrBackend); ok {
-		recognized, status := hb.IsRecognizedAgent(windowID)
-		if !recognized {
-			if !bk.Alive(windowID) {
-				return false, fmt.Errorf("endpoint not alive")
-			}
-			// Alive but not recognized — unknown, fail closed.
-			return false, fmt.Errorf("endpoint status unknown: not a recognized agent")
-		}
-		switch status {
-		case "working":
-			return true, nil
-		case "idle", "ready", "review-ready":
-			return false, nil
-		default:
-			// Unknown status: fail closed.
-			return false, fmt.Errorf("endpoint status unknown: %q", status)
-		}
-	}
-
-	// 3. Non-Herdr backends without BusyChecker — assume not busy.
-	return false, nil
+type SoldierEndpointCapabilities interface {
+	mailbox.BoundSender
+	Busy(home string, meta map[string]string) (bool, error)
 }
 
 // cleanReceiverID sanitizes an identifier for use as mailbox ReceiverID.
@@ -83,8 +43,8 @@ func cleanReceiverID(raw string) string {
 //  2. Write a pending record in the sender's outbox
 //     (state/.outbox/<sender-identity>/<msg-id>.pending)
 //  3. Check if the soldier endpoint is busy
-//  4. If not busy: send NotificationRef via SubmitPrompt (NOT the raw line)
-//  5. If busy: return queued (no SubmitPrompt, no ack)
+//  4. If not busy: send NotificationRef through the endpoint capability (NOT the raw line)
+//  5. If busy: return queued (no notification, no ack)
 //
 // IMPORTANT: No ProcessingAck is written here. The ack is written only by the
 // Soldier agent when it accepts the command into context via inbox ack.
@@ -95,7 +55,7 @@ func cleanReceiverID(raw string) string {
 // soldierTaskID is the task identifier (MUNSU_TASK_ID).
 // senderIdentity is the captain's identity (from ReadHomeIdentity or basename).
 // line is the command text to send.
-func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string) *SendToSoldierResult {
+func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpoint SoldierEndpointCapabilities) *SendToSoldierResult {
 	result := &SendToSoldierResult{}
 
 	// 1. Read soldier task meta for window and backend.
@@ -136,14 +96,12 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string) *Send
 		return result
 	}
 
-	// 5. Resolve backend and check busy status.
-	bk, _, err := backendForTask(senderHome, meta)
-	if err != nil {
-		result.Err = fmt.Errorf("resolving backend: %w", err)
+	// 5. Check endpoint readiness after durable publication.
+	if endpoint == nil {
+		result.Err = fmt.Errorf("soldier endpoint capability is required")
 		return result
 	}
-
-	busy, busyErr := IsEndpointBusy(bk, windowID)
+	busy, busyErr := endpoint.Busy(senderHome, meta)
 	if busyErr != nil {
 		// Unknown status: fail closed, retain pending.
 		result.Err = fmt.Errorf("checking soldier status: %w", busyErr)
@@ -156,15 +114,15 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string) *Send
 		return result
 	}
 
-	// 6b. Soldier is idle — send NotificationRef via SubmitPrompt.
+	// 6b. Soldier is idle — send NotificationRef through the endpoint capability.
 	ref := mailbox.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
 	refText := ref.Encode()
 
-	promptResult := session.SubmitPrompt(bk, windowID, refText)
-	if !promptResult.Acknowledged() {
+	promptResult := endpoint.Send(senderHome, meta, refText)
+	if !promptResult.Acknowledged {
 		// Not acknowledged — pending retained for retry.
 		result.Err = fmt.Errorf("send not acknowledged (status=%s)", promptResult.Status)
 		return result
@@ -175,19 +133,19 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string) *Send
 }
 
 // FlushPendingSoldierCommands reads pending envelopes for a specific soldier
-// and sends the oldest still-unacked command via NotificationRef SubmitPrompt.
+// and sends the oldest still-unacked command through the endpoint capability.
 //
 // Flow:
 //  1. List pending for sender identity
 //  2. Filter to only envelopes targeting this soldier (ReceiverID == soldierTaskID)
 //  3. Skip if already acked (remove pending via reconcile)
 //  4. Check if soldier is busy — if yes, retain pending
-//  5. Send NotificationRef via SubmitPrompt
+//  5. Send NotificationRef through the endpoint capability
 //  6. NO ProcessingAck written here
 //
 // Only one command is flushed per call (FIFO order).
 // Idempotent: calling with no pending or all acked is a no-op.
-func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity string) *SendToSoldierResult {
+func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity string, endpoint SoldierEndpointCapabilities) *SendToSoldierResult {
 	result := &SendToSoldierResult{}
 
 	// Read pending envelopes for this sender.
@@ -225,14 +183,12 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 
 	result.MessageID = targetEnv.MessageID
 
-	// Resolve backend and check if endpoint is alive + not busy.
-	bk, _, err := backendForTask(senderHome, meta)
-	if err != nil {
-		result.Err = fmt.Errorf("resolving backend: %w", err)
+	// Check endpoint readiness through the bound capability.
+	if endpoint == nil {
+		result.Err = fmt.Errorf("soldier endpoint capability is required")
 		return result
 	}
-
-	busy, busyErr := IsEndpointBusy(bk, windowID)
+	busy, busyErr := endpoint.Busy(senderHome, meta)
 	if busyErr != nil {
 		result.Err = fmt.Errorf("checking soldier status: %w", busyErr)
 		return result
@@ -251,15 +207,15 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 		return result
 	}
 
-	// Send NotificationRef via SubmitPrompt.
+	// Send NotificationRef through the endpoint capability.
 	ref := mailbox.NotificationRef{
 		MessageID:      targetEnv.MessageID,
 		SenderIdentity: senderIdentity,
 	}
 	refText := ref.Encode()
 
-	promptResult := session.SubmitPrompt(bk, windowID, refText)
-	if !promptResult.Acknowledged() {
+	promptResult := endpoint.Send(senderHome, meta, refText)
+	if !promptResult.Acknowledged {
 		result.Err = fmt.Errorf("flush not acknowledged (status=%s)", promptResult.Status)
 		return result
 	}
@@ -473,7 +429,7 @@ func CleanAllReadyEvents(homeDir, taskID string) error {
 // Key validation: the ready event's Key field is validated against the
 // durable task key from meta, not against itself. Callers must provide the
 // correct key context.
-func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGeneration string) (int, error) {
+func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGeneration string, endpoint SoldierEndpointCapabilities) (int, error) {
 	events, err := ScanReadyEvents(senderHome, soldierTaskID)
 	if err != nil {
 		return 0, fmt.Errorf("consume ready: scan: %w", err)
@@ -494,14 +450,14 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 
 	var flushed int
 	for _, ev := range events {
-	// Validate the ready event against durable task ID, meta key (if set),
-	// and generation. The meta key is the authoritative key for dispatch
-	// lifecycle. If meta key is empty, only task ID and generation are checked.
-	if err := ValidateReadyEvent(ev, soldierTaskID, metaKey, metaGeneration); err != nil {
-		// Stale or invalid: clean up and continue.
-		_ = CleanReadyEvent(senderHome, soldierTaskID, ev.EventID)
-		continue
-	}
+		// Validate the ready event against durable task ID, meta key (if set),
+		// and generation. The meta key is the authoritative key for dispatch
+		// lifecycle. If meta key is empty, only task ID and generation are checked.
+		if err := ValidateReadyEvent(ev, soldierTaskID, metaKey, metaGeneration); err != nil {
+			// Stale or invalid: clean up and continue.
+			_ = CleanReadyEvent(senderHome, soldierTaskID, ev.EventID)
+			continue
+		}
 
 		// Check if the pending command has already been dispatched (marked
 		// by a .dispatched marker). This prevents re-sending the same
@@ -541,7 +497,7 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 		}
 
 		// Flush one pending command.
-		flushResult := FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity)
+		flushResult := FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity, endpoint)
 		if flushResult.Err != nil {
 			// If flush failed, leave the ready event for retry.
 			return flushed, fmt.Errorf("consume ready: flush: %w", flushResult.Err)
@@ -731,11 +687,11 @@ func SoldierIsAcked(senderHome, senderIdentity, messageID string) bool {
 
 // ReadyEvent carries the durable ready signal from a soldier.
 type ReadyEvent struct {
-	EventID           string `json:"event_id"`
-	TaskID            string `json:"task_id"`
-	Key               string `json:"key"`
-	EndpointGeneration int64 `json:"endpoint_generation"`
-	Timestamp         int64  `json:"timestamp"`
+	EventID            string `json:"event_id"`
+	TaskID             string `json:"task_id"`
+	Key                string `json:"key"`
+	EndpointGeneration int64  `json:"endpoint_generation"`
+	Timestamp          int64  `json:"timestamp"`
 }
 
 // ValidateReadyEvent verifies that a ready event is not stale, matches the
@@ -797,7 +753,7 @@ func ParseReadyEvent(s string) (*ReadyEvent, error) {
 // ConsumeReadyEvent validates and processes a ready event.
 // Returns true if a pending command was flushed, false if no pending existed.
 // Returns error if the event is invalid or the flush failed.
-func ConsumeReadyEvent(senderHome, soldierTaskID, senderIdentity string, event *ReadyEvent, metaGeneration string) (bool, error) {
+func ConsumeReadyEvent(senderHome, soldierTaskID, senderIdentity string, event *ReadyEvent, metaGeneration string, endpoint SoldierEndpointCapabilities) (bool, error) {
 	meta, err := task.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		return false, fmt.Errorf("reading soldier meta: %w", err)
@@ -807,7 +763,7 @@ func ConsumeReadyEvent(senderHome, soldierTaskID, senderIdentity string, event *
 		return false, fmt.Errorf("ready event validation: %w", err)
 	}
 
-	result := FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity)
+	result := FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity, endpoint)
 	if result.Err != nil {
 		return false, fmt.Errorf("flush after ready event: %w", result.Err)
 	}

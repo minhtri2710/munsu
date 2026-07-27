@@ -433,7 +433,7 @@ func TestReconcileLegacyNudgeMarker(t *testing.T) {
 	}
 
 	// Reconcile — should migrate to mailbox.
-	if err := ReconcileLegacyConfigReread(parent, captainHome); err != nil {
+	if err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -458,7 +458,7 @@ func TestReconcileLegacyQuarantine(t *testing.T) {
 	}
 
 	// Reconcile.
-	if err := ReconcileLegacyConfigReread(parent, captainHome); err != nil {
+	if err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -483,7 +483,7 @@ func TestReconcileLegacyMalformedNudge(t *testing.T) {
 	}
 
 	// Reconcile should fail.
-	err := ReconcileLegacyConfigReread(parent, captainHome)
+	err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true})
 	if err == nil {
 		t.Error("expected error for malformed nudge marker")
 	}
@@ -516,7 +516,7 @@ func TestReconcileLegacy_SupersededByCurrentGen(t *testing.T) {
 	}
 
 	// Reconcile — should clean up without error since current gen supersedes.
-	if err := ReconcileLegacyConfigReread(parent, captainHome); err != nil {
+	if err := ReconcileLegacyConfigReread(parent, captainHome, &captainTestMailboxSender{acknowledged: true}); err != nil {
 		t.Fatal(err)
 	}
 

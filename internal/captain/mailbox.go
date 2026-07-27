@@ -5,15 +5,14 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // SendMailboxResult describes the outcome of a General→Captain mailbox send.
 type SendMailboxResult struct {
-	MessageID      string
-	Acknowledged   bool // true if SubmitPrompt was acknowledged
-	Err            error
+	MessageID    string
+	Acknowledged bool // true if the bound sender acknowledged notification
+	Err          error
 }
 
 // SendMailboxToCaptain sends a line to a captain via the mailbox Store/Receiver system.
@@ -24,13 +23,13 @@ type SendMailboxResult struct {
 //  3. Creates a mailbox Envelope (General→Captain) with marker.MarkFromGeneral(line) as payload
 //  4. Writes envelope to the captain's inbox (receiver-owned)
 //  5. Writes pending record in the General's outbox (sender-identity scoped)
-//  6. Sends canonical NotificationRef via session.SubmitPrompt (NOT the raw line)
+//  6. Sends the canonical NotificationRef through the bound sender capability
 //  7. Returns result — pending is NOT removed on acknowledgment; it is removed only after
 //     exact ack reconciles via converge.
 //
 // Preserves command marker semantics: the marker is in the envelope payload, not in the
 // notification text. The notification is a structured NotificationRef JSON.
-func SendMailboxToCaptain(sm Info, parentHome, line string) *SendMailboxResult {
+func SendMailboxToCaptain(sm Info, parentHome, line string, sender mailbox.BoundSender) *SendMailboxResult {
 	result := &SendMailboxResult{}
 
 	// 1. Validate task meta fully.
@@ -68,12 +67,6 @@ func SendMailboxToCaptain(sm Info, parentHome, line string) *SendMailboxResult {
 		return result
 	}
 
-	bk, _, bkErr := backendForTask(parentHome, meta)
-	if bkErr != nil {
-		result.Err = fmt.Errorf("resolving backend: %w", bkErr)
-		return result
-	}
-
 	// 2. Derive General sender identity/rank from durable parent home provenance.
 	senderIdentity, senderRank, err := mailbox.ReadHomeIdentity(parentHome)
 	if err != nil {
@@ -84,7 +77,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string) *SendMailboxResult {
 	// 3. Create envelope with marked line as payload.
 	// The marker preserves command semantics so the captain agent can distinguish
 	// General-routed commands from human chat. The notification ref (not the payload)
-	// is what gets sent via SubmitPrompt.
+	// is what gets sent through the bound sender capability.
 	markedLine := marker.MarkFromGeneral(line)
 	env := &mailbox.Envelope{
 		SenderRank:     senderRank,
@@ -109,20 +102,24 @@ func SendMailboxToCaptain(sm Info, parentHome, line string) *SendMailboxResult {
 		return result
 	}
 
-	// 6. Send canonical NotificationRef via SubmitPrompt.
+	// 6. Send the canonical NotificationRef through the bound sender.
 	ref := mailbox.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
 	notificationText := ref.Encode()
 
-	promptResult := session.SubmitPrompt(bk, windowID, notificationText)
-	result.Acknowledged = promptResult.Acknowledged()
+	if sender == nil {
+		result.Err = fmt.Errorf("captain mailbox sender capability is required")
+		return result
+	}
+	sendResult := sender.Send(parentHome, meta, notificationText)
+	result.Acknowledged = sendResult.Acknowledged
 
 	if !result.Acknowledged {
 		// Pending is retained — never remove on unacknowledged submit.
 		// The caller (munsu send or converge) sees the typed failure.
-		result.Err = fmt.Errorf("send not acknowledged (status=%s)", promptResult.Status)
+		result.Err = fmt.Errorf("send not acknowledged (status=%s)", sendResult.Status)
 		return result
 	}
 
@@ -140,7 +137,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string) *SendMailboxResult {
 //
 // This is called from converge to clean up pending records after the captain agent
 // has processed the notification and written the ack.
-func ReconcileMailboxPending(parentHome string, sm Info) error {
+func ReconcileMailboxPending(parentHome string, sm Info, sender mailbox.BoundSender) error {
 	// Derive General sender identity from parent home.
 	senderIdentity, _, err := mailbox.ReadHomeIdentity(parentHome)
 	if err != nil {
@@ -181,7 +178,7 @@ func ReconcileMailboxPending(parentHome string, sm Info) error {
 		if ack == nil {
 			// No ack yet — captain hasn't processed it.
 			// Resend NotificationRef (duplicate notification is idempotent).
-			if err := resendNotification(parentHome, sm, env); err != nil {
+			if err := resendNotification(parentHome, sm, env, sender); err != nil {
 				return fmt.Errorf("%s: resending notification for %s: %w", sm.ID, env.MessageID, err)
 			}
 			continue
@@ -204,7 +201,7 @@ func ReconcileMailboxPending(parentHome string, sm Info) error {
 // is silently skipped. The durable pending record remains and will be resolved
 // when the captain eventually comes online, or handled by ReconcileConfigRereadPending
 // for config-reread records.
-func resendNotification(parentHome string, sm Info, env *mailbox.Envelope) error {
+func resendNotification(parentHome string, sm Info, env *mailbox.Envelope, sender mailbox.BoundSender) error {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
@@ -218,17 +215,15 @@ func resendNotification(parentHome string, sm Info, env *mailbox.Envelope) error
 		return fmt.Errorf("no window in meta")
 	}
 
-	bk, _, bkErr := backendForTask(parentHome, meta)
-	if bkErr != nil {
-		return fmt.Errorf("resolving backend: %w", bkErr)
-	}
-
 	ref := mailbox.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: env.SenderIdentity,
 	}
-	result := session.SubmitPrompt(bk, windowID, ref.Encode())
-	if !result.Acknowledged() {
+	if sender == nil {
+		return fmt.Errorf("captain mailbox sender capability is required")
+	}
+	result := sender.Send(parentHome, meta, ref.Encode())
+	if !result.Acknowledged {
 		return fmt.Errorf("resend not acknowledged (status=%s)", result.Status)
 	}
 	return nil

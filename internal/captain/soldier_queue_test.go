@@ -2,7 +2,6 @@ package captain
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,48 +9,34 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // --- Test helpers ---
 
-// fakeAgentBackend implements PromptSubmitter with agent status awareness
-// for testing busy/idle soldier detection.
-type fakeAgentBackend struct {
-	alive        bool
+type fakeAgentEndpoint struct {
+	busy         bool
+	busyErr      error
 	acknowledged bool
-	agentStatus  string // "working", "idle", "ready", etc.
+	status       string
 	lastText     string
-	promptCalls  int // count of SubmitPrompt calls
+	promptCalls  int
 }
 
-func (f *fakeAgentBackend) Alive(string) bool { return f.alive }
-func (f *fakeAgentBackend) NewWindow(string, string) (string, error) {
-	return "test-window", nil
-}
-func (f *fakeAgentBackend) SendKeys(string, string) error { return nil }
-func (f *fakeAgentBackend) Capture(string, int) (string, error) {
-	return "", nil
-}
-func (f *fakeAgentBackend) Teardown(string) error { return nil }
-func (f *fakeAgentBackend) AgentPrompt(windowID, text string) session.PromptResult {
+func (*fakeAgentEndpoint) Alive(string, map[string]string) (bool, error)  { return true, nil }
+func (f *fakeAgentEndpoint) Busy(string, map[string]string) (bool, error) { return f.busy, f.busyErr }
+func (f *fakeAgentEndpoint) Send(_ string, _ map[string]string, payload string) mailbox.BoundSendResult {
 	f.promptCalls++
-	f.lastText = text
-	if f.acknowledged {
-		return session.PromptResult{Status: session.PromptSubmitted}
+	f.lastText = payload
+	status := f.status
+	if status == "" {
+		if f.acknowledged {
+			status = "submitted"
+		} else {
+			status = "stalled"
+		}
 	}
-	return session.PromptResult{Status: session.PromptStalled}
-}
-func (f *fakeAgentBackend) AgentBusy(windowID string) (bool, error) {
-	switch f.agentStatus {
-	case "working":
-		return true, nil
-	case "idle", "ready", "review-ready":
-		return false, nil
-	default:
-		return false, fmt.Errorf("endpoint status unknown: %q", f.agentStatus)
-	}
+	return mailbox.BoundSendResult{Status: status, Acknowledged: f.acknowledged}
 }
 
 // setupSoldierTestHomes creates a captain home with a soldier task meta.
@@ -72,10 +57,10 @@ func setupSoldierTestHomes(t *testing.T, agentStatus string) (captainHome, soldi
 
 	// Write soldier task meta in the shared captain home.
 	meta := map[string]string{
-		"window":   "test-window",
-		"backend":  "test",
-		"kind":     "ship",
-		"harness":  "pi",
+		"window":  "test-window",
+		"backend": "test",
+		"kind":    "ship",
+		"harness": "pi",
 	}
 	if err := task.WriteMeta(captainHome, soldierTaskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
@@ -89,11 +74,9 @@ func setupSoldierTestHomes(t *testing.T, agentStatus string) (captainHome, soldi
 func TestSendToSoldier_Idle_SendsNotificationRef(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work")
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
 
 	if result.Err != nil {
 		t.Fatalf("SendToSoldier: %v", result.Err)
@@ -173,11 +156,9 @@ func TestSendToSoldier_Idle_SendsNotificationRef(t *testing.T) {
 func TestSendToSoldier_Busy_QueuesWithoutSubmitPrompt(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work")
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
 
 	if result.Err != nil {
 		t.Fatalf("SendToSoldier: %v", result.Err)
@@ -222,11 +203,9 @@ func TestSendToSoldier_DeadEndpoint_ReturnsError(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	// Backend acknowledges but prompts are unacknowledged.
-	be := &fakeAgentBackend{alive: true, acknowledged: false, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{}
 
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work")
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
 
 	if result.Err == nil {
 		t.Fatal("expected error for unacknowledged prompt")
@@ -268,11 +247,9 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 		t.Fatal("no ack should exist before flush")
 	}
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
-	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 
 	if result.Err != nil {
 		t.Fatalf("FlushPendingSoldierCommands: %v", result.Err)
@@ -316,11 +293,9 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 func TestFlushPendingSoldierCommands_NoPending_IsNoop(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
-	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 
 	if result.Err != nil {
 		t.Fatalf("Flush: %v", result.Err)
@@ -355,11 +330,9 @@ func TestFlushPendingSoldierCommands_StillBusy_RetainsPending(t *testing.T) {
 		t.Fatalf("WritePending: %v", err)
 	}
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
-	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	result := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 
 	if result.Err != nil {
 		t.Fatalf("Flush: %v", result.Err)
@@ -386,12 +359,10 @@ func TestFlushPendingSoldierCommands_StillBusy_RetainsPending(t *testing.T) {
 func TestFlushPendingSoldierCommands_DuplicateFlushIsIdempotent(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
 	// First flush with no pending — no-op.
-	r1 := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	r1 := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 	if r1.Err != nil {
 		t.Fatalf("first flush: %v", r1.Err)
 	}
@@ -400,7 +371,7 @@ func TestFlushPendingSoldierCommands_DuplicateFlushIsIdempotent(t *testing.T) {
 	}
 
 	// Second flush with no pending — also no-op.
-	r2 := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	r2 := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 	if r2.Err != nil {
 		t.Fatalf("second flush: %v", r2.Err)
 	}
@@ -419,11 +390,9 @@ func TestSendToSoldier_Restart_PendingSurvives(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	// Queue a command (busy case).
-	be1 := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore1 := setTestBackend(be1)
-	defer restore1()
+	be1 := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: survive restart")
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: survive restart", be1)
 	if result.Err != nil {
 		t.Fatalf("SendToSoldier: %v", result.Err)
 	}
@@ -674,12 +643,10 @@ func TestSoldierAckNotification_WritesAck(t *testing.T) {
 func TestEndToEnd_SendIdleThenFlush(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
 	// Send to idle soldier.
-	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work")
+	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
 	if sendResult.Err != nil {
 		t.Fatalf("SendToSoldier: %v", sendResult.Err)
 	}
@@ -689,7 +656,7 @@ func TestEndToEnd_SendIdleThenFlush(t *testing.T) {
 
 	// Flush — the pending has no ack yet, so flush will re-notify
 	// (idempotent on the Herdr/SubmitPrompt side).
-	flushResult := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	flushResult := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 	if flushResult.Err != nil {
 		t.Fatalf("Flush: %v", flushResult.Err)
 	}
@@ -703,12 +670,10 @@ func TestEndToEnd_SendIdleThenFlush(t *testing.T) {
 func TestEndToEnd_BusyThenFlush(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
 	// Send to busy soldier — should be queued.
-	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: deferred work")
+	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: deferred work", be)
 	if sendResult.Err != nil {
 		t.Fatalf("SendToSoldier: %v", sendResult.Err)
 	}
@@ -720,10 +685,10 @@ func TestEndToEnd_BusyThenFlush(t *testing.T) {
 	}
 
 	// Now soldier becomes idle.
-	be.agentStatus = "idle"
+	be.busy = false
 
 	// Flush.
-	flushResult := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	flushResult := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 	if flushResult.Err != nil {
 		t.Fatalf("Flush: %v", flushResult.Err)
 	}
@@ -757,21 +722,19 @@ func TestEndToEnd_BusyThenFlush(t *testing.T) {
 func TestEndToEnd_DuplicateReadyEvent_IsIdempotent(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
 	// Queue a command while busy.
-	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work")
+	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: work", be)
 	if sendResult.Err != nil || !sendResult.Queued {
 		t.Fatalf("expected queued: err=%v queued=%v", sendResult.Err, sendResult.Queued)
 	}
 
 	// Soldier becomes idle.
-	be.agentStatus = "idle"
+	be.busy = false
 
 	// First ready event → flush.
-	firstFlush := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity)
+	firstFlush := FlushPendingSoldierCommands(captainHome, soldierTaskID, senderIdentity, be)
 	if firstFlush.Err != nil {
 		t.Fatalf("first flush: %v", firstFlush.Err)
 	}
@@ -790,11 +753,9 @@ func TestEndToEnd_DuplicateReadyEvent_IsIdempotent(t *testing.T) {
 func TestSendToSoldier_ReuseSamePane(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: reuse pane")
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: reuse pane", be)
 	if result.Err != nil {
 		t.Fatalf("SendToSoldier: %v", result.Err)
 	}
@@ -866,12 +827,10 @@ func TestSoldierLifecycleTransitions(t *testing.T) {
 func TestTerminalDoneAfterMerge(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "review-ready")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "review-ready"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
 	// Soldier is review-ready (idle for new commands).
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "finalize: merge PR")
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "finalize: merge PR", be)
 	if result.Err != nil {
 		t.Fatalf("SendToSoldier: %v", result.Err)
 	}
@@ -893,16 +852,14 @@ func TestTerminalDoneAfterMerge(t *testing.T) {
 func TestNoReportSpam(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
 	// Count status lines before.
 	statusBefore, _ := task.ReadStatus(captainHome, "captain-status")
 	beforeCount := len(statusBefore)
 
 	// Send to busy soldier.
-	_ = SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: quiet")
+	_ = SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: quiet", be)
 
 	// Count status lines after — should not have changed.
 	statusAfter, _ := task.ReadStatus(captainHome, "captain-status")
@@ -917,12 +874,10 @@ func TestNoReportSpam(t *testing.T) {
 func TestValidatePendingSurvives(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
 	// Queue a command.
-	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: survive")
+	result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: survive", be)
 	if result.Err != nil || !result.Queued {
 		t.Fatalf("expected queued: err=%v queued=%v", result.Err, result.Queued)
 	}
@@ -953,13 +908,11 @@ func TestValidatePendingSurvives(t *testing.T) {
 func TestSendToSoldier_NoSubmitPromptWhenBusy_Deadline(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
 	done := make(chan bool)
 	go func() {
-		result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: fast queue")
+		result := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: fast queue", be)
 		if result.Err != nil {
 			t.Errorf("SendToSoldier: %v", result.Err)
 		}
@@ -999,19 +952,17 @@ func TestConsumeReadyEvent(t *testing.T) {
 		t.Fatalf("WritePending: %v", err)
 	}
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
 	event := &ReadyEvent{
-		EventID:           "evt-1",
-		TaskID:            soldierTaskID,
-		Key:               "",
+		EventID:            "evt-1",
+		TaskID:             soldierTaskID,
+		Key:                "",
 		EndpointGeneration: 0,
-		Timestamp:         time.Now().UnixNano(),
+		Timestamp:          time.Now().UnixNano(),
 	}
 
-	flushed, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "")
+	flushed, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "", be)
 	if err != nil {
 		t.Fatalf("ConsumeReadyEvent: %v", err)
 	}
@@ -1028,14 +979,14 @@ func TestConsumeReadyEvent_WrongTaskID(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	event := &ReadyEvent{
-		EventID:           "evt-1",
-		TaskID:            "wrong-task",
-		Key:               "",
+		EventID:            "evt-1",
+		TaskID:             "wrong-task",
+		Key:                "",
 		EndpointGeneration: 0,
-		Timestamp:         time.Now().UnixNano(),
+		Timestamp:          time.Now().UnixNano(),
 	}
 
-	_, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "")
+	_, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "", &fakeAgentEndpoint{acknowledged: true})
 	if err == nil {
 		t.Fatal("expected error for wrong task ID")
 	}
@@ -1050,14 +1001,14 @@ func TestConsumeReadyEvent_StaleEvent(t *testing.T) {
 
 	// Event from 10 minutes ago.
 	event := &ReadyEvent{
-		EventID:           "evt-1",
-		TaskID:            soldierTaskID,
-		Key:               "",
+		EventID:            "evt-1",
+		TaskID:             soldierTaskID,
+		Key:                "",
 		EndpointGeneration: 0,
-		Timestamp:         time.Now().UnixNano() - int64(10*time.Minute),
+		Timestamp:          time.Now().UnixNano() - int64(10*time.Minute),
 	}
 
-	_, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "")
+	_, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "", &fakeAgentEndpoint{acknowledged: true})
 	if err == nil {
 		t.Fatal("expected error for stale event")
 	}
@@ -1068,14 +1019,14 @@ func TestConsumeReadyEvent_GenerationMismatch(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	event := &ReadyEvent{
-		EventID:           "evt-1",
-		TaskID:            soldierTaskID,
-		Key:               "",
+		EventID:            "evt-1",
+		TaskID:             soldierTaskID,
+		Key:                "",
 		EndpointGeneration: 5, // current gen is 0 (not set)
-		Timestamp:         time.Now().UnixNano(),
+		Timestamp:          time.Now().UnixNano(),
 	}
 
-	_, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "10")
+	_, err := ConsumeReadyEvent(captainHome, soldierTaskID, senderIdentity, event, "10", &fakeAgentEndpoint{acknowledged: true})
 	if err == nil {
 		t.Fatal("expected error for generation mismatch")
 	}
@@ -1261,11 +1212,7 @@ func TestConsumeAllReadyEvents_NoPendingIsNoop(t *testing.T) {
 		t.Fatalf("EmitReadyEvent: %v", err)
 	}
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
-
-	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdent, "")
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdent, "", &fakeAgentEndpoint{acknowledged: true})
 	if err != nil {
 		t.Fatalf("ConsumeAllReadyEvents: %v", err)
 	}
@@ -1287,11 +1234,9 @@ func TestConsumeAllReadyEvents_FullFlow(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
 	// Queue a command while busy.
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
-	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: full flow")
+	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: full flow", be)
 	if sendResult.Err != nil || !sendResult.Queued {
 		t.Fatalf("expected queued: err=%v queued=%v", sendResult.Err, sendResult.Queued)
 	}
@@ -1303,10 +1248,10 @@ func TestConsumeAllReadyEvents_FullFlow(t *testing.T) {
 	}
 
 	// Soldier becomes idle.
-	be.agentStatus = "idle"
+	be.busy = false
 
 	// Consume ready events.
-	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "", be)
 	if err != nil {
 		t.Fatalf("ConsumeAllReadyEvents: %v", err)
 	}
@@ -1343,11 +1288,9 @@ func TestConsumeAllReadyEvents_StaleEventRejected(t *testing.T) {
 	os.MkdirAll(filepath.Dir(p), 0755)
 	os.WriteFile(p, data, 0644)
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
-	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "", be)
 	if err != nil {
 		t.Fatalf("ConsumeAllReadyEvents: %v", err)
 	}
@@ -1372,11 +1315,9 @@ func TestConsumeAllReadyEvents_WrongTaskID(t *testing.T) {
 		t.Fatalf("EmitReadyEvent: %v", err)
 	}
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "idle"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{acknowledged: true}
 
-	_, err = ConsumeAllReadyEvents(captainHome, "wrong-task", senderIdentity, "")
+	_, err = ConsumeAllReadyEvents(captainHome, "wrong-task", senderIdentity, "", be)
 	if err != nil {
 		t.Fatalf("ConsumeAllReadyEvents for wrong task should not error: %v", err)
 	}
@@ -1390,12 +1331,10 @@ func TestConsumeAllReadyEvents_WrongTaskID(t *testing.T) {
 func TestConsumeAllReadyEvents_DuplicateReadyIdempotent(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
-	be := &fakeAgentBackend{alive: true, acknowledged: true, agentStatus: "working"}
-	restore := setTestBackend(be)
-	defer restore()
+	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
 	// Queue a command.
-	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: duplicate test")
+	sendResult := SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: duplicate test", be)
 	if sendResult.Err != nil || !sendResult.Queued {
 		t.Fatalf("expected queued: err=%v queued=%v", sendResult.Err, sendResult.Queued)
 	}
@@ -1412,10 +1351,10 @@ func TestConsumeAllReadyEvents_DuplicateReadyIdempotent(t *testing.T) {
 		t.Fatalf("expected 2 ready events (different keys), got %d", len(events))
 	}
 
-	be.agentStatus = "idle"
+	be.busy = false
 
 	// First consume: flushes the pending command.
-	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	flushed, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "", be)
 	if err != nil {
 		t.Fatalf("first ConsumeAllReadyEvents: %v", err)
 	}
@@ -1425,7 +1364,7 @@ func TestConsumeAllReadyEvents_DuplicateReadyIdempotent(t *testing.T) {
 
 	// Second consume: should NOT re-send the same NotificationRef
 	// because the dispatched marker prevents it.
-	flushed2, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "")
+	flushed2, err := ConsumeAllReadyEvents(captainHome, soldierTaskID, senderIdentity, "", be)
 	if err != nil {
 		t.Fatalf("second ConsumeAllReadyEvents: %v", err)
 	}
