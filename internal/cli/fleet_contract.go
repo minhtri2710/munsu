@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -26,6 +27,20 @@ func (p cliEndpointProbe) Probe(home string, meta map[string]string) (bool, erro
 }
 
 func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.EndpointStatus, error) {
+	if endpoint.Backend == "" || endpoint.Handle == "" || endpoint.Home == "" {
+		return fleet.EndpointStatus{}, fmt.Errorf("bound endpoint identity is incomplete")
+	}
+	switch endpoint.Backend {
+	case "tmux", "herdr", "zellij", "cmux", "orca":
+	default:
+		return fleet.EndpointStatus{}, fmt.Errorf("unsupported bound backend %q", endpoint.Backend)
+	}
+	if endpoint.Backend == "herdr" && endpoint.SessionOwner != "" {
+		handleSession, _ := session.ParseWindow(endpoint.Handle)
+		if handleSession != "" && handleSession != endpoint.SessionOwner {
+			return fleet.EndpointStatus{}, fmt.Errorf("herdr session ownership mismatch")
+		}
+	}
 	meta := map[string]string{
 		"backend":            endpoint.Backend,
 		"window":             endpoint.Handle,
@@ -38,9 +53,12 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 	if resolve == nil {
 		resolve = session.BackendForTask
 	}
-	bk, _, err := resolve(endpoint.Home, meta)
+	bk, resolved, err := resolve(endpoint.Home, meta)
 	if err != nil {
 		return fleet.EndpointStatus{}, err
+	}
+	if resolved != endpoint.Backend {
+		return fleet.EndpointStatus{}, fmt.Errorf("bound backend resolved as %q", resolved)
 	}
 	return fleet.EndpointStatus{Alive: bk.Alive(endpoint.Handle)}, nil
 }

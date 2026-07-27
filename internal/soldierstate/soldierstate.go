@@ -19,7 +19,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/nostatus"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -54,20 +53,9 @@ type EndpointProbe interface {
 	Probe(homeDir string, meta map[string]string) (bool, error)
 }
 
-type legacyEndpointProbe struct{}
-
-func (legacyEndpointProbe) Probe(homeDir string, meta map[string]string) (bool, error) {
-	bk, _, err := session.BackendForTask(homeDir, meta)
-	if err != nil {
-		return false, err
-	}
-	return bk.Alive(meta["window"]), nil
-}
-
-// Read reads and synthesizes the current soldier state using the
-// precedence hierarchy: backlog > meta/last-report > PR state > typed events > status fallback.
+// Read reads state without probing endpoint liveness.
 func Read(homeDir string, id string) (*State, error) {
-	return ReadWithProbe(homeDir, id, legacyEndpointProbe{})
+	return ReadWithProbe(homeDir, id, nil)
 }
 
 func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, error) {
