@@ -2314,11 +2314,12 @@ func Converge(parentHome string, registered []Info) (*ConvergeResult, error) {
 		}
 
 		// g. Mailbox-only Captain → General Uplink Report reconciliation.
+		uplinkTransport := newSessionUplinkTransport()
 		if ur, urErr := uplink.Recover(uplink.RecoverRequest{
 			SenderHome: sm.Home, ReceiverHome: parentHome,
 			ReceiverRank: mailbox.RankGeneral,
 			Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
-				return uplink.NotifyParent(sm.Home, parentHome, ref)
+				return uplink.NotifyParentWithTransport(sm.Home, parentHome, ref, uplinkTransport)
 			},
 		}); urErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeFailed, Detail: urErr.Error()})

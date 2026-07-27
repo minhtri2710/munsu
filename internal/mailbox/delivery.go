@@ -14,15 +14,12 @@ type DeliveryResult struct {
 	Err          error
 }
 
-// DeliverEnvelope sends an envelope's payload to the receiver via direct
-// session.SubmitPrompt (SendKeys). It does not mutate the envelope; ack
+// DeliverEnvelopeWithSender sends an envelope's payload through the supplied
+// task-bound sender capability. It does not mutate the envelope; ack
 // tracking is handled through separate ProcessingAck records.
 //
 // The sender must have already written the envelope to the receiver's inbox
 // and saved their own pending record.
-func DeliverEnvelope(receiverHome, senderIdentity string, env *Envelope, meta map[string]string) *DeliveryResult {
-	return DeliverEnvelopeWithSender(defaultBoundSender, receiverHome, senderIdentity, env, meta)
-}
 func DeliverEnvelopeWithSender(sender BoundSender, receiverHome, senderIdentity string, env *Envelope, meta map[string]string) *DeliveryResult {
 	result := &DeliveryResult{
 		MessageID: env.MessageID,
@@ -59,7 +56,7 @@ func DeliverEnvelopeWithSender(sender BoundSender, receiverHome, senderIdentity 
 }
 
 // DeliverEnvelopeWithMeta reads task meta and delivers.
-func DeliverEnvelopeWithMeta(homeDir, taskID, senderIdentity string, env *Envelope) *DeliveryResult {
+func DeliverEnvelopeWithMetaAndSender(sender BoundSender, homeDir, taskID, senderIdentity string, env *Envelope) *DeliveryResult {
 	meta, err := task.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return &DeliveryResult{
@@ -67,7 +64,7 @@ func DeliverEnvelopeWithMeta(homeDir, taskID, senderIdentity string, env *Envelo
 			Err:       fmt.Errorf("reading meta: %w", err),
 		}
 	}
-	return DeliverEnvelope(homeDir, senderIdentity, env, meta)
+	return DeliverEnvelopeWithSender(sender, homeDir, senderIdentity, env, meta)
 }
 
 // SendReport is the top-level helper for the happy path:
@@ -78,7 +75,7 @@ func DeliverEnvelopeWithMeta(homeDir, taskID, senderIdentity string, env *Envelo
 //
 // The caller retains the sender's pending record until exact ack.
 // Use AwaitedSendReport for the complete send-and-wait-for-ack flow.
-func SendReport(env *Envelope, receiverHome, senderHome string, meta map[string]string) *DeliveryResult {
+func SendReportWithSender(sender BoundSender, env *Envelope, receiverHome, senderHome string, meta map[string]string) *DeliveryResult {
 	if err := NewStore(receiverHome).WriteEnvelope(env); err != nil {
 		return &DeliveryResult{
 			MessageID: env.MessageID,
@@ -93,13 +90,13 @@ func SendReport(env *Envelope, receiverHome, senderHome string, meta map[string]
 		}
 	}
 
-	return DeliverEnvelope(receiverHome, env.SenderIdentity, env, meta)
+	return DeliverEnvelopeWithSender(sender, receiverHome, env.SenderIdentity, env, meta)
 }
 
 // AwaitedSendReport extends SendReport by also checking for the receiver's
 // exact ack after successful prompt submission.
-func AwaitedSendReport(env *Envelope, receiverHome, senderHome string, meta map[string]string) *DeliveryResult {
-	result := SendReport(env, receiverHome, senderHome, meta)
+func AwaitedSendReportWithSender(sender BoundSender, env *Envelope, receiverHome, senderHome string, meta map[string]string) *DeliveryResult {
+	result := SendReportWithSender(sender, env, receiverHome, senderHome, meta)
 	if result.Err != nil {
 		return result
 	}

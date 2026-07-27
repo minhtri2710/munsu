@@ -1169,7 +1169,7 @@ func TestRecoverInbox_AlreadyAcked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	attempt := RecoverInbox(home, env)
+	attempt := RecoverInboxWithSender(&deliverySender{}, home, env)
 	if !attempt.AlreadyAck {
 		t.Error("expected AlreadyAck for acked envelope")
 	}
@@ -1194,7 +1194,7 @@ func TestRecoverInbox_SkipOnMarker(t *testing.T) {
 	markerPath := RecoveryMarkerPath(home, env.MessageID)
 	os.WriteFile(markerPath, []byte("recovered\n"), 0644)
 
-	attempt := RecoverInbox(home, env)
+	attempt := RecoverInboxWithSender(&deliverySender{}, home, env)
 	if !attempt.Skipped {
 		t.Error("expected Skipped when marker exists")
 	}
@@ -1205,7 +1205,7 @@ func TestRecoverInbox_SkipsUplinkEnvelope(t *testing.T) {
 		{MessageID: "soldier-up", Kind: "uplink-report", SenderRank: RankSoldier, ReceiverRank: RankCaptain},
 		{MessageID: "captain-up", Kind: "uplink-report", SenderRank: RankCaptain, ReceiverRank: RankGeneral},
 	} {
-		attempt := RecoverInbox(t.TempDir(), env)
+		attempt := RecoverInboxWithSender(&deliverySender{}, t.TempDir(), env)
 		if !attempt.Skipped || attempt.Delivered {
 			t.Fatalf("attempt=%+v, want skipped uplink", attempt)
 		}
@@ -1213,7 +1213,7 @@ func TestRecoverInbox_SkipsUplinkEnvelope(t *testing.T) {
 }
 
 func TestRecoverAllInboxes_EmptyDir(t *testing.T) {
-	attempts, err := RecoverAllInboxes(t.TempDir())
+	attempts, err := RecoverAllInboxesWithSender(&deliverySender{}, t.TempDir())
 	if err != nil {
 		t.Fatalf("RecoverAllInboxes: %v", err)
 	}

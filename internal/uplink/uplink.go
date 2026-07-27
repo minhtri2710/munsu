@@ -13,7 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -292,30 +291,21 @@ func notificationDue(home, messageID string, now time.Time) bool {
 // NotifyParent attempts immediate delivery of a NotificationRef to the parent
 // agent pane. Durable state must already exist before this adapter is called.
 type TargetResolver func(receiverHome string, ref mailbox.NotificationRef) (afk.TargetResult, error)
-type BackendResolver func(senderHome string) (session.Backend, error)
 
-func NotifyParent(senderHome, receiverHome string, ref mailbox.NotificationRef) NotifyResult {
-	return NotifyParentWithAdapters(senderHome, receiverHome, ref, resolveReceiverTarget, func(home string) (session.Backend, error) {
-		bk, _, err := session.Resolve(home, "")
-		return bk, err
-	})
+type NotificationTransport interface {
+	Notify(senderHome string, target afk.TargetResult, payload string) NotifyResult
 }
 
-func NotifyParentWithAdapters(senderHome, receiverHome string, ref mailbox.NotificationRef, resolveTarget TargetResolver, resolveBackend BackendResolver) NotifyResult {
+func NotifyParentWithTransport(senderHome, receiverHome string, ref mailbox.NotificationRef, transport NotificationTransport) NotifyResult {
+	return NotifyParentWithTargetResolver(senderHome, receiverHome, ref, resolveReceiverTarget, transport)
+}
+
+func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref mailbox.NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) NotifyResult {
 	target, err := resolveTarget(receiverHome, ref)
-	if err != nil || target.Handle == "" || target.Source == afk.Unsupported {
+	if err != nil || target.Handle == "" || target.Source == afk.Unsupported || transport == nil {
 		return NotifyResult{Queued: true}
 	}
-	bk, err := resolveBackend(senderHome)
-	if err != nil {
-		return NotifyResult{Queued: true}
-	}
-	safe, _, err := afk.IsSafeInjectTarget(bk, target.Handle)
-	if err != nil || !safe {
-		return NotifyResult{Queued: true}
-	}
-	result := session.SubmitPrompt(bk, target.Handle, ref.Encode())
-	return NotifyResult{Acknowledged: result.Acknowledged(), Queued: !result.Acknowledged()}
+	return transport.Notify(senderHome, target, ref.Encode())
 }
 
 func resolveReceiverTarget(receiverHome string, ref mailbox.NotificationRef) (afk.TargetResult, error) {

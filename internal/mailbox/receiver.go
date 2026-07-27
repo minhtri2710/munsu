@@ -342,16 +342,13 @@ type NotifyResult struct {
 	Err          error
 }
 
-// NotifyReceiver sends the canonical NotificationRef text to the receiver's
-// session via session.SubmitPrompt. The receiver is expected to read their
+// NotifyReceiverWithSender sends the canonical NotificationRef text through
+// the supplied task-bound sender. The receiver is expected to read their
 // own inbox using the ref to locate the envelope.
 //
 // Submission acknowledgment (Acknowledged=true) never removes the sender's
 // pending record. Pending records are managed separately through the ack
 // flow via the sender's RemovePendingAfterAck.
-func NotifyReceiver(receiverHome string, ref NotificationRef, meta map[string]string) *NotifyResult {
-	return NotifyReceiverWithSender(defaultBoundSender, receiverHome, ref, meta)
-}
 func NotifyReceiverWithSender(sender BoundSender, receiverHome string, ref NotificationRef, meta map[string]string) *NotifyResult {
 	nr := &NotifyResult{Ref: ref}
 

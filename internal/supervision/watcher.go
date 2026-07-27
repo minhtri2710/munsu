@@ -15,7 +15,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -35,21 +34,9 @@ type WakeReason struct {
 type TaskEndpointProbe interface {
 	Probe(homeDir string, meta map[string]string) (bool, error)
 }
-type legacyTaskEndpointProbe struct{}
 
-func (legacyTaskEndpointProbe) Probe(homeDir string, meta map[string]string) (bool, error) {
-	bk, _, err := session.BackendForTask(homeDir, meta)
-	if err != nil {
-		return false, err
-	}
-	return bk.Alive(meta["window"]), nil
-}
-
-func Run(homeDir string) (*WakeReason, error) {
-	return RunWithProbe(homeDir, legacyTaskEndpointProbe{})
-}
-func RunWithProbe(homeDir string, probe TaskEndpointProbe) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe)
+func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -58,7 +45,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender mailbox.BoundSender) (*WakeReason, error) {
 	acquired, err := lifecycle.AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -85,7 +72,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
 			lifecycle.WriteBeat(homeDir)
-			if _, err := runCycleWithProbe(homeDir, probe); err != nil {
+			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender); err != nil {
 				return nil, err
 			}
 		}
@@ -186,18 +173,6 @@ var (
 	pauseResurfaceThreshold = 5 * time.Minute
 )
 
-// ScanFleet checks all live tasks for the first actionable condition.
-func ScanFleet(homeDir string) *WakeReason {
-	reasons := scanFleetWithProbe(homeDir, false, legacyTaskEndpointProbe{})
-	if len(reasons) == 0 {
-		return nil
-	}
-	return reasons[0]
-}
-
-func scanFleet(homeDir string, clearResolved bool) []*WakeReason {
-	return scanFleetWithProbe(homeDir, clearResolved, legacyTaskEndpointProbe{})
-}
 func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe) []*WakeReason {
 	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
 	if err != nil {
@@ -272,9 +247,6 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 	return out
 }
 
-func scanTask(homeDir, id string) *WakeReason {
-	return scanTaskWithProbe(homeDir, id, legacyTaskEndpointProbe{})
-}
 func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe) *WakeReason {
 	meta, err := task.ReadMeta(homeDir, id)
 	if err != nil {
@@ -348,26 +320,27 @@ var recoveryDone sync.Map
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
-func RunCycle(homeDir string) (bool, error) {
-	return RunCycleWithProbe(homeDir, legacyTaskEndpointProbe{})
-}
-func RunCycleWithProbe(homeDir string, probe TaskEndpointProbe) (bool, error) {
-	return runCycleWithProbe(homeDir, probe)
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender) (bool, error) {
+	return runCycleWithProbeAndSender(homeDir, probe, sender)
 }
 
 // runRecovery executes the one-shot recovery on watcher startup.
 // It retries pending inbox envelopes once with fingerprint dedup,
 // runs the legacy terminal reconcile hook (if any) once,
 // then completes any pending poll retirements.
-func runRecovery(homeDir string) {
+func runRecovery(homeDir string, sender mailbox.BoundSender) error {
+	if sender == nil {
+		return fmt.Errorf("mailbox recovery sender capability is required")
+	}
 	if _, loaded := recoveryDone.LoadOrStore(homeDir, true); loaded {
-		return
+		return nil
 	}
 
 	// Recovery step 1: retry pending inbox envelopes via mailbox recovery.
-	attempts, err := mailbox.RecoverAllInboxes(homeDir)
+	attempts, err := mailbox.RecoverAllInboxesWithSender(sender, homeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mailbox recovery error: %v\n", err)
+		recoveryDone.Delete(homeDir)
+		return fmt.Errorf("mailbox recovery: %w", err)
 	} else {
 		for _, a := range attempts {
 			if a.Err != nil {
@@ -386,18 +359,18 @@ func runRecovery(homeDir string) {
 			fmt.Fprintf(os.Stderr, "terminal reconcile recovery: %v\n", err)
 		}
 	}
+	return nil
 }
 
-func runCycle(homeDir string) (bool, error) {
-	return runCycleWithProbe(homeDir, legacyTaskEndpointProbe{})
-}
-func runCycleWithProbe(homeDir string, probe TaskEndpointProbe) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
 
 	// Run one-shot recovery on first cycle for this home.
-	runRecovery(homeDir)
+	if err := runRecovery(homeDir, sender); err != nil {
+		return false, err
+	}
 
 	// Retirement recovery: scan pending records every cycle.
 	// This handles crashes during the merged-PR retirement sequence.

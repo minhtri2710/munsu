@@ -34,9 +34,6 @@ func RecoveryMarkerPath(receiverHome, messageID string) string {
 // RecoverInbox attempts one recovery delivery for a single pending envelope.
 // It checks if the envelope was already acked and skips if so.
 // It writes a fingerprint marker on completion to prevent repeated retries.
-func RecoverInbox(receiverHome string, env *Envelope) *RecoveryAttempt {
-	return RecoverInboxWithSender(defaultBoundSender, receiverHome, env)
-}
 func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelope) *RecoveryAttempt {
 	ra := &RecoveryAttempt{
 		MessageID: env.MessageID,
@@ -100,7 +97,7 @@ func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelo
 // RecoverAllInboxes scans the given home for all pending inbox envelopes
 // from all senders and attempts recovery delivery for each.
 // This is the entry point for watcher startup recovery.
-func RecoverAllInboxes(receiverHome string) ([]*RecoveryAttempt, error) {
+func RecoverAllInboxesWithSender(sender BoundSender, receiverHome string) ([]*RecoveryAttempt, error) {
 	inboxRoot := filepath.Join(receiverHome, "state", InboxDir)
 	entries, err := os.ReadDir(inboxRoot)
 	if err != nil {
@@ -121,7 +118,7 @@ func RecoverAllInboxes(receiverHome string) ([]*RecoveryAttempt, error) {
 			continue
 		}
 		for _, env := range envs {
-			attempt := RecoverInbox(receiverHome, env)
+			attempt := RecoverInboxWithSender(sender, receiverHome, env)
 			attempts = append(attempts, attempt)
 		}
 	}

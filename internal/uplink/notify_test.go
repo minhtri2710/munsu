@@ -5,42 +5,44 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 )
 
-type notifyBackend struct{ submitted string }
+type notifyTransport struct{ submitted string }
 
-func (*notifyBackend) NewWindow(string, string) (string, error) { return "", nil }
-func (b *notifyBackend) SendKeys(_ string, text string) error   { b.submitted = text; return nil }
-func (*notifyBackend) Capture(string, int) (string, error)      { return "❯ \n", nil }
-func (*notifyBackend) Alive(string) bool                        { return true }
-func (*notifyBackend) Teardown(string) error                    { return nil }
-func (b *notifyBackend) AgentPrompt(_ string, text string) session.PromptResult {
-	b.submitted = text
-	return session.PromptResult{Status: session.PromptSubmitted}
+func (t *notifyTransport) Notify(_ string, _ afk.TargetResult, payload string) NotifyResult {
+	t.submitted = payload
+	return NotifyResult{Acknowledged: true}
 }
 
-func TestNotifyParentWithAdaptersSubmitsOnlyNotificationRef(t *testing.T) {
+func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) {
 	ref := mailbox.NotificationRef{MessageID: "message-one", SenderIdentity: "soldier-one"}
-	backend := &notifyBackend{}
+	transport := &notifyTransport{}
 	var receiverSeen string
-	result := NotifyParentWithAdapters("sender", "receiver", ref,
+	result := NotifyParentWithTargetResolver("sender", "receiver", ref,
 		func(receiver string, got mailbox.NotificationRef) (afk.TargetResult, error) {
 			receiverSeen = receiver
 			return afk.TargetResult{Source: afk.RuntimeSource, Handle: "fleet:p9"}, nil
-		},
-		func(sender string) (session.Backend, error) { return backend, nil },
-	)
+		}, transport)
 	if !result.Acknowledged {
 		t.Fatal("notification should be acknowledged")
 	}
 	if receiverSeen != "receiver" {
 		t.Fatalf("receiver=%q", receiverSeen)
 	}
-	if backend.submitted != ref.Encode() {
-		t.Fatalf("submitted=%q want=%q", backend.submitted, ref.Encode())
+	if transport.submitted != ref.Encode() {
+		t.Fatalf("submitted=%q want=%q", transport.submitted, ref.Encode())
 	}
-	if backend.submitted == "done: raw payload [task=task:with/slash]" {
+	if transport.submitted == "done: raw payload [task=task:with/slash]" {
 		t.Fatal("raw payload submitted")
+	}
+}
+
+func TestNotifyParentWithTargetResolverQueuesUnavailableTarget(t *testing.T) {
+	result := NotifyParentWithTargetResolver("sender", "receiver", mailbox.NotificationRef{},
+		func(string, mailbox.NotificationRef) (afk.TargetResult, error) {
+			return afk.TargetResult{Source: afk.Unsupported}, nil
+		}, &notifyTransport{})
+	if !result.Queued || result.Acknowledged {
+		t.Fatalf("result = %+v", result)
 	}
 }

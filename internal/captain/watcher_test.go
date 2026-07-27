@@ -9,11 +9,27 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/wakedelivery"
 )
+
+type captainTestProbe struct{}
+
+func (captainTestProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
+
+type captainTestSender struct{}
+
+func (captainTestSender) Alive(string, map[string]string) (bool, error) { return false, nil }
+func (captainTestSender) Send(string, map[string]string, string) mailbox.BoundSendResult {
+	return mailbox.BoundSendResult{}
+}
+
+func captainRunCycle(home string) (bool, error) {
+	return supervision.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{})
+}
 
 // --- WatcherStatusSummary tests ---
 
@@ -251,7 +267,7 @@ func TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt(t *testing.T) {
 
 	// First cycle — startup recovery (no receipts pending).
 	// The real reconcileHook is already installed via init().
-	emitted, err := supervision.RunCycle(cptHome)
+	emitted, err := captainRunCycle(cptHome)
 	if err != nil {
 		t.Fatalf("first RunCycle: %v", err)
 	}
@@ -261,7 +277,7 @@ func TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt(t *testing.T) {
 	writeReceiptAndObligation(t, cptHome, taskID, termKey, "done", "post-startup complete")
 
 	// Second cycle — per-cycle reconcile via real hook should relay the receipt.
-	emitted2, err := supervision.RunCycle(cptHome)
+	emitted2, err := captainRunCycle(cptHome)
 	if err != nil {
 		t.Fatalf("second RunCycle: %v", err)
 	}
@@ -306,7 +322,7 @@ func TestCaptainPerCycle_RealHook_ExactlyOneWake(t *testing.T) {
 	writeReceiptAndObligation(t, cptHome, taskID, termKey, "done", "startup pending")
 
 	// First cycle — startup recovery relays via real hook.
-	emitted, err := supervision.RunCycle(cptHome)
+	emitted, err := captainRunCycle(cptHome)
 	if err != nil {
 		t.Fatalf("first RunCycle: %v", err)
 	}
@@ -327,7 +343,7 @@ func TestCaptainPerCycle_RealHook_ExactlyOneWake(t *testing.T) {
 
 	// Run 3 more cycles — no duplicate relay should occur.
 	for i := 0; i < 3; i++ {
-		emittedN, err := supervision.RunCycle(cptHome)
+		emittedN, err := captainRunCycle(cptHome)
 		if err != nil {
 			t.Fatalf("cycle %d: %v", i+2, err)
 		}
@@ -362,7 +378,7 @@ func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
 	key2 := "mk-2"
 
 	// First cycle — no receipts (startup recovery is no-op).
-	emitted, err := supervision.RunCycle(cptHome)
+	emitted, err := captainRunCycle(cptHome)
 	if err != nil {
 		t.Fatalf("first RunCycle: %v", err)
 	}
@@ -372,7 +388,7 @@ func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
 	writeReceiptAndObligation(t, cptHome, task1, key1, "done", "first")
 
 	// Second cycle — should relay first receipt via real hook.
-	emitted2, err := supervision.RunCycle(cptHome)
+	emitted2, err := captainRunCycle(cptHome)
 	if err != nil {
 		t.Fatalf("second RunCycle: %v", err)
 	}
@@ -386,7 +402,7 @@ func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
 	writeReceiptAndObligation(t, cptHome, task2, key2, "done", "second")
 
 	// Third cycle — should relay second receipt; first is already acked.
-	emitted3, err := supervision.RunCycle(cptHome)
+	emitted3, err := captainRunCycle(cptHome)
 	if err != nil {
 		t.Fatalf("third RunCycle: %v", err)
 	}
@@ -423,13 +439,13 @@ func TestCaptainPerCycle_RealHook_TwoWatchersIsolated(t *testing.T) {
 	// Each watcher runs with its own MUNSU_PARENT_STATUS set.
 	func() {
 		defer setParentStatus(gen1)()
-		if _, err := supervision.RunCycle(cpt1); err != nil {
+		if _, err := captainRunCycle(cpt1); err != nil {
 			t.Errorf("watcher 1 first cycle: %v", err)
 		}
 	}()
 	func() {
 		defer setParentStatus(gen2)()
-		if _, err := supervision.RunCycle(cpt2); err != nil {
+		if _, err := captainRunCycle(cpt2); err != nil {
 			t.Errorf("watcher 2 first cycle: %v", err)
 		}
 	}()
@@ -441,13 +457,13 @@ func TestCaptainPerCycle_RealHook_TwoWatchersIsolated(t *testing.T) {
 	// Run per-cycle reconcile on both watchers (sequentially, each with own parent).
 	func() {
 		defer setParentStatus(gen1)()
-		if _, err := supervision.RunCycle(cpt1); err != nil {
+		if _, err := captainRunCycle(cpt1); err != nil {
 			t.Errorf("watcher 1 second cycle: %v", err)
 		}
 	}()
 	func() {
 		defer setParentStatus(gen2)()
-		if _, err := supervision.RunCycle(cpt2); err != nil {
+		if _, err := captainRunCycle(cpt2); err != nil {
 			t.Errorf("watcher 2 second cycle: %v", err)
 		}
 	}()
@@ -506,8 +522,8 @@ func TestCaptainActivationOnReceipt_HookWired(t *testing.T) {
 	writeReceiptAndObligation(t, cptHome, taskID, termKey, "done", "activation test")
 
 	// Run cycles to get past startup recovery and trigger per-cycle hooks.
-	supervision.RunCycle(cptHome)
-	supervision.RunCycle(cptHome)
+	captainRunCycle(cptHome)
+	captainRunCycle(cptHome)
 
 	// Without captain meta (genHome has no captain:<id>.meta with herdr_pane_id),
 	// activation-seen must NOT be written — retries must remain possible.
@@ -516,7 +532,7 @@ func TestCaptainActivationOnReceipt_HookWired(t *testing.T) {
 	}
 
 	// Another cycle — idempotency: the hook must not panic or error.
-	supervision.RunCycle(cptHome)
+	captainRunCycle(cptHome)
 }
 
 // TestCaptainActivationOnReceipt_IdempotentSegregation verifies that
@@ -543,8 +559,8 @@ func TestCaptainActivationOnReceipt_IdempotentSegregation(t *testing.T) {
 
 	// Run cycles until the per-cycle hook fires (at least 2 cycles to
 	// get past recovery guard).
-	supervision.RunCycle(cptHome)
-	supervision.RunCycle(cptHome)
+	captainRunCycle(cptHome)
+	captainRunCycle(cptHome)
 
 	// First receipt should still be activation-seen (pre-written marker).
 	if !wakedelivery.IsActivationSeen(cptHome, taskSeen, keySeen) {
@@ -583,10 +599,10 @@ func TestCaptainActivationOnReceipt_NoParentContext(t *testing.T) {
 	defer setParentStatus(captainHome)()
 
 	// Cycle 1 (recovery).
-	supervision.RunCycle(captainHome)
+	captainRunCycle(captainHome)
 
 	// Cycle 2 (per-cycle) — hook should see parent == home and skip.
-	supervision.RunCycle(captainHome)
+	captainRunCycle(captainHome)
 
 	// Activation-seen should NOT be written because the hook short-circuits
 	// when parentHome == homeDir.
@@ -613,10 +629,10 @@ func TestCaptainActivationOnReceipt_NoParentEnv(t *testing.T) {
 	defer os.Setenv("MUNSU_PARENT_STATUS", oldParent)
 
 	// Cycle 1 (recovery).
-	supervision.RunCycle(captainHome)
+	captainRunCycle(captainHome)
 
 	// Cycle 2 (per-cycle) — hook should see empty parent and skip.
-	supervision.RunCycle(captainHome)
+	captainRunCycle(captainHome)
 
 	// Activation-seen should NOT be written.
 	if wakedelivery.IsActivationSeen(captainHome, taskID, termKey) {

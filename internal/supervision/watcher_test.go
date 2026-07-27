@@ -11,12 +11,35 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/waker"
 )
+
+type testEndpointProbe struct{}
+
+func (testEndpointProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
+
+type testCycleSender struct{}
+
+func (testCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
+func (testCycleSender) Send(string, map[string]string, string) mailbox.BoundSendResult {
+	return mailbox.BoundSendResult{}
+}
+
+func testScanFleet(home string) *WakeReason {
+	reasons := scanFleetWithProbe(home, false, testEndpointProbe{})
+	if len(reasons) == 0 {
+		return nil
+	}
+	return reasons[0]
+}
+func testRunCycle(home string) (bool, error) {
+	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{})
+}
 
 // --- absorbStaleSignal tests (pure predicate) ---
 
@@ -251,7 +274,7 @@ func TestStaleFirstSeen_ConcurrentAccess(t *testing.T) {
 
 func TestScanFleet_NoStateDir(t *testing.T) {
 	tmp := t.TempDir()
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for no state dir, got %v", reason)
 	}
@@ -262,7 +285,7 @@ func TestScanFleet_EmptyStateDir(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for empty state dir, got %v", reason)
 	}
@@ -275,7 +298,7 @@ func TestScanFleet_IgnoresDotfiles(t *testing.T) {
 
 	os.WriteFile(filepath.Join(stateDir, ".hidden.meta"), []byte("window=@test\n"), 0644)
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil when only dotfiles present, got %v", reason)
 	}
@@ -290,7 +313,7 @@ func TestScanFleet_NoWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for task with no window, got %v", reason)
 	}
@@ -306,7 +329,7 @@ func TestScanFleet_MultipleTasks_OnlyOneWithWindow(t *testing.T) {
 	// Task with a window (but window doesn't exist, so pane is dead)
 	task.WriteMeta(tmp, "has-win", map[string]string{"window": "@nonexistent99"})
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected a stale reason for dead pane")
 	}
@@ -395,7 +418,7 @@ func TestScanFleet_StaleStatusFile(t *testing.T) {
 	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
 	os.Chtimes(statusPath, past, past)
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected stale reason for old status file")
 	}
@@ -422,7 +445,7 @@ func TestScanFleet_RecentStatusNoStale(t *testing.T) {
 	// The pane is dead but the status is recent — pane staleness takes precedence
 	// But the status staleness check won't trigger because modtime is recent
 	// The pane liveness check will trigger stale first
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected stale reason for dead pane (recent status doesn't prevent pane check)")
 	}
@@ -442,7 +465,7 @@ func TestScanFleet_NoMetaFiles(t *testing.T) {
 	// even without a companion .meta — parent status is the return path.
 	os.WriteFile(filepath.Join(stateDir, "another.status"), []byte("done: finished\n"), 0644)
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected signal for captain-relevant status without meta")
 	}
@@ -459,7 +482,7 @@ func TestScanFleet_IgnoresNonWindowMeta(t *testing.T) {
 	// Meta without window key should be skipped
 	task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship", "project": "munsu"})
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason != nil {
 		t.Errorf("expected nil for meta without window, got %v", reason)
 	}
@@ -483,7 +506,7 @@ func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
 	os.Chtimes(statusPath, past, past)
 
 	// scanFleet processes meta files in directory order — should find a stale task
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected a stale reason")
 	}
@@ -502,7 +525,7 @@ func TestRunCycle_QueuedWakeDoesNotEmitAnotherWake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,11 +548,11 @@ func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T
 	os.MkdirAll(stateDir, 0755)
 	task.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-watch-cycle"})
 
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil || !emitted {
 		t.Fatalf("first cycle emitted=%v err=%v, want true nil", emitted, err)
 	}
-	emitted, err = runCycle(tmp)
+	emitted, err = testRunCycle(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +563,7 @@ func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T
 	if err := task.AppendStatus(tmp, "task-1", "failed: changed condition"); err != nil {
 		t.Fatal(err)
 	}
-	emitted, err = runCycle(tmp)
+	emitted, err = testRunCycle(tmp)
 	if err != nil || !emitted {
 		t.Fatalf("changed condition emitted=%v err=%v, want true nil", emitted, err)
 	}
@@ -564,7 +587,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 	task.WriteMeta(tmp, "consist-task", map[string]string{"window": "@nonexistentConsist"})
 
 	// First call
-	r1 := ScanFleet(tmp)
+	r1 := testScanFleet(tmp)
 	if r1 == nil {
 		t.Fatal("first call expected stale")
 	}
@@ -573,7 +596,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 	}
 
 	// Second call (still within microseconds, no demand deep yet)
-	r2 := ScanFleet(tmp)
+	r2 := testScanFleet(tmp)
 	if r2 == nil {
 		t.Fatal("second call expected stale")
 	}
@@ -587,7 +610,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 	staleFirstSeenMu.Unlock()
 
 	// Third call — should trigger demand deep inspection
-	r3 := ScanFleet(tmp)
+	r3 := testScanFleet(tmp)
 	if r3 == nil {
 		t.Fatal("third call expected stale")
 	}
@@ -637,7 +660,7 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 	os.WriteFile(filepath.Join(state, "captain:api.meta"), []byte("window=w1\nkind=captain\nbackend=tmux\n"), 0644)
 	os.WriteFile(filepath.Join(state, "captain:api.status"), []byte("done [key=x]: PR https://example/1\n"), 0644)
 
-	emitted, err := RunCycle(home)
+	emitted, err := testRunCycle(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -645,7 +668,7 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 		t.Fatal("expected wake from captain-relevant parent status")
 	}
 	// Second cycle with same status must not re-emit (fingerprint dedupe).
-	emitted2, err := RunCycle(home)
+	emitted2, err := testRunCycle(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -697,7 +720,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// 3) Watcher one-shot cycle enqueues captain-relevant signal.
-	emitted, err := RunCycle(home)
+	emitted, err := testRunCycle(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +764,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// Unchanged status must not re-emit after fingerprint marker.
-	emitted2, err := RunCycle(home)
+	emitted2, err := testRunCycle(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -888,7 +911,7 @@ func TestScanFleet_CaptainKindAbsorbsStale(t *testing.T) {
 	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
 	os.Chtimes(filepath.Join(stateDir, "captain:domain.status"), past, past)
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason != nil {
 		t.Fatalf("expected nil for idle captain (status-signal only), got %+v", reason)
 	}
@@ -906,7 +929,7 @@ func TestScanFleet_CaptainTerminalStillSignals(t *testing.T) {
 	})
 	os.WriteFile(filepath.Join(stateDir, "captain:domain.status"), []byte("done: handoff complete\n"), 0644)
 
-	reason := ScanFleet(tmp)
+	reason := testScanFleet(tmp)
 	if reason == nil {
 		t.Fatal("expected signal for terminal captain status")
 	}
@@ -922,13 +945,13 @@ func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 	task.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-stable"})
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: started\n"), 0644)
 
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil || !emitted {
 		t.Fatalf("first cycle emitted=%v err=%v, want true nil", emitted, err)
 	}
 	// Second and third cycles must not re-enqueue: message no longer embeds wall-clock age.
 	for i := 0; i < 2; i++ {
-		emitted, err = runCycle(tmp)
+		emitted, err = testRunCycle(tmp)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -994,7 +1017,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	recoveryDone = sync.Map{} // reset for test isolation
 
 	// Run one cycle — recovery should trigger and relay the pending receipt
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("runCycle: %v", err)
 	}
@@ -1026,7 +1049,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 
 	// Second runCycle should NOT trigger recovery again (recoveryDone=true)
 	recoveryDone = sync.Map{}
-	emitted2, err2 := runCycle(tmp)
+	emitted2, err2 := testRunCycle(tmp)
 	if err2 != nil {
 		t.Fatalf("second runCycle: %v", err2)
 	}
@@ -1064,7 +1087,7 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Run one cycle — should NOT emit diagnostic wake about parent-home
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("runCycle: %v", err)
 	}
@@ -1121,7 +1144,7 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 	recoveryDone = sync.Map{}
 
 	// Run one cycle — should NOT fail fatally
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("runCycle should not error on invalid parent: %v", err)
 	}
@@ -1202,10 +1225,10 @@ func TestRunCycle_StartupRecoveryIsIndependentPerHome(t *testing.T) {
 	defer func() { TerminalReconcileHook = origHook }()
 	recoveryDone = sync.Map{}
 
-	if _, err := runCycle(homeA); err != nil {
+	if _, err := testRunCycle(homeA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runCycle(homeB); err != nil {
+	if _, err := testRunCycle(homeB); err != nil {
 		t.Fatal(err)
 	}
 	if calls[homeA] != 1 || calls[homeB] != 1 {
@@ -1226,7 +1249,7 @@ func TestRunCycle_NoDoubleCallOnCycle1(t *testing.T) {
 	resetRecovery()
 
 	// Cycle 1 — recovery calls the hook once; per-cycle is skipped.
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("first runCycle: %v", err)
 	}
@@ -1237,7 +1260,7 @@ func TestRunCycle_NoDoubleCallOnCycle1(t *testing.T) {
 	}
 
 	// Cycle 2 — recovery is already done; per-cycle calls the hook once.
-	emitted2, err := runCycle(tmp)
+	emitted2, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("second runCycle: %v", err)
 	}
@@ -1272,7 +1295,7 @@ func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
 	os.Stderr = stderrW
 
 	// Run a cycle — must NOT fail fatally despite hook error.
-	emitted, cycleErr := runCycle(tmp)
+	emitted, cycleErr := testRunCycle(tmp)
 	// Restore stderr before any assertions.
 	stderrW.Close()
 	os.Stderr = origStderr
@@ -1290,7 +1313,7 @@ func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
 	}
 
 	// Second cycle should also continue despite hook error.
-	emitted2, err := runCycle(tmp)
+	emitted2, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("second runCycle should also not exit on hook error: %v", err)
 	}
@@ -1308,13 +1331,13 @@ func TestRunCycle_PerCycleReconcileNoHookIsNoop(t *testing.T) {
 	defer func() { TerminalReconcileHook = origHook }()
 	resetRecovery()
 
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("runCycle should work with nil hook: %v", err)
 	}
 	_ = emitted
 
-	emitted2, err := runCycle(tmp)
+	emitted2, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("second runCycle should work with nil hook: %v", err)
 	}
@@ -1339,7 +1362,7 @@ func TestRunCycle_CaptainActivationNotCalledOnCycle1(t *testing.T) {
 	resetRecovery()
 
 	// Cycle 1 — recovery guard should prevent hook call.
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("first runCycle: %v", err)
 	}
@@ -1350,7 +1373,7 @@ func TestRunCycle_CaptainActivationNotCalledOnCycle1(t *testing.T) {
 	}
 
 	// Cycle 2 — after recovery, hook should be called.
-	emitted2, err := runCycle(tmp)
+	emitted2, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("second runCycle: %v", err)
 	}
@@ -1375,25 +1398,25 @@ func TestRunCycle_CaptainActivationEveryCycleAfterRecovery(t *testing.T) {
 	resetRecovery()
 
 	// Cycle 1 — recovery, no hook call.
-	runCycle(tmp)
+	testRunCycle(tmp)
 	if callCount != 0 {
 		t.Fatalf("expected 0 after cycle 1, got %d", callCount)
 	}
 
 	// Cycle 2 — hook called once.
-	runCycle(tmp)
+	testRunCycle(tmp)
 	if callCount != 1 {
 		t.Fatalf("expected 1 after cycle 2, got %d", callCount)
 	}
 
 	// Cycle 3 — hook called once more.
-	runCycle(tmp)
+	testRunCycle(tmp)
 	if callCount != 2 {
 		t.Fatalf("expected 2 after cycle 3, got %d", callCount)
 	}
 
 	// Cycle 4 — hook called once more.
-	runCycle(tmp)
+	testRunCycle(tmp)
 	if callCount != 3 {
 		t.Fatalf("expected 3 after cycle 4, got %d", callCount)
 	}
@@ -1410,13 +1433,13 @@ func TestRunCycle_CaptainActivationNilHookIsNoop(t *testing.T) {
 	resetRecovery()
 
 	// Skip cycle 1 (recovery), check cycle 2.
-	emitted, err := runCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("first runCycle with nil hook: %v", err)
 	}
 	_ = emitted
 
-	emitted2, err := runCycle(tmp)
+	emitted2, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("second runCycle with nil hook: %v", err)
 	}
@@ -1501,7 +1524,7 @@ func TestDeadStaleWatcher_AutoRecoverOrFailClosed(t *testing.T) {
 
 	// Run cycle to attempt recovery — with no watcher, cycles still produce
 	// status-signal wakes.
-	emitted, err := RunCycle(tmp)
+	emitted, err := testRunCycle(tmp)
 	if err != nil {
 		t.Fatalf("RunCycle: %v", err)
 	}

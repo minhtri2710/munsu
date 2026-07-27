@@ -56,6 +56,7 @@ func captainActivationHook(homeDir string) {
 // ReconcileTerminalReceipts for backward compatibility.
 func reconcileHook(homeDir string, startup bool) error {
 	parentHome := resolveParentHome(homeDir)
+	transport := newSessionUplinkTransport()
 	if parentHome == "" {
 		return nil
 	}
@@ -63,7 +64,7 @@ func reconcileHook(homeDir string, startup bool) error {
 		SenderHome: homeDir, ReceiverHome: homeDir,
 		ReceiverRank: mailbox.RankCaptain, ForceNotify: startup,
 		Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
-			return uplink.NotifyParent(homeDir, homeDir, ref)
+			return uplink.NotifyParentWithTransport(homeDir, homeDir, ref, transport)
 		},
 	}); err != nil {
 		return err
@@ -72,7 +73,7 @@ func reconcileHook(homeDir string, startup bool) error {
 		SenderHome: homeDir, ReceiverHome: parentHome,
 		ReceiverRank: mailbox.RankGeneral, ForceNotify: startup,
 		Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
-			return uplink.NotifyParent(homeDir, parentHome, ref)
+			return uplink.NotifyParentWithTransport(homeDir, parentHome, ref, transport)
 		},
 	}); err != nil {
 		return err

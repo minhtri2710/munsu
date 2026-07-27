@@ -28,7 +28,10 @@ var materialStates = map[string]bool{
 
 // newReportCmd creates the `munsu report` command for rank-aware uplink status reporting.
 func newReportCmd() *cobra.Command {
-	return newReportCmdWithNotifier(uplink.NotifyParent)
+	transport := newSessionUplinkTransport()
+	return newReportCmdWithNotifier(func(senderHome, receiverHome string, ref mailbox.NotificationRef) uplink.NotifyResult {
+		return uplink.NotifyParentWithTransport(senderHome, receiverHome, ref, transport)
+	})
 }
 
 func newReportCmdWithNotifier(notify func(senderHome, receiverHome string, ref mailbox.NotificationRef) uplink.NotifyResult) *cobra.Command {

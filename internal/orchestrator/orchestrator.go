@@ -7,7 +7,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/waker"
 )
 
@@ -30,14 +29,6 @@ func DrainWakes(homeDir string) ([]waker.Record, error) {
 
 func HasQueuedWakes(homeDir string) bool {
 	return lifecycle.HasQueuedWakes(homeDir)
-}
-
-func RunWatcher(homeDir string) (*supervision.WakeReason, error) {
-	return supervision.Run(homeDir)
-}
-
-func RunWatcherWithProbe(homeDir string, probe supervision.TaskEndpointProbe) (*supervision.WakeReason, error) {
-	return supervision.RunWithProbe(homeDir, probe)
 }
 
 // StartAFK starts the AFK away-mode daemon.
