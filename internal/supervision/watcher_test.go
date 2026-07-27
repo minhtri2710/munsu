@@ -37,8 +37,28 @@ func testScanFleet(home string) *WakeReason {
 	}
 	return reasons[0]
 }
+
+type testWatcherHooks struct {
+	reconcile func(string, bool) error
+	activate  func(string)
+}
+
+func (h testWatcherHooks) Reconcile(home string, startup bool) error {
+	if h.reconcile != nil {
+		return h.reconcile(home, startup)
+	}
+	return nil
+}
+func (h testWatcherHooks) Activate(home string) {
+	if h.activate != nil {
+		h.activate(home)
+	}
+}
+
+var activeTestHooks WatcherHooks = NoopWatcherHooks{}
+
 func testRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{})
+	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks)
 }
 
 // --- absorbStaleSignal tests (pure predicate) ---
@@ -1003,16 +1023,16 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
 
 	// Install a TerminalReconcileHook that relays receipts (simulating captain init)
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string, startup bool) error {
+	origHooks := activeTestHooks
+	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
 		ph := os.Getenv("MUNSU_PARENT_STATUS")
 		if ph == "" || ph == homeDir {
 			return nil
 		}
 		_, err := turnend.RelayPendingReceipts(homeDir, ph)
 		return err
-	}
-	defer func() { TerminalReconcileHook = origHook }()
+	}}
+	defer func() { activeTestHooks = origHooks }()
 
 	recoveryDone = sync.Map{} // reset for test isolation
 
@@ -1079,9 +1099,9 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	}
 
 	// Ensure no hook is set and MUNSU_PARENT_STATUS is unset
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = nil
-	defer func() { TerminalReconcileHook = origHook }()
+	origHooks := activeTestHooks
+	activeTestHooks = NoopWatcherHooks{}
+	defer func() { activeTestHooks = origHooks }()
 	recoveryDone = sync.Map{}
 
 	t.Setenv("MUNSU_PARENT_STATUS", "")
@@ -1138,9 +1158,9 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 	t.Setenv("MUNSU_PARENT_STATUS", filepath.Join(tmp, "nonexistent"))
 
 	// No hook set — recovery does nothing, runCycle handles gracefully
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = nil
-	defer func() { TerminalReconcileHook = origHook }()
+	origHooks := activeTestHooks
+	activeTestHooks = NoopWatcherHooks{}
+	defer func() { activeTestHooks = origHooks }()
 	recoveryDone = sync.Map{}
 
 	// Run one cycle — should NOT fail fatally
@@ -1183,16 +1203,16 @@ func writeProvenanceMarker(t *testing.T, home, captainID string) {
 // receipts via turnend.RelayPendingReceipts. Returns a cleanup function.
 func installRelayHook(t *testing.T) func() {
 	t.Helper()
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string, startup bool) error {
+	origHooks := activeTestHooks
+	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
 		ph := os.Getenv("MUNSU_PARENT_STATUS")
 		if ph == "" || ph == homeDir {
 			return nil
 		}
 		_, err := turnend.RelayPendingReceipts(homeDir, ph)
 		return err
-	}
-	return func() { TerminalReconcileHook = origHook }
+	}}
+	return func() { activeTestHooks = origHooks }
 }
 
 // setupParentStatusTest creates a captain home and general (parent) home
@@ -1220,9 +1240,9 @@ func TestRunCycle_StartupRecoveryIsIndependentPerHome(t *testing.T) {
 	homeA := setupRunCycleTest(t)
 	homeB := setupRunCycleTest(t)
 	calls := map[string]int{}
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string, startup bool) error { calls[homeDir]++; return nil }
-	defer func() { TerminalReconcileHook = origHook }()
+	origHooks := activeTestHooks
+	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error { calls[homeDir]++; return nil }}
+	defer func() { activeTestHooks = origHooks }()
 	recoveryDone = sync.Map{}
 
 	if _, err := testRunCycle(homeA); err != nil {
@@ -1240,12 +1260,12 @@ func TestRunCycle_NoDoubleCallOnCycle1(t *testing.T) {
 	tmp := setupRunCycleTest(t)
 
 	callCount := 0
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string, startup bool) error {
+	origHooks := activeTestHooks
+	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
 		callCount++
 		return nil
-	}
-	defer func() { TerminalReconcileHook = origHook }()
+	}}
+	defer func() { activeTestHooks = origHooks }()
 	resetRecovery()
 
 	// Cycle 1 — recovery calls the hook once; per-cycle is skipped.
@@ -1279,11 +1299,11 @@ func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
 	tmp := setupRunCycleTest(t)
 
 	t.Setenv("MUNSU_PARENT_STATUS", "/nonexistent")
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = func(homeDir string, startup bool) error {
+	origHooks := activeTestHooks
+	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
 		return fmt.Errorf("simulated reconcile error")
-	}
-	defer func() { TerminalReconcileHook = origHook }()
+	}}
+	defer func() { activeTestHooks = origHooks }()
 	resetRecovery()
 
 	// Capture stderr to verify error message is observable.
@@ -1326,9 +1346,9 @@ func TestRunCycle_PerCycleReconcileErrorDoesNotExit(t *testing.T) {
 func TestRunCycle_PerCycleReconcileNoHookIsNoop(t *testing.T) {
 	tmp := setupRunCycleTest(t)
 
-	origHook := TerminalReconcileHook
-	TerminalReconcileHook = nil
-	defer func() { TerminalReconcileHook = origHook }()
+	origHooks := activeTestHooks
+	activeTestHooks = NoopWatcherHooks{}
+	defer func() { activeTestHooks = origHooks }()
 	resetRecovery()
 
 	emitted, err := testRunCycle(tmp)
@@ -1354,11 +1374,11 @@ func TestRunCycle_CaptainActivationNotCalledOnCycle1(t *testing.T) {
 	tmp := setupRunCycleTest(t)
 
 	callCount := 0
-	origHook := CaptainActivationHook
-	CaptainActivationHook = func(homeDir string) {
+	origHooks := activeTestHooks
+	activeTestHooks = testWatcherHooks{activate: func(homeDir string) {
 		callCount++
-	}
-	defer func() { CaptainActivationHook = origHook }()
+	}}
+	defer func() { activeTestHooks = origHooks }()
 	resetRecovery()
 
 	// Cycle 1 — recovery guard should prevent hook call.
@@ -1390,11 +1410,11 @@ func TestRunCycle_CaptainActivationEveryCycleAfterRecovery(t *testing.T) {
 	tmp := setupRunCycleTest(t)
 
 	callCount := 0
-	origHook := CaptainActivationHook
-	CaptainActivationHook = func(homeDir string) {
+	origHooks := activeTestHooks
+	activeTestHooks = testWatcherHooks{activate: func(homeDir string) {
 		callCount++
-	}
-	defer func() { CaptainActivationHook = origHook }()
+	}}
+	defer func() { activeTestHooks = origHooks }()
 	resetRecovery()
 
 	// Cycle 1 — recovery, no hook call.
@@ -1427,9 +1447,9 @@ func TestRunCycle_CaptainActivationEveryCycleAfterRecovery(t *testing.T) {
 func TestRunCycle_CaptainActivationNilHookIsNoop(t *testing.T) {
 	tmp := setupRunCycleTest(t)
 
-	origHook := CaptainActivationHook
-	CaptainActivationHook = nil
-	defer func() { CaptainActivationHook = origHook }()
+	origHooks := activeTestHooks
+	activeTestHooks = NoopWatcherHooks{}
+	defer func() { activeTestHooks = origHooks }()
 	resetRecovery()
 
 	// Skip cycle 1 (recovery), check cycle 2.

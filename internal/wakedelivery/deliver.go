@@ -2,7 +2,7 @@
 // a single deep module with a small public API.
 //
 // Two operations:
-//   - DeliverWake:  soldier-side orchestration (status → receipt → event → wake → injection)
+//   - DeliverWake:  soldier-side orchestration (status → receipt → event → wake)
 //   - ReconcilePending: captain-side relay (pending receipt → general status → ack → obligation close)
 //
 // Storage primitives (turnend, lifecycle, event) are imported, not absorbed.
@@ -14,14 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/composer"
 	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
 )
@@ -106,7 +103,7 @@ func isMaterial(state string) bool {
 //  3. Write captain receipt + init obligations (if parentHome set and material)
 //  4. Append typed event (best-effort)
 //  5. Enqueue wake (material states only)
-//  6. Inject sentinel to parent pane (best-effort)
+//  6. Complete best-effort wake bookkeeping
 //
 // Fail-closed: steps 1–3 must succeed; steps 4–6 are best-effort (return
 // non-fatal warnings via stderr).
@@ -171,104 +168,6 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	return receipt, nil
-}
-
-// --- Pane injection (moved from report_cmd.go) ---
-
-// injectedEvents tracks synthetic event IDs that have already been injected
-// to prevent duplicate injection of the same event.
-var injectedEvents sync.Map
-
-// ReportSessionResolver is the seam for resolving a session backend.
-// Production code uses session.Resolve; tests can inject a fake.
-type ReportSessionResolver func(string, string) (session.Backend, string, error)
-
-// InjectToParentPane resolves the parent pane target and injects a sentinel
-// message. Returns the typed InjectResult with outcome diagnostics.
-func InjectToParentPane(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64) afk.InjectResult {
-	return InjectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, state, syntheticID, session.Resolve)
-}
-
-// InjectToParentPaneWithResolver is the testable core of InjectToParentPane.
-func InjectToParentPaneWithResolver(role, homeDir, parentHome, taskID, msg, state string, syntheticID uint64, resolveSession ReportSessionResolver) afk.InjectResult {
-	// Atomically claim the event so concurrent attempts cannot inject twice.
-	// Failed or unsafe attempts release the claim so the same durable event ID
-	// remains retryable.
-	eventKey := fmt.Sprintf("%s/%s/%d", taskID, state, syntheticID)
-	if _, loaded := injectedEvents.LoadOrStore(eventKey, true); loaded {
-		return afk.InjectResult{Outcome: afk.OutcomeInjected, Target: "(deduped)"}
-	}
-	retainClaim := false
-	defer func() {
-		if !retainClaim {
-			injectedEvents.Delete(eventKey)
-		}
-	}()
-
-	// Resolve the target home for parent pane resolution.
-	targetHome, err := ResolveInjectionTargetHome(role, homeDir, parentHome)
-	if err != nil {
-		return afk.InjectResult{
-			Outcome: afk.OutcomeEndpointDead,
-			Error:   fmt.Sprintf("target home resolution: %v", err),
-		}
-	}
-
-	target, err := afk.ResolveTargetWithSource(targetHome)
-	if err != nil || target.Handle == "" || target.Source == afk.Unsupported {
-		return afk.InjectResult{
-			Outcome: afk.OutcomeEndpointDead,
-			Target:  target.Handle,
-			Error:   fmt.Sprintf("target resolution from %s: %v no-handle=%v unsupported=%v", targetHome, err, target.Handle == "", target.Source == afk.Unsupported),
-		}
-	}
-
-	// Obtain a session backend for SendKeys and Capture.
-	bk, _, err := resolveSession(homeDir, "")
-	if err != nil {
-		return afk.InjectResult{
-			Outcome: afk.OutcomeEndpointDead,
-			Target:  target.Handle,
-			Error:   fmt.Sprintf("backend resolve: %v", err),
-		}
-	}
-
-	var afkCap afk.PaneCapture = bk
-
-	injectMsg := fmt.Sprintf("[report] %s: %s (task=%s)", state, msg, taskID)
-	markedMsg := afk.Mark(injectMsg)
-	if syntheticID > 0 {
-		markedMsg = fmt.Sprintf("%s [event=%d]", markedMsg, syntheticID)
-	}
-
-	safe, verdict, err := afk.IsSafeInjectTarget(afkCap, target.Handle)
-	if err != nil {
-		return afk.InjectResult{Outcome: afk.OutcomeEndpointDead, Verdict: verdict.String(), Target: target.Handle, Error: err.Error()}
-	}
-	if !safe {
-		return afk.InjectResult{Outcome: afk.OutcomeUnsafe, Verdict: verdict.String(), Target: target.Handle}
-	}
-
-	result := session.SubmitPrompt(bk, target.Handle, markedMsg)
-	if !result.Acknowledged() {
-		return afk.InjectResult{Outcome: afk.OutcomeBackendFailed, Verdict: verdict.String(), Target: target.Handle, Error: string(result.Status)}
-	}
-	retainClaim = true
-	return afk.InjectResult{Outcome: afk.OutcomeInjected, Verdict: verdict.String(), Target: target.Handle}
-}
-
-// ResolveInjectionTargetHome returns the target home directory for parent pane
-// notification target resolution.
-func ResolveInjectionTargetHome(role, homeDir, parentHome string) (string, error) {
-	switch role {
-	case "soldier", "captain":
-		if parentHome == "" {
-			return "", fmt.Errorf("MUNSU_PARENT_STATUS not set for role %q", role)
-		}
-		return parentHome, nil
-	default:
-		return homeDir, nil
-	}
 }
 
 // --- ReconcilePending ---
@@ -517,9 +416,15 @@ func listAllReceipts(homeDir string) ([]turnend.PendingReceipt, error) {
 	return results, nil
 }
 
-// activationSessionResolver allows tests to inject a fake session backend
-// for ActivateOnReceipt. When set, it is used instead of session.Resolve.
-var activationSessionResolver func(string, string) (session.Backend, string, error)
+type ActivationAttempt struct {
+	Acknowledged                               bool
+	SafetyVerdict, SafetyError, CaptureContent string
+	SubmitStatus, SubmitDetail, SubmitError    string
+}
+
+type ActivationTransport interface {
+	Attempt(homeDir string, target afk.TargetResult, payload string) ActivationAttempt
+}
 
 // ActivateOnReceipt scans captain-owned receipt files and for each one
 // not yet activation-seen, attempts a safe, idempotent activation nudge to
@@ -542,7 +447,7 @@ var activationSessionResolver func(string, string) (session.Backend, string, err
 // Returns the number of activation nudges that were successfully injected.
 // Idempotent: safe to call repeatedly. Already activation-seen receipts are
 // skipped without examining the pane target again.
-func ActivateOnReceipt(captainHome, parentHome string) int {
+func ActivateOnReceiptWithTransport(captainHome, parentHome string, transport ActivationTransport) int {
 	allReceipts, err := listAllReceipts(captainHome)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: listing receipts for activation: %v\n", err)
@@ -566,37 +471,9 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 		return 0
 	}
 
-	// Obtain a session backend for injection.
-	resolveSession := session.Resolve
-	if activationSessionResolver != nil {
-		resolveSession = activationSessionResolver
-	}
-	bk, _, err := resolveSession(captainHome, "")
-	if err != nil {
-		diagLog(ActivationDiagnostic{
-			TargetHandle:   target.Handle,
-			ReceiptsFound:  len(allReceipts),
-			ReceiptSkipped: "no-backend",
-			SafetyError:    fmt.Sprintf("session.Resolve: %v", err),
-		})
-		// No backend available. Do NOT mark activation-seen.
+	if transport == nil {
+		diagLog(ActivationDiagnostic{TargetHandle: target.Handle, ReceiptsFound: len(allReceipts), ReceiptSkipped: "no-transport"})
 		return 0
-	}
-
-	var afkCap afk.PaneCapture = bk
-
-	// Determine whether the backend supports agent registration lookup.
-	agentAware, hasAgentAware := bk.(session.AgentAwareBackend)
-
-	// Pre-flight agent recognition: if agent-aware, check if target is a
-	// recognized agent. We use this later to distinguish pi/grok agent
-	// prompts (like ">") from dead shell prompts.
-	targetIsAgent := false
-	if hasAgentAware {
-		alive, agentAlive, agentErr := agentAware.CheckAgentAlive(target.Handle)
-		if agentErr == nil && alive && agentAlive {
-			targetIsAgent = true
-		}
 	}
 
 	count := 0
@@ -606,61 +483,17 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 			continue
 		}
 
-		// Check inject safety: composer must be empty (agent waiting).
-		safe, verdict, sErr := afk.IsSafeInjectTarget(afkCap, target.Handle)
-		diag := ActivationDiagnostic{
-			TargetHandle:  target.Handle,
-			ReceiptsFound: len(allReceipts),
-			SafetyVerdict: verdict.String(),
-		}
-
-		if sErr != nil {
-			diag.ReceiptSkipped = "capture-error"
-			diag.SafetyError = sErr.Error()
-			diagLog(diag)
-			// Capture failure. Do NOT mark activation-seen — preserve retry.
-			continue
-		}
-
-		// Context-aware safety fix: when the content heuristic returns
-		// Unknown or Pending (e.g., pi captain showing "Press any key" or
-		// "> " which the heuristic misclassifies), but the backend confirms
-		// the target IS a recognized agent, do a secondary check: capture the
-		// composer directly and treat a bare prompt glyph as Empty.
-		if !safe && targetIsAgent && (verdict.String() == "unknown" || verdict.String() == "pending") {
-			// Re-capture and check if the composer is empty except for
-			// a known prompt glyph. This handles pi's ">" prompt which
-			// the heuristic treats as a shell prompt (Unknown).
-			safe = checkAgentComposerSafe(afkCap, target.Handle)
-			if safe {
-				diag.SafetyVerdict = "empty"
-				diag.CaptureContent = "(agent-override: bare prompt glyph)"
-			} else {
-				diag.CaptureContent = "(agent-override: non-empty composer)"
-			}
-		}
-
-		if sErr == nil && !safe {
-			diag.ReceiptSkipped = "unsafe"
-			diagLog(diag)
-			// Unsafe target (composer busy, unknown verdict).
-			// Do NOT mark activation-seen — preserve retry.
-			continue
-		}
-
 		// Build the activation nudge message.
 		nudge := fmt.Sprintf("[receipt] %s: soldier %s [key=%s]", pr.State, pr.TaskID, pr.TermKey)
 		markedMsg := afk.Mark(nudge)
 
-		result := session.SubmitPrompt(bk, target.Handle, markedMsg)
-		diag.SubmitStatus = string(result.Status)
-		diag.SubmitDetail = result.Detail
-		if result.Err != nil {
-			diag.SubmitError = result.Err.Error()
-		}
-
-		if !result.Acknowledged() {
+		attempt := transport.Attempt(captainHome, target, markedMsg)
+		diag := ActivationDiagnostic{TargetHandle: target.Handle, ReceiptsFound: len(allReceipts), SafetyVerdict: attempt.SafetyVerdict, SafetyError: attempt.SafetyError, CaptureContent: attempt.CaptureContent, SubmitStatus: attempt.SubmitStatus, SubmitDetail: attempt.SubmitDetail, SubmitError: attempt.SubmitError}
+		if !attempt.Acknowledged {
 			diag.ReceiptSkipped = "submit-failed"
+			if attempt.SubmitStatus == "" {
+				diag.ReceiptSkipped = "unsafe"
+			}
 			diagLog(diag)
 			// Submit failed (backend failure, endpoint dead, etc.).
 			// Do NOT mark activation-seen — preserve retry.
@@ -677,70 +510,6 @@ func ActivateOnReceipt(captainHome, parentHome string) int {
 		count++
 	}
 	return count
-}
-
-// checkAgentComposerSafe captures the composer row and checks whether it is
-// empty except for a known agent prompt glyph. This is a fallback safety
-// check for recognized agents whose prompt glyph (e.g., ">" for pi) is
-// classified as Unknown by the generic composer heuristic.
-//
-// Returns true when the composer shows only a prompt glyph and whitespace
-// (agent is idle and ready for input). Returns false for any real typed
-// content, busy actions, or capture failure.
-func checkAgentComposerSafe(cap afk.PaneCapture, paneHandle string) bool {
-	output, err := cap.Capture(paneHandle, 4)
-	if err != nil {
-		return false
-	}
-	output = strings.TrimRight(output, "\n\r")
-	lines := strings.Split(output, "\n")
-	composerLine := ""
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			composerLine = lines[i]
-			break
-		}
-	}
-
-	// Strip ANSI and also ghost text (dim/faint SGR 2, dark truecolor).
-	plain := strings.TrimSpace(composer.StripANSI(composerLine))
-	ghostStripped := strings.TrimSpace(composer.StripGhost(composerLine))
-
-	// Check for busy indicators in plain text first (busy trumps everything).
-	busyPrefixes := []string{"Working", "Thinking", "Running", "Processing"}
-	for _, prefix := range busyPrefixes {
-		if strings.Contains(plain, prefix) {
-			return false
-		}
-	}
-
-	// Agent is idle if the composer shows ONLY a known prompt glyph.
-	// Known agent prompt glyphs: \u276F (claude), \u203A (codex), > (pi).
-	// Also accept empty composer (no content at all — appearing agent).
-	if plain == "" || plain == "\u276F" || plain == "\u203A" || plain == ">" {
-		return true
-	}
-
-	// After ghost-stripping, check the remaining visible content.
-	if ghostStripped == "" || ghostStripped == "\u276F" || ghostStripped == "\u203A" || ghostStripped == ">" {
-		return true
-	}
-
-	// For recognized agents with a prompt prefix, strip it and check
-	// whether only whitespace remains after the glyph.
-	for _, glyph := range []string{"\u276F ", "\u203A ", "> ", "o ", "\u276F", "\u203A", ">"} {
-		if strings.HasPrefix(ghostStripped, glyph) {
-			after := strings.TrimSpace(strings.TrimPrefix(ghostStripped, glyph))
-			if after == "" {
-				return true
-			}
-			// Non-empty content after glyph — not safe (typed input or busy).
-			return false
-		}
-	}
-
-	// Content after prompt glyph that is not busy → pending input. Not safe.
-	return false
 }
 
 // readCaptainID reads the captain ID from the provenance marker file.

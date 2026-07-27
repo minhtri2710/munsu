@@ -775,18 +775,17 @@ func TestActivationHook_ConfigFallback(t *testing.T) {
 	}
 
 	// Should not panic — activation is best-effort even if no receipts
-	captainActivationHook(tmp)
+	captainActivationHook(tmp, nil)
 }
 
-// TestActivationHook_NoParent verifies that captainActivationHook is a no-op
-// (returns without calling ActivateOnReceipt) when neither env nor config has
-// a valid parent.
+// TestActivationHook_NoParent verifies that the explicit watcher hook is a no-op
+// when neither env nor config has a valid parent.
 func TestActivationHook_NoParent(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Should not panic and should not try to activate
-	captainActivationHook(tmp)
+	captainActivationHook(tmp, nil)
 }
 func TestReconcileHook_ReturnsNilWhenParentStatusEmpty(t *testing.T) {
 	tmp := t.TempDir()

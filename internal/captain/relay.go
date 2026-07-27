@@ -11,10 +11,17 @@ import (
 	"github.com/minhtri2710/munsu/internal/wakedelivery"
 )
 
-func init() {
-	supervision.TerminalReconcileHook = reconcileHook
-	supervision.CaptainActivationHook = captainActivationHook
+type watcherHooks struct {
+	activation wakedelivery.ActivationTransport
 }
+
+func NewWatcherHooks(activation wakedelivery.ActivationTransport) supervision.WatcherHooks {
+	return watcherHooks{activation: activation}
+}
+func (watcherHooks) Reconcile(homeDir string, startup bool) error {
+	return reconcileHook(homeDir, startup)
+}
+func (h watcherHooks) Activate(homeDir string) { captainActivationHook(homeDir, h.activation) }
 
 // resolveParentHome resolves the parent home directory for a captain context.
 // Precedence:
@@ -43,12 +50,12 @@ func resolveParentHome(homeDir string) string {
 // captainActivationHook is the per-cycle activation hook running inside a
 // captain home. It nudges the captain agent pane when new soldier receipts
 // arrive, without waiting for General round-trip.
-func captainActivationHook(homeDir string) {
+func captainActivationHook(homeDir string, activation wakedelivery.ActivationTransport) {
 	parentHome := resolveParentHome(homeDir)
 	if parentHome == "" {
 		return
 	}
-	wakedelivery.ActivateOnReceipt(homeDir, parentHome)
+	wakedelivery.ActivateOnReceiptWithTransport(homeDir, parentHome, activation)
 }
 
 // reconcileHook is the supervision-watcher recovery hook running inside a

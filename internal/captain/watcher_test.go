@@ -28,7 +28,7 @@ func (captainTestSender) Send(string, map[string]string, string) mailbox.BoundSe
 }
 
 func captainRunCycle(home string) (bool, error) {
-	return supervision.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{})
+	return supervision.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewWatcherHooks(nil))
 }
 
 // --- WatcherStatusSummary tests ---

@@ -35,8 +35,18 @@ type TaskEndpointProbe interface {
 	Probe(homeDir string, meta map[string]string) (bool, error)
 }
 
-func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender)
+type WatcherHooks interface {
+	Reconcile(homeDir string, startup bool) error
+	Activate(homeDir string)
+}
+
+type NoopWatcherHooks struct{}
+
+func (NoopWatcherHooks) Reconcile(string, bool) error { return nil }
+func (NoopWatcherHooks) Activate(string)              {}
+
+func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender, hooks WatcherHooks) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -45,7 +55,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender mailbox.BoundSender) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender mailbox.BoundSender, hooks WatcherHooks) (*WakeReason, error) {
 	acquired, err := lifecycle.AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -72,7 +82,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
 			lifecycle.WriteBeat(homeDir)
-			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender); err != nil {
+			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks); err != nil {
 				return nil, err
 			}
 		}
@@ -303,34 +313,25 @@ func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe) *WakeReason 
 	return nil
 }
 
-// TerminalReconcileHook is a recovery-only hook for terminal receipt retry.
-// It is called ONCE when the watcher starts, not every cycle.
-// Set by the captain package during init.
-var TerminalReconcileHook func(homeDir string, startup bool) error
-
-// CaptainActivationHook is called every watcher cycle (after startup recovery)
-// to give the captain a chance to nudge/activate its agent pane when new
-// soldier receipts arrive. Set by the captain package during init.
-// Idempotent: the implementation must guard against duplicate nudges.
-// Nil hook = no-op.
-var CaptainActivationHook func(homeDir string)
-
 // recoveryDone tracks one-shot recovery independently for each watched home.
 var recoveryDone sync.Map
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender) (bool, error) {
-	return runCycleWithProbeAndSender(homeDir, probe, sender)
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender, hooks WatcherHooks) (bool, error) {
+	return runCycleWithProbeAndSender(homeDir, probe, sender, hooks)
 }
 
 // runRecovery executes the one-shot recovery on watcher startup.
 // It retries pending inbox envelopes once with fingerprint dedup,
 // runs the legacy terminal reconcile hook (if any) once,
 // then completes any pending poll retirements.
-func runRecovery(homeDir string, sender mailbox.BoundSender) error {
+func runRecovery(homeDir string, sender mailbox.BoundSender, hooks WatcherHooks) error {
 	if sender == nil {
 		return fmt.Errorf("mailbox recovery sender capability is required")
+	}
+	if hooks == nil {
+		return fmt.Errorf("watcher hooks capability is required")
 	}
 	if _, loaded := recoveryDone.LoadOrStore(homeDir, true); loaded {
 		return nil
@@ -351,24 +352,20 @@ func runRecovery(homeDir string, sender mailbox.BoundSender) error {
 		}
 	}
 
-	// Recovery step 2: run legacy terminal reconcile hook once.
-	// This catches any remaining turnend receipts that were not migrated
-	// to the new mailbox format.
-	if TerminalReconcileHook != nil {
-		if err := TerminalReconcileHook(homeDir, true); err != nil {
-			fmt.Fprintf(os.Stderr, "terminal reconcile recovery: %v\n", err)
-		}
+	// Recovery step 2: reconcile terminal receipts once.
+	if err := hooks.Reconcile(homeDir, true); err != nil {
+		fmt.Fprintf(os.Stderr, "terminal reconcile recovery: %v\n", err)
 	}
 	return nil
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender mailbox.BoundSender, hooks WatcherHooks) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
 
 	// Run one-shot recovery on first cycle for this home.
-	if err := runRecovery(homeDir, sender); err != nil {
+	if err := runRecovery(homeDir, sender, hooks); err != nil {
 		return false, err
 	}
 
@@ -395,8 +392,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	// exactly-once relay.
 	// On error, the error is logged and the cycle continues (bounded
 	// failure) — partial failure must not falsely ack/close obligations.
-	if recoveryWasDone && TerminalReconcileHook != nil {
-		if err := TerminalReconcileHook(homeDir, false); err != nil {
+	if recoveryWasDone {
+		if err := hooks.Reconcile(homeDir, false); err != nil {
 			fmt.Fprintf(os.Stderr, "terminal reconcile cycle: %v\n", err)
 		}
 	}
@@ -406,8 +403,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	// for new soldier receipts that haven't yet triggered an activation
 	// nudge to the captain agent pane. Idempotent: already-seen receipts
 	// are skipped via durable markers. Nil hook = no-op.
-	if recoveryWasDone && CaptainActivationHook != nil {
-		CaptainActivationHook(homeDir)
+	if recoveryWasDone {
+		hooks.Activate(homeDir)
 	}
 
 	emitted := false
