@@ -386,7 +386,7 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 	// Create a minimal meta file
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	metaContent := "kind=scout\nwindow=@1\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "nonexistent.meta"), []byte(metaContent), 0644)
 
 	// With --force, it should try to proceed (will fail at session/return steps but not at safety)
@@ -406,7 +406,7 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	metaContent := "kind=scout\nwindow=@1\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Without --force, should fail
@@ -434,7 +434,7 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Create meta file with harness=pi so adapter-driven artifacts are included
-	metaContent := "kind=scout\nwindow=@1\nharness=pi\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nharness=pi\n"
 	os.WriteFile(filepath.Join(stateDir, "test-residual.meta"), []byte(metaContent), 0644)
 
 	// Create residual artifacts: munsu-native (both old and new names) + pi adapter artifacts
@@ -486,7 +486,7 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Create meta file (harness=pi to include adapter artifacts)
-	metaContent := "kind=scout\nwindow=@1\nharness=pi\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nharness=pi\n"
 	os.WriteFile(filepath.Join(stateDir, "legacy-test.meta"), []byte(metaContent), 0644)
 
 	// Munsu-native artifacts: new canonical names (post item-5 rename)
@@ -600,7 +600,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	// Create meta file for a scout task.
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	metaContent := "kind=scout\nwindow=@1\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Create report.md so report check passes before decision hold check.
@@ -657,7 +657,7 @@ working [key=phase3]: Phase 3 in progress`
 	}
 
 	// Create a minimal meta file so Run can read it
-	metaContent := "kind=ship\nwindow=@1\n"
+	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
 	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -703,7 +703,7 @@ resolved [key=phase2]: Phase 2 done`
 	}
 
 	// Create minimal meta
-	metaContent := "kind=ship\nwindow=@1\n"
+	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
 	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -728,7 +728,7 @@ func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Create minimal meta but NO status file
-	metaContent := "kind=ship\nwindow=@1\n"
+	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
 	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -809,7 +809,7 @@ func TestUplinkCheck_NoMaterialStatusPasses(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	id := "test-task"
-	metaContent := "kind=ship\nwindow=@1\n"
+	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// No status file, no per-task obligations → should pass
@@ -836,7 +836,7 @@ func TestUplinkCheck_MaterialStatusWithoutReportRelayFails(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	id := "test-task"
-	metaContent := "kind=ship\nwindow=@1\n"
+	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations so uplinkCheck checks this task
@@ -863,7 +863,7 @@ func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) 
 	os.MkdirAll(stateDir, 0755)
 
 	id := "test-task"
-	metaContent := "kind=ship\nwindow=@1\n"
+	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations
@@ -901,7 +901,7 @@ func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings\n"), 0644)
 
 	id := "test-uplink-fail"
-	metaContent := "kind=scout\nwindow=@1\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations
@@ -930,7 +930,7 @@ func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
 	os.MkdirAll(receiptsDir, 0755)
 
 	id := "test-uplink-force"
-	metaContent := "kind=scout\nwindow=@1\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Write material status

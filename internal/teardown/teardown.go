@@ -109,20 +109,19 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	if windowID, ok := meta["window"]; ok && windowID != "" {
 		status, err := backend.Probe(opts.HomeDir, meta)
 		if err != nil {
-			result.Steps = append(result.Steps, fmt.Sprintf("session backend unavailable: %v", err))
+			return nil, fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err)
+		}
+		if !status.Alive {
+			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", windowID))
 		} else {
-			if !status.Alive {
-				result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", windowID))
-			}
 			request := DisposeRequest{Backend: meta["backend"], Handle: windowID, SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: opts.HomeDir, TaskID: opts.ID}
 			if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
 				request.DenyWorkspaceClose = true
 			}
 			if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
-				result.Steps = append(result.Steps, fmt.Sprintf("session teardown %s: %v", windowID, err))
-			} else {
-				result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", windowID))
+				return nil, fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err)
 			}
+			result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", windowID))
 		}
 	}
 

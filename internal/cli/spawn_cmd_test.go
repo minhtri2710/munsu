@@ -439,7 +439,7 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 	}
 
 	// Create task meta (kind=scout so scoutSafetyCheck runs — just needs report.md)
-	metaContent := "kind=scout\nwindow=@1\nworktree=/nonexistent\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
 	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	metaContent := "kind=scout\nwindow=@1\nworktree=/nonexistent\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
 	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +562,7 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	metaContent := "kind=scout\nwindow=@1\nworktree=/nonexistent\n"
+	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=/nonexistent\n"
 	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
