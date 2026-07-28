@@ -1,6 +1,6 @@
 package captain
 
-type LaunchRequest struct{ ContainerLabel, WindowName, Command, WorkingDir string }
+type LaunchRequest struct{ WindowName, Command, WorkingDir string }
 type LaunchResult struct {
 	Backend, Window string
 	Meta            map[string]string

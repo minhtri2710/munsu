@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
@@ -1090,7 +1089,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	if err != nil {
 		return fmt.Errorf("building launch script: %w", err)
 	}
-	launched, err := endpoint.Launch(parentHome, LaunchRequest{ContainerLabel: backend.WorkspaceTag(canonicalCaptainHome), WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome})
+	launched, err := endpoint.Launch(parentHome, LaunchRequest{WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome})
 	if err != nil {
 		return fmt.Errorf("launching captain endpoint: %w", err)
 	}

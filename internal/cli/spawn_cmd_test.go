@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
@@ -459,10 +459,10 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 	}
 
 	// Write receipt (no ack) so uplinkCheck blocks
-	if err := turnend.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
 		t.Fatal(err)
 	}
-	if err := turnend.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
+	if err := orchestrator.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -480,10 +480,10 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 	}
 
 	// Step 2: Write ack so uplinkCheck passes
-	if err := turnend.WriteAck(tmpDir, soldierID, "default"); err != nil {
+	if err := orchestrator.WriteAck(tmpDir, soldierID, "default"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := turnend.CompleteTaskObligation(tmpDir, soldierID, turnend.ReportRelay); err != nil {
+	if _, err := orchestrator.CompleteTaskObligation(tmpDir, soldierID, orchestrator.ReportRelay); err != nil {
 		t.Fatal(err)
 	}
 
@@ -526,10 +526,10 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	}
 
 	// Write receipt + obligations (no ack — would normally block)
-	if err := turnend.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(tmpDir, soldierID, "default", "done", "task complete"); err != nil {
 		t.Fatal(err)
 	}
-	if err := turnend.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
+	if err := orchestrator.InitTaskObligations(tmpDir, soldierID, "default"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -580,17 +580,17 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	}
 
 	// Write receipt + obligations
-	if err := turnend.WriteReceipt(tmpDir, soldierID, termKey, "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(tmpDir, soldierID, termKey, "done", "task complete"); err != nil {
 		t.Fatal(err)
 	}
-	if err := turnend.InitTaskObligations(tmpDir, soldierID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(tmpDir, soldierID, termKey); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("MUNSU_HOME", tmpDir)
 
 	// Write ack for WRONG task (same key) — should NOT unblock
-	if err := turnend.WriteAck(tmpDir, "wrong-task", termKey); err != nil {
+	if err := orchestrator.WriteAck(tmpDir, "wrong-task", termKey); err != nil {
 		t.Fatal(err)
 	}
 
@@ -605,7 +605,7 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	}
 
 	// Write ack for correct task but WRONG key — should NOT unblock either
-	if err := turnend.WriteAck(tmpDir, soldierID, "wrong-key"); err != nil {
+	if err := orchestrator.WriteAck(tmpDir, soldierID, "wrong-key"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -620,10 +620,10 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	}
 
 	// Now write ack for the exact taskID+key — should unblock
-	if err := turnend.WriteAck(tmpDir, soldierID, termKey); err != nil {
+	if err := orchestrator.WriteAck(tmpDir, soldierID, termKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := turnend.CompleteTaskObligation(tmpDir, soldierID, turnend.ReportRelay); err != nil {
+	if _, err := orchestrator.CompleteTaskObligation(tmpDir, soldierID, orchestrator.ReportRelay); err != nil {
 		t.Fatal(err)
 	}
 

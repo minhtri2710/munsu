@@ -7,13 +7,11 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/waker"
 )
 
 // Re-export lifecycle & waker helpers
 type WakeRecord = lifecycle.WakeRecord
 type BeatStatus = lifecycle.BeatStatus
-type WakerRecord = waker.Record
 
 func BeatPath(homeDir string) string  { return lifecycle.BeatPath(homeDir) }
 func QueuePath(homeDir string) string { return lifecycle.QueuePath(homeDir) }
@@ -23,8 +21,16 @@ func EnqueueWake(homeDir, kind, key, payload string) error {
 	return lifecycle.EnqueueWake(homeDir, kind, key, payload)
 }
 
-func DrainWakes(homeDir string) ([]waker.Record, error) {
-	return waker.Drain(homeDir)
+func DrainWakes(homeDir string) ([]WakeRecord, error) {
+	records, err := Drain(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WakeRecord, len(records))
+	for i, r := range records {
+		out[i] = WakeRecord(r)
+	}
+	return out, nil
 }
 
 func HasQueuedWakes(homeDir string) bool {

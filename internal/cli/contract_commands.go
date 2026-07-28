@@ -10,10 +10,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/waker"
 	"github.com/spf13/cobra"
 )
 
@@ -178,19 +178,19 @@ func newContractGuardCmd() *cobra.Command {
 			}
 
 			// Use shared guard evaluation (same as middleware)
-			result := waker.EvaluateGuard(ctx.Home, inFlight, time.Now())
+			result := orchestrator.EvaluateGuard(ctx.Home, inFlight, time.Now())
 			beatStatus := result.BeatStatus
 
 			// Build structured conditions with stable codes
-			var allConditions []waker.ConditionInfo
+			var allConditions []orchestrator.ConditionInfo
 			if !beatStatus.Exists {
-				allConditions = append(allConditions, waker.ConditionInfo{
-					Code:    waker.ConditionWatcherAbsent,
+				allConditions = append(allConditions, orchestrator.ConditionInfo{
+					Code:    orchestrator.ConditionWatcherAbsent,
 					Message: "WATCHER NEVER STARTED - no liveness beacon",
 				})
 			} else if beatStatus.Stale {
-				allConditions = append(allConditions, waker.ConditionInfo{
-					Code: waker.ConditionWatcherStale,
+				allConditions = append(allConditions, orchestrator.ConditionInfo{
+					Code: orchestrator.ConditionWatcherStale,
 					Message: fmt.Sprintf(
 						"WATCHER BEACON STALE - last beat %v ago (grace %v)",
 						beatStatus.Age.Round(time.Second), lifecycle.StaleThreshold()),

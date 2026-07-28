@@ -9,7 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // setupRelayTest creates a captain home and a general home with a provenance
@@ -61,10 +60,10 @@ func TestReconcileTerminalReceipts_SinglePending(t *testing.T) {
 	termKey := "test-key"
 
 	// Create soldier receipt (done state)
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -77,7 +76,7 @@ func TestReconcileTerminalReceipts_SinglePending(t *testing.T) {
 	}
 
 	// Verify ack exists
-	if !turnend.IsReceiptAcked(captainHome, taskID, termKey) {
+	if !orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should be acked after reconciliation")
 	}
 
@@ -92,7 +91,7 @@ func TestReconcileTerminalReceipts_SinglePending(t *testing.T) {
 	}
 
 	// Verify ReportRelay obligation closed
-	open, err := turnend.IsTaskReportRelayOpen(captainHome, taskID)
+	open, err := orchestrator.IsTaskReportRelayOpen(captainHome, taskID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
@@ -109,10 +108,10 @@ func TestReconcileTerminalReceipts_MultiplePending(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		taskID := "test-soldier-" + string(rune('0'+i))
 		termKey := "key-" + string(rune('0'+i))
-		if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+		if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 			t.Fatalf("WriteReceipt %d: %v", i, err)
 		}
-		if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+		if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 			t.Fatalf("InitTaskObligations %d: %v", i, err)
 		}
 	}
@@ -134,10 +133,10 @@ func TestReconcileTerminalReceipts_AlreadyAcked(t *testing.T) {
 	termKey := "acked-key"
 
 	// Write receipt then ack it (simulating previous relay)
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "already done"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "already done"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.WriteAck(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.WriteAck(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("WriteAck: %v", err)
 	}
 
@@ -159,10 +158,10 @@ func TestReconcileTerminalReceipts_Idempotent(t *testing.T) {
 	taskID := "idempotent-task"
 	termKey := "idempotent-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -193,10 +192,10 @@ func TestReconcileTerminalReceipts_PR315Shape(t *testing.T) {
 	taskID := "herdr-v075-backend-compat"
 	termKey := "herdr-v075-backend-compat"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", "PR #315"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "PR #315"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -209,7 +208,7 @@ func TestReconcileTerminalReceipts_PR315Shape(t *testing.T) {
 	}
 
 	// Verify ack with task ID == key
-	if !turnend.IsReceiptAcked(captainHome, taskID, termKey) {
+	if !orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt for PR#315 should be acked")
 	}
 }
@@ -227,10 +226,10 @@ func TestReconcileTerminalReceipts_UnreadableGeneralState(t *testing.T) {
 	taskID := "unreadable-task"
 	termKey := "unreadable-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -253,7 +252,7 @@ func TestReconcileTerminalReceipts_UnreadableGeneralState(t *testing.T) {
 	}
 
 	// Receipt must NOT be acked (preserved for retry)
-	if turnend.IsReceiptAcked(captainHome, taskID, termKey) {
+	if orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should NOT be acked after relay failure")
 	}
 }
@@ -266,15 +265,15 @@ func TestReconcileTerminalReceipts_PostRelayAckFailure(t *testing.T) {
 	taskID := "ack-fail-task"
 	termKey := "ack-fail-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
 	// Make the terminal-receipts dir read-only so WriteAck fails
-	receiptsDir := turnend.ReceiptDir(captainHome)
+	receiptsDir := orchestrator.ReceiptDir(captainHome)
 	os.Chmod(receiptsDir, 0500)
 	t.Cleanup(func() { os.Chmod(receiptsDir, 0755) })
 
@@ -296,7 +295,7 @@ func TestReconcileTerminalReceipts_PostRelayAckFailure(t *testing.T) {
 	}
 
 	// Receipt must NOT be acked (preserved for retry)
-	if turnend.IsReceiptAcked(captainHome, taskID, termKey) {
+	if orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should NOT be acked after ack failure")
 	}
 
@@ -320,10 +319,10 @@ func TestReconcileTerminalReceipts_NoProvenanceMarker(t *testing.T) {
 	taskID := "no-marker-task"
 	termKey := "no-marker-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -350,10 +349,10 @@ func TestRelayTerminalReceipts_BackwardCompat(t *testing.T) {
 
 	taskID := "backward-compat"
 	termKey := "compat-key"
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -384,13 +383,13 @@ func TestReconcileTerminalReceipts_ObligationCloseFailure(t *testing.T) {
 	taskID := "obligation-fail"
 	termKey := "obl-fail-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
 
 	// Write the obligations file but then make it read-only so
 	// CompleteTaskObligation can't write to it.
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 	oblPath := filepath.Join(captainHome, "state", ".obligations", taskID+".obligations")
@@ -409,7 +408,7 @@ func TestReconcileTerminalReceipts_ObligationCloseFailure(t *testing.T) {
 	// if the file is readable (it reads then writes). For this test we verify
 	// that even if the obligation file is problematic, the relay+ack succeed.
 	// The obligation state is verified by checking if ack exists.
-	if !turnend.IsReceiptAcked(captainHome, taskID, termKey) {
+	if !orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should be acked even if obligation close has issues")
 	}
 }
@@ -422,20 +421,20 @@ func TestReconcileTerminalReceipts_MultipleMixedOutcomes(t *testing.T) {
 	// Good receipt — will relay successfully
 	goodID := "good-task"
 	goodKey := "good-key"
-	if err := turnend.WriteReceipt(captainHome, goodID, goodKey, "done", "good"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, goodID, goodKey, "done", "good"); err != nil {
 		t.Fatalf("WriteReceipt good: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, goodID, goodKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, goodID, goodKey); err != nil {
 		t.Fatalf("InitTaskObligations good: %v", err)
 	}
 
 	// Receipt targeting an unreadable General state — will fail relay
 	badID := "bad-relay-task"
 	badKey := "bad-relay-key"
-	if err := turnend.WriteReceipt(captainHome, badID, badKey, "done", "bad"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, badID, badKey, "done", "bad"); err != nil {
 		t.Fatalf("WriteReceipt bad: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, badID, badKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, badID, badKey); err != nil {
 		t.Fatalf("InitTaskObligations bad: %v", err)
 	}
 
@@ -467,10 +466,10 @@ func TestReconcileTerminalReceipts_NonMaterialState(t *testing.T) {
 	taskID := "non-material-task"
 	termKey := "working-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "working", "still in progress"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "working", "still in progress"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -500,15 +499,15 @@ func TestReconcileTerminalReceipts_PreservesRetryable(t *testing.T) {
 	taskID := "retryable-task"
 	termKey := "retryable-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
 	// Make the terminal-receipts dir read-only to cause ack failure
-	receiptsDir := turnend.ReceiptDir(captainHome)
+	receiptsDir := orchestrator.ReceiptDir(captainHome)
 	os.Chmod(receiptsDir, 0500)
 	t.Cleanup(func() { os.Chmod(receiptsDir, 0755) })
 
@@ -521,12 +520,12 @@ func TestReconcileTerminalReceipts_PreservesRetryable(t *testing.T) {
 	}
 
 	// Receipt must NOT be acked
-	if turnend.IsReceiptAcked(captainHome, taskID, termKey) {
+	if orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt must not be acked after ack failure")
 	}
 
 	// ReportRelay obligation must still be open
-	open, err := turnend.IsTaskReportRelayOpen(captainHome, taskID)
+	open, err := orchestrator.IsTaskReportRelayOpen(captainHome, taskID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
@@ -542,10 +541,10 @@ func TestReconcileTerminalReceipts_CaptainID(t *testing.T) {
 	taskID := "id-test"
 	termKey := "id-key"
 
-	if err := turnend.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -568,8 +567,8 @@ func TestReconcileTerminalReceipts_TaskAppendStatus(t *testing.T) {
 	taskID := "status-check"
 	termKey := "check-key"
 
-	turnend.WriteReceipt(captainHome, taskID, termKey, "done", "completed successfully")
-	turnend.InitTaskObligations(captainHome, taskID, termKey)
+	orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "completed successfully")
+	orchestrator.InitTaskObligations(captainHome, taskID, termKey)
 
 	_, err := ReconcileTerminalReceipts(captainHome, generalHome)
 	if err != nil {
@@ -598,8 +597,8 @@ func TestReconcileTerminalReceipts_ReconcileOneCleanPath(t *testing.T) {
 	taskID := "clean-path"
 	termKey := "clean-key"
 
-	turnend.WriteReceipt(captainHome, taskID, termKey, "done", "")
-	turnend.InitTaskObligations(captainHome, taskID, termKey)
+	orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "")
+	orchestrator.InitTaskObligations(captainHome, taskID, termKey)
 
 	result, err := ReconcileTerminalReceipts(captainHome, generalHome)
 	if err != nil {

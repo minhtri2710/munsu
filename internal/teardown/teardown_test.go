@@ -13,7 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldier"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -819,7 +818,7 @@ func TestUplinkCheck_NoMaterialStatusPasses(t *testing.T) {
 
 	// Non-material status → should pass even with per-task obligations
 	// Must init per-task obligations first for uplinkCheck to see them
-	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("working: in progress\n"), 0644)
@@ -839,7 +838,7 @@ func TestUplinkCheck_MaterialStatusWithoutReportRelayFails(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations so uplinkCheck checks this task
-	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 
@@ -866,7 +865,7 @@ func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) 
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations
-	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 
@@ -874,7 +873,7 @@ func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) 
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 
 	// Complete the per-task ReportRelay obligation
-	found, err := turnend.CompleteTaskObligation(home, id, turnend.ReportRelay)
+	found, err := orchestrator.CompleteTaskObligation(home, id, orchestrator.ReportRelay)
 	if err != nil {
 		t.Fatalf("CompleteTaskObligation error: %v", err)
 	}
@@ -904,7 +903,7 @@ func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations
-	if err := turnend.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 

@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 type captainTestProbe struct{}
@@ -216,7 +215,7 @@ func TestInFlightSoldierPath_IgnoresNonShip(t *testing.T) {
 // --- Real-hook E2E: per-cycle terminal reconciliation via reconcileHook ---
 //
 // These tests invoke supervision.RunCycle against the REAL captain
-// reconcileHook (relay.go:31), NOT a test-local turnend.RelayPendingReceipts
+// reconcileHook (relay.go:31), NOT a test-local orchestrator.RelayPendingReceipts
 // substitute. They verify receipt ACK + obligation closure, then assert
 // exactly-once wake relay after repeated cycles.
 
@@ -246,10 +245,10 @@ func setParentStatus(parentHome string) func() {
 // writeReceiptAndObligation writes a receipt and initializes obligations.
 func writeReceiptAndObligation(t *testing.T, home, taskID, termKey, state, msg string) {
 	t.Helper()
-	if err := turnend.WriteReceipt(home, taskID, termKey, state, msg); err != nil {
+	if err := orchestrator.WriteReceipt(home, taskID, termKey, state, msg); err != nil {
 		t.Fatalf("WriteReceipt(%s): %v", taskID, err)
 	}
-	if err := turnend.InitTaskObligations(home, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(home, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations(%s): %v", taskID, err)
 	}
 }
@@ -283,7 +282,7 @@ func TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt(t *testing.T) {
 	_ = emitted2
 
 	// Verify receipt was acked.
-	if !turnend.IsReceiptAcked(cptHome, taskID, termKey) {
+	if !orchestrator.IsReceiptAcked(cptHome, taskID, termKey) {
 		t.Error("receipt should be acked after per-cycle reconcile")
 	}
 
@@ -298,7 +297,7 @@ func TestCaptainPerCycle_RealHook_RelaysPostStartupReceipt(t *testing.T) {
 	}
 
 	// Verify obligation is closed.
-	open, err := turnend.IsTaskReportRelayOpen(cptHome, taskID)
+	open, err := orchestrator.IsTaskReportRelayOpen(cptHome, taskID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
@@ -328,7 +327,7 @@ func TestCaptainPerCycle_RealHook_ExactlyOneWake(t *testing.T) {
 	_ = emitted
 
 	// Verify receipt acked.
-	if !turnend.IsReceiptAcked(cptHome, taskID, termKey) {
+	if !orchestrator.IsReceiptAcked(cptHome, taskID, termKey) {
 		t.Fatal("receipt should be acked after startup recovery")
 	}
 
@@ -360,7 +359,7 @@ func TestCaptainPerCycle_RealHook_ExactlyOneWake(t *testing.T) {
 	}
 
 	// Receipt remains acked.
-	if !turnend.IsReceiptAcked(cptHome, taskID, termKey) {
+	if !orchestrator.IsReceiptAcked(cptHome, taskID, termKey) {
 		t.Error("receipt should remain acked after multiple cycles")
 	}
 }
@@ -393,7 +392,7 @@ func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
 	}
 	_ = emitted2
 
-	if !turnend.IsReceiptAcked(cptHome, task1, key1) {
+	if !orchestrator.IsReceiptAcked(cptHome, task1, key1) {
 		t.Fatal("first receipt should be acked after second cycle")
 	}
 
@@ -407,7 +406,7 @@ func TestCaptainPerCycle_RealHook_MultipleReceipts(t *testing.T) {
 	}
 	_ = emitted3
 
-	if !turnend.IsReceiptAcked(cptHome, task2, key2) {
+	if !orchestrator.IsReceiptAcked(cptHome, task2, key2) {
 		t.Fatal("second receipt should be acked after third cycle")
 	}
 
@@ -468,10 +467,10 @@ func TestCaptainPerCycle_RealHook_TwoWatchersIsolated(t *testing.T) {
 	}()
 
 	// Verify watcher 1's receipt was acked (isolated from watcher 2).
-	if !turnend.IsReceiptAcked(cpt1, task1, "key-1") {
+	if !orchestrator.IsReceiptAcked(cpt1, task1, "key-1") {
 		t.Error("watcher 1 receipt should be acked (isolation from watcher 2)")
 	}
-	if !turnend.IsReceiptAcked(cpt2, task2, "key-2") {
+	if !orchestrator.IsReceiptAcked(cpt2, task2, "key-2") {
 		t.Error("watcher 2 receipt should be acked (isolation from watcher 1)")
 	}
 
@@ -485,7 +484,7 @@ func TestCaptainPerCycle_RealHook_TwoWatchersIsolated(t *testing.T) {
 		if _, err := os.Stat(relayPath); os.IsNotExist(err) {
 			t.Errorf("relay status for %s should exist in its own general", tid)
 		}
-		open, err := turnend.IsTaskReportRelayOpen(cpt, tid)
+		open, err := orchestrator.IsTaskReportRelayOpen(cpt, tid)
 		if err != nil {
 			t.Fatalf("IsTaskReportRelayOpen(%s): %v", tid, err)
 		}
@@ -573,10 +572,10 @@ func TestCaptainActivationOnReceipt_IdempotentSegregation(t *testing.T) {
 	}
 
 	// Both should become acked by the terminal reconcile hook.
-	if !turnend.IsReceiptAcked(cptHome, taskSeen, keySeen) {
+	if !orchestrator.IsReceiptAcked(cptHome, taskSeen, keySeen) {
 		t.Error("first receipt should be acked")
 	}
-	if !turnend.IsReceiptAcked(cptHome, taskNotSeen, keyNotSeen) {
+	if !orchestrator.IsReceiptAcked(cptHome, taskNotSeen, keyNotSeen) {
 		t.Error("second receipt should be acked")
 	}
 }

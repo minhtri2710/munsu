@@ -19,7 +19,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // Options controls teardown behavior.
@@ -80,7 +79,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 			os.WriteFile(filepath.Join(backupDir, opts.ID+".status"), src, 0644)
 		}
 		// Copy receipt files
-		receiptsDir := turnend.ReceiptDir(opts.HomeDir)
+		receiptsDir := orchestrator.ReceiptDir(opts.HomeDir)
 		if entries, err := os.ReadDir(receiptsDir); err == nil {
 			prefix := opts.ID + "."
 			for _, e := range entries {
@@ -194,7 +193,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 
 	// 4.5. Clear per-task obligation records for this task
 	// Uses per-task path instead of global per-role file.
-	if err := turnend.ClearTaskCompleted(opts.HomeDir, opts.ID); err != nil {
+	if err := orchestrator.ClearTaskCompleted(opts.HomeDir, opts.ID); err != nil {
 		result.Steps = append(result.Steps, fmt.Sprintf("clear task obligations: %v", err))
 	} else {
 		result.Steps = append(result.Steps, "task obligations cleared")
@@ -621,7 +620,7 @@ func uplinkCheck(opts Options) error {
 	// Legacy read compatibility: check the former ReportRelay obligation.
 	// Check if per-task ReportRelay obligation is still open.
 	// Per-task obligations are bound to exact taskID+terminalKey, not global role.
-	open, err := turnend.IsTaskReportRelayOpen(opts.HomeDir, opts.ID)
+	open, err := orchestrator.IsTaskReportRelayOpen(opts.HomeDir, opts.ID)
 	if err != nil {
 		return fmt.Errorf("reading task obligations: %w", err)
 	}
@@ -631,7 +630,7 @@ func uplinkCheck(opts Options) error {
 
 	// ReportRelay is open. Check if the task has material status.
 	// FAILS CLOSED: MaterialReportExists returns error for unreadable status.
-	hasMaterial, err := turnend.MaterialReportExists(opts.HomeDir, opts.ID)
+	hasMaterial, err := orchestrator.MaterialReportExists(opts.HomeDir, opts.ID)
 	if err != nil {
 		return fmt.Errorf("checking material report (fail-closed): %w", err)
 	}

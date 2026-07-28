@@ -1,4 +1,4 @@
-package waker
+package orchestrator
 
 import (
 	"bytes"
@@ -136,11 +136,11 @@ func TestCheckGuard_EmptyWakeQueue(t *testing.T) {
 func TestPrintRecords_Empty(t *testing.T) {
 	// Should not panic or produce output
 	PrintRecords(nil)
-	PrintRecords([]Record{})
+	PrintRecords([]WakeRecord{})
 }
 
 func TestPrintRecords_NonEmpty(t *testing.T) {
-	records := []Record{
+	records := []WakeRecord{
 		{Epoch: "1780000000", Seq: "1", Kind: "signal", Key: "task-abc", Payload: "build done"},
 		{Epoch: "1780000001", Seq: "2", Kind: "stale", Key: "task-xyz", Payload: "watcher dead"},
 	}

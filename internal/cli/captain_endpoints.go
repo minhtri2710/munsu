@@ -23,7 +23,7 @@ func (e sessionLaunchEndpoint) Launch(home string, req captain.LaunchRequest) (c
 	if herdr, ok := bk.(*backend.HerdrBackend); ok {
 		herdr.Cwd = req.WorkingDir
 	}
-	window, err := bk.NewWindow(req.ContainerLabel, req.WindowName)
+	window, err := bk.NewWindow(backend.WorkspaceTag(req.WorkingDir), req.WindowName)
 	if err != nil {
 		return captain.LaunchResult{}, err
 	}

@@ -2,11 +2,14 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/captain"
 )
 
 type captainProbeBackend struct {
@@ -161,6 +164,57 @@ func TestSessionRetireEndpointOutcomes(t *testing.T) {
 			}
 		})
 	}
+}
+
+type labelCaptureBackend struct{ gotLabel string }
+
+func (c *labelCaptureBackend) NewWindow(label, name string) (string, error) {
+	c.gotLabel = label
+	return "win", nil
+}
+func (c *labelCaptureBackend) SendKeys(string, string) error       { return nil }
+func (c *labelCaptureBackend) Capture(string, int) (string, error) { return "", nil }
+func (c *labelCaptureBackend) Alive(string) bool                   { return false }
+func (c *labelCaptureBackend) Teardown(string) error               { return nil }
+
+func TestSessionLaunchEndpointDerivesContainerLabel(t *testing.T) {
+	makeEndpoint := func(c *labelCaptureBackend) sessionLaunchEndpoint {
+		return sessionLaunchEndpoint{resolve: func(string, string) (backend.Backend, string, error) {
+			return c, "tmux", nil
+		}}
+	}
+
+	t.Run("plain home hash fallback", func(t *testing.T) {
+		c := &labelCaptureBackend{}
+		ep := makeEndpoint(c)
+		workingDir := t.TempDir()
+		if _, err := ep.Launch("home", captain.LaunchRequest{WindowName: "mu-captain-x", Command: "echo", WorkingDir: workingDir}); err != nil {
+			t.Fatal(err)
+		}
+		if want := backend.WorkspaceTag(workingDir); c.gotLabel != want {
+			t.Fatalf("label=%q want %q", c.gotLabel, want)
+		}
+		if c.gotLabel == "" {
+			t.Fatal("label must not be empty")
+		}
+	})
+
+	t.Run("marked captain home readable prefix", func(t *testing.T) {
+		captainHome := t.TempDir()
+		os.MkdirAll(captainHome, 0755)
+		os.WriteFile(filepath.Join(captainHome, ".munsu-captain-home"), []byte("munsu-v2\ncaptain-one\ntag\n"), 0600)
+		c := &labelCaptureBackend{}
+		ep := makeEndpoint(c)
+		if _, err := ep.Launch("home", captain.LaunchRequest{WindowName: "mu-captain-x", Command: "echo", WorkingDir: captainHome}); err != nil {
+			t.Fatal(err)
+		}
+		if want := backend.WorkspaceTag(captainHome); c.gotLabel != want {
+			t.Fatalf("label=%q want %q", c.gotLabel, want)
+		}
+		if !strings.HasPrefix(c.gotLabel, "captain-captain-one-") {
+			t.Fatalf("label=%q must start with captain prefix", c.gotLabel)
+		}
+	})
 }
 
 func TestSessionProbeEndpointAgentAwareOutcomes(t *testing.T) {

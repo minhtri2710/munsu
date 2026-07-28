@@ -15,8 +15,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
-	"github.com/minhtri2710/munsu/internal/waker"
 )
 
 type testEndpointProbe struct{}
@@ -1007,15 +1005,15 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 
 	// Write provenance marker so turnend can read captain ID
 	captainID := "test-captain"
-	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, orchestrator.ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
 
 	// Write receipt and init obligation (simulating soldier done)
-	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(tmp, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -1029,7 +1027,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 		if ph == "" || ph == homeDir {
 			return nil
 		}
-		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		_, err := orchestrator.RelayPendingReceipts(homeDir, ph)
 		return err
 	}}
 	defer func() { activeTestHooks = origHooks }()
@@ -1044,7 +1042,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	_ = emitted // may be false if relay hook does not enqueue wake
 
 	// Verify ack was written
-	if !turnend.IsReceiptAcked(tmp, taskID, termKey) {
+	if !orchestrator.IsReceiptAcked(tmp, taskID, termKey) {
 		t.Error("receipt should be acked after recovery")
 	}
 
@@ -1059,7 +1057,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	}
 
 	// Verify obligation is closed
-	open, err := turnend.IsTaskReportRelayOpen(tmp, taskID)
+	open, err := orchestrator.IsTaskReportRelayOpen(tmp, taskID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
@@ -1089,12 +1087,12 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	termKey := "uplink"
 
 	// Write provenance marker
-	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, orchestrator.ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
 
 	// Write receipt (but NO MUNSU_PARENT_STATUS)
-	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
 
@@ -1114,7 +1112,7 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	_ = emitted
 
 	// Receipt should NOT be acked (no relay happened — no parent, no hook)
-	if turnend.IsReceiptAcked(tmp, taskID, termKey) {
+	if orchestrator.IsReceiptAcked(tmp, taskID, termKey) {
 		t.Error("receipt should NOT be acked without parent env or hook")
 	}
 
@@ -1142,15 +1140,15 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 	termKey := "uplink"
 
 	// Write provenance marker
-	markerPath := filepath.Join(tmp, turnend.ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, orchestrator.ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
 
 	// Write receipt
-	if err := turnend.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := turnend.InitTaskObligations(tmp, taskID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(tmp, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -1194,13 +1192,13 @@ func setupRunCycleTest(t *testing.T) string {
 // receipt reconciliation tests.
 func writeProvenanceMarker(t *testing.T, home, captainID string) {
 	t.Helper()
-	markerPath := filepath.Join(home, turnend.ProvenanceMarkerName)
+	markerPath := filepath.Join(home, orchestrator.ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+home+"\n"), 0644)
 }
 
 // installRelayHook installs a TerminalReconcileHook that relays pending
-// receipts via turnend.RelayPendingReceipts. Returns a cleanup function.
+// receipts via orchestrator.RelayPendingReceipts. Returns a cleanup function.
 func installRelayHook(t *testing.T) func() {
 	t.Helper()
 	origHooks := activeTestHooks
@@ -1209,7 +1207,7 @@ func installRelayHook(t *testing.T) func() {
 		if ph == "" || ph == homeDir {
 			return nil
 		}
-		_, err := turnend.RelayPendingReceipts(homeDir, ph)
+		_, err := orchestrator.RelayPendingReceipts(homeDir, ph)
 		return err
 	}}
 	return func() { activeTestHooks = origHooks }
@@ -1487,12 +1485,12 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	lifecycle.EnqueueWake(tmp, "signal", "task-stale", "done: PR merged")
 
 	// Evaluate guard — should detect stale + pending.
-	result := waker.EvaluateGuard(tmp, 1, time.Now())
+	result := orchestrator.EvaluateGuard(tmp, 1, time.Now())
 	if !result.BeatStatus.Stale {
 		t.Fatal("expected stale beat status")
 	}
 	// Force the guard to include a stale condition by checking GuardWarnings.
-	warnings := waker.GuardWarnings(tmp)
+	warnings := orchestrator.GuardWarnings(tmp)
 	foundStale := false
 	for _, w := range warnings {
 		if strings.Contains(w, "STALE") {
@@ -1524,7 +1522,7 @@ func TestDeadStaleWatcher_AutoRecoverOrFailClosed(t *testing.T) {
 
 	// Bounded status command should detect the situation.
 	// (Unit test for the diagnostic evaluation logic)
-	warnings := waker.GuardWarnings(tmp)
+	warnings := orchestrator.GuardWarnings(tmp)
 	hasAbsentWarn := false
 	hasWakeWarn := false
 	for _, w := range warnings {

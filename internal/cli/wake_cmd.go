@@ -6,7 +6,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/waker"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -111,11 +111,11 @@ func newWakeCmd() *cobra.Command {
 		Use:   "drain",
 		Short: "Drain queued wakes (legacy compatibility)",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			records, err := waker.Drain(ctx.Home)
+			records, err := orchestrator.Drain(ctx.Home)
 			if err != nil {
 				return err
 			}
-			waker.PrintRecords(records)
+			orchestrator.PrintRecords(records)
 			return nil
 		}),
 	}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -41,7 +41,7 @@ func newTurnendObligationsCmd() *cobra.Command {
 				role = "soldier"
 			}
 
-			obligations, err := turnend.LoadObligations(ctx.Home, turnend.Role(role))
+			obligations, err := orchestrator.LoadObligations(ctx.Home, orchestrator.Role(role))
 			if err != nil {
 				return fmt.Errorf("loading obligations: %w", err)
 			}
@@ -54,7 +54,7 @@ func newTurnendObligationsCmd() *cobra.Command {
 			fmt.Printf("Turn-end obligations for role=%s:\n", role)
 			for _, o := range obligations {
 				state := "OPEN"
-				if o.State == turnend.StateClosed {
+				if o.State == orchestrator.StateClosed {
 					state = "closed"
 				}
 				fmt.Printf("  %s [%s] %s\n", o.Kind, state, o.Detail)
@@ -78,8 +78,8 @@ Valid kinds: report-relay, cleanup`,
 				role = "soldier"
 			}
 
-			kind := turnend.ObligationKind(args[0])
-			found, err := turnend.CompleteObligation(ctx.Home, turnend.Role(role), kind)
+			kind := orchestrator.ObligationKind(args[0])
+			found, err := orchestrator.CompleteObligation(ctx.Home, orchestrator.Role(role), kind)
 			if err != nil {
 				return fmt.Errorf("completing obligation: %w", err)
 			}
@@ -104,7 +104,7 @@ func newTurnendClearCmd() *cobra.Command {
 				role = "soldier"
 			}
 
-			if err := turnend.ClearCompleted(ctx.Home, turnend.Role(role)); err != nil {
+			if err := orchestrator.ClearCompleted(ctx.Home, orchestrator.Role(role)); err != nil {
 				return fmt.Errorf("clearing completed obligations: %w", err)
 			}
 			fmt.Printf("Completed obligations cleared for role=%s\n", role)

@@ -11,7 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/waker"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -91,7 +91,7 @@ func guardWarnWatcher() {
 		}
 	}
 
-	result := waker.EvaluateGuard(homeDir, inFlight, time.Now())
+	result := orchestrator.EvaluateGuard(homeDir, inFlight, time.Now())
 	beat := result.BeatStatus
 
 	cdPath := guardCooldownPath(homeDir)

@@ -12,8 +12,8 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/captain"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // TestE2E_TerminalUplinkContinuity proves the full Soldier → Captain → General
@@ -81,17 +81,17 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	}
 
 	// Durably write receipt (production path)
-	if err := turnend.WriteReceipt(captainHome, soldierID, termKey, "done", "task complete"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, soldierID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("writing captain receipt: %v", err)
 	}
 
 	// Initialize per-task obligations (production path)
-	if err := turnend.InitTaskObligations(captainHome, soldierID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, soldierID, termKey); err != nil {
 		t.Fatalf("init task obligations: %v", err)
 	}
 
 	// Verify the material report exists (fail-closed version)
-	hasMaterial, err := turnend.MaterialReportExists(captainHome, soldierID)
+	hasMaterial, err := orchestrator.MaterialReportExists(captainHome, soldierID)
 	if err != nil {
 		t.Fatalf("MaterialReportExists error: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	}
 
 	// Verify per-task ReportRelay obligation is open
-	open, err := turnend.IsTaskReportRelayOpen(captainHome, soldierID)
+	open, err := orchestrator.IsTaskReportRelayOpen(captainHome, soldierID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	}
 
 	// Verify receipt exists and is NOT acked yet
-	if turnend.IsReceiptAcked(captainHome, soldierID, termKey) {
+	if orchestrator.IsReceiptAcked(captainHome, soldierID, termKey) {
 		t.Fatal("receipt should NOT be acked before relay")
 	}
 
@@ -132,7 +132,7 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	}
 
 	// Verify ack now exists
-	if !turnend.IsReceiptAcked(captainHome, soldierID, termKey) {
+	if !orchestrator.IsReceiptAcked(captainHome, soldierID, termKey) {
 		t.Fatal("receipt should be acked after relay")
 	}
 
@@ -150,7 +150,7 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	t.Log("Phase 3 passed: Captain relayed receipt to General, ack written")
 
 	// ---- Phase 4: Per-task ReportRelay is now closed (by relay) ----
-	open, err = turnend.IsTaskReportRelayOpen(captainHome, soldierID)
+	open, err = orchestrator.IsTaskReportRelayOpen(captainHome, soldierID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen error: %v", err)
 	}
@@ -179,11 +179,11 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	}
 
 	// Evidence: receipt and ack files persist
-	receiptPath := turnend.ReceiptPath(captainHome, soldierID, termKey)
+	receiptPath := orchestrator.ReceiptPath(captainHome, soldierID, termKey)
 	if _, err := os.Stat(receiptPath); err != nil {
 		t.Fatalf("receipt should persist: %v", err)
 	}
-	ackPath := turnend.AckPath(captainHome, soldierID, termKey)
+	ackPath := orchestrator.AckPath(captainHome, soldierID, termKey)
 	if _, err := os.Stat(ackPath); err != nil {
 		t.Fatalf("ack should persist: %v", err)
 	}
@@ -221,8 +221,8 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	// ---- Phase 8: Duplicate Soldier report is idempotent ----
 	// Before rewriting, assert that the original receipt and ack still exist
 	// (teardown preserves durable evidence — step 7 does NOT clear receipts)
-	receiptPathPhase8 := turnend.ReceiptPath(captainHome, soldierID, termKey)
-	ackPathPhase8 := turnend.AckPath(captainHome, soldierID, termKey)
+	receiptPathPhase8 := orchestrator.ReceiptPath(captainHome, soldierID, termKey)
+	ackPathPhase8 := orchestrator.AckPath(captainHome, soldierID, termKey)
 	if _, err := os.Stat(receiptPathPhase8); err != nil {
 		t.Fatalf("original receipt should persist after teardown: %v", err)
 	}
@@ -231,15 +231,15 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	}
 
 	// Re-init obligations and re-write receipt to simulate another report
-	if err := turnend.InitTaskObligations(captainHome, soldierID, termKey); err != nil {
+	if err := orchestrator.InitTaskObligations(captainHome, soldierID, termKey); err != nil {
 		t.Fatalf("re-init obligations (should be noop): %v", err)
 	}
-	if err := turnend.WriteReceipt(captainHome, soldierID, termKey, "done", "task complete again"); err != nil {
+	if err := orchestrator.WriteReceipt(captainHome, soldierID, termKey, "done", "task complete again"); err != nil {
 		t.Fatalf("re-write receipt: %v", err)
 	}
 
 	// Receipt should not be acked yet (WriteReceipt invalidated stale ack)
-	if turnend.IsReceiptAcked(captainHome, soldierID, termKey) {
+	if orchestrator.IsReceiptAcked(captainHome, soldierID, termKey) {
 		t.Fatal("re-written receipt should not be acked yet")
 	}
 

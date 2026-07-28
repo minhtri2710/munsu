@@ -19,7 +19,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // DeliverRequest captures all inputs needed to deliver a terminal report
@@ -141,12 +140,12 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	// Step 2: For material states with a parent home, write captain receipt
 	// and init obligations. Fail-closed: if either fails, no event/wake is produced.
 	if isMaterial(req.State) && req.ParentHome != "" && req.Role == "soldier" {
-		if err := turnend.WriteReceipt(req.ParentHome, req.TaskID, req.Key, req.State, req.Message); err != nil {
+		if err := WriteReceipt(req.ParentHome, req.TaskID, req.Key, req.State, req.Message); err != nil {
 			return nil, fmt.Errorf("writing captain receipt: %w", err)
 		}
 		receipt.ReceiptWritten = true
 
-		if err := turnend.InitTaskObligations(req.ParentHome, req.TaskID, req.Key); err != nil {
+		if err := InitTaskObligations(req.ParentHome, req.TaskID, req.Key); err != nil {
 			return nil, fmt.Errorf("init task obligations: %w", err)
 		}
 		receipt.ObligationsInit = true
@@ -181,7 +180,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 // retryable receipt/obligation state and returns per-receipt outcomes rather
 // than an aggregate error. Callers should inspect outcomes for diagnostics.
 func ReconcilePending(captainHome, parentHome string) (*ReconcileResult, error) {
-	pending, err := turnend.ListPendingReceipts(captainHome)
+	pending, err := ListPendingReceipts(captainHome)
 	if err != nil {
 		return nil, fmt.Errorf("listing pending receipts: %w", err)
 	}
@@ -198,11 +197,11 @@ func ReconcilePending(captainHome, parentHome string) (*ReconcileResult, error) 
 }
 
 // reconcileOne processes a single pending receipt through the full relay chain.
-func reconcileOne(captainHome, parentHome string, pr turnend.PendingReceipt) ReconcileOutcome {
+func reconcileOne(captainHome, parentHome string, pr PendingReceipt) ReconcileOutcome {
 	base := ReconcileOutcome{TaskID: pr.TaskID, Key: pr.TermKey, State: pr.State}
 
 	// Already acked: skip.
-	if turnend.IsReceiptAcked(captainHome, pr.TaskID, pr.TermKey) {
+	if IsReceiptAcked(captainHome, pr.TaskID, pr.TermKey) {
 		base.Outcome = "already-acked"
 		return base
 	}
@@ -234,14 +233,14 @@ func reconcileOne(captainHome, parentHome string, pr turnend.PendingReceipt) Rec
 	}
 
 	// Step 3: Write ack in captain home (marks receipt as acknowledged).
-	if err := turnend.WriteAck(captainHome, pr.TaskID, pr.TermKey); err != nil {
+	if err := WriteAck(captainHome, pr.TaskID, pr.TermKey); err != nil {
 		base.Outcome = "ack-failed"
 		base.Err = fmt.Errorf("writing ack: %w", err)
 		return base
 	}
 
 	// Step 4: Complete per-task obligation in captain home.
-	if _, err := turnend.CompleteTaskObligation(captainHome, pr.TaskID, turnend.ReportRelay); err != nil {
+	if _, err := CompleteTaskObligation(captainHome, pr.TaskID, ReportRelay); err != nil {
 		base.Outcome = "obligation-close-failed"
 		base.Err = fmt.Errorf("completing obligation: %w", err)
 		return base
@@ -304,7 +303,7 @@ const activationSeenSuffix = ".activation-seen"
 
 // ActivationSeenPath returns the path for an activation-seen marker.
 func ActivationSeenPath(captainHome, taskID, termKey string) string {
-	return filepath.Join(turnend.ReceiptDir(captainHome), taskID+"."+termKey+activationSeenSuffix)
+	return filepath.Join(ReceiptDir(captainHome), taskID+"."+termKey+activationSeenSuffix)
 }
 
 // IsActivationSeen checks whether a receipt has already triggered an
@@ -372,8 +371,8 @@ func resolveCaptainActivationTarget(captainHome, parentHome string) (afk.TargetR
 // listAllReceipts scans the receipts directory and returns ALL receipt files
 // (regardless of ack status). This is used by ActivateOnReceipt to find
 // receipts that may already be acked (relayed) but not yet activation-seen.
-func listAllReceipts(homeDir string) ([]turnend.PendingReceipt, error) {
-	dir := turnend.ReceiptDir(homeDir)
+func listAllReceipts(homeDir string) ([]PendingReceipt, error) {
+	dir := ReceiptDir(homeDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -382,7 +381,7 @@ func listAllReceipts(homeDir string) ([]turnend.PendingReceipt, error) {
 		return nil, fmt.Errorf("reading receipts dir: %w", err)
 	}
 
-	var results []turnend.PendingReceipt
+	var results []PendingReceipt
 	seen := make(map[string]bool)
 	for _, e := range entries {
 		name := e.Name()
@@ -410,7 +409,7 @@ func listAllReceipts(homeDir string) ([]turnend.PendingReceipt, error) {
 			}
 		}
 
-		results = append(results, turnend.PendingReceipt{TaskID: taskID, TermKey: termKey, State: state})
+		results = append(results, PendingReceipt{TaskID: taskID, TermKey: termKey, State: state})
 	}
 	return results, nil
 }
@@ -514,7 +513,7 @@ func ActivateOnReceiptWithTransport(captainHome, parentHome string, transport Ac
 // readCaptainID reads the captain ID from the provenance marker file.
 // Falls back to the directory basename if no marker exists.
 func readCaptainID(captainHome string) (string, error) {
-	markerPath := filepath.Join(captainHome, turnend.ProvenanceMarkerName)
+	markerPath := filepath.Join(captainHome, ProvenanceMarkerName)
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
 		if os.IsNotExist(err) {

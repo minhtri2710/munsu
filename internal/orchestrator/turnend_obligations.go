@@ -11,7 +11,7 @@
 //   - Durable relay receipts in captain-owned state ensure Soldier->Captain
 //     ack survives restart.
 //   - Captain reconcile/turn-end relays to General and acks the exact task/key.
-package turnend
+package orchestrator
 
 import (
 	"bufio"
@@ -238,7 +238,7 @@ func ClearTaskAll(homeDir, taskID string) error {
 
 // readCaptainID reads the captain ID from the provenance marker.
 // Duplicates minimal captain.ValidateProvenance logic without importing captain.
-func readCaptainID(captainHome string) (string, error) {
+func readTurnendCaptainID(captainHome string) (string, error) {
 	markerPath := filepath.Join(captainHome, ProvenanceMarkerName)
 	data, err := os.ReadFile(markerPath)
 	if err != nil {
@@ -268,7 +268,7 @@ func RelayPendingReceipts(captainHome, parentHome string) (int, error) {
 		return 0, nil
 	}
 
-	captainID, err := readCaptainID(captainHome)
+	captainID, err := readTurnendCaptainID(captainHome)
 	if err != nil {
 		return 0, fmt.Errorf("reading captain id for relay: %w", err)
 	}

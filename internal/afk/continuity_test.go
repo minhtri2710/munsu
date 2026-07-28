@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
-	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
 // fakeBackend records SendKeys calls for test inspection.
@@ -169,8 +168,8 @@ func TestReliablePath_ExactTaskKeyRelay(t *testing.T) {
 	taskID := "test-task"
 	termKey := "my-key"
 
-	turnend.WriteReceipt(home, taskID, termKey, "done", "delivered")
-	pending, _ := turnend.ListPendingReceipts(home)
+	orchestrator.WriteReceipt(home, taskID, termKey, "done", "delivered")
+	pending, _ := orchestrator.ListPendingReceipts(home)
 	if len(pending) != 1 {
 		t.Fatalf("pending = %d, want 1", len(pending))
 	}
@@ -178,8 +177,8 @@ func TestReliablePath_ExactTaskKeyRelay(t *testing.T) {
 		t.Errorf("pending = %+v", pending[0])
 	}
 
-	turnend.WriteAck(home, taskID, termKey)
-	if !turnend.IsReceiptAcked(home, taskID, termKey) {
+	orchestrator.WriteAck(home, taskID, termKey)
+	if !orchestrator.IsReceiptAcked(home, taskID, termKey) {
 		t.Fatal("IsReceiptAcked false after WriteAck")
 	}
 }
@@ -346,7 +345,7 @@ func TestLiteralFailClosedTeardown_NoForce(t *testing.T) {
 	// No status file means MaterialReportExists returns false (no material state).
 	// The teardown uplink check should pass (no report to relay).
 	// Verify by checking MaterialReportExists directly.
-	hasMaterial, err := turnend.MaterialReportExists(home, taskID)
+	hasMaterial, err := orchestrator.MaterialReportExists(home, taskID)
 	if err != nil {
 		t.Fatalf("MaterialReportExists: %v", err)
 	}

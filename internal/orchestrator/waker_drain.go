@@ -1,5 +1,5 @@
 // Package waker handles durable wake queue operations and guard checks.
-package waker
+package orchestrator
 
 import (
 	"fmt"
@@ -9,9 +9,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
-
-// Record is a single wake queue entry, imported from lifecycle.
-type Record lifecycle.WakeRecord
 
 // ConditionCode is a stable machine-readable code for a guard condition.
 type ConditionCode string
@@ -34,20 +31,20 @@ type ConditionInfo struct {
 }
 
 // Drain reads and clears the wake queue.
-func Drain(homeDir string) ([]Record, error) {
+func Drain(homeDir string) ([]WakeRecord, error) {
 	records, err := lifecycle.DrainWakes(homeDir)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Record, len(records))
+	out := make([]WakeRecord, len(records))
 	for i, r := range records {
-		out[i] = Record(r)
+		out[i] = WakeRecord(r)
 	}
 	return out, nil
 }
 
 // PrintRecords prints drained records in a readable format.
-func PrintRecords(records []Record) {
+func PrintRecords(records []WakeRecord) {
 	if len(records) == 0 {
 		fmt.Println("ok: no pending wakes")
 		return

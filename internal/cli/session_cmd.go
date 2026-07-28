@@ -15,12 +15,12 @@ import (
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/spf13/cobra"
 )
 
@@ -634,12 +634,12 @@ func checkPendingRelayObligations(homeDir string) error {
 	}
 
 	for _, h := range homes {
-		receipts, err := turnend.ListPendingReceipts(h)
+		receipts, err := orchestrator.ListPendingReceipts(h)
 		if err != nil {
 			return fmt.Errorf("obligation gate fail-closed: reading terminal receipts from %s: %w", h, err)
 		}
 		for _, r := range receipts {
-			has, err := turnend.MaterialReportExists(h, r.TaskID)
+			has, err := orchestrator.MaterialReportExists(h, r.TaskID)
 			if err != nil {
 				return fmt.Errorf("obligation gate fail-closed: checking material report for task %s in %s: %w", r.TaskID, h, err)
 			}
