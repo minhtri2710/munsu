@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -1074,7 +1073,7 @@ func TestCurrentEndpointKindFailsClosedWhenTmuxPaneCannotResolve(t *testing.T) {
 
 func TestAuthorizeSpawnAllowsValidatedCaptain(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := captain.SeedProvenance(homeDir, "sm-1"); err != nil {
+	if err := home.SeedCaptainProvenance(homeDir, "sm-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := authorizeSpawn("captain", homeDir, homeDir); err != nil {
@@ -1084,7 +1083,7 @@ func TestAuthorizeSpawnAllowsValidatedCaptain(t *testing.T) {
 
 func TestAuthorizeSpawnRejectsCaptainOutsideItsHome(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := captain.SeedProvenance(homeDir, "sm-1"); err != nil {
+	if err := home.SeedCaptainProvenance(homeDir, "sm-1"); err != nil {
 		t.Fatal(err)
 	}
 	err := authorizeSpawn("captain", homeDir, t.TempDir())

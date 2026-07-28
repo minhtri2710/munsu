@@ -22,14 +22,14 @@ import (
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
-const ProvenanceMarkerName = ".munsu-captain-home"
+const ProvenanceMarkerName = home.CaptainProvenanceMarkerName
 
 // CharterVersion is the current version identifier embedded in every generated
 // .captain-charter.md file so agents and operators can verify the charter revision.
 const CharterVersion = "captain-charter-v1"
 
 // ProvenanceVersion is the current provenance marker format version.
-const ProvenanceVersion = "munsu-v2"
+const ProvenanceVersion = home.CaptainProvenanceVersion
 
 // ConvergeLockName is the converge-specific lock file under parent state.
 const ConvergeLockName = ".captain-converge.lock"
@@ -650,71 +650,10 @@ func rollbackWorktree(worktreeCreated bool, absHome, absRepo string, registered 
 	}
 }
 
-// canonicalHome returns the fully-resolved, absolute path for homePath.
-// Fails closed: any resolution error returns an error — no raw fallback.
-func canonicalHome(homePath string) (string, error) {
-	canon, err := filepath.EvalSymlinks(homePath)
-	if err != nil {
-		return "", fmt.Errorf("resolving symlinks: %w", err)
-	}
-	abs, err := filepath.Abs(canon)
-	if err != nil {
-		return "", fmt.Errorf("resolving absolute path: %w", err)
-	}
-	return abs, nil
-}
-
-// SeedProvenance writes the provenance marker to a captain home root.
-// Fails closed if canonical home cannot be determined.
-func SeedProvenance(homePath, id string) error {
-	canonical, err := canonicalHome(homePath)
-	if err != nil {
-		return fmt.Errorf("cannot determine canonical home for %s: %w", homePath, err)
-	}
-	content := fmt.Sprintf("%s\n%s\n%s\n", ProvenanceVersion, id, canonical)
-	markerPath := filepath.Join(homePath, ProvenanceMarkerName)
-	return os.WriteFile(markerPath, []byte(content), 0644)
-}
-
-// ValidateProvenance reads and validates the provenance home.
-// Rejects v1 (missing canonical-home), extra fields, and copied/moved homes.
+func canonicalHome(homePath string) (string, error) { return home.CanonicalCaptainHome(homePath) }
+func SeedProvenance(homePath, id string) error      { return home.SeedCaptainProvenance(homePath, id) }
 func ValidateProvenance(homePath string) (string, error) {
-	markerPath := filepath.Join(homePath, ProvenanceMarkerName)
-	data, err := os.ReadFile(markerPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("captain home %s has no %s marker — run 'munsu captain seed' or 'munsu captain migrate'", homePath, ProvenanceMarkerName)
-		}
-		return "", fmt.Errorf("reading provenance marker %s: %w", markerPath, err)
-	}
-	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 4)
-	if len(lines) < 3 {
-		return "", fmt.Errorf("provenance marker %s is malformed: expected exactly 3 lines (version, id, canonical-home), got %d", markerPath, len(lines))
-	}
-	if len(lines) > 3 {
-		return "", fmt.Errorf("provenance marker %s has extra content — expected exactly 3 lines", markerPath)
-	}
-	version := strings.TrimSpace(lines[0])
-	if version != ProvenanceVersion {
-		return "", fmt.Errorf("provenance marker %s has unsupported version %q (expected %q)", markerPath, version, ProvenanceVersion)
-	}
-	id := strings.TrimSpace(lines[1])
-	if id == "" {
-		return "", fmt.Errorf("provenance marker %s has empty id", markerPath)
-	}
-	storedHome := strings.TrimSpace(lines[2])
-	if storedHome == "" {
-		return "", fmt.Errorf("provenance marker %s has empty canonical-home", markerPath)
-	}
-	// Verify canonical home match — rejects copied/moved homes.
-	actualCanon, err := canonicalHome(homePath)
-	if err != nil {
-		return "", fmt.Errorf("cannot verify canonical home for copied/move check: %w", err)
-	}
-	if actualCanon != storedHome {
-		return "", fmt.Errorf("provenance marker home %q does not match actual canonical home %q — captain may have been copied/moved", storedHome, actualCanon)
-	}
-	return id, nil
+	return home.ValidateCaptainProvenance(homePath)
 }
 
 // Validate checks a captain home for full structural correctness:

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -224,7 +223,7 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 func authorizeSpawn(role, homeDir, cwd string) error {
 	switch role {
 	case "captain":
-		if _, err := captain.ValidateProvenance(homeDir); err != nil {
+		if _, err := home.ValidateCaptainProvenance(homeDir); err != nil {
 			return fmt.Errorf("spawn authority: invalid captain identity: %w", err)
 		}
 		canonicalHome, err := canonicalExistingPath(homeDir)
@@ -748,7 +747,7 @@ func (r *Runner) resolveSkills() (required, optional []fleet.SkillEntry, diags [
 // Returns empty string when not running under a captain.
 func (r *Runner) resolveParentCaptainID() string {
 	if r.spawnRole == "captain" {
-		if id, err := captain.ValidateProvenance(r.homeDir); err == nil {
+		if id, err := home.ValidateCaptainProvenance(r.homeDir); err == nil {
 			return id
 		}
 	}
