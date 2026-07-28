@@ -1,4 +1,4 @@
-package contract
+package cli
 
 import (
 	"embed"
@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-//go:embed fixtures/capabilities.toon fixtures/backend_capabilities.json
+//go:embed contract_fixtures/capabilities.toon contract_fixtures/backend_capabilities.json
 var outputFixtures embed.FS
 
 func TestEncodeTOONMatchesCapabilitiesFixture(t *testing.T) {
@@ -73,7 +73,7 @@ func TestEncodeRejectsUnsupportedOutput(t *testing.T) {
 
 func outputFixture(t *testing.T, name string) string {
 	t.Helper()
-	data, err := outputFixtures.ReadFile("fixtures/" + name)
+	data, err := outputFixtures.ReadFile("contract_fixtures/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}

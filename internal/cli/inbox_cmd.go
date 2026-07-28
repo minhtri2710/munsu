@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -95,11 +94,11 @@ This produces output with kind=inbox.receive.`,
 					fmt.Sprintf("receiving notification: %v", err))
 			}
 
-			return writeContract(cmd, contract.Response[contract.InboxReceiveResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[InboxReceiveResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "inbox.receive",
 				Status:        "success",
-				Data: contract.InboxReceiveResult{
+				Data: InboxReceiveResult{
 					MessageID:      env.MessageID,
 					SenderIdentity: env.SenderIdentity,
 					Payload:        env.Payload,
@@ -165,11 +164,11 @@ This produces output with kind=inbox.ack.`,
 					fmt.Sprintf("acknowledging notification: %v", err))
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "inbox.ack",
 				Status:        "success",
-				Data: contract.MessageResult{
+				Data: MessageResult{
 					Message: fmt.Sprintf("accepted message %s from %s (outcome=%s)", ref.MessageID, ref.SenderIdentity, ack.Outcome),
 				},
 			})

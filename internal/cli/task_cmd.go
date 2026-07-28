@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -38,11 +37,11 @@ func newTaskCmd() *cobra.Command {
 			if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.add",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("task %s added", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("task %s added", id)},
 			})
 		}),
 	}
@@ -63,15 +62,15 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			if len(entries) == 0 {
-				return writeContract(cmd, contract.Response[contract.EmptyResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[EmptyResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "task.list",
 					Status:        "success",
-					Data:          contract.EmptyResult{Count: 0, Context: "no tasks found"},
+					Data:          EmptyResult{Count: 0, Context: "no tasks found"},
 				})
 			}
 
-			var taskEntries []contract.TaskEntry
+			var taskEntries []TaskEntry
 			for _, e := range entries {
 				if stateFilter != "" && !strings.Contains(e.LastStatus, stateFilter) {
 					continue
@@ -84,7 +83,7 @@ func newTaskCmd() *cobra.Command {
 				if status == "" {
 					status = "registered"
 				}
-				taskEntries = append(taskEntries, contract.TaskEntry{
+				taskEntries = append(taskEntries, TaskEntry{
 					ID:      e.ID,
 					Kind:    e.Kind,
 					Project: project,
@@ -92,8 +91,8 @@ func newTaskCmd() *cobra.Command {
 				})
 			}
 
-			return writeContract(cmd, contract.Response[[]contract.TaskEntry]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[[]TaskEntry]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.list",
 				Status:        "success",
 				Data:          taskEntries,
@@ -133,11 +132,11 @@ func newTaskCmd() *cobra.Command {
 				}
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.show",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -162,11 +161,11 @@ func newTaskCmd() *cobra.Command {
 			rec, _ := orchestrator.FromTaskStatus(ctx.Home, id, line)
 			_ = orchestrator.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.status",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("status appended: %s", line)},
+				Data:          MessageResult{Message: fmt.Sprintf("status appended: %s", line)},
 			})
 		}),
 	}

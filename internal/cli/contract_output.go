@@ -1,4 +1,4 @@
-package contract
+package cli
 
 import (
 	"encoding/json"

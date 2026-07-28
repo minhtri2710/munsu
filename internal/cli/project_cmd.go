@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
@@ -42,16 +41,16 @@ the repository is cloned into the projects directory first.`,
 				return err
 			}
 			if len(projects) == 0 {
-				return writeContract(cmd, contract.Response[contract.EmptyResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[EmptyResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "project.list",
 					Status:        "success",
-					Data:          contract.EmptyResult{Count: 0, Context: "No projects registered."},
+					Data:          EmptyResult{Count: 0, Context: "No projects registered."},
 				})
 			}
-			entries := make([]contract.ProjectEntry, len(projects))
+			entries := make([]ProjectEntry, len(projects))
 			for i, p := range projects {
-				entries[i] = contract.ProjectEntry{
+				entries[i] = ProjectEntry{
 					Name:        p.Name,
 					Mode:        p.Mode,
 					Yolo:        p.Yolo,
@@ -59,8 +58,8 @@ the repository is cloned into the projects directory first.`,
 					Added:       p.Added,
 				}
 			}
-			return writeContract(cmd, contract.Response[[]contract.ProjectEntry]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[[]ProjectEntry]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "project.list",
 				Status:        "success",
 				Data:          entries,
@@ -79,7 +78,7 @@ the repository is cloned into the projects directory first.`,
 			if err != nil {
 				return err
 			}
-			entry := contract.ProjectEntry{
+			entry := ProjectEntry{
 				Name:        p.Name,
 				Mode:        p.Mode,
 				Yolo:        p.Yolo,
@@ -91,8 +90,8 @@ the repository is cloned into the projects directory first.`,
 			if fi, statErr := os.Stat(projDir); statErr == nil && fi.IsDir() {
 				entry.Directory = projDir
 			}
-			return writeContract(cmd, contract.Response[contract.ProjectEntry]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[ProjectEntry]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "project.show",
 				Status:        "success",
 				Data:          entry,
@@ -123,11 +122,11 @@ the repository is cloned into the projects directory first.`,
 			if yolo {
 				msg += " +yolo"
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "project.mode",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: msg},
+				Data:          MessageResult{Message: msg},
 			})
 		}),
 	}

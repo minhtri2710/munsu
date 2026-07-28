@@ -1,4 +1,4 @@
-package contract
+package cli
 
 import (
 	"embed"
@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-//go:embed fixtures/*.json fixtures/*.toon
+//go:embed contract_fixtures/*.json contract_fixtures/*.toon
 var fixtureFiles embed.FS
 
 var fixtureNames = []string{
@@ -48,7 +48,7 @@ var fixtureNames = []string{
 func TestGoldenFixturePairs(t *testing.T) {
 	t.Parallel()
 
-	entries, err := fixtureFiles.ReadDir("fixtures")
+	entries, err := fixtureFiles.ReadDir("contract_fixtures")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestGoldenFixturePairs(t *testing.T) {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			jsonFixture, err := fixtureFiles.ReadFile("fixtures/" + name + ".json")
+			jsonFixture, err := fixtureFiles.ReadFile("contract_fixtures/" + name + ".json")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -92,7 +92,7 @@ func TestGoldenFixturePairs(t *testing.T) {
 			}
 			validateJSONEnvelope(t, name, document)
 
-			toonFixture, err := fixtureFiles.ReadFile("fixtures/" + name + ".toon")
+			toonFixture, err := fixtureFiles.ReadFile("contract_fixtures/" + name + ".toon")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -132,7 +132,7 @@ func TestSchemaVersionAndModelJSONTags(t *testing.T) {
 
 func TestErrorFixtureHasStableActionableEnvelope(t *testing.T) {
 	t.Parallel()
-	contents, err := fixtureFiles.ReadFile("fixtures/error.json")
+	contents, err := fixtureFiles.ReadFile("contract_fixtures/error.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
@@ -36,11 +35,11 @@ func newSkillListCmd() *cobra.Command {
 				return err
 			}
 			sort.Strings(names)
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "skill.list",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.Join(names, "\n")},
+				Data:          MessageResult{Message: strings.Join(names, "\n")},
 			})
 		},
 	}

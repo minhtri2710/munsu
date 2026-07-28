@@ -1,7 +1,7 @@
 // Package contract defines the JSON-compatible data model for the versioned
 // orchestration contract. It intentionally has no runtime behavior; Phase 1
 // will use these types at the output boundary.
-package contract
+package cli
 
 const (
 	// SchemaVersion is the stable schema identifier shared by TOON and JSON.

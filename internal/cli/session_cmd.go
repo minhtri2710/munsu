@@ -10,7 +10,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
@@ -81,11 +80,11 @@ func newBriefCmd() *cobra.Command {
 				b.WriteString("  yolo:  true\n")
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "brief",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -111,7 +110,7 @@ func newSessionStartCmd() *cobra.Command {
 
 			// Discard verbose output when JSON contract is requested.
 			var w io.Writer = cmd.OutOrStdout()
-			if output == contract.OutputJSON {
+			if output == OutputJSON {
 				w = io.Discard
 			}
 
@@ -141,11 +140,11 @@ func newSessionStartCmd() *cobra.Command {
 				watcherState = "unknown"
 			}
 
-			return writeContract(cmd, contract.Response[contract.SessionStart]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[SessionStart]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "backend.start",
 				Status:        "success",
-				Data: contract.SessionStart{
+				Data: SessionStart{
 					Lock:        lockState,
 					Watcher:     watcherState,
 					BootstrapOK: result.Bootstrap != nil,
@@ -189,11 +188,11 @@ func newBootstrapCmd() *cobra.Command {
 				b.WriteString(result.GC.String() + "\n")
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "bootstrap",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -215,11 +214,11 @@ func newWatchCmd() *cobra.Command {
 			if reason != nil {
 				message = fmt.Sprintf("stopped: %s — %s", reason.Kind, reason.Message)
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "watch",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: message},
+				Data:          MessageResult{Message: message},
 			})
 		}),
 	}
@@ -723,7 +722,7 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 				return operationError("internal", "Run `munsu afk drain --consumer "+consumer+"` again", err.Error())
 			}
 
-			if output == contract.OutputJSON {
+			if output == OutputJSON {
 				var actionable []string
 				for _, w := range report.Actionable {
 					actionable = append(actionable, fmt.Sprintf("[%s] %s: %s", w.EventID, w.Key, w.Payload))
@@ -737,11 +736,11 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 					inFlight = report.FleetPeek.InFlight
 					dead = report.FleetPeek.Dead
 				}
-				return writeContract(cmd, contract.Response[contract.DrainCycle]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[DrainCycle]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "orchestrator.drain",
 					Status:        "success",
-					Data: contract.DrainCycle{
+					Data: DrainCycle{
 						ClaimID:      report.LeaseID,
 						Consumer:     report.Consumer,
 						Actionable:   actionable,

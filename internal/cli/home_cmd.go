@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -22,11 +21,11 @@ With --mkdir, create the home directory tree {state,data,config,projects}.`,
 					return err
 				}
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: ctx.Home},
+				Data:          MessageResult{Message: ctx.Home},
 			})
 		}),
 	}

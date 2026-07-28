@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -46,11 +45,11 @@ func newEventAppendCmd() *cobra.Command {
 				return operationError("internal", "Run `munsu event append` again", err.Error())
 			}
 
-			return writeContract(cmd, contract.Response[contract.EventAppend]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[EventAppend]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "event.append",
 				Status:        "success",
-				Data: contract.EventAppend{
+				Data: EventAppend{
 					EventID:   id,
 					Type:      eventType,
 					Synthetic: false,

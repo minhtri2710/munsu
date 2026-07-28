@@ -8,7 +8,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
@@ -39,11 +38,11 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 				if resolved == "" {
 					resolved = "none"
 				}
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "message",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: resolved},
+					Data:          MessageResult{Message: resolved},
 				})
 			}
 			val, err := config.Get(ctx.Home, key)
@@ -53,11 +52,11 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 				}
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: val},
+				Data:          MessageResult{Message: val},
 			})
 		}),
 	}
@@ -117,11 +116,11 @@ Override environment variables:
   MUNSU_DEFAULT_MODE_OVERRIDE
 `,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "config.show",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: showConfig(ctx.Home)},
+				Data:          MessageResult{Message: showConfig(ctx.Home)},
 			})
 		}),
 	}

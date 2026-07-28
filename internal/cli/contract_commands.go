@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
@@ -24,18 +23,18 @@ func newCapabilitiesCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.Capabilities]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[Capabilities]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "capabilities",
 				Status:        "success",
-				Data: contract.Capabilities{
-					ContractVersion: contract.SchemaVersion,
+				Data: Capabilities{
+					ContractVersion: SchemaVersion,
 					Commands: []string{
 						"capabilities", "task observe", "fleet snapshot --version 2", "guard", "watch ensure",
 						"watch run", "wake claim", "wake ack", "event append", "backend capabilities", "spawn",
 						"integrate install", "integrate repair", "integrate status", "afk drain",
 					},
-					OutputFormats: []string{contract.OutputTOON, contract.OutputJSON},
+					OutputFormats: []string{OutputTOON, OutputJSON},
 				},
 				Help: []string{"Run `munsu task observe <task-id>` to inspect a task"},
 			})
@@ -71,11 +70,11 @@ func newBackendCmd() *cobra.Command {
 					return operationError("dependency_unavailable", "Configure a supported session backend and rerun `munsu backend capabilities`", "No supported session backend is available")
 				}
 			}
-			return writeContract(cmd, contract.Response[contract.BackendCapabilities]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[BackendCapabilities]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "backend.capabilities",
 				Status:        "success",
-				Data: contract.BackendCapabilities{
+				Data: BackendCapabilities{
 					Backend:  backendName,
 					Features: []string{"create_session", "send_input", "pane_liveness"},
 				},
@@ -114,7 +113,7 @@ func newTaskObserveCmd() *cobra.Command {
 				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to observe task state")
 			}
 			meta, _ := home.ReadMeta(ctx.Home, args[0])
-			result := contract.TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
+			result := TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
 			if fields["description"] {
 				result.Description = state.Description
 			}
@@ -125,8 +124,8 @@ func newTaskObserveCmd() *cobra.Command {
 				result.NoMistakesStep = state.NoMistakesRunStep
 			}
 			help := []string{"Run `munsu task observe " + args[0] + " --fields description,branch` for expanded fields"}
-			return writeContract(cmd, contract.Response[contract.TaskObserve]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[TaskObserve]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.observe",
 				Status:        "success",
 				Data:          result,
@@ -196,9 +195,9 @@ func newContractGuardCmd() *cobra.Command {
 			}
 			allConditions = append(allConditions, result.Conditions...)
 
-			var violations []contract.GuardViolation
+			var violations []GuardViolation
 			for _, c := range allConditions {
-				v := contract.GuardViolation{
+				v := GuardViolation{
 					Code:      string(c.Code),
 					Condition: c.Message,
 					Evidence:  []string{"munsu guard", "state/.wake-queue"},
@@ -215,7 +214,7 @@ func newContractGuardCmd() *cobra.Command {
 						continue
 					}
 					if guardErr := backend.AssertNotTangled(projectDir, entry.Name); guardErr != nil {
-						v := contract.GuardViolation{
+						v := GuardViolation{
 							Condition: guardErr.Error(),
 							Evidence:  []string{"git worktree list", "project: " + entry.Name},
 						}
@@ -255,11 +254,11 @@ func newContractGuardCmd() *cobra.Command {
 				backwardCompatConditions = append(backwardCompatConditions, c.Message)
 			}
 
-			return writeContract(cmd, contract.Response[contract.Guard]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[Guard]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "guard",
 				Status:        "success",
-				Data: contract.Guard{
+				Data: Guard{
 					State:      state,
 					Violations: violations,
 					Conditions: backwardCompatConditions,

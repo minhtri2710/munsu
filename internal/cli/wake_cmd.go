@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -49,11 +48,11 @@ func newWakeCmd() *cobra.Command {
 				wakeIDs = append(wakeIDs, w.Epoch+":"+w.Seq)
 			}
 
-			return writeContract(cmd, contract.Response[contract.WakeClaim]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[WakeClaim]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "wake.claim",
 				Status:        "success",
-				Data: contract.WakeClaim{
+				Data: WakeClaim{
 					WakeID:       strings.Join(wakeIDs, ","),
 					ClaimID:      result.LeaseID,
 					Owner:        result.Consumer,
@@ -93,11 +92,11 @@ func newWakeCmd() *cobra.Command {
 			ackedCount := strconv.Itoa(len(eventIDs))
 			state := "acknowledged"
 
-			return writeContract(cmd, contract.Response[contract.WakeAck]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[WakeAck]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "wake.ack",
 				Status:        "success",
-				Data: contract.WakeAck{
+				Data: WakeAck{
 					WakeID:  ackedCount,
 					ClaimID: leaseID,
 					State:   state,

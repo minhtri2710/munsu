@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/spf13/cobra"
@@ -196,8 +195,8 @@ func runIntegrateInstall(cmd *cobra.Command, ctx Ctx, flags integrateFlags) erro
 		return err
 	}
 
-	return writeContract(cmd, contract.Response[integrateResultData]{
-		SchemaVersion: contract.SchemaVersion,
+	return writeContract(cmd, Response[integrateResultData]{
+		SchemaVersion: SchemaVersion,
 		Kind:          "integrate.install",
 		Status:        "success",
 		Data: integrateResultData{
@@ -231,8 +230,8 @@ func runIntegrateRepair(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 		return err
 	}
 
-	return writeContract(cmd, contract.Response[integrateResultData]{
-		SchemaVersion: contract.SchemaVersion,
+	return writeContract(cmd, Response[integrateResultData]{
+		SchemaVersion: SchemaVersion,
 		Kind:          "integrate.repair",
 		Status:        "success",
 		Data: integrateResultData{
@@ -265,8 +264,8 @@ func runIntegrateStatus(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 		return err
 	}
 
-	return writeContract(cmd, contract.Response[integrateResultData]{
-		SchemaVersion: contract.SchemaVersion,
+	return writeContract(cmd, Response[integrateResultData]{
+		SchemaVersion: SchemaVersion,
 		Kind:          "integrate.status",
 		Status:        "success",
 		Data: integrateResultData{
@@ -490,7 +489,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 	}
 
 	// Default Pi-shaped output: JSON contract on stdout
-	data := contract.SafetyCheckData{
+	data := SafetyCheckData{
 		Identity:       result.Identity,
 		GateCapability: result.GateCapability,
 		CanonicalPath:  result.CanonicalPath,
@@ -500,8 +499,8 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 		Error:          result.Error,
 	}
 
-	return writeContract(cmd, contract.Response[interface{}]{
-		SchemaVersion: contract.SchemaVersion,
+	return writeContract(cmd, Response[interface{}]{
+		SchemaVersion: SchemaVersion,
 		Kind:          "integrate.safety-check",
 		Status:        "success",
 		Data:          data,

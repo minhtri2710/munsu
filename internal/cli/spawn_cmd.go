@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -154,11 +153,11 @@ func newSendCmd() *cobra.Command {
 					msg = fmt.Sprintf("sent to captain %s (message=%s, notification pending)", smID, result.MessageID)
 				}
 
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "send",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: msg},
+					Data:          MessageResult{Message: msg},
 				})
 			}
 
@@ -176,19 +175,19 @@ func newSendCmd() *cobra.Command {
 			}
 
 			if sendResult.Queued {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "send",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("queued to %s (message=%s): soldier busy", id, sendResult.MessageID)},
+					Data:          MessageResult{Message: fmt.Sprintf("queued to %s (message=%s): soldier busy", id, sendResult.MessageID)},
 				})
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "send",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("sent to %s (message=%s)", id, sendResult.MessageID)},
+				Data:          MessageResult{Message: fmt.Sprintf("sent to %s (message=%s)", id, sendResult.MessageID)},
 			})
 		}),
 	}
@@ -266,11 +265,11 @@ func newSoldierStateCmd() *cobra.Command {
 			if err != nil {
 				return operationError("internal", "Run `munsu soldier-state "+id+"` again", "Unable to read soldier state")
 			}
-			return writeContract(cmd, contract.Response[contract.TaskObserve]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[TaskObserve]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.observe",
 				Status:        "success",
-				Data: contract.TaskObserve{
+				Data: TaskObserve{
 					TaskID:              state.TaskID,
 					Status:              state.Status,
 					Description:         state.Description,
@@ -324,11 +323,11 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "promote",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship", id)},
 			})
 		}),
 	}
@@ -377,11 +376,11 @@ With --force:
 			for _, step := range result.Steps {
 				b.WriteString(fmt.Sprintf("  - %s\n", step))
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "teardown",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -419,37 +418,37 @@ Calling when the soldier is busy returns with "still busy".
 			}
 
 			if result.Queued {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "soldier-flush",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: soldier still busy, pending retained", id)},
+					Data:          MessageResult{Message: fmt.Sprintf("%s: soldier still busy, pending retained", id)},
 				})
 			}
 
 			if result.MessageID == "" {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "soldier-flush",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: no pending commands", id)},
+					Data:          MessageResult{Message: fmt.Sprintf("%s: no pending commands", id)},
 				})
 			}
 
 			if result.Sent {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "soldier-flush",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: flushed pending command (message=%s)", id, result.MessageID)},
+					Data:          MessageResult{Message: fmt.Sprintf("%s: flushed pending command (message=%s)", id, result.MessageID)},
 				})
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "soldier-flush",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("%s: no action taken", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("%s: no action taken", id)},
 			})
 		}),
 	}

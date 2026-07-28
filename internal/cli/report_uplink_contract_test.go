@@ -7,13 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
-func runUplinkReport(t *testing.T, notify func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult, args ...string) (string, string, contract.Response[contract.MessageResult]) {
+func runUplinkReport(t *testing.T, notify func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult, args ...string) (string, string, Response[MessageResult]) {
 	t.Helper()
 	senderHome, receiverHome := t.TempDir(), t.TempDir()
 	t.Setenv("MUNSU_HOME", senderHome)
@@ -30,7 +29,7 @@ func runUplinkReport(t *testing.T, notify func(string, string, orchestrator.Noti
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	var resp contract.Response[contract.MessageResult]
+	var resp Response[MessageResult]
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}

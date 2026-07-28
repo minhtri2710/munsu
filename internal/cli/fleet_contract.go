@@ -7,7 +7,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -104,7 +103,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	if err != nil {
 		return operationError("internal", "Run `munsu fleet snapshot --version 2` again", "Unable to read fleet state")
 	}
-	soldiers := make([]contract.Soldier, 0, len(snapshot.Tasks))
+	soldiers := make([]Soldier, 0, len(snapshot.Tasks))
 	for _, entry := range snapshot.Tasks {
 		status := entry.LastStatus
 		if index := strings.Index(status, ":"); index >= 0 {
@@ -113,7 +112,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		if status == "" {
 			status = fleet.PhaseFromMeta(entry.Window, entry.PaneAlive)
 		}
-		row := contract.Soldier{TaskID: entry.ID, Status: status}
+		row := Soldier{TaskID: entry.ID, Status: status}
 		if fields["branch"] {
 			row.Branch = branchFor(map[string]string{"worktree": entry.Worktree})
 		}
@@ -121,11 +120,11 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	}
 	// Collect captain entries with home-summary + parent return-channel status.
 	matedata, err := captain.List(ctx.Home)
-	var captains []contract.CaptainEntry
+	var captains []CaptainEntry
 	if err == nil {
 		for _, m := range matedata {
 			status := fleet.CaptainStatus(ctx.Home, m.ID, m.Home)
-			entry := contract.CaptainEntry{
+			entry := CaptainEntry{
 				ID:               m.ID,
 				Home:             m.Home,
 				Scope:            m.Scope,
@@ -151,7 +150,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 					entry.Freshness = "fresh"
 					entry.ParentEventRole = "historical-only"
 				}
-				entry.Counts = &contract.CaptainHomeCounts{
+				entry.Counts = &CaptainHomeCounts{
 					ActiveChildren: sum.Counts.ActiveChildren,
 					DecisionsOpen:  sum.Counts.DecisionsOpen,
 					Holds:          sum.Counts.Holds,
@@ -163,32 +162,32 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 					Done:           sum.Counts.Done,
 				}
 				for _, c := range sum.ActiveChildren {
-					entry.ActiveChildren = append(entry.ActiveChildren, contract.CaptainChildBrief{
+					entry.ActiveChildren = append(entry.ActiveChildren, CaptainChildBrief{
 						ID: c.ID, Status: c.Status, Kind: c.Kind, Doing: c.Doing,
 					})
 				}
 				for _, d := range sum.DecisionsOpen {
-					entry.DecisionsOpen = append(entry.DecisionsOpen, contract.CaptainDecision{
+					entry.DecisionsOpen = append(entry.DecisionsOpen, CaptainDecision{
 						ID: d.ID, Key: d.Key, Verb: d.Verb, Summary: d.Summary, Reason: d.Reason, Source: d.Source,
 					})
 				}
 				for _, h := range sum.Holds {
-					entry.Holds = append(entry.Holds, contract.CaptainHold{
+					entry.Holds = append(entry.Holds, CaptainHold{
 						ID: h.ID, Title: h.Title, BlockedBy: h.BlockedBy, Reason: h.Reason, Source: h.Source,
 					})
 				}
 				for _, q := range sum.Queued {
-					entry.Queued = append(entry.Queued, contract.CaptainQueued{
+					entry.Queued = append(entry.Queued, CaptainQueued{
 						ID: q.ID, Title: q.Title, Repo: q.Repo, Kind: q.Kind,
 					})
 				}
 				for _, l := range sum.Landed {
-					entry.Landed = append(entry.Landed, contract.CaptainLanded{
+					entry.Landed = append(entry.Landed, CaptainLanded{
 						ID: l.ID, Title: l.Title, PRURL: l.PRURL,
 					})
 				}
 				for _, o := range sum.Omitted {
-					entry.Omitted = append(entry.Omitted, contract.CaptainOmitted{
+					entry.Omitted = append(entry.Omitted, CaptainOmitted{
 						Surface: o.Surface, Count: o.Count,
 					})
 				}
@@ -210,17 +209,17 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	}
 
 	sort.Slice(soldiers, func(i, j int) bool { return soldiers[i].TaskID < soldiers[j].TaskID })
-	return writeContract(cmd, contract.Response[contract.FleetSnapshotV2]{
-		SchemaVersion: contract.SchemaVersion,
+	return writeContract(cmd, Response[FleetSnapshotV2]{
+		SchemaVersion: SchemaVersion,
 		Kind:          "fleet.snapshot",
 		Status:        "success",
-		Data: contract.FleetSnapshotV2{
+		Data: FleetSnapshotV2{
 			Scope:           ctx.Home,
 			Count:           len(soldiers),
 			Total:           len(soldiers),
 			Soldiers:        soldiers,
 			Captains:        captains,
-			CaptainGuidance: contract.DefaultCaptainGuidance(),
+			CaptainGuidance: DefaultCaptainGuidance(),
 			UnresolvedHolds: unresolvedHolds,
 		},
 		Help: []string{"Run `munsu task observe <task-id>` to inspect a soldier"},

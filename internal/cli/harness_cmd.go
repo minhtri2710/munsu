@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
@@ -22,11 +21,11 @@ func newHarnessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: h},
+				Data:          MessageResult{Message: h},
 			})
 		},
 	}
@@ -43,11 +42,11 @@ func newHarnessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: h},
+				Data:          MessageResult{Message: h},
 			})
 		}),
 	}
@@ -64,11 +63,11 @@ func newHarnessCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: h},
+				Data:          MessageResult{Message: h},
 			})
 		}),
 	}

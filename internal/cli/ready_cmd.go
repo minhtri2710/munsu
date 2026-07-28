@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -63,11 +62,11 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 				return fmt.Errorf("ready: emit: %w", err)
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "ready",
 				Status:        "success",
-				Data: contract.MessageResult{
+				Data: MessageResult{
 					Message: fmt.Sprintf("ready event emitted: task=%s event=%s gen=%s",
 						taskID, readyEvent.EventID, metaGeneration),
 				},

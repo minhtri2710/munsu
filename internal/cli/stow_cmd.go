@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
@@ -49,25 +48,25 @@ Examples:
 
 			switch {
 			case res.DataLearnings != "":
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "stow",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed learnings to %s", res.DataLearnings)},
+					Data:          MessageResult{Message: fmt.Sprintf("Stowed learnings to %s", res.DataLearnings)},
 				})
 			case res.DataCaptain != "":
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "stow",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed general preferences to %s", res.DataCaptain)},
+					Data:          MessageResult{Message: fmt.Sprintf("Stowed general preferences to %s", res.DataCaptain)},
 				})
 			default:
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "stow",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: "Nothing to stow (no text provided)", Noop: true},
+					Data:          MessageResult{Message: "Nothing to stow (no text provided)", Noop: true},
 				})
 			}
 		}),
@@ -115,11 +114,11 @@ or an absolute path to a project directory.`,
 			if res.SelfGovernSec {
 				msg.WriteString("\nAdded '## Maintaining this file' section")
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "ensure-agents-md",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: msg.String()},
+				Data:          MessageResult{Message: msg.String()},
 			})
 		}),
 	}

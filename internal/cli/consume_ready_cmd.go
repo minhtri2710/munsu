@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -59,11 +58,11 @@ Flags:
 				fmt.Fprintf(os.Stderr, "consume-ready: reconcile warning: %v\n", recErr)
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "consume-ready",
 				Status:        "success",
-				Data: contract.MessageResult{
+				Data: MessageResult{
 					Message: fmt.Sprintf("consumed ready events for %s: %d command(s) flushed", taskID, flushed),
 				},
 			})

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/spf13/cobra"
 )
 
@@ -44,8 +43,8 @@ Safety invariants (always enforced):
 			if err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[backend.PruneResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[backend.PruneResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "herdr.prune",
 				Status:        "success",
 				Data:          *result,

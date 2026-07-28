@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -172,7 +171,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
-			var injectResult *contract.ReportInjection
+			var injectResult *ReportInjection
 			watcherID := identifyWatcher(homeDir)
 			var enqueueTimestamp, receiptTimestamp int64
 			if uplinkResult != nil {
@@ -180,7 +179,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				if uplinkResult.Notified {
 					outcome = "notified"
 				}
-				injectResult = &contract.ReportInjection{Outcome: outcome}
+				injectResult = &ReportInjection{Outcome: outcome}
 				receiptTimestamp = time.Now().Unix()
 			} else if receipt != nil {
 				enqueueTimestamp = receipt.EnqueueUnix
@@ -189,11 +188,11 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "report",
 				Status:        "success",
-				Data: contract.MessageResult{
+				Data: MessageResult{
 					Message:          fmt.Sprintf("reported %s: %s (role=%s, task=%s)", state, msg, role, taskID),
 					Injection:        injectResult,
 					EnqueueTimestamp: enqueueTimestamp,

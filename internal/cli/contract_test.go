@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -201,7 +200,7 @@ func TestWriteContractErrorWrapsNonContractErrors(t *testing.T) {
 func TestWriteContractErrorEncodeFailureReturnsNonZero(t *testing.T) {
 	var buf bytes.Buffer
 	// contractError with schema version that should fail encoding
-	// Use an unencodable struct — contract.Encode returns error for
+	// Use an unencodable struct — Encode returns error for
 	// nil values or broken output format.
 	err := fmt.Errorf("encode fail test")
 	exitCode := WriteContractError(&buf, err, []string{})
@@ -319,7 +318,7 @@ func TestFleetSnapshotV2CaptainGuidanceJSON(t *testing.T) {
 		t.Fatalf("invalid json: %v\n%s", err, out)
 	}
 	g := resp.Data.CaptainGuidance
-	want := contract.DefaultCaptainGuidance()
+	want := DefaultCaptainGuidance()
 	if g.Note != want.Note {
 		t.Errorf("note = %q", g.Note)
 	}
@@ -359,7 +358,7 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fleet snapshot v2: %v", err)
 	}
-	var resp contract.Response[contract.FleetSnapshotV2]
+	var resp Response[FleetSnapshotV2]
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, out)
 	}
@@ -445,10 +444,10 @@ func TestSafetyCheckContractJSON(t *testing.T) {
 	}
 
 	var resp struct {
-		SchemaVersion string                   `json:"schema_version"`
-		Kind          string                   `json:"kind"`
-		Status        string                   `json:"status"`
-		Data          contract.SafetyCheckData `json:"data"`
+		SchemaVersion string          `json:"schema_version"`
+		Kind          string          `json:"kind"`
+		Status        string          `json:"status"`
+		Data          SafetyCheckData `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("safety-check JSON unmarshal: %v\nOutput: %s", err, out)
@@ -503,7 +502,7 @@ func TestSafetyCheckBlockTrue(t *testing.T) {
 	}
 
 	var resp struct {
-		Data contract.SafetyCheckData `json:"data"`
+		Data SafetyCheckData `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("JSON unmarshal: %v\nOutput: %s", err, out)
