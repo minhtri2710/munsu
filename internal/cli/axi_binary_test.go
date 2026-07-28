@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // axiBinaryPath caches the path to the built munsu binary for the test run.
@@ -56,7 +56,7 @@ func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
 	t.Helper()
 	pid := launchedPID
 	if pid <= 0 {
-		id := supervision.ReadIdentity(home)
+		id := orchestrator.ReadIdentity(home)
 		_, beatPID, beatOK := lifecycle.ReadBeat(home)
 		if id != nil {
 			pid = id.PID
@@ -65,7 +65,7 @@ func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
 		}
 	}
 
-	if err := supervision.Stop(home); err != nil {
+	if err := orchestrator.Stop(home); err != nil {
 		t.Errorf("stop test watcher: %v", err)
 	}
 	if pid <= 0 {

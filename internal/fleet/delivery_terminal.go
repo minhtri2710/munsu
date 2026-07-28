@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/home"
@@ -59,7 +60,7 @@ func VerifyDoneIdentity(homeDir, taskID, msg string) error {
 	}
 
 	// Read stored identity (may be nil if no identity has been captured)
-	stored, _ := IdentityFromMeta(meta)
+	stored, _ := domain.IdentityFromMeta(meta)
 
 	if !found {
 		// No PR URL in message. If the task has a stored delivery identity,
@@ -110,7 +111,7 @@ func VerifyDoneIdentity(homeDir, taskID, msg string) error {
 
 // provider client (GitHub via gh-axi or GitLab via glab). Rejects degraded
 // CLI fallback paths — provider absence means fail closed.
-func captureTerminalIdentityViaProvider(prURL string) (*DeliveryIdentity, error) {
+func captureTerminalIdentityViaProvider(prURL string) (*domain.DeliveryIdentity, error) {
 	provider, _, _, _, _, err := ParseProviderURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("unrecognized PR/MR URL: %w", err)
@@ -197,8 +198,8 @@ func CaptureTerminalIdentity(homeDir, taskID, msg string) error {
 			}
 
 			// Check if stored identity is already complete
-			if existing, err := IdentityFromMeta(meta); err == nil && existing != nil {
-				if err := ValidateIdentity(existing); err == nil {
+			if existing, err := domain.IdentityFromMeta(meta); err == nil && existing != nil {
+				if err := domain.ValidateIdentity(existing); err == nil {
 					// Complete matching identity already exists — idempotent skip
 					return nil
 				}
@@ -213,7 +214,7 @@ func CaptureTerminalIdentity(homeDir, taskID, msg string) error {
 	}
 
 	// Validate captured identity before persisting
-	if err := ValidateIdentity(ident); err != nil {
+	if err := domain.ValidateIdentity(ident); err != nil {
 		return fmt.Errorf("terminal identity: provider returned incomplete data: %w", err)
 	}
 

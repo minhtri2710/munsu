@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/domain"
 
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -16,7 +17,7 @@ import (
 // Returns nil when delivery_state is already merged (idempotent).
 // Returns a CASError when another writer modified meta concurrently.
 // Returns an error when meta cannot be read or written.
-func MarkMerged(homeDir, taskID string, expected *DeliveryIdentity) error {
+func MarkMerged(homeDir, taskID string, expected *domain.DeliveryIdentity) error {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return fmt.Errorf("mark merged: reading meta: %w", err)
@@ -59,7 +60,7 @@ func MarkMerged(homeDir, taskID string, expected *DeliveryIdentity) error {
 	return nil
 }
 
-// MarkMergedFromRecord is a convenience wrapper that builds a DeliveryIdentity
+// MarkMergedFromRecord is a convenience wrapper that builds a domain.DeliveryIdentity
 // from a PollRetirementRecord's fields and calls MarkMerged. It is used by
 // the supervision recovery path.
 //
@@ -68,7 +69,7 @@ func MarkMerged(homeDir, taskID string, expected *DeliveryIdentity) error {
 func MarkMergedFromRecord(homeDir, taskID string, provider, owner, repo string,
 	number int, url, baseRef, headRef, headSHA string) error {
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: provider,
 		Owner:    owner,
 		Repo:     repo,

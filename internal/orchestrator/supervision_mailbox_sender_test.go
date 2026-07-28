@@ -1,19 +1,17 @@
-package supervision
+package orchestrator
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 type testMailboxSender struct{ payloads []string }
 
 func (*testMailboxSender) Alive(string, map[string]string) (bool, error) { return true, nil }
-func (s *testMailboxSender) Send(_ string, _ map[string]string, payload string) orchestrator.BoundSendResult {
+func (s *testMailboxSender) Send(_ string, _ map[string]string, payload string) BoundSendResult {
 	s.payloads = append(s.payloads, payload)
-	return orchestrator.BoundSendResult{Status: "submitted", Acknowledged: true}
+	return BoundSendResult{Status: "submitted", Acknowledged: true}
 }
 
 func TestRunCycleWithProbeAndSenderRejectsNilHooksWithoutMarkingRecoveryDone(t *testing.T) {
@@ -44,7 +42,7 @@ func TestRunCycleWithProbeAndSenderRejectsNilSenderWithoutMarkingRecoveryDone(t 
 func TestRunCycleRecoveryScanFailureCanRetry(t *testing.T) {
 	home := t.TempDir()
 	recoveryDone.Delete(home)
-	inboxRoot := filepath.Join(home, "state", orchestrator.InboxDir)
+	inboxRoot := filepath.Join(home, "state", InboxDir)
 	if err := os.MkdirAll(filepath.Dir(inboxRoot), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -68,12 +66,12 @@ func TestRunCycleRecoveryScanFailureCanRetry(t *testing.T) {
 func TestRunCycleRecoveryUsesExplicitSenderAndWritesMarker(t *testing.T) {
 	home := t.TempDir()
 	recoveryDone.Delete(home)
-	env := &orchestrator.Envelope{
-		SchemaVersion: orchestrator.SchemaVersion, MessageID: "watcher-recovery", SenderRank: orchestrator.RankGeneral,
-		SenderIdentity: "general", ReceiverRank: orchestrator.RankCaptain, ReceiverID: "captain-1",
-		Kind: "command", TaskID: "task-1", Payload: "wake", PayloadHash: orchestrator.PayloadHashHex("wake"), CreatedAt: 1,
+	env := &Envelope{
+		SchemaVersion: SchemaVersion, MessageID: "watcher-recovery", SenderRank: RankGeneral,
+		SenderIdentity: "general", ReceiverRank: RankCaptain, ReceiverID: "captain-1",
+		Kind: "command", TaskID: "task-1", Payload: "wake", PayloadHash: PayloadHashHex("wake"), CreatedAt: 1,
 	}
-	if err := orchestrator.NewStore(home).WriteEnvelope(env); err != nil {
+	if err := NewStore(home).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "state", "task-1.meta"), []byte("backend=tmux\nwindow=pane-1\n"), 0600); err != nil {
@@ -86,7 +84,7 @@ func TestRunCycleRecoveryUsesExplicitSenderAndWritesMarker(t *testing.T) {
 	if len(sender.payloads) != 1 || sender.payloads[0] != "wake" {
 		t.Fatalf("sender payloads = %v", sender.payloads)
 	}
-	if _, err := os.Stat(orchestrator.RecoveryMarkerPath(home, env.MessageID)); err != nil {
+	if _, err := os.Stat(RecoveryMarkerPath(home, env.MessageID)); err != nil {
 		t.Fatalf("recovery marker missing: %v", err)
 	}
 }

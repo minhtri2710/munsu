@@ -1,6 +1,6 @@
 // Package supervision provides watcher check plugin infrastructure including
 // crash-safe retirement of merged PR poll artifacts.
-package supervision
+package orchestrator
 
 import (
 	"crypto/sha256"
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -350,13 +350,13 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 	}
 
 	// Read task delivery identity.
-	ident, err := fleet.RequireIdentity(homeDir, taskID)
+	ident, err := RequireIdentity(homeDir, taskID)
 	if err != nil {
 		return fmt.Errorf("delivery identity: %w", err)
 	}
 
 	// Step 1: Query provider merge status.
-	status, err := fleet.QueryDeliveryMergeStatus(ident)
+	status, err := QueryDeliveryMergeStatus(ident)
 	if err != nil {
 		// Provider unavailable / query error: preserve poll, do not fail fatal.
 		return fmt.Errorf("merge status query (preserving poll): %w", err)
@@ -496,12 +496,46 @@ func removePollWithValidation(checkPath, expectedDigest string) error {
 }
 
 // markDeliveryMerged is a seam over fleet.MarkMerged, replaceable in tests.
-var markDeliveryMerged = fleet.MarkMerged
+
+var RequireIdentity = func(homeDir, id string) (*domain.DeliveryIdentity, error) {
+	meta, err := home.ReadMeta(homeDir, id)
+	if err != nil {
+		return nil, fmt.Errorf("reading task meta for identity: %w", err)
+	}
+	ident, err := domain.IdentityFromMeta(meta)
+	if err != nil {
+		return nil, fmt.Errorf("parsing delivery identity: %w", err)
+	}
+	if ident == nil {
+		return nil, fmt.Errorf("no delivery identity found for task %s", id)
+	}
+	if err := domain.ValidateIdentity(ident); err != nil {
+		return nil, fmt.Errorf("incomplete delivery identity for task %s: %w", id, err)
+	}
+	return ident, nil
+}
+
+var QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	return nil, fmt.Errorf("QueryDeliveryMergeStatus provider not set")
+}
+
+var MarkMerged = func(homeDir, taskID string, ident *domain.DeliveryIdentity) error {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		meta = make(map[string]string)
+	}
+	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateMerged)
+	return home.WriteMeta(homeDir, taskID, meta)
+}
+
+var markDeliveryMerged = func(homeDir, taskID string, ident *domain.DeliveryIdentity) error {
+	return MarkMerged(homeDir, taskID, ident)
+}
 
 // recordToIdentity builds a DeliveryIdentity from a PollRetirementRecord for
 // use in the recovery path's MarkMerged call.
-func recordToIdentity(rec *PollRetirementRecord) *fleet.DeliveryIdentity {
-	return &fleet.DeliveryIdentity{
+func recordToIdentity(rec *PollRetirementRecord) *domain.DeliveryIdentity {
+	return &domain.DeliveryIdentity{
 		Provider: rec.Provider,
 		Owner:    rec.Owner,
 		Repo:     rec.Repo,
@@ -565,7 +599,7 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 		// This heals orphaned retirement records and is idempotent
 		// (no-op if already merged). Fail-closed: preserves record
 		// and poll for the next recovery cycle.
-		if currentMeta[fleet.MetaDeliveryState] != string(fleet.DeliveryStateMerged) {
+		if currentMeta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
 			if err := markDeliveryMerged(homeDir, taskID, recordToIdentity(rec)); err != nil {
 				return false, fmt.Errorf("recovery: delivery_state CAS failed: %w", err)
 			}

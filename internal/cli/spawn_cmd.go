@@ -14,7 +14,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/spawn"
-	"github.com/minhtri2710/munsu/internal/teardown"
 	"github.com/spf13/cobra"
 )
 
@@ -364,13 +363,13 @@ With --force:
 				return fmt.Errorf("teardown refused: %w", err)
 			}
 
-			opts := teardown.Options{
+			opts := orchestrator.Options{
 				HomeDir: ctx.Home,
 				ID:      id,
 				Force:   force,
 			}
 
-			result, err := teardown.RunWithBackend(opts, newSessionBoundTeardown())
+			result, err := orchestrator.RunWithBackend(opts, newSessionBoundTeardown())
 			if err != nil {
 				return err
 			}

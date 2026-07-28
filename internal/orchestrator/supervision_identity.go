@@ -1,4 +1,4 @@
-package supervision
+package orchestrator
 
 import (
 	"encoding/json"
@@ -89,7 +89,7 @@ func identityPath(homeDir string) string {
 var BuildVersion = "0.0.0-dev"
 
 // CommitSHA holds the verified commit SHA for this build, set via ldflags
-// at build time (e.g. -X supervision.CommitSHA=abc1234).
+// at build time (e.g. -X CommitSHA=abc1234).
 // Used for typed identity comparison in the watcher handshake.
 // Empty means the commit is unknown — comparisons fail closed.
 var CommitSHA = ""

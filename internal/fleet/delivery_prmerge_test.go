@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,7 @@ func TestPRMerge_FleetSyncReadsMeta(t *testing.T) {
 	homeDir := t.TempDir()
 
 	// Write meta with a project name and delivery identity
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",

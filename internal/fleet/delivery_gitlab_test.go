@@ -392,7 +392,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Open(t *testing.T) {
 	defaultGlabRunner = readyRunner()
 	defer func() { defaultGlabRunner = old }()
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		Owner:    "owner",
 		Repo:     "project",
@@ -419,7 +419,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Merged(t *testing.T) {
 	defaultGlabRunner = mergedRunner()
 	defer func() { defaultGlabRunner = oldRunner }()
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		Owner:    "owner",
 		Repo:     "project",
@@ -446,7 +446,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Ready_Closed(t *testing.T) {
 	defaultGlabRunner = closedRunner()
 	defer func() { defaultGlabRunner = oldRunner }()
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		Owner:    "owner",
 		Repo:     "project",
@@ -475,7 +475,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Failed_FallackSpyUncalled(t *testing.T)
 	oldFallback := defaultGlabFallback
 	defaultGlabRunner = failedVersionRunner()
 	fallbackCalled := false
-	defaultGlabFallback = func(ident *DeliveryIdentity) (*PRMergeStatus, error) {
+	defaultGlabFallback = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		fallbackCalled = true
 		return nil, fmt.Errorf("fallback should not be called when Failed")
 	}
@@ -484,7 +484,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Failed_FallackSpyUncalled(t *testing.T)
 		defaultGlabFallback = oldFallback
 	}()
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
@@ -502,16 +502,16 @@ func TestQueryDeliveryMergeStatus_GitLab_Absent_FallackCalled(t *testing.T) {
 	oldFallback := defaultGlabFallback
 	defaultGlabRunner = &fakeGlabRunner{lookPathErr: errors.New("not found")}
 	fallbackCalled := false
-	defaultGlabFallback = func(ident *DeliveryIdentity) (*PRMergeStatus, error) {
+	defaultGlabFallback = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		fallbackCalled = true
-		return &PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
+		return &domain.PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
 	}
 	defer func() {
 		defaultGlabRunner = oldRunner
 		defaultGlabFallback = oldFallback
 	}()
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
@@ -537,7 +537,7 @@ func TestQueryDeliveryMergeStatus_GitLab_Absent_NoFallackError(t *testing.T) {
 		defaultGlabFallback = oldFallback
 	}()
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: "gitlab",
 		URL:      "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
@@ -553,15 +553,15 @@ func TestQueryDeliveryMergeStatus_GitHub_Delegates(t *testing.T) {
 	// GitHub URL should route through QueryPRMergeStatus.
 	// Use a mock to verify delegation.
 	saved := QueryPRMergeStatus
-	QueryPRMergeStatus = func(ghURL domain.GHURL) (*PRMergeStatus, error) {
+	QueryPRMergeStatus = func(ghURL domain.GHURL) (*domain.PRMergeStatus, error) {
 		if ghURL.Owner != "minhtri2710" || ghURL.Repo != "munsu" || ghURL.Num != 42 {
 			t.Errorf("unexpected ghURL: %+v", ghURL)
 		}
-		return &PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
+		return &domain.PRMergeStatus{State: "OPEN", Merged: false, Closed: false, HeadSHA: "abc123"}, nil
 	}
 	defer func() { QueryPRMergeStatus = saved }()
 
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider: "github",
 		Owner:    "minhtri2710",
 		Repo:     "munsu",
@@ -671,7 +671,7 @@ func TestParseProviderURL_SelfHostedGitLab(t *testing.T) {
 // --- GitLab identity round-trip through meta ---
 
 func TestGitLabIdentity_RoundTrip(t *testing.T) {
-	original := &DeliveryIdentity{
+	original := &domain.DeliveryIdentity{
 		Provider:   "gitlab",
 		Owner:      "owner",
 		Repo:       "project",
@@ -684,7 +684,7 @@ func TestGitLabIdentity_RoundTrip(t *testing.T) {
 	}
 
 	meta := original.ToMeta()
-	restored, err := IdentityFromMeta(meta)
+	restored, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta: %v", err)
 	}
@@ -720,7 +720,7 @@ func TestGitLabIdentity_LegacyPRKey(t *testing.T) {
 	meta := map[string]string{
 		"pr": "https://gitlab.com/owner/project/-/merge_requests/42",
 	}
-	id, err := IdentityFromMeta(meta)
+	id, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta with legacy pr key: %v", err)
 	}
@@ -749,7 +749,7 @@ func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
 		"pr_head":      sampleSHA,
 		"pr_timestamp": "2026-07-18T12:00:00Z",
 	}
-	_, err := IdentityFromMeta(meta)
+	_, err := domain.IdentityFromMeta(meta)
 	if err == nil {
 		t.Fatal("expected error for provider/URL mismatch")
 	}
@@ -798,7 +798,7 @@ func TestProbeGitLabCapability_Deterministic(t *testing.T) {
 func TestGitHubIdentityStillWorks(t *testing.T) {
 	original := validIdentity()
 	meta := original.ToMeta()
-	restored, err := IdentityFromMeta(meta)
+	restored, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta: %v", err)
 	}
@@ -815,7 +815,7 @@ func TestGitHubIdentityStillWorks(t *testing.T) {
 
 func TestExistingGitHubTestsStillPass(t *testing.T) {
 	meta := validIdentity().ToMeta()
-	restored, err := IdentityFromMeta(meta)
+	restored, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta: %v", err)
 	}

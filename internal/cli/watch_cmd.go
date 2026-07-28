@@ -10,7 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -67,7 +67,7 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	// If restart requested, signal existing watcher using identity validation
 	if restart && beatStatus.Exists {
 		_, pid, ok := lifecycle.ReadBeat(homeDir)
-		if ok && pid > 0 && supervision.ValidatePIDOwnership(homeDir, pid) {
+		if ok && pid > 0 && orchestrator.ValidatePIDOwnership(homeDir, pid) {
 			proc, err := os.FindProcess(pid)
 			if err == nil {
 				_ = signalWatchProcess(proc)
@@ -80,7 +80,7 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	// A fresh beat is healthy only when its PID has validated ownership.
 	if beatStatus.Exists && !beatStatus.Stale {
 		_, pid, ok := lifecycle.ReadBeat(homeDir)
-		if ok && pid > 0 && supervision.ValidatePIDOwnership(homeDir, pid) {
+		if ok && pid > 0 && orchestrator.ValidatePIDOwnership(homeDir, pid) {
 			return contract.Response[contract.WatchEnsure]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "watch.ensure",
@@ -126,7 +126,7 @@ func ensureWatcher(homeDir string, restart bool) contract.Response[contract.Watc
 	}
 
 	// Read identity for identity-aware lease info
-	id := supervision.ReadIdentity(homeDir)
+	id := orchestrator.ReadIdentity(homeDir)
 	identityStr := fmt.Sprintf("pid:%d", pid)
 	if id != nil {
 		identityStr = fmt.Sprintf("pid:%d version=%s proto=%d", id.PID, id.BuildVersion, id.ProtocolVersion)
@@ -165,11 +165,11 @@ func waitForWatcherBeacon(homeDir string, pid int, timeout time.Duration) (lifec
 	var status lifecycle.BeatStatus
 	for {
 		status = lifecycle.ReadBeatStatus(homeDir, time.Now())
-		if status.Exists && !status.Stale && supervision.ValidatePIDOwnership(homeDir, pid) {
+		if status.Exists && !status.Stale && orchestrator.ValidatePIDOwnership(homeDir, pid) {
 			return status, true
 		}
 		if time.Now().After(deadline) {
-			return status, status.Exists && supervision.ValidatePIDOwnership(homeDir, pid)
+			return status, status.Exists && orchestrator.ValidatePIDOwnership(homeDir, pid)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -178,7 +178,7 @@ func waitForWatcherBeacon(homeDir string, pid int, timeout time.Duration) (lifec
 // identifyWatcher generates a watcher identity string. Prefers the persisted
 // identity file over PID-only inference.
 func identifyWatcher(homeDir string) string {
-	if id := supervision.ReadIdentity(homeDir); id != nil {
+	if id := orchestrator.ReadIdentity(homeDir); id != nil {
 		return fmt.Sprintf("watch-%d-v%s", id.PID, id.BuildVersion)
 	}
 	_, pid, ok := lifecycle.ReadBeat(homeDir)
@@ -198,9 +198,9 @@ func watcherLeaseInfo(homeDir string) *contract.WatchLeaseInfo {
 
 	identityStr := ""
 	validated := false
-	if id := supervision.ReadIdentity(homeDir); id != nil {
+	if id := orchestrator.ReadIdentity(homeDir); id != nil {
 		identityStr = fmt.Sprintf("pid:%d version=%s proto=%d", id.PID, id.BuildVersion, id.ProtocolVersion)
-		validated = supervision.ValidatePIDOwnership(homeDir, id.PID)
+		validated = orchestrator.ValidatePIDOwnership(homeDir, id.PID)
 	}
 
 	return &contract.WatchLeaseInfo{
@@ -223,7 +223,7 @@ func newWatchRunCmd() *cobra.Command {
 			}
 
 			wakesBefore := countQueuedWakes(ctx.Home)
-			emitted, err := supervision.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), captain.NewWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport()))
+			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), captain.NewWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport()))
 			if err != nil {
 				return err
 			}
@@ -311,7 +311,7 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 
 	watchID := fmt.Sprintf("watch-%d", pid)
 
-	if !supervision.ValidatePIDOwnership(homeDir, pid) {
+	if !orchestrator.ValidatePIDOwnership(homeDir, pid) {
 		return contract.Response[contract.WatchStop]{
 			SchemaVersion: contract.SchemaVersion,
 			Kind:          "watch.stop",
@@ -345,7 +345,7 @@ func stopWatcher(homeDir string) contract.Response[contract.WatchStop] {
 	}
 
 	lifecycle.ClearBeat(homeDir)
-	supervision.ClearIdentity(homeDir)
+	orchestrator.ClearIdentity(homeDir)
 	return contract.Response[contract.WatchStop]{
 		SchemaVersion: contract.SchemaVersion,
 		Kind:          "watch.stop",
@@ -388,8 +388,8 @@ func evaluateWatcherStatus(homeDir string) contract.Response[contract.WatchStatu
 	var identity string
 	var pid int
 
-	if id := supervision.ReadIdentity(homeDir); id != nil {
-		identity = supervision.IdentitySummary(id)
+	if id := orchestrator.ReadIdentity(homeDir); id != nil {
+		identity = orchestrator.IdentitySummary(id)
 		pid = id.PID
 	} else if _, beatPID, ok := lifecycle.ReadBeat(homeDir); ok {
 		pid = beatPID

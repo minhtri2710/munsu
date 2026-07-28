@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -92,180 +91,13 @@ func (r Review) IsApproving() bool {
 	return r.State == ReviewApproved
 }
 
-// DeliveryIdentity captures the durable identity of a pull request at the
-// time it was discovered, before branch topology can change.
-// The record survives local checkout switch and remote head deletion.
-type DeliveryIdentity struct {
-	Provider   string `json:"provider"`   // e.g. "github"
-	Owner      string `json:"owner"`      // repository owner
-	Repo       string `json:"repo"`       // repository name
-	Number     int    `json:"number"`     // PR number
-	URL        string `json:"url"`        // full PR URL
-	BaseRef    string `json:"baseRef"`    // target branch ref (e.g. "main")
-	HeadRef    string `json:"headRef"`    // source branch ref (e.g. "feature/foo")
-	HeadSHA    string `json:"headSHA"`    // exact head commit SHA at capture time
-	CapturedAt string `json:"capturedAt"` // ISO 8601 capture timestamp
-}
-
-// ValidateIdentity checks that a DeliveryIdentity has all required fields
-// populated and that the repository components are consistent.
-// Returns a descriptive error if the identity is insufficient for
-// destructive delivery actions.
-func ValidateIdentity(id *DeliveryIdentity) error {
-	switch {
-	case id == nil:
-		return fmt.Errorf("delivery identity is nil")
-	case id.Provider == "":
-		return fmt.Errorf("delivery identity: provider is required")
-	case id.Owner == "":
-		return fmt.Errorf("delivery identity: owner is required")
-	case id.Repo == "":
-		return fmt.Errorf("delivery identity: repo is required")
-	case id.Number <= 0:
-		return fmt.Errorf("delivery identity: PR number must be positive, got %d", id.Number)
-	case id.URL == "":
-		return fmt.Errorf("delivery identity: URL is required")
-	case id.BaseRef == "":
-		return fmt.Errorf("delivery identity: baseRef is required")
-	case id.HeadRef == "":
-		return fmt.Errorf("delivery identity: headRef is required")
-	case id.HeadSHA == "":
-		return fmt.Errorf("delivery identity: headSHA is required")
-	case id.CapturedAt == "":
-		return fmt.Errorf("delivery identity: capturedAt is required")
-	}
-	return nil
-}
-
-// MetaKeys returns the task meta keys used to persist this identity.
-func (id *DeliveryIdentity) MetaKeys() []string {
-	return []string{
-		"pr_provider", "pr_owner", "pr_repo",
-		"pr_number", "pr_url",
-		"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha",
-		"pr_timestamp",
-	}
-}
-
-// ToMeta serializes the identity into a task meta map.
-// Writes both canonical (pr_head_sha, pr_base_ref) and legacy
-// (pr_head, pr_base) names for backward compatibility.
-func (id *DeliveryIdentity) ToMeta() map[string]string {
-	return map[string]string{
-		"pr_provider":  id.Provider,
-		"pr_owner":     id.Owner,
-		"pr_repo":      id.Repo,
-		"pr_number":    fmt.Sprintf("%d", id.Number),
-		"pr_url":       id.URL,
-		"pr_base":      id.BaseRef,
-		"pr_base_ref":  id.BaseRef,
-		"pr_head_ref":  id.HeadRef,
-		"pr_head":      id.HeadSHA,
-		"pr_head_sha":  id.HeadSHA,
-		"pr_timestamp": id.CapturedAt,
-	}
-}
-
-// IdentityFromMeta reconstructs a DeliveryIdentity from task meta.
-// Returns nil (no error) when no identity metadata exists, so callers
-// can distinguish "no identity" from "corrupt identity".
-func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
-	prURL := meta["pr_url"]
-	if prURL == "" {
-		prURL = meta["pr"]
-	}
-	if prURL == "" {
-		for _, key := range (&DeliveryIdentity{}).MetaKeys() {
-			if meta[key] != "" {
-				return nil, fmt.Errorf("delivery identity has %s but no pr_url", key)
-			}
-		}
-		return nil, nil
-	}
-
-	numStr := meta["pr_number"]
-	num := 0
-	if numStr != "" {
-		n, err := strconv.Atoi(numStr)
-		if err != nil || n <= 0 {
-			return nil, fmt.Errorf("invalid pr_number %q", numStr)
-		}
-		num = n
-	}
-
-	urlProvider, parsedOwner, parsedRepo, parsedNum, _, err := ParseProviderURL(prURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid pr_url %q: %w", prURL, err)
-	}
-	owner := meta["pr_owner"]
-	repo := meta["pr_repo"]
-
-	// Check provider/URL consistency: if pr_provider is set in meta,
-	// it must match the provider detected from the URL.
-	if metaProvider := meta["pr_provider"]; metaProvider != "" && metaProvider != urlProvider {
-		return nil, fmt.Errorf("provider mismatch: pr_provider=%q but URL provider=%q", metaProvider, urlProvider)
-	}
-	if owner != "" && owner != parsedOwner {
-		return nil, fmt.Errorf("pr_owner %q does not match pr_url owner %q", owner, parsedOwner)
-	}
-	if repo != "" && repo != parsedRepo {
-		return nil, fmt.Errorf("pr_repo %q does not match pr_url repo %q", repo, parsedRepo)
-	}
-	if num > 0 && num != parsedNum {
-		return nil, fmt.Errorf("pr_number %d does not match pr_url number %d", num, parsedNum)
-	}
-	if owner == "" {
-		owner = parsedOwner
-	}
-	if repo == "" {
-		repo = parsedRepo
-	}
-	if num <= 0 {
-		num = parsedNum
-	}
-
-	// Resolve headSHA with fallback: pr_head_sha -> pr_head
-	headSHA := meta["pr_head_sha"]
-	if headSHA == "" {
-		headSHA = meta["pr_head"]
-	} else if other := meta["pr_head"]; other != "" && other != headSHA {
-		return nil, fmt.Errorf("pr_head_sha %q conflicts with pr_head %q", headSHA, other)
-	}
-
-	// Resolve baseRef with fallback: pr_base_ref -> pr_base
-	baseRef := meta["pr_base_ref"]
-	if baseRef == "" {
-		baseRef = meta["pr_base"]
-	} else if other := meta["pr_base"]; other != "" && other != baseRef {
-		return nil, fmt.Errorf("pr_base_ref %q conflicts with pr_base %q", baseRef, other)
-	}
-
-	id := &DeliveryIdentity{
-		Provider:   meta["pr_provider"],
-		Owner:      owner,
-		Repo:       repo,
-		Number:     num,
-		URL:        prURL,
-		BaseRef:    baseRef,
-		HeadRef:    meta["pr_head_ref"],
-		HeadSHA:    headSHA,
-		CapturedAt: meta["pr_timestamp"],
-	}
-
-	return id, nil
-}
-
-// RequireIdentity reads and validates a delivery identity from task meta.
-// It is the authoritative check before destructive delivery actions.
-// Returns an error if the identity is missing, incomplete, or inconsistent.
-// This refuses to guess or reconstruct identity from current branch state.
-func RequireIdentity(homeDir, id string) (*DeliveryIdentity, error) {
+func RequireIdentity(homeDir, id string) (*domain.DeliveryIdentity, error) {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading task meta for identity: %w", err)
 	}
 
-	ident, err := IdentityFromMeta(meta)
+	ident, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		return nil, fmt.Errorf("parsing delivery identity: %w", err)
 	}
@@ -273,17 +105,17 @@ func RequireIdentity(homeDir, id string) (*DeliveryIdentity, error) {
 		return nil, fmt.Errorf("no delivery identity found for task %s: PR URL not set in meta; use pr-check to capture identity before destructive actions", id)
 	}
 
-	if err := ValidateIdentity(ident); err != nil {
+	if err := domain.ValidateIdentity(ident); err != nil {
 		return nil, fmt.Errorf("incomplete delivery identity for task %s: %w; re-run pr-check to recapture", id, err)
 	}
 
 	return ident, nil
 }
 
-// CaptureIdentity extracts a DeliveryIdentity from a PR/MR URL.
+// CaptureIdentity extracts a domain.DeliveryIdentity from a PR/MR URL.
 // For GitHub URLs it uses gh-axi (via GitHubClient) with degraded gh CLI fallback.
 // For GitLab URLs it uses glab (via GitLabClient) with no degraded fallback.
-func CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
+func CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error) {
 	provider, _, _, _, _, err := ParseProviderURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PR/MR URL: %w", err)
@@ -299,9 +131,9 @@ func CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
 	}
 }
 
-// captureGitHubIdentity captures a DeliveryIdentity from a GitHub PR URL.
+// captureGitHubIdentity captures a domain.DeliveryIdentity from a GitHub PR URL.
 // Uses gh-axi via the typed GitHubClient when Ready; falls back to raw gh CLI.
-func captureGitHubIdentity(prURL string) (*DeliveryIdentity, error) {
+func captureGitHubIdentity(prURL string) (*domain.DeliveryIdentity, error) {
 	client, err := DefaultGitHubClient()
 	if err == nil {
 		return client.CaptureIdentity(prURL)
@@ -339,7 +171,7 @@ func captureGitHubIdentity(prURL string) (*DeliveryIdentity, error) {
 		return nil, fmt.Errorf("gh pr view returned empty headRefOid")
 	}
 
-	return &DeliveryIdentity{
+	return &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      ghURL.Owner,
 		Repo:       ghURL.Repo,
@@ -352,10 +184,10 @@ func captureGitHubIdentity(prURL string) (*DeliveryIdentity, error) {
 	}, nil
 }
 
-// captureGitLabIdentity captures a DeliveryIdentity from a GitLab MR URL.
+// captureGitLabIdentity captures a domain.DeliveryIdentity from a GitLab MR URL.
 // Uses glab via the typed GitLabClient. No degraded fallback — if glab is
 // Absent or Failed, callers must fail closed so silent raw glab is never used.
-func captureGitLabIdentity(mrURL string) (*DeliveryIdentity, error) {
+func captureGitLabIdentity(mrURL string) (*domain.DeliveryIdentity, error) {
 	client, err := DefaultGitLabClient()
 	if err != nil {
 		return nil, fmt.Errorf("GitLab provider not available: %w", err)

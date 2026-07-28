@@ -1,6 +1,6 @@
 //go:build !darwin && !linux
 
-package supervision
+package orchestrator
 
 import "fmt"
 

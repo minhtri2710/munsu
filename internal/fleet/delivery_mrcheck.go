@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"path/filepath"
 
@@ -21,7 +22,7 @@ func MRLiveCheck(homeDir string, id, mrURL string) error {
 	}
 
 	// Validate identity before persisting
-	if err := ValidateIdentity(ident); err != nil {
+	if err := domain.ValidateIdentity(ident); err != nil {
 		return fmt.Errorf("captured identity is incomplete: %w", err)
 	}
 

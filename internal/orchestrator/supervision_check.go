@@ -1,7 +1,7 @@
 // Package supervision provides watcher check plugin infrastructure.
 // A check plugin is an executable script (per-task or global) that the watcher
 // discovers and surfaces as a Kind=check wake for the AFK/general pipeline.
-package supervision
+package orchestrator
 
 import (
 	"fmt"

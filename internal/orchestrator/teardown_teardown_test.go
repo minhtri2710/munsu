@@ -1,4 +1,4 @@
-package teardown
+package orchestrator
 
 import (
 	"fmt"
@@ -11,7 +11,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldier"
 )
 
@@ -747,7 +746,7 @@ func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
 
 func TestUplinkCheck_MailboxOnlyKeyedOpenBlocks(t *testing.T) {
 	home, receiver := t.TempDir(), t.TempDir()
-	_, err := orchestrator.Report(orchestrator.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: orchestrator.RankSoldier, SenderIdentity: "soldier", ReceiverRank: orchestrator.RankCaptain, ReceiverID: "captain", TaskID: "task:1", Key: "release", State: "done", Message: "complete"})
+	_, err := Report(ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: RankSoldier, SenderIdentity: "soldier", ReceiverRank: RankCaptain, ReceiverID: "captain", TaskID: "task:1", Key: "release", State: "done", Message: "complete"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -758,11 +757,11 @@ func TestUplinkCheck_MailboxOnlyKeyedOpenBlocks(t *testing.T) {
 
 func TestUplinkCheck_MailboxOnlyPendingWithoutOpenEvidenceBlocks(t *testing.T) {
 	home := t.TempDir()
-	env := &orchestrator.Envelope{Kind: "uplink-report", SenderRank: orchestrator.RankSoldier, SenderIdentity: "soldier", ReceiverRank: orchestrator.RankCaptain, ReceiverID: "captain", TaskID: "task:partial", Key: "x", Payload: "done"}
-	if err := orchestrator.NewStore(home).WriteEnvelope(env); err != nil {
+	env := &Envelope{Kind: "uplink-report", SenderRank: RankSoldier, SenderIdentity: "soldier", ReceiverRank: RankCaptain, ReceiverID: "captain", TaskID: "task:partial", Key: "x", Payload: "done"}
+	if err := NewStore(home).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
-	if err := orchestrator.NewStore(home).WritePending(env); err != nil {
+	if err := NewStore(home).WritePending(env); err != nil {
 		t.Fatal(err)
 	}
 	if err := uplinkCheck(Options{HomeDir: home, ID: "task:partial"}); err == nil {
@@ -772,28 +771,28 @@ func TestUplinkCheck_MailboxOnlyPendingWithoutOpenEvidenceBlocks(t *testing.T) {
 
 func TestUplinkCheck_WrongAckBlocksExactAckOpens(t *testing.T) {
 	home, receiver := t.TempDir(), t.TempDir()
-	result, err := orchestrator.Report(orchestrator.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: orchestrator.RankSoldier, SenderIdentity: "soldier", ReceiverRank: orchestrator.RankCaptain, ReceiverID: "captain", TaskID: "task:ack", Key: "default", State: "done", Message: "complete"})
+	result, err := Report(ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: RankSoldier, SenderIdentity: "soldier", ReceiverRank: RankCaptain, ReceiverID: "captain", TaskID: "task:ack", Key: "default", State: "done", Message: "complete"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, _ := orchestrator.NewStore(receiver).ReadEnvelope("soldier", result.MessageID)
-	wrong := &orchestrator.ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: orchestrator.PayloadHashHex("wrong"), ProcessedAt: time.Now().UnixNano(), Outcome: orchestrator.OutcomeAccepted}
-	if err := orchestrator.NewStore(receiver).WriteAck(wrong); err != nil {
+	env, _ := NewStore(receiver).ReadEnvelope("soldier", result.MessageID)
+	wrong := &ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: PayloadHashHex("wrong"), ProcessedAt: time.Now().UnixNano(), Outcome: OutcomeAccepted}
+	if err := NewStore(receiver).WriteAck(wrong); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orchestrator.Recover(orchestrator.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err == nil {
+	if _, err := Recover(RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err == nil {
 		t.Fatal("wrong ack should fail")
 	}
 	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err == nil {
 		t.Fatal("wrong ack must block")
 	}
-	os.Remove(filepath.Join(receiver, "state", orchestrator.InboxDir, "soldier", result.MessageID+".ack"))
+	os.Remove(filepath.Join(receiver, "state", InboxDir, "soldier", result.MessageID+".ack"))
 	exact := *wrong
 	exact.PayloadHash = env.PayloadHash
-	if err := orchestrator.NewStore(receiver).WriteAck(&exact); err != nil {
+	if err := NewStore(receiver).WriteAck(&exact); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := orchestrator.Recover(orchestrator.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err != nil {
+	if _, err := Recover(RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err != nil {
@@ -818,7 +817,7 @@ func TestUplinkCheck_NoMaterialStatusPasses(t *testing.T) {
 
 	// Non-material status → should pass even with per-task obligations
 	// Must init per-task obligations first for uplinkCheck to see them
-	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("working: in progress\n"), 0644)
@@ -838,7 +837,7 @@ func TestUplinkCheck_MaterialStatusWithoutReportRelayFails(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations so uplinkCheck checks this task
-	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 
@@ -865,7 +864,7 @@ func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) 
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations
-	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 
@@ -873,7 +872,7 @@ func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) 
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 
 	// Complete the per-task ReportRelay obligation
-	found, err := orchestrator.CompleteTaskObligation(home, id, orchestrator.ReportRelay)
+	found, err := CompleteTaskObligation(home, id, ReportRelay)
 	if err != nil {
 		t.Fatalf("CompleteTaskObligation error: %v", err)
 	}
@@ -903,7 +902,7 @@ func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
 
 	// Init per-task obligations
-	if err := orchestrator.InitTaskObligations(home, id, "uplink"); err != nil {
+	if err := InitTaskObligations(home, id, "uplink"); err != nil {
 		t.Fatalf("init obligations: %v", err)
 	}
 
@@ -934,7 +933,7 @@ func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
 	// Write material status
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 	// Write a receipt file
-	os.WriteFile(filepath.Join(receiptsDir, id+".orchestrator.receipt"), []byte("state=done\n"), 0644)
+	os.WriteFile(filepath.Join(receiptsDir, id+".receipt"), []byte("state=done\n"), 0644)
 
 	// With --force, teardown should proceed but preserve evidence
 	result, err := RunWithBackend(Options{HomeDir: home, ID: id, Force: true}, fakeTeardown{})
@@ -948,7 +947,7 @@ func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
 		t.Fatalf("evidence should be preserved at %s: %v", backupPath, err)
 	}
 	// Verify receipt was also preserved
-	backupReceipt := filepath.Join(stateDir, ".backup", id, id+".orchestrator.receipt")
+	backupReceipt := filepath.Join(stateDir, ".backup", id, id+".receipt")
 	if _, err := os.Stat(backupReceipt); err != nil {
 		t.Fatalf("receipt evidence should be preserved at %s: %v", backupReceipt, err)
 	}

@@ -2,13 +2,14 @@ package fleet
 
 import (
 	"encoding/json"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"testing"
 )
 
 func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
-	// Test the PRMergeStatus can be unmarshaled from gh CLI output
+	// Test the domain.PRMergeStatus can be unmarshaled from gh CLI output
 	input := `{"state":"MERGED","merged":true,"headRefOid":"abc123def456","mergedSha":"abc123def456"}`
-	var status PRMergeStatus
+	var status domain.PRMergeStatus
 	if err := json.Unmarshal([]byte(input), &status); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -28,7 +29,7 @@ func TestPRMergeStatus_JSONUnmarshal(t *testing.T) {
 
 func TestPRMergeStatus_Closed(t *testing.T) {
 	input := `{"state":"CLOSED","merged":false,"headRefOid":"def456abc123","mergedSha":""}`
-	var status PRMergeStatus
+	var status domain.PRMergeStatus
 	if err := json.Unmarshal([]byte(input), &status); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestPRMergeStatus_Closed(t *testing.T) {
 
 func TestPRMergeStatus_Open(t *testing.T) {
 	input := `{"state":"OPEN","merged":false,"headRefOid":"xyz789","mergedSha":""}`
-	var status PRMergeStatus
+	var status domain.PRMergeStatus
 	if err := json.Unmarshal([]byte(input), &status); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestPRMergeStatus_Open(t *testing.T) {
 
 func TestPRMergeStatus_FieldTags(t *testing.T) {
 	// Verify the JSON field tags match gh CLI output format
-	var status PRMergeStatus
+	var status domain.PRMergeStatus
 	input := `{"state":"MERGED","merged":true,"headRefOid":"abc","mergedSha":"def"}`
 	if err := json.Unmarshal([]byte(input), &status); err != nil {
 		t.Fatalf("unmarshal: %v", err)

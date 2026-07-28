@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,7 +180,7 @@ func TestCaptureTerminalIdentity_IdempotentCompleteIdentity(t *testing.T) {
 
 	// Capture again — should be idempotent
 	savedCapture := captureTerminalIdentity
-	captureTerminalIdentity = func(prURL string) (*DeliveryIdentity, error) {
+	captureTerminalIdentity = func(prURL string) (*domain.DeliveryIdentity, error) {
 		t.Fatal("captureTerminalIdentity should not be called when identity already exists")
 		return nil, nil
 	}
@@ -223,7 +224,7 @@ func TestCaptureTerminalIdentity_IdempotentWithLegacyKeys(t *testing.T) {
 
 	// Capture again — should be idempotent (IdentityFromMeta resolves legacy keys)
 	savedCapture := captureTerminalIdentity
-	captureTerminalIdentity = func(prURL string) (*DeliveryIdentity, error) {
+	captureTerminalIdentity = func(prURL string) (*domain.DeliveryIdentity, error) {
 		t.Fatal("captureTerminalIdentity should not be called when identity already exists via legacy keys")
 		return nil, nil
 	}
@@ -276,8 +277,8 @@ func TestCaptureTerminalIdentity_IncompleteIdentityReplaced(t *testing.T) {
 
 	// Capture with injected provider
 	savedCapture := captureTerminalIdentity
-	captureTerminalIdentity = func(url string) (*DeliveryIdentity, error) {
-		return &DeliveryIdentity{
+	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
+		return &domain.DeliveryIdentity{
 			Provider:   "github",
 			Owner:      "minhtri2710",
 			Repo:       "munsu",
@@ -318,7 +319,7 @@ func TestCaptureTerminalIdentity_ProviderFailureFailsClosed(t *testing.T) {
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
 
 	savedCapture := captureTerminalIdentity
-	captureTerminalIdentity = func(url string) (*DeliveryIdentity, error) {
+	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
 		return nil, os.ErrPermission
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
@@ -344,9 +345,9 @@ func TestCaptureTerminalIdentity_ProviderEmptyHeadSHA(t *testing.T) {
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
 
 	savedCapture := captureTerminalIdentity
-	captureTerminalIdentity = func(url string) (*DeliveryIdentity, error) {
+	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
 		// Return identity with empty HeadSHA — ValidateIdentity should reject it
-		return &DeliveryIdentity{
+		return &domain.DeliveryIdentity{
 			Provider:   "github",
 			Owner:      "minhtri2710",
 			Repo:       "munsu",
@@ -385,7 +386,7 @@ func TestCaptureTerminalIdentity_MetaWriteFailureFailsClosed(t *testing.T) {
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
 
 	savedCapture := captureTerminalIdentity
-	captureTerminalIdentity = func(url string) (*DeliveryIdentity, error) {
+	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
 		return validIdentity(), nil
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
@@ -405,7 +406,7 @@ func TestCaptureTerminalIdentity_SuccessfulCapture(t *testing.T) {
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
 
 	savedCapture := captureTerminalIdentity
-	ident := &DeliveryIdentity{
+	ident := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -416,7 +417,7 @@ func TestCaptureTerminalIdentity_SuccessfulCapture(t *testing.T) {
 		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
 		CapturedAt: "2026-07-19T00:00:00Z",
 	}
-	captureTerminalIdentity = func(url string) (*DeliveryIdentity, error) {
+	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
 		return ident, nil
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()

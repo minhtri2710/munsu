@@ -12,8 +12,8 @@ import (
 
 var fetchLiveIdentity = CaptureIdentity
 
-func validateLiveIdentity(stored, live *DeliveryIdentity) error {
-	if err := ValidateIdentity(live); err != nil {
+func validateLiveIdentity(stored, live *domain.DeliveryIdentity) error {
+	if err := domain.ValidateIdentity(live); err != nil {
 		return fmt.Errorf("invalid live PR identity: %w", err)
 	}
 	if stored.Provider != live.Provider || stored.Owner != live.Owner || stored.Repo != live.Repo ||
@@ -115,7 +115,7 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	// Build updated identity from snapshot evidence
-	finalIdent := &DeliveryIdentity{
+	finalIdent := &domain.DeliveryIdentity{
 		Provider:   ident.Provider,
 		Owner:      ident.Owner,
 		Repo:       ident.Repo,

@@ -2,14 +2,15 @@ package fleet
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"path/filepath"
 	"testing"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
-func identityFor(owner, repo string, number int, headSHA string) *DeliveryIdentity {
-	return &DeliveryIdentity{
+func identityFor(owner, repo string, number int, headSHA string) *domain.DeliveryIdentity {
+	return &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      owner,
 		Repo:       repo,
@@ -174,7 +175,7 @@ func TestMarkMerged_CASFailOnIdentityMismatch(t *testing.T) {
 	}
 
 	// Use a wrong identity (different head SHA).
-	wrongIdent := &DeliveryIdentity{
+	wrongIdent := &domain.DeliveryIdentity{
 		Provider: "github",
 		Owner:    "testowner",
 		Repo:     "testrepo",

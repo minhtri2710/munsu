@@ -1,4 +1,4 @@
-package teardown
+package orchestrator
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 // --- test helpers ---
@@ -127,21 +126,21 @@ func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath string) {
 	return wtPath, remotePath
 }
 
-// mockPRMergeStatus returns a function that replaces fleet.QueryPRMergeStatus
+// mockPRMergeStatus returns a function that replaces QueryDeliveryMergeStatus
 // with a mock that returns the given status and error.
-func mockPRMergeStatus(status *fleet.PRMergeStatus, err error) func(domain.GHURL) (*fleet.PRMergeStatus, error) {
-	return func(domain.GHURL) (*fleet.PRMergeStatus, error) {
+func mockPRMergeStatus(status *domain.PRMergeStatus, err error) func(*domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	return func(*domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 		return status, err
 	}
 }
 
-// applyMockPRStatus sets up a mock for fleet.QueryPRMergeStatus and returns a
+// applyMockPRStatus sets up a mock for QueryDeliveryMergeStatus and returns a
 // cleanup function that restores the original.
-func applyMockPRStatus(t *testing.T, status *fleet.PRMergeStatus, err error) func() {
+func applyMockPRStatus(t *testing.T, status *domain.PRMergeStatus, err error) func() {
 	t.Helper()
-	saved := fleet.QueryPRMergeStatus
-	fleet.QueryPRMergeStatus = mockPRMergeStatus(status, err)
-	return func() { fleet.QueryPRMergeStatus = saved }
+	saved := QueryDeliveryMergeStatus
+	QueryDeliveryMergeStatus = mockPRMergeStatus(status, err)
+	return func() { QueryDeliveryMergeStatus = saved }
 }
 
 // --- Cleanliness checks (no identity) ---
@@ -218,7 +217,7 @@ func TestShipSafetyCheck_Topology_MergedPRWithDeletedHead(t *testing.T) {
 	wt, _ := setupTopologyRepo(t, tmp)
 
 	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
 		HeadSHA:   "abc123def456",
@@ -258,7 +257,7 @@ func TestShipSafetyCheck_Topology_MergedPRBranchExists(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	meta["pr_head"] = headSHA // must match actual head
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: headSHA,
 		HeadSHA:   headSHA,
@@ -280,7 +279,7 @@ func TestShipSafetyCheck_Topology_ClosedUnmergedPR(t *testing.T) {
 	wt, _ := setupTopologyRepo(t, tmp)
 
 	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  true,
 		State:   "CLOSED",
@@ -303,7 +302,7 @@ func TestShipSafetyCheck_Topology_OpenUnmergedPR(t *testing.T) {
 	wt, _ := setupTopologyRepo(t, tmp)
 
 	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  false,
 		State:   "OPEN",
@@ -347,7 +346,7 @@ func TestShipSafetyCheck_Topology_WrongPRHead(t *testing.T) {
 	// Stored head doesn't match provider-reported head
 	meta["pr_head"] = "oldsha0000000000000000000000000000000000"
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "newsha0000000000000000000000000000000000",
 		HeadSHA:   "newsha0000000000000000000000000000000000",
@@ -372,7 +371,7 @@ func TestShipSafetyCheck_Topology_DirtyWithIdentity(t *testing.T) {
 	os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("changes"), 0644)
 
 	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
 		HeadSHA:   "abc123def456",
@@ -399,7 +398,7 @@ func TestShipSafetyCheck_Topology_EmitProof(t *testing.T) {
 	wt, _ := setupTopologyRepo(t, tmp)
 
 	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
 		HeadSHA:   "abc123def456",
@@ -548,7 +547,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedDeletedHead(t *testing.T) {
 	wt, _ := setupTopologyRepo(t, tmp)
 
 	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
 		HeadSHA:   "abc123def456",
@@ -597,7 +596,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedOrdinaryMerge(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	meta["pr_head"] = headSHA // must match actual head
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: headSHA,
 		HeadSHA:   headSHA,
@@ -674,7 +673,7 @@ func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	meta["pr_head"] = orphanSHA // orphan SHA is NOT an ancestor of origin/main
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: orphanSHA,
 		HeadSHA:   orphanSHA,
@@ -779,7 +778,7 @@ func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	meta["pr_head"] = headSHA
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: squashSHA,
 		HeadSHA:   headSHA,
@@ -807,7 +806,7 @@ func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
 
 func TestShipSafetyCheck_Topology_UnmergedDeletedBranch(t *testing.T) {
 	// Remote branch deleted but PR NOT merged: branch deletion alone
-	// never authorizes teardown.
+	// never authorizes
 	tmp := t.TempDir()
 	wt, _ := setupTopologyRepo(t, tmp)
 
@@ -820,7 +819,7 @@ func TestShipSafetyCheck_Topology_UnmergedDeletedBranch(t *testing.T) {
 	cmd.Env = gitEnv
 	_ = cmd.Run()
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  false,
 		State:   "OPEN",
@@ -845,7 +844,7 @@ func TestShipSafetyCheck_Topology_ProviderEmptyState(t *testing.T) {
 	wt, _ := setupTopologyRepo(t, tmp)
 
 	meta := fixtureMeta(wt, true)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  false,
 		State:   "", // empty state is not valid
@@ -881,7 +880,7 @@ func TestShipSafetyCheck_Topology_DeletedHeadWrongSHA(t *testing.T) {
 	cmd.Env = gitEnv
 	_ = cmd.Run()
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "livesha1111111111111111111111111111111111",
 		HeadSHA:   "livesha1111111111111111111111111111111111",
@@ -984,7 +983,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 	}
 
 	// Mock provider: merged with matching HeadSHA
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: headSHA,
 		HeadSHA:   headSHA,
@@ -1051,7 +1050,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 	}
 
 	// Provider returns empty HeadSHA — fail closed
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "",
 		HeadSHA:   "",
@@ -1112,7 +1111,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing
 	}
 
 	// Provider reports DIFFERENT HeadSHA — fail closed
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "different0000000000000000000000000000000000",
 		HeadSHA:   "different0000000000000000000000000000000000",
@@ -1171,7 +1170,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
 	}
 
 	// Provider: still OPEN (not merged)
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  false,
 		State:   "OPEN",
@@ -1230,7 +1229,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *test
 	}
 
 	// Provider: CLOSED but not merged
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  true,
 		State:   "CLOSED",
@@ -1322,9 +1321,9 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 	meta := fixtureMeta(wt, true)
 	meta["pr_head"] = headSHA
 	meta["pr_head_sha"] = headSHA
-	meta[fleet.MetaDeliveryState] = string(fleet.DeliveryStateMerged)
+	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateMerged)
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: headSHA,
 		HeadSHA:   headSHA,
@@ -1357,9 +1356,9 @@ func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.
 	meta := fixtureMeta(wt, true)
 	meta["pr_head"] = headSHA
 	meta["pr_head_sha"] = headSHA
-	meta[fleet.MetaDeliveryState] = string(fleet.DeliveryStateReviewReady)
+	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateReviewReady)
 
-	cleanup := applyMockPRStatus(t, &fleet.PRMergeStatus{
+	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: headSHA,
 		HeadSHA:   headSHA,

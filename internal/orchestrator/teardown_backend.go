@@ -1,4 +1,4 @@
-package teardown
+package orchestrator
 
 type EndpointStatus struct{ Alive bool }
 type DisposeRequest struct {

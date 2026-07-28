@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // TestVersionString verifies that VersionString produces the expected label.
@@ -107,8 +107,8 @@ func TestSnapshotWatcher_NoIdentity(t *testing.T) {
 
 func TestSnapshotWatcher_NoBeat(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 
 	snap := snapshotWatcher(home)
 	if snap.Active {
@@ -118,9 +118,9 @@ func TestSnapshotWatcher_NoBeat(t *testing.T) {
 
 func TestSnapshotWatcher_IdentityPIDMismatch(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
+	id := orchestrator.NewIdentity(home)
 	id.PID = 99999
-	supervision.WriteIdentity(home, id)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	snap := snapshotWatcher(home)
@@ -131,16 +131,16 @@ func TestSnapshotWatcher_IdentityPIDMismatch(t *testing.T) {
 
 func TestSnapshotWatcher_Active(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	snap := snapshotWatcher(home)
 	if !snap.Active {
 		t.Error("expected Active=true for valid identity+beat")
 	}
-	if snap.OldVersion != supervision.BuildVersion {
-		t.Errorf("OldVersion = %q, want %q", snap.OldVersion, supervision.BuildVersion)
+	if snap.OldVersion != orchestrator.BuildVersion {
+		t.Errorf("OldVersion = %q, want %q", snap.OldVersion, orchestrator.BuildVersion)
 	}
 	if snap.OldPID != os.Getpid() {
 		t.Errorf("OldPID = %d, want %d", snap.OldPID, os.Getpid())
@@ -215,10 +215,10 @@ func TestWaitForNewWatcher_IdentityAppears(t *testing.T) {
 		defer wg.Done()
 		time.Sleep(50 * time.Millisecond)
 		// Write identity with new commit SHA.
-		id := supervision.NewIdentity(home)
+		id := orchestrator.NewIdentity(home)
 		id.CommitSHA = "newcommit"
 		id.BuildVersion = "0.1.0-dev+newcommit"
-		supervision.WriteIdentity(home, id)
+		orchestrator.WriteIdentity(home, id)
 		// Write beat.
 		lifecycle.WriteBeat(home)
 	}()
@@ -281,11 +281,11 @@ func TestWaitForNewWatcher_SpoofedIdentity(t *testing.T) {
 	}
 
 	// Write identity with matching CommitSHA but dead PID.
-	spoofedID := supervision.NewIdentity(home)
+	spoofedID := orchestrator.NewIdentity(home)
 	spoofedID.PID = 99999
 	spoofedID.CommitSHA = "newcommit"
 	spoofedID.BuildVersion = "0.1.0-dev+new"
-	supervision.WriteIdentity(home, spoofedID)
+	orchestrator.WriteIdentity(home, spoofedID)
 
 	// Write beat matching the spoofed PID with fresh timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Unix(), 99999)
@@ -320,10 +320,10 @@ func TestWaitForNewWatcher_StaleBeat(t *testing.T) {
 	}
 
 	// Identity with real PID and matching CommitSHA.
-	id := supervision.NewIdentity(home)
+	id := orchestrator.NewIdentity(home)
 	id.CommitSHA = "newcommit"
 	id.BuildVersion = "0.1.0-dev+new"
-	supervision.WriteIdentity(home, id)
+	orchestrator.WriteIdentity(home, id)
 
 	// Beat with stale timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
@@ -358,10 +358,10 @@ func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
 	}
 
 	// Identity with real PID and matching CommitSHA.
-	id := supervision.NewIdentity(home)
+	id := orchestrator.NewIdentity(home)
 	id.CommitSHA = "newcommit"
 	id.BuildVersion = "0.1.0-dev+new"
-	supervision.WriteIdentity(home, id)
+	orchestrator.WriteIdentity(home, id)
 
 	// Beat with future timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
@@ -477,8 +477,8 @@ func TestUpdateWithHandshake_ActiveWatcherRestarts(t *testing.T) {
 	home := t.TempDir()
 
 	// Set up a fake active watcher: identity matches beat.
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	installedVersion := "0.1.0-dev+newcommit"
@@ -547,10 +547,10 @@ func TestUpdateWithHandshake_TimeoutCarriesEvidence(t *testing.T) {
 	home := t.TempDir()
 
 	// Set up a fake active watcher with known CommitSHA.
-	id := supervision.NewIdentity(home)
+	id := orchestrator.NewIdentity(home)
 	id.BuildVersion = "0.1.0-dev+oldcommit"
 	id.CommitSHA = "oldcommit"
-	supervision.WriteIdentity(home, id)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	installedVersion := "0.1.0-dev+newcommit"
@@ -643,8 +643,8 @@ func TestUpdateWithHandshake_ArmBackgroundFails(t *testing.T) {
 	home := t.TempDir()
 
 	// Set up a fake active watcher.
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	savedUpdate := doUpdate
@@ -784,10 +784,10 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 	initMunsuRepo(t, repo, "main")
 
 	// Set up a fake active watcher.
-	id := supervision.NewIdentity(home)
+	id := orchestrator.NewIdentity(home)
 	id.BuildVersion = "0.1.0-dev+oldcommit"
 	id.CommitSHA = "oldcommit"
-	supervision.WriteIdentity(home, id)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	savedUpdateIn := doUpdateIn
@@ -800,10 +800,10 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 	// commit identity, exercising the real handshake evidence path.
 	savedArm := doArmBackground
 	doArmBackground = func(dir string, restart bool) error {
-		emptyID := supervision.NewIdentity(dir)
+		emptyID := orchestrator.NewIdentity(dir)
 		emptyID.BuildVersion = "0.1.0-dev+newcommit"
 		emptyID.CommitSHA = ""
-		if err := supervision.WriteIdentity(dir, emptyID); err != nil {
+		if err := orchestrator.WriteIdentity(dir, emptyID); err != nil {
 			return err
 		}
 		lifecycle.WriteBeat(dir)
@@ -841,8 +841,8 @@ func TestUpdateWithHandshakeEx_ActiveWatcherHandshake(t *testing.T) {
 	initMunsuRepo(t, repo, "main")
 
 	// Set up a fake active watcher.
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	expectedCommit := shortHEADFromCWD(t, repo)
@@ -903,10 +903,10 @@ func TestHelperNewWatcher(t *testing.T) {
 	if home == "" || version == "" {
 		t.Fatal("GO_TEST_HELPER_HOME and GO_TEST_HELPER_VERSION required")
 	}
-	id := supervision.NewIdentity(home)
+	id := orchestrator.NewIdentity(home)
 	id.BuildVersion = version
 	id.CommitSHA = commitSHA
-	if err := supervision.WriteIdentity(home, id); err != nil {
+	if err := orchestrator.WriteIdentity(home, id); err != nil {
 		t.Fatal(err)
 	}
 	lifecycle.WriteBeat(home)
@@ -917,17 +917,17 @@ func TestHelperNewWatcher(t *testing.T) {
 // custom build version and commit SHA written into the identity.
 func TestSnapshotWatcher_WithCustomVersion(t *testing.T) {
 	home := t.TempDir()
-	origVersion := supervision.BuildVersion
-	origCommitSHA := supervision.CommitSHA
-	supervision.BuildVersion = "0.2.0-test+abc1234"
-	supervision.CommitSHA = "abc1234"
+	origVersion := orchestrator.BuildVersion
+	origCommitSHA := orchestrator.CommitSHA
+	orchestrator.BuildVersion = "0.2.0-test+abc1234"
+	orchestrator.CommitSHA = "abc1234"
 	t.Cleanup(func() {
-		supervision.BuildVersion = origVersion
-		supervision.CommitSHA = origCommitSHA
+		orchestrator.BuildVersion = origVersion
+		orchestrator.CommitSHA = origCommitSHA
 	})
 
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	snap := snapshotWatcher(home)
@@ -946,8 +946,8 @@ func TestSnapshotWatcher_WithCustomVersion(t *testing.T) {
 
 func TestSnapshotWatcher_StaleBeat(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 
 	// Write a beat with a stale timestamp (beyond StaleThreshold).
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
@@ -961,8 +961,8 @@ func TestSnapshotWatcher_StaleBeat(t *testing.T) {
 
 func TestSnapshotWatcher_FutureBeat(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 
 	// Write a beat with a future timestamp (>5s skew).
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
@@ -986,10 +986,10 @@ func TestHandshakeError_ImplementsError(t *testing.T) {
 // correctly from the filesystem.
 func TestBuildHandshakeError(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
+	id := orchestrator.NewIdentity(home)
 	id.BuildVersion = "0.1.0-dev+stale"
 	id.CommitSHA = "stalecommit"
-	supervision.WriteIdentity(home, id)
+	orchestrator.WriteIdentity(home, id)
 
 	snap := &WatcherSnapshot{
 		Active:             true,
@@ -1098,8 +1098,8 @@ func TestHandshakeError_FailedWithCommitSHA(t *testing.T) {
 // TestConcurrentSnapshotAccess verifies that snapshot creation is safe.
 func TestConcurrentSnapshotAccess(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 	lifecycle.WriteBeat(home)
 
 	var wg sync.WaitGroup

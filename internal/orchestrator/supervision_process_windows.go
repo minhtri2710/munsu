@@ -1,6 +1,6 @@
 //go:build windows
 
-package supervision
+package orchestrator
 
 import "os/exec"
 

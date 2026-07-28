@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // WatcherSnapshot captures whether a watcher was active before an update.
@@ -39,7 +39,7 @@ var doUpdate = Update
 var doUpdateIn = UpdateIn
 
 // doArmBackground is an injectable seam for tests. Production code must not replace it.
-var doArmBackground = supervision.ArmBackground
+var doArmBackground = orchestrator.ArmBackground
 
 // resolveBuildIdentity sets InstalledVersion and InstalledCommitSHA on the
 // snapshot from the given commit SHA. Shared by UpdateWithHandshake and
@@ -191,7 +191,7 @@ func updateIn(installRoot, realPath string) error {
 	// Rebuild binary with version/commit ldflags
 	version := VersionString(commit)
 	tmpPath := realPath + ".tmp"
-	ldflags := fmt.Sprintf("-X github.com/minhtri2710/munsu/internal/cli.Version=%s -X github.com/minhtri2710/munsu/internal/supervision.CommitSHA=%s", version, commit)
+	ldflags := fmt.Sprintf("-X github.com/minhtri2710/munsu/internal/cli.Version=%s -X github.com/minhtri2710/munsu/internal/orchestrator.CommitSHA=%s", version, commit)
 	buildCmd := exec.Command("go", "build",
 		"-ldflags", ldflags,
 		"-o", tmpPath,
@@ -270,7 +270,7 @@ func currentBranch(root string) (string, error) {
 // snapshotWatcher checks whether a watcher is active and returns a snapshot.
 // Returns a snapshot with Active=false if no watcher is clearly running.
 func snapshotWatcher(homeDir string) *WatcherSnapshot {
-	id := supervision.ReadIdentity(homeDir)
+	id := orchestrator.ReadIdentity(homeDir)
 	_, pid, ok := lifecycle.ReadBeat(homeDir)
 	if !ok || pid <= 0 || id == nil {
 		return &WatcherSnapshot{Active: false}
@@ -282,7 +282,7 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 	// OS-backed process ownership validation: PID must provably belong to
 	// the process that wrote the identity (start time + executable match).
 	// This rejects stale or reused PIDs.
-	if !supervision.ValidatePIDOwnership(homeDir, pid) {
+	if !orchestrator.ValidatePIDOwnership(homeDir, pid) {
 		return &WatcherSnapshot{Active: false}
 	}
 	// Reject stale or future heartbeats using canonical lifecycle staleness.
@@ -400,8 +400,8 @@ func waitForNewWatcher(homeDir string, snap *WatcherSnapshot) error {
 		}
 
 		// Check identity: should have the new build version (verified via CommitSHA).
-		if id := supervision.ReadIdentity(homeDir); id != nil {
-			if supervision.NewBuildIdentity(id.CommitSHA).Matches(supervision.NewBuildIdentity(snap.InstalledCommitSHA)) && id.PID > 0 {
+		if id := orchestrator.ReadIdentity(homeDir); id != nil {
+			if orchestrator.NewBuildIdentity(id.CommitSHA).Matches(orchestrator.NewBuildIdentity(snap.InstalledCommitSHA)) && id.PID > 0 {
 				identityOK = true
 				_, beatPID, beatOK2 := lifecycle.ReadBeat(homeDir)
 				if beatOK2 && beatPID == id.PID && beatPID != snap.OldPID {
@@ -410,7 +410,7 @@ func waitForNewWatcher(homeDir string, snap *WatcherSnapshot) error {
 					// files and stale/future heartbeats.
 					bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
 					if bt.Exists && !bt.Stale && bt.Age >= -5*time.Second &&
-						supervision.ValidatePIDOwnership(homeDir, id.PID) {
+						orchestrator.ValidatePIDOwnership(homeDir, id.PID) {
 						return nil
 					}
 				}
@@ -432,7 +432,7 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 		oldPID = fmt.Sprintf("%d", snap.OldPID)
 	}
 
-	newID := supervision.ReadIdentity(homeDir)
+	newID := orchestrator.ReadIdentity(homeDir)
 	newVersion := ""
 	newPID := ""
 	newCommitSHA := ""
@@ -441,7 +441,7 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 		newVersion = newID.BuildVersion
 		newPID = fmt.Sprintf("%d", newID.PID)
 		newCommitSHA = newID.CommitSHA
-		ownershipOK = supervision.ValidatePIDOwnership(homeDir, newID.PID)
+		ownershipOK = orchestrator.ValidatePIDOwnership(homeDir, newID.PID)
 	}
 
 	beatTS, beatPID, beatOKLive := lifecycle.ReadBeat(homeDir)

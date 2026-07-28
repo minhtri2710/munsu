@@ -8,7 +8,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/supervision"
 )
 
 // CapabilityDiagnostics groups all extended capability reports for doctor output.
@@ -57,7 +56,7 @@ func (d IntegrationDiagnostic) Fix() string {
 
 // WatcherDiagnostic reports watcher identity and version status.
 type WatcherDiagnostic struct {
-	Identity       *supervision.WatcherIdentity
+	Identity       *orchestrator.WatcherIdentity
 	Running        bool
 	VersionMatched bool
 	CliVersion     string
@@ -67,7 +66,7 @@ func (d *WatcherDiagnostic) String() string {
 	if d.Identity == nil || !d.Running {
 		return "watcher: not running or identity unverified"
 	}
-	s := fmt.Sprintf("watcher: %s", supervision.IdentitySummary(d.Identity))
+	s := fmt.Sprintf("watcher: %s", orchestrator.IdentitySummary(d.Identity))
 	switch {
 	case !d.VersionMatched && d.CliVersion != "":
 		s += fmt.Sprintf(", CLI version: %s [VERSION MISMATCH]", d.CliVersion)
@@ -180,20 +179,20 @@ func collectIntegrationDiagnostics(home, cwd string) []IntegrationDiagnostic {
 func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 	d := &WatcherDiagnostic{CliVersion: version}
 
-	id := supervision.ReadIdentity(home)
+	id := orchestrator.ReadIdentity(home)
 	if id == nil {
 		return d
 	}
 	d.Identity = id
-	d.Running = supervision.ValidatePIDOwnership(home, id.PID)
+	d.Running = orchestrator.ValidatePIDOwnership(home, id.PID)
 
 	// Compare via CommitSHA first; fall back to display-version comparison
 	// for backward compatibility with watcher identity files that predate
 	// the CommitSHA field.
-	// Use supervision.CommitSHA (the linker-injected value) rather than the
-	// CLI-local CommitSHA, because ldflags set supervision.CommitSHA directly.
-	if id.CommitSHA != "" && supervision.CommitSHA != "" {
-		d.VersionMatched = supervision.NewBuildIdentity(id.CommitSHA).Matches(supervision.NewBuildIdentity(supervision.CommitSHA))
+	// Use orchestrator.CommitSHA (the linker-injected value) rather than the
+	// CLI-local CommitSHA, because ldflags set orchestrator.CommitSHA directly.
+	if id.CommitSHA != "" && orchestrator.CommitSHA != "" {
+		d.VersionMatched = orchestrator.NewBuildIdentity(id.CommitSHA).Matches(orchestrator.NewBuildIdentity(orchestrator.CommitSHA))
 	} else if version != "" && id.BuildVersion != "" {
 		d.VersionMatched = id.BuildVersion == version
 	}

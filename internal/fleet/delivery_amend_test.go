@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,8 +13,8 @@ import (
 
 // --- Test helpers ---
 
-func testIdentity() *DeliveryIdentity {
-	return &DeliveryIdentity{
+func testIdentity() *domain.DeliveryIdentity {
+	return &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -26,8 +27,8 @@ func testIdentity() *DeliveryIdentity {
 	}
 }
 
-func testNewHeadIdentity() *DeliveryIdentity {
-	return &DeliveryIdentity{
+func testNewHeadIdentity() *domain.DeliveryIdentity {
+	return &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",

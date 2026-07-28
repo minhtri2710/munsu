@@ -1,8 +1,9 @@
 // Package teardown implements soldier teardown safety checks and lifecycle.
-package teardown
+package orchestrator
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,12 +13,12 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldier"
 )
+
+var GateRefuseFromCWD = func() error { return nil }
 
 // Options controls teardown behavior.
 type Options struct {
@@ -41,7 +42,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-	if err := fleet.GateRefuseFromCWD(); err != nil {
+	if err := GateRefuseFromCWD(); err != nil {
 		return nil, fmt.Errorf("teardown refused: %w", err)
 	}
 
@@ -77,7 +78,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 			os.WriteFile(filepath.Join(backupDir, opts.ID+".status"), src, 0644)
 		}
 		// Copy receipt files
-		receiptsDir := orchestrator.ReceiptDir(opts.HomeDir)
+		receiptsDir := ReceiptDir(opts.HomeDir)
 		if entries, err := os.ReadDir(receiptsDir); err == nil {
 			prefix := opts.ID + "."
 			for _, e := range entries {
@@ -160,7 +161,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	// 3.5. Terminal event: close any open keyed phases before removing the status file.
 	// This ensures the append-only log has proper terminal events for each
 	// open keyed phase (working/paused), preventing stale working/blocked status
-	// from appearing as the current reconciled state after teardown.
+	// from appearing as the current reconciled state after
 	// Appending to both the status file (before cleanup) and the typed event log
 	// (for permanent durability) follows the current-state precedence pattern.
 	closeTerminalPhases(opts, result)
@@ -191,7 +192,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 
 	// 4.5. Clear per-task obligation records for this task
 	// Uses per-task path instead of global per-role file.
-	if err := orchestrator.ClearTaskCompleted(opts.HomeDir, opts.ID); err != nil {
+	if err := ClearTaskCompleted(opts.HomeDir, opts.ID); err != nil {
 		result.Steps = append(result.Steps, fmt.Sprintf("clear task obligations: %v", err))
 	} else {
 		result.Steps = append(result.Steps, "task obligations cleared")
@@ -235,7 +236,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	return result, nil
 }
 
-// safetyCheck verifies that work is landed before allowing teardown.
+// safetyCheck verifies that work is landed before allowing
 // Returns proof strings alongside any error. Proofs are only populated on success.
 func safetyCheck(opts Options, meta map[string]string, kind string) ([]string, error) {
 	switch kind {
@@ -272,7 +273,7 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 	return nil
 }
 
-// shipSafetyCheck verifies work is landed before teardown.
+// shipSafetyCheck verifies work is landed before
 // It separates cleanliness checks (dirty worktree) from merge-proof checks
 // (topology-aware PR merge verification using delivery identity).
 // Returns proof strings emitted during merge-proof checks.
@@ -304,7 +305,7 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 		// Filter out known munsu-owned launch artifacts (e.g. .soldier-charter.md,
 		// .soldier-envelope.json, .soldier-prompt.md, .soldier-brief.md,
 		// .soldier-launch.sh). These are lifecycle-owned and cleanable during
-		// normal teardown. Any other untracked/modified files still fail.
+		// normal  Any other untracked/modified files still fail.
 		lines := strings.Split(raw, "\n")
 		allowlist := make(map[string]bool)
 		for _, name := range soldier.LaunchArtifactNames() {
@@ -342,7 +343,7 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 		// Validate identity before any provider query or fallback.
 		// Partial/corrupt identity must fail closed and never silently
 		// degrade to the legacy branch check.
-		if err := fleet.ValidateIdentity(ident); err != nil {
+		if err := domain.ValidateIdentity(ident); err != nil {
 			return nil, fmt.Errorf("invalid delivery identity (fail-closed, no legacy fallback): %w", err)
 		}
 
@@ -362,12 +363,12 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 }
 
 // identityFromMeta reconstructs a delivery identity from task meta using the
-// authoritative fleet.IdentityFromMeta, which correctly distinguishes:
+// authoritative IdentityFromMeta, which correctly distinguishes:
 //   - nil, nil     (truly no identity metadata — legacy fallback allowed)
 //   - nil, error   (partial identity with missing pr_url — fail closed)
 //   - identity, nil (valid identity — proceed to topology-aware check)
-func identityFromMeta(meta map[string]string) (*fleet.DeliveryIdentity, error) {
-	return fleet.IdentityFromMeta(meta)
+func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) {
+	return domain.IdentityFromMeta(meta)
 }
 
 // topologyAwareMergeCheck verifies the work is landed using the provider's
@@ -377,15 +378,15 @@ func identityFromMeta(meta map[string]string) (*fleet.DeliveryIdentity, error) {
 //   - Unknown/unverifiable: refuses teardown
 //
 // Returns the proof string on success.
-func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *fleet.DeliveryIdentity) (string, error) {
+func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity) (string, error) {
 	// Check lifecycle state if set: require merged state for landed delivery.
-	if ds := meta[fleet.MetaDeliveryState]; ds != "" && ds != string(fleet.DeliveryStateMerged) {
-		return "", fmt.Errorf("delivery lifecycle is in state %q, expected %q (use --force to override)", ds, fleet.DeliveryStateMerged)
+	if ds := meta[domain.MetaDeliveryState]; ds != "" && ds != string(domain.DeliveryStateMerged) {
+		return "", fmt.Errorf("delivery lifecycle is in state %q, expected %q (use --force to override)", ds, domain.DeliveryStateMerged)
 	}
 
 	// Query the provider for the current PR/MR merge status using the
 	// provider-neutral seam that routes by identity provider.
-	status, err := fleet.QueryDeliveryMergeStatus(ident)
+	status, err := QueryDeliveryMergeStatus(ident)
 	if err != nil {
 		return "", fmt.Errorf("cannot verify merge status: %w (use --force to override)", err)
 	}
@@ -570,7 +571,7 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
 // closeTerminalPhases reads the status file for the task being torn down,
 // finds any open keyed phases (working/paused), and appends a "resolved"
 // terminal event for each open phase. This prevents stale working/blocked
-// status from remaining as the current reconciled state after teardown.
+// status from remaining as the current reconciled state after
 // It writes to both the status file (before cleanup) and the typed event
 // log (for permanent durability). Idempotent: already-closed keys are not
 // returned by OpenActivities, so repeating the same resolved key is safe.
@@ -590,9 +591,9 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 		}
 		result.Steps = append(result.Steps, fmt.Sprintf("closed keyed phase [key=%s]", act.Key))
 
-		// Also write to the typed event log for permanent durability beyond teardown.
-		syntheticID := orchestrator.SyntheticEventID()
-		if err := orchestrator.AppendWithID(opts.HomeDir, syntheticID, "task.status", opts.ID, act.Key, closeLine); err != nil {
+		// Also write to the typed event log for permanent durability beyond
+		syntheticID := SyntheticEventID()
+		if err := AppendWithID(opts.HomeDir, syntheticID, "task.status", opts.ID, act.Key, closeLine); err != nil {
 			result.Steps = append(result.Steps, fmt.Sprintf("warning: event log: %v", err))
 		}
 	}
@@ -611,14 +612,14 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 //
 // The check is idempotent after ReportRelay is completed. Use --force to bypass.
 func uplinkCheck(opts Options) error {
-	if orchestrator.HasPendingReport(opts.HomeDir, opts.ID) || orchestrator.HasAnyOpenReport(opts.HomeDir, opts.ID) {
+	if HasPendingReport(opts.HomeDir, opts.ID) || HasAnyOpenReport(opts.HomeDir, opts.ID) {
 		return fmt.Errorf("uplink report not acknowledged: Processing Ack is still pending for task %s (use --force to override)", opts.ID)
 	}
 
 	// Legacy read compatibility: check the former ReportRelay obligation.
 	// Check if per-task ReportRelay obligation is still open.
 	// Per-task obligations are bound to exact taskID+terminalKey, not global role.
-	open, err := orchestrator.IsTaskReportRelayOpen(opts.HomeDir, opts.ID)
+	open, err := IsTaskReportRelayOpen(opts.HomeDir, opts.ID)
 	if err != nil {
 		return fmt.Errorf("reading task obligations: %w", err)
 	}
@@ -628,7 +629,7 @@ func uplinkCheck(opts Options) error {
 
 	// ReportRelay is open. Check if the task has material status.
 	// FAILS CLOSED: MaterialReportExists returns error for unreadable status.
-	hasMaterial, err := orchestrator.MaterialReportExists(opts.HomeDir, opts.ID)
+	hasMaterial, err := MaterialReportExists(opts.HomeDir, opts.ID)
 	if err != nil {
 		return fmt.Errorf("checking material report (fail-closed): %w", err)
 	}

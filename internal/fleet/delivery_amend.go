@@ -70,8 +70,8 @@ func PrMetaFields() []string {
 	}
 }
 
-// identityChecks builds a CAS check map from a DeliveryIdentity.
-func identityChecks(id *DeliveryIdentity) map[string]string {
+// identityChecks builds a CAS check map from a domain.DeliveryIdentity.
+func identityChecks(id *domain.DeliveryIdentity) map[string]string {
 	return map[string]string{
 		"pr_provider": id.Provider,
 		"pr_owner":    id.Owner,
@@ -84,8 +84,8 @@ func identityChecks(id *DeliveryIdentity) map[string]string {
 	}
 }
 
-// identityUpdates builds an update map from a DeliveryIdentity.
-func identityUpdates(id *DeliveryIdentity) map[string]string {
+// identityUpdates builds an update map from a domain.DeliveryIdentity.
+func identityUpdates(id *domain.DeliveryIdentity) map[string]string {
 	m := id.ToMeta()
 	m[MetaDeliveryState] = string(DeliveryStateReviewReady)
 	return m
@@ -256,14 +256,14 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 	}
 
 	// Build the stored identity from meta
-	ident, err := IdentityFromMeta(meta)
+	ident, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		return nil, fmt.Errorf("begin amendment: reading delivery identity: %w", err)
 	}
 	if ident == nil {
 		return nil, fmt.Errorf("begin amendment: no delivery identity in meta")
 	}
-	if err := ValidateIdentity(ident); err != nil {
+	if err := domain.ValidateIdentity(ident); err != nil {
 		return nil, fmt.Errorf("begin amendment: incomplete identity: %w", err)
 	}
 
@@ -303,7 +303,7 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 //
 // On success, atomically updates the identity and appends an audit record.
 // Returns the updated identity and audit record.
-func AcceptAmendment(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *AmendRecord, error) {
+func AcceptAmendment(homeDir, taskID, worktreePath string) (*domain.DeliveryIdentity, *AmendRecord, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("accept amendment: reading meta: %w", err)
@@ -319,7 +319,7 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *
 	}
 
 	// Read stored identity
-	stored, err := IdentityFromMeta(meta)
+	stored, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		return nil, nil, fmt.Errorf("accept amendment: reading stored identity: %w", err)
 	}
@@ -357,7 +357,7 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *
 	}
 
 	// Build new identity
-	newIdent := &DeliveryIdentity{
+	newIdent := &domain.DeliveryIdentity{
 		Provider:   stored.Provider,
 		Owner:      stored.Owner,
 		Repo:       stored.Repo,
@@ -422,13 +422,13 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *
 //
 // This is the recovery route for PR #339 and similar cases. It requires only
 // the stored identity and provider access — no manual meta edits or --force.
-func ReconcileIdentity(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *AmendRecord, error) {
+func ReconcileIdentity(homeDir, taskID, worktreePath string) (*domain.DeliveryIdentity, *AmendRecord, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile: reading meta: %w", err)
 	}
 
-	stored, err := IdentityFromMeta(meta)
+	stored, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile: reading stored identity: %w", err)
 	}
@@ -458,7 +458,7 @@ func ReconcileIdentity(homeDir, taskID, worktreePath string) (*DeliveryIdentity,
 	}
 
 	// Build new identity
-	newIdent := &DeliveryIdentity{
+	newIdent := &domain.DeliveryIdentity{
 		Provider:   stored.Provider,
 		Owner:      stored.Owner,
 		Repo:       stored.Repo,
@@ -511,7 +511,7 @@ func ReconcileIdentity(homeDir, taskID, worktreePath string) (*DeliveryIdentity,
 // verifySnapshotIdentity checks that the stored identity matches the provider
 // snapshot on all critical fields: provider, owner, repo, number, base ref,
 // and head ref. Branch replacement is rejected.
-func verifySnapshotIdentity(stored *DeliveryIdentity, snap *ProviderSnapshot) error {
+func verifySnapshotIdentity(stored *domain.DeliveryIdentity, snap *ProviderSnapshot) error {
 	if stored.Provider != snap.Provider {
 		return fmt.Errorf("provider mismatch: stored=%q snapshot=%q", stored.Provider, snap.Provider)
 	}

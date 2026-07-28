@@ -10,12 +10,18 @@ import (
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
-	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/spf13/cobra"
 )
 
-func runtimeTaskEndpointProbe() supervision.TaskEndpointProbe {
+func init() {
+	orchestrator.QueryDeliveryMergeStatus = fleet.QueryDeliveryMergeStatus
+	orchestrator.MarkMerged = fleet.MarkMerged
+	orchestrator.GateRefuseFromCWD = fleet.GateRefuseFromCWD
+}
+
+func runtimeTaskEndpointProbe() orchestrator.TaskEndpointProbe {
 	return cliEndpointProbe{resolve: backend.BackendForTask}
 }
 

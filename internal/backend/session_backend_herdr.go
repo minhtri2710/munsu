@@ -30,7 +30,7 @@ type HerdrBackend struct {
 	Hometag string
 
 	// DenyCloseWorkspaceIDs lists workspace IDs that must NOT be closed
-	// during teardown, even if label matches hometag. Populated by teardown.Run
+	// during teardown, even if label matches hometag. Populated by fleet.Run
 	// when other tasks still reference the same workspace.
 	DenyCloseWorkspaceIDs []string
 

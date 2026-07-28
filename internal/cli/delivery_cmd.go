@@ -2,10 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/teardown"
 	"github.com/spf13/cobra"
 )
 
@@ -122,7 +122,7 @@ Without --teardown, the command prints the exact teardown invocation to run next
 				return nil
 			}
 			fmt.Printf("Running teardown for %s in %s after merge...\n", id, taskHome)
-			result, err := teardown.RunWithBackend(teardown.Options{
+			result, err := orchestrator.RunWithBackend(orchestrator.Options{
 				HomeDir: taskHome,
 				ID:      id,
 				Force:   false,

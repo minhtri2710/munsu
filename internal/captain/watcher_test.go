@@ -11,7 +11,6 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/supervision"
 )
 
 type captainTestProbe struct{}
@@ -26,7 +25,7 @@ func (captainTestSender) Send(string, map[string]string, string) orchestrator.Bo
 }
 
 func captainRunCycle(home string) (bool, error) {
-	return supervision.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil))
+	return orchestrator.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil))
 }
 
 // --- WatcherStatusSummary tests ---
@@ -45,8 +44,8 @@ func TestWatcherStatusSummary_StoppedWithIdentity(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Write an identity file without a beat — simulates crash residue.
-	id := supervision.NewIdentity(tmp)
-	supervision.WriteIdentity(tmp, id)
+	id := orchestrator.NewIdentity(tmp)
+	orchestrator.WriteIdentity(tmp, id)
 
 	status := WatcherStatusSummary(tmp)
 	if status != WatcherStopped {
@@ -116,8 +115,8 @@ func TestEnsureWatcher_StopsWhenNoChildWork(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Simulate a watcher identity and beat.
-	id := supervision.NewIdentity(tmp)
-	supervision.WriteIdentity(tmp, id)
+	id := orchestrator.NewIdentity(tmp)
+	orchestrator.WriteIdentity(tmp, id)
 	lifecycle.WriteBeat(tmp)
 
 	status := WatcherStatusSummary(tmp)
@@ -214,7 +213,7 @@ func TestInFlightSoldierPath_IgnoresNonShip(t *testing.T) {
 
 // --- Real-hook E2E: per-cycle terminal reconciliation via reconcileHook ---
 //
-// These tests invoke supervision.RunCycle against the REAL captain
+// These tests invoke orchestrator.RunCycle against the REAL captain
 // reconcileHook (relay.go:31), NOT a test-local orchestrator.RelayPendingReceipts
 // substitute. They verify receipt ACK + obligation closure, then assert
 // exactly-once wake relay after repeated cycles.

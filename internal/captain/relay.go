@@ -7,7 +7,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/supervision"
 )
 
 type watcherHooks struct {
@@ -15,7 +14,7 @@ type watcherHooks struct {
 	activation   orchestrator.ActivationTransport
 }
 
-func NewWatcherHooks(notification orchestrator.NotificationTransport, activation orchestrator.ActivationTransport) supervision.WatcherHooks {
+func NewWatcherHooks(notification orchestrator.NotificationTransport, activation orchestrator.ActivationTransport) orchestrator.WatcherHooks {
 	return watcherHooks{notification: notification, activation: activation}
 }
 func (h watcherHooks) Reconcile(homeDir string, startup bool) error {

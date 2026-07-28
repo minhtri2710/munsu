@@ -1,5 +1,5 @@
 // Package supervision provides the event-driven watcher backbone.
-package supervision
+package orchestrator
 
 import (
 	"fmt"
@@ -15,11 +15,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 )
 
-const pollInterval = 5 * time.Second
+const watcherPollInterval = 5 * time.Second
 
 // WakeReason describes an actionable watcher condition.
 type WakeReason struct {
@@ -45,7 +44,7 @@ type NoopWatcherHooks struct{}
 func (NoopWatcherHooks) Reconcile(string, bool) error { return nil }
 func (NoopWatcherHooks) Activate(string)              {}
 
-func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender orchestrator.BoundSender, hooks WatcherHooks) (*WakeReason, error) {
+func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (*WakeReason, error) {
 	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks)
 }
 
@@ -55,7 +54,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender orchestrator.BoundSender, hooks WatcherHooks) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (*WakeReason, error) {
 	acquired, err := lifecycle.AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -73,7 +72,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	defer ClearIdentityIfMatches(homeDir, identity)
 
 	lifecycle.WriteBeat(homeDir)
-	ticker := newTicker(pollInterval)
+	ticker := newTicker(watcherPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -318,7 +317,7 @@ var recoveryDone sync.Map
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender orchestrator.BoundSender, hooks WatcherHooks) (bool, error) {
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (bool, error) {
 	return runCycleWithProbeAndSender(homeDir, probe, sender, hooks)
 }
 
@@ -326,7 +325,7 @@ func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 // It retries pending inbox envelopes once with fingerprint dedup,
 // runs the legacy terminal reconcile hook (if any) once,
 // then completes any pending poll retirements.
-func runRecovery(homeDir string, sender orchestrator.BoundSender, hooks WatcherHooks) error {
+func runRecovery(homeDir string, sender BoundSender, hooks WatcherHooks) error {
 	if sender == nil {
 		return fmt.Errorf("mailbox recovery sender capability is required")
 	}
@@ -338,7 +337,7 @@ func runRecovery(homeDir string, sender orchestrator.BoundSender, hooks WatcherH
 	}
 
 	// Recovery step 1: retry pending inbox envelopes via mailbox recovery.
-	attempts, err := orchestrator.RecoverAllInboxesWithSender(sender, homeDir)
+	attempts, err := RecoverAllInboxesWithSender(sender, homeDir)
 	if err != nil {
 		recoveryDone.Delete(homeDir)
 		return fmt.Errorf("mailbox recovery: %w", err)
@@ -359,7 +358,7 @@ func runRecovery(homeDir string, sender orchestrator.BoundSender, hooks WatcherH
 	return nil
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender orchestrator.BoundSender, hooks WatcherHooks) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
@@ -501,7 +500,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	// Per-cycle terminal receipt reconciliation runs above (see comment),
 	// sharing the same TerminalReconcileHook with startup recovery.
 	// The watcher is recovery-only for pending envelope delivery.
-	// Normal rank-aware communication goes directly via orchestrator.SendReport.
+	// Normal rank-aware communication goes directly via SendReport.
 
 	return emitted, nil
 }

@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,8 +10,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
-func validIdentity() *DeliveryIdentity {
-	return &DeliveryIdentity{
+func validIdentity() *domain.DeliveryIdentity {
+	return &domain.DeliveryIdentity{
 		Provider: "github", Owner: "minhtri2710", Repo: "munsu", Number: 42,
 		URL: "https://github.com/minhtri2710/munsu/pull/42", BaseRef: "main",
 		HeadRef: "feature/test", HeadSHA: "abc123def456abc123def456abc123def456abc1",
@@ -21,7 +22,7 @@ func validIdentity() *DeliveryIdentity {
 // --- ValidateIdentity tests ---
 
 func TestValidateIdentity_Valid(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -32,13 +33,13 @@ func TestValidateIdentity_Valid(t *testing.T) {
 		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
-	if err := ValidateIdentity(id); err != nil {
+	if err := domain.ValidateIdentity(id); err != nil {
 		t.Errorf("expected valid identity, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_Nil(t *testing.T) {
-	err := ValidateIdentity(nil)
+	err := domain.ValidateIdentity(nil)
 	if err == nil {
 		t.Fatal("expected error for nil identity")
 	}
@@ -48,49 +49,49 @@ func TestValidateIdentity_Nil(t *testing.T) {
 }
 
 func TestValidateIdentity_MissingProvider(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Owner:   "minhtri2710",
 		Repo:    "munsu",
 		Number:  42,
 		URL:     "https://github.com/minhtri2710/munsu/pull/42",
 		HeadSHA: "abc123",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "provider is required") {
 		t.Errorf("expected provider error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_MissingOwner(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider: "github",
 		Repo:     "munsu",
 		Number:   42,
 		URL:      "https://github.com/minhtri2710/munsu/pull/42",
 		HeadSHA:  "abc123",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "owner is required") {
 		t.Errorf("expected owner error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_MissingRepo(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider: "github",
 		Owner:    "minhtri2710",
 		Number:   42,
 		URL:      "https://github.com/minhtri2710/munsu/pull/42",
 		HeadSHA:  "abc123",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "repo is required") {
 		t.Errorf("expected repo error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_InvalidNumber(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider: "github",
 		Owner:    "minhtri2710",
 		Repo:     "munsu",
@@ -98,28 +99,28 @@ func TestValidateIdentity_InvalidNumber(t *testing.T) {
 		URL:      "https://github.com/minhtri2710/munsu/pull/42",
 		HeadSHA:  "abc123",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "PR number must be positive") {
 		t.Errorf("expected positive number error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_MissingURL(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider: "github",
 		Owner:    "minhtri2710",
 		Repo:     "munsu",
 		Number:   42,
 		HeadSHA:  "abc123",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "URL is required") {
 		t.Errorf("expected URL error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_MissingBaseRef(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -129,14 +130,14 @@ func TestValidateIdentity_MissingBaseRef(t *testing.T) {
 		HeadSHA:    "abc123",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "baseRef is required") {
 		t.Errorf("expected baseRef error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_MissingHeadRef(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -146,14 +147,14 @@ func TestValidateIdentity_MissingHeadRef(t *testing.T) {
 		HeadSHA:    "abc123",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "headRef is required") {
 		t.Errorf("expected headRef error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_MissingHeadSHA(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -163,14 +164,14 @@ func TestValidateIdentity_MissingHeadSHA(t *testing.T) {
 		HeadRef:    "feature/test",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "headSHA is required") {
 		t.Errorf("expected headSHA error, got: %v", err)
 	}
 }
 
 func TestValidateIdentity_MissingCapturedAt(t *testing.T) {
-	id := &DeliveryIdentity{
+	id := &domain.DeliveryIdentity{
 		Provider: "github",
 		Owner:    "minhtri2710",
 		Repo:     "munsu",
@@ -180,7 +181,7 @@ func TestValidateIdentity_MissingCapturedAt(t *testing.T) {
 		HeadRef:  "feature/test",
 		HeadSHA:  "abc123",
 	}
-	err := ValidateIdentity(id)
+	err := domain.ValidateIdentity(id)
 	if err == nil || !strings.Contains(err.Error(), "capturedAt is required") {
 		t.Errorf("expected capturedAt error, got: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestValidateIdentity_MissingCapturedAt(t *testing.T) {
 // --- ToMeta / IdentityFromMeta round-trip tests ---
 
 func TestIdentityRoundTrip(t *testing.T) {
-	original := &DeliveryIdentity{
+	original := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -202,7 +203,7 @@ func TestIdentityRoundTrip(t *testing.T) {
 	}
 
 	meta := original.ToMeta()
-	restored, err := IdentityFromMeta(meta)
+	restored, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestIdentityRoundTrip(t *testing.T) {
 
 func TestIdentityFromMeta_EmptyMeta(t *testing.T) {
 	meta := map[string]string{}
-	id, err := IdentityFromMeta(meta)
+	id, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta on empty meta: %v", err)
 	}
@@ -250,7 +251,7 @@ func TestIdentityFromMeta_LegacyPRKey(t *testing.T) {
 	meta := map[string]string{
 		"pr": "https://github.com/minhtri2710/munsu/pull/42",
 	}
-	id, err := IdentityFromMeta(meta)
+	id, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta with legacy pr key: %v", err)
 	}
@@ -279,7 +280,7 @@ func TestIdentityFromMeta_PartialWithLegacy(t *testing.T) {
 		"pr_head":     "abc123def456abc123def456abc123def456abc1",
 		"pr_provider": "github",
 	}
-	id, err := IdentityFromMeta(meta)
+	id, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta: %v", err)
 	}
@@ -297,7 +298,7 @@ func TestRequireIdentity_Success(t *testing.T) {
 	homeDir := t.TempDir()
 	id := "test-task"
 
-	original := &DeliveryIdentity{
+	original := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -381,7 +382,7 @@ func TestRequireIdentity_Incomplete(t *testing.T) {
 // --- MetaKeys test ---
 
 func TestIdentity_MetaKeys(t *testing.T) {
-	id := &DeliveryIdentity{}
+	id := &domain.DeliveryIdentity{}
 	keys := id.MetaKeys()
 	expected := []string{
 		"pr_provider", "pr_owner", "pr_repo",
@@ -427,7 +428,7 @@ func TestRequireIdentity_LegacyPRKeyOnly(t *testing.T) {
 	// IdentityFromMeta will produce an identity missing pr_base, pr_head_ref,
 	// pr_timestamp, etc. So RequireIdentity should still fail because
 	// ValidateIdentity catches the missing required fields.
-	ident, err := IdentityFromMeta(meta)
+	ident, err := domain.IdentityFromMeta(meta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta: %v", err)
 	}
@@ -441,7 +442,7 @@ func TestRequireIdentity_LegacyPRKeyOnly(t *testing.T) {
 		t.Errorf("HeadSHA: got %q", ident.HeadSHA)
 	}
 	// The validation should fail because baseRef/headRef/capturedAt are missing
-	if err := ValidateIdentity(ident); err == nil {
+	if err := domain.ValidateIdentity(ident); err == nil {
 		t.Error("expected ValidateIdentity to fail for legacy-only identity (missing baseRef, headRef, capturedAt)")
 	}
 }
@@ -498,14 +499,14 @@ func TestPRCheck_WritesIdentityKeys(t *testing.T) {
 	}
 
 	// Verify IdentityFromMeta round-trips from the meta
-	ident, err := IdentityFromMeta(readMeta)
+	ident, err := domain.IdentityFromMeta(readMeta)
 	if err != nil {
 		t.Fatalf("IdentityFromMeta: %v", err)
 	}
 	if ident == nil {
 		t.Fatal("IdentityFromMeta returned nil")
 	}
-	if err := ValidateIdentity(ident); err != nil {
+	if err := domain.ValidateIdentity(ident); err != nil {
 		t.Errorf("ValidateIdentity: %v", err)
 	}
 }
@@ -557,7 +558,7 @@ func TestPRMerge_ValidatesIdentity(t *testing.T) {
 func TestIdentityFromMeta_RejectsMalformedURL(t *testing.T) {
 	meta := validIdentity().ToMeta()
 	meta["pr_url"] = "not-a-pr-url"
-	if _, err := IdentityFromMeta(meta); err == nil {
+	if _, err := domain.IdentityFromMeta(meta); err == nil {
 		t.Fatal("expected malformed pr_url error")
 	}
 }
@@ -565,7 +566,7 @@ func TestIdentityFromMeta_RejectsMalformedURL(t *testing.T) {
 func TestIdentityFromMeta_RejectsURLFieldMismatch(t *testing.T) {
 	meta := validIdentity().ToMeta()
 	meta["pr_owner"] = "different-owner"
-	if _, err := IdentityFromMeta(meta); err == nil {
+	if _, err := domain.IdentityFromMeta(meta); err == nil {
 		t.Fatal("expected URL/field mismatch error")
 	}
 }
@@ -574,7 +575,7 @@ func TestPRMerge_RejectsURLMismatch(t *testing.T) {
 	homeDir := t.TempDir()
 	id := "mismatch-task"
 
-	original := &DeliveryIdentity{
+	original := &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      "minhtri2710",
 		Repo:       "munsu",
@@ -602,11 +603,11 @@ func TestPRMerge_RejectsURLMismatch(t *testing.T) {
 func TestPRMerge_RejectsLiveIdentityDrift(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(*DeliveryIdentity)
+		mutate func(*domain.DeliveryIdentity)
 	}{
-		{"force push", func(id *DeliveryIdentity) { id.HeadSHA = "def456def456def456def456def456def456def4" }},
-		{"base retarget", func(id *DeliveryIdentity) { id.BaseRef = "release" }},
-		{"head ref change", func(id *DeliveryIdentity) { id.HeadRef = "feature/renamed" }},
+		{"force push", func(id *domain.DeliveryIdentity) { id.HeadSHA = "def456def456def456def456def456def456def4" }},
+		{"base retarget", func(id *domain.DeliveryIdentity) { id.BaseRef = "release" }},
+		{"head ref change", func(id *domain.DeliveryIdentity) { id.HeadRef = "feature/renamed" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -618,7 +619,7 @@ func TestPRMerge_RejectsLiveIdentityDrift(t *testing.T) {
 			live := *stored
 			tc.mutate(&live)
 			old := fetchLiveIdentity
-			fetchLiveIdentity = func(string) (*DeliveryIdentity, error) { return &live, nil }
+			fetchLiveIdentity = func(string) (*domain.DeliveryIdentity, error) { return &live, nil }
 			t.Cleanup(func() { fetchLiveIdentity = old })
 			err := PRMerge(homeDir, "ship", stored.URL, nil)
 			if err == nil || !strings.Contains(err.Error(), "live PR identity changed") || !strings.Contains(err.Error(), "re-run pr-check") {
@@ -631,13 +632,13 @@ func TestPRMerge_RejectsLiveIdentityDrift(t *testing.T) {
 func TestIdentityFromMeta_RejectsCorruptNumber(t *testing.T) {
 	meta := validIdentity().ToMeta()
 	meta["pr_number"] = "not-a-number"
-	if _, err := IdentityFromMeta(meta); err == nil {
+	if _, err := domain.IdentityFromMeta(meta); err == nil {
 		t.Fatal("expected corrupt pr_number error")
 	}
 }
 
 func TestIdentityFromMeta_RejectsPartialIdentityWithoutURL(t *testing.T) {
-	if _, err := IdentityFromMeta(map[string]string{"pr_head": "abc123"}); err == nil {
+	if _, err := domain.IdentityFromMeta(map[string]string{"pr_head": "abc123"}); err == nil {
 		t.Fatal("expected partial identity error")
 	}
 }
@@ -646,7 +647,7 @@ func TestIdentityFromMeta_RejectsPartialIdentityWithoutURL(t *testing.T) {
 
 func TestReviewDiff_LegacyPRKeyRead(t *testing.T) {
 	// Test that ReviewDiff reads the legacy pr key from meta
-	// without requiring a full DeliveryIdentity.
+	// without requiring a full domain.DeliveryIdentity.
 	// The git diff error proves the legacy path was reached.
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
@@ -699,7 +700,7 @@ func TestIdentityFromMeta_RejectsMultipleFieldsWithoutURL(t *testing.T) {
 		"pr_base":      "main",
 		"pr_timestamp": "2026-07-18T00:00:00Z",
 	}
-	_, err := IdentityFromMeta(meta)
+	_, err := domain.IdentityFromMeta(meta)
 	if err == nil {
 		t.Fatal("expected error for partial identity with multiple fields but no pr_url")
 	}

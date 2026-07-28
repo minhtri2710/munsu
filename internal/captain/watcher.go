@@ -8,7 +8,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // WatcherStatus describes the disposition of a per-captain watcher.
@@ -32,7 +32,7 @@ func WatcherStatusSummary(captainHome string) WatcherStatus {
 	beatStatus := lifecycle.ReadBeatStatus(captainHome, time.Now())
 	if !beatStatus.Exists {
 		// No beat — check identity as secondary signal (leftover from crash).
-		if id := supervision.ReadIdentity(captainHome); id != nil {
+		if id := orchestrator.ReadIdentity(captainHome); id != nil {
 			return WatcherStopped
 		}
 		return WatcherAbsent
@@ -43,7 +43,7 @@ func WatcherStatusSummary(captainHome string) WatcherStatus {
 
 	// Beat is fresh. Validate PID ownership to confirm it's our watcher.
 	_, pid, ok := lifecycle.ReadBeat(captainHome)
-	if ok && pid > 0 && supervision.ValidatePIDOwnership(captainHome, pid) {
+	if ok && pid > 0 && orchestrator.ValidatePIDOwnership(captainHome, pid) {
 		return WatcherRunning
 	}
 
@@ -96,11 +96,11 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 
 	// No child work — idle policy: stop watcher if running.
 	if status == WatcherRunning {
-		if err := supervision.Stop(captainHome); err != nil {
+		if err := orchestrator.Stop(captainHome); err != nil {
 			return fmt.Errorf("stopping watcher for captain home %s: %w", captainHome, err)
 		}
 		lifecycle.ClearBeat(captainHome)
-		supervision.ClearIdentity(captainHome)
+		orchestrator.ClearIdentity(captainHome)
 	}
 	return nil
 }

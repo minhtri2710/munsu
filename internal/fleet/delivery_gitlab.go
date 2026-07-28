@@ -49,7 +49,7 @@ var defaultGlabRunner GlabRunner = &glabRunnerImpl{}
 
 // GlabFallbackFn is an injectable read-only fallback for when glab is
 // Absent or Unsupported. When nil, the fallback returns an unavailable error.
-type GlabFallbackFn func(ident *DeliveryIdentity) (*PRMergeStatus, error)
+type GlabFallbackFn func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error)
 
 // defaultGlabFallback is the production fallback (no fallback available).
 var defaultGlabFallback GlabFallbackFn = nil
@@ -79,8 +79,8 @@ func ParseProviderURL(raw string) (provider string, owner string, repo string, n
 // All operations go through the consolidated authority path backed by glab.
 // When the GitLab capability is Absent or Failed, callers must fail closed.
 type GitLabClient interface {
-	// CaptureIdentity captures a full DeliveryIdentity from a GitLab MR URL.
-	CaptureIdentity(mrURL string) (*DeliveryIdentity, error)
+	// CaptureIdentity captures a full domain.DeliveryIdentity from a GitLab MR URL.
+	CaptureIdentity(mrURL string) (*domain.DeliveryIdentity, error)
 
 	// ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.
 	ViewMRState(host, owner, project string, iid int) (string, error)
@@ -203,8 +203,8 @@ func (c *glabClient) ViewMRJSON(host, owner, project string, iid int) ([]byte, e
 	return c.runner.Run(args...)
 }
 
-// CaptureIdentity captures a full DeliveryIdentity from a GitLab MR URL.
-func (c *glabClient) CaptureIdentity(mrURL string) (*DeliveryIdentity, error) {
+// CaptureIdentity captures a full domain.DeliveryIdentity from a GitLab MR URL.
+func (c *glabClient) CaptureIdentity(mrURL string) (*domain.DeliveryIdentity, error) {
 	glURL, err := domain.ParseMRURL(mrURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid MR URL: %w", err)
@@ -236,7 +236,7 @@ func (c *glabClient) CaptureIdentity(mrURL string) (*DeliveryIdentity, error) {
 		return nil, fmt.Errorf("glab mr view returned empty target_branch")
 	}
 
-	return &DeliveryIdentity{
+	return &domain.DeliveryIdentity{
 		Provider:   "gitlab",
 		Owner:      glURL.Owner,
 		Repo:       glURL.Project,

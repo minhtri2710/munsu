@@ -27,8 +27,8 @@ type GitHubClient interface {
 	// Uses gh CLI through the consolidated adapter when gh-axi is Ready.
 	ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error)
 
-	// CaptureIdentity captures a full DeliveryIdentity from a PR URL.
-	CaptureIdentity(prURL string) (*DeliveryIdentity, error)
+	// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL.
+	CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error)
 }
 
 // ghAxiClient implements GitHubClient backed by gh-axi.
@@ -169,10 +169,10 @@ func (c *ghAxiClient) ViewPRJSON(owner, repo string, number int, fields string) 
 	return out, nil
 }
 
-// CaptureIdentity captures a full DeliveryIdentity from a PR URL.
+// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL.
 // Uses gh CLI through the consolidated adapter for JSON fields that
 // gh-axi does not expose (headRefOid, headRefName, baseRefName).
-func (c *ghAxiClient) CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
+func (c *ghAxiClient) CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error) {
 	ghURL, err := domain.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PR URL: %w", err)
@@ -196,7 +196,7 @@ func (c *ghAxiClient) CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
 		return nil, fmt.Errorf("gh pr view returned empty headRefOid")
 	}
 
-	return &DeliveryIdentity{
+	return &domain.DeliveryIdentity{
 		Provider:   "github",
 		Owner:      ghURL.Owner,
 		Repo:       ghURL.Repo,

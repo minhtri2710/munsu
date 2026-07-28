@@ -1,4 +1,4 @@
-package teardown
+package orchestrator
 
 import (
 	"errors"

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
 )
 
 // fakeBackend records SendKeys calls for test inspection.
@@ -243,14 +242,14 @@ func TestTypedDiagnostics_EnqueueTimestamps(t *testing.T) {
 // TestTypedDiagnostics_WatcherIdentityPersisted proves identity is durable.
 func TestTypedDiagnostics_WatcherIdentityPersisted(t *testing.T) {
 	home := t.TempDir()
-	id := supervision.NewIdentity(home)
-	supervision.WriteIdentity(home, id)
+	id := orchestrator.NewIdentity(home)
+	orchestrator.WriteIdentity(home, id)
 
-	read := supervision.ReadIdentity(home)
+	read := orchestrator.ReadIdentity(home)
 	if read == nil || read.PID != id.PID {
 		t.Fatalf("identity mismatch: read=%+v", read)
 	}
-	if !supervision.ValidatePIDOwnership(home, os.Getpid()) {
+	if !orchestrator.ValidatePIDOwnership(home, os.Getpid()) {
 		t.Fatal("ValidatePIDOwnership failed")
 	}
 }
@@ -361,7 +360,7 @@ func TestLiteralFailClosedTeardown_NoForce(t *testing.T) {
 }
 
 func TestTypedDiagnostics_WatcherIdentitySummary(t *testing.T) {
-	id := &supervision.WatcherIdentity{
+	id := &orchestrator.WatcherIdentity{
 		PID:             12345,
 		BuildVersion:    "1.2.3",
 		CommitSHA:       "abc1234",
@@ -369,7 +368,7 @@ func TestTypedDiagnostics_WatcherIdentitySummary(t *testing.T) {
 		StartTime:       time.Now().Unix(),
 		Home:            "/tmp/test",
 	}
-	summary := supervision.IdentitySummary(id)
+	summary := orchestrator.IdentitySummary(id)
 	if !strings.Contains(summary, "pid=12345") {
 		t.Errorf("missing pid: %q", summary)
 	}

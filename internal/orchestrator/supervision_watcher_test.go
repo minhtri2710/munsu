@@ -1,4 +1,4 @@
-package supervision
+package orchestrator
 
 import (
 	"fmt"
@@ -13,7 +13,6 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/marker"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 )
 
@@ -24,8 +23,8 @@ func (testEndpointProbe) Probe(string, map[string]string) (bool, error) { return
 type testCycleSender struct{}
 
 func (testCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (testCycleSender) Send(string, map[string]string, string) orchestrator.BoundSendResult {
-	return orchestrator.BoundSendResult{}
+func (testCycleSender) Send(string, map[string]string, string) BoundSendResult {
+	return BoundSendResult{}
 }
 
 func testScanFleet(home string) *WakeReason {
@@ -1005,15 +1004,15 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 
 	// Write provenance marker so turnend can read captain ID
 	captainID := "test-captain"
-	markerPath := filepath.Join(tmp, orchestrator.ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
 
 	// Write receipt and init obligation (simulating soldier done)
-	if err := orchestrator.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+	if err := WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(tmp, taskID, termKey); err != nil {
+	if err := InitTaskObligations(tmp, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -1027,7 +1026,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 		if ph == "" || ph == homeDir {
 			return nil
 		}
-		_, err := orchestrator.RelayPendingReceipts(homeDir, ph)
+		_, err := RelayPendingReceipts(homeDir, ph)
 		return err
 	}}
 	defer func() { activeTestHooks = origHooks }()
@@ -1042,7 +1041,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	_ = emitted // may be false if relay hook does not enqueue wake
 
 	// Verify ack was written
-	if !orchestrator.IsReceiptAcked(tmp, taskID, termKey) {
+	if !IsReceiptAcked(tmp, taskID, termKey) {
 		t.Error("receipt should be acked after recovery")
 	}
 
@@ -1057,7 +1056,7 @@ func TestRunCycle_RelayPendingReceipts(t *testing.T) {
 	}
 
 	// Verify obligation is closed
-	open, err := orchestrator.IsTaskReportRelayOpen(tmp, taskID)
+	open, err := IsTaskReportRelayOpen(tmp, taskID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
@@ -1087,12 +1086,12 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	termKey := "uplink"
 
 	// Write provenance marker
-	markerPath := filepath.Join(tmp, orchestrator.ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
 
 	// Write receipt (but NO MUNSU_PARENT_STATUS)
-	if err := orchestrator.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+	if err := WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
 
@@ -1112,7 +1111,7 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	_ = emitted
 
 	// Receipt should NOT be acked (no relay happened — no parent, no hook)
-	if orchestrator.IsReceiptAcked(tmp, taskID, termKey) {
+	if IsReceiptAcked(tmp, taskID, termKey) {
 		t.Error("receipt should NOT be acked without parent env or hook")
 	}
 
@@ -1140,15 +1139,15 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 	termKey := "uplink"
 
 	// Write provenance marker
-	markerPath := filepath.Join(tmp, orchestrator.ProvenanceMarkerName)
+	markerPath := filepath.Join(tmp, ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\ntest-captain\n"+tmp+"\n"), 0644)
 
 	// Write receipt
-	if err := orchestrator.WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
+	if err := WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(tmp, taskID, termKey); err != nil {
+	if err := InitTaskObligations(tmp, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -1177,7 +1176,7 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 //   - Error does not exit the watcher and is observable on stderr
 //   - No hook = no-op
 //
-// Real-hook E2E tests (invoking supervision.RunCycle against the real captain
+// Real-hook E2E tests (invoking RunCycle against the real captain
 // reconcileHook) live in internal/captain/watcher_test.go.
 
 // setupRunCycleTest creates a home with state dir for runCycle tests.
@@ -1192,13 +1191,13 @@ func setupRunCycleTest(t *testing.T) string {
 // receipt reconciliation tests.
 func writeProvenanceMarker(t *testing.T, home, captainID string) {
 	t.Helper()
-	markerPath := filepath.Join(home, orchestrator.ProvenanceMarkerName)
+	markerPath := filepath.Join(home, ProvenanceMarkerName)
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+home+"\n"), 0644)
 }
 
 // installRelayHook installs a TerminalReconcileHook that relays pending
-// receipts via orchestrator.RelayPendingReceipts. Returns a cleanup function.
+// receipts via RelayPendingReceipts. Returns a cleanup function.
 func installRelayHook(t *testing.T) func() {
 	t.Helper()
 	origHooks := activeTestHooks
@@ -1207,7 +1206,7 @@ func installRelayHook(t *testing.T) func() {
 		if ph == "" || ph == homeDir {
 			return nil
 		}
-		_, err := orchestrator.RelayPendingReceipts(homeDir, ph)
+		_, err := RelayPendingReceipts(homeDir, ph)
 		return err
 	}}
 	return func() { activeTestHooks = origHooks }
@@ -1485,12 +1484,12 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	lifecycle.EnqueueWake(tmp, "signal", "task-stale", "done: PR merged")
 
 	// Evaluate guard — should detect stale + pending.
-	result := orchestrator.EvaluateGuard(tmp, 1, time.Now())
+	result := EvaluateGuard(tmp, 1, time.Now())
 	if !result.BeatStatus.Stale {
 		t.Fatal("expected stale beat status")
 	}
 	// Force the guard to include a stale condition by checking GuardWarnings.
-	warnings := orchestrator.GuardWarnings(tmp)
+	warnings := GuardWarnings(tmp)
 	foundStale := false
 	for _, w := range warnings {
 		if strings.Contains(w, "STALE") {
@@ -1522,7 +1521,7 @@ func TestDeadStaleWatcher_AutoRecoverOrFailClosed(t *testing.T) {
 
 	// Bounded status command should detect the situation.
 	// (Unit test for the diagnostic evaluation logic)
-	warnings := orchestrator.GuardWarnings(tmp)
+	warnings := GuardWarnings(tmp)
 	hasAbsentWarn := false
 	hasWakeWarn := false
 	for _, w := range warnings {

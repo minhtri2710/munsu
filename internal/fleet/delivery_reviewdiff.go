@@ -45,7 +45,7 @@ func ReviewDiff(homeDir string, id string) error {
 	// Resolve authoritative base using stored identity if available
 	base := ""
 
-	ident, _ := IdentityFromMeta(meta)
+	ident, _ := domain.IdentityFromMeta(meta)
 	if ident != nil && ident.URL != "" {
 		// Use the stored identity for the base reference
 		ghURL, err := domain.ParseGHURL(ident.URL)
