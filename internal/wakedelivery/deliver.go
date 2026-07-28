@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
 )
@@ -154,9 +154,9 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	// Step 3: Append to typed event log (best-effort)
-	syntheticID := event.SyntheticEventID()
+	syntheticID := orchestrator.SyntheticEventID()
 	receipt.EventID = syntheticID
-	if err := event.AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
+	if err := orchestrator.AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
 	}
 

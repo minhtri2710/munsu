@@ -1,4 +1,4 @@
-package event
+package orchestrator
 
 import (
 	"os"

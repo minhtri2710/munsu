@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/event"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -159,8 +159,8 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			// Compatibility translator: also write as typed event
-			rec, _ := event.FromTaskStatus(ctx.Home, id, line)
-			_ = event.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
+			rec, _ := orchestrator.FromTaskStatus(ctx.Home, id, line)
+			_ = orchestrator.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
 
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,

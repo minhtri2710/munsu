@@ -14,8 +14,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -595,8 +595,8 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 		result.Steps = append(result.Steps, fmt.Sprintf("closed keyed phase [key=%s]", act.Key))
 
 		// Also write to the typed event log for permanent durability beyond teardown.
-		syntheticID := event.SyntheticEventID()
-		if err := event.AppendWithID(opts.HomeDir, syntheticID, "task.status", opts.ID, act.Key, closeLine); err != nil {
+		syntheticID := orchestrator.SyntheticEventID()
+		if err := orchestrator.AppendWithID(opts.HomeDir, syntheticID, "task.status", opts.ID, act.Key, closeLine); err != nil {
 			result.Steps = append(result.Steps, fmt.Sprintf("warning: event log: %v", err))
 		}
 	}

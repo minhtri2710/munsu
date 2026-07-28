@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/event"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/turnend"
 )
@@ -187,10 +187,10 @@ func TestReliablePath_ExactTaskKeyRelay(t *testing.T) {
 // TestReliablePath_EventAppendRoundTrip proves event log round-trips.
 func TestReliablePath_EventAppendRoundTrip(t *testing.T) {
 	home := t.TempDir()
-	sid := event.SyntheticEventID()
+	sid := orchestrator.SyntheticEventID()
 
-	event.AppendWithID(home, sid, "task.status", "producer", "key", "done: test")
-	records, _ := event.ReadAll(home)
+	orchestrator.AppendWithID(home, sid, "task.status", "producer", "key", "done: test")
+	records, _ := orchestrator.ReadAll(home)
 	if len(records) != 1 {
 		t.Fatalf("records = %d, want 1", len(records))
 	}
