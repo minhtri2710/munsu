@@ -35,3 +35,9 @@ func (fakeIntegrationPort) EnsureCaptain(string) error { return nil }
 func (fakeIntegrationPort) Status(string, string) (IntegrationStatus, error) {
 	return IntegrationStatus{State: "installed"}, nil
 }
+func seedWithParentTest(id, captainHome, parentHome, charter string) error {
+	return SeedCaptain(CaptainSeedOptions{ID: id, Home: captainHome, ParentHome: parentHome, Charter: charter, Integration: fakeIntegrationPort{}})
+}
+func seedTest(id, captainHome, charter string) error {
+	return SeedCaptain(CaptainSeedOptions{ID: id, Home: captainHome, Charter: charter, Integration: fakeIntegrationPort{}})
+}

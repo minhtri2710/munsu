@@ -208,7 +208,7 @@ func TestDefaultCaptainCharter_ContainsReturnChannel(t *testing.T) {
 func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 	parent := t.TempDir()
 	sm := filepath.Join(parent, "captains", "api")
-	if err := SeedWithParent("api", sm, parent, ""); err != nil {
+	if err := seedWithParentTest("api", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 	// The canonical charter lives in .captain-charter.md.
@@ -234,7 +234,7 @@ func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 	homePath := filepath.Join(tmp, "captains", "test-sm")
 	charter := "# Captain charter\n\nPersistent domain supervisor.\n"
 
-	if err := Seed("test-sm", homePath, charter); err != nil {
+	if err := seedTest("test-sm", homePath, charter); err != nil {
 		t.Fatal(err)
 	}
 
@@ -284,7 +284,7 @@ func TestSeed_CreatesDirectoryStructure(t *testing.T) {
 }
 
 func TestSeed_InvalidPath(t *testing.T) {
-	err := Seed("test-sm", "/nonexistent/parent/sm", "# charter")
+	err := seedTest("test-sm", "/nonexistent/parent/sm", "# charter")
 	if err == nil {
 		t.Fatal("expected error for invalid path")
 	}
@@ -659,7 +659,7 @@ func TestProvenance_WrongVersion(t *testing.T) {
 func TestValidate_PassesForSeededHome(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
-	Seed("test-sm", smHome, "# charter")
+	seedTest("test-sm", smHome, "# charter")
 
 	err := Validate(smHome, tmp)
 	if err != nil {
@@ -670,7 +670,7 @@ func TestValidate_PassesForSeededHome(t *testing.T) {
 func TestValidate_RefusesFakeName(t *testing.T) {
 	tmp := t.TempDir()
 	fakeHome := filepath.Join(tmp, "fake")
-	Seed("fake-sm", fakeHome, "# charter")
+	seedTest("fake-sm", fakeHome, "# charter")
 
 	err := Validate(fakeHome, tmp)
 	if err == nil {
@@ -684,7 +684,7 @@ func TestValidate_RefusesFakeName(t *testing.T) {
 func TestValidate_RefusesPrimaryName(t *testing.T) {
 	tmp := t.TempDir()
 	primaryHome := filepath.Join(tmp, "primary")
-	Seed("primary-sm", primaryHome, "# charter")
+	seedTest("primary-sm", primaryHome, "# charter")
 
 	err := Validate(primaryHome, tmp)
 	if err == nil {
@@ -694,7 +694,7 @@ func TestValidate_RefusesPrimaryName(t *testing.T) {
 
 func TestValidate_RefusesSelfParent(t *testing.T) {
 	tmp := t.TempDir()
-	Seed("test-sm", tmp, "# charter")
+	seedTest("test-sm", tmp, "# charter")
 
 	err := Validate(tmp, tmp)
 	if err == nil {
@@ -1148,7 +1148,7 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	}
 
 	sm := filepath.Join(parent, "captains", "ops")
-	if err := SeedWithParent("ops", sm, parent, ""); err != nil {
+	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1172,7 +1172,7 @@ func TestSeedWithParent_WritesParentHomeConfig(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 
 	sm := filepath.Join(parent, "captains", "ops")
-	if err := SeedWithParent("ops", sm, parent, ""); err != nil {
+	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1577,7 +1577,7 @@ func TestLaunch_RefusesUnmarkedHome(t *testing.T) {
 func TestLaunch_RefusesCaptainRole(t *testing.T) {
 	tmp := t.TempDir()
 	smHome := filepath.Join(tmp, "captains", "test-sm")
-	Seed("test-sm", smHome, "# charter")
+	seedTest("test-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "captain")
 	err := Launch(smHome, tmp, testLaunchEndpoint{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch other captains") {
@@ -1591,7 +1591,7 @@ func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	smHome := filepath.Join(t.TempDir(), "child-sm")
-	Seed("child-sm", smHome, "# charter")
+	seedTest("child-sm", smHome, "# charter")
 	t.Setenv("MUNSU_ROLE", "")
 	err := Launch(smHome, parent, testLaunchEndpoint{})
 	if err == nil || !strings.Contains(err.Error(), "cannot launch another captain") {
@@ -2358,7 +2358,7 @@ func TestRegister_Idempotent(t *testing.T) {
 func TestSeedWithParent_Registers(t *testing.T) {
 	parent := t.TempDir()
 	sm := filepath.Join(parent, "captains", "ops")
-	if err := SeedWithParent("ops", sm, parent, ""); err != nil {
+	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 	mates, err := ListCaptains(parent)
@@ -2532,7 +2532,7 @@ func TestRetire_ForceAllowsInFlight(t *testing.T) {
 func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 	parent := t.TempDir()
 	sm := filepath.Join(parent, "captains", "ext-sm")
-	if err := SeedWithParent("ext-sm", sm, parent, "# charter\n"); err != nil {
+	if err := seedWithParentTest("ext-sm", sm, parent, "# charter\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2882,7 +2882,7 @@ func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "existing-sm")
 
 	// Create a state-only captain home first.
-	if err := SeedWithParent("existing-sm", homePath, parent, ""); err != nil {
+	if err := seedWithParentTest("existing-sm", homePath, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3033,8 +3033,8 @@ func TestDefaultBranch_FallbackToMain(t *testing.T) {
 func stateOnlyHomeFixture(t *testing.T, parent, id string) string {
 	t.Helper()
 	smHome := filepath.Join(parent, "captains", id)
-	if err := Seed(id, smHome, "# charter for "+id); err != nil {
-		t.Fatalf("Seed(%s): %v", id, err)
+	if err := seedTest(id, smHome, "# charter for "+id); err != nil {
+		t.Fatalf("seedTest(%s): %v", id, err)
 	}
 	return smHome
 }
