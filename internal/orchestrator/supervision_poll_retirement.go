@@ -72,9 +72,8 @@ func publicationLine(taskID, prURL, mergedSHA string) string {
 // retirementRecordPath returns the path for a pending retirement record.
 // Uses a collision-safe filename based on schema + task ID.
 func retirementRecordPath(homeDir, taskID string) string {
-	// Safe filename: replace path separators and colons.
-	safeID := strings.NewReplacer("/", "_", ":", "_", ".", "_").Replace(taskID)
-	return filepath.Join(homeDir, retirementDir, fmt.Sprintf("v%d-%s.json", PollRetirementSchema, safeID))
+	digest := sha256.Sum256([]byte(taskID))
+	return filepath.Join(homeDir, retirementDir, fmt.Sprintf("v%d-%s.json", PollRetirementSchema, hex.EncodeToString(digest[:])))
 }
 
 // retirementDirPath returns the retirement state directory path.
@@ -236,16 +235,18 @@ func ListPendingRetirements(homeDir string) ([]string, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		// Parse safe-ID back from filename: "v1-<safeID>.json"
-		name := entry.Name()
-		trimmed := strings.TrimPrefix(name, fmt.Sprintf("v%d-", PollRetirementSchema))
-		trimmed = strings.TrimSuffix(trimmed, ".json")
-		if trimmed == "" || trimmed == name {
-			continue
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("reading retirement record %s: %w", entry.Name(), err)
 		}
-		// Reverse the safe-ID encoding.
-		id := strings.NewReplacer("_", ":").Replace(trimmed)
-		ids = append(ids, id)
+		var rec PollRetirementRecord
+		if err := json.Unmarshal(data, &rec); err != nil {
+			return nil, fmt.Errorf("parsing retirement record %s: %w", entry.Name(), err)
+		}
+		if rec.TaskID == "" || retirementRecordPath(homeDir, rec.TaskID) != filepath.Join(dir, entry.Name()) {
+			return nil, fmt.Errorf("retirement record %s has invalid task identity", entry.Name())
+		}
+		ids = append(ids, rec.TaskID)
 	}
 	return ids, nil
 }
@@ -647,8 +648,12 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 		return false, fmt.Errorf("recovery: publication could not be confirmed; preserving poll and record")
 	}
 
-	// Publication exists. Now remove poll if it still matches.
-	if pollExists && pollMatches {
+	// Publication exists. A changed poll is a different artifact and must
+	// preserve the recovery record for operator attention.
+	if pollExists && !pollMatches {
+		return false, fmt.Errorf("recovery: poll digest changed; preserving poll and retirement record")
+	}
+	if pollExists {
 		if err := os.Remove(checkPath); err != nil && !os.IsNotExist(err) {
 			return false, fmt.Errorf("recovery: removing poll: %w", err)
 		}

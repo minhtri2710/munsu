@@ -933,23 +933,15 @@ func TestRecoverPendingRetirement_PollDigestMismatch(t *testing.T) {
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
 
-	// Recovery: poll exists but digest doesn't match — recovery checks meta identity
-	// (which matches TaskID, provider, URL, and head SHA), not poll digest.
-	// Since publication evidence is absent, recovery appends it. But because
-	// the poll digest does not match, recovery does NOT remove the poll
-	// (the poll may have been replaced by a different one). The record IS removed
-	// because the meta identity matches and publication is durably written.
 	resolved, err := RecoverPendingRetirement(home, taskID)
-	if err != nil {
-		t.Fatalf("expected recovery to handle digest mismatch: %v", err)
+	if err == nil || resolved {
+		t.Fatalf("expected digest mismatch to remain unresolved, got resolved=%v err=%v", resolved, err)
 	}
-	if !resolved {
-		t.Fatal("expected resolved=true")
-	}
-
-	// Check file should NOT be removed (digest mismatch preserves it).
 	if _, err := os.Stat(checkPath); err != nil {
 		t.Fatal("poll should be preserved on digest mismatch")
+	}
+	if got := readRetirementRecordOrNil(t, home, taskID); got == nil {
+		t.Fatal("retirement record should be preserved on digest mismatch")
 	}
 }
 
@@ -1458,14 +1450,20 @@ func TestListPendingRetirements_NoDir(t *testing.T) {
 	}
 }
 
-func TestListPendingRetirements_IgnoresNonJSON(t *testing.T) {
+func TestListPendingRetirementsReadsTaskIdentityFromRecords(t *testing.T) {
 	home := t.TempDir()
 	dir := retirementDirPath(home)
-	os.MkdirAll(dir, 0755)
-
-	os.WriteFile(filepath.Join(dir, "v1-test-task.json"), []byte("{}"), 0644)
-	os.WriteFile(filepath.Join(dir, "v1-other.json"), []byte("{}"), 0644)
-	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("notes"), 0644)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"task_a", "task:a"} {
+		if err := WriteRetirementRecord(home, &PollRetirementRecord{SchemaVersion: PollRetirementSchema, TaskID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("notes"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	ids, err := ListPendingRetirements(home)
 	if err != nil {
@@ -1602,6 +1600,56 @@ func TestRecoverPendingRetirement_SetsDeliveryStateMerged(t *testing.T) {
 	}
 	if result[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
 		t.Fatalf("expected delivery_state=%q, got %q", domain.DeliveryStateMerged, result[domain.MetaDeliveryState])
+	}
+}
+
+func TestRetirementRecordPathsDoNotCollide(t *testing.T) {
+	home := t.TempDir()
+	ids := []string{"task_a", "task:a", "task.a", "task/a"}
+	paths := make(map[string]string)
+	for _, id := range ids {
+		path := retirementRecordPath(home, id)
+		if previous, ok := paths[path]; ok {
+			t.Fatalf("task IDs %q and %q share retirement path %q", previous, id, path)
+		}
+		paths[path] = id
+	}
+}
+
+func TestRecoverPendingRetirement_PreservesRecordWhenPollDigestChanges(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+
+	digest, err := pollContentDigest(checkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &PollRetirementRecord{
+		SchemaVersion:   PollRetirementSchema,
+		TaskID:          taskID,
+		PollPath:        filepath.Base(checkPath),
+		PollDigest:      digest,
+		Provider:        "github",
+		URL:             "https://github.com/testowner/testrepo/pull/42",
+		HeadSHA:         "0000111122223333444455556666777788889999",
+		PublicationLine: publicationLine(taskID, "https://github.com/testowner/testrepo/pull/42", "merged-sha"),
+	}
+	if err := WriteRetirementRecord(home, rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(checkPath, []byte("#!/bin/sh\necho changed\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := RecoverPendingRetirement(home, taskID)
+	if err == nil || resolved {
+		t.Fatalf("RecoverPendingRetirement = (%v, %v), want unresolved error", resolved, err)
+	}
+	if got := readRetirementRecordOrNil(t, home, taskID); got == nil {
+		t.Fatal("retirement record was removed after digest mismatch")
+	}
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("poll was removed after digest mismatch: %v", err)
 	}
 }
 
