@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
@@ -216,7 +216,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	// Status-signal path: captain-relevant last lines (including Captain return-channel
 	// files state/captain:<id>.status) wake General even when the pane is alive.
 	seenStatus := map[string]bool{}
-	for _, match := range classify.ScanGeneralRelevant(filepath.Join(homeDir, "state")) {
+	for _, match := range domain.ScanGeneralRelevant(filepath.Join(homeDir, "state")) {
 		seenStatus[match.TaskID] = true
 		reasons = append(reasons, &WakeReason{
 			Kind:    "signal",
@@ -624,8 +624,8 @@ func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort)
 	if !paneAlive {
 		return false
 	}
-	switch classify.AbsorbClass(id, filepath.Join(homeDir, "state")) {
-	case classify.Working, classify.Paused:
+	switch domain.AbsorbClass(id, filepath.Join(homeDir, "state")) {
+	case domain.Working, domain.Paused:
 		return true
 	}
 	return false
@@ -638,7 +638,7 @@ func isStatusPaused(homeDir, id string) bool {
 	if err != nil || len(lines) == 0 {
 		return false
 	}
-	return classify.IsPaused(lines[len(lines)-1])
+	return domain.IsPaused(lines[len(lines)-1])
 }
 
 // isPausedBeyondResurface reports whether a paused task has been paused
@@ -660,5 +660,5 @@ func isStatusGeneralRelevant(homeDir, id string) bool {
 	if err != nil || len(lines) == 0 {
 		return false
 	}
-	return classify.GeneralRelevant(lines[len(lines)-1])
+	return domain.GeneralRelevant(lines[len(lines)-1])
 }

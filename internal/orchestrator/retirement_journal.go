@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -63,7 +63,7 @@ func PrepareForcedRetirementEvidence(homeDir, taskID string) ([]string, error) {
 func FinalizeRetirementJournals(homeDir, taskID string) ([]string, error) {
 	var steps []string
 	statusPath := filepath.Join(homeDir, "state", taskID+".status")
-	for _, activity := range classify.OpenActivities(statusPath) {
+	for _, activity := range domain.OpenActivities(statusPath) {
 		line := fmt.Sprintf("resolved [key=%s]: soldier torn down", activity.Key)
 		if err := home.AppendStatus(homeDir, taskID, line); err != nil {
 			return steps, err

@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -41,7 +41,7 @@ type State struct {
 	// OpenActivities are still-open keyed work phases from the status event log
 	// (working/paused open; done/failed/resolved/etc. close). Evidence only —
 	// Status is the current-state authority.
-	OpenActivities []classify.Activity
+	OpenActivities []domain.Activity
 
 	// BacklogState is the task state from the backlog file when available.
 	BacklogState string `json:"backlog_state,omitempty"`
@@ -75,7 +75,7 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	if len(statusLines) > 0 {
 		s.StatusLines = len(statusLines)
 	}
-	s.OpenActivities = classify.OpenActivities(statusPath)
+	s.OpenActivities = domain.OpenActivities(statusPath)
 
 	// --- No-mistakes run-step (pipeline state) ---
 	// This is a fast local check that feeds into the hierarchy below.

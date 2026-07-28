@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
@@ -159,7 +159,7 @@ func DrainCycle(opts DrainCycleOptions) (*DrainReport, error) {
 			Key:     w.Key,
 			Payload: w.Payload,
 		}
-		if classify.GeneralRelevant(w.Payload) {
+		if domain.GeneralRelevant(w.Payload) {
 			report.Actionable = append(report.Actionable, dw)
 		} else {
 			report.RoutineCount++

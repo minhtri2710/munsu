@@ -35,7 +35,7 @@ func TestTransitionalPackagePolicy(t *testing.T) {
 		packages[p.ImportPath] = p
 	}
 	const root = "github.com/minhtri2710/munsu/internal/"
-	retired := map[string]bool{"session": true, "worktree": true, "hometag": true, "ghurl": true, "glurl": true, "composer": true, "nostatus": true, "event": true, "mailbox": true, "uplink": true, "wakedelivery": true, "waker": true, "turnend": true, "afk": true, "backlog": true, "project": true, "scope": true, "delivery": true, "supervision": true, "teardown": true, "decisionhold": true, "brief": true, "soldier": true, "soldierstate": true, "capability": true, "runner": true, "herdrprune": true, "agentsmd": true, "stow": true, "selfupdate": true, "contract": true, "marker": true, "integrate": true}
+	retired := map[string]bool{"session": true, "worktree": true, "hometag": true, "ghurl": true, "glurl": true, "composer": true, "nostatus": true, "event": true, "mailbox": true, "uplink": true, "wakedelivery": true, "waker": true, "turnend": true, "afk": true, "backlog": true, "project": true, "scope": true, "delivery": true, "supervision": true, "teardown": true, "decisionhold": true, "brief": true, "soldier": true, "soldierstate": true, "capability": true, "runner": true, "herdrprune": true, "agentsmd": true, "stow": true, "selfupdate": true, "contract": true, "marker": true, "integrate": true, "classify": true}
 	for path, p := range packages {
 		for _, imp := range p.Imports {
 			if retired[strings.TrimPrefix(imp, root)] && strings.HasPrefix(imp, root) {

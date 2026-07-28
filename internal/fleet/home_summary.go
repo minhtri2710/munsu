@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -205,7 +205,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	stateDir := home.StateDir(homeDir)
 	for _, c := range children {
 		path := filepath.Join(stateDir, c.id+".status")
-		for _, d := range classify.OpenDecisions(path) {
+		for _, d := range domain.OpenDecisions(path) {
 			key := c.id + "\x00" + d.Key + "\x00" + d.Verb
 			if seenDecision[key] {
 				continue

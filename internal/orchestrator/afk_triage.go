@@ -1,7 +1,7 @@
 package orchestrator
 
 import (
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
@@ -43,7 +43,7 @@ func OneCycle(homeDir string) (*Digest, error) {
 			// Wake payloads from afk escalation are status-line notes
 			// ("PR merged", "build broken") and match the classify patterns
 			// for done/failed/needs-decision content.
-			IsGeneralRelevant: classify.GeneralRelevant(rec.Payload),
+			IsGeneralRelevant: domain.GeneralRelevant(rec.Payload),
 		}
 
 		if wd.IsGeneralRelevant {

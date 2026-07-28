@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -39,20 +39,20 @@ type TaskSnapshot struct {
 	Source string `json:"source,omitempty"`
 
 	// Resolved current-state projection (populated when a resolver is wired).
-	CurrentState        string              `json:"current_state,omitempty"`
-	CurrentDescription  string              `json:"current_description,omitempty"`
-	NoMistakesRunStep   string              `json:"no_mistakes_run_step,omitempty"`
-	StatusLogSuperseded bool                `json:"status_log_superseded"`
-	OpenActivities      []classify.Activity `json:"open_activities,omitempty"`
+	CurrentState        string            `json:"current_state,omitempty"`
+	CurrentDescription  string            `json:"current_description,omitempty"`
+	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
+	StatusLogSuperseded bool              `json:"status_log_superseded"`
+	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
 
 // CurrentStateInfo carries the resolved current-state projection for a task.
 type CurrentStateInfo struct {
-	State               string              `json:"state"`
-	Description         string              `json:"description"`
-	NoMistakesRunStep   string              `json:"no_mistakes_run_step,omitempty"`
-	StatusLogSuperseded bool                `json:"status_log_superseded"`
-	OpenActivities      []classify.Activity `json:"open_activities,omitempty"`
+	State               string            `json:"state"`
+	Description         string            `json:"description"`
+	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
+	StatusLogSuperseded bool              `json:"status_log_superseded"`
+	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
 
 // resolveCurrentState is a function pointer wired from CLI to use soldierstate.Read().
@@ -83,7 +83,7 @@ func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo 
 	}
 
 	statusPath := filepath.Join(mhome.StateDir(homeDir), id+".status")
-	info.OpenActivities = classify.OpenActivities(statusPath)
+	info.OpenActivities = domain.OpenActivities(statusPath)
 
 	if data, err := os.ReadFile(statusPath); err == nil {
 		lines := strings.TrimSpace(string(data))

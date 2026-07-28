@@ -1,4 +1,4 @@
-package classify
+package domain
 
 import (
 	"os"

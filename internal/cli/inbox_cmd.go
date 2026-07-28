@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -245,7 +245,7 @@ func formatCaptainStatusLines(stateDir string) []string {
 
 		captainID := strings.TrimPrefix(name[:len(name)-len(".status")], "captain:")
 		marker := " "
-		if classify.GeneralRelevant(lastLine) {
+		if domain.GeneralRelevant(lastLine) {
 			marker = "!"
 		}
 		lines = append(lines, fmt.Sprintf("%s %s: %s", marker, captainID, lastLine))
