@@ -1,6 +1,6 @@
 //go:build linux
 
-package afk
+package orchestrator
 
 import (
 	"fmt"

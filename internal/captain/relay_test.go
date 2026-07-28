@@ -6,9 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // setupRelayTest creates a captain home and a general home with a provenance
@@ -738,7 +737,7 @@ type captainNotificationTransport struct {
 	calls        int
 }
 
-func (t *captainNotificationTransport) Notify(string, afk.TargetResult, string) orchestrator.UplinkNotifyResult {
+func (t *captainNotificationTransport) Notify(string, orchestrator.TargetResult, string) orchestrator.UplinkNotifyResult {
 	t.calls++
 	return orchestrator.UplinkNotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
 }

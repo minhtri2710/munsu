@@ -3,10 +3,9 @@ package cli
 import (
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 type sessionActivationTransport struct {
@@ -17,12 +16,12 @@ func newSessionActivationTransport() orchestrator.ActivationTransport {
 	return sessionActivationTransport{resolve: backend.Resolve}
 }
 
-func (t sessionActivationTransport) Attempt(home string, target afk.TargetResult, payload string) orchestrator.ActivationAttempt {
+func (t sessionActivationTransport) Attempt(home string, target orchestrator.TargetResult, payload string) orchestrator.ActivationAttempt {
 	bk, _, err := t.resolve(home, "")
 	if err != nil {
 		return orchestrator.ActivationAttempt{SafetyError: err.Error()}
 	}
-	safe, verdict, err := afk.IsSafeInjectTarget(bk, target.Handle)
+	safe, verdict, err := orchestrator.IsSafeInjectTarget(bk, target.Handle)
 	attempt := orchestrator.ActivationAttempt{SafetyVerdict: verdict.String()}
 	if err != nil {
 		attempt.SafetyError = err.Error()
@@ -51,7 +50,7 @@ func (t sessionActivationTransport) Attempt(home string, target afk.TargetResult
 	return attempt
 }
 
-func activationComposerSafe(cap afk.PaneCapture, handle string) bool {
+func activationComposerSafe(cap orchestrator.PaneCapture, handle string) bool {
 	output, err := cap.Capture(handle, 4)
 	if err != nil {
 		return false

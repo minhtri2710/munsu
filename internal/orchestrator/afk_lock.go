@@ -1,4 +1,4 @@
-package afk
+package orchestrator
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const afkLockFile = "state/.afk.lock"
+const afkLockFile = "state/.lock"
 
 // Lock represents an identity-backed daemon lock for the AFK daemon.
 // It stores the PID and start time, enabling idempotent acquire: if the

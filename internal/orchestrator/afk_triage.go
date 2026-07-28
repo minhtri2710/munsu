@@ -1,4 +1,4 @@
-package afk
+package orchestrator
 
 import (
 	"github.com/minhtri2710/munsu/internal/classify"

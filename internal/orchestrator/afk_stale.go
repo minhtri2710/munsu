@@ -1,4 +1,4 @@
-package afk
+package orchestrator
 
 import (
 	"fmt"

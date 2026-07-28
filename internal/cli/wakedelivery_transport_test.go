@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/backend"
 )
 
@@ -59,7 +59,7 @@ func TestSessionActivationTransportMapsTypedOutcomes(t *testing.T) {
 		transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 			return bk, "tmux", nil
 		}}
-		got := transport.Attempt("home", afk.TargetResult{Handle: "pane"}, "payload")
+		got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
 		want := status == backend.PromptSubmitted || status == backend.PromptQueuedWhileBusy
 		if got.Acknowledged != want || got.SubmitStatus != string(status) {
 			t.Fatalf("status %s: %+v", status, got)
@@ -76,7 +76,7 @@ func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
 	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 		return bk, "tmux", nil
 	}}
-	got := transport.Attempt("home", afk.TargetResult{Handle: "pane"}, "payload")
+	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
 	if !got.Acknowledged || got.SafetyVerdict != "empty" {
 		t.Fatalf("recognized-agent result = %+v", got)
 	}
@@ -86,7 +86,7 @@ func TestSessionActivationTransportQueuesResolutionFailure(t *testing.T) {
 	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 		return nil, "", errors.New("unavailable")
 	}}
-	got := transport.Attempt("home", afk.TargetResult{Handle: "pane"}, "payload")
+	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
 	if got.Acknowledged || got.SafetyError == "" {
 		t.Fatalf("resolution result = %+v", got)
 	}

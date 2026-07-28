@@ -5,8 +5,7 @@ package orchestrator
 import (
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
+		"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // Re-export lifecycle & waker helpers
@@ -40,13 +39,13 @@ func HasQueuedWakes(homeDir string) bool {
 // StartAFK starts the AFK away-mode daemon.
 func StartAFK(homeDir string) error {
 	_ = lifecycle.ReadBeatStatus(homeDir, time.Now())
-	return afk.Start(homeDir)
+	return Start(homeDir)
 }
 
 func IsAFKActive(homeDir string) bool {
-	return afk.IsActive(homeDir)
+	return IsActive(homeDir)
 }
 
 func DisableAFK(homeDir string) error {
-	return afk.Disable(homeDir)
+	return Disable(homeDir)
 }

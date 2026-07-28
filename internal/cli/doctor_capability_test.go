@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/supervision"
 )
@@ -268,7 +268,7 @@ func TestCollectCapabilities_GeneralTarget(t *testing.T) {
 
 	// If unsupported, there should be a fix hint available.
 	// If there's an ownership validation error, the fix is still relevant.
-	if capResult.General.Err == nil && capResult.General.Result.Source == afk.Unsupported {
+	if capResult.General.Err == nil && capResult.General.Result.Source == orchestrator.Unsupported {
 		if fix := capResult.General.Fix(); fix == "" {
 			t.Error("expected non-empty Fix for unsupported general target")
 		}

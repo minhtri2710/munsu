@@ -1,6 +1,6 @@
 //go:build darwin
 
-package afk
+package orchestrator
 
 import (
 	"bytes"

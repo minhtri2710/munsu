@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/backend"
 )
 
@@ -24,7 +24,7 @@ func TestSessionUplinkTransportMapsTypedPromptOutcomes(t *testing.T) {
 		transport := sessionUplinkTransport{resolve: func(string, string) (backend.Backend, string, error) {
 			return uplinkPromptBackend{result: backend.PromptResult{Status: status}}, "tmux", nil
 		}}
-		got := transport.Notify("home", afk.TargetResult{Source: afk.RuntimeSource, Handle: "pane"}, "payload")
+		got := transport.Notify("home", orchestrator.TargetResult{Source: orchestrator.RuntimeSource, Handle: "pane"}, "payload")
 		wantAck := status == backend.PromptSubmitted || status == backend.PromptQueuedWhileBusy
 		if got.Acknowledged != wantAck || got.Queued == wantAck {
 			t.Fatalf("status %s: %+v", status, got)
@@ -36,7 +36,7 @@ func TestSessionUplinkTransportQueuesResolutionFailure(t *testing.T) {
 	transport := sessionUplinkTransport{resolve: func(string, string) (backend.Backend, string, error) {
 		return nil, "", errors.New("unavailable")
 	}}
-	got := transport.Notify("home", afk.TargetResult{Source: afk.RuntimeSource, Handle: "pane"}, "payload")
+	got := transport.Notify("home", orchestrator.TargetResult{Source: orchestrator.RuntimeSource, Handle: "pane"}, "payload")
 	if !got.Queued || got.Acknowledged {
 		t.Fatalf("result = %+v", got)
 	}

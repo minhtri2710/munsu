@@ -7,11 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -239,7 +238,7 @@ func resolveRingPolicy(ring, homeDir string) string {
 	case "no-ring":
 		return "no-ring"
 	default: // auto
-		if afk.ShouldBatch(homeDir) {
+		if orchestrator.ShouldBatch(homeDir) {
 			return "no-ring"
 		}
 		return "ring"

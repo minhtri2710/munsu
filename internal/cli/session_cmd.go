@@ -8,14 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/spawn"
@@ -667,7 +666,7 @@ Subcommands:
   return     Ordered AFK daemon shutdown with digest drain
   return check  Check if actionable AFK state remains`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			var d afk.Daemon
+			var d orchestrator.Daemon
 			return d.Start(ctx.Home)
 		}),
 	}
@@ -701,12 +700,28 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 				return err
 			}
 
-			report, err := afk.DrainCycle(afk.DrainCycleOptions{
+			report, err := orchestrator.DrainCycle(orchestrator.DrainCycleOptions{
 				HomeDir:       ctx.Home,
 				Consumer:      consumer,
 				LeaseCaptains: leaseCaptains,
 				Limit:         limit,
 				PeekFleet:     !noPeek,
+				FleetSnapshot: func(homeDir string) ([]orchestrator.FleetTaskSnapshot, error) {
+					snap, err := fleet.Snapshot(homeDir)
+					if err != nil {
+						return nil, err
+					}
+					var list []orchestrator.FleetTaskSnapshot
+					for _, t := range snap.Tasks {
+						list = append(list, orchestrator.FleetTaskSnapshot{
+							ID:         t.ID,
+							Kind:       t.Kind,
+							LastStatus: t.LastStatus,
+							Window:     t.Window,
+						})
+					}
+					return list, nil
+				},
 			})
 			if err != nil {
 				return operationError("internal", "Run `munsu afk drain --consumer "+consumer+"` again", err.Error())
@@ -728,7 +743,7 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 				}
 				return writeContract(cmd, contract.Response[contract.DrainCycle]{
 					SchemaVersion: contract.SchemaVersion,
-					Kind:          "afk.drain",
+					Kind:          "orchestrator.drain",
 					Status:        "success",
 					Data: contract.DrainCycle{
 						ClaimID:      report.LeaseID,
@@ -767,7 +782,7 @@ Check exit code via 'munsu afk return check' — returns 0 when
 no actionable AFK state remains.`,
 		Args: cobra.NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			report, err := afk.Return(ctx.Home)
+			report, err := orchestrator.Return(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -782,7 +797,7 @@ no actionable AFK state remains.`,
 non-zero if actionable items remain.`,
 		Args: cobra.NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if !afk.IsClean(ctx.Home) {
+			if !orchestrator.IsClean(ctx.Home) {
 				return fmt.Errorf("actionable AFK state remains — run 'munsu afk return' to reconcile")
 			}
 			return nil

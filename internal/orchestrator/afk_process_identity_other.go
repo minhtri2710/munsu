@@ -1,6 +1,6 @@
 //go:build !darwin && !linux
 
-package afk
+package orchestrator
 
 import "fmt"
 

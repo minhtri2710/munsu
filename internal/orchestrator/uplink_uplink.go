@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/config"
+		"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/task"
 )
@@ -289,10 +288,10 @@ func notificationDue(home, messageID string, now time.Time) bool {
 
 // NotifyParent attempts immediate delivery of a NotificationRef to the parent
 // agent pane. Durable state must already exist before this adapter is called.
-type TargetResolver func(receiverHome string, ref NotificationRef) (afk.TargetResult, error)
+type TargetResolver func(receiverHome string, ref NotificationRef) (TargetResult, error)
 
 type NotificationTransport interface {
-	Notify(senderHome string, target afk.TargetResult, payload string) UplinkNotifyResult
+	Notify(senderHome string, target TargetResult, payload string) UplinkNotifyResult
 }
 
 func NotifyParentWithTransport(senderHome, receiverHome string, ref NotificationRef, transport NotificationTransport) UplinkNotifyResult {
@@ -301,35 +300,35 @@ func NotifyParentWithTransport(senderHome, receiverHome string, ref Notification
 
 func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
 	target, err := resolveTarget(receiverHome, ref)
-	if err != nil || target.Handle == "" || target.Source == afk.Unsupported || transport == nil {
+	if err != nil || target.Handle == "" || target.Source == Unsupported || transport == nil {
 		return UplinkNotifyResult{Queued: true}
 	}
 	return transport.Notify(senderHome, target, ref.Encode())
 }
 
-func resolveReceiverTarget(receiverHome string, ref NotificationRef) (afk.TargetResult, error) {
+func resolveReceiverTarget(receiverHome string, ref NotificationRef) (TargetResult, error) {
 	env, err := NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil || env == nil {
-		return afk.TargetResult{}, fmt.Errorf("reading receiver envelope: %w", err)
+		return TargetResult{}, fmt.Errorf("reading receiver envelope: %w", err)
 	}
 	if env.ReceiverRank == RankCaptain {
 		parentHome, err := config.Get(receiverHome, "parent-home")
 		if err != nil {
-			return afk.TargetResult{}, fmt.Errorf("captain parent-home unavailable: %w", err)
+			return TargetResult{}, fmt.Errorf("captain parent-home unavailable: %w", err)
 		}
 		meta, err := task.ReadMeta(parentHome, "captain:"+env.ReceiverID)
 		if err != nil {
-			return afk.TargetResult{}, err
+			return TargetResult{}, err
 		}
 		paneID := strings.TrimSpace(meta["herdr_pane_id"])
 		if paneID == "" {
-			return afk.TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
+			return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
 		}
 		sessionID := strings.TrimSpace(meta["herdr_session"])
 		if sessionID == "" {
 			sessionID = "default"
 		}
-		return afk.TargetResult{Source: afk.RuntimeSource, Handle: sessionID + ":" + paneID, Session: sessionID}, nil
+		return TargetResult{Source: RuntimeSource, Handle: sessionID + ":" + paneID, Session: sessionID}, nil
 	}
-	return afk.ResolveTargetWithSource(receiverHome)
+	return ResolveTargetWithSource(receiverHome)
 }

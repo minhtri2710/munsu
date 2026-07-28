@@ -1,4 +1,4 @@
-package afk
+package orchestrator
 
 import (
 	"encoding/json"
@@ -128,7 +128,7 @@ func Return(homeDir string) (*ReturnReport, error) {
 	return report, nil
 }
 
-// readDaemonPID reads the PID from state/.afk.lock.
+// readDaemonPID reads the PID from state/.lock.
 func readDaemonPID(homeDir string) int {
 	lockPath := filepath.Join(homeDir, afkLockFile)
 	data, err := os.ReadFile(lockPath)

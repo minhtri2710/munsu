@@ -1,4 +1,4 @@
-package afk
+package orchestrator
 
 import (
 	"encoding/json"
@@ -366,7 +366,7 @@ func TestReadDaemonPID_ValidLock(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, ".afk.lock"), []byte("12345\t2024-01-01T00:00:00Z\n"), 0644)
+	os.WriteFile(filepath.Join(stateDir, ".lock"), []byte("12345\t2024-01-01T00:00:00Z\n"), 0644)
 
 	if pid := readDaemonPID(tmp); pid != 12345 {
 		t.Errorf("readDaemonPID = %d, want 12345", pid)

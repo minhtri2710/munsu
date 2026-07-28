@@ -1,4 +1,4 @@
-package afk
+package orchestrator
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 )
 
 // captureStdout runs f and returns everything written to stdout.
-func captureStdout(f func()) string {
+func afkCaptureStdout(f func()) string {
 	old := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -79,7 +79,7 @@ func TestScanStatusFiles_NoStateDir(t *testing.T) {
 func TestScanStatusFiles_EmptyStateDir(t *testing.T) {
 	tmp := t.TempDir()
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if output != "" {
@@ -96,7 +96,7 @@ func TestScanStatusFiles_IgnoresNonStatusFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, ".hidden.status"), []byte("done: hidden\n"), 0644)
 	os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("window=@0\n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if output != "" {
@@ -110,7 +110,7 @@ func TestScanStatusFiles_DetectsDoneEvent(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: doing stuff\ndone: PR #42 checks green\n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if !strings.Contains(output, "done:") || !strings.Contains(output, "task-1.status") {
@@ -124,7 +124,7 @@ func TestScanStatusFiles_DetectsFailedEvent(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: doing stuff\nfailed: build broken\n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if !strings.Contains(output, "failed:") || !strings.Contains(output, "task-1.status") {
@@ -138,7 +138,7 @@ func TestScanStatusFiles_DetectsNeedsDecisionEvent(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: need input\nneeds-decision: which branch to target\n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if !strings.Contains(output, "needs-decision:") || !strings.Contains(output, "task-1.status") {
@@ -152,7 +152,7 @@ func TestScanStatusFiles_IgnoresWorkingStatus(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: in progress\nworking: still working\n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if output != "" {
@@ -168,7 +168,7 @@ func TestScanStatusFiles_MultipleTasks(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "task-2.status"), []byte("working: ongoing\n"), 0644)
 	os.WriteFile(filepath.Join(stateDir, "task-3.status"), []byte("working: stuck\nneeds-decision: what next\n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if !strings.Contains(output, "done:") {
@@ -195,7 +195,7 @@ func TestScanStatusFiles_EmptyFile(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte{}, 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if output != "" {
@@ -209,7 +209,7 @@ func TestScanStatusFiles_OnlyWhitespace(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("  \n\n  \n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if output != "" {
@@ -224,7 +224,7 @@ func TestScanStatusFiles_DoneAtFirstLine(t *testing.T) {
 	// Event on the last line — that's what scanStatusFiles checks
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("done: first action\n"), 0644)
 
-	output := captureStdout(func() {
+	output := afkCaptureStdout(func() {
 		scanStatusFiles(tmp)
 	})
 	if !strings.Contains(output, "done:") {
@@ -314,7 +314,7 @@ func TestScanStatusFiles_DedupSkipsRepeat(t *testing.T) {
 	seenMu.Unlock()
 
 	// First call: should escalate
-	firstOut := captureStdout(func() { scanStatusFiles(tmp) })
+	firstOut := afkCaptureStdout(func() { scanStatusFiles(tmp) })
 	if !strings.Contains(firstOut, "done:") {
 		t.Fatalf("expected first call to escalate 'done:', got %q", firstOut)
 	}
@@ -333,7 +333,7 @@ func TestScanStatusFiles_DedupSkipsRepeat(t *testing.T) {
 	}
 
 	// Captain call: same content, should be suppressed
-	captainOut := captureStdout(func() { scanStatusFiles(tmp) })
+	captainOut := afkCaptureStdout(func() { scanStatusFiles(tmp) })
 	if captainOut != "" {
 		t.Errorf("expected no output on repeat, got %q", captainOut)
 	}
@@ -352,7 +352,7 @@ func TestScanStatusFiles_EscalatesOnChange(t *testing.T) {
 	seenMu.Unlock()
 
 	// First call: escalate
-	firstOut := captureStdout(func() { scanStatusFiles(tmp) })
+	firstOut := afkCaptureStdout(func() { scanStatusFiles(tmp) })
 	if !strings.Contains(firstOut, "done:") {
 		t.Fatalf("expected first call to escalate 'done:', got %q", firstOut)
 	}
@@ -361,7 +361,7 @@ func TestScanStatusFiles_EscalatesOnChange(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("done: build green\nfailed: test failure\n"), 0644)
 
 	// Captain call: line changed, should escalate again
-	captainOut := captureStdout(func() { scanStatusFiles(tmp) })
+	captainOut := afkCaptureStdout(func() { scanStatusFiles(tmp) })
 	if !strings.Contains(captainOut, "failed:") {
 		t.Errorf("expected escalation on line change, got %q", captainOut)
 	}

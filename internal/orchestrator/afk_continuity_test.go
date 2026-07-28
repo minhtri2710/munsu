@@ -1,6 +1,7 @@
-package afk_test
+package orchestrator_test
 
 import (
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,9 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
 )
 
@@ -53,7 +52,7 @@ func TestFastPath_SafeIdleCaptainInjects(t *testing.T) {
 	msg := "[report] done: PR merged (task=test-1)"
 	eventID := "12345"
 
-	result := afk.DirectInject(bk, cap, parentTarget, msg, eventID)
+	result := orchestrator.DirectInject(bk, cap, parentTarget, msg, eventID)
 
 	if string(result.Outcome) != "injected" {
 		t.Fatalf("outcome = %q, want injected", string(result.Outcome))
@@ -76,7 +75,7 @@ func TestFastPath_SafeIdleCaptainInjects(t *testing.T) {
 func TestFastPath_PendingComposerNoInjection(t *testing.T) {
 	bk := &fakeBackend{}
 	cap := &fakeCapture{content: "git status\n"}
-	result := afk.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
+	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
 
 	if string(result.Outcome) != "unsafe" {
 		t.Fatalf("outcome = %q, want unsafe", string(result.Outcome))
@@ -90,7 +89,7 @@ func TestFastPath_PendingComposerNoInjection(t *testing.T) {
 func TestFastPath_DeadShellNoInjection(t *testing.T) {
 	bk := &fakeBackend{}
 	cap := &fakeCapture{content: "$ \n"}
-	result := afk.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
+	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
 
 	if string(result.Outcome) != "unsafe" {
 		t.Fatalf("outcome = %q, want unsafe", string(result.Outcome))
@@ -104,7 +103,7 @@ func TestFastPath_DeadShellNoInjection(t *testing.T) {
 func TestFastPath_BackendErrorReturnsBackendFailed(t *testing.T) {
 	bk := &failBackend{}
 	cap := &fakeCapture{content: "\u276F \n"}
-	result := afk.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
+	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
 
 	if string(result.Outcome) != "backend-failed" {
 		t.Fatalf("outcome = %q, want backend-failed", string(result.Outcome))
@@ -118,7 +117,7 @@ func TestFastPath_BackendErrorReturnsBackendFailed(t *testing.T) {
 func TestFastPath_CaptureErrorReturnsEndpointDead(t *testing.T) {
 	bk := &fakeBackend{}
 	cap := &fakeCapture{err: os.ErrInvalid}
-	result := afk.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
+	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
 
 	if string(result.Outcome) != "endpoint-dead" {
 		t.Fatalf("outcome = %q, want endpoint-dead", string(result.Outcome))
@@ -202,8 +201,8 @@ func TestReliablePath_EventAppendRoundTrip(t *testing.T) {
 func TestTypedDiagnostics_InjectionOutcomes(t *testing.T) {
 	tests := []struct {
 		name    string
-		backend afk.Backend
-		capture afk.PaneCapture
+		backend orchestrator.Backend
+		capture orchestrator.PaneCapture
 		want    string
 	}{
 		{"injected", &fakeBackend{}, &fakeCapture{content: "\u276F \n"}, "injected"},
@@ -215,7 +214,7 @@ func TestTypedDiagnostics_InjectionOutcomes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := afk.DirectInject(tt.backend, tt.capture, "s:p", "test msg", "1")
+			result := orchestrator.DirectInject(tt.backend, tt.capture, "s:p", "test msg", "1")
 			if string(result.Outcome) != tt.want {
 				t.Errorf("outcome = %q, want %q", string(result.Outcome), tt.want)
 			}
@@ -261,7 +260,7 @@ func TestReliablePath_WakePreservedAfterInjection(t *testing.T) {
 	home := t.TempDir()
 	lifecycle.EnqueueWake(home, "signal", "task-i", "done: persistent")
 
-	afk.DirectInject(&fakeBackend{}, &fakeCapture{content: "\u276F \n"}, "s:p", "test", "1")
+	orchestrator.DirectInject(&fakeBackend{}, &fakeCapture{content: "\u276F \n"}, "s:p", "test", "1")
 
 	if !lifecycle.HasQueuedWakes(home) {
 		t.Fatal("wake lost after injection")

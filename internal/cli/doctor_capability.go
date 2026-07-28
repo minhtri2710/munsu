@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/scope"
@@ -89,7 +89,7 @@ func (d *WatcherDiagnostic) Fix() string {
 
 // GeneralDiagnostic reports general target resolution status.
 type GeneralDiagnostic struct {
-	Result afk.TargetResult
+	Result orchestrator.TargetResult
 	Err    error
 }
 
@@ -97,14 +97,14 @@ func (d *GeneralDiagnostic) String() string {
 	if d.Err != nil {
 		return fmt.Sprintf("general target: error: %v", d.Err)
 	}
-	if d.Result.Source == afk.Unsupported {
+	if d.Result.Source == orchestrator.Unsupported {
 		return fmt.Sprintf("general target: %s (%s)", d.Result.Source, d.Result.SourceDetail)
 	}
 	return fmt.Sprintf("general target: resolved via %s → %q", d.Result.Source, d.Result.Handle)
 }
 
 func (d *GeneralDiagnostic) Fix() string {
-	if d.Result.Source == afk.Unsupported {
+	if d.Result.Source == orchestrator.Unsupported {
 		return "set config/general-pane or ensure TMUX_PANE/HERDR_ENV is active"
 	}
 	return ""
@@ -203,14 +203,14 @@ func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 func collectGeneralDiagnostic(home string) *GeneralDiagnostic {
 	d := &GeneralDiagnostic{}
 
-	result, err := afk.ResolveTargetWithSource(home)
+	result, err := orchestrator.ResolveTargetWithSource(home)
 	if err != nil {
 		d.Err = err
 		return d
 	}
 	d.Result = result
 
-	if err := afk.ValidateTargetOwnership(&result); err != nil {
+	if err := orchestrator.ValidateTargetOwnership(&result); err != nil {
 		d.Err = fmt.Errorf("ownership validation: %w", err)
 	}
 	return d

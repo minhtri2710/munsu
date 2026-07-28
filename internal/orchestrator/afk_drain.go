@@ -1,13 +1,26 @@
-package afk
+package orchestrator
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/task"
 )
+
+// FleetTaskSnapshot is the typed task reading for fleet peek.
+type FleetTaskSnapshot struct {
+	ID         string
+	Kind       string
+	LastStatus string
+	Window     string
+}
+
+// FleetSnapshotProvider resolves fleet tasks for advisory peeking.
+type FleetSnapshotProvider func(homeDir string) ([]FleetTaskSnapshot, error)
 
 // DrainReport summarizes one General drain cycle: claimed signal wakes
 // classified into actionable vs routine, plus a fleet peek of in-flight
@@ -47,9 +60,7 @@ type DrainTaskRow struct {
 
 // HasActionable reports whether the drain cycle surfaced anything that
 // needs General attention before resuming normal work. Actionable signals
-// come from claimed wakes (general-relevant payloads). The fleet peek is
-// informational and does not itself gate action — fleet.Snapshot assumes
-// panes alive when a window is set unless a liveness probe is wired.
+// come from claimed wakes (general-relevant payloads).
 func (r *DrainReport) HasActionable() bool {
 	if r == nil {
 		return false
@@ -106,6 +117,7 @@ type DrainCycleOptions struct {
 	LeaseCaptains int
 	Limit         int
 	PeekFleet     bool // include a fleet snapshot peek
+	FleetSnapshot FleetSnapshotProvider
 }
 
 // DrainCycle performs one General drain cycle:
@@ -155,7 +167,7 @@ func DrainCycle(opts DrainCycleOptions) (*DrainReport, error) {
 	}
 
 	if opts.PeekFleet {
-		peek, perr := peekFleet(opts.HomeDir)
+		peek, perr := peekFleet(opts.HomeDir, opts.FleetSnapshot)
 		if perr != nil {
 			// Fleet peek is advisory; never fail the drain on it.
 			report.Guidance = append(report.Guidance, "fleet peek failed: "+perr.Error())
@@ -170,21 +182,49 @@ func DrainCycle(opts DrainCycleOptions) (*DrainReport, error) {
 }
 
 // peekFleet builds a compact actionable fleet peek from the snapshot.
-func peekFleet(homeDir string) (*DrainFleetPeek, error) {
-	snap, err := fleet.Snapshot(homeDir)
-	if err != nil {
-		return nil, err
+func peekFleet(homeDir string, provider FleetSnapshotProvider) (*DrainFleetPeek, error) {
+	var tasks []FleetTaskSnapshot
+	if provider != nil {
+		var err error
+		tasks, err = provider(homeDir)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Default fallback: scan state/*.meta
+		stateDir := filepath.Join(homeDir, "state")
+		entries, err := os.ReadDir(stateDir)
+		if err == nil {
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".meta") && !strings.HasPrefix(e.Name(), ".") {
+					id := strings.TrimSuffix(e.Name(), ".meta")
+					meta, err := task.ReadMeta(homeDir, id)
+					if err == nil {
+						tasks = append(tasks, FleetTaskSnapshot{
+							ID:         id,
+							Kind:       meta["kind"],
+							LastStatus: meta["last_status"],
+							Window:     meta["window"],
+						})
+					}
+				}
+			}
+		}
 	}
+
 	peek := &DrainFleetPeek{}
-	for _, ts := range snap.Tasks {
+	for _, ts := range tasks {
 		if ts.Kind != "ship" && ts.Kind != "scout" {
 			continue
 		}
-		phase := fleet.PhaseFromProjection(ts)
+		phase := "alive"
+		if ts.Window == "" {
+			phase = "no-window"
+		}
 		peek.InFlight++
 		if phase == "alive" {
 			peek.Alive++
-		} else if phase == "dead" {
+		} else {
 			peek.Dead++
 		}
 		status := ts.LastStatus

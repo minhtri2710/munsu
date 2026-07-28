@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -106,7 +106,7 @@ func printFleetState(w io.Writer, home string) {
 // read-only sessions must not claim wakes. Fleet peek is omitted because the
 // fleet state block above already shows in-flight phase.
 func printDrainSummary(w io.Writer, home string) {
-	report, err := afk.DrainCycle(afk.DrainCycleOptions{
+	report, err := orchestrator.DrainCycle(orchestrator.DrainCycleOptions{
 		HomeDir:   home,
 		Consumer:  "session-start",
 		Limit:     10,

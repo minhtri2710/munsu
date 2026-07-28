@@ -1,6 +1,6 @@
 //go:build windows
 
-package afk
+package orchestrator
 
 import "errors"
 

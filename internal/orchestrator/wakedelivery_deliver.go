@@ -16,8 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
+		"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -332,25 +331,25 @@ func MarkActivationSeen(captainHome, taskID, termKey string) error {
 //
 // Returns the target result with the handle in "session:pane_id" format, or
 // an error if the meta cannot be read or has no herdr_pane_id.
-func resolveCaptainActivationTarget(captainHome, parentHome string) (afk.TargetResult, error) {
+func resolveCaptainActivationTarget(captainHome, parentHome string) (TargetResult, error) {
 	if parentHome == "" {
-		return afk.TargetResult{}, fmt.Errorf("no parent home for captain meta lookup")
+		return TargetResult{}, fmt.Errorf("no parent home for captain meta lookup")
 	}
 
 	captainID, err := readCaptainID(captainHome)
 	if err != nil {
-		return afk.TargetResult{}, fmt.Errorf("reading captain id: %w", err)
+		return TargetResult{}, fmt.Errorf("reading captain id: %w", err)
 	}
 
 	taskID := "captain:" + captainID
 	meta, err := task.ReadMeta(parentHome, taskID)
 	if err != nil {
-		return afk.TargetResult{}, fmt.Errorf("reading captain meta %s: %w", taskID, err)
+		return TargetResult{}, fmt.Errorf("reading captain meta %s: %w", taskID, err)
 	}
 
 	paneID := strings.TrimSpace(meta["herdr_pane_id"])
 	if paneID == "" {
-		return afk.TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
+		return TargetResult{}, fmt.Errorf("captain meta has no herdr_pane_id")
 	}
 
 	session := strings.TrimSpace(meta["herdr_session"])
@@ -360,8 +359,8 @@ func resolveCaptainActivationTarget(captainHome, parentHome string) (afk.TargetR
 
 	handle := session + ":" + paneID
 
-	return afk.TargetResult{
-		Source:       afk.RuntimeSource,
+	return TargetResult{
+		Source:       RuntimeSource,
 		Handle:       handle,
 		Session:      session,
 		SourceDetail: "captain task meta: " + taskID,
@@ -421,7 +420,7 @@ type ActivationAttempt struct {
 }
 
 type ActivationTransport interface {
-	Attempt(homeDir string, target afk.TargetResult, payload string) ActivationAttempt
+	Attempt(homeDir string, target TargetResult, payload string) ActivationAttempt
 }
 
 // ActivateOnReceipt scans captain-owned receipt files and for each one
@@ -483,7 +482,7 @@ func ActivateOnReceiptWithTransport(captainHome, parentHome string, transport Ac
 
 		// Build the activation nudge message.
 		nudge := fmt.Sprintf("[receipt] %s: soldier %s [key=%s]", pr.State, pr.TaskID, pr.TermKey)
-		markedMsg := afk.Mark(nudge)
+		markedMsg := Mark(nudge)
 
 		attempt := transport.Attempt(captainHome, target, markedMsg)
 		diag := ActivationDiagnostic{TargetHandle: target.Handle, ReceiptsFound: len(allReceipts), SafetyVerdict: attempt.SafetyVerdict, SafetyError: attempt.SafetyError, CaptureContent: attempt.CaptureContent, SubmitStatus: attempt.SubmitStatus, SubmitDetail: attempt.SubmitDetail, SubmitError: attempt.SubmitError}
