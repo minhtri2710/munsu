@@ -1,4 +1,4 @@
-package spawn
+package fleet
 
 import (
 	"fmt"
@@ -364,7 +364,7 @@ func TestRun_ValidateMode(t *testing.T) {
 		HomeDir:     t.TempDir(),
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	}
-	_, err := Run(args)
+	_, err := Spawn(args)
 	if err == nil {
 		t.Fatal("expected error for invalid mode")
 	}
@@ -395,7 +395,7 @@ func TestRun_InjectFakeEndpointCapabilities(t *testing.T) {
 		HomeDir:     t.TempDir(),
 		Endpoints:   fakeEndpointCapabilities{backend: fake},
 	}
-	_, err := Run(args)
+	_, err := Spawn(args)
 	if err == nil {
 		t.Fatal("expected error for missing brief")
 	}
@@ -749,7 +749,7 @@ func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 		HomeDir:     t.TempDir(),
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	}
-	_, err := Run(args)
+	_, err := Spawn(args)
 	if err == nil {
 		t.Fatal("expected error for invalid mode")
 	}
@@ -779,7 +779,7 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Run(Args{
+	_, err := Spawn(Args{
 		ID:          "test-task",
 		ProjectName: "test-project",
 		HomeDir:     tmpDir,
@@ -1565,7 +1565,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		Mode:        "local-only",
 	}
 
-	_, err := Run(args)
+	_, err := Spawn(args)
 	if err == nil {
 		t.Fatal("Run expected error when post-create verification fails, got nil")
 	}

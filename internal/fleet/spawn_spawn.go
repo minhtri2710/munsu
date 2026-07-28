@@ -1,7 +1,7 @@
 // Package spawn implements the soldier spawn orchestration — the full
 // sequence of resolving home, validating inputs, acquiring a worktree,
 // launching the harness, and wiring the agent session.
-package spawn
+package fleet
 
 import (
 	"fmt"
@@ -12,7 +12,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,7 +43,7 @@ type Args struct {
 //	→ start session → send brief → arm watcher
 //
 // On error after worktree lease, the worktree is returned to the pool (fail-closed).
-func Run(args Args) (string, error) {
+func Spawn(args Args) (string, error) {
 	return NewRunner(args).Run()
 }
 
@@ -76,7 +75,7 @@ func noMistakesOnPath() bool {
 // using the full capability probe. Used by auto-detection paths where silent
 // fallback to direct-PR is acceptable (unlike explicit/project/config selection).
 func noMistakesAvailable() bool {
-	probe := fleet.NoMistakesProbe()
+	probe := NoMistakesProbe()
 	return probe.State == backend.Ready
 }
 
@@ -87,7 +86,7 @@ func EnsureDeliveryModeRunnable(mode string) error {
 	if mode != "no-mistakes" {
 		return nil
 	}
-	probe := fleet.NoMistakesProbe()
+	probe := NoMistakesProbe()
 	switch probe.State {
 	case backend.Absent:
 		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")
@@ -157,7 +156,7 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 	}
 	// Binary on PATH but incompatible version: inform the user why.
 	if noMistakesOnPath() {
-		probe := fleet.NoMistakesProbe()
+		probe := NoMistakesProbe()
 		fmt.Fprintf(os.Stderr, "warning: no-mistakes found on PATH but not compatible: %s; defaulting to direct-PR. Upgrade no-mistakes or run 'munsu doctor'\n", probe.Detail)
 		return "direct-PR", nil
 	}
@@ -347,7 +346,7 @@ func defaultNoMistakesPreflight(repoPath string) error {
 // worktree acquisition. It verifies environmental readiness for the
 // resolved delivery mode (e.g. gh auth, remotes).
 func (r *Runner) preflightDelivery() error {
-	result, err := fleet.Preflight(r.effectiveMode, r.projPath)
+	result, err := Preflight(r.effectiveMode, r.projPath)
 	if err != nil {
 		return fmt.Errorf("delivery preflight: %w", err)
 	}
@@ -357,7 +356,7 @@ func (r *Runner) preflightDelivery() error {
 	return nil
 }
 
-func formatPreflightFailures(checks []fleet.Check) string {
+func formatPreflightFailures(checks []Check) string {
 	var b strings.Builder
 	for _, c := range checks {
 		if !c.OK {
@@ -375,11 +374,11 @@ func formatPreflightFailures(checks []fleet.Check) string {
 }
 
 // effectiveModeForSpawn resolves the effective delivery mode for a spawn operation.
-// It falls back to fleet.Mode when ProjectMode is not set in args.
+// It falls back to Mode when ProjectMode is not set in args.
 func effectiveModeForSpawn(homeDir string, args Args) (string, error) {
 	projectMode := args.ProjectMode
 	if projectMode == "" {
-		if m, _, err := fleet.Mode(homeDir, args.ProjectName); err == nil {
+		if m, _, err := Mode(homeDir, args.ProjectName); err == nil {
 			projectMode = m
 		}
 	}

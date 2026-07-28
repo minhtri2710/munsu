@@ -9,7 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +61,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				projectMode = "" // registry not set or not found — will use other fallbacks
 			}
 
-			_, err := spawn.Run(spawn.Args{
+			_, err := fleet.Spawn(fleet.Args{
 				ID:          id,
 				ProjectName: projectName,
 				Kind:        kind,

@@ -1,4 +1,4 @@
-package spawn
+package fleet
 
 type fakeEndpointCapabilities struct{ backend *fakeBackend }
 
@@ -9,8 +9,8 @@ func (f fakeEndpointCapabilities) Create(req CreateRequest) (CreatedEndpoint, er
 func (f fakeEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error {
 	return f.backend.SendKeys(ep.Handle, text)
 }
-func (f fakeEndpointCapabilities) Probe(ep CreatedEndpoint) (EndpointStatus, error) {
-	return EndpointStatus{Alive: f.backend.Alive(ep.Handle)}, nil
+func (f fakeEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointStatus, error) {
+	return SpawnEndpointStatus{Alive: f.backend.Alive(ep.Handle)}, nil
 }
 func (f fakeEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
 	return f.backend.Capture(ep.Handle, n)

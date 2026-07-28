@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +36,7 @@ func newBriefCmd() *cobra.Command {
 				projYolo = y
 			}
 
-			resolvedMode, err := spawn.ResolveDeliveryMode(ctx.Home, modeFlag, projectMode)
+			resolvedMode, err := fleet.ResolveDeliveryMode(ctx.Home, modeFlag, projectMode)
 			if err != nil {
 				return err
 			}

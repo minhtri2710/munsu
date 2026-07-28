@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/spawn"
+	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 type spawnEndpointBackend struct {
@@ -48,7 +48,7 @@ func TestSpawnSessionEndpointsDerivesWorkspaceLabel(t *testing.T) {
 		bound:   map[string]backend.Backend{},
 	}
 	homeDir := t.TempDir()
-	if _, err := endpoints.Create(spawn.CreateRequest{Home: homeDir}); err != nil {
+	if _, err := endpoints.Create(fleet.CreateRequest{Home: homeDir}); err != nil {
 		t.Fatal(err)
 	}
 	if want := backend.WorkspaceTag(homeDir); bk.gotLabel != want {
@@ -69,7 +69,7 @@ func TestSpawnSessionEndpointsPreservesBackendIdentityAndMetadata(t *testing.T) 
 		resolve: func(string, string) (backend.Backend, string, error) { return bk, "herdr", nil },
 		bound:   map[string]backend.Backend{},
 	}
-	created, err := endpoints.Create(spawn.CreateRequest{})
+	created, err := endpoints.Create(fleet.CreateRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +96,11 @@ func TestSpawnSessionEndpointsKeepsCreatorBindingsSeparate(t *testing.T) {
 		},
 		bound: map[string]backend.Backend{},
 	}
-	firstEndpoint, err := endpoints.Create(spawn.CreateRequest{})
+	firstEndpoint, err := endpoints.Create(fleet.CreateRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondEndpoint, err := endpoints.Create(spawn.CreateRequest{})
+	secondEndpoint, err := endpoints.Create(fleet.CreateRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

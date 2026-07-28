@@ -1,4 +1,4 @@
-package spawn
+package fleet
 
 type CreateRequest struct {
 	Home, PreferredBackend, TabName, Cwd string
@@ -9,12 +9,12 @@ type CreatedEndpoint struct {
 	Metadata                                          map[string]string
 }
 
-type EndpointStatus struct{ Alive bool }
+type SpawnEndpointStatus struct{ Alive bool }
 
 type EndpointCapabilities interface {
 	Create(CreateRequest) (CreatedEndpoint, error)
 	Submit(CreatedEndpoint, string) error
-	Probe(CreatedEndpoint) (EndpointStatus, error)
+	Probe(CreatedEndpoint) (SpawnEndpointStatus, error)
 	Capture(CreatedEndpoint, int) (string, error)
 	Dispose(CreatedEndpoint) error
 }

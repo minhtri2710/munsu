@@ -1,4 +1,4 @@
-package spawn
+package fleet
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -37,7 +36,7 @@ type Runner struct {
 
 	// soldier launch prompt state
 	prompt     string
-	promptEnv  *fleet.LaunchEnvelope
+	promptEnv  *LaunchEnvelope
 	launchArgs []string
 	launchBin  string
 }
@@ -241,11 +240,11 @@ func authorizeSpawn(role, homeDir, cwd string) error {
 	case "soldier":
 		return fmt.Errorf("spawn authority: regular soldiers cannot spawn; delegate to the general or a captain")
 	case "", "general":
-		identity, _, _, err := fleet.ClassifyIdentity(cwd)
+		identity, _, _, err := ClassifyIdentity(cwd)
 		if err != nil {
 			return fmt.Errorf("spawn authority: classifying current checkout: %w", err)
 		}
-		if identity == fleet.Worktree {
+		if identity == Worktree {
 			return fmt.Errorf("spawn authority: linked-worktree callers cannot spawn; delegate to the general or a captain")
 		}
 		return nil
@@ -330,7 +329,7 @@ func normalizeBacklogState(state string) string {
 // Returns the state string, blocked-by value (always empty from GetItem),
 // whether found, and any error.
 var readBacklogTaskState = func(homeDir, id string) (string, string, bool, error) {
-	item, found, err := fleet.GetItem(homeDir, id)
+	item, found, err := GetItem(homeDir, id)
 	if err != nil {
 		return "", "", false, fmt.Errorf("reading backlog state for %s: %w", id, err)
 	}
@@ -360,7 +359,7 @@ func (r *Runner) validateHarnessFlag() error {
 
 // Phase 4: preflightBrief checks that a brief exists before spawning.
 func (r *Runner) preflightBrief() error {
-	if !fleet.Exists(r.homeDir, r.args.ID) {
+	if !Exists(r.homeDir, r.args.ID) {
 		return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning",
 			r.args.ID, r.args.ID, r.args.ProjectName)
 	}
@@ -370,7 +369,7 @@ func (r *Runner) preflightBrief() error {
 // Phase 5: checkBacklogAuthority verifies the task is uniquely queued+ready in the backlog.
 // Fail closed unless the task is uniquely present and ready, or --reopen is used.
 func (r *Runner) checkBacklogAuthority() error {
-	item, found, err := fleet.GetItem(r.homeDir, r.args.ID)
+	item, found, err := GetItem(r.homeDir, r.args.ID)
 	if err != nil {
 		return fmt.Errorf("lifecycle guard: reading backlog: %w", err)
 	}
@@ -379,7 +378,7 @@ func (r *Runner) checkBacklogAuthority() error {
 	}
 
 	// Check for duplicate IDs in backlog
-	dup, err := fleet.HasDuplicate(r.homeDir, r.args.ID)
+	dup, err := HasDuplicate(r.homeDir, r.args.ID)
 	if err != nil {
 		return fmt.Errorf("lifecycle guard: checking for duplicates: %w", err)
 	}
@@ -393,15 +392,15 @@ func (r *Runner) checkBacklogAuthority() error {
 
 	// State-based checks. Backlog In flight without live meta is start→spawn — allow.
 	switch item.State {
-	case fleet.StateBlocked:
+	case StateBlocked:
 		if !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is blocked; use --reopen to force dispatch or clear the blocker first", r.args.ID)
 		}
-	case fleet.StateDone:
+	case StateDone:
 		if !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is done; use --reopen to reopen", r.args.ID)
 		}
-	case fleet.StateInFlight:
+	case StateInFlight:
 		// Allow when no live session; refuse only duplicate live execution.
 		if metaExists && !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
@@ -419,7 +418,7 @@ func (r *Runner) checkBacklogAuthority() error {
 
 // Phase 6: resolveProject resolves the project repo path from registry.
 func (r *Runner) resolveProject() error {
-	projPath, err := fleet.ResolveRepoPath(r.homeDir, r.args.ProjectName)
+	projPath, err := ResolveRepoPath(r.homeDir, r.args.ProjectName)
 	if err != nil {
 		return fmt.Errorf("resolving project %q: %w", r.args.ProjectName, err)
 	}
@@ -437,7 +436,7 @@ func (r *Runner) checkTangle() error {
 
 // checkScopeGate refuses no-mistakes gate agents before worktree allocation.
 func (r *Runner) checkScopeGate() error {
-	if err := fleet.GateRefusalError(r.projPath); err != nil {
+	if err := GateRefusalError(r.projPath); err != nil {
 		return fmt.Errorf("scope gate: %w", err)
 	}
 	return nil
@@ -541,7 +540,7 @@ func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
 
 // taskDescription returns text used to match dispatch profiles (brief body or id).
 func (r *Runner) taskDescription() string {
-	briefPath := fleet.Path(r.homeDir, r.args.ID)
+	briefPath := Path(r.homeDir, r.args.ID)
 	if data, err := os.ReadFile(briefPath); err == nil {
 		s := strings.TrimSpace(string(data))
 		if s != "" {
@@ -606,7 +605,7 @@ func labelComponent(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// Phase 11: createSession creates a session window for the fleet.
+// Phase 11: createSession creates a session window for the
 func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
@@ -633,7 +632,7 @@ func (r *Runner) createSession() error {
 // fail-closed checks happen before any session allocation.
 func (r *Runner) buildSoldierPrompt() error {
 	// Read brief content from the registered brief path.
-	briefPath := fleet.Path(r.homeDir, r.args.ID)
+	briefPath := Path(r.homeDir, r.args.ID)
 	briefData, readErr := os.ReadFile(briefPath)
 	if readErr != nil {
 		return fmt.Errorf("reading brief %s: %w", briefPath, readErr)
@@ -651,7 +650,7 @@ func (r *Runner) buildSoldierPrompt() error {
 	}
 
 	// Build the prompt input struct.
-	input := fleet.LaunchPromptInput{
+	input := LaunchPromptInput{
 		TaskID:          r.args.ID,
 		TaskKind:        r.args.Kind,
 		DeliveryMode:    r.effectiveMode,
@@ -667,12 +666,12 @@ func (r *Runner) buildSoldierPrompt() error {
 	}
 
 	// Fail-closed: validate before building.
-	if err := fleet.FailClosedDuringLaunch(input); err != nil {
+	if err := FailClosedDuringLaunch(input); err != nil {
 		return fmt.Errorf("pre-launch fail-closed: %w", err)
 	}
 
 	// Build the complete prompt and envelope.
-	promptText, env, err := fleet.BuildLaunchPrompt(input)
+	promptText, env, err := BuildLaunchPrompt(input)
 	if err != nil {
 		return fmt.Errorf("building soldier launch prompt: %w", err)
 	}
@@ -680,13 +679,13 @@ func (r *Runner) buildSoldierPrompt() error {
 	r.promptEnv = env
 
 	// Persist durable files to the worktree.
-	charter := fleet.DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
-	if err := fleet.PersistLaunchFiles(r.wtPath, charter, briefData, env, promptText); err != nil {
+	charter := DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
+	if err := PersistLaunchFiles(r.wtPath, charter, briefData, env, promptText); err != nil {
 		return fmt.Errorf("persisting soldier launch files: %w", err)
 	}
 
 	// Build launch arguments with the complete prompt, passing model and effort.
-	bin, args, err := fleet.BuildLaunchArgs(r.wtPath, r.harness, r.model, r.effort, promptText)
+	bin, args, err := BuildLaunchArgs(r.wtPath, r.harness, r.model, r.effort, promptText)
 	if err != nil {
 		return fmt.Errorf("building soldier launch arguments: %w", err)
 	}
@@ -699,11 +698,11 @@ func (r *Runner) buildSoldierPrompt() error {
 // resolveSkills returns deterministic required/optional skills for the current
 // spawn based on task kind, delivery mode, and lifecycle policy.
 // Uses explicit typed declarations — no keyword guessing or load-all.
-func (r *Runner) resolveSkills() (required, optional []fleet.SkillEntry, diags []string) {
+func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []string) {
 	// Catalog of skills available to spawns.
 	// In a production system this would come from a registry or config file;
 	// here we build it from known skills and their authority classifications.
-	catalog := []fleet.SkillEntry{
+	catalog := []SkillEntry{
 		// Soldier-applicable skills
 		{Name: "gh-axi", Role: "soldier"},
 		{Name: "chrome-devtools-axi", Role: "soldier"},
@@ -739,7 +738,7 @@ func (r *Runner) resolveSkills() (required, optional []fleet.SkillEntry, diags [
 		requiredNames = append(requiredNames, "gh-axi")
 	}
 
-	required, optional, diags = fleet.CollectSkills(catalog, requiredNames, optionalNames)
+	required, optional, diags = CollectSkills(catalog, requiredNames, optionalNames)
 	return required, optional, diags
 }
 
@@ -756,7 +755,7 @@ func (r *Runner) resolveParentCaptainID() string {
 }
 
 // shQuote wraps s in single quotes, escaping embedded single quotes.
-func shQuote(s string) string {
+func spawnShQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
@@ -776,23 +775,23 @@ func (r *Runner) bootstrapWindow() {
 	b.WriteString("#!/usr/bin/env bash\n")
 	b.WriteString("set -euo pipefail\n")
 	b.WriteString("cd ")
-	b.WriteString(shQuote(r.wtPath))
+	b.WriteString(spawnShQuote(r.wtPath))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_HOME=")
-	b.WriteString(shQuote(r.homeDir))
+	b.WriteString(spawnShQuote(r.homeDir))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_ROLE=soldier\n")
 	b.WriteString("export MUNSU_TASK_ID=")
-	b.WriteString(shQuote(r.args.ID))
+	b.WriteString(spawnShQuote(r.args.ID))
 	b.WriteString("\n")
 	b.WriteString("export MUNSU_PARENT_STATUS=")
-	b.WriteString(shQuote(r.homeDir))
+	b.WriteString(spawnShQuote(r.homeDir))
 	b.WriteString("\n")
 	b.WriteString("exec ")
-	b.WriteString(shQuote(r.launchBin))
+	b.WriteString(spawnShQuote(r.launchBin))
 	for _, arg := range r.launchArgs {
 		b.WriteString(" ")
-		b.WriteString(shQuote(arg))
+		b.WriteString(spawnShQuote(arg))
 	}
 	b.WriteString("\n")
 
@@ -800,7 +799,7 @@ func (r *Runner) bootstrapWindow() {
 	if writeErr := os.WriteFile(launchScript, []byte(b.String()), 0755); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
 	}
-	fullCmd := fmt.Sprintf("bash %s", shQuote(launchScript))
+	fullCmd := fmt.Sprintf("bash %s", spawnShQuote(launchScript))
 	if sendErr := r.endpoints.Submit(r.endpoint, fullCmd); sendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
 	}
@@ -808,7 +807,7 @@ func (r *Runner) bootstrapWindow() {
 
 // Phase 13a: writeBriefToWorktree writes the brief file into the worktree.
 func (r *Runner) writeBriefToWorktree() {
-	briefPath := fleet.Path(r.homeDir, r.args.ID)
+	briefPath := Path(r.homeDir, r.args.ID)
 	data, readErr := os.ReadFile(briefPath)
 	if readErr != nil {
 		if !os.IsNotExist(readErr) {
@@ -817,7 +816,7 @@ func (r *Runner) writeBriefToWorktree() {
 		return
 	}
 	r.briefData = data
-	briefWorktreePath := filepath.Join(r.wtPath, ".soldier-fleet.md")
+	briefWorktreePath := filepath.Join(r.wtPath, ".soldier-md")
 	if writeErr := os.WriteFile(briefWorktreePath, data, 0644); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing brief to worktree: %v\n", writeErr)
 	}
