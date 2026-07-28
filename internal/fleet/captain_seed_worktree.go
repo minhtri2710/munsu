@@ -53,7 +53,10 @@ var worktreeExcludeContent = []string{
 //
 // repoPath must be the root of a local git clone (typically a project repo).
 // The default branch is resolved from origin/HEAD.
-func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force bool, ref string) (err error) {
+func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force bool, ref string, integration IntegrationPort) (err error) {
+	if integration == nil {
+		return fmt.Errorf("captain integration capability is required")
+	}
 	var absRepo string
 	absRepo, err = filepath.Abs(repoPath)
 	if err != nil {
@@ -192,6 +195,9 @@ func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		}
 	}
 
+	if err = ensureCaptainIntegration(absHome, integration); err != nil {
+		return fmt.Errorf("installing captain integration: %w", err)
+	}
 	fmt.Printf("Seeded worktree captain %s at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)
 	return
 }
@@ -447,7 +453,10 @@ func writeRollbackMarker(backupPath, captainHome string) error {
 //   - repoPath must be a local git clone whose origin matches parentHome's
 //   - id must match the home's provenance id
 //   - parentHome is the fleet General home (for registration, config push)
-func MigrateToWorktree(captainHome, repoPath, id, parentHome string) (err error) {
+func migrateToWorktree(captainHome, repoPath, id, parentHome string, integration IntegrationPort) (err error) {
+	if integration == nil {
+		return fmt.Errorf("captain integration capability is required")
+	}
 	// 1. Validate captain home is a state-only home.
 	if !isStateOnlyHome(captainHome) {
 		// Refuse if it's already a managed worktree.
@@ -590,7 +599,9 @@ func MigrateToWorktree(captainHome, repoPath, id, parentHome string) (err error)
 		}
 	}
 
-	// 16. Install Pi extensions.
+	if err = ensureCaptainIntegration(absHome, integration); err != nil {
+		return fmt.Errorf("installing captain integration: %w", err)
+	}
 	fmt.Printf("Migrated captain %s to managed worktree at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)
 	fmt.Printf("  backup preserved at %s\n", backupPath)
 	return nil
@@ -670,18 +681,25 @@ func SeedCaptainFromWorktree(opts CaptainWorktreeSeedOptions) error {
 	if opts.Integration == nil {
 		return fmt.Errorf("captain integration capability is required")
 	}
-	if err := SeedFromWorktree(opts.ID, opts.Home, opts.Repo, opts.ParentHome, opts.Charter, opts.Force, opts.Ref); err != nil {
+	if err := seedFromWorktree(opts.ID, opts.Home, opts.Repo, opts.ParentHome, opts.Charter, opts.Force, opts.Ref, opts.Integration); err != nil {
 		return err
 	}
-	return ensureCaptainIntegration(opts.Home, opts.Integration)
+	return nil
 }
 
 func MigrateCaptainToWorktree(opts CaptainMigrationOptions) error {
 	if opts.Integration == nil {
 		return fmt.Errorf("captain integration capability is required")
 	}
-	if err := MigrateToWorktree(opts.CaptainHome, opts.Repo, opts.ID, opts.ParentHome); err != nil {
+	if err := migrateToWorktree(opts.CaptainHome, opts.Repo, opts.ID, opts.ParentHome, opts.Integration); err != nil {
 		return err
 	}
-	return ensureCaptainIntegration(opts.CaptainHome, opts.Integration)
+	return nil
+}
+
+func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force bool, ref string) error {
+	return fmt.Errorf("captain integration capability is required")
+}
+func MigrateToWorktree(captainHome, repoPath, id, parentHome string) error {
+	return fmt.Errorf("captain integration capability is required")
 }

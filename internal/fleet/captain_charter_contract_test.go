@@ -259,7 +259,7 @@ func TestManagedWorktree_CharterUntracked(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", id)
 
 	// SeedFromWorktree creates a managed worktree at homePath.
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 

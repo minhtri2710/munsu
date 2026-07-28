@@ -41,3 +41,10 @@ func seedWithParentTest(id, captainHome, parentHome, charter string) error {
 func seedTest(id, captainHome, charter string) error {
 	return SeedCaptain(CaptainSeedOptions{ID: id, Home: captainHome, Charter: charter, Integration: fakeIntegrationPort{}})
 }
+
+func seedFromWorktreeTest(id, h, repo, parent, charter string, force bool, ref string) error {
+	return seedFromWorktree(id, h, repo, parent, charter, force, ref, fakeIntegrationPort{})
+}
+func migrateToWorktreeTest(h, repo, id, parent string) error {
+	return migrateToWorktree(h, repo, id, parent, fakeIntegrationPort{})
+}

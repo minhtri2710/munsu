@@ -306,7 +306,7 @@ func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 	id := "test-captain"
 	homePath := filepath.Join(parent, "captains", id)
 
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -370,7 +370,7 @@ func TestSeedWorktree_NonGitSource(t *testing.T) {
 	parent := t.TempDir()
 	repo := t.TempDir() // not a git repo
 
-	err := SeedFromWorktree("test", "", repo, parent, "", false, "")
+	err := seedFromWorktreeTest("test", "", repo, parent, "", false, "")
 	if err == nil {
 		t.Fatal("expected error for non-git source repo")
 	}
@@ -389,12 +389,12 @@ func TestSeedWorktree_Idempotent(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", id)
 
 	// First seed succeeds.
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second seed without force is idempotent no-op.
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -409,12 +409,12 @@ func TestSeedWorktree_ForceReplaces(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", id)
 
 	// First seed succeeds.
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second seed with --force replaces.
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", true, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", true, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -433,7 +433,7 @@ func TestSeedWorktree_RemoteMismatch(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/different/repo.git")
 
-	err := SeedFromWorktree("test", "", repo, parent, "", false, "")
+	err := seedFromWorktreeTest("test", "", repo, parent, "", false, "")
 	if err == nil {
 		t.Fatal("expected error for mismatched remote")
 	}
@@ -461,7 +461,7 @@ func TestSeedWorktree_ExplicitRef(t *testing.T) {
 	}
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, repo, parent, "", false, "feature-branch"); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, repo, parent, "", false, "feature-branch"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -486,7 +486,7 @@ func TestSeedWorktree_RollbackOnFailure(t *testing.T) {
 
 	// Seed with a non-existent parent home for the charter path (will fail).
 	// The worktree should be cleaned up.
-	err := SeedFromWorktree(id, homePath, repo, "/nonexistent/parent", "", false, "")
+	err := seedFromWorktreeTest(id, homePath, repo, "/nonexistent/parent", "", false, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -508,14 +508,14 @@ func TestSeedWorktree_RollbackUnregisterOnFailure(t *testing.T) {
 
 	// SeedWorktree with a non-existent parent config dir to fail ConfigPush.
 	// The worktree should be created, registered, then rolled back.
-	err := SeedFromWorktree(id, homePath, repo, parent, "", false, "")
+	err := seedFromWorktreeTest(id, homePath, repo, parent, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Now corrupt the config-push by removing parent config dir.
 	// A second force seed should succeed.
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", true, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", true, ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -529,7 +529,7 @@ func TestSeedWorktree_ParentHomeCharter(t *testing.T) {
 	id := "test-captain"
 	homePath := filepath.Join(parent, "captains", id)
 
-	if err := SeedFromWorktree(id, homePath, repo, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, repo, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -578,7 +578,7 @@ func TestSeedWorktree_GitignoreContent(t *testing.T) {
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
 
 	homePath := filepath.Join(parent, "captains", "test")
-	if err := SeedFromWorktree("test", homePath, repo, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test", homePath, repo, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2755,7 +2755,7 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 	parent := t.TempDir()
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2867,12 +2867,12 @@ func TestSeedFromWorktree_Idempotent(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	// First call: creates the worktree.
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second call: must be a no-op.
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal("second seed should be no-op:", err)
 	}
 }
@@ -2889,7 +2889,7 @@ func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 	project := newWorktreeFixture(t)
 
 	// Worktree seed on an existing state-only home must fail.
-	if err := SeedFromWorktree("existing-sm", homePath, project, parent, "", false, ""); err == nil {
+	if err := seedFromWorktreeTest("existing-sm", homePath, project, parent, "", false, ""); err == nil {
 		t.Fatal("expected error for state-only home, got nil")
 	}
 }
@@ -2913,7 +2913,7 @@ func TestSeedFromWorktree_ManagedWorktreeClean(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", id)
 
 	// Seed the managed worktree.
-	if err := SeedFromWorktree(id, homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2977,7 +2977,7 @@ func TestIsManagedWorktree(t *testing.T) {
 		project := newWorktreeFixture(t)
 		parent := t.TempDir()
 		homePath := filepath.Join(parent, "captains", "test-captain")
-		if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+		if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 			t.Fatal(err)
 		}
 		managed, err := isManagedWorktree(homePath)
@@ -3052,7 +3052,7 @@ func TestMigrateToWorktree_SuccessPath(t *testing.T) {
 	os.WriteFile(filepath.Join(smHome, "data", "notes.md"), []byte("# notes\n"), 0644)
 
 	// Migrate to managed worktree.
-	if err := MigrateToWorktree(smHome, project, id, parent); err != nil {
+	if err := migrateToWorktreeTest(smHome, project, id, parent); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3153,12 +3153,12 @@ func TestMigrateToWorktree_RefusesManagedWorktree(t *testing.T) {
 
 	id := "test-captain"
 	homePath := filepath.Join(parent, "captains", id)
-	if err := SeedFromWorktree(id, homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest(id, homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Attempt migration on already-managed worktree.
-	err := MigrateToWorktree(homePath, project, id, parent)
+	err := migrateToWorktreeTest(homePath, project, id, parent)
 	if err == nil {
 		t.Fatal("expected error for already-managed worktree")
 	}
@@ -3175,7 +3175,7 @@ func TestMigrateToWorktree_RefusesNonStateOnly(t *testing.T) {
 	bareDir := filepath.Join(t.TempDir(), "bare")
 	os.MkdirAll(bareDir, 0755)
 
-	err := MigrateToWorktree(bareDir, project, "test", parent)
+	err := migrateToWorktreeTest(bareDir, project, "test", parent)
 	if err == nil {
 		t.Fatal("expected error for non-state-only path")
 	}
@@ -3192,7 +3192,7 @@ func TestMigrateToWorktree_RollbackOnWorktreeFailure(t *testing.T) {
 	// Use a non-existent repo path to cause worktree creation to fail.
 	nonExistentRepo := filepath.Join(t.TempDir(), "nonexistent")
 
-	err := MigrateToWorktree(smHome, nonExistentRepo, id, parent)
+	err := migrateToWorktreeTest(smHome, nonExistentRepo, id, parent)
 	if err == nil {
 		t.Fatal("expected error for non-existent repo")
 	}
@@ -3216,7 +3216,7 @@ func TestMigrateToWorktree_RemoteMismatchRefused(t *testing.T) {
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/different/repo.git")
 
-	err := MigrateToWorktree(smHome, repo, id, parent)
+	err := migrateToWorktreeTest(smHome, repo, id, parent)
 	if err == nil {
 		t.Fatal("expected error for mismatched remote")
 	}
@@ -3237,7 +3237,7 @@ func TestSeedWorktree_GitClean(t *testing.T) {
 	parent := t.TempDir()
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3279,7 +3279,7 @@ func TestRepairWorktreeAdminPath(t *testing.T) {
 
 	// Create worktree at a temp path, then rename to final captain home.
 	tempPath := filepath.Join(parent, "captains", "temp-worktree")
-	if err := SeedFromWorktree("test-captain", tempPath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", tempPath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3342,7 +3342,7 @@ func TestUpdate_ManagedWorktreeUsesProvenanceRepo(t *testing.T) {
 
 	// Seed a managed worktree captain (creates .captain-provenance with source-repo).
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3403,7 +3403,7 @@ func TestUpdate_ManagedWorktreeAlreadyCurrent(t *testing.T) {
 	parent := t.TempDir()
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3426,7 +3426,7 @@ func TestUpdate_ManagedWorktreeNoParentGit(t *testing.T) {
 	parent := t.TempDir()
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3458,7 +3458,7 @@ func TestMigrateRollbackSafety(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", id)
 
 	// Seed with a non-existent parent home for the charter path (will fail).
-	err := SeedFromWorktree(id, homePath, repo, "/nonexistent/parent", "", false, "")
+	err := seedFromWorktreeTest(id, homePath, repo, "/nonexistent/parent", "", false, "")
 	if err == nil {
 		t.Fatal("expected error for non-existent parent charter path")
 	}
@@ -3606,7 +3606,7 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	gitTestRun(t, project, "push", "-u", "origin", "main")
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3653,7 +3653,7 @@ func TestManagedCleanState_PreservesHolds(t *testing.T) {
 	gitTestRun(t, project, "remote", "set-head", "origin", "main")
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3739,7 +3739,7 @@ func TestManagedCleanState_OperationalDirsAreIgnored(t *testing.T) {
 	gitTestRun(t, project, "remote", "set-head", "origin", "main")
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3795,7 +3795,7 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{}\n"), 0644)
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3865,7 +3865,7 @@ func TestManagedCleanState_HoldsSurviveMultipleCycles(t *testing.T) {
 	gitTestRun(t, project, "remote", "set-head", "origin", "main")
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3939,7 +3939,7 @@ func TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
-	if err := SeedFromWorktree("test-captain", homePath, project, parent, "", false, ""); err != nil {
+	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -4008,7 +4008,7 @@ func TestMigrateToWorktree_HoldsPreservedClean(t *testing.T) {
 	os.WriteFile(filepath.Join(smHome, "config", "custom.cfg"), []byte("setting=1\n"), 0644)
 
 	// Run migration.
-	if err := MigrateToWorktree(smHome, project, id, parent); err != nil {
+	if err := migrateToWorktreeTest(smHome, project, id, parent); err != nil {
 		t.Fatal(err)
 	}
 
