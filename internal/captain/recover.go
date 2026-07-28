@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -166,7 +165,10 @@ func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
 	}
-	result, err := bootstrap.Status(sm.Home, sm.Home, h, bootstrap.ScopeProject)
+	if tx.Capabilities.Integration == nil {
+		return StepResult{Name: "integration-status", State: StepSkipped, Detail: "integration capability unavailable"}
+	}
+	result, err := tx.Capabilities.Integration.Status(sm.Home, h)
 	if err != nil {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("integration check error: %v", err)}

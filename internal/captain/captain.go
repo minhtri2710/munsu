@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -132,49 +131,20 @@ func outcomeFromFFError(err error) UpdateOutcome {
 	}
 }
 
-// so Launch buildLaunchArgs can always pass -e for munsu integrate + captain-compat names.
-// Idempotent. Soft-skips when pi is unavailable (non-pi fleets / offline test hosts).
+type noopIntegrationPort struct{}
+
+func (noopIntegrationPort) EnsureCaptain(string) error { return nil }
+func (noopIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+	return IntegrationStatus{State: "absent"}, nil
+}
+
+var integrationPort IntegrationPort = noopIntegrationPort{}
+
 func EnsureCaptainPiExtensions(captainHome string) error {
 	if _, err := ValidateProvenance(captainHome); err != nil {
 		return fmt.Errorf("refusing pi extensions on unmarked home %s: %w", captainHome, err)
 	}
-	adpt := &bootstrap.PiAdapter{
-		HomeDir: captainHome,
-		Cwd:     captainHome,
-		Scope:   string(bootstrap.ScopeProject),
-	}
-	target, _, _, err := adpt.InstallPiExtension()
-	if err != nil {
-		// Soft-skip when pi/munsu tooling is missing — captain may run a non-pi harness.
-		msg := err.Error()
-		if strings.Contains(msg, "pi not found") ||
-			strings.Contains(msg, "Install Pi") ||
-			strings.Contains(msg, "pi API capability") ||
-			strings.Contains(msg, "cannot check pi version") ||
-			strings.Contains(msg, "cannot parse pi version") ||
-			strings.Contains(msg, "pi version") ||
-			strings.Contains(msg, "cannot resolve munsu binary path") ||
-			strings.Contains(msg, "munsu not found") {
-			return nil
-		}
-		return fmt.Errorf("installing munsu-pi-integration: %w", err)
-	}
-	// Mirror integrate content under munsu-captain-* names so Launch -e matches captain shape.
-	content, err := os.ReadFile(target)
-	if err != nil {
-		return fmt.Errorf("reading installed pi extension: %w", err)
-	}
-	extDir := filepath.Join(captainHome, ".pi", "extensions")
-	if err := os.MkdirAll(extDir, 0755); err != nil {
-		return fmt.Errorf("creating .pi/extensions: %w", err)
-	}
-	for _, name := range []string{"munsu-captain-turnend-guard.ts", "munsu-captain-pi-watch.ts"} {
-		dst := filepath.Join(extDir, name)
-		if err := atomicWriteFile(dst, content, 0644); err != nil {
-			return fmt.Errorf("writing %s: %w", name, err)
-		}
-	}
-	return nil
+	return integrationPort.EnsureCaptain(captainHome)
 }
 
 type Info struct {
