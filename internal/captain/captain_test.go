@@ -12,11 +12,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
@@ -2407,28 +2406,28 @@ func TestConverge_ReconcilesCaptainUplinkWithoutWatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := uplink.Report(uplink.ReportRequest{
+	result, err := orchestrator.Report(orchestrator.ReportRequest{
 		SenderHome: captainHome, ReceiverHome: parent,
-		SenderRank: mailbox.RankCaptain, SenderIdentity: "sm-one",
-		ReceiverRank: mailbox.RankGeneral, ReceiverID: filepath.Base(parent),
+		SenderRank: orchestrator.RankCaptain, SenderIdentity: "sm-one",
+		ReceiverRank: orchestrator.RankGeneral, ReceiverID: filepath.Base(parent),
 		TaskID: "captain:sm-one", Key: "default", State: "done", Message: "complete",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, _ := mailbox.NewStore(parent).ReadEnvelope("sm-one", result.MessageID)
-	ack := &mailbox.ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: env.PayloadHash, ProcessedAt: time.Now().UnixNano(), Outcome: mailbox.OutcomeAccepted}
-	if err := mailbox.NewStore(parent).WriteAck(ack); err != nil {
+	env, _ := orchestrator.NewStore(parent).ReadEnvelope("sm-one", result.MessageID)
+	ack := &orchestrator.ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: env.PayloadHash, ProcessedAt: time.Now().UnixNano(), Outcome: orchestrator.OutcomeAccepted}
+	if err := orchestrator.NewStore(parent).WriteAck(ack); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := Converge(parent, []Info{{ID: "sm-one", Home: captainHome}}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}}); err != nil {
 		t.Fatal(err)
 	}
-	if !uplink.HasAcceptedReport(captainHome, "captain:sm-one", "default") {
+	if !orchestrator.HasAcceptedReport(captainHome, "captain:sm-one", "default") {
 		t.Fatal("accepted evidence missing")
 	}
-	if pending, _ := mailbox.NewStore(captainHome).ReadPending("sm-one", result.MessageID); pending != nil {
+	if pending, _ := orchestrator.NewStore(captainHome).ReadPending("sm-one", result.MessageID); pending != nil {
 		t.Fatal("pending not removed")
 	}
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
-	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // Options controls teardown behavior.
@@ -615,7 +614,7 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 //
 // The check is idempotent after ReportRelay is completed. Use --force to bypass.
 func uplinkCheck(opts Options) error {
-	if uplink.HasPendingReport(opts.HomeDir, opts.ID) || uplink.HasAnyOpenReport(opts.HomeDir, opts.ID) {
+	if orchestrator.HasPendingReport(opts.HomeDir, opts.ID) || orchestrator.HasAnyOpenReport(opts.HomeDir, opts.ID) {
 		return fmt.Errorf("uplink report not acknowledged: Processing Ack is still pending for task %s (use --force to override)", opts.ID)
 	}
 

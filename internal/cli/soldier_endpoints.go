@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 type recognizedAgentBackend interface {
@@ -75,11 +75,11 @@ func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool
 	return false, nil
 }
 
-func (s sessionSoldierEndpoints) Send(home string, meta map[string]string, payload string) mailbox.BoundSendResult {
+func (s sessionSoldierEndpoints) Send(home string, meta map[string]string, payload string) orchestrator.BoundSendResult {
 	bk, err := s.backend(home, meta)
 	if err != nil {
-		return mailbox.BoundSendResult{Status: "backend-failed", Err: err}
+		return orchestrator.BoundSendResult{Status: "backend-failed", Err: err}
 	}
 	result := backend.SubmitPrompt(bk, meta["window"], payload)
-	return mailbox.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
+	return orchestrator.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
 }

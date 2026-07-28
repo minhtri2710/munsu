@@ -1,5 +1,5 @@
 // Package uplink implements durable one-hop material reports.
-package uplink
+package orchestrator
 
 import (
 	"encoding/json"
@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -22,7 +21,7 @@ var materialStates = map[string]bool{
 	"done": true, "failed": true, "blocked": true, "needs-decision": true,
 }
 
-type NotifyResult struct {
+type UplinkNotifyResult struct {
 	Acknowledged bool
 	Queued       bool
 }
@@ -30,9 +29,9 @@ type NotifyResult struct {
 type ReportRequest struct {
 	SenderHome, ReceiverHome    string
 	SenderIdentity, ReceiverID  string
-	SenderRank, ReceiverRank    mailbox.Rank
+	SenderRank, ReceiverRank    Rank
 	TaskID, Key, State, Message string
-	Notify                      func(mailbox.NotificationRef) NotifyResult
+	Notify                      func(NotificationRef) UplinkNotifyResult
 }
 
 type ReportResult struct {
@@ -44,10 +43,10 @@ type ReportResult struct {
 type RecoverRequest struct {
 	SenderHome, ReceiverHome string
 	SenderIdentity           string
-	ReceiverRank             mailbox.Rank
+	ReceiverRank             Rank
 	ForceNotify              bool
 	Now                      time.Time
-	Notify                   func(mailbox.NotificationRef) NotifyResult
+	Notify                   func(NotificationRef) UplinkNotifyResult
 }
 
 type RecoverResult struct {
@@ -80,15 +79,15 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	}
 
 	payload := fmt.Sprintf("%s: %s [task=%s key=%s]", req.State, req.Message, req.TaskID, req.Key)
-	env := &mailbox.Envelope{
+	env := &Envelope{
 		SenderRank: req.SenderRank, SenderIdentity: req.SenderIdentity,
 		ReceiverRank: req.ReceiverRank, ReceiverID: req.ReceiverID,
 		Kind: "uplink-report", TaskID: req.TaskID, Key: req.Key, Payload: payload,
 	}
-	if err := mailbox.NewStore(req.ReceiverHome).WriteEnvelope(env); err != nil {
+	if err := NewStore(req.ReceiverHome).WriteEnvelope(env); err != nil {
 		return nil, fmt.Errorf("uplink report: write envelope: %w", err)
 	}
-	if err := mailbox.NewStore(req.SenderHome).WritePending(env); err != nil {
+	if err := NewStore(req.SenderHome).WritePending(env); err != nil {
 		return nil, fmt.Errorf("uplink report: write pending: %w", err)
 	}
 	if err := writeEvidence(openEvidencePath(req.SenderHome, req.TaskID, req.Key), evidence{MessageID: env.MessageID, TaskID: req.TaskID, Key: req.Key, State: req.State, At: time.Now().UnixNano()}); err != nil {
@@ -105,7 +104,7 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if req.Notify == nil {
 		return result, nil
 	}
-	ref := mailbox.NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
+	ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: req.SenderIdentity}
 	nr := req.Notify(ref)
 	if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 		return nil, err
@@ -120,12 +119,12 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 	if req.Now.IsZero() {
 		req.Now = time.Now()
 	}
-	var pending []*mailbox.Envelope
+	var pending []*Envelope
 	var err error
 	if req.SenderIdentity == "" {
-		pending, err = mailbox.NewStore(req.SenderHome).ListAllPending()
+		pending, err = NewStore(req.SenderHome).ListAllPending()
 	} else {
-		pending, err = mailbox.NewStore(req.SenderHome).ListPending(req.SenderIdentity)
+		pending, err = NewStore(req.SenderHome).ListPending(req.SenderIdentity)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("uplink recover: list pending: %w", err)
@@ -135,22 +134,22 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 		if req.ReceiverRank != "" && env.ReceiverRank != req.ReceiverRank {
 			continue
 		}
-		ack, err := mailbox.NewStore(req.ReceiverHome).ReadAck(env.SenderIdentity, env.MessageID)
+		ack, err := NewStore(req.ReceiverHome).ReadAck(env.SenderIdentity, env.MessageID)
 		if err != nil {
 			return nil, err
 		}
 		if ack != nil {
-			if err := mailbox.ValidateAck(env, ack); err != nil {
+			if err := ValidateAck(env, ack); err != nil {
 				return nil, fmt.Errorf("uplink recover: invalid ack: %w", err)
 			}
-			if ack.Outcome != mailbox.OutcomeAccepted {
+			if ack.Outcome != OutcomeAccepted {
 				return nil, fmt.Errorf("uplink recover: ack outcome %q is not accepted", ack.Outcome)
 			}
 			if err := writeEvidence(acceptedEvidencePath(req.SenderHome, env.TaskID, env.Key), evidence{MessageID: env.MessageID, TaskID: env.TaskID, Key: env.Key, At: req.Now.UnixNano()}); err != nil {
 				return nil, err
 			}
 			_ = os.Remove(openEvidencePath(req.SenderHome, env.TaskID, env.Key))
-			if err := mailbox.NewStore(req.SenderHome).RemovePendingAfterAck(env.SenderIdentity, env.MessageID, ack); err != nil {
+			if err := NewStore(req.SenderHome).RemovePendingAfterAck(env.SenderIdentity, env.MessageID, ack); err != nil {
 				return nil, err
 			}
 			_ = os.Remove(notificationAttemptPath(req.SenderHome, env.MessageID))
@@ -161,7 +160,7 @@ func Recover(req RecoverRequest) (*RecoverResult, error) {
 			result.Queued++
 			continue
 		}
-		ref := mailbox.NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
+		ref := NotificationRef{MessageID: env.MessageID, SenderIdentity: env.SenderIdentity}
 		nr := req.Notify(ref)
 		if err := markNotificationAttempt(req.SenderHome, env.MessageID); err != nil {
 			return nil, err
@@ -194,7 +193,7 @@ func HasAnyOpenReport(home, taskID string) bool {
 // HasPendingReport checks sender pending records directly so teardown remains
 // fail-closed if a crash occurs before local open evidence is written.
 func HasPendingReport(home, taskID string) bool {
-	pending, err := mailbox.NewStore(home).ListAllPending()
+	pending, err := NewStore(home).ListAllPending()
 	if err != nil {
 		return true
 	}
@@ -206,12 +205,12 @@ func HasPendingReport(home, taskID string) bool {
 	return false
 }
 
-func supersededReports(req ReportRequest) ([]*mailbox.Envelope, error) {
-	pending, err := mailbox.NewStore(req.SenderHome).ListPending(req.SenderIdentity)
+func supersededReports(req ReportRequest) ([]*Envelope, error) {
+	pending, err := NewStore(req.SenderHome).ListPending(req.SenderIdentity)
 	if err != nil {
 		return nil, err
 	}
-	var old []*mailbox.Envelope
+	var old []*Envelope
 	for _, env := range pending {
 		if env.TaskID == req.TaskID && normalizedKey(env.Key) == normalizedKey(req.Key) {
 			old = append(old, env)
@@ -220,12 +219,12 @@ func supersededReports(req ReportRequest) ([]*mailbox.Envelope, error) {
 	return old, nil
 }
 
-func retireSuperseded(senderHome, receiverHome string, old []*mailbox.Envelope) error {
+func retireSuperseded(senderHome, receiverHome string, old []*Envelope) error {
 	for _, env := range old {
-		if err := mailbox.NewStore(receiverHome).MarkSuperseded(env.SenderIdentity, env.MessageID); err != nil {
+		if err := NewStore(receiverHome).MarkSuperseded(env.SenderIdentity, env.MessageID); err != nil {
 			return err
 		}
-		if err := os.Remove(filepath.Join(senderHome, "state", mailbox.OutboxDir, env.SenderIdentity, env.MessageID+".pending")); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(filepath.Join(senderHome, "state", OutboxDir, env.SenderIdentity, env.MessageID+".pending")); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		_ = os.Remove(notificationAttemptPath(senderHome, env.MessageID))
@@ -290,30 +289,30 @@ func notificationDue(home, messageID string, now time.Time) bool {
 
 // NotifyParent attempts immediate delivery of a NotificationRef to the parent
 // agent pane. Durable state must already exist before this adapter is called.
-type TargetResolver func(receiverHome string, ref mailbox.NotificationRef) (afk.TargetResult, error)
+type TargetResolver func(receiverHome string, ref NotificationRef) (afk.TargetResult, error)
 
 type NotificationTransport interface {
-	Notify(senderHome string, target afk.TargetResult, payload string) NotifyResult
+	Notify(senderHome string, target afk.TargetResult, payload string) UplinkNotifyResult
 }
 
-func NotifyParentWithTransport(senderHome, receiverHome string, ref mailbox.NotificationRef, transport NotificationTransport) NotifyResult {
+func NotifyParentWithTransport(senderHome, receiverHome string, ref NotificationRef, transport NotificationTransport) UplinkNotifyResult {
 	return NotifyParentWithTargetResolver(senderHome, receiverHome, ref, resolveReceiverTarget, transport)
 }
 
-func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref mailbox.NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) NotifyResult {
+func NotifyParentWithTargetResolver(senderHome, receiverHome string, ref NotificationRef, resolveTarget TargetResolver, transport NotificationTransport) UplinkNotifyResult {
 	target, err := resolveTarget(receiverHome, ref)
 	if err != nil || target.Handle == "" || target.Source == afk.Unsupported || transport == nil {
-		return NotifyResult{Queued: true}
+		return UplinkNotifyResult{Queued: true}
 	}
 	return transport.Notify(senderHome, target, ref.Encode())
 }
 
-func resolveReceiverTarget(receiverHome string, ref mailbox.NotificationRef) (afk.TargetResult, error) {
-	env, err := mailbox.NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
+func resolveReceiverTarget(receiverHome string, ref NotificationRef) (afk.TargetResult, error) {
+	env, err := NewStore(receiverHome).ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil || env == nil {
 		return afk.TargetResult{}, fmt.Errorf("reading receiver envelope: %w", err)
 	}
-	if env.ReceiverRank == mailbox.RankCaptain {
+	if env.ReceiverRank == RankCaptain {
 		parentHome, err := config.Get(receiverHome, "parent-home")
 		if err != nil {
 			return afk.TargetResult{}, fmt.Errorf("captain parent-home unavailable: %w", err)

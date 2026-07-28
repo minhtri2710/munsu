@@ -9,7 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -74,14 +74,14 @@ This produces output with kind=inbox.receive.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			refJSON := args[0]
 
-			ref, err := mailbox.ParseNotificationRef(refJSON)
+			ref, err := orchestrator.ParseNotificationRef(refJSON)
 			if err != nil {
 				return usageError("invalid_ref",
 					"NotificationRef must be valid JSON with message_id and sender_identity fields",
 					fmt.Sprintf("parsing NotificationRef: %v", err))
 			}
 
-			recv, err := mailbox.NewReceiver(ctx.Home)
+			recv, err := orchestrator.NewReceiver(ctx.Home)
 			if err != nil {
 				return operationError("receiver_init_failed",
 					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",
@@ -144,14 +144,14 @@ This produces output with kind=inbox.ack.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			refJSON := args[0]
 
-			ref, err := mailbox.ParseNotificationRef(refJSON)
+			ref, err := orchestrator.ParseNotificationRef(refJSON)
 			if err != nil {
 				return usageError("invalid_ref",
 					"NotificationRef must be valid JSON with message_id and sender_identity fields",
 					fmt.Sprintf("parsing NotificationRef: %v", err))
 			}
 
-			recv, err := mailbox.NewReceiver(ctx.Home)
+			recv, err := orchestrator.NewReceiver(ctx.Home)
 			if err != nil {
 				return operationError("receiver_init_failed",
 					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",

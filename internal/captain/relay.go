@@ -6,18 +6,16 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
-	"github.com/minhtri2710/munsu/internal/uplink"
-	"github.com/minhtri2710/munsu/internal/wakedelivery"
 )
 
 type watcherHooks struct {
-	notification uplink.NotificationTransport
-	activation   wakedelivery.ActivationTransport
+	notification orchestrator.NotificationTransport
+	activation   orchestrator.ActivationTransport
 }
 
-func NewWatcherHooks(notification uplink.NotificationTransport, activation wakedelivery.ActivationTransport) supervision.WatcherHooks {
+func NewWatcherHooks(notification orchestrator.NotificationTransport, activation orchestrator.ActivationTransport) supervision.WatcherHooks {
 	return watcherHooks{notification: notification, activation: activation}
 }
 func (h watcherHooks) Reconcile(homeDir string, startup bool) error {
@@ -52,17 +50,17 @@ func resolveParentHome(homeDir string) string {
 // captainActivationHook is the per-cycle activation hook running inside a
 // captain home. It nudges the captain agent pane when new soldier receipts
 // arrive, without waiting for General round-trip.
-func captainActivationHook(homeDir string, activation wakedelivery.ActivationTransport) {
+func captainActivationHook(homeDir string, activation orchestrator.ActivationTransport) {
 	parentHome := resolveParentHome(homeDir)
 	if parentHome == "" {
 		return
 	}
-	wakedelivery.ActivateOnReceiptWithTransport(homeDir, parentHome, activation)
+	orchestrator.ActivateOnReceiptWithTransport(homeDir, parentHome, activation)
 }
 
 // reconcileHook recovers mailbox uplinks and legacy terminal receipts for a
 // captain home on watcher startup and each polling cycle.
-func reconcileHook(homeDir string, startup bool, transport uplink.NotificationTransport) error {
+func reconcileHook(homeDir string, startup bool, transport orchestrator.NotificationTransport) error {
 	parentHome := resolveParentHome(homeDir)
 	if parentHome == "" {
 		return nil
@@ -70,20 +68,20 @@ func reconcileHook(homeDir string, startup bool, transport uplink.NotificationTr
 	if transport == nil {
 		return fmt.Errorf("uplink notification transport capability is required")
 	}
-	if _, err := uplink.Recover(uplink.RecoverRequest{
+	if _, err := orchestrator.Recover(orchestrator.RecoverRequest{
 		SenderHome: homeDir, ReceiverHome: homeDir,
-		ReceiverRank: mailbox.RankCaptain, ForceNotify: startup,
-		Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
-			return uplink.NotifyParentWithTransport(homeDir, homeDir, ref, transport)
+		ReceiverRank: orchestrator.RankCaptain, ForceNotify: startup,
+		Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+			return orchestrator.NotifyParentWithTransport(homeDir, homeDir, ref, transport)
 		},
 	}); err != nil {
 		return err
 	}
-	if _, err := uplink.Recover(uplink.RecoverRequest{
+	if _, err := orchestrator.Recover(orchestrator.RecoverRequest{
 		SenderHome: homeDir, ReceiverHome: parentHome,
-		ReceiverRank: mailbox.RankGeneral, ForceNotify: startup,
-		Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
-			return uplink.NotifyParentWithTransport(homeDir, parentHome, ref, transport)
+		ReceiverRank: orchestrator.RankGeneral, ForceNotify: startup,
+		Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+			return orchestrator.NotifyParentWithTransport(homeDir, parentHome, ref, transport)
 		},
 	}); err != nil {
 		return err
@@ -144,10 +142,10 @@ func (r *ReconcileResult) Failed() int {
 }
 
 // ReconcileTerminalReceipts is the shared reconciliation seam.
-// Delegates to wakedelivery.ReconcilePending for the core logic and maps
+// Delegates to orchestrator.ReconcilePending for the core logic and maps
 // outcomes to captain types for backward compatibility.
 func ReconcileTerminalReceipts(captainHome, parentHome string) (*ReconcileResult, error) {
-	wdResult, err := wakedelivery.ReconcilePending(captainHome, parentHome)
+	wdResult, err := orchestrator.ReconcilePending(captainHome, parentHome)
 	if err != nil {
 		return nil, err
 	}

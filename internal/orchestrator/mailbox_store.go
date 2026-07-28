@@ -1,4 +1,4 @@
-package mailbox
+package orchestrator
 
 import (
 	"encoding/json"

@@ -7,7 +7,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +36,7 @@ Flags:
 			// Derive sender identity.
 			senderIdentity, _ := cmd.Flags().GetString("sender")
 			if senderIdentity == "" {
-				senderIdentity, _, _ = mailbox.ReadHomeIdentity(ctx.Home)
+				senderIdentity, _, _ = orchestrator.ReadHomeIdentity(ctx.Home)
 				if senderIdentity == "" {
 					senderIdentity = filepath.Base(ctx.Home)
 				}

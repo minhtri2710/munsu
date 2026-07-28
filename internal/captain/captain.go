@@ -16,11 +16,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
@@ -2091,8 +2090,8 @@ func removeNudgeMarker(parentHome, smID string) {
 // nudges, safe ff, inheritance push, ownership-backed backend Alive check,
 // watcher status check, and reread nudge only if instruction surface advanced.
 type ConvergeCapabilities struct {
-	Notification uplink.NotificationTransport
-	Mailbox      mailbox.BoundSender
+	Notification orchestrator.NotificationTransport
+	Mailbox      orchestrator.BoundSender
 	Launch       LaunchEndpoint
 	Probe        ProbeEndpoint
 	Nudge        NudgeEndpoint
@@ -2287,11 +2286,11 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 
 		// g. Mailbox-only Captain → General Uplink Report reconciliation.
-		if ur, urErr := uplink.Recover(uplink.RecoverRequest{
+		if ur, urErr := orchestrator.Recover(orchestrator.RecoverRequest{
 			SenderHome: sm.Home, ReceiverHome: parentHome,
-			ReceiverRank: mailbox.RankGeneral,
-			Notify: func(ref mailbox.NotificationRef) uplink.NotifyResult {
-				return uplink.NotifyParentWithTransport(sm.Home, parentHome, ref, notification)
+			ReceiverRank: orchestrator.RankGeneral,
+			Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+				return orchestrator.NotifyParentWithTransport(sm.Home, parentHome, ref, notification)
 			},
 		}); urErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeFailed, Detail: urErr.Error()})
@@ -2300,7 +2299,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeOK, Detail: fmt.Sprintf("accepted=%d notified=%d queued=%d", ur.Accepted, ur.Notified, ur.Queued)})
 		}
 
-		// Legacy read compatibility only: drain receipts created before mailbox-only uplink.
+		// Legacy read compatibility only: drain receipts created before mailbox-only orchestrator.
 		// This is not the report path for new material reports.
 		// Scans the captain home for un-acked soldier terminal reports
 		// and relays each one to the General's state using the shared

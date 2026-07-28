@@ -1,25 +1,24 @@
-package uplink
+package orchestrator
 
 import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/mailbox"
 )
 
 type notifyTransport struct{ submitted string }
 
-func (t *notifyTransport) Notify(_ string, _ afk.TargetResult, payload string) NotifyResult {
+func (t *notifyTransport) Notify(_ string, _ afk.TargetResult, payload string) UplinkNotifyResult {
 	t.submitted = payload
-	return NotifyResult{Acknowledged: true}
+	return UplinkNotifyResult{Acknowledged: true}
 }
 
 func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) {
-	ref := mailbox.NotificationRef{MessageID: "message-one", SenderIdentity: "soldier-one"}
+	ref := NotificationRef{MessageID: "message-one", SenderIdentity: "soldier-one"}
 	transport := &notifyTransport{}
 	var receiverSeen string
 	result := NotifyParentWithTargetResolver("sender", "receiver", ref,
-		func(receiver string, got mailbox.NotificationRef) (afk.TargetResult, error) {
+		func(receiver string, got NotificationRef) (afk.TargetResult, error) {
 			receiverSeen = receiver
 			return afk.TargetResult{Source: afk.RuntimeSource, Handle: "fleet:p9"}, nil
 		}, transport)
@@ -38,8 +37,8 @@ func TestNotifyParentWithTargetResolverSubmitsOnlyNotificationRef(t *testing.T) 
 }
 
 func TestNotifyParentWithTargetResolverQueuesUnavailableTarget(t *testing.T) {
-	result := NotifyParentWithTargetResolver("sender", "receiver", mailbox.NotificationRef{},
-		func(string, mailbox.NotificationRef) (afk.TargetResult, error) {
+	result := NotifyParentWithTargetResolver("sender", "receiver", NotificationRef{},
+		func(string, NotificationRef) (afk.TargetResult, error) {
 			return afk.TargetResult{Source: afk.Unsupported}, nil
 		}, &notifyTransport{})
 	if !result.Queued || result.Acknowledged {

@@ -2,6 +2,8 @@ package testutil
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"os/exec"
 	"strings"
 	"testing"
@@ -21,17 +23,22 @@ func TestTransitionalPackagePolicy(t *testing.T) {
 	}
 	dec := json.NewDecoder(strings.NewReader(string(out)))
 	packages := map[string]listedPackage{}
-	for dec.More() {
+	for {
 		var p listedPackage
-		if err := dec.Decode(&p); err != nil {
+		err := dec.Decode(&p)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
 		packages[p.ImportPath] = p
 	}
 	const root = "github.com/minhtri2710/munsu/internal/"
+	retired := map[string]bool{"session": true, "worktree": true, "hometag": true, "ghurl": true, "glurl": true, "composer": true, "nostatus": true, "event": true, "mailbox": true}
 	for path, p := range packages {
 		for _, imp := range p.Imports {
-			if imp == root+"session" || imp == root+"worktree" || imp == root+"hometag" {
+			if retired[strings.TrimPrefix(imp, root)] && strings.HasPrefix(imp, root) {
 				t.Errorf("%s imports retired package %s", path, imp)
 			}
 			if path == root+"fleet" && imp == root+"orchestrator" {

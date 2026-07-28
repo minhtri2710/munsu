@@ -1,4 +1,4 @@
-package wakedelivery
+package orchestrator
 
 import (
 	"fmt"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/turnend"
 )
 
@@ -65,7 +64,7 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	}
 
 	// Local event log should exist
-	events, err := orchestrator.ReadAll(soldierHome)
+	events, err := ReadAll(soldierHome)
 	if err != nil {
 		t.Fatalf("event log: %v", err)
 	}
@@ -133,7 +132,7 @@ func TestDeliverWake_SoldierNonMaterialState(t *testing.T) {
 	}
 
 	// Event should exist
-	events, err := orchestrator.ReadAll(soldierHome)
+	events, err := ReadAll(soldierHome)
 	if err != nil {
 		t.Fatalf("event log: %v", err)
 	}
@@ -204,7 +203,7 @@ func TestDeliverWake_ReceiptWriteFails(t *testing.T) {
 	}
 
 	// No event log should exist
-	eventPath := orchestrator.LogPath(soldierHome)
+	eventPath := LogPath(soldierHome)
 	if _, err := os.Stat(eventPath); err == nil {
 		t.Error("event log should not exist after receipt failure")
 	}
@@ -263,7 +262,7 @@ func TestDeliverWake_ObligationsInitFails(t *testing.T) {
 	}
 
 	// No event log
-	eventPath := orchestrator.LogPath(soldierHome)
+	eventPath := LogPath(soldierHome)
 	if _, err := os.Stat(eventPath); err == nil {
 		t.Error("event log should not exist after obligations failure")
 	}

@@ -4,8 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/uplink"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 func TestReportCmdMaterialSoldierUsesMailboxOnly(t *testing.T) {
@@ -24,17 +23,17 @@ func TestReportCmdMaterialSoldierUsesMailboxOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pending, err := mailbox.NewStore(captainHome).ListPending("task_one")
+	pending, err := orchestrator.NewStore(captainHome).ListPending("task_one")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
-	if pending[0].ReceiverRank != mailbox.RankCaptain {
+	if pending[0].ReceiverRank != orchestrator.RankCaptain {
 		t.Fatalf("receiver rank=%s", pending[0].ReceiverRank)
 	}
-	if env, _ := mailbox.NewStore(captainHome).ReadEnvelope("task_one", pending[0].MessageID); env == nil {
+	if env, _ := orchestrator.NewStore(captainHome).ReadEnvelope("task_one", pending[0].MessageID); env == nil {
 		t.Fatal("Captain inbox should contain the Uplink Report")
 	}
-	if !uplink.HasOpenReport(captainHome, "task:one", "default") {
+	if !orchestrator.HasOpenReport(captainHome, "task:one", "default") {
 		t.Fatal("open evidence missing")
 	}
 }
@@ -42,7 +41,7 @@ func TestReportCmdMaterialSoldierUsesMailboxOnly(t *testing.T) {
 func TestReportCmdMaterialCaptainUsesGeneralMailbox(t *testing.T) {
 	captainHome := t.TempDir()
 	generalHome := t.TempDir()
-	if err := mailbox.WriteHomeIdentity(captainHome, "captain-one", mailbox.RankCaptain); err != nil {
+	if err := orchestrator.WriteHomeIdentity(captainHome, "captain-one", orchestrator.RankCaptain); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", captainHome)
@@ -58,14 +57,14 @@ func TestReportCmdMaterialCaptainUsesGeneralMailbox(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pending, err := mailbox.NewStore(captainHome).ListPending("captain-one")
+	pending, err := orchestrator.NewStore(captainHome).ListPending("captain-one")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
-	if pending[0].ReceiverRank != mailbox.RankGeneral {
+	if pending[0].ReceiverRank != orchestrator.RankGeneral {
 		t.Fatalf("receiver rank=%s", pending[0].ReceiverRank)
 	}
-	if env, _ := mailbox.NewStore(generalHome).ReadEnvelope("captain-one", pending[0].MessageID); env == nil {
+	if env, _ := orchestrator.NewStore(generalHome).ReadEnvelope("captain-one", pending[0].MessageID); env == nil {
 		t.Fatal("General inbox should contain the Uplink Report")
 	}
 }

@@ -9,12 +9,11 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/uplink"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
-func runUplinkReport(t *testing.T, notify func(string, string, mailbox.NotificationRef) uplink.NotifyResult, args ...string) (string, string, contract.Response[contract.MessageResult]) {
+func runUplinkReport(t *testing.T, notify func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult, args ...string) (string, string, contract.Response[contract.MessageResult]) {
 	t.Helper()
 	senderHome, receiverHome := t.TempDir(), t.TempDir()
 	t.Setenv("MUNSU_HOME", senderHome)
@@ -39,18 +38,18 @@ func runUplinkReport(t *testing.T, notify func(string, string, mailbox.Notificat
 }
 
 func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
-	senderHome, receiverHome, resp := runUplinkReport(t, func(string, string, mailbox.NotificationRef) uplink.NotifyResult {
+	senderHome, receiverHome, resp := runUplinkReport(t, func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
 		t.Fatal("no-ring must not notify")
-		return uplink.NotifyResult{}
+		return orchestrator.UplinkNotifyResult{}
 	}, "--ring", "no-ring", "done", "complete")
-	pending, err := mailbox.NewStore(receiverHome).ListPending("task_with_slash")
+	pending, err := orchestrator.NewStore(receiverHome).ListPending("task_with_slash")
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
 	if !lifecycle.HasQueuedWakes(receiverHome) {
 		t.Fatal("receiver wake missing")
 	}
-	if !uplink.HasOpenReport(receiverHome, "task:with/slash", "default") {
+	if !orchestrator.HasOpenReport(receiverHome, "task:with/slash", "default") {
 		t.Fatal("open evidence missing")
 	}
 	if resp.Data.Injection == nil || resp.Data.Injection.Outcome != "queued" {
@@ -63,8 +62,8 @@ func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
 }
 
 func TestReportCmdNotificationFailureReturnsQueued(t *testing.T) {
-	_, _, resp := runUplinkReport(t, func(string, string, mailbox.NotificationRef) uplink.NotifyResult {
-		return uplink.NotifyResult{Queued: true}
+	_, _, resp := runUplinkReport(t, func(string, string, orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
+		return orchestrator.UplinkNotifyResult{Queued: true}
 	}, "--ring", "ring", "failed", "failed")
 	if resp.Data.Injection == nil || resp.Data.Injection.Outcome != "queued" {
 		t.Fatalf("response=%+v", resp.Data.Injection)
@@ -72,15 +71,15 @@ func TestReportCmdNotificationFailureReturnsQueued(t *testing.T) {
 }
 
 func TestReportCmdImmediateNotificationUsesRefAndReturnsNotified(t *testing.T) {
-	var got mailbox.NotificationRef
-	_, receiverHome, resp := runUplinkReport(t, func(_, _ string, ref mailbox.NotificationRef) uplink.NotifyResult {
+	var got orchestrator.NotificationRef
+	_, receiverHome, resp := runUplinkReport(t, func(_, _ string, ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
 		got = ref
-		return uplink.NotifyResult{Acknowledged: true}
+		return orchestrator.UplinkNotifyResult{Acknowledged: true}
 	}, "--ring", "ring", "blocked", "waiting")
 	if got.MessageID == "" || got.SenderIdentity != "task_with_slash" {
 		t.Fatalf("ref=%+v", got)
 	}
-	env, err := mailbox.NewStore(receiverHome).ReadEnvelope(got.SenderIdentity, got.MessageID)
+	env, err := orchestrator.NewStore(receiverHome).ReadEnvelope(got.SenderIdentity, got.MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("env=%+v err=%v", env, err)
 	}

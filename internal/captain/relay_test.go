@@ -8,8 +8,8 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/turnend"
-	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // setupRelayTest creates a captain home and a general home with a provenance
@@ -739,9 +739,9 @@ type captainNotificationTransport struct {
 	calls        int
 }
 
-func (t *captainNotificationTransport) Notify(string, afk.TargetResult, string) uplink.NotifyResult {
+func (t *captainNotificationTransport) Notify(string, afk.TargetResult, string) orchestrator.UplinkNotifyResult {
 	t.calls++
-	return uplink.NotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
+	return orchestrator.UplinkNotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
 }
 
 // TestResolveParentHome_HookConsistency_ConfigFallback verifies that when

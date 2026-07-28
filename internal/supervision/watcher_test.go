@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/mailbox"
 	"github.com/minhtri2710/munsu/internal/marker"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
@@ -26,8 +26,8 @@ func (testEndpointProbe) Probe(string, map[string]string) (bool, error) { return
 type testCycleSender struct{}
 
 func (testCycleSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (testCycleSender) Send(string, map[string]string, string) mailbox.BoundSendResult {
-	return mailbox.BoundSendResult{}
+func (testCycleSender) Send(string, map[string]string, string) orchestrator.BoundSendResult {
+	return orchestrator.BoundSendResult{}
 }
 
 func testScanFleet(home string) *WakeReason {

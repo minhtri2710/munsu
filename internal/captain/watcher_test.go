@@ -9,11 +9,10 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
-	"github.com/minhtri2710/munsu/internal/wakedelivery"
 )
 
 type captainTestProbe struct{}
@@ -23,8 +22,8 @@ func (captainTestProbe) Probe(string, map[string]string) (bool, error) { return 
 type captainTestSender struct{}
 
 func (captainTestSender) Alive(string, map[string]string) (bool, error) { return false, nil }
-func (captainTestSender) Send(string, map[string]string, string) mailbox.BoundSendResult {
-	return mailbox.BoundSendResult{}
+func (captainTestSender) Send(string, map[string]string, string) orchestrator.BoundSendResult {
+	return orchestrator.BoundSendResult{}
 }
 
 func captainRunCycle(home string) (bool, error) {
@@ -527,7 +526,7 @@ func TestCaptainActivationOnReceipt_HookWired(t *testing.T) {
 
 	// Without captain meta (genHome has no captain:<id>.meta with herdr_pane_id),
 	// activation-seen must NOT be written — retries must remain possible.
-	if wakedelivery.IsActivationSeen(cptHome, taskID, termKey) {
+	if orchestrator.IsActivationSeen(cptHome, taskID, termKey) {
 		t.Error("activation-seen should NOT be written without captain meta")
 	}
 
@@ -550,7 +549,7 @@ func TestCaptainActivationOnReceipt_IdempotentSegregation(t *testing.T) {
 
 	// First receipt: write + mark activation-seen.
 	writeReceiptAndObligation(t, cptHome, taskSeen, keySeen, "done", "seen")
-	if err := wakedelivery.MarkActivationSeen(cptHome, taskSeen, keySeen); err != nil {
+	if err := orchestrator.MarkActivationSeen(cptHome, taskSeen, keySeen); err != nil {
 		t.Fatalf("MarkActivationSeen: %v", err)
 	}
 
@@ -563,13 +562,13 @@ func TestCaptainActivationOnReceipt_IdempotentSegregation(t *testing.T) {
 	captainRunCycle(cptHome)
 
 	// First receipt should still be activation-seen (pre-written marker).
-	if !wakedelivery.IsActivationSeen(cptHome, taskSeen, keySeen) {
+	if !orchestrator.IsActivationSeen(cptHome, taskSeen, keySeen) {
 		t.Error("first receipt should remain activation-seen")
 	}
 
 	// Without captain meta (no herdr_pane_id in genHome meta),
 	// second receipt must NOT be activation-seen.
-	if wakedelivery.IsActivationSeen(cptHome, taskNotSeen, keyNotSeen) {
+	if orchestrator.IsActivationSeen(cptHome, taskNotSeen, keyNotSeen) {
 		t.Error("second receipt should NOT be activation-seen without captain meta")
 	}
 
@@ -606,7 +605,7 @@ func TestCaptainActivationOnReceipt_NoParentContext(t *testing.T) {
 
 	// Activation-seen should NOT be written because the hook short-circuits
 	// when parentHome == homeDir.
-	if wakedelivery.IsActivationSeen(captainHome, taskID, termKey) {
+	if orchestrator.IsActivationSeen(captainHome, taskID, termKey) {
 		t.Error("activation-seen should NOT be written when parentHome == homeDir")
 	}
 }
@@ -635,7 +634,7 @@ func TestCaptainActivationOnReceipt_NoParentEnv(t *testing.T) {
 	captainRunCycle(captainHome)
 
 	// Activation-seen should NOT be written.
-	if wakedelivery.IsActivationSeen(captainHome, taskID, termKey) {
+	if orchestrator.IsActivationSeen(captainHome, taskID, termKey) {
 		t.Error("activation-seen should NOT be written when MUNSU_PARENT_STATUS is unset")
 	}
 }

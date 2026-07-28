@@ -1,12 +1,10 @@
-package uplink
+package orchestrator
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/mailbox"
 )
 
 func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
@@ -17,19 +15,19 @@ func TestReportPersistsBeforeNotificationAndQueuesFailure(t *testing.T) {
 	result, err := Report(ReportRequest{
 		SenderHome:     senderHome,
 		ReceiverHome:   receiverHome,
-		SenderRank:     mailbox.RankSoldier,
+		SenderRank:     RankSoldier,
 		SenderIdentity: "soldier-1",
-		ReceiverRank:   mailbox.RankCaptain,
+		ReceiverRank:   RankCaptain,
 		ReceiverID:     "captain-1",
 		TaskID:         "task:1",
 		Key:            "default",
 		State:          "done",
 		Message:        "complete",
-		Notify: func(ref mailbox.NotificationRef) NotifyResult {
-			pending, _ := mailbox.NewStore(senderHome).ReadPending("soldier-1", ref.MessageID)
-			envelope, _ := mailbox.NewStore(receiverHome).ReadEnvelope("soldier-1", ref.MessageID)
+		Notify: func(ref NotificationRef) UplinkNotifyResult {
+			pending, _ := NewStore(senderHome).ReadPending("soldier-1", ref.MessageID)
+			envelope, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", ref.MessageID)
 			observedDurable = pending != nil && envelope != nil
-			return NotifyResult{Queued: true}
+			return UplinkNotifyResult{Queued: true}
 		},
 	})
 	if err != nil {
@@ -52,8 +50,8 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 
 	first, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain-1",
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "blocked", Message: "waiting",
 	})
 	if err != nil {
@@ -61,8 +59,8 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 	}
 	second, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain-1",
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "done", Message: "complete",
 	})
 	if err != nil {
@@ -71,17 +69,17 @@ func TestReportLatestSupersedesSameTaskAndKey(t *testing.T) {
 	if first.MessageID == second.MessageID {
 		t.Fatal("superseding report should have a new immutable message ID")
 	}
-	pending, err := mailbox.NewStore(senderHome).ListPending("soldier-1")
+	pending, err := NewStore(senderHome).ListPending("soldier-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pending) != 1 || pending[0].MessageID != second.MessageID {
 		t.Fatalf("pending = %+v, want only latest report", pending)
 	}
-	if env, _ := mailbox.NewStore(receiverHome).ReadEnvelope("soldier-1", first.MessageID); env == nil {
+	if env, _ := NewStore(receiverHome).ReadEnvelope("soldier-1", first.MessageID); env == nil {
 		t.Fatal("superseded receiver envelope should remain immutable history")
 	}
-	if !mailbox.NewStore(receiverHome).IsSuperseded("soldier-1", first.MessageID) {
+	if !NewStore(receiverHome).IsSuperseded("soldier-1", first.MessageID) {
 		t.Fatal("superseded marker missing")
 	}
 }
@@ -91,8 +89,8 @@ func TestReportReplacementFailurePreservesOldPending(t *testing.T) {
 	receiverHome := t.TempDir()
 	first, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain-1",
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "blocked", Message: "waiting",
 	})
 	if err != nil {
@@ -106,14 +104,14 @@ func TestReportReplacementFailurePreservesOldPending(t *testing.T) {
 	}
 	_, err = Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain-1",
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "phase", State: "done", Message: "complete",
 	})
 	if err == nil {
 		t.Fatal("replacement should fail")
 	}
-	pending, readErr := mailbox.NewStore(senderHome).ReadPending("soldier-1", first.MessageID)
+	pending, readErr := NewStore(senderHome).ReadPending("soldier-1", first.MessageID)
 	if readErr != nil || pending == nil {
 		t.Fatalf("old pending must survive: %v", readErr)
 	}
@@ -124,26 +122,26 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	receiverHome := t.TempDir()
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: mailbox.RankCaptain, SenderIdentity: "captain-1",
-		ReceiverRank: mailbox.RankGeneral, ReceiverID: "general-1",
+		SenderRank: RankCaptain, SenderIdentity: "captain-1",
+		ReceiverRank: RankGeneral, ReceiverID: "general-1",
 		TaskID: "captain:1", Key: "default", State: "failed", Message: "failed",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	env, err := mailbox.NewStore(receiverHome).ReadEnvelope("captain-1", result.MessageID)
+	env, err := NewStore(receiverHome).ReadEnvelope("captain-1", result.MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("ReadEnvelope: %v", err)
 	}
-	ack := &mailbox.ProcessingAck{
+	ack := &ProcessingAck{
 		MessageID: env.MessageID, SenderRank: env.SenderRank,
 		SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank,
 		ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key,
 		PayloadHash: env.PayloadHash, ProcessedAt: time.Now().UnixNano(),
-		Outcome: mailbox.OutcomeAccepted,
+		Outcome: OutcomeAccepted,
 	}
-	if err := mailbox.NewStore(receiverHome).WriteAck(ack); err != nil {
+	if err := NewStore(receiverHome).WriteAck(ack); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,9 +149,9 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	recovered, err := Recover(RecoverRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderIdentity: "captain-1", ForceNotify: true,
-		Notify: func(ref mailbox.NotificationRef) NotifyResult {
+		Notify: func(ref NotificationRef) UplinkNotifyResult {
 			notified = ref.Encode()
-			return NotifyResult{Acknowledged: true}
+			return UplinkNotifyResult{Acknowledged: true}
 		},
 	})
 	if err != nil {
@@ -171,7 +169,7 @@ func TestRecoverUsesNotificationRefAndClosesAfterExactAck(t *testing.T) {
 	if !HasAcceptedReport(senderHome, "captain:1", "default") {
 		t.Fatal("accepted evidence should be durable")
 	}
-	pending, _ := mailbox.NewStore(senderHome).ReadPending("captain-1", result.MessageID)
+	pending, _ := NewStore(senderHome).ReadPending("captain-1", result.MessageID)
 	if pending != nil {
 		t.Fatal("accepted pending should be removed")
 	}
@@ -182,10 +180,10 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 	receiverHome := t.TempDir()
 	result, err := Report(ReportRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
-		SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier-1",
-		ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain-1",
+		SenderRank: RankSoldier, SenderIdentity: "soldier-1",
+		ReceiverRank: RankCaptain, ReceiverID: "captain-1",
 		TaskID: "task:1", Key: "default", State: "done", Message: "complete",
-		Notify: func(mailbox.NotificationRef) NotifyResult { return NotifyResult{Acknowledged: true} },
+		Notify: func(NotificationRef) UplinkNotifyResult { return UplinkNotifyResult{Acknowledged: true} },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -197,11 +195,14 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var got mailbox.NotificationRef
+	var got NotificationRef
 	recovered, err := Recover(RecoverRequest{
 		SenderHome: senderHome, ReceiverHome: receiverHome,
 		SenderIdentity: "soldier-1", Now: time.Now(),
-		Notify: func(ref mailbox.NotificationRef) NotifyResult { got = ref; return NotifyResult{Acknowledged: true} },
+		Notify: func(ref NotificationRef) UplinkNotifyResult {
+			got = ref
+			return UplinkNotifyResult{Acknowledged: true}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +210,7 @@ func TestRecoverRetriesSameRefAfterSixtySeconds(t *testing.T) {
 	if recovered.Notified != 1 || got.MessageID != result.MessageID {
 		t.Fatalf("recover = %+v ref=%+v", recovered, got)
 	}
-	if _, err := os.Stat(filepath.Join(receiverHome, "state", mailbox.InboxDir, "soldier-1", result.MessageID+".json")); err != nil {
+	if _, err := os.Stat(filepath.Join(receiverHome, "state", InboxDir, "soldier-1", result.MessageID+".json")); err != nil {
 		t.Fatal("recovery must retain the original envelope")
 	}
 }

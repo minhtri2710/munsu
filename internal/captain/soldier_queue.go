@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -22,7 +22,7 @@ type SendToSoldierResult struct {
 }
 
 type SoldierEndpointCapabilities interface {
-	mailbox.BoundSender
+	orchestrator.BoundSender
 	Busy(home string, meta map[string]string) (bool, error)
 }
 
@@ -73,17 +73,17 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 	// 2. Create the mailbox Envelope (captain→soldier).
 	// ReceiverID is the sanitized soldier task ID; ReceiverRank is RankSoldier.
 	receiverID := cleanReceiverID(soldierTaskID)
-	env := &mailbox.Envelope{
-		SenderRank:     mailbox.RankCaptain,
+	env := &orchestrator.Envelope{
+		SenderRank:     orchestrator.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   mailbox.RankSoldier,
+		ReceiverRank:   orchestrator.RankSoldier,
 		ReceiverID:     receiverID, // sanitized task ID
 		TaskID:         soldierTaskID,
 		Payload:        line,
 	}
 
 	// 3. Write envelope to the shared inbox (state/.inbox/<sender>/<msg-id>.json).
-	store := mailbox.NewStore(senderHome)
+	store := orchestrator.NewStore(senderHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		result.Err = fmt.Errorf("writing inbox envelope: %w", err)
 		return result
@@ -115,7 +115,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 	}
 
 	// 6b. Soldier is idle — send NotificationRef through the endpoint capability.
-	ref := mailbox.NotificationRef{
+	ref := orchestrator.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
@@ -149,7 +149,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	result := &SendToSoldierResult{}
 
 	// Read pending envelopes for this sender.
-	store := mailbox.NewStore(senderHome)
+	store := orchestrator.NewStore(senderHome)
 	pending, err := store.ListPending(senderIdentity)
 	if err != nil {
 		result.Err = fmt.Errorf("listing pending: %w", err)
@@ -158,7 +158,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 
 	// Filter to only pending targeting this soldier (ReceiverID matches).
 	receiverID := cleanReceiverID(soldierTaskID)
-	var targetEnv *mailbox.Envelope
+	var targetEnv *orchestrator.Envelope
 	for _, env := range pending {
 		if env.ReceiverID == receiverID {
 			targetEnv = env
@@ -208,7 +208,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	}
 
 	// Send NotificationRef through the endpoint capability.
-	ref := mailbox.NotificationRef{
+	ref := orchestrator.NotificationRef{
 		MessageID:      targetEnv.MessageID,
 		SenderIdentity: senderIdentity,
 	}
@@ -227,7 +227,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 // ReconcileSoldierPending checks for acks on pending envelopes and removes
 // matching pending records when a valid ack exists.
 func ReconcileSoldierPending(senderHome, senderIdentity string) error {
-	store := mailbox.NewStore(senderHome)
+	store := orchestrator.NewStore(senderHome)
 	// resolve taskID from env.ReceiverID... but ReceiverID is sanitized.
 	// We store the original TaskID in the envelope, so we can read it.
 
@@ -256,12 +256,12 @@ func ReconcileSoldierPending(senderHome, senderIdentity string) error {
 
 // SoldierInboxPath returns the path to the inbox directory for a sender.
 func SoldierInboxPath(senderHome, senderIdentity string) string {
-	return filepath.Join(senderHome, "state", mailbox.InboxDir, senderIdentity)
+	return filepath.Join(senderHome, "state", orchestrator.InboxDir, senderIdentity)
 }
 
 // SoldierOutboxPath returns the path to the pending records directory for a sender.
 func SoldierOutboxPath(senderHome, senderIdentity string) string {
-	return filepath.Join(senderHome, "state", mailbox.OutboxDir, senderIdentity)
+	return filepath.Join(senderHome, "state", orchestrator.OutboxDir, senderIdentity)
 }
 
 // EmitReadyEvent writes a durable ready event marker for a soldier task.
@@ -462,7 +462,7 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 		// Check if the pending command has already been dispatched (marked
 		// by a .dispatched marker). This prevents re-sending the same
 		// NotificationRef on duplicate ready events.
-		store := mailbox.NewStore(senderHome)
+		store := orchestrator.NewStore(senderHome)
 		pending, listErr := store.ListPending(senderIdentity)
 		if listErr != nil {
 			return flushed, fmt.Errorf("consume ready: list pending: %w", listErr)
@@ -470,7 +470,7 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 
 		// Filter to pending targeting this soldier.
 		receiverID := cleanReceiverID(soldierTaskID)
-		var pendingEnv *mailbox.Envelope
+		var pendingEnv *orchestrator.Envelope
 		for _, p := range pending {
 			if p.ReceiverID == receiverID {
 				pendingEnv = p
@@ -587,12 +587,12 @@ func cleanDispatched(senderHome, taskID, messageID string) error {
 //
 // Returns the envelope payload. Writes NO ack.
 // Returns an error if the envelope is not found or validation fails.
-func SoldierReceiveNotification(senderHome string, ref mailbox.NotificationRef, expectedTaskID string) (string, error) {
+func SoldierReceiveNotification(senderHome string, ref orchestrator.NotificationRef, expectedTaskID string) (string, error) {
 	if err := ref.Validate(); err != nil {
 		return "", fmt.Errorf("invalid ref: %w", err)
 	}
 
-	store := mailbox.NewStore(senderHome)
+	store := orchestrator.NewStore(senderHome)
 	env, err := store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
 		return "", fmt.Errorf("reading envelope: %w", err)
@@ -602,7 +602,7 @@ func SoldierReceiveNotification(senderHome string, ref mailbox.NotificationRef, 
 	}
 
 	// Validate the envelope.
-	if err := mailbox.ValidateEnvelope(env); err != nil {
+	if err := orchestrator.ValidateEnvelope(env); err != nil {
 		return "", fmt.Errorf("invalid envelope: %w", err)
 	}
 
@@ -610,7 +610,7 @@ func SoldierReceiveNotification(senderHome string, ref mailbox.NotificationRef, 
 	if env.TaskID != expectedTaskID {
 		return "", fmt.Errorf("envelope task ID %q does not match expected %q", env.TaskID, expectedTaskID)
 	}
-	if env.ReceiverRank != mailbox.RankSoldier {
+	if env.ReceiverRank != orchestrator.RankSoldier {
 		return "", fmt.Errorf("envelope receiver rank %q, expected soldier", env.ReceiverRank)
 	}
 	if env.SenderIdentity != ref.SenderIdentity {
@@ -629,12 +629,12 @@ func SoldierReceiveNotification(senderHome string, ref mailbox.NotificationRef, 
 // Validates that the envelope exists, matches expected task ID, and writes
 // an "accepted" ack. Idempotent: calling with the same ref returns the
 // existing ack with preserved timestamp.
-func SoldierAckNotification(senderHome string, ref mailbox.NotificationRef, expectedTaskID string) (*mailbox.ProcessingAck, error) {
+func SoldierAckNotification(senderHome string, ref orchestrator.NotificationRef, expectedTaskID string) (*orchestrator.ProcessingAck, error) {
 	if err := ref.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid ref: %w", err)
 	}
 
-	store := mailbox.NewStore(senderHome)
+	store := orchestrator.NewStore(senderHome)
 	env, err := store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
 		return nil, fmt.Errorf("reading envelope: %w", err)
@@ -643,7 +643,7 @@ func SoldierAckNotification(senderHome string, ref mailbox.NotificationRef, expe
 		return nil, fmt.Errorf("envelope not found: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
 	}
 
-	if err := mailbox.ValidateEnvelope(env); err != nil {
+	if err := orchestrator.ValidateEnvelope(env); err != nil {
 		return nil, fmt.Errorf("invalid envelope: %w", err)
 	}
 	if env.TaskID != expectedTaskID {
@@ -656,13 +656,13 @@ func SoldierAckNotification(senderHome string, ref mailbox.NotificationRef, expe
 		return nil, fmt.Errorf("reading existing ack: %w", err)
 	}
 	if existing != nil {
-		if existing.Outcome == mailbox.OutcomeAccepted {
+		if existing.Outcome == orchestrator.OutcomeAccepted {
 			return existing, nil // idempotent
 		}
 		return nil, fmt.Errorf("ack conflict: existing outcome %q", existing.Outcome)
 	}
 
-	ack := &mailbox.ProcessingAck{
+	ack := &orchestrator.ProcessingAck{
 		MessageID:      env.MessageID,
 		SenderRank:     env.SenderRank,
 		SenderIdentity: env.SenderIdentity,
@@ -672,7 +672,7 @@ func SoldierAckNotification(senderHome string, ref mailbox.NotificationRef, expe
 		Key:            env.Key,
 		PayloadHash:    env.PayloadHash,
 		ProcessedAt:    time.Now().UnixNano(),
-		Outcome:        mailbox.OutcomeAccepted,
+		Outcome:        orchestrator.OutcomeAccepted,
 	}
 	if err := store.WriteAck(ack); err != nil {
 		return nil, fmt.Errorf("writing ack: %w", err)
@@ -682,7 +682,7 @@ func SoldierAckNotification(senderHome string, ref mailbox.NotificationRef, expe
 
 // SoldierIsAcked checks whether a specific message has been acknowledged.
 func SoldierIsAcked(senderHome, senderIdentity, messageID string) bool {
-	return mailbox.NewStore(senderHome).IsAcked(senderIdentity, messageID)
+	return orchestrator.NewStore(senderHome).IsAcked(senderIdentity, messageID)
 }
 
 // ReadyEvent carries the durable ready signal from a soldier.

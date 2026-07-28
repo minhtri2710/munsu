@@ -1,4 +1,4 @@
-package mailbox
+package orchestrator
 
 type BoundSendResult struct {
 	Status       string

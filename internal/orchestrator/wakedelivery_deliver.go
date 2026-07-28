@@ -7,7 +7,7 @@
 //
 // Storage primitives (turnend, lifecycle, event) are imported, not absorbed.
 // Injection logic is moved here from report_cmd.go.
-package wakedelivery
+package orchestrator
 
 import (
 	"fmt"
@@ -18,7 +18,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
 )
@@ -80,8 +79,8 @@ func (r *ReconcileResult) Failed() int {
 	return n
 }
 
-// materialStates is the set of states that warrant waking a parent supervisor.
-var materialStates = map[string]bool{
+// wakeMaterialStates is the set of states that warrant waking a parent supervisor.
+var wakeMaterialStates = map[string]bool{
 	"done":           true,
 	"failed":         true,
 	"needs-decision": true,
@@ -90,7 +89,7 @@ var materialStates = map[string]bool{
 
 // isMaterial returns true for states that warrant wake/receipt.
 func isMaterial(state string) bool {
-	return materialStates[state]
+	return wakeMaterialStates[state]
 }
 
 // --- DeliverWake ---
@@ -154,9 +153,9 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	// Step 3: Append to typed event log (best-effort)
-	syntheticID := orchestrator.SyntheticEventID()
+	syntheticID := SyntheticEventID()
 	receipt.EventID = syntheticID
-	if err := orchestrator.AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
+	if err := AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
 	}
 

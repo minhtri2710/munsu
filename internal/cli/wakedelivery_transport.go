@@ -6,24 +6,24 @@ import (
 	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/wakedelivery"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 type sessionActivationTransport struct {
 	resolve func(string, string) (backend.Backend, string, error)
 }
 
-func newSessionActivationTransport() wakedelivery.ActivationTransport {
+func newSessionActivationTransport() orchestrator.ActivationTransport {
 	return sessionActivationTransport{resolve: backend.Resolve}
 }
 
-func (t sessionActivationTransport) Attempt(home string, target afk.TargetResult, payload string) wakedelivery.ActivationAttempt {
+func (t sessionActivationTransport) Attempt(home string, target afk.TargetResult, payload string) orchestrator.ActivationAttempt {
 	bk, _, err := t.resolve(home, "")
 	if err != nil {
-		return wakedelivery.ActivationAttempt{SafetyError: err.Error()}
+		return orchestrator.ActivationAttempt{SafetyError: err.Error()}
 	}
 	safe, verdict, err := afk.IsSafeInjectTarget(bk, target.Handle)
-	attempt := wakedelivery.ActivationAttempt{SafetyVerdict: verdict.String()}
+	attempt := orchestrator.ActivationAttempt{SafetyVerdict: verdict.String()}
 	if err != nil {
 		attempt.SafetyError = err.Error()
 		return attempt

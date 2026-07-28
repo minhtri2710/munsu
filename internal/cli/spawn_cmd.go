@@ -9,7 +9,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
@@ -168,7 +168,7 @@ func newSendCmd() *cobra.Command {
 
 			// Non-captain: mailbox-based send with busy-queueing for soldier tasks.
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := mailbox.ReadHomeIdentity(ctx.Home)
+			senderIdentity, _, identErr := orchestrator.ReadHomeIdentity(ctx.Home)
 			if identErr != nil {
 				// Fallback to home basename.
 				senderIdentity = filepath.Base(ctx.Home)
@@ -412,7 +412,7 @@ Calling when the soldier is busy returns with "still busy".
 			id := args[0]
 
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := mailbox.ReadHomeIdentity(ctx.Home)
+			senderIdentity, _, identErr := orchestrator.ReadHomeIdentity(ctx.Home)
 			if identErr != nil {
 				senderIdentity = filepath.Base(ctx.Home)
 			}

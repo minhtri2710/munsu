@@ -11,10 +11,9 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/turnend"
-	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -749,7 +748,7 @@ func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
 
 func TestUplinkCheck_MailboxOnlyKeyedOpenBlocks(t *testing.T) {
 	home, receiver := t.TempDir(), t.TempDir()
-	_, err := uplink.Report(uplink.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier", ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain", TaskID: "task:1", Key: "release", State: "done", Message: "complete"})
+	_, err := orchestrator.Report(orchestrator.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: orchestrator.RankSoldier, SenderIdentity: "soldier", ReceiverRank: orchestrator.RankCaptain, ReceiverID: "captain", TaskID: "task:1", Key: "release", State: "done", Message: "complete"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -760,11 +759,11 @@ func TestUplinkCheck_MailboxOnlyKeyedOpenBlocks(t *testing.T) {
 
 func TestUplinkCheck_MailboxOnlyPendingWithoutOpenEvidenceBlocks(t *testing.T) {
 	home := t.TempDir()
-	env := &mailbox.Envelope{Kind: "uplink-report", SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier", ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain", TaskID: "task:partial", Key: "x", Payload: "done"}
-	if err := mailbox.NewStore(home).WriteEnvelope(env); err != nil {
+	env := &orchestrator.Envelope{Kind: "uplink-report", SenderRank: orchestrator.RankSoldier, SenderIdentity: "soldier", ReceiverRank: orchestrator.RankCaptain, ReceiverID: "captain", TaskID: "task:partial", Key: "x", Payload: "done"}
+	if err := orchestrator.NewStore(home).WriteEnvelope(env); err != nil {
 		t.Fatal(err)
 	}
-	if err := mailbox.NewStore(home).WritePending(env); err != nil {
+	if err := orchestrator.NewStore(home).WritePending(env); err != nil {
 		t.Fatal(err)
 	}
 	if err := uplinkCheck(Options{HomeDir: home, ID: "task:partial"}); err == nil {
@@ -774,28 +773,28 @@ func TestUplinkCheck_MailboxOnlyPendingWithoutOpenEvidenceBlocks(t *testing.T) {
 
 func TestUplinkCheck_WrongAckBlocksExactAckOpens(t *testing.T) {
 	home, receiver := t.TempDir(), t.TempDir()
-	result, err := uplink.Report(uplink.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: mailbox.RankSoldier, SenderIdentity: "soldier", ReceiverRank: mailbox.RankCaptain, ReceiverID: "captain", TaskID: "task:ack", Key: "default", State: "done", Message: "complete"})
+	result, err := orchestrator.Report(orchestrator.ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: orchestrator.RankSoldier, SenderIdentity: "soldier", ReceiverRank: orchestrator.RankCaptain, ReceiverID: "captain", TaskID: "task:ack", Key: "default", State: "done", Message: "complete"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, _ := mailbox.NewStore(receiver).ReadEnvelope("soldier", result.MessageID)
-	wrong := &mailbox.ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: mailbox.PayloadHashHex("wrong"), ProcessedAt: time.Now().UnixNano(), Outcome: mailbox.OutcomeAccepted}
-	if err := mailbox.NewStore(receiver).WriteAck(wrong); err != nil {
+	env, _ := orchestrator.NewStore(receiver).ReadEnvelope("soldier", result.MessageID)
+	wrong := &orchestrator.ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: orchestrator.PayloadHashHex("wrong"), ProcessedAt: time.Now().UnixNano(), Outcome: orchestrator.OutcomeAccepted}
+	if err := orchestrator.NewStore(receiver).WriteAck(wrong); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uplink.Recover(uplink.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err == nil {
+	if _, err := orchestrator.Recover(orchestrator.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err == nil {
 		t.Fatal("wrong ack should fail")
 	}
 	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err == nil {
 		t.Fatal("wrong ack must block")
 	}
-	os.Remove(filepath.Join(receiver, "state", mailbox.InboxDir, "soldier", result.MessageID+".ack"))
+	os.Remove(filepath.Join(receiver, "state", orchestrator.InboxDir, "soldier", result.MessageID+".ack"))
 	exact := *wrong
 	exact.PayloadHash = env.PayloadHash
-	if err := mailbox.NewStore(receiver).WriteAck(&exact); err != nil {
+	if err := orchestrator.NewStore(receiver).WriteAck(&exact); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uplink.Recover(uplink.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err != nil {
+	if _, err := orchestrator.Recover(orchestrator.RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err != nil {
@@ -936,7 +935,7 @@ func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
 	// Write material status
 	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
 	// Write a receipt file
-	os.WriteFile(filepath.Join(receiptsDir, id+".uplink.receipt"), []byte("state=done\n"), 0644)
+	os.WriteFile(filepath.Join(receiptsDir, id+".orchestrator.receipt"), []byte("state=done\n"), 0644)
 
 	// With --force, teardown should proceed but preserve evidence
 	result, err := RunWithBackend(Options{HomeDir: home, ID: id, Force: true}, fakeTeardown{})
@@ -950,7 +949,7 @@ func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
 		t.Fatalf("evidence should be preserved at %s: %v", backupPath, err)
 	}
 	// Verify receipt was also preserved
-	backupReceipt := filepath.Join(stateDir, ".backup", id, id+".uplink.receipt")
+	backupReceipt := filepath.Join(stateDir, ".backup", id, id+".orchestrator.receipt")
 	if _, err := os.Stat(backupReceipt); err != nil {
 		t.Fatalf("receipt evidence should be preserved at %s: %v", backupReceipt, err)
 	}
