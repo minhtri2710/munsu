@@ -1128,7 +1128,7 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := os.ReadFile(CaptainRegistryPath(smHome))
+	got, err := os.ReadFile(RegistryPath(smHome))
 	if err != nil {
 		t.Fatalf("projects.md was not pushed: %v", err)
 	}
@@ -1136,7 +1136,7 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 		t.Errorf("projects.md = %q, want %q", string(got), reg)
 	}
 
-	projects, err := ListCaptains(smHome)
+	projects, err := List(smHome)
 	if err != nil {
 		t.Fatalf("ListCaptains: %v", err)
 	}
@@ -1159,14 +1159,14 @@ func TestConfigPush_ProjectsRegistryMirrorDeletion(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := os.WriteFile(CaptainRegistryPath(smHome), []byte("- stale - /tmp/stale (added 2026-01-01)\n"), 0644); err != nil {
+	if err := os.WriteFile(RegistryPath(smHome), []byte("- stale - /tmp/stale (added 2026-01-01)\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(CaptainRegistryPath(smHome)); !os.IsNotExist(err) {
+	if _, err := os.Stat(RegistryPath(smHome)); !os.IsNotExist(err) {
 		t.Error("projects.md should have been deleted when parent has none")
 	}
 }

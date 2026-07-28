@@ -1439,8 +1439,8 @@ func pushSharedFile(parentHome, captainHome string, logFn func(action, name stri
 // home. Entries keep absolute path descriptions so ResolveRepoPath works
 // without cloning into the captain projects/ tree (no auto-clone).
 func pushProjectsRegistry(parentHome, captainHome string, logFn func(action, name string)) error {
-	src := CaptainRegistryPath(parentHome)
-	dst := CaptainRegistryPath(captainHome)
+	src := RegistryPath(parentHome)
+	dst := RegistryPath(captainHome)
 
 	if !isSafeConfigPath(dst, parentHome, captainHome) {
 		return fmt.Errorf("projects.md path escapes captain container — refuse")
