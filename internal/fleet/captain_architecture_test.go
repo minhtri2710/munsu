@@ -555,3 +555,213 @@ func TestUpdate_WorktreeHomeFastForwarded(t *testing.T) {
 		t.Fatal("expected Before != After on fast-forward")
 	}
 }
+
+// TestUpdate_WorktreeHomeAlreadyCurrent proves that Update() returns
+// AlreadyCurrent when the captain is already on the parent's commit.
+func TestUpdate_WorktreeHomeAlreadyCurrent(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+
+	parent := filepath.Join(root, "parent")
+	captain := filepath.Join(root, "captain")
+	for _, dst := range []string{parent, captain} {
+		if out, err := exec.Command("git", "clone", remote, dst).CombinedOutput(); err != nil {
+			t.Fatalf("git clone: %v\n%s", err, out)
+		}
+		gitTestRun(t, dst, "config", "user.name", "Munsu Test")
+		gitTestRun(t, dst, "config", "user.email", "munsu@example.invalid")
+	}
+
+	// Initial commit: .gitignore covers captain markers.
+	gitTestRun(t, parent, "checkout", "-b", "main")
+	gitignoreContent := []byte("state/\nconfig/\ndata/\n.munsu-captain-home\n.captain-launch.sh\n")
+	if err := os.WriteFile(filepath.Join(parent, ".gitignore"), gitignoreContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, parent, "add", ".gitignore", "AGENTS.md")
+	gitTestRun(t, parent, "commit", "-m", "initial")
+	initCommit := gitTestRun(t, parent, "rev-parse", "HEAD")
+	gitTestRun(t, parent, "push", "-u", "origin", "main")
+	gitTestRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	// Sync captain.
+	gitTestRun(t, captain, "fetch", "origin", "main")
+	gitTestRun(t, captain, "checkout", "-B", "main", initCommit)
+	gitTestRun(t, captain, "remote", "set-head", "origin", "main")
+	gitTestRun(t, parent, "remote", "set-head", "origin", "main")
+	gitTestRun(t, captain, "reset", "--hard", initCommit)
+
+	// Add captain structure.
+	os.MkdirAll(filepath.Join(captain, "state"), 0755)
+	os.MkdirAll(filepath.Join(captain, "config"), 0755)
+	os.MkdirAll(filepath.Join(captain, "data"), 0755)
+	// No tracked file writes — state/, config/, data/ are gitignored.
+	SeedProvenance(captain, "test-sm")
+
+	// First Update: already current (nothing to ff).
+	resp := Update(captain, parent)
+	if resp.Outcome != AlreadyCurrent {
+		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, AlreadyCurrent, resp.Err)
+	}
+}
+
+// TestUpdate_UnmarkedHomeReturnsInvalidProvenance proves that Update()
+// on a home without provenance marker returns InvalidProvenance, not a
+// panic or silent skip.
+func TestUpdate_UnmarkedHomeReturnsInvalidProvenance(t *testing.T) {
+	tmp := t.TempDir()
+	resp := Update(tmp, t.TempDir())
+	if resp.Outcome != InvalidProvenance {
+		t.Fatalf("Update outcome = %q, want %q (err=%v)", resp.Outcome, InvalidProvenance, resp.Err)
+	}
+	if resp.Err == nil {
+		t.Fatal("expected non-nil error for unmarked home")
+	}
+}
+
+// TestUpdate_StateOnlyHomeDoesNotCallSafeFF proves that Update() returns
+// StateOnlySkipped before attempting safeFF, so state-only homes never
+// trigger git operations.
+func TestUpdate_StateOnlyHomeDoesNotCallSafeFF(t *testing.T) {
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
+	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
+	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
+	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# State-only\n"), 0644)
+	SeedProvenance(smHome, "test-sm")
+
+	// No .git directory is created.
+	if _, err := os.Stat(filepath.Join(smHome, ".git")); !os.IsNotExist(err) {
+		t.Skip("test setup has .git — cannot prove no-call")
+	}
+
+	resp := Update(smHome, parent)
+	if resp.Outcome != StateOnlySkipped {
+		t.Fatalf("Update outcome = %q, want %q", resp.Outcome, StateOnlySkipped)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Invariant: Update outcome types map correctly from safeFF reasons
+// ---------------------------------------------------------------------------
+
+// TestUpdate_OutcomeMapping proves that safeFF reasons are correctly mapped
+// to typed UpdateOutcome values, so convergent actions can make decisions
+// on typed outcomes rather than error string parsing.
+func TestUpdate_OutcomeMapping(t *testing.T) {
+	tests := []struct {
+		reason   SafeFFReason
+		err      error
+		expected UpdateOutcome
+	}{
+		{SafeFFSuccess, nil, FastForwarded},
+		{SafeFFAlreadyCurrent, nil, AlreadyCurrent},
+		{SafeFFOffBranch, fmt.Errorf("off branch"), WrongBranch},
+		{SafeFFMissingOrigin, fmt.Errorf("no origin"), Offline},
+		{SafeFFChangesTracked, fmt.Errorf("dirty"), Dirty},
+		{SafeFFError, fmt.Errorf("generic"), Diverged},
+	}
+
+	for _, tt := range tests {
+		got := outcomeFromFFReason(tt.reason, tt.err)
+		if got != tt.expected {
+			t.Errorf("outcomeFromFFReason(%q, %v) = %q, want %q",
+				tt.reason, tt.err, got, tt.expected)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Invariant: Config inheritance is safe and mirror-deletes correctly
+// ---------------------------------------------------------------------------
+
+// TestConfigPush_DoesNotLeakOutsideCaptain proves that ConfigPush refuses
+// any config path that symlink-escapes the captain home, preventing the
+// parent's inherited config from leaking outside the captain container.
+func TestConfigPush_DoesNotLeakOutsideCaptain(t *testing.T) {
+	parent := t.TempDir()
+	smHome := filepath.Join(parent, "captains", "test-sm")
+	outside := t.TempDir()
+
+	os.MkdirAll(smHome, 0755)
+	// Symlink config/ to an outside dir.
+	if err := os.Symlink(outside, filepath.Join(smHome, "config")); err != nil {
+		t.Fatal(err)
+	}
+	SeedProvenance(smHome, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	err := ConfigPush(parent, smHome)
+	if err == nil || !strings.Contains(err.Error(), "escapes captain container") {
+		t.Fatalf("ConfigPush error = %v, want symlink-escape refusal", err)
+	}
+	// Outside must remain unmutated.
+	if _, err := os.Stat(filepath.Join(outside, "soldier-harness")); !os.IsNotExist(err) {
+		t.Fatalf("outside destination was mutated: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Invariant: Provenance validation rejects copied/moved homes
+// ---------------------------------------------------------------------------
+
+// TestProvenance_CopiedHomeIsRefused proves that a captain home that was
+// copied to a different path (canonical home mismatch) is rejected by
+// ValidateProvenance. This prevents two captains from claiming the same ID.
+func TestProvenance_CopiedHomeIsRefused(t *testing.T) {
+	tmp := t.TempDir()
+	original := filepath.Join(tmp, "original")
+	copied := filepath.Join(tmp, "copied")
+
+	os.MkdirAll(original, 0755)
+	SeedProvenance(original, "test-sm")
+
+	// Copy the entire home (including provenance marker with canonical path).
+	copyDir(t, original, copied)
+
+	// Validation must fail because canonical home doesn't match.
+	_, err := ValidateProvenance(copied)
+	if err == nil {
+		t.Fatal("expected error for copied home")
+	}
+	if !strings.Contains(err.Error(), "canonical") && !strings.Contains(err.Error(), "does not match") {
+		t.Errorf("error = %v, want canonical-home mismatch", err)
+	}
+}
+
+// copyDir recursively copies a directory tree for provenance copy tests.
+func copyDir(t *testing.T, src, dst string) {
+	t.Helper()
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			copyDir(t, srcPath, dstPath)
+		} else {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dstPath, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
