@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var errLockUnavailable = errors.New("Windows file locking unavailable")
+var errWatcherLockUnavailable = errors.New("Windows file locking unavailable")
 
 func lockWatcherFile(file *os.File, nonblock bool) error {
 	overlapped := new(windows.Overlapped)
@@ -24,7 +24,7 @@ func lockWatcherFile(file *os.File, nonblock bool) error {
 		if callErr == windows.ERROR_LOCK_VIOLATION {
 			return os.ErrPermission
 		}
-		return errors.Join(errLockUnavailable, callErr)
+		return errors.Join(errWatcherLockUnavailable, callErr)
 	}
 	return nil
 }
@@ -33,7 +33,7 @@ func unlockWatcherFile(file *os.File) error {
 	ret, _, callErr := windows.NewLazySystemDLL("kernel32.dll").NewProc("UnlockFileEx").Call(
 		uintptr(file.Fd()), 0, ^uintptr(0), ^uintptr(0), 0)
 	if ret == 0 {
-		return errors.Join(errLockUnavailable, callErr)
+		return errors.Join(errWatcherLockUnavailable, callErr)
 	}
 	return nil
 }
