@@ -124,7 +124,7 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass for clean branch: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only known launch artifacts are dirty: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file exists alongside known artifacts")
 	}
@@ -250,7 +250,7 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file coexists with known artifacts")
 	}
@@ -312,7 +312,7 @@ func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta)
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only .soldier-launch.sh is dirty: %v", err)
 	}
@@ -328,14 +328,14 @@ func TestShipSafetyCheck_NoRemoteBranch(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{}, meta)
+	_, err := shipSafetyCheck(Options{}, meta, fakeTeardown{})
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail without remote")
 	}
 }
 
 func TestShipSafetyCheck_NoWorktreeInMeta(t *testing.T) {
-	_, err := shipSafetyCheck(Options{ID: "test"}, map[string]string{})
+	_, err := shipSafetyCheck(Options{ID: "test"}, map[string]string{}, fakeTeardown{})
 	if err == nil {
 		t.Fatal("should fail when no worktree in meta")
 	}

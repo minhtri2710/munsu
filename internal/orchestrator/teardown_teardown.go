@@ -19,9 +19,6 @@ import (
 )
 
 var GateRefuseFromCWD = func() error { return nil }
-var QueryDeliveryMergeStatus = func(*domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	return nil, fmt.Errorf("delivery merge status capability is required")
-}
 
 // Options controls teardown behavior.
 type Options struct {
@@ -61,7 +58,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	}
 
 	if !opts.Force {
-		proofs, err := safetyCheck(opts, meta, kind)
+		proofs, err := safetyCheck(opts, meta, kind, backend)
 		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
@@ -241,7 +238,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 
 // safetyCheck verifies that work is landed before allowing
 // Returns proof strings alongside any error. Proofs are only populated on success.
-func safetyCheck(opts Options, meta map[string]string, kind string) ([]string, error) {
+func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown) ([]string, error) {
 	switch kind {
 	case "scout":
 		if err := scoutSafetyCheck(opts, meta); err != nil {
@@ -249,7 +246,7 @@ func safetyCheck(opts Options, meta map[string]string, kind string) ([]string, e
 		}
 		return nil, nil
 	default:
-		return shipSafetyCheck(opts, meta)
+		return shipSafetyCheck(opts, meta, backend)
 	}
 }
 
@@ -280,7 +277,7 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 // It separates cleanliness checks (dirty worktree) from merge-proof checks
 // (topology-aware PR merge verification using delivery identity).
 // Returns proof strings emitted during merge-proof checks.
-func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
+func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown) ([]string, error) {
 	wtPath, ok := meta["worktree"]
 	if !ok || wtPath == "" {
 		return nil, fmt.Errorf("no worktree path in meta for %s", opts.ID)
@@ -350,7 +347,7 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 			return nil, fmt.Errorf("invalid delivery identity (fail-closed, no legacy fallback): %w", err)
 		}
 
-		proof, err := topologyAwareMergeCheck(opts, meta, wtPath, ident)
+		proof, err := topologyAwareMergeCheck(opts, meta, wtPath, ident, backend)
 		if err != nil {
 			return nil, err
 		}
@@ -381,7 +378,7 @@ func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) 
 //   - Unknown/unverifiable: refuses teardown
 //
 // Returns the proof string on success.
-func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity) (string, error) {
+func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown) (string, error) {
 	// Check lifecycle state if set: require merged state for landed delivery.
 	if ds := meta[domain.MetaDeliveryState]; ds != "" && ds != string(domain.DeliveryStateMerged) {
 		return "", fmt.Errorf("delivery lifecycle is in state %q, expected %q (use --force to override)", ds, domain.DeliveryStateMerged)
@@ -389,7 +386,7 @@ func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string
 
 	// Query the provider for the current PR/MR merge status using the
 	// provider-neutral seam that routes by identity provider.
-	status, err := QueryDeliveryMergeStatus(ident)
+	status, err := backend.QueryMergeStatus(ident)
 	if err != nil {
 		return "", fmt.Errorf("cannot verify merge status: %w (use --force to override)", err)
 	}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 type fakeTeardown struct {
@@ -19,6 +21,9 @@ func (f fakeTeardown) Probe(string, map[string]string) (EndpointStatus, error) {
 	return EndpointStatus{Alive: f.alive}, f.probeErr
 }
 func (f fakeTeardown) Dispose(string, map[string]string, DisposeRequest) error { return f.disposeErr }
+func (f fakeTeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	return QueryDeliveryMergeStatus(ident)
+}
 func (f fakeTeardown) ReturnWorktree(_, worktreePath string) error {
 	if f.returnWorktreeFn != nil {
 		return f.returnWorktreeFn(worktreePath)

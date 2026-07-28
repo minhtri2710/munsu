@@ -16,7 +16,6 @@ import (
 )
 
 func init() {
-	orchestrator.QueryDeliveryMergeStatus = fleet.QueryDeliveryMergeStatus
 	orchestrator.GateRefuseFromCWD = fleet.GateRefuseFromCWD
 }
 

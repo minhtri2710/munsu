@@ -5,6 +5,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 type sessionBoundTeardown struct {
@@ -62,6 +64,10 @@ func (s sessionBoundTeardown) Dispose(home string, meta map[string]string, req o
 		hb.DenyCloseWorkspaceIDs = []string{req.WorkspaceID}
 	}
 	return bk.Teardown(req.Handle)
+}
+
+func (s sessionBoundTeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	return fleet.QueryDeliveryMergeStatus(ident)
 }
 
 func (s sessionBoundTeardown) ReturnWorktree(homeDir, worktreePath string) error {
