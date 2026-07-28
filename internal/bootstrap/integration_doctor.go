@@ -1,5 +1,5 @@
 // Package integrate manages opt-in harness integration.
-package integrate
+package bootstrap
 
 import (
 	"fmt"

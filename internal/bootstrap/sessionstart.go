@@ -10,7 +10,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
@@ -263,7 +262,7 @@ func printIntegrationMatrix(w io.Writer, home string) {
 	if role == "" {
 		role = "general"
 	}
-	r, err := integrate.Doctor(home, integrate.Role(role))
+	r, err := Doctor(home, Role(role))
 	if err != nil {
 		return
 	}

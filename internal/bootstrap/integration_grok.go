@@ -2,7 +2,7 @@
 //
 // Grok adapter: generates .grok/hooks/*.json hook files anchored to the munsu
 // binary path, mirroring the munsu Grok hook contract.
-package integrate
+package bootstrap
 
 import (
 	"crypto/sha256"

@@ -1,4 +1,4 @@
-package integrate
+package bootstrap
 
 import (
 	"bytes"

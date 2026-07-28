@@ -12,7 +12,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/spf13/cobra"
 )
 
@@ -163,12 +162,12 @@ Always exits 0 because Claude SessionStart exit 2 blocks session init.`,
 	return cmd
 }
 
-func resolveIntegrateScope(raw string) (integrate.Scope, error) {
+func resolveIntegrateScope(raw string) (bootstrap.Scope, error) {
 	switch raw {
 	case "user":
-		return integrate.ScopeUser, nil
+		return bootstrap.ScopeUser, nil
 	case "project":
-		return integrate.ScopeProject, nil
+		return bootstrap.ScopeProject, nil
 	default:
 		return "", fmt.Errorf("unsupported scope %q: must be 'user' or 'project'", raw)
 	}
@@ -190,14 +189,14 @@ func runIntegrateInstall(cmd *cobra.Command, ctx Ctx, flags integrateFlags) erro
 	}
 
 	cwd, _ := os.Getwd()
-	result, err := integrate.Install(ctx.Home, cwd, harnessName, scope, flags.dryRun)
+	result, err := bootstrap.Install(ctx.Home, cwd, harnessName, scope, flags.dryRun)
 	if err != nil {
 		return err
 	}
 
 	return writeContract(cmd, Response[integrateResultData]{
 		SchemaVersion: SchemaVersion,
-		Kind:          "integrate.install",
+		Kind:          "bootstrap.install",
 		Status:        "success",
 		Data: integrateResultData{
 			Harness:     result.Harness,
@@ -225,14 +224,14 @@ func runIntegrateRepair(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 	}
 
 	cwd, _ := os.Getwd()
-	result, err := integrate.Repair(ctx.Home, cwd, harnessName, scope, flags.dryRun)
+	result, err := bootstrap.Repair(ctx.Home, cwd, harnessName, scope, flags.dryRun)
 	if err != nil {
 		return err
 	}
 
 	return writeContract(cmd, Response[integrateResultData]{
 		SchemaVersion: SchemaVersion,
-		Kind:          "integrate.repair",
+		Kind:          "bootstrap.repair",
 		Status:        "success",
 		Data: integrateResultData{
 			Harness:     result.Harness,
@@ -259,14 +258,14 @@ func runIntegrateStatus(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 	}
 
 	cwd, _ := os.Getwd()
-	result, err := integrate.Status(ctx.Home, cwd, harnessName, scope)
+	result, err := bootstrap.Status(ctx.Home, cwd, harnessName, scope)
 	if err != nil {
 		return err
 	}
 
 	return writeContract(cmd, Response[integrateResultData]{
 		SchemaVersion: SchemaVersion,
-		Kind:          "integrate.status",
+		Kind:          "bootstrap.status",
 		Status:        "success",
 		Data: integrateResultData{
 			Harness:     result.Harness,
@@ -370,7 +369,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 	}
 
 	// Evaluate scope/gate safety.
-	result := integrate.SafetyCheck(checkPath)
+	result := bootstrap.SafetyCheck(checkPath)
 
 	// Evaluate command blocking rules.
 	block := false

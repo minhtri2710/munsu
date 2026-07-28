@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 
 	// Shorten Pi capability probe timeout so seeded tests don't wait 30s on
 	// slow PATH lookups. Tests that need the default timeout restore it.
-	integrate.SetProbeTimeout(5 * time.Second)
+	bootstrap.SetProbeTimeout(5 * time.Second)
 
 	// Override the Pi extension installer to no-op so ordinary captain tests
 	// never create .pi/extensions/ in managed worktree fixtures. Tests that

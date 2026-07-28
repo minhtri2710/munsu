@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/integrate"
 )
 
 // StepState is the outcome of one recovery step.
@@ -165,7 +165,7 @@ func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
 	}
-	result, err := integrate.Status(sm.Home, sm.Home, h, integrate.ScopeProject)
+	result, err := bootstrap.Status(sm.Home, sm.Home, h, bootstrap.ScopeProject)
 	if err != nil {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("integration check error: %v", err)}

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os/exec"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -157,7 +157,7 @@ func collectIntegrationDiagnostics(home, cwd string) []IntegrationDiagnostic {
 		}
 
 		// Check integration status.
-		result, err := integrate.Status(home, cwd, name, integrate.ScopeProject)
+		result, err := bootstrap.Status(home, cwd, name, bootstrap.ScopeProject)
 		if err != nil {
 			d.State = "error"
 			d.Detail = fmt.Sprintf("status check failed: %v", err)

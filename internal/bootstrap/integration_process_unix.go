@@ -1,6 +1,6 @@
 //go:build !windows
 
-package integrate
+package bootstrap
 
 import (
 	"os/exec"

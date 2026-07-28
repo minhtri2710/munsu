@@ -5,7 +5,7 @@
 // project-local). Ownership markers ensure we never overwrite unrelated user
 // content. All writes are atomic (write-to-temp, then rename with fsync).
 // Backups are taken before owned content is replaced.
-package integrate
+package bootstrap
 
 import (
 	"bytes"

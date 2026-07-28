@@ -1,4 +1,4 @@
-package integrate
+package bootstrap
 
 type testMunsuResolver struct {
 	path string

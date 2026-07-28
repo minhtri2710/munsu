@@ -10,7 +10,7 @@
 // PreToolUse deny mechanism: the checker writes the reason to stderr and exits 2.
 // The plugin reads `result.stderr.trim()` and throws `new Error(...)` which
 // blocks the bash command (verified against OpenCode 1.17.15).
-package integrate
+package bootstrap
 
 import (
 	"crypto/sha256"

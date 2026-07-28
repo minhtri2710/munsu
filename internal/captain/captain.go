@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -38,7 +38,7 @@ const ConvergeLockName = ".captain-converge.lock"
 const NudgePendingDir = ".captain-nudge-pending"
 
 // captainPiExtensionNames are project-local Pi extensions loaded with -e at captain launch.
-// Order matches captain launch: turnend guard then watch bridge, plus munsu integrate.
+// Order matches captain launch: turnend guard then watch bridge, plus munsu bootstrap.
 var captainPiExtensionNames = []string{
 	"munsu-pi-integration.ts",
 	"munsu-captain-turnend-guard.ts",
@@ -138,10 +138,10 @@ func EnsureCaptainPiExtensions(captainHome string) error {
 	if _, err := ValidateProvenance(captainHome); err != nil {
 		return fmt.Errorf("refusing pi extensions on unmarked home %s: %w", captainHome, err)
 	}
-	adpt := &integrate.PiAdapter{
+	adpt := &bootstrap.PiAdapter{
 		HomeDir: captainHome,
 		Cwd:     captainHome,
-		Scope:   string(integrate.ScopeProject),
+		Scope:   string(bootstrap.ScopeProject),
 	}
 	target, _, _, err := adpt.InstallPiExtension()
 	if err != nil {

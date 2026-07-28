@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -293,7 +293,7 @@ func TestCollectCapabilities_IntegrationInstalled(t *testing.T) {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	targetFile := filepath.Join(targetDir, "munsu-integrate.ts")
+	targetFile := filepath.Join(targetDir, "munsu-bootstrap.ts")
 	markerLine := "// munsu-integrate v1 -- do not edit this section\n"
 	content := markerLine + "export const integration = { version: '1.0.0' };\n"
 	if err := os.WriteFile(targetFile, []byte(content), 0644); err != nil {
@@ -315,7 +315,7 @@ func TestCollectCapabilities_IntegrationInstalled(t *testing.T) {
 	}
 
 	// Sanity: verify Status returns "installed" directly
-	result, err := integrate.Status(home, cwd, "pi", integrate.ScopeProject)
+	result, err := bootstrap.Status(home, cwd, "pi", bootstrap.ScopeProject)
 	if err != nil {
 		t.Fatalf("Status failed: %v", err)
 	}
