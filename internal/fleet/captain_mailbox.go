@@ -5,7 +5,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // SendMailboxResult describes the outcome of a General→Captain mailbox send.
@@ -29,7 +28,7 @@ type SendMailboxResult struct {
 //
 // Preserves command marker semantics: the marker is in the envelope payload, not in the
 // notification text. The notification is a structured NotificationRef JSON.
-func SendMailboxToCaptain(sm Info, parentHome, line string, sender orchestrator.BoundSender) *SendMailboxResult {
+func SendMailboxToCaptain(sm Info, parentHome, line string, sender home.BoundSender) *SendMailboxResult {
 	result := &SendMailboxResult{}
 
 	// 1. Validate task meta fully.
@@ -68,7 +67,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender orchestrator.
 	}
 
 	// 2. Derive General sender identity/rank from durable parent home provenance.
-	senderIdentity, senderRank, err := orchestrator.ReadHomeIdentity(parentHome)
+	senderIdentity, senderRank, err := home.ReadHomeIdentity(parentHome)
 	if err != nil {
 		result.Err = fmt.Errorf("deriving sender identity from parent home: %w", err)
 		return result
@@ -79,16 +78,16 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender orchestrator.
 	// General-routed commands from human chat. The notification ref (not the payload)
 	// is what gets sent through the bound sender capability.
 	markedLine := home.MarkFromGeneral(line)
-	env := &orchestrator.Envelope{
+	env := &home.Envelope{
 		SenderRank:     senderRank,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankCaptain,
+		ReceiverRank:   home.RankCaptain,
 		ReceiverID:     sm.ID,
 		Payload:        markedLine,
 	}
 
 	// 4. Write envelope to the captain's inbox.
-	receiverStore := orchestrator.NewStore(canonSM)
+	receiverStore := home.NewStore(canonSM)
 	if err := receiverStore.WriteEnvelope(env); err != nil {
 		result.Err = fmt.Errorf("writing inbox envelope: %w", err)
 		return result
@@ -96,14 +95,14 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender orchestrator.
 	result.MessageID = env.MessageID
 
 	// 5. Write pending record in the General's outbox (sender-identity scoped).
-	senderStore := orchestrator.NewStore(parentHome)
+	senderStore := home.NewStore(parentHome)
 	if err := senderStore.WritePending(env); err != nil {
 		result.Err = fmt.Errorf("writing sender pending: %w", err)
 		return result
 	}
 
 	// 6. Send the canonical NotificationRef through the bound sender.
-	ref := orchestrator.NotificationRef{
+	ref := home.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
@@ -137,15 +136,15 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender orchestrator.
 //
 // This is called from converge to clean up pending records after the captain agent
 // has processed the notification and written the ack.
-func ReconcileMailboxPending(parentHome string, sm Info, sender orchestrator.BoundSender) error {
+func ReconcileMailboxPending(parentHome string, sm Info, sender home.BoundSender) error {
 	// Derive General sender identity from parent home.
-	senderIdentity, _, err := orchestrator.ReadHomeIdentity(parentHome)
+	senderIdentity, _, err := home.ReadHomeIdentity(parentHome)
 	if err != nil {
 		return fmt.Errorf("%s: deriving sender identity: %w", sm.ID, err)
 	}
 
 	// ListCaptains all pending records for the General sender identity.
-	parentStore := orchestrator.NewStore(parentHome)
+	parentStore := home.NewStore(parentHome)
 	pending, err := parentStore.ListPending(senderIdentity)
 	if err != nil {
 		return fmt.Errorf("%s: listing pending: %w", sm.ID, err)
@@ -162,7 +161,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender orchestrator.Bou
 	if _, err := ValidateProvenance(sm.Home); err != nil {
 		return fmt.Errorf("%s: provenance validation: %w", sm.ID, err)
 	}
-	captainStore := orchestrator.NewStore(canonSM)
+	captainStore := home.NewStore(canonSM)
 
 	for _, env := range pending {
 		// Skip envelopes not targeting this captain.
@@ -201,7 +200,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender orchestrator.Bou
 // is silently skipped. The durable pending record remains and will be resolved
 // when the captain eventually comes online, or handled by ReconcileConfigRereadPending
 // for config-reread records.
-func resendNotification(parentHome string, sm Info, env *orchestrator.Envelope, sender orchestrator.BoundSender) error {
+func resendNotification(parentHome string, sm Info, env *home.Envelope, sender home.BoundSender) error {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
@@ -215,7 +214,7 @@ func resendNotification(parentHome string, sm Info, env *orchestrator.Envelope, 
 		return fmt.Errorf("no window in meta")
 	}
 
-	ref := orchestrator.NotificationRef{
+	ref := home.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: env.SenderIdentity,
 	}

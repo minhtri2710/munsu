@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // ConfigRereadKey is the mailbox envelope Key for config-reread notifications.
@@ -185,7 +184,7 @@ func ConfigRereadEnvelopeID(senderIdentity, captainIdentity string, generation i
 //
 // The parentHome-facing converge/captain_cmd caller handles convergence
 // and liveness; this function owns the mailbox write and notification.
-func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, digest string, sender orchestrator.BoundSender) error {
+func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, digest string, sender home.BoundSender) error {
 	// Validate captain provenance and derive identity.
 	captainIdentity, err := ValidateProvenance(captainHome)
 	if err != nil {
@@ -193,7 +192,7 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 	}
 
 	// Derive General sender identity from parent home.
-	senderIdentity, senderRank, err := orchestrator.ReadHomeIdentity(parentHome)
+	senderIdentity, senderRank, err := home.ReadHomeIdentity(parentHome)
 	if err != nil {
 		return fmt.Errorf("config-reread requirement: deriving sender identity: %w", err)
 	}
@@ -212,11 +211,11 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 	markedLine := home.MarkFromGeneral(msg)
 
 	// Create a deterministic envelope.
-	env := &orchestrator.Envelope{
+	env := &home.Envelope{
 		MessageID:      ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest),
 		SenderRank:     senderRank,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankCaptain,
+		ReceiverRank:   home.RankCaptain,
 		ReceiverID:     captainIdentity,
 		TaskID:         taskID,
 		Key:            ConfigRereadKey,
@@ -228,8 +227,8 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 		return fmt.Errorf("config-reread requirement: canonicalizing captain home: %w", err)
 	}
 
-	receiverStore := orchestrator.NewStore(canonCaptain)
-	senderStore := orchestrator.NewStore(parentHome)
+	receiverStore := home.NewStore(canonCaptain)
+	senderStore := home.NewStore(parentHome)
 
 	// Remove stale config-reread inbox/pending records (coalesce).
 	if err := removeStaleConfigRereadRecords(canonCaptain, parentHome, senderIdentity, env); err != nil {
@@ -262,7 +261,7 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 	}
 
 	// Send the canonical NotificationRef through the bound sender.
-	ref := orchestrator.NotificationRef{
+	ref := home.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
@@ -281,20 +280,20 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 // envelopes and pending records for older generations, leaving only the
 // current one. This is best-effort: stale files that cannot be removed
 // (permissions, in-flight I/O) log a diagnostic and do not block.
-func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity string, current *orchestrator.Envelope) error {
+func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity string, current *home.Envelope) error {
 	// Clean captain's inbox: remove any config-reread envelope with a
 	// different message ID (older generation).
-	receiverStore := orchestrator.NewStore(captainHome)
+	receiverStore := home.NewStore(captainHome)
 	envelopes, err := receiverStore.ListInbox(senderIdentity)
 	if err == nil {
 		for _, env := range envelopes {
 			if env.Key == ConfigRereadKey && env.MessageID != current.MessageID {
 				inboxPath := filepath.Join(
-					captainHome, "state", orchestrator.InboxDir, senderIdentity, env.MessageID+".json",
+					captainHome, "state", home.InboxDir, senderIdentity, env.MessageID+".json",
 				)
 				os.Remove(inboxPath) // best-effort
 				ackPath := filepath.Join(
-					captainHome, "state", orchestrator.InboxDir, senderIdentity, env.MessageID+".ack",
+					captainHome, "state", home.InboxDir, senderIdentity, env.MessageID+".ack",
 				)
 				os.Remove(ackPath)
 			}
@@ -303,13 +302,13 @@ func removeStaleConfigRereadRecords(captainHome, parentHome, senderIdentity stri
 
 	// Clean General's outbox: remove any config-reread pending record with
 	// a different message ID (older generation).
-	senderStore := orchestrator.NewStore(parentHome)
+	senderStore := home.NewStore(parentHome)
 	pending, err := senderStore.ListPending(senderIdentity)
 	if err == nil {
 		for _, env := range pending {
 			if env.Key == ConfigRereadKey && env.MessageID != current.MessageID {
 				pendingPath := filepath.Join(
-					parentHome, "state", orchestrator.OutboxDir, senderIdentity, env.MessageID+".pending",
+					parentHome, "state", home.OutboxDir, senderIdentity, env.MessageID+".pending",
 				)
 				os.Remove(pendingPath) // best-effort
 			}
@@ -332,7 +331,7 @@ func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
 		return fmt.Errorf("reconcile config-reread: %w", err)
 	}
 
-	senderIdentity, _, err := orchestrator.ReadHomeIdentity(parentHome)
+	senderIdentity, _, err := home.ReadHomeIdentity(parentHome)
 	if err != nil {
 		return fmt.Errorf("reconcile config-reread: deriving sender identity: %w", err)
 	}
@@ -353,7 +352,7 @@ func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
 
 	// Determine the acked envelope ID for the latest generation.
 	latestID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
-	captainStore := orchestrator.NewStore(canonCaptain)
+	captainStore := home.NewStore(canonCaptain)
 
 	// Check if the latest said is acked.
 	if !captainStore.IsAcked(senderIdentity, latestID) {
@@ -361,7 +360,7 @@ func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
 	}
 
 	// Latest is acked — clean any stale config-reread pending.
-	senderStore := orchestrator.NewStore(parentHome)
+	senderStore := home.NewStore(parentHome)
 	pending, err := senderStore.ListPending(senderIdentity)
 	if err != nil {
 		return nil
@@ -369,7 +368,7 @@ func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
 	for _, env := range pending {
 		if env.Key == ConfigRereadKey && env.MessageID != latestID {
 			pendingPath := filepath.Join(
-				parentHome, "state", orchestrator.OutboxDir, senderIdentity, env.MessageID+".pending",
+				parentHome, "state", home.OutboxDir, senderIdentity, env.MessageID+".pending",
 			)
 			os.Remove(pendingPath)
 		}
@@ -406,7 +405,7 @@ func legacyConfigRereadQuarantineDir(captainHome string) string {
 //     error returned (fail-closed). Caller must resolve manually.
 //   - If the current generation (from .config-reread-gen) already equals or
 //     exceeds what the legacy artifacts describe, just delete the artifacts.
-func ReconcileLegacyConfigReread(parentHome, captainHome string, sender orchestrator.BoundSender) error {
+func ReconcileLegacyConfigReread(parentHome, captainHome string, sender home.BoundSender) error {
 	captainIdentity, err := ValidateProvenance(captainHome)
 	if err != nil {
 		return fmt.Errorf("reconcile legacy config-reread: %w", err)
