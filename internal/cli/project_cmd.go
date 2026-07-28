@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +26,7 @@ the repository is cloned into the projects directory first.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			mode, _ := cmd.Flags().GetString("mode")
 			yolo, _ := cmd.Flags().GetBool("yolo")
-			return project.Add(ctx.Home, args[0], args[1], mode, yolo)
+			return fleet.Add(ctx.Home, args[0], args[1], mode, yolo)
 		}),
 	}
 	addCmd.Flags().String("mode", "", "Delivery mode (feat, fix, refactor, etc.)")
@@ -37,7 +37,7 @@ the repository is cloned into the projects directory first.`,
 		Short: "List registered projects",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			projects, err := project.List(ctx.Home)
+			projects, err := fleet.List(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -75,7 +75,7 @@ the repository is cloned into the projects directory first.`,
 		Short: "Show project details",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			p, err := project.Find(ctx.Home, args[0])
+			p, err := fleet.Find(ctx.Home, args[0])
 			if err != nil {
 				return err
 			}
@@ -87,7 +87,7 @@ the repository is cloned into the projects directory first.`,
 				Added:       p.Added,
 			}
 			// Show project dir if it exists
-			projDir := filepath.Join(project.ProjectsDir(ctx.Home), p.Name)
+			projDir := filepath.Join(fleet.ProjectsDir(ctx.Home), p.Name)
 			if fi, statErr := os.Stat(projDir); statErr == nil && fi.IsDir() {
 				entry.Directory = projDir
 			}
@@ -106,7 +106,7 @@ the repository is cloned into the projects directory first.`,
 		Short: "Remove a registered project",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return project.Rm(ctx.Home, args[0])
+			return fleet.Rm(ctx.Home, args[0])
 		}),
 	}
 
@@ -115,7 +115,7 @@ the repository is cloned into the projects directory first.`,
 		Short: "Resolve delivery mode for a project",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			mode, yolo, err := project.Mode(ctx.Home, args[0])
+			mode, yolo, err := fleet.Mode(ctx.Home, args[0])
 			if err != nil {
 				return err
 			}

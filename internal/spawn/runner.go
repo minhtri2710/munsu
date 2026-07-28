@@ -9,13 +9,11 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldier"
 )
 
@@ -246,11 +244,11 @@ func authorizeSpawn(role, homeDir, cwd string) error {
 	case "soldier":
 		return fmt.Errorf("spawn authority: regular soldiers cannot spawn; delegate to the general or a captain")
 	case "", "general":
-		identity, _, _, err := scope.ClassifyIdentity(cwd)
+		identity, _, _, err := fleet.ClassifyIdentity(cwd)
 		if err != nil {
 			return fmt.Errorf("spawn authority: classifying current checkout: %w", err)
 		}
-		if identity == scope.Worktree {
+		if identity == fleet.Worktree {
 			return fmt.Errorf("spawn authority: linked-worktree callers cannot spawn; delegate to the general or a captain")
 		}
 		return nil
@@ -335,7 +333,7 @@ func normalizeBacklogState(state string) string {
 // Returns the state string, blocked-by value (always empty from GetItem),
 // whether found, and any error.
 var readBacklogTaskState = func(homeDir, id string) (string, string, bool, error) {
-	item, found, err := backlog.GetItem(homeDir, id)
+	item, found, err := fleet.GetItem(homeDir, id)
 	if err != nil {
 		return "", "", false, fmt.Errorf("reading backlog state for %s: %w", id, err)
 	}
@@ -375,7 +373,7 @@ func (r *Runner) preflightBrief() error {
 // Phase 5: checkBacklogAuthority verifies the task is uniquely queued+ready in the backlog.
 // Fail closed unless the task is uniquely present and ready, or --reopen is used.
 func (r *Runner) checkBacklogAuthority() error {
-	item, found, err := backlog.GetItem(r.homeDir, r.args.ID)
+	item, found, err := fleet.GetItem(r.homeDir, r.args.ID)
 	if err != nil {
 		return fmt.Errorf("lifecycle guard: reading backlog: %w", err)
 	}
@@ -384,7 +382,7 @@ func (r *Runner) checkBacklogAuthority() error {
 	}
 
 	// Check for duplicate IDs in backlog
-	dup, err := backlog.HasDuplicate(r.homeDir, r.args.ID)
+	dup, err := fleet.HasDuplicate(r.homeDir, r.args.ID)
 	if err != nil {
 		return fmt.Errorf("lifecycle guard: checking for duplicates: %w", err)
 	}
@@ -398,15 +396,15 @@ func (r *Runner) checkBacklogAuthority() error {
 
 	// State-based checks. Backlog In flight without live meta is start→spawn — allow.
 	switch item.State {
-	case backlog.StateBlocked:
+	case fleet.StateBlocked:
 		if !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is blocked; use --reopen to force dispatch or clear the blocker first", r.args.ID)
 		}
-	case backlog.StateDone:
+	case fleet.StateDone:
 		if !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is done; use --reopen to reopen", r.args.ID)
 		}
-	case backlog.StateInFlight:
+	case fleet.StateInFlight:
 		// Allow when no live session; refuse only duplicate live execution.
 		if metaExists && !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
@@ -424,7 +422,7 @@ func (r *Runner) checkBacklogAuthority() error {
 
 // Phase 6: resolveProject resolves the project repo path from registry.
 func (r *Runner) resolveProject() error {
-	projPath, err := project.ResolveRepoPath(r.homeDir, r.args.ProjectName)
+	projPath, err := fleet.ResolveRepoPath(r.homeDir, r.args.ProjectName)
 	if err != nil {
 		return fmt.Errorf("resolving project %q: %w", r.args.ProjectName, err)
 	}
@@ -442,7 +440,7 @@ func (r *Runner) checkTangle() error {
 
 // checkScopeGate refuses no-mistakes gate agents before worktree allocation.
 func (r *Runner) checkScopeGate() error {
-	if err := scope.GateRefusalError(r.projPath); err != nil {
+	if err := fleet.GateRefusalError(r.projPath); err != nil {
 		return fmt.Errorf("scope gate: %w", err)
 	}
 	return nil

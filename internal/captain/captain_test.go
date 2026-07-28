@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/project"
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
@@ -1131,7 +1131,7 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := os.ReadFile(project.RegistryPath(smHome))
+	got, err := os.ReadFile(fleet.RegistryPath(smHome))
 	if err != nil {
 		t.Fatalf("projects.md was not pushed: %v", err)
 	}
@@ -1139,14 +1139,14 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 		t.Errorf("projects.md = %q, want %q", string(got), reg)
 	}
 
-	projects, err := project.List(smHome)
+	projects, err := fleet.List(smHome)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if len(projects) != 2 {
 		t.Fatalf("got %d projects, want 2", len(projects))
 	}
-	path, err := project.ResolveRepoPath(smHome, "munsu")
+	path, err := fleet.ResolveRepoPath(smHome, "munsu")
 	if err != nil {
 		t.Fatalf("ResolveRepoPath: %v", err)
 	}
@@ -1162,14 +1162,14 @@ func TestConfigPush_ProjectsRegistryMirrorDeletion(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := os.WriteFile(project.RegistryPath(smHome), []byte("- stale - /tmp/stale (added 2026-01-01)\n"), 0644); err != nil {
+	if err := os.WriteFile(fleet.RegistryPath(smHome), []byte("- stale - /tmp/stale (added 2026-01-01)\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := ConfigPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(project.RegistryPath(smHome)); !os.IsNotExist(err) {
+	if _, err := os.Stat(fleet.RegistryPath(smHome)); !os.IsNotExist(err) {
 		t.Error("projects.md should have been deleted when parent has none")
 	}
 }
@@ -1182,7 +1182,7 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := "- munsu - /Users/beowulf/Work/munsu (added 2026-07-16)\n"
-	if err := os.WriteFile(project.RegistryPath(parent), []byte(reg), 0644); err != nil {
+	if err := os.WriteFile(fleet.RegistryPath(parent), []byte(reg), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1194,7 +1194,7 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(sm, "config", "soldier-harness")); err != nil {
 		t.Fatalf("seed did not inherit soldier-harness: %v", err)
 	}
-	got, err := os.ReadFile(project.RegistryPath(sm))
+	got, err := os.ReadFile(fleet.RegistryPath(sm))
 	if err != nil {
 		t.Fatalf("seed did not inherit projects.md: %v", err)
 	}

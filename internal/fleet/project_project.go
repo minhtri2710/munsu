@@ -1,4 +1,4 @@
-package project
+package fleet
 
 import (
 	"fmt"
@@ -107,7 +107,7 @@ func isURL(s string) bool {
 		strings.HasPrefix(s, "ssh://")
 }
 
-// Add registers a project. If pathOrURL is a URL, clones it first.
+// Add registers a  If pathOrURL is a URL, clones it first.
 // If the name is already registered, updates the existing entry in-place (no duplicate).
 func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 	regPath := RegistryPath(homeDir)
@@ -274,7 +274,7 @@ func Rm(homeDir, name string) error {
 	return nil
 }
 
-// Mode returns the delivery mode and yolo flag for a project.
+// Mode returns the delivery mode and yolo flag for a
 // If mode is empty, defaults to "no-mistakes" (the default delivery mode).
 func Mode(homeDir, name string) (mode string, yolo bool, err error) {
 	p, err := Find(homeDir, name)

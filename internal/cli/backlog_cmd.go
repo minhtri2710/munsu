@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/minhtri2710/munsu/internal/backlog"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -61,9 +61,9 @@ Example:
 
 			var err error
 			if isDefaultHome(ctx.Home) {
-				err = backlog.AddItemDispatch(ctx.Home, id, desc, kind, repo, start)
+				err = fleet.AddItemDispatch(ctx.Home, id, desc, kind, repo, start)
 			} else {
-				err = backlog.AddItem(ctx.Home, id, desc, kind, repo, start)
+				err = fleet.AddItem(ctx.Home, id, desc, kind, repo, start)
 			}
 			if err != nil {
 				return err
@@ -100,7 +100,7 @@ func newBacklogListCmd() *cobra.Command {
 		Short: "List backlog items",
 		Args:  MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "list", args)
+			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "list", args)
 		}),
 	}
 }
@@ -111,7 +111,7 @@ func newBacklogShowCmd() *cobra.Command {
 		Short: "Show backlog item details",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "show", args)
+			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "show", args)
 		}),
 	}
 }
@@ -122,7 +122,7 @@ func newBacklogStartCmd() *cobra.Command {
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "start", args)
+			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "start", args)
 		}),
 	}
 }
@@ -133,7 +133,7 @@ func newBacklogDoneCmd() *cobra.Command {
 		Short: "Mark a backlog item as done",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "done", args)
+			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "done", args)
 		}),
 	}
 }
@@ -151,7 +151,7 @@ When --by is omitted, falls back to manual backend.`,
 			if by != "" {
 				args = append(args, "--by", by)
 			}
-			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "block", args)
+			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "block", args)
 		}),
 	}
 	cmd.Flags().StringVar(&by, "by", "", "Dependency that blocks this item (required for tasks-axi backend)")
@@ -167,7 +167,7 @@ func newBacklogReadyCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "ready", args)
+			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "ready", args)
 		}),
 	}
 }
@@ -181,7 +181,7 @@ func newBacklogUnblockCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return backlog.Run(ctx.Home, isDefaultHome(ctx.Home), "unblock", args)
+			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "unblock", args)
 		}),
 	}
 }
@@ -196,7 +196,7 @@ func newBacklogPathsCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolving working directory: %w", err)
 			}
-			paths, err := backlog.ResolvePaths(cwd, ctx.Home)
+			paths, err := fleet.ResolvePaths(cwd, ctx.Home)
 			if err != nil {
 				return err
 			}

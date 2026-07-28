@@ -1,4 +1,4 @@
-package backlog
+package fleet
 
 import (
 	"bytes"
@@ -120,7 +120,7 @@ func TestHelperProcess(t *testing.T) {
 }
 
 // Helper to capture stdout during tests.
-func captureStdout(fn func()) string {
+func backlogCaptureStdout(fn func()) string {
 	r, w, err := os.Pipe()
 	if err != nil {
 		panic(err)
@@ -212,7 +212,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		}
 		output := buf.String()
 
-		expectedOutput := fmt.Sprintf("EXEC_CMD: add task-1 priority:high --file %s\n", filepath.Join(homeDir, "data", "backlog.md"))
+		expectedOutput := fmt.Sprintf("EXEC_CMD: add task-1 priority:high --file %s\n", filepath.Join(homeDir, "data", "md"))
 		if output != expectedOutput {
 			t.Errorf("expected output %q, got %q", expectedOutput, output)
 		}
@@ -249,7 +249,7 @@ func TestRun_TasksAxiFallback(t *testing.T) {
 		}
 		output := buf.String()
 
-		expectedOutput := fmt.Sprintf("EXEC_CMD: block task-a --by task-b --file %s\n", filepath.Join(homeDir, "data", "backlog.md"))
+		expectedOutput := fmt.Sprintf("EXEC_CMD: block task-a --by task-b --file %s\n", filepath.Join(homeDir, "data", "md"))
 		if output != expectedOutput {
 			t.Errorf("expected output %q, got %q", expectedOutput, output)
 		}
@@ -338,10 +338,10 @@ func TestRun_BackendSelection(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// Verify backlog.md was created by FileBackend (manual path).
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// Verify md was created by FileBackend (manual path).
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); os.IsNotExist(err) {
-			t.Errorf("expected backlog.md at %s (manual mode should use FileBackend), but it does not exist", backlogPath)
+			t.Errorf("expected md at %s (manual mode should use FileBackend), but it does not exist", backlogPath)
 		}
 	})
 
@@ -360,7 +360,7 @@ func TestRun_BackendSelection(t *testing.T) {
 		os.MkdirAll(configDir, 0755)
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
 
-		output := captureStdout(func() {
+		output := backlogCaptureStdout(func() {
 			err := Run(homeDir, true, "list", []string{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -371,10 +371,10 @@ func TestRun_BackendSelection(t *testing.T) {
 			t.Errorf("expected tasks-axi execution, got %q", output)
 		}
 
-		// No backlog.md should exist — FileBackend was never invoked.
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// No md should exist — FileBackend was never invoked.
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); err == nil {
-			t.Errorf("backlog.md should NOT exist under tasks-axi backend (no cross-store write), but it does")
+			t.Errorf("md should NOT exist under tasks-axi backend (no cross-store write), but it does")
 		}
 	})
 
@@ -429,10 +429,10 @@ func TestRun_FailClosed(t *testing.T) {
 			t.Fatal("expected error from tasks-axi FAILED in ModeTasksAxi, got nil")
 		}
 
-		// Verify no backlog.md was created — no silent fallback to FileBackend.
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// Verify no md was created — no silent fallback to FileBackend.
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); err == nil {
-			t.Errorf("backlog.md should NOT exist after tasks-axi FAILED (fail-closed, no fallback), but it does")
+			t.Errorf("md should NOT exist after tasks-axi FAILED (fail-closed, no fallback), but it does")
 		}
 	})
 
@@ -446,10 +446,10 @@ func TestRun_FailClosed(t *testing.T) {
 		}
 
 		// Error should mention tasks-axi, not a manual error.
-		// Verify no backlog.md was created — no silent fallback to FileBackend.
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// Verify no md was created — no silent fallback to FileBackend.
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); err == nil {
-			t.Errorf("backlog.md should NOT exist after tasks-axi FAILED (fail-closed, no fallback), but it does")
+			t.Errorf("md should NOT exist after tasks-axi FAILED (fail-closed, no fallback), but it does")
 		}
 	})
 }
@@ -477,10 +477,10 @@ func TestRun_FallbackOnAbsent(t *testing.T) {
 			t.Fatalf("unexpected error from fallback: %v", err)
 		}
 
-		// FileBackend should have created backlog.md.
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// FileBackend should have created md.
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); os.IsNotExist(err) {
-			t.Errorf("expected backlog.md from manual fallback, but it does not exist")
+			t.Errorf("expected md from manual fallback, but it does not exist")
 		}
 	})
 
@@ -502,10 +502,10 @@ func TestRun_FallbackOnAbsent(t *testing.T) {
 			t.Fatalf("unexpected error from compat fallback: %v", err)
 		}
 
-		// FileBackend should have created backlog.md.
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// FileBackend should have created md.
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); os.IsNotExist(err) {
-			t.Errorf("expected backlog.md from compat fallback, but it does not exist")
+			t.Errorf("expected md from compat fallback, but it does not exist")
 		}
 	})
 }
@@ -537,10 +537,10 @@ func TestAddItemDispatch_NoCrossStoreMutation(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// backlog.md should NOT exist — tasks-axi was used, not FileBackend.
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// md should NOT exist — tasks-axi was used, not FileBackend.
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); err == nil {
-			t.Errorf("backlog.md should NOT exist under tasks-axi backend (no cross-store mutation), but it does")
+			t.Errorf("md should NOT exist under tasks-axi backend (no cross-store mutation), but it does")
 		}
 	})
 
@@ -555,10 +555,10 @@ func TestAddItemDispatch_NoCrossStoreMutation(t *testing.T) {
 			t.Fatal("expected error from tasks-axi FAILED, got nil")
 		}
 
-		// backlog.md should NOT exist — FileBackend was never called.
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// md should NOT exist — FileBackend was never called.
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); err == nil {
-			t.Errorf("backlog.md should NOT exist after tasks-axi FAILED (fail-closed), but it does")
+			t.Errorf("md should NOT exist after tasks-axi FAILED (fail-closed), but it does")
 		}
 	})
 }
@@ -588,10 +588,10 @@ func TestGetItem_RouteThroughBackend(t *testing.T) {
 		os.MkdirAll(configDir, 0755)
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
 
-		// Pre-populate backlog.md (FileBackend should read this).
+		// Pre-populate md (FileBackend should read this).
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: From native\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: From native\n"), 0644)
 
 		lookPath = func(name string) (string, error) {
 			return "/mock/tasks-axi", nil
@@ -631,10 +631,10 @@ func TestGetItem_RouteThroughBackend(t *testing.T) {
 		os.MkdirAll(configDir, 0755)
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
 
-		// Pre-populate backlog.md with DIVERGENT data (tasks-axi should NOT read this).
+		// Pre-populate md with DIVERGENT data (tasks-axi should NOT read this).
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
 
 		item, found, err := GetItem(homeDir, "TASK-1")
 		if err != nil {
@@ -651,10 +651,10 @@ func TestGetItem_RouteThroughBackend(t *testing.T) {
 			t.Errorf("expected state InFlight from tasks-axi, got %v", item.State)
 		}
 
-		// Verify backlog.md was NOT consulted (should still have divergent data).
-		data, _ := os.ReadFile(filepath.Join(dataDir, "backlog.md"))
+		// Verify md was NOT consulted (should still have divergent data).
+		data, _ := os.ReadFile(filepath.Join(dataDir, "md"))
 		if !strings.Contains(string(data), "Divergent native data") {
-			t.Errorf("backlog.md should remain unchanged (not consulted by GetItem)")
+			t.Errorf("md should remain unchanged (not consulted by GetItem)")
 		}
 	})
 }
@@ -698,10 +698,10 @@ func TestHasDuplicate_RouteThroughBackend(t *testing.T) {
 		os.MkdirAll(configDir, 0755)
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
 
-		// Pre-populate backlog.md with NO duplicates (tasks-axi should NOT read this).
+		// Pre-populate md with NO duplicates (tasks-axi should NOT read this).
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Only one in native\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Only one in native\n"), 0644)
 
 		dup, err := HasDuplicate(homeDir, "TASK-1")
 		if err != nil {
@@ -770,12 +770,12 @@ func TestHasDuplicate_RouteThroughBackend(t *testing.T) {
 		// Pre-populate divergent native markdown to prove FAILED never consults it.
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Divergent native\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Divergent native\n"), 0644)
 
 		// FAILED should still propagate — does not fall back to FileBackend despite native file.
 		_, _, err = GetItem(homeDir, "TASK-1")
 		if err == nil {
-			t.Fatal("expected error from tasks-axi FAILED even with native backlog.md present (fail-closed)")
+			t.Fatal("expected error from tasks-axi FAILED even with native md present (fail-closed)")
 		}
 
 		// FAILED should NOT fall through to FileBackend — HasDuplicate returns error.
@@ -975,10 +975,10 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// Verify backlog.md was created in homeDir/data/ (manual path)
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		// Verify md was created in homeDir/data/ (manual path)
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); os.IsNotExist(err) {
-			t.Errorf("expected backlog.md at %s, but it does not exist", backlogPath)
+			t.Errorf("expected md at %s, but it does not exist", backlogPath)
 		}
 	})
 
@@ -1012,7 +1012,7 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 		var buf bytes.Buffer
 		buf.ReadFrom(r)
 		output := buf.String()
-		expectedFile := filepath.Join(homeDir, "data", "backlog.md")
+		expectedFile := filepath.Join(homeDir, "data", "md")
 		if !strings.Contains(output, "EXEC_CMD: list --file "+expectedFile) {
 			t.Errorf("expected tasks-axi execution scoped to %s, got %q", expectedFile, output)
 		}
@@ -1030,9 +1030,9 @@ func TestRun_ConfigBackendGate(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		backlogPath := filepath.Join(homeDir, "data", "backlog.md")
+		backlogPath := filepath.Join(homeDir, "data", "md")
 		if _, err := os.Stat(backlogPath); os.IsNotExist(err) {
-			t.Errorf("expected backlog.md at %s, but it does not exist", backlogPath)
+			t.Errorf("expected md at %s, but it does not exist", backlogPath)
 		}
 	})
 }
@@ -1061,12 +1061,12 @@ func TestTasksAxiBackendScopesOperationsToHome(t *testing.T) {
 
 	homeDir := t.TempDir()
 	backend := &TasksAxiBackend{HomeDir: homeDir}
-	output := captureStdout(func() {
+	output := backlogCaptureStdout(func() {
 		if err := backend.Add("task-1", "scoped", "ship", "munsu", false); err != nil {
 			t.Fatal(err)
 		}
 	})
-	expectedFile := filepath.Join(homeDir, "data", "backlog.md")
+	expectedFile := filepath.Join(homeDir, "data", "md")
 	if !strings.Contains(output, "--file "+expectedFile) {
 		t.Errorf("expected home-scoped tasks-axi call, got %q", output)
 	}
@@ -1074,7 +1074,7 @@ func TestTasksAxiBackendScopesOperationsToHome(t *testing.T) {
 
 func TestFileBackend_Parse(t *testing.T) {
 	t.Run("nonexistent file", func(t *testing.T) {
-		fb := NewFileBackend("/nonexistent/path/backlog.md")
+		fb := NewFileBackend("/nonexistent/path/md")
 		items, err := fb.parse()
 		if err != nil {
 			t.Fatal(err)
@@ -1086,7 +1086,7 @@ func TestFileBackend_Parse(t *testing.T) {
 
 	t.Run("empty file", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		os.WriteFile(path, []byte("# Backlog\n\n## 2024-01-01\n"), 0644)
 		fb := NewFileBackend(path)
 
@@ -1101,7 +1101,7 @@ func TestFileBackend_Parse(t *testing.T) {
 
 	t.Run("multiple items", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		content := `# Backlog
 
 ## 2024-01-01
@@ -1146,7 +1146,7 @@ func TestFileBackend_Parse(t *testing.T) {
 
 	t.Run("indented items", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		content := "# Backlog\n\n## 2024-01-01\n  - [ ] TASK-1: indented\n\t- [x] TASK-2: tabbed\n"
 		os.WriteFile(path, []byte(content), 0644)
 		fb := NewFileBackend(path)
@@ -1162,7 +1162,7 @@ func TestFileBackend_Parse(t *testing.T) {
 
 	t.Run("tasks-axi dash format", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		content := `# Backlog
 
 ## 2024-01-01
@@ -1214,7 +1214,7 @@ func TestFileBackend_Parse(t *testing.T) {
 
 	t.Run("tasks-axi dash format with description containing dashes", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		content := `# Backlog
 
 ## 2024-01-01
@@ -1248,7 +1248,7 @@ func TestFileBackend_Parse(t *testing.T) {
 func TestFileBackend_Render(t *testing.T) {
 	t.Run("render and reparse", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		items := []Item{
@@ -1290,10 +1290,10 @@ func TestFileBackend_Render(t *testing.T) {
 func TestFileBackend_Add(t *testing.T) {
 	t.Run("add to empty backlog", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
-		output := captureStdout(func() {
+		output := backlogCaptureStdout(func() {
 			if err := fb.Add("TASK-1", "My first task", "", "", false); err != nil {
 				t.Fatal(err)
 			}
@@ -1316,7 +1316,7 @@ func TestFileBackend_Add(t *testing.T) {
 
 	t.Run("duplicate id", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "first", "", "", false)
@@ -1333,7 +1333,7 @@ func TestFileBackend_Add(t *testing.T) {
 func TestFileBackend_List(t *testing.T) {
 	t.Run("empty backlog", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		items, err := fb.List(StateQueued)
@@ -1349,7 +1349,7 @@ func TestFileBackend_List(t *testing.T) {
 func TestFileBackend_Show(t *testing.T) {
 	t.Run("existing item", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "My task", "", "", false)
@@ -1365,7 +1365,7 @@ func TestFileBackend_Show(t *testing.T) {
 
 	t.Run("nonexistent item", func(t *testing.T) {
 		tmp := t.TempDir()
-		fb := NewFileBackend(filepath.Join(tmp, "backlog.md"))
+		fb := NewFileBackend(filepath.Join(tmp, "md"))
 
 		_, ok := fb.Show("NONEXISTENT")
 		if ok {
@@ -1377,7 +1377,7 @@ func TestFileBackend_Show(t *testing.T) {
 func TestFileBackend_UpdateState(t *testing.T) {
 	t.Run("start task", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "My task", "", "", false)
@@ -1393,7 +1393,7 @@ func TestFileBackend_UpdateState(t *testing.T) {
 
 	t.Run("done task", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "My task", "", "", false)
@@ -1409,7 +1409,7 @@ func TestFileBackend_UpdateState(t *testing.T) {
 
 	t.Run("block task", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "My task", "", "", false)
@@ -1425,7 +1425,7 @@ func TestFileBackend_UpdateState(t *testing.T) {
 
 	t.Run("ready task (unblock)", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "My task", "", "", false)
@@ -1440,7 +1440,7 @@ func TestFileBackend_UpdateState(t *testing.T) {
 
 	t.Run("nonexistent item", func(t *testing.T) {
 		tmp := t.TempDir()
-		fb := NewFileBackend(filepath.Join(tmp, "backlog.md"))
+		fb := NewFileBackend(filepath.Join(tmp, "md"))
 
 		err := fb.UpdateState("NONEXISTENT", StateDone)
 		if err == nil {
@@ -1453,7 +1453,7 @@ func TestFileBackend_UpdateState(t *testing.T) {
 
 	t.Run("transition from done is rejected", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		fb.Add("TASK-1", "My task", "", "", false)
@@ -1472,7 +1472,7 @@ func TestFileBackend_UpdateState(t *testing.T) {
 func TestFileBackend_Ensure(t *testing.T) {
 	t.Run("creates file with header", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "data", "backlog.md")
+		path := filepath.Join(tmp, "data", "md")
 		fb := NewFileBackend(path)
 
 		if err := fb.ensureBacklog(); err != nil {
@@ -1490,7 +1490,7 @@ func TestFileBackend_Ensure(t *testing.T) {
 
 	t.Run("existing file unchanged", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		os.WriteFile(path, []byte("existing content\n"), 0644)
 		fb := NewFileBackend(path)
 
@@ -1651,7 +1651,7 @@ func TestManualRun_Verbs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		output := captureStdout(func() {
+		output := backlogCaptureStdout(func() {
 			if err := manualRun(homeDir, "list", []string{}); err != nil {
 				t.Fatal(err)
 			}
@@ -1666,7 +1666,7 @@ func TestManualRun_Verbs(t *testing.T) {
 		manualRun(homeDir, "add", []string{"TASK-1", "My task"})
 
 		// start
-		output := captureStdout(func() {
+		output := backlogCaptureStdout(func() {
 			manualRun(homeDir, "start", []string{"TASK-1"})
 		})
 		if !strings.Contains(output, "[-]") {
@@ -1674,7 +1674,7 @@ func TestManualRun_Verbs(t *testing.T) {
 		}
 
 		// done
-		output = captureStdout(func() {
+		output = backlogCaptureStdout(func() {
 			manualRun(homeDir, "done", []string{"TASK-1"})
 		})
 		if !strings.Contains(output, "[x]") {
@@ -1687,7 +1687,7 @@ func TestManualRun_Verbs(t *testing.T) {
 		manualRun(homeDir, "add", []string{"TASK-1", "My task"})
 
 		manualRun(homeDir, "block", []string{"TASK-1"})
-		fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+		fb := NewFileBackend(filepath.Join(homeDir, "data", "md"))
 		items, _ := fb.parse()
 		if items[0].State != StateBlocked {
 			t.Errorf("expected blocked, got %v", items[0].State)
@@ -1704,7 +1704,7 @@ func TestManualRun_Verbs(t *testing.T) {
 func TestFileBackend_AddWithMetadata(t *testing.T) {
 	t.Run("add with kind and repo", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		if err := fb.Add("TASK-1", "My task", "scout", "munsu", false); err != nil {
@@ -1731,7 +1731,7 @@ func TestFileBackend_AddWithMetadata(t *testing.T) {
 
 	t.Run("add with start flag sets in-flight", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		if err := fb.Add("TASK-1", "My task", "", "", true); err != nil {
@@ -1749,7 +1749,7 @@ func TestFileBackend_AddWithMetadata(t *testing.T) {
 
 	t.Run("add with all flags", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		if err := fb.Add("TASK-1", "My task", "scout", "munsu", true); err != nil {
@@ -1775,7 +1775,7 @@ func TestFileBackend_AddWithMetadata(t *testing.T) {
 func TestFileBackend_RenderWithMetadata(t *testing.T) {
 	t.Run("metadata round-trip", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		items := []Item{
@@ -1815,7 +1815,7 @@ func TestFileBackend_RenderWithMetadata(t *testing.T) {
 
 	t.Run("metadata round-trip both fields", func(t *testing.T) {
 		tmp := t.TempDir()
-		path := filepath.Join(tmp, "backlog.md")
+		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
 
 		items := []Item{
@@ -1858,7 +1858,7 @@ func TestAddItemPublic(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+		fb := NewFileBackend(filepath.Join(homeDir, "data", "md"))
 		items, err := fb.parse()
 		if err != nil {
 			t.Fatal(err)
@@ -1881,7 +1881,7 @@ func TestAddItemPublic(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+		fb := NewFileBackend(filepath.Join(homeDir, "data", "md"))
 		items, err := fb.parse()
 		if err != nil {
 			t.Fatal(err)
@@ -1966,10 +1966,10 @@ func TestListItems_RouteThroughBackend(t *testing.T) {
 		os.MkdirAll(configDir, 0755)
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("tasks-axi\n"), 0644)
 
-		// Pre-populate backlog.md with DIVERGENT data (tasks-axi should NOT read this).
+		// Pre-populate md with DIVERGENT data (tasks-axi should NOT read this).
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
 
 		items, err := ListItems(homeDir, StateQueued)
 		if err != nil {
@@ -2004,7 +2004,7 @@ func TestListItems_RouteThroughBackend(t *testing.T) {
 		// Pre-populate divergent native backlog to prove FAILED never consults it.
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Divergent native\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Divergent native\n"), 0644)
 
 		_, err := ListItems(homeDir, StateQueued)
 		if err == nil {
@@ -2014,10 +2014,10 @@ func TestListItems_RouteThroughBackend(t *testing.T) {
 			t.Errorf("error should reference tasks-axi, got: %v", err)
 		}
 
-		// Verify backlog.md was NOT consulted (still has divergent data).
-		data, _ := os.ReadFile(filepath.Join(dataDir, "backlog.md"))
+		// Verify md was NOT consulted (still has divergent data).
+		data, _ := os.ReadFile(filepath.Join(dataDir, "md"))
 		if !strings.Contains(string(data), "Divergent native") {
-			t.Errorf("backlog.md should remain unchanged (not consulted by ListItems)")
+			t.Errorf("md should remain unchanged (not consulted by ListItems)")
 		}
 	})
 
@@ -2036,10 +2036,10 @@ func TestListItems_RouteThroughBackend(t *testing.T) {
 		os.MkdirAll(configDir, 0755)
 		os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
 
-		// Pre-populate backlog.md with native data.
+		// Pre-populate md with native data.
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Native manual data\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] TASK-1: Native manual data\n"), 0644)
 
 		items, err := ListItems(homeDir, StateQueued)
 		if err != nil {
@@ -2071,7 +2071,7 @@ func TestListItems_RouteThroughBackend(t *testing.T) {
 		// Pre-populate divergent native backlog to prove auto mode uses tasks-axi.
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [x] TASK-1: Divergent native data\n"), 0644)
 
 		items, err := ListItems(homeDir, StateQueued)
 		if err != nil {
@@ -2097,7 +2097,7 @@ func TestListItems_RouteThroughBackend(t *testing.T) {
 
 		dataDir := filepath.Join(homeDir, "data")
 		os.MkdirAll(dataDir, 0755)
-		os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [ ] TASK-1: Fallback native item\n"), 0644)
+		os.WriteFile(filepath.Join(dataDir, "md"), []byte("# Backlog\n\n## 2026-01-01\n- [ ] TASK-1: Fallback native item\n"), 0644)
 
 		items, err := ListItems(homeDir, StateQueued)
 		if err != nil {

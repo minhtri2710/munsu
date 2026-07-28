@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/project"
 )
 
 // ConfigRereadKey is the mailbox envelope Key for config-reread notifications.
@@ -80,7 +80,7 @@ func ComputeInheritedConfigDigest(captainHome string) (string, error) {
 	}
 
 	// projects.md
-	projPath := project.RegistryPath(captainHome)
+	projPath := fleet.RegistryPath(captainHome)
 	data, err = os.ReadFile(projPath)
 	if os.IsNotExist(err) {
 		fmt.Fprintf(h, "data/projects.md:ABSENT\n")

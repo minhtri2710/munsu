@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/spf13/cobra"
 )
 
@@ -76,7 +76,7 @@ Typical munsu-ops flow:
 			}
 			fmt.Fprintln(out, "")
 			fmt.Fprintln(out, "=== Registered projects (choose a fleet target; cwd may stay on a product folder) ===")
-			projects, err := project.List(ctx.Home)
+			projects, err := fleet.List(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing projects: %w", err)
 			}
@@ -88,7 +88,7 @@ Typical munsu-ops flow:
 					if p.Description != "" {
 						line += " — " + p.Description
 					}
-					if path, rerr := project.ResolveRepoPath(ctx.Home, p.Name); rerr == nil && path != "" {
+					if path, rerr := fleet.ResolveRepoPath(ctx.Home, p.Name); rerr == nil && path != "" {
 						line += " (" + path + ")"
 					}
 					fmt.Fprintln(out, line)

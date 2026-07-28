@@ -16,8 +16,6 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/spf13/cobra"
@@ -39,7 +37,7 @@ func newBriefCmd() *cobra.Command {
 			// Resolve delivery mode using full auto-detection chain
 			projectMode := ""
 			projYolo := false
-			if m, y, err := project.Mode(ctx.Home, repo); err == nil {
+			if m, y, err := fleet.Mode(ctx.Home, repo); err == nil {
 				projectMode = m
 				projYolo = y
 			}
@@ -290,8 +288,8 @@ func runGuardClaude(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		if err := checkPendingRelayObligations(homeDir); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			exitWithCode(2)
@@ -379,8 +377,8 @@ func runGuardCodexLike(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		if err := checkPendingRelayObligations(homeDir); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			exitWithCode(2)
@@ -463,8 +461,8 @@ func runGuardGrok(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		if err := checkPendingRelayObligations(homeDir); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			exitWithCode(2)
@@ -563,8 +561,8 @@ func runGuardAgy(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		allowJSON, _ := json.Marshal(map[string]interface{}{
 			"decision": "allow",
 		})

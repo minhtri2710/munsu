@@ -1,4 +1,4 @@
-package project
+package fleet
 
 import (
 	"os"
@@ -107,7 +107,7 @@ func TestFormatEntrySimple(t *testing.T) {
 	}
 }
 
-func TestRoundTrip(t *testing.T) {
+func TestProjectRegistryRoundTrip(t *testing.T) {
 	original := "- my-project feat +yolo - Description here (added 2026-03-15)"
 	p, err := ParseEntry(original)
 	if err != nil {

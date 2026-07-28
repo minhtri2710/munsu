@@ -44,7 +44,7 @@ func TestBacklogPathsCommandSeparatesDevelopmentAndRuntime(t *testing.T) {
 	text := output.String()
 	for _, expected := range []string{
 		"development: " + filepath.Join(resolvedRepo, "backlog.md"),
-		"runtime: " + filepath.Join(resolvedHome, "data", "backlog.md"),
+		"runtime: " + filepath.Join(resolvedHome, "data", "md"),
 		"config: " + filepath.Join(resolvedRepo, ".tasks.toml"),
 	} {
 		if !strings.Contains(text, expected) {
@@ -78,7 +78,7 @@ func TestBacklogAddWithNonDefaultHomeUsesRuntimeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runtimeData, err := os.ReadFile(filepath.Join(home, "data", "backlog.md"))
+	runtimeData, err := os.ReadFile(filepath.Join(home, "data", "md"))
 	if err != nil {
 		t.Fatal(err)
 	}

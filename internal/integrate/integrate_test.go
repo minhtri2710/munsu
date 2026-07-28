@@ -562,10 +562,10 @@ func TestWriteAtomic_CreatesSubdirs(t *testing.T) {
 	}
 }
 
-// Test SafetyCheck uses scope.Classify without duplicating logic
+// Test SafetyCheck uses fleet.Classify without duplicating logic
 func TestSafetyCheck_UsesScopeClassify(t *testing.T) {
-	// Verify SafetyCheck delegates to scope.Classify by checking error behavior
-	// on a non-existent path (scope.Classify fails closed)
+	// Verify SafetyCheck delegates to fleet.Classify by checking error behavior
+	// on a non-existent path (fleet.Classify fails closed)
 	result := SafetyCheck("/nonexistent/path/that/does/not/exist")
 	// Should have identity set (even if error)
 	if result.Identity == "" && result.Error == "" {

@@ -1,4 +1,4 @@
-package backlog
+package fleet
 
 import (
 	"fmt"
@@ -9,14 +9,14 @@ import (
 )
 
 // writeBacklog creates a test backlog file with the given items
-// and sets the backend to manual mode so native backlog.md is used.
+// and sets the backend to manual mode so native md is used.
 func writeBacklog(t *testing.T, homeDir string, items []string) {
 	t.Helper()
 	dataDir := filepath.Join(homeDir, "data")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatalf("creating data dir: %v", err)
 	}
-	// Force manual mode so tests that write native backlog.md are read via FileBackend.
+	// Force manual mode so tests that write native md are read via FileBackend.
 	configDir := filepath.Join(homeDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("creating config dir: %v", err)
@@ -28,7 +28,7 @@ func writeBacklog(t *testing.T, homeDir string, items []string) {
 	for _, item := range items {
 		content += item + "\n"
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "backlog.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "md"), []byte(content), 0644); err != nil {
 		t.Fatalf("writing backlog: %v", err)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/spf13/cobra"
 )
@@ -209,10 +208,10 @@ func newContractGuardCmd() *cobra.Command {
 			}
 
 			// Check project tangles
-			projects, err := project.List(ctx.Home)
+			projects, err := fleet.List(ctx.Home)
 			if err == nil {
 				for _, entry := range projects {
-					projectDir, resolveErr := project.ResolveRepoPath(ctx.Home, entry.Name)
+					projectDir, resolveErr := fleet.ResolveRepoPath(ctx.Home, entry.Name)
 					if resolveErr != nil {
 						continue
 					}

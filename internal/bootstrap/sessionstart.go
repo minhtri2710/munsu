@@ -8,14 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/scope"
 )
 
 type SessionStartResult struct {
@@ -23,7 +20,7 @@ type SessionStartResult struct {
 	Bootstrap       *Result
 	FleetSync       *fleet.SyncResult
 	Watcher         WatchEnsureResult
-	BacklogDigest   *backlog.BacklogDigest
+	BacklogDigest   *fleet.BacklogDigest
 	CaptainLiveness *CaptainLivenessResult
 }
 
@@ -232,8 +229,8 @@ func CheckSessionScope(home string) ScopeCheckResult {
 	if err != nil {
 		return ScopeCheckResult{ErrorMessage: err.Error()}
 	}
-	cls := scope.Classify(cwd)
-	if cls.Identity != scope.Primary {
+	cls := fleet.Classify(cwd)
+	if cls.Identity != fleet.Primary {
 		return ScopeCheckResult{}
 	}
 	return ScopeCheckResult{IsPrimary: true}
@@ -243,16 +240,16 @@ func checkSessionScope(home string) error {
 	if _, present := os.LookupEnv("NO_MISTAKES_GATE"); present {
 		return fmt.Errorf("no-mistakes gate agent must not drive the fleet")
 	}
-	projects, err := project.List(home)
+	projects, err := fleet.List(home)
 	if err != nil {
 		return fmt.Errorf("scope projects: %w", err)
 	}
 	for _, registered := range projects {
-		path, err := project.ResolveRepoPath(home, registered.Name)
+		path, err := fleet.ResolveRepoPath(home, registered.Name)
 		if err != nil {
 			return fmt.Errorf("scope project %s: %w", registered.Name, err)
 		}
-		if err := scope.GateRefusalError(path); err != nil {
+		if err := fleet.GateRefusalError(path); err != nil {
 			return fmt.Errorf("project %s: %w", registered.Name, err)
 		}
 	}
@@ -363,7 +360,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "  Repair: munsu watch ensure")
 	}
 
-	res.BacklogDigest = backlog.BuildDigest(home)
+	res.BacklogDigest = fleet.BuildDigest(home)
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Backlog Digest ---")
 	if res.BacklogDigest.Total > 0 {

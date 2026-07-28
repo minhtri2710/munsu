@@ -13,7 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/capability"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"gopkg.in/yaml.v3"
 )
 
@@ -376,11 +376,11 @@ func formatPreflightFailures(checks []delivery.Check) string {
 }
 
 // effectiveModeForSpawn resolves the effective delivery mode for a spawn operation.
-// It falls back to project.Mode when ProjectMode is not set in args.
+// It falls back to fleet.Mode when ProjectMode is not set in args.
 func effectiveModeForSpawn(homeDir string, args Args) (string, error) {
 	projectMode := args.ProjectMode
 	if projectMode == "" {
-		if m, _, err := project.Mode(homeDir, args.ProjectName); err == nil {
+		if m, _, err := fleet.Mode(homeDir, args.ProjectName); err == nil {
 			projectMode = m
 		}
 	}

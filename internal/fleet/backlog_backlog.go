@@ -1,4 +1,4 @@
-package backlog
+package fleet
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 var (
@@ -33,11 +35,19 @@ const (
 
 // resolveBackend resolves the backend mode based on home, CLI flag, and config.
 // Non-default homes force ModeManual to prevent data leaks across homes.
-func resolveBackend(homeDir string, isDefault bool) BackendMode {
-	// Non-default --home always forces manual (data safety policy).
-	if !isDefault {
-		return ModeManual
+func resolveBacklogFile(homeDir string) string {
+	mdPath := filepath.Join(homeDir, "data", "md")
+	if _, err := os.Stat(mdPath); err == nil {
+		return mdPath
 	}
+	legacyPath := filepath.Join(homeDir, "data", "backlog.md")
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath
+	}
+	return mdPath
+}
+
+func resolveBackend(homeDir string, isDefault bool) BackendMode {
 	// Check explicit config/backlog-backend.
 	data, err := os.ReadFile(filepath.Join(homeDir, "config", "backlog-backend"))
 	if err == nil {
@@ -47,6 +57,10 @@ func resolveBackend(homeDir string, isDefault bool) BackendMode {
 		case "tasks-axi":
 			return ModeTasksAxi
 		}
+	}
+	// Non-default --home forces manual when absent config (data safety policy).
+	if !isDefault {
+		return ModeManual
 	}
 	// Absent config or unknown value → Auto mode (backward compatible default).
 	return ModeAuto
@@ -95,7 +109,7 @@ func RunManual(homeDir, verb string, args []string) error {
 
 // manualRun handles backlog operations using the FileBackend.
 func manualRun(homeDir, verb string, args []string) error {
-	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	fb := NewFileBackend(resolveBacklogFile(homeDir))
 	switch verb {
 	case "add":
 		if len(args) < 2 {
@@ -179,18 +193,35 @@ func transitionViaFileBackend(fb *FileBackend, args []string, toState TaskState)
 
 // AddItem adds a backlog item with optional metadata, using the manual (home-scoped) backend.
 func AddItem(homeDir, id, desc, kind, repo string, start bool) error {
-	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	fb := NewFileBackend(resolveBacklogFile(homeDir))
 	return fb.Add(id, desc, kind, repo, start)
+}
+
+// isDefaultHomePath reports whether homeDir is the default MUNSU_HOME.
+func isDefaultHomePath(homeDir string) bool {
+	if homeDir == "" {
+		return true
+	}
+	defaultHome, err := mhome.Resolve("")
+	if err != nil {
+		return false
+	}
+	givenAbs, err1 := filepath.Abs(homeDir)
+	defaultAbs, err2 := filepath.Abs(defaultHome)
+	if err1 == nil && err2 == nil {
+		return filepath.Clean(givenAbs) == filepath.Clean(defaultAbs)
+	}
+	return filepath.Clean(homeDir) == filepath.Clean(defaultHome)
 }
 
 // GetItem reads a backlog item by ID via the selected backend.
 // Returns the item, whether it was found, and any error.
 func GetItem(homeDir, id string) (Item, bool, error) {
-	mode := resolveBackend(homeDir, true)
+	mode := resolveBackend(homeDir, isDefaultHomePath(homeDir))
 	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
 		return getItemViaTasksAxi(homeDir, id)
 	}
-	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	fb := NewFileBackend(resolveBacklogFile(homeDir))
 	item, ok := fb.Show(id)
 	if !ok {
 		return Item{}, false, nil
@@ -281,7 +312,7 @@ func HasDuplicate(homeDir, id string) (bool, error) {
 	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
 		return hasDuplicateViaTasksAxi(homeDir, id)
 	}
-	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	fb := NewFileBackend(resolveBacklogFile(homeDir))
 	items, err := fb.List(StateQueued) // unfiltered returns all
 	if err != nil {
 		return false, err
@@ -378,7 +409,7 @@ func ListItems(homeDir string, filter TaskState) ([]Item, error) {
 	if mode == ModeTasksAxi || (mode == ModeAuto && tasksAxiAvailable()) {
 		return listItemsViaTasksAxi(homeDir, filter)
 	}
-	fb := NewFileBackend(filepath.Join(homeDir, "data", "backlog.md"))
+	fb := NewFileBackend(resolveBacklogFile(homeDir))
 	return fb.List(filter)
 }
 
@@ -509,7 +540,7 @@ func runTasksAxiCapture(homeDir, verb string, args []string) (stdout, stderr str
 	cliArgs := []string{verb}
 	cliArgs = append(cliArgs, args...)
 	if homeDir != "" {
-		backlogPath, err := filepath.Abs(filepath.Join(homeDir, "data", "backlog.md"))
+		backlogPath, err := filepath.Abs(resolveBacklogFile(homeDir))
 		if err != nil {
 			return "", "", fmt.Errorf("resolving backlog path: %w", err)
 		}
@@ -524,7 +555,7 @@ func runTasksAxiCapture(homeDir, verb string, args []string) (stdout, stderr str
 	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
-// runTasksAxiForHome scopes tasks-axi to a runtime home's durable backlog.
+// runTasksAxiForHome scopes tasks-axi to a runtime home's durable
 func runTasksAxiForHome(homeDir, verb string, args []string) error {
 	path, err := lookPath("tasks-axi")
 	if err != nil {
@@ -534,7 +565,7 @@ func runTasksAxiForHome(homeDir, verb string, args []string) error {
 	cliArgs := []string{verb}
 	cliArgs = append(cliArgs, args...)
 	if homeDir != "" {
-		backlogPath, err := filepath.Abs(filepath.Join(homeDir, "data", "backlog.md"))
+		backlogPath, err := filepath.Abs(resolveBacklogFile(homeDir))
 		if err != nil {
 			return fmt.Errorf("resolving backlog path: %w", err)
 		}

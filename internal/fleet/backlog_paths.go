@@ -1,4 +1,4 @@
-package backlog
+package fleet
 
 import (
 	"bufio"
@@ -29,8 +29,8 @@ func ResolvePaths(cwd, homeDir string) (Paths, error) {
 	}
 
 	paths := Paths{
-		Development: filepath.Join(cwdAbs, "backlog.md"),
-		Runtime:     filepath.Join(homeAbs, "data", "backlog.md"),
+		Development: filepath.Join(cwdAbs, "md"),
+		Runtime:     resolveBacklogFile(homeAbs),
 	}
 
 	configPath := findTasksConfig(cwdAbs)
@@ -95,5 +95,5 @@ func markdownBacklogPath(configPath string) (string, error) {
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("reading tasks config: %w", err)
 	}
-	return filepath.Join(filepath.Dir(configPath), "backlog.md"), nil
+	return filepath.Join(filepath.Dir(configPath), "md"), nil
 }

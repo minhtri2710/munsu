@@ -7,7 +7,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -131,26 +130,26 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		return sum
 	}
 
-	items, listErr := backlog.ListItems(homeDir, backlog.StateQueued) // zero filter = all
+	items, listErr := ListItems(homeDir, StateQueued) // zero filter = all
 	backlogPresent := listErr == nil
 	if !backlogPresent {
 		items = nil
 	}
 
-	inFlightByID := map[string]backlog.Item{}
-	var queuedAll []backlog.Item
-	var landedAll []backlog.Item
+	inFlightByID := map[string]Item{}
+	var queuedAll []Item
+	var landedAll []Item
 	for _, item := range items {
 		switch item.State {
-		case backlog.StateQueued:
+		case StateQueued:
 			sum.Counts.Queued++
 			queuedAll = append(queuedAll, item)
-		case backlog.StateInFlight:
+		case StateInFlight:
 			sum.Counts.InFlight++
 			inFlightByID[item.ID] = item
-		case backlog.StateBlocked:
+		case StateBlocked:
 			sum.Counts.Blocked++
-		case backlog.StateDone:
+		case StateDone:
 			sum.Counts.Done++
 			if item.Kind != "captain" {
 				landedAll = append(landedAll, item)
@@ -239,7 +238,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	var holdsAll []HoldBrief
 	for _, item := range items {
-		if item.State != backlog.StateBlocked {
+		if item.State != StateBlocked {
 			continue
 		}
 		holdsAll = append(holdsAll, HoldBrief{

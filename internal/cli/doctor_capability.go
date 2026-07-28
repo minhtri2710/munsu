@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os/exec"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/supervision"
 )
 
@@ -218,7 +218,7 @@ func collectGeneralDiagnostic(home string) *GeneralDiagnostic {
 
 func collectScopeDiagnostic(cwd string) *ScopeDiagnostic {
 	d := &ScopeDiagnostic{Path: cwd}
-	r := scope.Classify(cwd)
+	r := fleet.Classify(cwd)
 	d.Identity = r.Identity.String()
 	d.GateCap = r.GateCap.String()
 	d.Path = r.CanonicalPath

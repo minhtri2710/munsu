@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -95,23 +94,23 @@ func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, erro
 	if backlogState, ok := readBacklogState(homeDir, id); ok {
 		s.BacklogState = backlogState.String()
 		switch backlogState {
-		case backlog.StateDone:
+		case fleet.StateDone:
 			s.Status = "done"
 			s.Description = "backlog: done"
 			s.StatusLogSuperseded = true
 			return s, nil
-		case backlog.StateBlocked:
+		case fleet.StateBlocked:
 			s.Status = "blocked"
 			s.Description = "backlog: blocked"
 			s.StatusLogSuperseded = true
 			return s, nil
-		case backlog.StateQueued:
+		case fleet.StateQueued:
 			// Queued means not yet started — report as-is when no higher work state.
 			if s.Status == "unknown" {
 				s.Status = "queued"
 				s.Description = "backlog: queued"
 			}
-		case backlog.StateInFlight:
+		case fleet.StateInFlight:
 			// In-flight — continue to lower tiers for detail.
 		}
 	}
@@ -193,10 +192,10 @@ func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, erro
 }
 
 // readBacklogState reads the task's state from the selected backlog authority.
-func readBacklogState(homeDir, id string) (backlog.TaskState, bool) {
-	item, found, err := backlog.GetItem(homeDir, id)
+func readBacklogState(homeDir, id string) (fleet.TaskState, bool) {
+	item, found, err := fleet.GetItem(homeDir, id)
 	if err != nil || !found {
-		return backlog.StateQueued, false
+		return fleet.StateQueued, false
 	}
 	return item.State, true
 }

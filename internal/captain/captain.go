@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/project"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
@@ -1529,8 +1529,8 @@ func pushSharedFile(parentHome, captainHome string, logFn func(action, name stri
 // home. Entries keep absolute path descriptions so ResolveRepoPath works
 // without cloning into the captain projects/ tree (no auto-clone).
 func pushProjectsRegistry(parentHome, captainHome string, logFn func(action, name string)) error {
-	src := project.RegistryPath(parentHome)
-	dst := project.RegistryPath(captainHome)
+	src := fleet.RegistryPath(parentHome)
+	dst := fleet.RegistryPath(captainHome)
 
 	if !isSafeConfigPath(dst, parentHome, captainHome) {
 		return fmt.Errorf("projects.md path escapes captain container — refuse")
@@ -1557,7 +1557,7 @@ func pushProjectsRegistry(parentHome, captainHome string, logFn func(action, nam
 	}
 
 	// Validate parent registry before writing so captains never inherit a corrupt file.
-	if _, err := project.ListFromFile(src); err != nil {
+	if _, err := fleet.ListFromFile(src); err != nil {
 		return fmt.Errorf("reading parent projects.md: %w", err)
 	}
 

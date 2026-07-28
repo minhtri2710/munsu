@@ -1,4 +1,4 @@
-package backlog
+package fleet
 
 import (
 	"os"
@@ -12,7 +12,7 @@ func TestResolvePathsSeparatesDevelopmentAndRuntimeBacklogs(t *testing.T) {
 	if err := os.MkdirAll(nested, 0755); err != nil {
 		t.Fatal(err)
 	}
-	config := "backend = \"markdown\"\n\n[markdown]\npath = \"backlog.md\"\narchive = \".tasks/done-archive.md\"\ndone_keep = 10\n"
+	config := "backend = \"markdown\"\n\n[markdown]\npath = \"md\"\narchive = \".tasks/done-archive.md\"\ndone_keep = 10\n"
 	if err := os.WriteFile(filepath.Join(repo, ".tasks.toml"), []byte(config), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -23,11 +23,11 @@ func TestResolvePathsSeparatesDevelopmentAndRuntimeBacklogs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if paths.Development != filepath.Join(repo, "backlog.md") {
-		t.Errorf("development backlog = %q, want %q", paths.Development, filepath.Join(repo, "backlog.md"))
+	if paths.Development != filepath.Join(repo, "md") {
+		t.Errorf("development backlog = %q, want %q", paths.Development, filepath.Join(repo, "md"))
 	}
-	if paths.Runtime != filepath.Join(home, "data", "backlog.md") {
-		t.Errorf("runtime backlog = %q, want %q", paths.Runtime, filepath.Join(home, "data", "backlog.md"))
+	if paths.Runtime != filepath.Join(home, "data", "md") {
+		t.Errorf("runtime backlog = %q, want %q", paths.Runtime, filepath.Join(home, "data", "md"))
 	}
 	if paths.Config != filepath.Join(repo, ".tasks.toml") {
 		t.Errorf("config = %q, want %q", paths.Config, filepath.Join(repo, ".tasks.toml"))
@@ -43,8 +43,8 @@ func TestResolvePathsDefaultsDevelopmentBacklogToWorkingDirectory(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if paths.Development != filepath.Join(cwd, "backlog.md") {
-		t.Errorf("development backlog = %q, want %q", paths.Development, filepath.Join(cwd, "backlog.md"))
+	if paths.Development != filepath.Join(cwd, "md") {
+		t.Errorf("development backlog = %q, want %q", paths.Development, filepath.Join(cwd, "md"))
 	}
 	if paths.Config != "" {
 		t.Errorf("config = %q, want empty", paths.Config)
@@ -61,8 +61,8 @@ func TestResolvePathsConfigWithoutMarkdownPathFallsBackToRepoBacklog(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paths.Development != filepath.Join(repo, "backlog.md") {
-		t.Errorf("development backlog = %q, want %q", paths.Development, filepath.Join(repo, "backlog.md"))
+	if paths.Development != filepath.Join(repo, "md") {
+		t.Errorf("development backlog = %q, want %q", paths.Development, filepath.Join(repo, "md"))
 	}
 	if paths.Config != filepath.Join(repo, ".tasks.toml") {
 		t.Errorf("config = %q, want %q", paths.Config, filepath.Join(repo, ".tasks.toml"))

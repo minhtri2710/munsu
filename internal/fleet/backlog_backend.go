@@ -1,4 +1,4 @@
-package backlog
+package fleet
 
 // Backend defines the interface for backlog storage backends.
 // Adding a new backend (e.g. SQLite, GitHub Issues) means implementing
@@ -22,7 +22,7 @@ type Backend interface {
 }
 
 // TasksAxiBackend implements Backend by delegating to the tasks-axi CLI.
-// HomeDir scopes operations to <home>/data/backlog.md; an empty value uses cwd configuration.
+// HomeDir scopes operations to <home>/data/md; an empty value uses cwd configuration.
 type TasksAxiBackend struct {
 	HomeDir string
 }

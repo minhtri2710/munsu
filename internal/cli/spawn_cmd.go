@@ -9,10 +9,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/teardown"
@@ -54,7 +53,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			if len(args) >= 2 {
 				projectName = args[1]
 			} else {
-				p, err := project.ResolveFromCwd(ctx.Home)
+				p, err := fleet.ResolveFromCwd(ctx.Home)
 				if err != nil {
 					return fmt.Errorf("no project argument and cannot infer from cwd: %w\n  Pass the project name: munsu spawn %s <project>\n  Or register this repo: munsu project add <name> <path>", err, id)
 				}
@@ -63,7 +62,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			}
 
 			// Resolve project mode from registry
-			projectMode, _, projErr := project.Mode(ctx.Home, projectName)
+			projectMode, _, projErr := fleet.Mode(ctx.Home, projectName)
 			if projErr != nil {
 				projectMode = "" // registry not set or not found — will use other fallbacks
 			}
@@ -126,7 +125,7 @@ func newSendCmd() *cobra.Command {
 			}
 
 			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-			if err := scope.GateRefuseFromCWD(); err != nil {
+			if err := fleet.GateRefuseFromCWD(); err != nil {
 				return fmt.Errorf("send refused: %w", err)
 			}
 
@@ -361,7 +360,7 @@ With --force:
 			id := args[0]
 
 			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-			if err := scope.GateRefuseFromCWD(); err != nil {
+			if err := fleet.GateRefuseFromCWD(); err != nil {
 				return fmt.Errorf("teardown refused: %w", err)
 			}
 

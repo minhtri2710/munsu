@@ -13,10 +13,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldier"
 )
 
@@ -42,7 +42,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-	if err := scope.GateRefuseFromCWD(); err != nil {
+	if err := fleet.GateRefuseFromCWD(); err != nil {
 		return nil, fmt.Errorf("teardown refused: %w", err)
 	}
 

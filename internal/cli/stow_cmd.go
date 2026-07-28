@@ -8,7 +8,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/agentsmd"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/project"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/selfupdate"
 	"github.com/minhtri2710/munsu/internal/stow"
 	"github.com/spf13/cobra"
@@ -98,7 +98,7 @@ or an absolute path to a project directory.`,
 			// Resolve project name to path if not already an absolute path
 			projectDir := projectArg
 			if !filepath.IsAbs(projectArg) {
-				resolved, err := project.ResolveRepoPath(ctx.Home, projectArg)
+				resolved, err := fleet.ResolveRepoPath(ctx.Home, projectArg)
 				if err != nil {
 					return fmt.Errorf("resolving project %q: %w", projectArg, err)
 				}

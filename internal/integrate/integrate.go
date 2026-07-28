@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/scope"
 )
 
 // Scope identifies where integration artifacts are installed.
@@ -565,27 +565,27 @@ console.log("API probe passed");
 // ---------------------------------------------------------------------------
 
 func SafetyCheck(path string) *SafetyCheckResult {
-	scopeResult := scope.Classify(path)
+	scopeResult := fleet.Classify(path)
 
 	result := &SafetyCheckResult{
 		CanonicalPath: scopeResult.CanonicalPath,
 	}
 
-	// Map scope.Identity to string
+	// Map fleet.Identity to string
 	switch scopeResult.Identity {
-	case scope.Primary:
+	case fleet.Primary:
 		result.Identity = "primary"
-	case scope.Worktree:
+	case fleet.Worktree:
 		result.Identity = "worktree"
 	default:
 		result.Identity = "unrelated"
 	}
 
-	// Map scope.GateCap
+	// Map fleet.GateCap
 	switch scopeResult.GateCap {
-	case scope.GatePresent:
+	case fleet.GatePresent:
 		result.GateCapability = "gate-present"
-	case scope.GateAbsent:
+	case fleet.GateAbsent:
 		result.GateCapability = "gate-absent"
 	default:
 		result.GateCapability = "gate-unknown"
@@ -596,10 +596,10 @@ func SafetyCheck(path string) *SafetyCheckResult {
 	if scopeResult.Err != nil {
 		result.GateRefused = true
 		result.Error = scopeResult.Err.Error()
-	} else if scopeResult.GateCap == scope.GatePresent {
+	} else if scopeResult.GateCap == fleet.GatePresent {
 		result.GateRefused = true
 		result.Error = scopeResult.GateSource
-	} else if scopeResult.Identity == scope.Unrelated {
+	} else if scopeResult.Identity == fleet.Unrelated {
 		// Unrelated identity with no explicit gate still fails closed
 		result.GateRefused = true
 		result.Error = "unrelated checkout (not a recognized repository)"
