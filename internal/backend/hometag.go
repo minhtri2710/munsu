@@ -9,23 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Canonical returns the physical absolute path for homeDir.
 // Symlinks and macOS /tmp -> /private/tmp are collapsed so the same
 // installation always hashes to the same tag.
 func Canonical(homeDir string) string {
-	if homeDir == "" {
-		return homeDir
-	}
-	abs, err := filepath.Abs(homeDir)
-	if err != nil {
-		return filepath.Clean(homeDir)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
-	}
-	return abs
+	return home.Canonical(homeDir)
 }
 
 // Tag returns a 6-character lowercase hex prefix for homeDir.

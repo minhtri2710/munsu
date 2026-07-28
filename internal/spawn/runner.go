@@ -617,7 +617,7 @@ func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
 	}
-	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.args.Backend, WorkspaceName: backend.WorkspaceTag(r.homeDir), TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
+	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.args.Backend, TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
 	if err != nil {
 		return err
 	}

@@ -24,7 +24,7 @@ func (s *spawnSessionEndpoints) Create(req spawn.CreateRequest) (spawn.CreatedEn
 	if hb, ok := bk.(*backend.HerdrBackend); ok {
 		hb.Cwd = req.Cwd
 	}
-	handle, err := bk.NewWindow(req.WorkspaceName, req.TabName)
+	handle, err := bk.NewWindow(backend.WorkspaceTag(req.Home), req.TabName)
 	if err != nil {
 		return spawn.CreatedEndpoint{}, fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", name, err)
 	}

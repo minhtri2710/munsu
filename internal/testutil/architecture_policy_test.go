@@ -56,7 +56,7 @@ func TestTransitionalPackagePolicy(t *testing.T) {
 	// Workflow packages must not directly import concrete backend/session
 	// infrastructure. Transitive dependencies through other packages are
 	// expected; only direct imports violate the composition root.
-	backendFree := map[string]bool{"captain": true}
+	backendFree := map[string]bool{"captain": true, "teardown": true, "supervision": true}
 	for _, p := range packages {
 		pkg := strings.TrimPrefix(p.ImportPath, root)
 		if !backendFree[pkg] || !strings.HasPrefix(p.ImportPath, root) {

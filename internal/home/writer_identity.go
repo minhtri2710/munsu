@@ -36,6 +36,24 @@ func CanonicalPath(path string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
+// Canonical returns the physical absolute path for homeDir, collapsing symlinks
+// and macOS /tmp -> /private/tmp so the same installation always resolves to
+// the same path. Unlike CanonicalPath, it never errors: when symlink resolution
+// fails (e.g. nonexistent path) it falls back to the absolute path.
+func Canonical(homeDir string) string {
+	if homeDir == "" {
+		return homeDir
+	}
+	abs, err := filepath.Abs(homeDir)
+	if err != nil {
+		return filepath.Clean(homeDir)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
+
 func WriterIdentityPath(homeDir, kind string) string {
 	return filepath.Join(homeDir, "state", "."+kind+"-identity")
 }

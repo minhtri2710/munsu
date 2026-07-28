@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/backend"
+	homepkg "github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- NewIdentity tests ---
@@ -41,7 +41,7 @@ func TestNewIdentity_HasAllFields(t *testing.T) {
 func TestNewIdentity_HomeIsSet(t *testing.T) {
 	home := t.TempDir()
 	id := NewIdentity(home)
-	want := backend.Canonical(home)
+	want := homepkg.Canonical(home)
 	if id.Home != want {
 		t.Errorf("Home = %q, want %q", id.Home, want)
 	}
@@ -507,7 +507,7 @@ func TestBeatAndIdentityConsistency(t *testing.T) {
 	if read == nil {
 		t.Fatal("ReadIdentity returned nil")
 	}
-	want := backend.Canonical(home)
+	want := homepkg.Canonical(home)
 	if read.Home != want {
 		t.Errorf("Home = %q, want %q", read.Home, want)
 	}
@@ -694,7 +694,7 @@ func TestCommitSHA_BackwardCompatV1(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	// Generic JSON identity without an optional commit SHA.
-	content := fmt.Sprintf(`{"schema_version":1,"kind":"watcher","pid":12345,"start_token":"startts","executable_path":"/usr/bin/munsu","canonical_home":%q,"build_version":"v1.0.0","protocol_version":1,"started_at":1700000000}`, backend.Canonical(home))
+	content := fmt.Sprintf(`{"schema_version":1,"kind":"watcher","pid":12345,"start_token":"startts","executable_path":"/usr/bin/munsu","canonical_home":%q,"build_version":"v1.0.0","protocol_version":1,"started_at":1700000000}`, homepkg.Canonical(home))
 	os.WriteFile(filepath.Join(home, "state", ".watcher-identity"), []byte(content), 0600)
 
 	read := ReadIdentity(home)

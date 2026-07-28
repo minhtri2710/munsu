@@ -1,7 +1,7 @@
 package spawn
 
 type CreateRequest struct {
-	Home, PreferredBackend, WorkspaceName, TabName, Cwd string
+	Home, PreferredBackend, TabName, Cwd string
 }
 
 type CreatedEndpoint struct {

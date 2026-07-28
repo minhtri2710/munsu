@@ -23,6 +23,42 @@ func (*spawnEndpointBackend) Alive(string) bool                   { return true 
 func (*spawnEndpointBackend) Teardown(string) error               { return nil }
 func (b *spawnEndpointBackend) MetaExtras() map[string]string     { return b.metadata }
 
+type spawnLabelBackend struct {
+	window    string
+	gotLabel  string
+	submitted []string
+}
+
+func (b *spawnLabelBackend) NewWindow(label, _ string) (string, error) {
+	b.gotLabel = label
+	return b.window, nil
+}
+func (b *spawnLabelBackend) SendKeys(_ string, text string) error {
+	b.submitted = append(b.submitted, text)
+	return nil
+}
+func (*spawnLabelBackend) Capture(string, int) (string, error) { return "ready", nil }
+func (*spawnLabelBackend) Alive(string) bool                   { return true }
+func (*spawnLabelBackend) Teardown(string) error               { return nil }
+
+func TestSpawnSessionEndpointsDerivesWorkspaceLabel(t *testing.T) {
+	bk := &spawnLabelBackend{window: "window-1"}
+	endpoints := &spawnSessionEndpoints{
+		resolve: func(string, string) (backend.Backend, string, error) { return bk, "tmux", nil },
+		bound:   map[string]backend.Backend{},
+	}
+	homeDir := t.TempDir()
+	if _, err := endpoints.Create(spawn.CreateRequest{Home: homeDir}); err != nil {
+		t.Fatal(err)
+	}
+	if want := backend.WorkspaceTag(homeDir); bk.gotLabel != want {
+		t.Fatalf("label=%q want %q", bk.gotLabel, want)
+	}
+	if bk.gotLabel == "" {
+		t.Fatal("label must not be empty")
+	}
+}
+
 func TestSpawnSessionEndpointsPreservesBackendIdentityAndMetadata(t *testing.T) {
 	bk := &spawnEndpointBackend{window: "window-1", metadata: map[string]string{
 		"herdr_session":      "session-1",

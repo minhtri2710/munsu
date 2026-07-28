@@ -5,7 +5,34 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
+
+func TestCanonicalDelegatesToHome(t *testing.T) {
+	existing := t.TempDir()
+	linkDir := t.TempDir()
+	link := filepath.Join(linkDir, "link")
+	if err := os.Symlink(existing, link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"empty", ""},
+		{"existing", existing},
+		{"nonexistent", filepath.Join("definitely", "gone")},
+		{"symlink", link},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, want := Canonical(tc.path), home.Canonical(tc.path); got != want {
+				t.Fatalf("Canonical(%q) = %q, home.Canonical = %q", tc.path, got, want)
+			}
+		})
+	}
+}
 
 func TestTagDeterministic(t *testing.T) {
 	a := Hometag("/home/user/.munsu")

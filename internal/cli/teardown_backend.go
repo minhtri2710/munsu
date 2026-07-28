@@ -63,3 +63,7 @@ func (s sessionBoundTeardown) Dispose(home string, meta map[string]string, req t
 	}
 	return bk.Teardown(req.Handle)
 }
+
+func (s sessionBoundTeardown) ReturnWorktree(homeDir, worktreePath string) error {
+	return backend.ReturnWorktree(homeDir, worktreePath)
+}
