@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -363,7 +362,7 @@ func (r *Runner) validateHarnessFlag() error {
 
 // Phase 4: preflightBrief checks that a brief exists before spawning.
 func (r *Runner) preflightBrief() error {
-	if !brief.Exists(r.homeDir, r.args.ID) {
+	if !fleet.Exists(r.homeDir, r.args.ID) {
 		return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning",
 			r.args.ID, r.args.ID, r.args.ProjectName)
 	}
@@ -544,7 +543,7 @@ func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
 
 // taskDescription returns text used to match dispatch profiles (brief body or id).
 func (r *Runner) taskDescription() string {
-	briefPath := brief.Path(r.homeDir, r.args.ID)
+	briefPath := fleet.Path(r.homeDir, r.args.ID)
 	if data, err := os.ReadFile(briefPath); err == nil {
 		s := strings.TrimSpace(string(data))
 		if s != "" {
@@ -636,7 +635,7 @@ func (r *Runner) createSession() error {
 // fail-closed checks happen before any session allocation.
 func (r *Runner) buildSoldierPrompt() error {
 	// Read brief content from the registered brief path.
-	briefPath := brief.Path(r.homeDir, r.args.ID)
+	briefPath := fleet.Path(r.homeDir, r.args.ID)
 	briefData, readErr := os.ReadFile(briefPath)
 	if readErr != nil {
 		return fmt.Errorf("reading brief %s: %w", briefPath, readErr)
@@ -811,7 +810,7 @@ func (r *Runner) bootstrapWindow() {
 
 // Phase 13a: writeBriefToWorktree writes the brief file into the worktree.
 func (r *Runner) writeBriefToWorktree() {
-	briefPath := brief.Path(r.homeDir, r.args.ID)
+	briefPath := fleet.Path(r.homeDir, r.args.ID)
 	data, readErr := os.ReadFile(briefPath)
 	if readErr != nil {
 		if !os.IsNotExist(readErr) {
@@ -820,7 +819,7 @@ func (r *Runner) writeBriefToWorktree() {
 		return
 	}
 	r.briefData = data
-	briefWorktreePath := filepath.Join(r.wtPath, ".soldier-brief.md")
+	briefWorktreePath := filepath.Join(r.wtPath, ".soldier-fleet.md")
 	if writeErr := os.WriteFile(briefWorktreePath, data, 0644); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing brief to worktree: %v\n", writeErr)
 	}

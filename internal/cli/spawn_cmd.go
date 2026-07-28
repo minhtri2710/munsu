@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -307,8 +306,8 @@ func newPromoteCmd() *cobra.Command {
 			}
 
 			// Preflight: require report.md to exist
-			if !brief.ReportExists(ctx.Home, id) {
-				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, brief.ReportPath(ctx.Home, id))
+			if !fleet.ReportExists(ctx.Home, id) {
+				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, fleet.ReportPath(ctx.Home, id))
 			}
 
 			// Preflight: require last status to be done or resolved
@@ -351,7 +350,7 @@ holds before teardown proceeds. Use --force to skip all safety checks.
 
 With --force:
   - Skips report.md and decision-hold checks
-  - Removes data/<id>/ including report.md and brief.md
+  - Removes data/<id>/ including report.md and fleet.md
   - Use when the scout completed without a formal report or for cleanup
 `,
 		Args: ExactArgs(1),

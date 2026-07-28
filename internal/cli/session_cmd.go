@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -52,7 +51,7 @@ func newBriefCmd() *cobra.Command {
 					return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
 				}
 			}
-			opts := brief.ScaffoldOptions{
+			opts := fleet.ScaffoldOptions{
 				HomeDir: ctx.Home,
 				ID:      id,
 				Repo:    repo,
@@ -61,7 +60,7 @@ func newBriefCmd() *cobra.Command {
 				Yolo:    projYolo,
 			}
 
-			if err := brief.Scaffold(opts); err != nil {
+			if err := fleet.Scaffold(opts); err != nil {
 				return err
 			}
 
@@ -71,7 +70,7 @@ func newBriefCmd() *cobra.Command {
 			}
 
 			var b strings.Builder
-			b.WriteString(fmt.Sprintf("Brief scaffolded at %s\n", brief.Path(ctx.Home, id)))
+			b.WriteString(fmt.Sprintf("Brief scaffolded at %s\n", fleet.Path(ctx.Home, id)))
 			b.WriteString(fmt.Sprintf("  id:    %s\n", id))
 			b.WriteString(fmt.Sprintf("  repo:  %s\n", repo))
 			b.WriteString(fmt.Sprintf("  kind:  %s\n", kind))
