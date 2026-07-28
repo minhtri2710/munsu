@@ -19,7 +19,7 @@ func TestExistingAGENTSMD_Preservation(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	// First seed creates both .captain-charter.md and AGENTS.md.
-	if err := SeedWithParent("test-captain", homePath, parent, ""); err != nil {
+	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -30,7 +30,7 @@ func TestExistingAGENTSMD_Preservation(t *testing.T) {
 	}
 
 	// Seed again — must NOT overwrite AGENTS.md.
-	if err := SeedWithParent("test-captain", homePath, parent, ""); err != nil {
+	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -187,7 +187,7 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	// Seed a captain.
-	if err := SeedWithParent("test-captain", homePath, parent, ""); err != nil {
+	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -28,3 +28,10 @@ type noopCaptainWatcher struct{}
 
 func (noopCaptainWatcher) Status(string) WatcherStatus { return WatcherAbsent }
 func (noopCaptainWatcher) Ensure(string, bool) error   { return nil }
+
+type fakeIntegrationPort struct{}
+
+func (fakeIntegrationPort) EnsureCaptain(string) error { return nil }
+func (fakeIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+	return IntegrationStatus{State: "installed"}, nil
+}

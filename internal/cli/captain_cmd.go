@@ -37,7 +37,7 @@ Flags for worktree provisioning:
 			if seedRepo != "" {
 				return fleet.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "", seedForce, seedRef)
 			}
-			return fleet.SeedWithParent(args[0], args[1], ctx.Home, "")
+			return fleet.SeedCaptain(fleet.CaptainSeedOptions{ID: args[0], Home: args[1], ParentHome: ctx.Home, Integration: captainIntegrationAdapter{}})
 		}),
 	}
 	seedCmd.Flags().StringVar(&seedRepo, "repo", "", "Path to the project git repo for managed worktree captain home")

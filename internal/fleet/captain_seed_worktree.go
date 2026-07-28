@@ -192,12 +192,6 @@ func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 		}
 	}
 
-	// Install Pi extensions.
-	if err = ensurePiExtensions(absHome); err != nil {
-		err = fmt.Errorf("installing captain pi extensions: %w", err)
-		return
-	}
-
 	fmt.Printf("Seeded worktree captain %s at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)
 	return
 }
@@ -597,10 +591,6 @@ func MigrateToWorktree(captainHome, repoPath, id, parentHome string) (err error)
 	}
 
 	// 16. Install Pi extensions.
-	if err = ensurePiExtensions(absHome); err != nil {
-		return fmt.Errorf("installing captain pi extensions: %w", err)
-	}
-
 	fmt.Printf("Migrated captain %s to managed worktree at %s (from %s, %s)\n", id, absHome, absRepo, checkoutRef)
 	fmt.Printf("  backup preserved at %s\n", backupPath)
 	return nil

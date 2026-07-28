@@ -129,20 +129,19 @@ func outcomeFromFFError(err error) UpdateOutcome {
 	}
 }
 
-type noopIntegrationPort struct{}
-
-func (noopIntegrationPort) EnsureCaptain(string) error { return nil }
-func (noopIntegrationPort) Status(string, string) (IntegrationStatus, error) {
-	return IntegrationStatus{State: "absent"}, nil
-}
-
-var integrationPort IntegrationPort = noopIntegrationPort{}
-
-func EnsureCaptainPiExtensions(captainHome string) error {
+func ensureCaptainIntegration(captainHome string, integration IntegrationPort) error {
 	if _, err := ValidateProvenance(captainHome); err != nil {
 		return fmt.Errorf("refusing pi extensions on unmarked home %s: %w", captainHome, err)
 	}
-	return integrationPort.EnsureCaptain(captainHome)
+	if integration == nil {
+		return fmt.Errorf("captain integration capability is required")
+	}
+	return integration.EnsureCaptain(captainHome)
+}
+
+type CaptainSeedOptions struct {
+	ID, Home, ParentHome, Charter string
+	Integration                   IntegrationPort
 }
 
 type Info struct {
@@ -186,9 +185,6 @@ var gitRun = func(args ...string) (string, error) {
 var launchCmd = func(binPath string, args []string, captainHome string, parentHome string) (string, error) {
 	return buildLaunchScript(binPath, args, captainHome, parentHome)
 }
-
-// ensurePiExtensions installs Pi captain extensions. Override in tests to no-op.
-var ensurePiExtensions = EnsureCaptainPiExtensions
 
 // --- Helpers ---
 
@@ -485,11 +481,16 @@ func writeCaptainCharter(homePath, charter string) error {
 // AGENTS.md is left untouched if it exists (user/project-owned); a minimal pointer
 // is written only when AGENTS.md is absent, so Validate and legacy consumers pass.
 func Seed(id, homePath, charter string) error {
-	return SeedWithParent(id, homePath, "", charter)
+	return fmt.Errorf("captain integration capability is required")
 }
 
 // SeedWithParent is Seed with an explicit General parent home for default charter generation.
 func SeedWithParent(id, homePath, parentHome, charter string) error {
+	return fmt.Errorf("captain integration capability is required")
+}
+
+func SeedCaptain(opts CaptainSeedOptions) error {
+	id, homePath, parentHome, charter := opts.ID, opts.Home, opts.ParentHome, opts.Charter
 	if err := os.MkdirAll(homePath, 0755); err != nil {
 		return fmt.Errorf("creating captain home %s: %w", homePath, err)
 	}
@@ -541,7 +542,7 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	}
 
 	// Install project-scoped Pi captain extensions so Launch -e always has files.
-	if err := ensurePiExtensions(homePath); err != nil {
+	if err := ensureCaptainIntegration(homePath, opts.Integration); err != nil {
 		return fmt.Errorf("installing captain pi extensions: %w", err)
 	}
 
@@ -1582,10 +1583,6 @@ func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 	// Refresh the canonical .captain-charter.md so it stays current on every config-push cycle.
 	if err := RefreshCharter(captainHome, parentHome); err != nil {
 		return nil, fmt.Errorf("refreshing captain charter: %w", err)
-	}
-
-	if err := ensurePiExtensions(captainHome); err != nil {
-		return nil, fmt.Errorf("installing captain pi extensions: %w", err)
 	}
 
 	// Generation tracking: advance the config reread generation if inherited

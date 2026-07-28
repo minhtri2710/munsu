@@ -31,19 +31,8 @@ func TestMain(m *testing.M) {
 	origPath = os.Getenv("PATH")
 	os.Setenv("PATH", fakeBinDir+string(filepath.ListSeparator)+origPath)
 
-	// Shorten Pi capability probe timeout so seeded tests don't wait 30s on
-	// slow PATH lookups. Tests that need the default timeout restore it.
-
-	// Override the Pi extension installer to no-op so ordinary captain tests
-	// never create .pi/extensions/ in managed worktree fixtures. Tests that
-	// explicitly validate Pi installation (e.g., TestEnsureCaptainPiExtensions)
-	// call EnsureCaptainPiExtensions directly, bypassing this seam.
-	origEnsurePi := ensurePiExtensions
-	ensurePiExtensions = func(string) error { return nil }
-
 	code := m.Run()
 
-	ensurePiExtensions = origEnsurePi
 	cleanup()
 	os.Setenv("PATH", origPath)
 	os.Exit(code)
@@ -2557,7 +2546,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 	}
 	if len(found) == 0 {
 		// Soft-skip host: still prove Ensure is idempotent and Launch wiring is safe.
-		if err := EnsureCaptainPiExtensions(sm); err != nil {
+		if err := ensureCaptainIntegration(sm, fakeIntegrationPort{}); err != nil {
 			t.Fatalf("EnsureCaptainPiExtensions: %v", err)
 		}
 		// Manually plant extension to assert buildLaunchArgs -e path still works.
@@ -2601,7 +2590,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 }
 
 func TestEnsureCaptainPiExtensions_RefusesUnmarked(t *testing.T) {
-	err := EnsureCaptainPiExtensions(t.TempDir())
+	err := ensureCaptainIntegration(t.TempDir(), fakeIntegrationPort{})
 	if err == nil || !strings.Contains(err.Error(), "unmarked home") {
 		t.Fatalf("EnsureCaptainPiExtensions() error = %v, want unmarked refusal", err)
 	}
