@@ -665,3 +665,23 @@ func readCaptainProvenance(homePath string) string {
 	}
 	return ""
 }
+
+func SeedCaptainFromWorktree(opts CaptainWorktreeSeedOptions) error {
+	if opts.Integration == nil {
+		return fmt.Errorf("captain integration capability is required")
+	}
+	if err := SeedFromWorktree(opts.ID, opts.Home, opts.Repo, opts.ParentHome, opts.Charter, opts.Force, opts.Ref); err != nil {
+		return err
+	}
+	return ensureCaptainIntegration(opts.Home, opts.Integration)
+}
+
+func MigrateCaptainToWorktree(opts CaptainMigrationOptions) error {
+	if opts.Integration == nil {
+		return fmt.Errorf("captain integration capability is required")
+	}
+	if err := MigrateToWorktree(opts.CaptainHome, opts.Repo, opts.ID, opts.ParentHome); err != nil {
+		return err
+	}
+	return ensureCaptainIntegration(opts.CaptainHome, opts.Integration)
+}

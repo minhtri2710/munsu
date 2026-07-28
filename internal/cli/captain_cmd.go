@@ -35,7 +35,7 @@ Flags for worktree provisioning:
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if seedRepo != "" {
-				return fleet.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "", seedForce, seedRef)
+				return fleet.SeedCaptainFromWorktree(fleet.CaptainWorktreeSeedOptions{ID: args[0], Home: args[1], Repo: seedRepo, ParentHome: ctx.Home, Force: seedForce, Ref: seedRef, Integration: captainIntegrationAdapter{}})
 			}
 			return fleet.SeedCaptain(fleet.CaptainSeedOptions{ID: args[0], Home: args[1], ParentHome: ctx.Home, Integration: captainIntegrationAdapter{}})
 		}),
@@ -172,7 +172,7 @@ the old home is backed up at <home-path>.backup-<timestamp>.`,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if migrateRepo != "" {
-				return fleet.MigrateToWorktree(args[0], migrateRepo, args[1], ctx.Home)
+				return fleet.MigrateCaptainToWorktree(fleet.CaptainMigrationOptions{CaptainHome: args[0], Repo: migrateRepo, ID: args[1], ParentHome: ctx.Home, Integration: captainIntegrationAdapter{}})
 			}
 			return fleet.Migrate(args[0], args[1])
 		}),
