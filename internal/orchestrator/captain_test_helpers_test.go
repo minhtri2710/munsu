@@ -1,0 +1,11 @@
+package orchestrator
+
+type captainNotificationTransport struct {
+	acknowledged bool
+	calls        int
+}
+
+func (t *captainNotificationTransport) Notify(string, TargetResult, string) UplinkNotifyResult {
+	t.calls++
+	return UplinkNotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
+}

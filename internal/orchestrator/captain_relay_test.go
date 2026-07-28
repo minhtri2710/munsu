@@ -1,3 +1,5 @@
+//go:build integration
+
 package orchestrator
 
 import (
@@ -730,16 +732,6 @@ func TestResolveParentHome_ConfigEmptyDoesNotCrash(t *testing.T) {
 	if got != "" {
 		t.Errorf("ResolveCaptainParentHome() = %q, want %q (empty config, no crash)", got, "")
 	}
-}
-
-type captainNotificationTransport struct {
-	acknowledged bool
-	calls        int
-}
-
-func (t *captainNotificationTransport) Notify(string, TargetResult, string) UplinkNotifyResult {
-	t.calls++
-	return UplinkNotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
 }
 
 // TestResolveParentHome_HookConsistency_ConfigFallback verifies that when
