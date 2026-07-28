@@ -26,6 +26,24 @@ func TestTaskMetadataRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+func TestTaskMetadataDoesNotIncreaseExistingDirectoryPermissions(t *testing.T) {
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	if err := os.Mkdir(state, 0500); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMeta(tmp, "restricted", map[string]string{"kind": "ship"}); err == nil {
+		t.Fatal("WriteMeta succeeded in read-only state directory")
+	}
+	info, err := os.Stat(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0500 {
+		t.Fatalf("state permissions = %04o, want 0500", got)
+	}
+}
+
 func TestTaskMetadataUsesPrivatePermissions(t *testing.T) {
 	tmp := t.TempDir()
 	if err := WriteMeta(tmp, "private", map[string]string{"kind": "ship"}); err != nil {

@@ -42,7 +42,11 @@ func ensurePrivateStateDir(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0700)
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	return os.Chmod(path, info.Mode().Perm()&0700)
 }
 
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
