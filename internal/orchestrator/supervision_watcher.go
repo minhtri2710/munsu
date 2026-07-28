@@ -215,7 +215,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	// Status-signal path: captain-relevant last lines (including Captain return-channel
 	// files state/captain:<id>.status) wake General even when the pane is alive.
 	seenStatus := map[string]bool{}
-	for _, match := range domain.ScanGeneralRelevant(filepath.Join(homeDir, "state")) {
+	for _, match := range home.ScanGeneralRelevant(filepath.Join(homeDir, "state")) {
 		seenStatus[match.TaskID] = true
 		reasons = append(reasons, &WakeReason{
 			Kind:    "signal",
@@ -623,7 +623,7 @@ func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort)
 	if !paneAlive {
 		return false
 	}
-	switch domain.AbsorbClass(id, filepath.Join(homeDir, "state")) {
+	switch home.AbsorbClass(id, filepath.Join(homeDir, "state")) {
 	case domain.Working, domain.Paused:
 		return true
 	}

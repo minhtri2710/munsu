@@ -75,7 +75,7 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	if len(statusLines) > 0 {
 		s.StatusLines = len(statusLines)
 	}
-	s.OpenActivities = domain.OpenActivities(statusPath)
+	s.OpenActivities = home.OpenActivities(statusPath)
 
 	// --- No-mistakes run-step (pipeline state) ---
 	// This is a fast local check that feeds into the hierarchy below.

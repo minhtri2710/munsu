@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -83,7 +84,7 @@ func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo 
 	}
 
 	statusPath := filepath.Join(mhome.StateDir(homeDir), id+".status")
-	info.OpenActivities = domain.OpenActivities(statusPath)
+	info.OpenActivities = home.OpenActivities(statusPath)
 
 	if data, err := os.ReadFile(statusPath); err == nil {
 		lines := strings.TrimSpace(string(data))

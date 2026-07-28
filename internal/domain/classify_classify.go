@@ -4,9 +4,6 @@
 package domain
 
 import (
-	"bufio"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -113,26 +110,6 @@ func removeByKey(decisions []Decision, key string) []Decision {
 	return decisions
 }
 
-// readLastLine reads the last non-empty line from a file.
-// Returns empty string if the file cannot be read or has no content.
-func readLastLine(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	var lastLine string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		text := scanner.Text()
-		if strings.TrimSpace(text) != "" {
-			lastLine = text
-		}
-	}
-	return lastLine
-}
-
 // --- Public API ---
 
 // GeneralRelevant returns true if a status line contains a general-relevant verb
@@ -188,18 +165,11 @@ func IsPaused(line string) bool {
 // referencing the same key. A bare "resolved:" closes the "default" key.
 // Returns nil for missing/unreadable files or when no decisions are open.
 // Matches the munsu status_open_decisions pattern.
-func OpenDecisions(path string) []Decision {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
+func FoldOpenDecisions(lines []string) []Decision {
 	var decisions []Decision
 
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
@@ -228,17 +198,10 @@ func OpenDecisions(path string) []Decision {
 // needs-decision, blocked, resolved, or captain-held with the same key closes it.
 // Bare legacy events use key "default". Matches the munsu status_open_activities pattern.
 // Not authoritative current state — use soldierstate / home summary for that.
-func OpenActivities(path string) []Activity {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
+func FoldOpenActivities(lines []string) []Activity {
 	var activities []Activity
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
@@ -268,62 +231,12 @@ func removeActivityByKey(activities []Activity, key string) []Activity {
 	return activities
 }
 
-// AbsorbClass classifies why an idle task might be safely absorbed.
-// Reads the status file from stateDir/<id>.status and classifies based on
-// the last non-empty status line:
-//   - Working if the last line verb is "working"
-//   - Paused if the last line verb is the pause verb
-//   - None otherwise
-//
-// This is a pure-logic subset of munsu's absorb_class logic, which also
-// consults no-mistakes run-step and pane liveness. The watcher integrates
-// classify alongside soldierstate.Read for the full picture.
-func AbsorbClass(id string, stateDir string) AbsorbResult {
-	statusPath := filepath.Join(stateDir, id+".status")
-	lastLine := readLastLine(statusPath)
-	if lastLine == "" {
-		return None
-	}
-
-	verb := lineVerb(lastLine)
-	switch verb {
+func ClassifyAbsorb(lastLine string) AbsorbResult {
+	switch lineVerb(strings.TrimSpace(lastLine)) {
 	case PausedVerbDefault:
 		return Paused
 	case "working":
 		return Working
 	}
 	return None
-}
-
-// ScanGeneralRelevant scans stateDir/*.status for general-relevant last lines.
-// Returns a StatusMatch for each file whose last line is general-relevant.
-// Matches the munsu scan_captain_relevant_statuses pattern.
-func ScanGeneralRelevant(stateDir string) []StatusMatch {
-	entries, err := os.ReadDir(stateDir)
-	if err != nil {
-		return nil
-	}
-
-	var matches []StatusMatch
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".status") {
-			continue
-		}
-
-		statusPath := filepath.Join(stateDir, name)
-		lastLine := readLastLine(statusPath)
-		if lastLine == "" || !GeneralRelevant(lastLine) {
-			continue
-		}
-
-		taskID := strings.TrimSuffix(name, ".status")
-		matches = append(matches, StatusMatch{
-			Path:     statusPath,
-			TaskID:   taskID,
-			LastLine: lastLine,
-		})
-	}
-
-	return matches
 }
