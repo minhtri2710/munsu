@@ -12,26 +12,22 @@ import (
 	"time"
 )
 
-// TestMain implements a helper mode so the lock can be held by a separate
-// process (its own FD lifetime), mirroring how munsu actually uses the lock:
-// one holder per process, released when the process exits.
-func TestMain(m *testing.M) {
-	if home := os.Getenv("MUNSU_LOCKTEST_HOME"); home != "" {
-		acq, err := AcquireSession(home)
-		if err != nil {
-			fmt.Println("ERR", err)
-			os.Exit(0)
-		}
-		if !acq {
-			fmt.Println("REFUSED")
-			os.Exit(0)
-		}
-		fmt.Println("HELD")
-		// Hold the leaked FD (and thus the lock) until killed.
-		time.Sleep(30 * time.Second)
-		os.Exit(0)
+func TestLifecycleLockHelper(t *testing.T) {
+	home := os.Getenv("MUNSU_LOCKTEST_HOME")
+	if home == "" {
+		t.Skip("helper mode")
 	}
-	os.Exit(m.Run())
+	acquired, err := AcquireSession(home)
+	if err != nil {
+		fmt.Println("ERR", err)
+		return
+	}
+	if !acquired {
+		fmt.Println("REFUSED")
+		return
+	}
+	fmt.Println("HELD")
+	time.Sleep(30 * time.Second)
 }
 
 // helperProc runs the test binary in helper mode against home and returns the
@@ -39,7 +35,7 @@ func TestMain(m *testing.M) {
 // kill the process (to release the lock via process exit).
 func helperProc(t *testing.T, home string) (*exec.Cmd, string) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLifecycleLockHelper$")
 	cmd.Env = append(os.Environ(), "MUNSU_LOCKTEST_HOME="+home)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
