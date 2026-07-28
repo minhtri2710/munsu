@@ -16,7 +16,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
@@ -1999,16 +1998,19 @@ func removeNudgeMarker(parentHome, smID string) {
 // nudges, safe ff, inheritance push, ownership-backed backend Alive check,
 // watcher status check, and reread nudge only if instruction surface advanced.
 type ConvergeCapabilities struct {
-	Notification orchestrator.NotificationTransport
-	Mailbox      orchestrator.BoundSender
+	Notification any
+	Continuity   CaptainContinuityPort
+	Messaging    CaptainMessagingPort
+	Watcher      CaptainWatcherPort
+	Mailbox      home.BoundSender
 	Launch       LaunchEndpoint
 	Probe        ProbeEndpoint
 	Nudge        NudgeEndpoint
 }
 
 func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (*ConvergeResult, error) {
-	notification, sender := caps.Notification, caps.Mailbox
-	if len(registered) > 0 && notification == nil {
+	sender := caps.Mailbox
+	if len(registered) > 0 && caps.Notification == nil {
 		return nil, fmt.Errorf("uplink notification transport capability is required")
 	}
 	if len(registered) > 0 && sender == nil {
@@ -2194,42 +2196,18 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": config-reread pending reconciliation", Status: ConvergeOK, Detail: "ok"})
 		}
 
-		// g. Mailbox-only Captain → General Uplink Report reconciliation.
-		if ur, urErr := orchestrator.Recover(orchestrator.RecoverRequest{
-			SenderHome: sm.Home, ReceiverHome: parentHome,
-			ReceiverRank: orchestrator.RankGeneral,
-			Notify: func(ref orchestrator.NotificationRef) orchestrator.UplinkNotifyResult {
-				return orchestrator.NotifyParentWithTransport(sm.Home, parentHome, ref, notification)
-			},
-		}); urErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeFailed, Detail: urErr.Error()})
-			errs = append(errs, fmt.Sprintf("%s: uplink reconciliation failed: %v", sm.ID, urErr))
+		// g. Captain continuity reconciliation.
+		if caps.Continuity == nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeFailed, Detail: "captain continuity capability is required"})
+			errs = append(errs, sm.ID+": captain continuity capability is required")
 		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": uplink reconciliation", Status: ConvergeOK, Detail: fmt.Sprintf("accepted=%d notified=%d queued=%d", ur.Accepted, ur.Notified, ur.Queued)})
-		}
-
-		// Legacy read compatibility only: drain receipts created before mailbox-only orchestrator.
-		// This is not the report path for new material reports.
-		// Scans the captain home for un-acked soldier terminal reports
-		// and relays each one to the General's state using the shared
-		// reconciliation seam.
-		relayResult, relayErr := orchestrator.ReconcileTerminalReceipts(sm.Home, parentHome)
-		if relayErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeFailed, Detail: relayErr.Error()})
-			errs = append(errs, fmt.Sprintf("%s: terminal relay failed: %v", sm.ID, relayErr))
-		} else if relayResult != nil && relayResult.Relayed() > 0 {
-			detail := fmt.Sprintf("relayed %d receipt(s) to General", relayResult.Relayed())
-			if f := relayResult.Failed(); f > 0 {
-				detail += fmt.Sprintf(" (%d failed)", f)
+			continuity, continuityErr := caps.Continuity.Reconcile(parentHome, CaptainEndpoint{ID: sm.ID, Home: sm.Home, Scope: sm.Scope, Project: sm.Project})
+			if continuityErr != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeFailed, Detail: continuityErr.Error()})
+				errs = append(errs, fmt.Sprintf("%s: continuity reconciliation failed: %v", sm.ID, continuityErr))
+			} else {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeOK, Detail: fmt.Sprintf("accepted=%d notified=%d queued=%d relayed=%d", continuity.Accepted, continuity.Notified, continuity.Queued, continuity.Relayed)})
 			}
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: detail})
-			for _, o := range relayResult.Outcomes {
-				if o.Outcome != orchestrator.OutcomeRelayed {
-					errs = append(errs, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
-				}
-			}
-		} else {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeSkipped, Detail: "no pending receipts"})
 		}
 
 		// h. Mailbox pending reconciliation (General → Captain).
@@ -2237,7 +2215,9 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		// a ProcessingAck in the captain's inbox. If ack exists and validates,
 		// removes the sender's pending record. If no ack exists, retries the
 		// NotificationRef (duplicate notification is idempotent).
-		if mbErr := ReconcileMailboxPending(parentHome, sm, sender); mbErr != nil {
+		if caps.Messaging == nil {
+			errs = append(errs, sm.ID+": captain messaging capability is required")
+		} else if mbErr := caps.Messaging.ReconcilePending(parentHome, CaptainEndpoint{ID: sm.ID, Home: sm.Home, Scope: sm.Scope, Project: sm.Project}, sender); mbErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": mailbox pending reconciliation", Status: ConvergeFailed, Detail: mbErr.Error()})
 			errs = append(errs, mbErr.Error())
 		} else {
@@ -2245,7 +2225,10 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 
 		// Watcher status check and reporting.
-		ws := WatcherStatusSummary(sm.Home)
+		ws := WatcherAbsent
+		if caps.Watcher != nil {
+			ws = caps.Watcher.Status(sm.Home)
+		}
 		switch ws {
 		case WatcherRunning:
 			fmt.Printf("  %s: watcher running\n", sm.ID)

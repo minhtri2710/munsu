@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // --- Test helpers ---
@@ -20,9 +19,9 @@ type captainTestMailboxSender struct {
 }
 
 func (captainTestMailboxSender) Alive(string, map[string]string) (bool, error) { return true, nil }
-func (s *captainTestMailboxSender) Send(_ string, _ map[string]string, payload string) orchestrator.BoundSendResult {
+func (s *captainTestMailboxSender) Send(_ string, _ map[string]string, payload string) home.BoundSendResult {
 	s.lastPayload = payload
-	return orchestrator.BoundSendResult{Status: "submitted", Acknowledged: s.acknowledged}
+	return home.BoundSendResult{Status: "submitted", Acknowledged: s.acknowledged}
 }
 
 // setupTestHomes creates a parent (General) home and a captain home with
@@ -105,7 +104,7 @@ func TestSendMailboxToCaptain_HappyPath(t *testing.T) {
 	if strings.Contains(sender.lastPayload, line) {
 		t.Error("notification text must NOT contain the raw line (payload)")
 	}
-	var ref orchestrator.NotificationRef
+	var ref home.NotificationRef
 	if err := json.Unmarshal([]byte(sender.lastPayload), &ref); err != nil {
 		t.Fatalf("notification text must be valid NotificationRef JSON: %v", err)
 	}
@@ -114,7 +113,7 @@ func TestSendMailboxToCaptain_HappyPath(t *testing.T) {
 	}
 
 	// Verify envelope was written to captain inbox.
-	captainStore := orchestrator.NewStore(captainHome)
+	captainStore := home.NewStore(captainHome)
 	env, err := captainStore.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
 	if err != nil {
 		t.Fatalf("ReadEnvelope: %v", err)
@@ -127,7 +126,7 @@ func TestSendMailboxToCaptain_HappyPath(t *testing.T) {
 	}
 
 	// Verify pending record was written in General outbox.
-	parentStore := orchestrator.NewStore(parentHome)
+	parentStore := home.NewStore(parentHome)
 	// Sender identity is derived from parent home basename (no marker).
 	generalIdentity := filepath.Base(parentHome)
 	pending, err := parentStore.ReadPending(generalIdentity, result.MessageID)
@@ -170,7 +169,7 @@ func TestSendMailboxToCaptain_DeadPane(t *testing.T) {
 	}
 
 	// Verify envelope was still written (write happens before notification).
-	captainStore := orchestrator.NewStore(captainHome)
+	captainStore := home.NewStore(captainHome)
 	env, err := captainStore.ReadEnvelope(filepath.Base(parentHome), result.MessageID)
 	if err != nil {
 		t.Fatalf("ReadEnvelope: %v", err)
@@ -180,7 +179,7 @@ func TestSendMailboxToCaptain_DeadPane(t *testing.T) {
 	}
 
 	// Verify pending was written and NOT removed.
-	parentStore := orchestrator.NewStore(parentHome)
+	parentStore := home.NewStore(parentHome)
 	pending, err := parentStore.ReadPending(filepath.Base(parentHome), result.MessageID)
 	if err != nil {
 		t.Fatalf("ReadPending: %v", err)
@@ -219,24 +218,24 @@ func TestReconcileMailboxPending_ExactAckRemovesPending(t *testing.T) {
 	parentHome, captainHome, captainID := setupTestHomes(t)
 
 	// Write an envelope to captain's inbox and pending to General's outbox.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankGeneral,
+	env := &home.Envelope{
+		SenderRank:     home.RankGeneral,
 		SenderIdentity: filepath.Base(parentHome),
-		ReceiverRank:   orchestrator.RankCaptain,
+		ReceiverRank:   home.RankCaptain,
 		ReceiverID:     captainID,
 		Payload:        "do: work",
 	}
-	captainStore := orchestrator.NewStore(captainHome)
+	captainStore := home.NewStore(captainHome)
 	if err := captainStore.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
-	parentStore := orchestrator.NewStore(parentHome)
+	parentStore := home.NewStore(parentHome)
 	if err := parentStore.WritePending(env); err != nil {
 		t.Fatalf("WritePending: %v", err)
 	}
 
 	// Write an ack in the captain's inbox (simulate captain agent processing).
-	ack := &orchestrator.ProcessingAck{
+	ack := &home.ProcessingAck{
 		MessageID: env.MessageID, SenderRank: env.SenderRank,
 		SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank,
 		ReceiverID: env.ReceiverID, PayloadHash: env.PayloadHash,
@@ -268,16 +267,16 @@ func TestReconcileMailboxPending_WrongAckFailsClosed(t *testing.T) {
 	parentHome, captainHome, captainID := setupTestHomes(t)
 
 	// Write envelope and pending.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankGeneral,
+	env := &home.Envelope{
+		SenderRank:     home.RankGeneral,
 		SenderIdentity: filepath.Base(parentHome),
-		ReceiverRank:   orchestrator.RankCaptain,
+		ReceiverRank:   home.RankCaptain,
 		ReceiverID:     captainID,
 		Payload:        "do: work",
-		PayloadHash:    orchestrator.PayloadHashHex("do: work"),
+		PayloadHash:    home.PayloadHashHex("do: work"),
 	}
-	captainStore := orchestrator.NewStore(captainHome)
-	parentStore := orchestrator.NewStore(parentHome)
+	captainStore := home.NewStore(captainHome)
+	parentStore := home.NewStore(parentHome)
 	if err := captainStore.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
@@ -286,10 +285,10 @@ func TestReconcileMailboxPending_WrongAckFailsClosed(t *testing.T) {
 	}
 
 	// Write a WRONG ack (different payload hash).
-	ack := &orchestrator.ProcessingAck{
+	ack := &home.ProcessingAck{
 		MessageID: env.MessageID, SenderRank: env.SenderRank,
 		SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank,
-		ReceiverID: env.ReceiverID, PayloadHash: orchestrator.PayloadHashHex("wrong payload"),
+		ReceiverID: env.ReceiverID, PayloadHash: home.PayloadHashHex("wrong payload"),
 		ProcessedAt: time.Now().UnixNano(), Outcome: "done",
 	}
 	if err := captainStore.WriteAck(ack); err != nil {
@@ -321,15 +320,15 @@ func TestReconcileMailboxPending_NoAckRetries(t *testing.T) {
 	parentHome, captainHome, captainID := setupTestHomes(t)
 
 	// Write envelope and pending.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankGeneral,
+	env := &home.Envelope{
+		SenderRank:     home.RankGeneral,
 		SenderIdentity: filepath.Base(parentHome),
-		ReceiverRank:   orchestrator.RankCaptain,
+		ReceiverRank:   home.RankCaptain,
 		ReceiverID:     captainID,
 		Payload:        "do: work",
 	}
-	captainStore := orchestrator.NewStore(captainHome)
-	parentStore := orchestrator.NewStore(parentHome)
+	captainStore := home.NewStore(captainHome)
+	parentStore := home.NewStore(parentHome)
 	if err := captainStore.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
@@ -349,7 +348,7 @@ func TestReconcileMailboxPending_NoAckRetries(t *testing.T) {
 	if sender.lastPayload == "" {
 		t.Fatal("expected notification text on retry")
 	}
-	var ref orchestrator.NotificationRef
+	var ref home.NotificationRef
 	if err := json.Unmarshal([]byte(sender.lastPayload), &ref); err != nil {
 		t.Fatalf("invalid NotificationRef: %v", err)
 	}
@@ -373,29 +372,29 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 	}
 
 	// Set up captain home with identity home.
-	if err := orchestrator.WriteHomeIdentity(captainHome, "test-captain", orchestrator.RankCaptain); err != nil {
+	if err := home.WriteHomeIdentity(captainHome, "test-captain", home.RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
 
 	// Write an envelope in the captain's inbox (as if General sent it).
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankGeneral,
+	env := &home.Envelope{
+		SenderRank:     home.RankGeneral,
 		SenderIdentity: "general-main",
-		ReceiverRank:   orchestrator.RankCaptain,
+		ReceiverRank:   home.RankCaptain,
 		ReceiverID:     "test-captain",
 		Payload:        "do: work",
 	}
-	captainStore := orchestrator.NewStore(captainHome)
+	captainStore := home.NewStore(captainHome)
 	if err := captainStore.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
 
 	// Create receiver and ack the notification ref.
-	recv, err := orchestrator.NewReceiver(captainHome)
+	recv, err := home.NewReceiver(captainHome)
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
-	ref := orchestrator.NotificationRef{
+	ref := home.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: "general-main",
 	}
@@ -406,8 +405,8 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 	if ack == nil {
 		t.Fatal("expected non-nil ack")
 	}
-	if ack.Outcome != orchestrator.OutcomeAccepted {
-		t.Errorf("ack outcome=%q, want %q", ack.Outcome, orchestrator.OutcomeAccepted)
+	if ack.Outcome != home.OutcomeAccepted {
+		t.Errorf("ack outcome=%q, want %q", ack.Outcome, home.OutcomeAccepted)
 	}
 
 	// Verify ack file was written on disk.
@@ -421,8 +420,8 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 	if ack2.MessageID != env.MessageID {
 		t.Errorf("ack MessageID=%q", ack2.MessageID)
 	}
-	if ack2.Outcome != orchestrator.OutcomeAccepted {
-		t.Errorf("ack outcome=%q, want %q", ack2.Outcome, orchestrator.OutcomeAccepted)
+	if ack2.Outcome != home.OutcomeAccepted {
+		t.Errorf("ack outcome=%q, want %q", ack2.Outcome, home.OutcomeAccepted)
 	}
 
 	// Acking the same ref again must be idempotent.
@@ -443,17 +442,17 @@ func TestInboxAckCmd_InvalidRef(t *testing.T) {
 	if err := os.MkdirAll(captainHome, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := orchestrator.WriteHomeIdentity(captainHome, "test-captain", orchestrator.RankCaptain); err != nil {
+	if err := home.WriteHomeIdentity(captainHome, "test-captain", home.RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
 
-	recv, err := orchestrator.NewReceiver(captainHome)
+	recv, err := home.NewReceiver(captainHome)
 	if err != nil {
 		t.Fatalf("NewReceiver: %v", err)
 	}
 
 	// Empty ref should fail.
-	_, err = recv.Ack(orchestrator.NotificationRef{})
+	_, err = recv.Ack(home.NotificationRef{})
 	if err == nil {
 		t.Fatal("expected error for empty ref")
 	}
@@ -479,7 +478,7 @@ func TestSendMailboxToCaptain_MarkerInPayload(t *testing.T) {
 	}
 
 	// Verify envelope payload DOES contain the home.
-	captainStore := orchestrator.NewStore(captainHome)
+	captainStore := home.NewStore(captainHome)
 	env, err := captainStore.ReadEnvelope(filepath.Base(parentHome), result.MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("ReadEnvelope: %v", err)

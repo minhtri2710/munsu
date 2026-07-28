@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // --- Test helpers ---
@@ -25,7 +25,7 @@ type fakeAgentEndpoint struct {
 
 func (*fakeAgentEndpoint) Alive(string, map[string]string) (bool, error)  { return true, nil }
 func (f *fakeAgentEndpoint) Busy(string, map[string]string) (bool, error) { return f.busy, f.busyErr }
-func (f *fakeAgentEndpoint) Send(_ string, _ map[string]string, payload string) orchestrator.BoundSendResult {
+func (f *fakeAgentEndpoint) Send(_ string, _ map[string]string, payload string) home.BoundSendResult {
 	f.promptCalls++
 	f.lastText = payload
 	status := f.status
@@ -36,7 +36,7 @@ func (f *fakeAgentEndpoint) Send(_ string, _ map[string]string, payload string) 
 			status = "stalled"
 		}
 	}
-	return orchestrator.BoundSendResult{Status: status, Acknowledged: f.acknowledged}
+	return home.BoundSendResult{Status: status, Acknowledged: f.acknowledged}
 }
 
 // setupSoldierTestHomes creates a captain home with a soldier task meta.
@@ -49,7 +49,7 @@ func setupSoldierTestHomes(t *testing.T, agentStatus string) (captainHome, soldi
 		t.Fatalf("mkdir captain: %v", err)
 	}
 	senderIdentity = "captain-main"
-	if err := orchestrator.WriteHomeIdentity(captainHome, senderIdentity, orchestrator.RankCaptain); err != nil {
+	if err := home.WriteHomeIdentity(captainHome, senderIdentity, home.RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity captain: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestSendToSoldier_Idle_SendsNotificationRef(t *testing.T) {
 	if strings.Contains(be.lastText, "do: work") {
 		t.Error("notification text must NOT contain the raw line (payload)")
 	}
-	var ref orchestrator.NotificationRef
+	var ref home.NotificationRef
 	if err := json.Unmarshal([]byte(be.lastText), &ref); err != nil {
 		t.Fatalf("notification text must be valid NotificationRef JSON: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestSendToSoldier_Idle_SendsNotificationRef(t *testing.T) {
 	}
 
 	// Verify envelope was written to the shared inbox.
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	env, err := store.ReadEnvelope(senderIdentity, result.MessageID)
 	if err != nil || env == nil {
 		t.Fatal("envelope should exist in inbox")
@@ -123,10 +123,10 @@ func TestSendToSoldier_Idle_SendsNotificationRef(t *testing.T) {
 	if env.Payload != "do: work" {
 		t.Errorf("payload=%q, want %q", env.Payload, "do: work")
 	}
-	if env.SenderRank != orchestrator.RankCaptain {
+	if env.SenderRank != home.RankCaptain {
 		t.Errorf("sender rank=%q, want captain", env.SenderRank)
 	}
-	if env.ReceiverRank != orchestrator.RankSoldier {
+	if env.ReceiverRank != home.RankSoldier {
 		t.Errorf("receiver rank=%q, want soldier", env.ReceiverRank)
 	}
 	if env.ReceiverID != cleanReceiverID(soldierTaskID) {
@@ -179,7 +179,7 @@ func TestSendToSoldier_Busy_QueuesWithoutSubmitPrompt(t *testing.T) {
 	}
 
 	// Verify envelope was still written.
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	env, err := store.ReadEnvelope(senderIdentity, result.MessageID)
 	if err != nil || env == nil {
 		t.Fatal("envelope should exist even when busy")
@@ -215,7 +215,7 @@ func TestSendToSoldier_DeadEndpoint_ReturnsError(t *testing.T) {
 	}
 
 	// Verify pending still exists.
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	pending, _ := store.ReadPending(senderIdentity, result.MessageID)
 	if pending == nil {
 		t.Fatal("pending should exist after unacknowledged send")
@@ -228,15 +228,15 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	// Simulate a queued command (write envelope + pending, no ack).
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankCaptain,
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankSoldier,
+		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     cleanReceiverID(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: queued work",
 	}
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestFlushPendingSoldierCommands_FlushesNotificationRef(t *testing.T) {
 	if strings.Contains(be.lastText, "do: queued work") {
 		t.Error("flush must send NotificationRef, not raw line")
 	}
-	var ref orchestrator.NotificationRef
+	var ref home.NotificationRef
 	if err := json.Unmarshal([]byte(be.lastText), &ref); err != nil {
 		t.Fatalf("flush must send valid NotificationRef: %v", err)
 	}
@@ -314,15 +314,15 @@ func TestFlushPendingSoldierCommands_StillBusy_RetainsPending(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "working")
 
 	// Simulate a queued command.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankCaptain,
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankSoldier,
+		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     cleanReceiverID(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: queued work",
 	}
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestSendToSoldier_Restart_PendingSurvives(t *testing.T) {
 	}
 
 	// Simulate restart: create fresh store (files survive).
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 
 	// Verify envelope survived.
 	env, err := store.ReadEnvelope(senderIdentity, result.MessageID)
@@ -430,15 +430,15 @@ func TestReconcileSoldierPending_ExactAckClears(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	// Write envelope + pending.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankCaptain,
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankSoldier,
+		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     cleanReceiverID(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: reconcile test",
 	}
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestReconcileSoldierPending_ExactAckClears(t *testing.T) {
 	}
 
 	// Write ack on the shared inbox (as the Soldier would do).
-	ack := &orchestrator.ProcessingAck{
+	ack := &home.ProcessingAck{
 		MessageID:      env.MessageID,
 		SenderRank:     env.SenderRank,
 		SenderIdentity: env.SenderIdentity,
@@ -456,7 +456,7 @@ func TestReconcileSoldierPending_ExactAckClears(t *testing.T) {
 		TaskID:         env.TaskID,
 		PayloadHash:    env.PayloadHash,
 		ProcessedAt:    time.Now().UnixNano(),
-		Outcome:        orchestrator.OutcomeAccepted,
+		Outcome:        home.OutcomeAccepted,
 	}
 	if err := store.WriteAck(ack); err != nil {
 		t.Fatalf("WriteAck: %v", err)
@@ -479,16 +479,16 @@ func TestReconcileSoldierPending_ExactAckClears(t *testing.T) {
 func TestReconcileSoldierPending_WrongAckFailsClosed(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankCaptain,
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankSoldier,
+		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     cleanReceiverID(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: work",
-		PayloadHash:    orchestrator.PayloadHashHex("do: work"),
+		PayloadHash:    home.PayloadHashHex("do: work"),
 	}
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
@@ -497,15 +497,15 @@ func TestReconcileSoldierPending_WrongAckFailsClosed(t *testing.T) {
 	}
 
 	// Write a WRONG ack (wrong payload hash).
-	ack := &orchestrator.ProcessingAck{
+	ack := &home.ProcessingAck{
 		MessageID:      env.MessageID,
 		SenderRank:     env.SenderRank,
 		SenderIdentity: env.SenderIdentity,
 		ReceiverRank:   env.ReceiverRank,
 		ReceiverID:     env.ReceiverID,
-		PayloadHash:    orchestrator.PayloadHashHex("wrong payload"),
+		PayloadHash:    home.PayloadHashHex("wrong payload"),
 		ProcessedAt:    time.Now().UnixNano(),
-		Outcome:        orchestrator.OutcomeAccepted,
+		Outcome:        home.OutcomeAccepted,
 	}
 	if err := store.WriteAck(ack); err != nil {
 		t.Fatalf("WriteAck: %v", err)
@@ -533,20 +533,20 @@ func TestSoldierReceiveNotification(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	// Write an envelope.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankCaptain,
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankSoldier,
+		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     cleanReceiverID(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: receive test",
 	}
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
 
-	ref := orchestrator.NotificationRef{
+	ref := home.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
@@ -569,7 +569,7 @@ func TestSoldierReceiveNotification(t *testing.T) {
 	}
 
 	// Invalid ref should fail.
-	badRef := orchestrator.NotificationRef{MessageID: "nonexistent", SenderIdentity: senderIdentity}
+	badRef := home.NotificationRef{MessageID: "nonexistent", SenderIdentity: senderIdentity}
 	_, err = SoldierReceiveNotification(captainHome, badRef, soldierTaskID)
 	if err == nil {
 		t.Fatal("expected error for nonexistent envelope")
@@ -582,20 +582,20 @@ func TestSoldierAckNotification_WritesAck(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	// Write an envelope.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankCaptain,
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankSoldier,
+		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     cleanReceiverID(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: ack test",
 	}
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
 
-	ref := orchestrator.NotificationRef{
+	ref := home.NotificationRef{
 		MessageID:      env.MessageID,
 		SenderIdentity: senderIdentity,
 	}
@@ -607,8 +607,8 @@ func TestSoldierAckNotification_WritesAck(t *testing.T) {
 	if ack == nil {
 		t.Fatal("expected non-nil ack")
 	}
-	if ack.Outcome != orchestrator.OutcomeAccepted {
-		t.Errorf("outcome=%q, want %q", ack.Outcome, orchestrator.OutcomeAccepted)
+	if ack.Outcome != home.OutcomeAccepted {
+		t.Errorf("outcome=%q, want %q", ack.Outcome, home.OutcomeAccepted)
 	}
 	if ack.PayloadHash != env.PayloadHash {
 		t.Error("payload hash mismatch")
@@ -627,7 +627,7 @@ func TestSoldierAckNotification_WritesAck(t *testing.T) {
 	if second == nil {
 		t.Fatal("expected non-nil ack on second call")
 	}
-	if second.Outcome != orchestrator.OutcomeAccepted {
+	if second.Outcome != home.OutcomeAccepted {
 		t.Errorf("second outcome=%q", second.Outcome)
 	}
 
@@ -702,7 +702,7 @@ func TestEndToEnd_BusyThenFlush(t *testing.T) {
 	}
 
 	// Verify NotificationRef was sent (not raw line).
-	var ref orchestrator.NotificationRef
+	var ref home.NotificationRef
 	if err := json.Unmarshal([]byte(be.lastText), &ref); err != nil {
 		t.Fatalf("flush must send NotificationRef: %v", err)
 	}
@@ -711,7 +711,7 @@ func TestEndToEnd_BusyThenFlush(t *testing.T) {
 	}
 
 	// No ack written by flush.
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if store.IsAcked(senderIdentity, sendResult.MessageID) {
 		t.Fatal("flush must NOT write ack")
 	}
@@ -839,7 +839,7 @@ func TestTerminalDoneAfterMerge(t *testing.T) {
 	}
 
 	// Verify NotificationRef was sent.
-	var ref orchestrator.NotificationRef
+	var ref home.NotificationRef
 	if err := json.Unmarshal([]byte(be.lastText), &ref); err == nil {
 		if ref.MessageID != result.MessageID {
 			t.Errorf("ref MessageID=%q", ref.MessageID)
@@ -883,7 +883,7 @@ func TestValidatePendingSurvives(t *testing.T) {
 	}
 
 	// Reconstruct store from files (simulating restart).
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 
 	// Verify envelope survives.
 	env, err := store.ReadEnvelope(senderIdentity, result.MessageID)
@@ -936,15 +936,15 @@ func TestConsumeReadyEvent(t *testing.T) {
 	captainHome, soldierTaskID, senderIdentity := setupSoldierTestHomes(t, "idle")
 
 	// Queue a pending command first.
-	env := &orchestrator.Envelope{
-		SenderRank:     orchestrator.RankCaptain,
+	env := &home.Envelope{
+		SenderRank:     home.RankCaptain,
 		SenderIdentity: senderIdentity,
-		ReceiverRank:   orchestrator.RankSoldier,
+		ReceiverRank:   home.RankSoldier,
 		ReceiverID:     cleanReceiverID(soldierTaskID),
 		TaskID:         soldierTaskID,
 		Payload:        "do: ready event test",
 	}
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if err := store.WriteEnvelope(env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
 	}
@@ -1384,7 +1384,7 @@ func TestConsumeAllReadyEvents_DuplicateReadyIdempotent(t *testing.T) {
 	}
 
 	// Pending still exists (no ack yet).
-	store := orchestrator.NewStore(captainHome)
+	store := home.NewStore(captainHome)
 	if store.IsAcked(senderIdentity, sendResult.MessageID) {
 		t.Errorf("pending should not be acked yet")
 	}

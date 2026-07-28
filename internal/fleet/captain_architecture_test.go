@@ -455,7 +455,7 @@ func TestConverge_StateOnlyHomeDoesNotFail(t *testing.T) {
 	// Converge with the state-only home.
 	result, err := Converge(parent, []Info{
 		{ID: "state-only-sm", Home: smHome},
-	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 
 	// The overall converge must complete (may return partial/failed from safeFF,
 	// but the important thing is it doesn't crash or hang).

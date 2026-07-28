@@ -13,7 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
@@ -1350,59 +1349,6 @@ func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 // TestEnsureWatcher_NoLongerRequiresParentHome verifies that EnsureWatcher
 // no longer requires config/parent-home. The watcher is recovery-only and
 // does not need parent-home for terminal receipt routing.
-func TestEnsureWatcher_NoLongerRequiresParentHome(t *testing.T) {
-	t.Parallel()
-	captainHome := t.TempDir()
-	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(captainHome, "captains"), 0755)
-
-	// No parent-home config — EnsureWatcher should start watcher without error.
-	// (Starting actually requires spawning a child process which won't work in
-	// unit tests, but the function should get past the parent-home check.)
-	// The actual exec will fail, but the parent-home validation no longer blocks.
-	err := EnsureWatcher(captainHome, true)
-	if err == nil {
-		t.Log("EnsureWatcher succeeded without parent-home (as expected)")
-		return
-	}
-	// If it errored, verify it's NOT the parent-home missing error.
-	if strings.Contains(err.Error(), "parent-home is missing") {
-		t.Errorf("EnsureWatcher should not fail on missing parent-home, got: %v", err)
-	}
-}
-
-// TestEnsureWatcher_PassesParentHomeToChildEnv verifies that EnsureWatcher
-// sets MUNSU_PARENT_STATUS in the watcher child process environment when
-// parent-home is valid. We can't easily inspect a real child process env in
-// unit tests, but we can verify that the function does NOT error.
-func TestEnsureWatcher_PassesParentHomeToChildEnv(t *testing.T) {
-	t.Parallel()
-	captainHome := t.TempDir()
-	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
-
-	// Write valid parent-home
-	if err := config.Set(captainHome, "parent-home", t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-
-	// We cannot fully test child process env without exec, but we can verify
-	// the function returns an error about exec (since munsu binary isn't in PATH)
-	// rather than a parent-home validation error.
-	err := EnsureWatcher(captainHome, true)
-	if err == nil {
-		// This path would start a real process; in unit test context that's fine.
-		// The point is that it didn't fail on parent-home validation.
-		t.Log("EnsureWatcher passed parent-home validation (expected exec error if no binary)")
-		return
-	}
-	// If it errored, it should NOT be a parent-home validation error
-	if strings.Contains(err.Error(), "parent-home is missing") ||
-		strings.Contains(err.Error(), "does not exist") {
-		t.Errorf("EnsureWatcher should not fail on parent-home validation: %v", err)
-	}
-}
-
 func TestGetInheritableListCaptains_Default(t *testing.T) {
 	os.Unsetenv("MUNSU_INHERITABLE_CONFIG")
 	list := getInheritableList()
@@ -2317,11 +2263,11 @@ func TestAcquireExclusiveLock_NoRemoveOnFailure(t *testing.T) {
 
 func TestConverge_EmptyRegistry(t *testing.T) {
 	parent := t.TempDir()
-	_, err := Converge(parent, nil, ConvergeCapabilities{Notification: nil, Mailbox: nil})
+	_, err := Converge(parent, nil, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: nil, Mailbox: nil})
 	if err != nil {
 		t.Fatalf("Converge(nil) error: %v", err)
 	}
-	_, err = Converge(parent, []Info{}, ConvergeCapabilities{Notification: nil, Mailbox: nil})
+	_, err = Converge(parent, []Info{}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: nil, Mailbox: nil})
 	if err != nil {
 		t.Fatalf("Converge(empty) error: %v", err)
 	}
@@ -2332,7 +2278,7 @@ func TestConverge_RefusesUnmarkedHome(t *testing.T) {
 
 	_, err := Converge(parent, []Info{
 		{ID: "test-sm", Home: "/nonexistent"},
-	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -2366,7 +2312,7 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	_, err := Converge(parent, []Info{
 		{ID: "sm-alpha", Home: sm1},
 		{ID: "sm-beta", Home: sm2},
-	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 
 	// State-only homes skip safeFF gracefully; converge should succeed.
 	if err != nil {
@@ -2390,45 +2336,6 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	}
 }
 
-func TestConverge_ReconcilesCaptainUplinkWithoutWatcher(t *testing.T) {
-	parent := t.TempDir()
-	captainHome := filepath.Join(parent, "captains", "sm-one")
-	for _, dir := range []string{"state", "config", "data"} {
-		os.MkdirAll(filepath.Join(captainHome, dir), 0755)
-	}
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("# General\n"), 0644)
-	os.WriteFile(filepath.Join(captainHome, "AGENTS.md"), []byte("# Captain\n"), 0644)
-	if err := SeedProvenance(captainHome, "sm-one"); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := orchestrator.Report(orchestrator.ReportRequest{
-		SenderHome: captainHome, ReceiverHome: parent,
-		SenderRank: orchestrator.RankCaptain, SenderIdentity: "sm-one",
-		ReceiverRank: orchestrator.RankGeneral, ReceiverID: filepath.Base(parent),
-		TaskID: "captain:sm-one", Key: "default", State: "done", Message: "complete",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	env, _ := orchestrator.NewStore(parent).ReadEnvelope("sm-one", result.MessageID)
-	ack := &orchestrator.ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: env.PayloadHash, ProcessedAt: time.Now().UnixNano(), Outcome: orchestrator.OutcomeAccepted}
-	if err := orchestrator.NewStore(parent).WriteAck(ack); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := Converge(parent, []Info{{ID: "sm-one", Home: captainHome}}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}}); err != nil {
-		t.Fatal(err)
-	}
-	if !orchestrator.HasAcceptedReport(captainHome, "captain:sm-one", "default") {
-		t.Fatal("accepted evidence missing")
-	}
-	if pending, _ := orchestrator.NewStore(captainHome).ReadPending("sm-one", result.MessageID); pending != nil {
-		t.Fatal("pending not removed")
-	}
-}
-
 func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	parent := t.TempDir()
 	smHome := filepath.Join(parent, "captains", "test-sm")
@@ -2443,7 +2350,7 @@ func TestConverge_RefusesRegistryIDMismatch(t *testing.T) {
 	// But registry says "wrong-id".
 	_, err := Converge(parent, []Info{
 		{ID: "wrong-id", Home: smHome},
-	}, ConvergeCapabilities{Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
+	}, ConvergeCapabilities{Continuity: noopCaptainContinuity{}, Messaging: noopCaptainMessaging{}, Watcher: noopCaptainWatcher{}, Notification: &captainNotificationTransport{acknowledged: true}, Mailbox: &captainTestMailboxSender{}})
 	if err == nil {
 		t.Fatal("expected error for ID mismatch")
 	}

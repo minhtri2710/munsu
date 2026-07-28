@@ -10,6 +10,8 @@ type ProbeEndpoint interface {
 }
 
 type RecoverCapabilities struct {
+	Continuity  CaptainContinuityPort
+	Watcher     CaptainWatcherPort
 	Integration IntegrationPort
 	Launch      LaunchEndpoint
 	Probe       ProbeEndpoint

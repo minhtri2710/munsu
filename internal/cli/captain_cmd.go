@@ -216,7 +216,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
@@ -253,7 +253,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if target == nil {
 				return fmt.Errorf("no registered captain with id %q", args[0])
 			}
-			tx := &fleet.RecoverTransaction{Capabilities: fleet.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()}}
+			tx := &fleet.RecoverTransaction{Capabilities: fleet.RecoverCapabilities{Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Watcher: captainWatcherAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()}}
 			res := tx.Recover(ctx.Home, *target)
 			fmt.Println(res.StepsString())
 			return nil
@@ -282,7 +282,7 @@ func captainLivenessForSession(home string, recover bool) bootstrap.CaptainLiven
 	if !recover {
 		return res
 	}
-	rr, _ := fleet.Recover(home, registered, fleet.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+	rr, _ := fleet.Recover(home, registered, fleet.RecoverCapabilities{Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Watcher: captainWatcherAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 	if rr != nil {
 		res.Recover = &bootstrap.CaptainRecoverSummary{
 			Relaunched: rr.Relaunched,

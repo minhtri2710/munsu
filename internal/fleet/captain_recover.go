@@ -8,7 +8,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // StepState is the outcome of one recovery step.
@@ -279,14 +278,17 @@ func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResu
 	}
 
 	hasChildWork := inFlightSoldierPath(sm.Home)
-	status := WatcherStatusSummary(sm.Home)
+	if tx.Capabilities.Watcher == nil {
+		return StepResult{Name: "watcher-ensure", State: StepFailed, Detail: "captain watcher capability is required"}
+	}
+	status := tx.Capabilities.Watcher.Status(sm.Home)
 
 	if hasChildWork {
 		if status == WatcherRunning {
 			return StepResult{Name: "watcher-ensure", State: StepOk,
 				Detail: "watcher already running (child work in flight)"}
 		}
-		if err := EnsureWatcher(sm.Home, true); err != nil {
+		if err := tx.Capabilities.Watcher.Ensure(sm.Home, true); err != nil {
 			return StepResult{Name: "watcher-ensure", State: StepFailed,
 				Detail: fmt.Sprintf("starting watcher: %v", err)}
 		}
@@ -296,7 +298,7 @@ func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResu
 
 	// No child work — idle policy: stop watcher if running.
 	if status == WatcherRunning {
-		if err := EnsureWatcher(sm.Home, false); err != nil {
+		if err := tx.Capabilities.Watcher.Ensure(sm.Home, false); err != nil {
 			return StepResult{Name: "watcher-ensure", State: StepFailed,
 				Detail: fmt.Sprintf("stopping watcher: %v", err)}
 		}
@@ -322,27 +324,17 @@ func (tx *RecoverTransaction) stepLegacyGuard(parentHome string, sm Info, config
 
 func (tx *RecoverTransaction) stepTerminalReconcile(parentHome string, sm Info, configOk bool) StepResult {
 	if !configOk {
-		return StepResult{Name: "terminal-reconcile", State: StepSkipped,
-			Detail: "skipped: config validation failed"}
+		return StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "skipped: config validation failed"}
 	}
-	result, err := orchestrator.ReconcileTerminalReceipts(sm.Home, parentHome)
+	if tx.Capabilities.Continuity == nil {
+		return StepResult{Name: "terminal-reconcile", State: StepFailed, Detail: "captain continuity capability is required"}
+	}
+	result, err := tx.Capabilities.Continuity.ReconcileTerminal(parentHome, CaptainEndpoint{ID: sm.ID, Home: sm.Home, Scope: sm.Scope, Project: sm.Project})
 	if err != nil {
-		return StepResult{Name: "terminal-reconcile", State: StepFailed,
-			Detail: err.Error()}
+		return StepResult{Name: "terminal-reconcile", State: StepFailed, Detail: err.Error()}
 	}
-	relayed := result.Relayed()
-	if relayed > 0 {
-		var diags []string
-		for _, o := range result.Outcomes {
-			if o.Outcome != orchestrator.OutcomeRelayed {
-				diags = append(diags, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
-			}
-		}
-		detail := fmt.Sprintf("relayed %d receipt(s) to General", relayed)
-		if len(diags) > 0 {
-			detail += "; partial failures: " + strings.Join(diags, ", ")
-		}
-		return StepResult{Name: "terminal-reconcile", State: StepOk, Detail: detail}
+	if result.Relayed > 0 {
+		return StepResult{Name: "terminal-reconcile", State: StepOk, Detail: fmt.Sprintf("relayed %d receipt(s) to General", result.Relayed)}
 	}
 	return StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "no pending receipts"}
 }
