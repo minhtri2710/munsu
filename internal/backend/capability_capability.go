@@ -1,7 +1,7 @@
 // Package capability defines typed states for capability expressions.
 // Each state models the lifecycle of an external capability that the
 // orchestrator may depend on.
-package capability
+package backend
 
 import "fmt"
 

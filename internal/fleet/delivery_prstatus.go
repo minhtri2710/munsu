@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
@@ -70,16 +70,16 @@ var QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRM
 func queryGLMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
 	state := ProbeGitLabCapability()
 	switch state {
-	case capability.Ready:
+	case backend.Ready:
 		// Use the typed GitLabClient
 		client, err := GitLabClientForState(state)
 		if err != nil {
 			return nil, fmt.Errorf("GitLab provider: %w", err)
 		}
 		return fetchGLMergeStatus(client, ident)
-	case capability.Failed:
+	case backend.Failed:
 		return nil, fmt.Errorf("GitLab capability failed: cannot query MR status (use --force to override)")
-	case capability.Absent, capability.Unsupported:
+	case backend.Absent, backend.Unsupported:
 		// Read-only status; permitted fallback if one is configured.
 		if defaultGlabFallback != nil {
 			return defaultGlabFallback(ident)

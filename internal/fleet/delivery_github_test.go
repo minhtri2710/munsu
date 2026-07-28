@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
@@ -15,13 +15,13 @@ func TestProbeGitHubCapability_ReadsGhAxiPresence(t *testing.T) {
 	// ProbeGitHubCapability should return Ready when gh-axi is on PATH
 	// or Absent when it's not. This test relies on the actual PATH.
 	state := ProbeGitHubCapability()
-	if state != capability.Ready && state != capability.Absent {
+	if state != backend.Ready && state != backend.Absent {
 		t.Errorf("expected Ready or Absent, got %v", state)
 	}
 }
 
 func TestGitHubClientForState_AbsentFailsClosed(t *testing.T) {
-	_, err := GitHubClientForState(capability.Absent)
+	_, err := GitHubClientForState(backend.Absent)
 	if err == nil {
 		t.Fatal("expected error for Absent state")
 	}
@@ -31,7 +31,7 @@ func TestGitHubClientForState_AbsentFailsClosed(t *testing.T) {
 }
 
 func TestGitHubClientForState_FailedFailsClosed(t *testing.T) {
-	_, err := GitHubClientForState(capability.Failed)
+	_, err := GitHubClientForState(backend.Failed)
 	if err == nil {
 		t.Fatal("expected error for Failed state")
 	}
@@ -41,7 +41,7 @@ func TestGitHubClientForState_FailedFailsClosed(t *testing.T) {
 }
 
 func TestGitHubClientForState_UnsupportedFailsClosed(t *testing.T) {
-	_, err := GitHubClientForState(capability.Unsupported)
+	_, err := GitHubClientForState(backend.Unsupported)
 	if err == nil {
 		t.Fatal("expected error for Unsupported state")
 	}
@@ -51,7 +51,7 @@ func TestGitHubClientForState_UnsupportedFailsClosed(t *testing.T) {
 }
 
 func TestGitHubClientForState_ReadyReturnsClient(t *testing.T) {
-	client, err := GitHubClientForState(capability.Ready)
+	client, err := GitHubClientForState(backend.Ready)
 	if err != nil {
 		t.Fatalf("unexpected error for Ready: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestParseGhAxiState_NoStateField(t *testing.T) {
 func TestDefaultGitHubClient_RoutesToGhAxiWhenReady(t *testing.T) {
 	// Probe current environment
 	state := ProbeGitHubCapability()
-	if state != capability.Ready {
+	if state != backend.Ready {
 		t.Skip("gh-axi not on PATH, skipping Ready-path test")
 	}
 
@@ -173,7 +173,7 @@ func TestQueryPRMergeStatus_UsesGhAxiWhenReady(t *testing.T) {
 	}
 
 	state := ProbeGitHubCapability()
-	if state != capability.Ready {
+	if state != backend.Ready {
 		t.Skip("gh-axi not on PATH, skipping Ready-path test")
 	}
 
@@ -197,13 +197,13 @@ func TestGHAxiAdapter_StateAwareConstruction(t *testing.T) {
 		t.Fatal("expected non-nil adapter")
 	}
 	// State should be Ready or Absent depending on PATH
-	if a.state != capability.Ready && a.state != capability.Absent {
+	if a.state != backend.Ready && a.state != backend.Absent {
 		t.Errorf("unexpected state: %v", a.state)
 	}
 }
 
 func TestGHAxiAdapter_RunPRCheck_FailsClosedOnAbsent(t *testing.T) {
-	a := &GHAxiAdapter{state: capability.Absent}
+	a := &GHAxiAdapter{state: backend.Absent}
 	err := a.RunPRCheck("", "", "")
 	if err == nil {
 		t.Fatal("expected error for Absent state")
@@ -214,7 +214,7 @@ func TestGHAxiAdapter_RunPRCheck_FailsClosedOnAbsent(t *testing.T) {
 }
 
 func TestGHAxiAdapter_RunPRCheck_FailsClosedOnFailed(t *testing.T) {
-	a := &GHAxiAdapter{state: capability.Failed}
+	a := &GHAxiAdapter{state: backend.Failed}
 	err := a.RunPRCheck("", "", "")
 	if err == nil {
 		t.Fatal("expected error for Failed state")
@@ -234,7 +234,7 @@ func TestProbeGitHubCapability_ReplacedLookPath(t *testing.T) {
 	ghAxiLookPath = func() (string, error) {
 		return "", errors.New("not found")
 	}
-	if state := ProbeGitHubCapability(); state != capability.Absent {
+	if state := ProbeGitHubCapability(); state != backend.Absent {
 		t.Errorf("expected Absent, got %v", state)
 	}
 
@@ -242,7 +242,7 @@ func TestProbeGitHubCapability_ReplacedLookPath(t *testing.T) {
 	ghAxiLookPath = func() (string, error) {
 		return "/usr/local/bin/gh-axi", nil
 	}
-	if state := ProbeGitHubCapability(); state != capability.Ready {
+	if state := ProbeGitHubCapability(); state != backend.Ready {
 		t.Errorf("expected Ready, got %v", state)
 	}
 }
@@ -294,10 +294,10 @@ func TestExistingAdapterContracts_StillHold(t *testing.T) {
 // capability chain (Absent, Failed, Unsupported) produces an error and
 // never silently falls back to Ready.
 func TestCapabilityChain_NoSilentFallback(t *testing.T) {
-	states := []capability.State{
-		capability.Absent,
-		capability.Failed,
-		capability.Unsupported,
+	states := []backend.State{
+		backend.Absent,
+		backend.Failed,
+		backend.Unsupported,
 	}
 	for _, s := range states {
 		s := s
@@ -326,7 +326,7 @@ func TestCapabilityChain_NoSilentFallback(t *testing.T) {
 // Unsupported for the lookPath pathway).
 func TestProbeGitHubCapability_ReturnsDeterministicState(t *testing.T) {
 	state := ProbeGitHubCapability()
-	if state != capability.Ready && state != capability.Absent {
+	if state != backend.Ready && state != backend.Absent {
 		t.Errorf("unexpected state %v, want Ready or Absent", state)
 	}
 	// Should be deterministic within the same test process.

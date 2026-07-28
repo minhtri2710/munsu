@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // PreflightResult captures the result of a delivery mode preflight check.
@@ -47,7 +47,7 @@ func preflightNoMistakes() (*PreflightResult, error) {
 	// Only check version/compatibility if binary is found.
 	if checks[0].OK {
 		probe := NoMistakesProbe()
-		if probe.State != capability.Ready {
+		if probe.State != backend.Ready {
 			checks = append(checks, Check{
 				Name:   "no-mistakes-compat",
 				OK:     false,

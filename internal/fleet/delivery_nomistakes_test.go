@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // TestNoMistakesProbe_Absent verifies that a missing binary returns Absent.
 func TestNoMistakesProbe_Absent(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	result := NoMistakesProbe()
-	if result.State != capability.Absent {
+	if result.State != backend.Absent {
 		t.Errorf("expected Absent, got %v (%s)", result.State, result.Detail)
 	}
 }
@@ -42,7 +42,7 @@ exit 1
 
 	result := NoMistakesProbe()
 	// v0.5.0 is below MinNoMistakesVersion (1.20.0), should be Unsupported
-	if result.State != capability.Unsupported {
+	if result.State != backend.Unsupported {
 		t.Errorf("expected Unsupported for old version, got %v (%s)", result.State, result.Detail)
 	}
 	if result.Version != "" && result.Version == "0.5.0" {
@@ -64,7 +64,7 @@ exit 0
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	result := NoMistakesProbe()
-	if result.State != capability.Failed {
+	if result.State != backend.Failed {
 		t.Errorf("expected Failed for malformed version, got %v (%s)", result.State, result.Detail)
 	}
 }
@@ -81,7 +81,7 @@ func TestNoMistakesProbe_Failed_EmptyVersion(t *testing.T) {
 
 	result := NoMistakesProbe()
 	// Binary exists but produces no --version output
-	if result.State != capability.Failed {
+	if result.State != backend.Failed {
 		t.Errorf("expected Failed for empty version, got %v (%s)", result.State, result.Detail)
 	}
 }
@@ -97,7 +97,7 @@ func TestNoMistakesProbe_Failed_VersionCommandFails(t *testing.T) {
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	result := NoMistakesProbe()
-	if result.State != capability.Failed {
+	if result.State != backend.Failed {
 		t.Errorf("expected Failed when version command fails, got %v (%s)", result.State, result.Detail)
 	}
 }
@@ -108,7 +108,7 @@ func TestNoMistakesProbe_Ready(t *testing.T) {
 		t.Skip("no-mistakes not on PATH")
 	}
 	result := NoMistakesProbe()
-	if result.State != capability.Ready {
+	if result.State != backend.Ready {
 		t.Errorf("expected Ready, got %v (%s)", result.State, result.Detail)
 	}
 	if result.Path == "" {
@@ -153,7 +153,7 @@ exit 1
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	result := NoMistakesProbe()
-	if result.State != capability.Ready {
+	if result.State != backend.Ready {
 		t.Errorf("expected Ready for valid fake binary, got %v (%s)", result.State, result.Detail)
 	}
 	if result.Path == "" {
@@ -203,10 +203,10 @@ func TestProbeResult_String(t *testing.T) {
 		p    ProbeResult
 		want string
 	}{
-		{ProbeResult{State: capability.Absent}, "no-mistakes: absent"},
-		{ProbeResult{State: capability.Unsupported, Version: "0.5.0"}, "no-mistakes: unsupported (version 0.5.0)"},
-		{ProbeResult{State: capability.Ready, Version: "1.40.0", Path: "/usr/bin/no-mistakes"}, "no-mistakes: ready (1.40.0 at /usr/bin/no-mistakes)"},
-		{ProbeResult{State: capability.Failed, Detail: "oops"}, "no-mistakes: failed (oops)"},
+		{ProbeResult{State: backend.Absent}, "no-mistakes: absent"},
+		{ProbeResult{State: backend.Unsupported, Version: "0.5.0"}, "no-mistakes: unsupported (version 0.5.0)"},
+		{ProbeResult{State: backend.Ready, Version: "1.40.0", Path: "/usr/bin/no-mistakes"}, "no-mistakes: ready (1.40.0 at /usr/bin/no-mistakes)"},
+		{ProbeResult{State: backend.Failed, Detail: "oops"}, "no-mistakes: failed (oops)"},
 	}
 	for _, tt := range tests {
 		got := tt.p.String()

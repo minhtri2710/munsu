@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // MinNoMistakesVersion is the minimum compatible no-mistakes version.
@@ -17,22 +17,22 @@ const MinNoMistakesVersion = "1.20.0"
 
 // ProbeResult captures the result of a no-mistakes capability probe.
 type ProbeResult struct {
-	State   capability.State `json:"state"`
-	Path    string           `json:"path,omitempty"`
-	Version string           `json:"version,omitempty"`
-	Detail  string           `json:"detail,omitempty"`
+	State   backend.State `json:"state"`
+	Path    string        `json:"path,omitempty"`
+	Version string        `json:"version,omitempty"`
+	Detail  string        `json:"detail,omitempty"`
 }
 
 // String returns a human-readable summary of the probe result.
 func (p ProbeResult) String() string {
 	switch p.State {
-	case capability.Absent:
+	case backend.Absent:
 		return "no-mistakes: absent"
-	case capability.Unsupported:
+	case backend.Unsupported:
 		return fmt.Sprintf("no-mistakes: unsupported (version %s)", p.Version)
-	case capability.Ready:
+	case backend.Ready:
 		return fmt.Sprintf("no-mistakes: ready (%s at %s)", p.Version, p.Path)
-	case capability.Failed:
+	case backend.Failed:
 		return fmt.Sprintf("no-mistakes: failed (%s)", p.Detail)
 	default:
 		return fmt.Sprintf("no-mistakes: unknown state")
@@ -46,7 +46,7 @@ func NoMistakesProbe() ProbeResult {
 	path, err := exec.LookPath("no-mistakes")
 	if err != nil {
 		return ProbeResult{
-			State:  capability.Absent,
+			State:  backend.Absent,
 			Detail: "no-mistakes not found on PATH",
 		}
 	}
@@ -54,7 +54,7 @@ func NoMistakesProbe() ProbeResult {
 	out, err := exec.Command("no-mistakes", "--version").Output()
 	if err != nil {
 		return ProbeResult{
-			State:  capability.Failed,
+			State:  backend.Failed,
 			Path:   path,
 			Detail: fmt.Sprintf("cannot check version: %v", err),
 		}
@@ -62,7 +62,7 @@ func NoMistakesProbe() ProbeResult {
 	ver := strings.TrimSpace(string(out))
 	if ver == "" {
 		return ProbeResult{
-			State:  capability.Failed,
+			State:  backend.Failed,
 			Path:   path,
 			Detail: "no-mistakes --version returned empty output",
 		}
@@ -83,7 +83,7 @@ func NoMistakesProbe() ProbeResult {
 	parsed, err := semver.NewVersion(cleanVer)
 	if err != nil {
 		return ProbeResult{
-			State:   capability.Failed,
+			State:   backend.Failed,
 			Path:    path,
 			Version: ver,
 			Detail:  fmt.Sprintf("cannot parse version %q: %v", ver, err),
@@ -93,7 +93,7 @@ func NoMistakesProbe() ProbeResult {
 	minVer, err := semver.NewVersion(MinNoMistakesVersion)
 	if err != nil {
 		return ProbeResult{
-			State:  capability.Failed,
+			State:  backend.Failed,
 			Path:   path,
 			Detail: fmt.Sprintf("invalid minimum version %q: %v", MinNoMistakesVersion, err),
 		}
@@ -101,7 +101,7 @@ func NoMistakesProbe() ProbeResult {
 
 	if parsed.LessThan(minVer) {
 		return ProbeResult{
-			State:   capability.Unsupported,
+			State:   backend.Unsupported,
 			Path:    path,
 			Version: parsed.String(),
 			Detail:  fmt.Sprintf("no-mistakes version %s < minimum %s", parsed.String(), MinNoMistakesVersion),
@@ -112,7 +112,7 @@ func NoMistakesProbe() ProbeResult {
 	axiOut, err := exec.Command("no-mistakes", "axi", "status", "--help").Output()
 	if err != nil {
 		return ProbeResult{
-			State:   capability.Failed,
+			State:   backend.Failed,
 			Path:    path,
 			Version: parsed.String(),
 			Detail:  fmt.Sprintf("axi command surface not available: %v", err),
@@ -120,7 +120,7 @@ func NoMistakesProbe() ProbeResult {
 	}
 	if !strings.Contains(string(axiOut), "status") {
 		return ProbeResult{
-			State:   capability.Failed,
+			State:   backend.Failed,
 			Path:    path,
 			Version: parsed.String(),
 			Detail:  "axi status subcommand not recognized",
@@ -128,7 +128,7 @@ func NoMistakesProbe() ProbeResult {
 	}
 
 	return ProbeResult{
-		State:   capability.Ready,
+		State:   backend.Ready,
 		Path:    path,
 		Version: parsed.String(),
 		Detail:  "found on PATH, version compatible, axi surface available",

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
@@ -99,49 +99,49 @@ var _ GitLabClient = (*glabClient)(nil)
 
 // ProbeGitLabCapability probes glab availability through the default runner.
 // Returns one of: Ready, Absent, Failed, Unsupported.
-func ProbeGitLabCapability() capability.State {
+func ProbeGitLabCapability() backend.State {
 	return probeGlabCapability(defaultGlabRunner)
 }
 
 // probeGlabCapability probes glab availability through the given runner.
-func probeGlabCapability(runner GlabRunner) capability.State {
+func probeGlabCapability(runner GlabRunner) backend.State {
 	_, err := runner.LookPath()
 	if err != nil {
-		return capability.Absent
+		return backend.Absent
 	}
 
 	// Verify --version works
 	out, err := runner.Run("--version")
 	if err != nil || len(out) == 0 {
-		return capability.Failed
+		return backend.Failed
 	}
 
 	// Verify mr view subcommand is available
 	helpOut, err := runner.Run("mr", "view", "--help")
 	if err != nil || !strings.Contains(string(helpOut), "view") {
-		return capability.Unsupported
+		return backend.Unsupported
 	}
 
 	// Verify authentication via glab auth status
 	authOut, err := runner.Run("auth", "status")
 	if err != nil || !strings.Contains(string(authOut), "authenticated") {
-		return capability.Failed
+		return backend.Failed
 	}
 
-	return capability.Ready
+	return backend.Ready
 }
 
 // GitLabClientForState returns the appropriate GitLabClient or an error
 // based on the capability state. Fails closed on Absent/Failed/Unsupported.
-func GitLabClientForState(s capability.State) (GitLabClient, error) {
+func GitLabClientForState(s backend.State) (GitLabClient, error) {
 	switch s {
-	case capability.Ready:
+	case backend.Ready:
 		return &glabClient{runner: defaultGlabRunner}, nil
-	case capability.Absent:
+	case backend.Absent:
 		return nil, fmt.Errorf("GitLab capability absent: glab not found on PATH")
-	case capability.Unsupported:
+	case backend.Unsupported:
 		return nil, fmt.Errorf("GitLab capability unsupported: glab is not available on this platform")
-	case capability.Failed:
+	case backend.Failed:
 		return nil, fmt.Errorf("GitLab capability failed: glab encountered an error")
 	default:
 		return nil, fmt.Errorf("GitLab capability in unknown state: %v", s)

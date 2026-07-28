@@ -3,7 +3,7 @@ package fleet
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // Pipeline defines the interface for delivery operations.
@@ -32,7 +32,7 @@ var (
 // It checks the GitHub capability state on construction — if gh-axi is
 // not Ready, operations fail closed.
 type GHAxiAdapter struct {
-	state capability.State
+	state backend.State
 }
 
 // NewGHAxiAdapter returns a new GHAxiAdapter after probing gh-axi availability.
@@ -44,7 +44,7 @@ func NewGHAxiAdapter() *GHAxiAdapter {
 // RunPRCheck arms a PR merge poll via PRCheck. Fails closed if gh-axi
 // is not available.
 func (a *GHAxiAdapter) RunPRCheck(homeDir, id, prURL string) error {
-	if a.state != capability.Ready {
+	if a.state != backend.Ready {
 		return fmt.Errorf("GHAxiAdapter: GitHub capability not ready (state=%s): gh-axi required for PR check", a.state)
 	}
 	return PRCheck(homeDir, id, prURL)
@@ -66,7 +66,7 @@ func (a *GHAxiAdapter) MergeLocal(homeDir, id string) error {
 // It checks the GitLab capability state on construction — if glab is
 // not Ready, operations fail closed.
 type GlabAdapter struct {
-	state capability.State
+	state backend.State
 }
 
 // NewGlabAdapter returns a new GlabAdapter after probing glab availability.
@@ -84,7 +84,7 @@ func (a *GlabAdapter) RunPRCheck(homeDir, id, prURL string) error {
 	if provider != "gitlab" {
 		return fmt.Errorf("GlabAdapter: expected GitLab MR URL, got provider %q", provider)
 	}
-	if a.state != capability.Ready {
+	if a.state != backend.Ready {
 		return fmt.Errorf("GlabAdapter: GitLab capability not ready (state=%s): glab required for MR check", a.state)
 	}
 	return MRLiveCheck(homeDir, id, prURL)

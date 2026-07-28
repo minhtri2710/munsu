@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
@@ -158,7 +158,7 @@ const sampleSHA = "abc123def456abc123def456abc123def456abc1"
 func TestProbeGlabCapability_Absent(t *testing.T) {
 	runner := &fakeGlabRunner{lookPathErr: errors.New("not found")}
 	state := probeGlabCapability(runner)
-	if state != capability.Absent {
+	if state != backend.Absent {
 		t.Errorf("expected Absent, got %v", state)
 	}
 }
@@ -166,7 +166,7 @@ func TestProbeGlabCapability_Absent(t *testing.T) {
 func TestProbeGlabCapability_Failed(t *testing.T) {
 	runner := failedVersionRunner()
 	state := probeGlabCapability(runner)
-	if state != capability.Failed {
+	if state != backend.Failed {
 		t.Errorf("expected Failed, got %v", state)
 	}
 }
@@ -174,7 +174,7 @@ func TestProbeGlabCapability_Failed(t *testing.T) {
 func TestProbeGlabCapability_Unsupported(t *testing.T) {
 	runner := unsupportedRunner()
 	state := probeGlabCapability(runner)
-	if state != capability.Unsupported {
+	if state != backend.Unsupported {
 		t.Errorf("expected Unsupported, got %v", state)
 	}
 }
@@ -182,7 +182,7 @@ func TestProbeGlabCapability_Unsupported(t *testing.T) {
 func TestProbeGlabCapability_Ready(t *testing.T) {
 	runner := readyRunner()
 	state := probeGlabCapability(runner)
-	if state != capability.Ready {
+	if state != backend.Ready {
 		t.Errorf("expected Ready, got %v", state)
 	}
 }
@@ -190,7 +190,7 @@ func TestProbeGlabCapability_Ready(t *testing.T) {
 func TestProbeGlabCapability_AuthFailure(t *testing.T) {
 	runner := failedAuthRunner()
 	state := probeGlabCapability(runner)
-	if state != capability.Failed {
+	if state != backend.Failed {
 		t.Errorf("expected Failed, got %v", state)
 	}
 }
@@ -198,7 +198,7 @@ func TestProbeGlabCapability_AuthFailure(t *testing.T) {
 // --- GitLabClientForState tests ---
 
 func TestGitLabClientForState_AbsentFailsClosed(t *testing.T) {
-	_, err := GitLabClientForState(capability.Absent)
+	_, err := GitLabClientForState(backend.Absent)
 	if err == nil {
 		t.Fatal("expected error for Absent state")
 	}
@@ -208,7 +208,7 @@ func TestGitLabClientForState_AbsentFailsClosed(t *testing.T) {
 }
 
 func TestGitLabClientForState_FailedFailsClosed(t *testing.T) {
-	_, err := GitLabClientForState(capability.Failed)
+	_, err := GitLabClientForState(backend.Failed)
 	if err == nil {
 		t.Fatal("expected error for Failed state")
 	}
@@ -218,7 +218,7 @@ func TestGitLabClientForState_FailedFailsClosed(t *testing.T) {
 }
 
 func TestGitLabClientForState_UnsupportedFailsClosed(t *testing.T) {
-	_, err := GitLabClientForState(capability.Unsupported)
+	_, err := GitLabClientForState(backend.Unsupported)
 	if err == nil {
 		t.Fatal("expected error for Unsupported state")
 	}
@@ -228,7 +228,7 @@ func TestGitLabClientForState_UnsupportedFailsClosed(t *testing.T) {
 }
 
 func TestGitLabClientForState_ReadyReturnsClient(t *testing.T) {
-	client, err := GitLabClientForState(capability.Ready)
+	client, err := GitLabClientForState(backend.Ready)
 	if err != nil {
 		t.Fatalf("unexpected error for Ready: %v", err)
 	}
@@ -761,10 +761,10 @@ func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
 // --- GitLab capability chain tests ---
 
 func TestGitLabCapabilityChain_NoSilentFallback(t *testing.T) {
-	states := []capability.State{
-		capability.Absent,
-		capability.Failed,
-		capability.Unsupported,
+	states := []backend.State{
+		backend.Absent,
+		backend.Failed,
+		backend.Unsupported,
 	}
 	for _, s := range states {
 		s := s

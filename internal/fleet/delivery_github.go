@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
@@ -44,12 +44,12 @@ var _ GitHubClient = (*ghAxiClient)(nil)
 // Returns Ready if found, Absent if not found.
 // Fail-closed: only Ready permits gh-axi operations; all other states
 // cause callers to reject the operation.
-func ProbeGitHubCapability() capability.State {
+func ProbeGitHubCapability() backend.State {
 	_, err := ghAxiLookPath()
 	if err != nil {
-		return capability.Absent
+		return backend.Absent
 	}
-	return capability.Ready
+	return backend.Ready
 }
 
 // ghAxiLookPath is a variable for testing — can be replaced to simulate
@@ -65,15 +65,15 @@ var ghCLILookPath = func() (string, error) {
 
 // GitHubClientForState returns the appropriate GitHubClient or an error
 // based on the capability state. Fails closed on Absent/Failed/Unsupported.
-func GitHubClientForState(s capability.State) (GitHubClient, error) {
+func GitHubClientForState(s backend.State) (GitHubClient, error) {
 	switch s {
-	case capability.Ready:
+	case backend.Ready:
 		return &ghAxiClient{}, nil
-	case capability.Absent:
+	case backend.Absent:
 		return nil, fmt.Errorf("GitHub capability absent: gh-axi not found on PATH")
-	case capability.Unsupported:
+	case backend.Unsupported:
 		return nil, fmt.Errorf("GitHub capability unsupported: gh-axi is not available on this platform")
-	case capability.Failed:
+	case backend.Failed:
 		return nil, fmt.Errorf("GitHub capability failed: gh-axi encountered an error")
 	default:
 		return nil, fmt.Errorf("GitHub capability in unknown state: %v", s)

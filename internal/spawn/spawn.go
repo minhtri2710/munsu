@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/capability"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"gopkg.in/yaml.v3"
@@ -77,7 +77,7 @@ func noMistakesOnPath() bool {
 // fallback to direct-PR is acceptable (unlike explicit/project/config selection).
 func noMistakesAvailable() bool {
 	probe := fleet.NoMistakesProbe()
-	return probe.State == capability.Ready
+	return probe.State == backend.Ready
 }
 
 // EnsureDeliveryModeRunnable validates that an explicit non-empty mode is runnable.
@@ -89,13 +89,13 @@ func EnsureDeliveryModeRunnable(mode string) error {
 	}
 	probe := fleet.NoMistakesProbe()
 	switch probe.State {
-	case capability.Absent:
+	case backend.Absent:
 		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")
-	case capability.Unsupported:
+	case backend.Unsupported:
 		return fmt.Errorf("delivery mode 'no-mistakes': %s; upgrade to a compatible version", probe.Detail)
-	case capability.Failed:
+	case backend.Failed:
 		return fmt.Errorf("delivery mode 'no-mistakes' compatibility check failed: %s", probe.Detail)
-	case capability.Ready:
+	case backend.Ready:
 		return nil
 	default:
 		return fmt.Errorf("delivery mode 'no-mistakes': unexpected probe state")
