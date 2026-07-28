@@ -14,6 +14,48 @@ func setHomeEnv(t *testing.T, path string) {
 	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
 }
 
+func TestTaskMetadataRejectsPathTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	for _, id := range []string{"", ".", "..", "../escape", "nested/task"} {
+		if err := WriteMeta(tmp, id, map[string]string{"kind": "ship"}); err == nil {
+			t.Errorf("WriteMeta(%q) succeeded, want validation error", id)
+		}
+		if err := AppendStatus(tmp, id, "working: test"); err == nil {
+			t.Errorf("AppendStatus(%q) succeeded, want validation error", id)
+		}
+	}
+}
+
+func TestTaskMetadataUsesPrivatePermissions(t *testing.T) {
+	tmp := t.TempDir()
+	if err := WriteMeta(tmp, "private", map[string]string{"kind": "ship"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendStatus(tmp, "private", "working: test"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(tmp, "state", "private.meta"),
+		filepath.Join(tmp, "state", "private.meta.lock"),
+		filepath.Join(tmp, "state", "private.status"),
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Errorf("%s permissions = %04o, want 0600", path, got)
+		}
+	}
+	info, err := os.Stat(filepath.Join(tmp, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0700 {
+		t.Errorf("state permissions = %04o, want 0700", got)
+	}
+}
+
 func TestWriteMeta(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)

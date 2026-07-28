@@ -17,12 +17,32 @@ func StateDir(homeDir string) string {
 
 // metaPath returns the path to the meta file for the given task ID.
 func metaPath(homeDir string, id string) (string, error) {
+	if err := validateTaskID(id); err != nil {
+		return "", err
+	}
 	return filepath.Join(StateDir(homeDir), id+".meta"), nil
 }
 
 // statusPath returns the path to the status file for the given task ID.
 func statusPath(homeDir string, id string) (string, error) {
+	if err := validateTaskID(id); err != nil {
+		return "", err
+	}
 	return filepath.Join(StateDir(homeDir), id+".status"), nil
+}
+
+func validateTaskID(id string) error {
+	if id == "" || id == "." || id == ".." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
+		return fmt.Errorf("invalid task ID %q", id)
+	}
+	return nil
+}
+
+func ensurePrivateStateDir(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0700)
 }
 
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
@@ -46,7 +66,7 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
 	var b strings.Builder
@@ -59,6 +79,11 @@ func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
 		return fmt.Errorf("creating temp meta file: %w", err)
 	}
 	tmpPath := tmpF.Name()
+	if err := tmpF.Chmod(0600); err != nil {
+		tmpF.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("securing temp meta file: %w", err)
+	}
 	if _, err := tmpF.WriteString(b.String()); err != nil {
 		tmpF.Close()
 		os.Remove(tmpPath)
@@ -113,10 +138,10 @@ func AppendStatus(homeDir string, id, line string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("opening status file: %w", err)
 	}
@@ -319,20 +344,26 @@ func (e *CASError) Error() string {
 }
 
 // lockPath returns the path to the advisory lock file for a meta file.
-func lockPath(homeDir, id string) string {
-	p, _ := metaPath(homeDir, id)
-	return p + ".lock"
+func lockPath(homeDir, id string) (string, error) {
+	p, err := metaPath(homeDir, id)
+	if err != nil {
+		return "", err
+	}
+	return p + ".lock", nil
 }
 
 // acquireMetaLock acquires an exclusive advisory lock on the meta lock file.
 // Uses flock(2) which is automatically released when the process exits.
 // Returns the locked file and a cleanup function.
 func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
-	lp := lockPath(homeDir, id)
-	if err := os.MkdirAll(filepath.Dir(lp), 0755); err != nil {
+	lp, err := lockPath(homeDir, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := ensurePrivateStateDir(filepath.Dir(lp)); err != nil {
 		return nil, nil, fmt.Errorf("creating state directory for lock: %w", err)
 	}
-	f, err := os.OpenFile(lp, os.O_RDONLY|os.O_CREATE, 0644)
+	f, err := os.OpenFile(lp, os.O_RDONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening lock file: %w", err)
 	}
