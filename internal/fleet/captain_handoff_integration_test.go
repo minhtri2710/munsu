@@ -38,6 +38,9 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 			t.Fatalf("tasks-axi %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
+	if err := os.WriteFile(source, []byte("# Backlog\n\n## Queued\n\n## Done\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	runTasksAxi("add", "blocker-a", "Blocker", "--file", source)
 	runTasksAxi("add", "dependent-b", "Dependent", "--blocked-by", "blocker-a", "--file", source)
 	if err := os.WriteFile(destination, []byte("# Backlog\n\n## Queued\n\n## Done\n"), 0644); err != nil {
