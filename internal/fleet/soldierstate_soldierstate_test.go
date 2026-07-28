@@ -1,4 +1,4 @@
-package soldierstate
+package fleet
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 )
 
 // setManualMode forces manual backlog backend for tests that use native backlog.md.
-func setManualMode(t *testing.T, homeDir string) {
+func setSoldierStateManualMode(t *testing.T, homeDir string) {
 	t.Helper()
 	configDir := filepath.Join(homeDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -32,7 +32,7 @@ func TestRead_NoMeta(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	s, err := Read(tmp, "nonexistent")
+	s, err := ReadSoldierState(tmp, "nonexistent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestRead_NoWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "no-win")
+	s, err := ReadSoldierState(tmp, "no-win")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestRead_WithWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "with-win")
+	s, err := ReadSoldierState(tmp, "with-win")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestRead_HerdrPaneNotFound_ReturnsPaneAliveFalse(t *testing.T) {
 	}
 	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
 
-	s, err := Read(tmp, "incident-soldier")
+	s, err := ReadSoldierState(tmp, "incident-soldier")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestRead_StatusLogOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "status-test")
+	s, err := ReadSoldierState(tmp, "status-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestRead_FailedStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "fail-test")
+	s, err := ReadSoldierState(tmp, "fail-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestRead_MultipleStatusLines(t *testing.T) {
 	home.AppendStatus(tmp, "multi-status", "resolved: chose approach A")
 	home.AppendStatus(tmp, "multi-status", "done: all done")
 
-	s, err := Read(tmp, "multi-status")
+	s, err := ReadSoldierState(tmp, "multi-status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestRead_ResolvedIsNotCurrentState(t *testing.T) {
 	home.AppendStatus(tmp, "resolved-only", "working: started")
 	home.AppendStatus(tmp, "resolved-only", "resolved: closed key without terminal")
 
-	s, err := Read(tmp, "resolved-only")
+	s, err := ReadSoldierState(tmp, "resolved-only")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestRead_KeyedOpenActivitiesMultiEvent(t *testing.T) {
 	home.AppendStatus(tmp, "keyed-phases", "resolved [key=phase7]: Phase 7 done")
 	home.AppendStatus(tmp, "keyed-phases", "working [key=phase8]: Phase 8 started")
 
-	s, err := Read(tmp, "keyed-phases")
+	s, err := ReadSoldierState(tmp, "keyed-phases")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestRead_KeyedVerbBeforeColon(t *testing.T) {
 	}
 	home.AppendStatus(tmp, "keyed-verb", "done [key=ship]: PR https://example/1")
 
-	s, err := Read(tmp, "keyed-verb")
+	s, err := ReadSoldierState(tmp, "keyed-verb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestRead_GitBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "git-test")
+	s, err := ReadSoldierState(tmp, "git-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestRead_LastNonTerminalStatus(t *testing.T) {
 	home.AppendStatus(tmp, "nonterm", "paused: waiting for review")
 	home.AppendStatus(tmp, "nonterm", "blocked: dependency not ready")
 
-	s, err := Read(tmp, "nonterm")
+	s, err := ReadSoldierState(tmp, "nonterm")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestApplyNoMistakesStep_Cancelled(t *testing.T) {
 
 func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
 	tmp := t.TempDir()
-	setManualMode(t, tmp)
+	setSoldierStateManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	// Create meta with window
@@ -446,7 +446,7 @@ func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "backlog-test")
+	s, err := ReadSoldierState(tmp, "backlog-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
 
 func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
 	tmp := t.TempDir()
-	setManualMode(t, tmp)
+	setSoldierStateManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "blocked-test", map[string]string{
@@ -492,7 +492,7 @@ func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "blocked-test")
+	s, err := ReadSoldierState(tmp, "blocked-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
 
 func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
 	tmp := t.TempDir()
-	setManualMode(t, tmp)
+	setSoldierStateManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	// Create meta with window
@@ -535,7 +535,7 @@ func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "in-flight-test")
+	s, err := ReadSoldierState(tmp, "in-flight-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
 
 func TestRead_BacklogQueuedWhenUnknown(t *testing.T) {
 	tmp := t.TempDir()
-	setManualMode(t, tmp)
+	setSoldierStateManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
 	// Create meta only (no status file, no window)
@@ -574,7 +574,7 @@ func TestRead_BacklogQueuedWhenUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Read(tmp, "queued-test")
+	s, err := ReadSoldierState(tmp, "queued-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +602,7 @@ func TestRead_NoBacklogItemFallsThrough(t *testing.T) {
 	}
 
 	// No backlog file at all — should fall through to tier 2
-	s, err := Read(tmp, "no-backlog-item")
+	s, err := ReadSoldierState(tmp, "no-backlog-item")
 	if err != nil {
 		t.Fatal(err)
 	}

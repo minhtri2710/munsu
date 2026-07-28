@@ -1,4 +1,4 @@
-package soldierstate
+package fleet
 
 import (
 	"errors"

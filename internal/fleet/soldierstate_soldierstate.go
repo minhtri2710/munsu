@@ -7,7 +7,7 @@
 //  5. Status file fallback (append-only .status lines)
 //
 // Pane prose is diagnostic only — never derived as current-state truth.
-package soldierstate
+package fleet
 
 import (
 	"encoding/json"
@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -48,16 +47,16 @@ type State struct {
 	BacklogState string `json:"backlog_state,omitempty"`
 }
 
-type EndpointProbe interface {
+type StateEndpointProbe interface {
 	Probe(homeDir string, meta map[string]string) (bool, error)
 }
 
 // Read reads state without probing endpoint liveness.
-func Read(homeDir string, id string) (*State, error) {
+func ReadSoldierState(homeDir string, id string) (*State, error) {
 	return ReadWithProbe(homeDir, id, nil)
 }
 
-func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, error) {
+func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 
 	// Read meta (always needed for context)
@@ -94,23 +93,23 @@ func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, erro
 	if backlogState, ok := readBacklogState(homeDir, id); ok {
 		s.BacklogState = backlogState.String()
 		switch backlogState {
-		case fleet.StateDone:
+		case StateDone:
 			s.Status = "done"
 			s.Description = "backlog: done"
 			s.StatusLogSuperseded = true
 			return s, nil
-		case fleet.StateBlocked:
+		case StateBlocked:
 			s.Status = "blocked"
 			s.Description = "backlog: blocked"
 			s.StatusLogSuperseded = true
 			return s, nil
-		case fleet.StateQueued:
+		case StateQueued:
 			// Queued means not yet started — report as-is when no higher work state.
 			if s.Status == "unknown" {
 				s.Status = "queued"
 				s.Description = "backlog: queued"
 			}
-		case fleet.StateInFlight:
+		case StateInFlight:
 			// In-flight — continue to lower tiers for detail.
 		}
 	}
@@ -192,10 +191,10 @@ func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, erro
 }
 
 // readBacklogState reads the task's state from the selected backlog authority.
-func readBacklogState(homeDir, id string) (fleet.TaskState, bool) {
-	item, found, err := fleet.GetItem(homeDir, id)
+func readBacklogState(homeDir, id string) (TaskState, bool) {
+	item, found, err := GetItem(homeDir, id)
 	if err != nil || !found {
-		return fleet.StateQueued, false
+		return StateQueued, false
 	}
 	return item.State, true
 }
@@ -256,7 +255,7 @@ func (s *State) applyNoMistakesStep(step, outcome string) {
 // the structured nostatus package at the CLI boundary, and returns the conceptual
 // run-step, outcome, and whether the info is relevant.
 func checkNoMistakesRun(wtPath, currentBranch string) (step, outcome string, ok bool) {
-	r, err := fleet.Read(wtPath)
+	r, err := Read(wtPath)
 	if err != nil {
 		return "", "", false
 	}

@@ -10,7 +10,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/spf13/cobra"
 )
 
@@ -71,7 +70,7 @@ func init() {
 	// Fleet receives a typed probe port; session adapter wiring remains at the CLI composition root.
 	fleet.SetEndpointProbe(cliEndpointProbe{resolve: backend.BackendForTask})
 	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
-		st, err := soldierstate.ReadWithProbe(homeDir, id, cliEndpointProbe{resolve: backend.BackendForTask})
+		st, err := fleet.ReadWithProbe(homeDir, id, cliEndpointProbe{resolve: backend.BackendForTask})
 		if err != nil {
 			return nil, err
 		}

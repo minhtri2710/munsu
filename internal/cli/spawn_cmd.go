@@ -11,7 +11,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/spf13/cobra"
 )
@@ -263,7 +262,7 @@ func newSoldierStateCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			state, err := soldierstate.Read(ctx.Home, id)
+			state, err := fleet.ReadSoldierState(ctx.Home, id)
 			if err != nil {
 				return operationError("internal", "Run `munsu soldier-state "+id+"` again", "Unable to read soldier state")
 			}

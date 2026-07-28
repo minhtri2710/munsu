@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/spf13/cobra"
 )
 
@@ -110,7 +109,7 @@ func newTaskObserveCmd() *cobra.Command {
 			if _, err := home.ReadMeta(ctx.Home, args[0]); err != nil {
 				return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
 			}
-			state, err := soldierstate.Read(ctx.Home, args[0])
+			state, err := fleet.ReadSoldierState(ctx.Home, args[0])
 			if err != nil {
 				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to observe task state")
 			}
