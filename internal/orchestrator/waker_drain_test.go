@@ -8,14 +8,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // writeBeatFile writes a watcher liveness beat file at the given timestamp.
 func writeBeatFile(t *testing.T, homeDir string, ts int64) {
 	t.Helper()
-	path := lifecycle.BeatPath(homeDir)
+	path := BeatPath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +26,7 @@ func writeBeatFile(t *testing.T, homeDir string, ts int64) {
 // writeWakeQueue writes tab-separated wake queue entries.
 func writeWakeQueue(t *testing.T, homeDir string, lines []string) {
 	t.Helper()
-	path := lifecycle.QueuePath(homeDir)
+	path := QueuePath(homeDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -39,9 +37,9 @@ func writeWakeQueue(t *testing.T, homeDir string, lines []string) {
 }
 
 // formatBeatContent formats a unix timestamp as the decimal + pid string
-// expected by lifecycle.ReadBeat.
+// expected by ReadBeat.
 func formatBeatContent(ts int64) string {
-	// Use the same format as lifecycle.WriteBeat: "<unix_ts> <pid>"
+	// Use the same format as WriteBeat: "<unix_ts> <pid>"
 	return fmt.Sprintf("%d %d", ts, 12345)
 }
 
@@ -261,7 +259,7 @@ func TestEvaluateGuard_AgedWakeProducesAgedWakeCondition(t *testing.T) {
 	// Enqueue a material wake with an old timestamp by manipulating the queue file.
 	// Direct EnqueueWake adds current time, so write a TSV line manually.
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := lifecycle.QueuePath(home)
+	queuePath := QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	line := fmt.Sprintf("%d	%d\tsignal\ttask-1\tdone: PR merged\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
@@ -292,7 +290,7 @@ func TestEvaluateGuard_FreshWakeNoAgedCondition(t *testing.T) {
 	writeBeatFile(t, home, time.Now().Unix())
 
 	// Enqueue a fresh material wake.
-	lifecycle.EnqueueWake(home, "signal", "task-fresh", "done: just finished")
+	EnqueueWake(home, "signal", "task-fresh", "done: just finished")
 
 	result := EvaluateGuard(home, 1, time.Now())
 
@@ -308,7 +306,7 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 
 	// Old material wake
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := lifecycle.QueuePath(home)
+	queuePath := QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	line := fmt.Sprintf("%d	%d\tsignal\ttask-old\tdone: very old\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
@@ -320,7 +318,7 @@ func TestHasAgedMaterialWake_Threshold(t *testing.T) {
 
 func TestHasAgedMaterialWake_Fresh(t *testing.T) {
 	home := t.TempDir()
-	lifecycle.EnqueueWake(home, "signal", "task-fresh", "done: fresh")
+	EnqueueWake(home, "signal", "task-fresh", "done: fresh")
 
 	if HasAgedMaterialWake(home, time.Now()) {
 		t.Fatal("HasAgedMaterialWake should be false for fresh wake")
@@ -330,7 +328,7 @@ func TestHasAgedMaterialWake_Fresh(t *testing.T) {
 func TestHasAgedMaterialWake_NonMaterialWakes(t *testing.T) {
 	home := t.TempDir()
 	oldEpoch := time.Now().Add(-MaterialWakeAgeThreshold - time.Minute).Unix()
-	queuePath := lifecycle.QueuePath(home)
+	queuePath := QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	// Routine wake, not material.
 	line := fmt.Sprintf("%d	%d\tstale\ttask-routine\tworking: in progress\n", oldEpoch, 1)

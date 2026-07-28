@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // TestE2E_CaptainUpdate_Scenario1_SeedLaunch verifies the seed + launch Captain lifecycle
@@ -385,14 +385,14 @@ func TestE2E_CaptainUpdate_Scenario4_ConfigRereadNudge(t *testing.T) {
 	// Phase 4b: Verify config-reread wake was enqueued after push.
 	// EnqueueWake happens inside Converge's config push step.
 	// When ConfigPush runs in Converge, it enqueues a "config-reread" wake
-	// via lifecycle.EnqueueWake. Let's enqueue one directly to test the
+	// via orchestrator.EnqueueWake. Let's enqueue one directly to test the
 	// wake path.
-	if err := lifecycle.EnqueueWake(homePath, "config", "config-reread", "config refreshed via converge"); err != nil {
+	if err := orchestrator.EnqueueWake(homePath, "config", "config-reread", "config refreshed via converge"); err != nil {
 		t.Fatalf("EnqueueWake: %v", err)
 	}
 
 	// Verify the wake file exists.
-	wakePath := lifecycle.QueuePath(homePath)
+	wakePath := orchestrator.QueuePath(homePath)
 	wakeData, err := os.ReadFile(wakePath)
 	if err != nil {
 		t.Fatalf("reading wake queue: %v", err)

@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -32,7 +31,7 @@ func newWakeCmd() *cobra.Command {
 				return err
 			}
 
-			result, err := lifecycle.ClaimWakes(ctx.Home, consumer, leaseSec, limit)
+			result, err := orchestrator.ClaimWakes(ctx.Home, consumer, leaseSec, limit)
 			if err != nil {
 				return operationError("internal", "Run `munsu wake claim --consumer "+consumer+"` again", err.Error())
 			}
@@ -84,7 +83,7 @@ func newWakeCmd() *cobra.Command {
 				return err
 			}
 
-			if err := lifecycle.AckWakes(ctx.Home, leaseID, eventIDs); err != nil {
+			if err := orchestrator.AckWakes(ctx.Home, leaseID, eventIDs); err != nil {
 				return operationError("internal", "Run `munsu wake ack "+leaseID+" ...` again", err.Error())
 			}
 

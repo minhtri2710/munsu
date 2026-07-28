@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // --- DeliverWake tests ---
@@ -78,7 +76,7 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	}
 
 	// Wake queue should have entries
-	if !lifecycle.HasQueuedWakes(soldierHome) {
+	if !HasQueuedWakes(soldierHome) {
 		t.Error("expected wake queue entries")
 	}
 
@@ -140,7 +138,7 @@ func TestDeliverWake_SoldierNonMaterialState(t *testing.T) {
 	}
 
 	// Wake queue should NOT exist for non-material state
-	if lifecycle.HasQueuedWakes(soldierHome) {
+	if HasQueuedWakes(soldierHome) {
 		t.Error("expected NO wake queue for non-material state")
 	}
 
@@ -172,7 +170,7 @@ func TestDeliverWake_SoldierNoParent(t *testing.T) {
 	}
 
 	// Local status + event + wake should exist
-	if !lifecycle.HasQueuedWakes(soldierHome) {
+	if !HasQueuedWakes(soldierHome) {
 		t.Error("expected wake queue even without parent")
 	}
 }
@@ -208,7 +206,7 @@ func TestDeliverWake_ReceiptWriteFails(t *testing.T) {
 	}
 
 	// No wake queue
-	if lifecycle.HasQueuedWakes(soldierHome) {
+	if HasQueuedWakes(soldierHome) {
 		t.Error("wake queue should not exist after receipt failure")
 	}
 
@@ -267,7 +265,7 @@ func TestDeliverWake_ObligationsInitFails(t *testing.T) {
 	}
 
 	// No wake queue
-	if lifecycle.HasQueuedWakes(soldierHome) {
+	if HasQueuedWakes(soldierHome) {
 		t.Error("wake queue should not exist after obligations failure")
 	}
 }
@@ -302,7 +300,7 @@ func TestDeliverWake_CaptainMaterialState(t *testing.T) {
 		t.Errorf("captain status should exist: %v", err)
 	}
 
-	if !lifecycle.HasQueuedWakes(captainHome) {
+	if !HasQueuedWakes(captainHome) {
 		t.Error("expected wake queue for captain material state")
 	}
 }
@@ -325,7 +323,7 @@ func TestDeliverWake_GeneralMaterialState(t *testing.T) {
 		t.Fatal("expected non-nil receipt")
 	}
 
-	if !lifecycle.HasQueuedWakes(generalHome) {
+	if !HasQueuedWakes(generalHome) {
 		t.Error("expected wake queue for general material state")
 	}
 }

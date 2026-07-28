@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // fakeBackend records SendKeys calls for test inspection.
@@ -130,17 +128,17 @@ func TestFastPath_CaptureErrorReturnsEndpointDead(t *testing.T) {
 func TestReliablePath_WakeSurvivesCaptainRecovery(t *testing.T) {
 	home := t.TempDir()
 
-	if err := lifecycle.EnqueueWake(home, "signal", "task-1", "done: PR merged"); err != nil {
+	if err := orchestrator.EnqueueWake(home, "signal", "task-1", "done: PR merged"); err != nil {
 		t.Fatalf("EnqueueWake: %v", err)
 	}
-	records, err := lifecycle.DrainWakes(home)
+	records, err := orchestrator.DrainWakes(home)
 	if err != nil {
 		t.Fatalf("DrainWakes: %v", err)
 	}
 	if len(records) != 1 {
 		t.Fatalf("drained %d, want 1", len(records))
 	}
-	if lifecycle.HasQueuedWakes(home) {
+	if orchestrator.HasQueuedWakes(home) {
 		t.Fatal("HasQueuedWakes true after drain")
 	}
 }
@@ -148,10 +146,10 @@ func TestReliablePath_WakeSurvivesCaptainRecovery(t *testing.T) {
 // TestReliablePath_DuplicateWakeIdempotency proves append-only.
 func TestReliablePath_DuplicateWakeIdempotency(t *testing.T) {
 	home := t.TempDir()
-	lifecycle.EnqueueWake(home, "signal", "task-1", "done: same")
-	lifecycle.EnqueueWake(home, "signal", "task-1", "done: same")
+	orchestrator.EnqueueWake(home, "signal", "task-1", "done: same")
+	orchestrator.EnqueueWake(home, "signal", "task-1", "done: same")
 
-	records, err := lifecycle.DrainWakes(home)
+	records, err := orchestrator.DrainWakes(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,10 +223,10 @@ func TestTypedDiagnostics_InjectionOutcomes(t *testing.T) {
 func TestTypedDiagnostics_EnqueueTimestamps(t *testing.T) {
 	home := t.TempDir()
 	before := time.Now().Unix()
-	lifecycle.EnqueueWake(home, "signal", "task-ts", "done: test")
+	orchestrator.EnqueueWake(home, "signal", "task-ts", "done: test")
 	after := time.Now().Unix()
 
-	records, _ := lifecycle.DrainWakes(home)
+	records, _ := orchestrator.DrainWakes(home)
 	if len(records) != 1 {
 		t.Fatalf("records = %d", len(records))
 	}
@@ -257,11 +255,11 @@ func TestTypedDiagnostics_WatcherIdentityPersisted(t *testing.T) {
 // TestReliablePath_WakePreservedAfterInjection proves wake survives injection.
 func TestReliablePath_WakePreservedAfterInjection(t *testing.T) {
 	home := t.TempDir()
-	lifecycle.EnqueueWake(home, "signal", "task-i", "done: persistent")
+	orchestrator.EnqueueWake(home, "signal", "task-i", "done: persistent")
 
 	orchestrator.DirectInject(&fakeBackend{}, &fakeCapture{content: "\u276F \n"}, "s:p", "test", "1")
 
-	if !lifecycle.HasQueuedWakes(home) {
+	if !orchestrator.HasQueuedWakes(home) {
 		t.Fatal("wake lost after injection")
 	}
 }
@@ -270,14 +268,14 @@ func TestReliablePath_WakePreservedAfterInjection(t *testing.T) {
 func TestBoundedWakeDrainAnnotations(t *testing.T) {
 	home := t.TempDir()
 	for i := 0; i < 3; i++ {
-		lifecycle.EnqueueWake(home, "signal", fmt.Sprintf("task-%d", i), "done: work")
+		orchestrator.EnqueueWake(home, "signal", fmt.Sprintf("task-%d", i), "done: work")
 	}
 
-	records, _ := lifecycle.DrainWakes(home)
+	records, _ := orchestrator.DrainWakes(home)
 	if len(records) != 3 {
 		t.Fatalf("drained %d, want 3", len(records))
 	}
-	if lifecycle.HasQueuedWakes(home) {
+	if orchestrator.HasQueuedWakes(home) {
 		t.Fatal("queue still exists after drain")
 	}
 }
@@ -288,12 +286,12 @@ func TestConfigRereadWake_Visibility(t *testing.T) {
 	home := t.TempDir()
 
 	// Enqueue a config-reread wake as the converge loop would.
-	if err := lifecycle.EnqueueWake(home, "config", "config-reread", "config refreshed via converge"); err != nil {
+	if err := orchestrator.EnqueueWake(home, "config", "config-reread", "config refreshed via converge"); err != nil {
 		t.Fatalf("EnqueueWake: %v", err)
 	}
 
 	// Verify it survives drain.
-	records, err := lifecycle.DrainWakes(home)
+	records, err := orchestrator.DrainWakes(home)
 	if err != nil {
 		t.Fatalf("DrainWakes: %v", err)
 	}
@@ -311,7 +309,7 @@ func TestConfigRereadWake_Visibility(t *testing.T) {
 	}
 
 	// Queue must be empty after drain.
-	if lifecycle.HasQueuedWakes(home) {
+	if orchestrator.HasQueuedWakes(home) {
 		t.Fatal("HasQueuedWakes true after drain")
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -45,7 +44,7 @@ func TestReportCmdNoRingCreatesDurableMailboxOnly(t *testing.T) {
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending=%d err=%v", len(pending), err)
 	}
-	if !lifecycle.HasQueuedWakes(receiverHome) {
+	if !orchestrator.HasQueuedWakes(receiverHome) {
 		t.Fatal("receiver wake missing")
 	}
 	if !orchestrator.HasOpenReport(receiverHome, "task:with/slash", "default") {

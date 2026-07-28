@@ -11,7 +11,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 const retryInterval = 60 * time.Second
@@ -92,7 +91,7 @@ func Report(req ReportRequest) (*ReportResult, error) {
 	if err := writeEvidence(openEvidencePath(req.SenderHome, req.TaskID, req.Key), evidence{MessageID: env.MessageID, TaskID: req.TaskID, Key: req.Key, State: req.State, At: time.Now().UnixNano()}); err != nil {
 		return nil, fmt.Errorf("uplink report: write open evidence: %w", err)
 	}
-	if err := lifecycle.EnqueueWake(req.ReceiverHome, "uplink", req.TaskID, payload); err != nil {
+	if err := EnqueueWake(req.ReceiverHome, "uplink", req.TaskID, payload); err != nil {
 		return nil, fmt.Errorf("uplink report: enqueue receiver wake: %w", err)
 	}
 	if err := retireSuperseded(req.SenderHome, req.ReceiverHome, oldReports); err != nil {

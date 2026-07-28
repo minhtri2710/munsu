@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -121,7 +120,7 @@ func TestSnapshotWatcher_IdentityPIDMismatch(t *testing.T) {
 	id := orchestrator.NewIdentity(home)
 	id.PID = 99999
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	snap := snapshotWatcher(home)
 	if snap.Active {
@@ -133,7 +132,7 @@ func TestSnapshotWatcher_Active(t *testing.T) {
 	home := t.TempDir()
 	id := orchestrator.NewIdentity(home)
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	snap := snapshotWatcher(home)
 	if !snap.Active {
@@ -220,7 +219,7 @@ func TestWaitForNewWatcher_IdentityAppears(t *testing.T) {
 		id.BuildVersion = "0.1.0-dev+newcommit"
 		orchestrator.WriteIdentity(home, id)
 		// Write beat.
-		lifecycle.WriteBeat(home)
+		orchestrator.WriteBeat(home)
 	}()
 
 	err := waitForNewWatcher(home, snap)
@@ -247,7 +246,7 @@ func TestWaitForNewWatcher_OnlyBeatWithoutIdentity(t *testing.T) {
 	}
 
 	// Write beat but no identity — should still time out.
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	err := waitForNewWatcher(home, snap)
 	if err == nil {
@@ -289,7 +288,7 @@ func TestWaitForNewWatcher_SpoofedIdentity(t *testing.T) {
 
 	// Write beat matching the spoofed PID with fresh timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Unix(), 99999)
-	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
 
 	err := waitForNewWatcher(home, snap)
 	if err == nil {
@@ -327,7 +326,7 @@ func TestWaitForNewWatcher_StaleBeat(t *testing.T) {
 
 	// Beat with stale timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
-	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
 
 	err := waitForNewWatcher(home, snap)
 	if err == nil {
@@ -365,7 +364,7 @@ func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
 
 	// Beat with future timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
-	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
 
 	err := waitForNewWatcher(home, snap)
 	if err == nil {
@@ -479,7 +478,7 @@ func TestUpdateWithHandshake_ActiveWatcherRestarts(t *testing.T) {
 	// Set up a fake active watcher: identity matches beat.
 	id := orchestrator.NewIdentity(home)
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	installedVersion := "0.1.0-dev+newcommit"
 	installedCommitSHA := "newcommit"
@@ -551,7 +550,7 @@ func TestUpdateWithHandshake_TimeoutCarriesEvidence(t *testing.T) {
 	id.BuildVersion = "0.1.0-dev+oldcommit"
 	id.CommitSHA = "oldcommit"
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	installedVersion := "0.1.0-dev+newcommit"
 	installedCommitSHA := "newcommit"
@@ -645,7 +644,7 @@ func TestUpdateWithHandshake_ArmBackgroundFails(t *testing.T) {
 	// Set up a fake active watcher.
 	id := orchestrator.NewIdentity(home)
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	savedUpdate := doUpdate
 	doUpdate = func() error {
@@ -788,7 +787,7 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 	id.BuildVersion = "0.1.0-dev+oldcommit"
 	id.CommitSHA = "oldcommit"
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	savedUpdateIn := doUpdateIn
 	doUpdateIn = func(string) error { return nil }
@@ -806,7 +805,7 @@ func TestUpdateWithHandshakeEx_EmptyCommitFailsClosed(t *testing.T) {
 		if err := orchestrator.WriteIdentity(dir, emptyID); err != nil {
 			return err
 		}
-		lifecycle.WriteBeat(dir)
+		orchestrator.WriteBeat(dir)
 		return nil
 	}
 	defer func() { doArmBackground = savedArm }()
@@ -843,7 +842,7 @@ func TestUpdateWithHandshakeEx_ActiveWatcherHandshake(t *testing.T) {
 	// Set up a fake active watcher.
 	id := orchestrator.NewIdentity(home)
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	expectedCommit := shortHEADFromCWD(t, repo)
 
@@ -909,7 +908,7 @@ func TestHelperNewWatcher(t *testing.T) {
 	if err := orchestrator.WriteIdentity(home, id); err != nil {
 		t.Fatal(err)
 	}
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 	// Keep process alive so parent can validate PID ownership.
 	time.Sleep(10 * time.Second)
 }
@@ -928,7 +927,7 @@ func TestSnapshotWatcher_WithCustomVersion(t *testing.T) {
 
 	id := orchestrator.NewIdentity(home)
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	snap := snapshotWatcher(home)
 	if !snap.Active {
@@ -951,7 +950,7 @@ func TestSnapshotWatcher_StaleBeat(t *testing.T) {
 
 	// Write a beat with a stale timestamp (beyond StaleThreshold).
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
-	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
 
 	snap := snapshotWatcher(home)
 	if snap.Active {
@@ -966,7 +965,7 @@ func TestSnapshotWatcher_FutureBeat(t *testing.T) {
 
 	// Write a beat with a future timestamp (>5s skew).
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
-	os.WriteFile(lifecycle.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
 
 	snap := snapshotWatcher(home)
 	if snap.Active {
@@ -1100,7 +1099,7 @@ func TestConcurrentSnapshotAccess(t *testing.T) {
 	home := t.TempDir()
 	id := orchestrator.NewIdentity(home)
 	orchestrator.WriteIdentity(home, id)
-	lifecycle.WriteBeat(home)
+	orchestrator.WriteBeat(home)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // FleetTaskSnapshot is the typed task reading for fleet peek.
@@ -141,7 +140,7 @@ func DrainCycle(opts DrainCycleOptions) (*DrainReport, error) {
 		limit = 10
 	}
 
-	claim, err := lifecycle.ClaimWakes(opts.HomeDir, opts.Consumer, leaseCaptains, limit)
+	claim, err := ClaimWakes(opts.HomeDir, opts.Consumer, leaseCaptains, limit)
 	if err != nil {
 		return nil, fmt.Errorf("claiming wakes: %w", err)
 	}

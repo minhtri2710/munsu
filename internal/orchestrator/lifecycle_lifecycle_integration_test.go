@@ -1,6 +1,6 @@
 //go:build integration
 
-package lifecycle
+package orchestrator
 
 import (
 	"bufio"

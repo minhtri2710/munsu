@@ -10,7 +10,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -278,7 +277,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		return res, fmt.Errorf("session-start refused: %w", err)
 	}
 
-	acquired, err := lifecycle.AcquireSession(home)
+	acquired, err := orchestrator.AcquireSession(home)
 	if err != nil {
 		return res, fmt.Errorf("lock acquire: %w", err)
 	}

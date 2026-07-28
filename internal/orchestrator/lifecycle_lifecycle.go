@@ -3,7 +3,7 @@
 // Consumers (supervision, waker, session) import lifecycle and never
 // spell state/.wake-queue, state/.last-watcher-beat, or state/.lock
 // themselves.
-package lifecycle
+package orchestrator
 
 import (
 	"bufio"
@@ -72,7 +72,7 @@ func AcquireSession(homeDir string) (bool, error) {
 	// Stale lock recovery: if lock file contains a dead PID, or a PID
 	// whose process is a munsu watch (legacy shared lock), clear it.
 	if pid := readLockPID(path); pid > 0 {
-		if !isProcessAlive(pid) {
+		if !isLifecycleProcessAlive(pid) {
 			fmt.Fprintf(os.Stderr, "WARNING: stale session lock from dead PID %d — clearing\n", pid)
 			os.Remove(path)
 		} else if isWatchProcess(pid) {
@@ -111,7 +111,7 @@ func readLockPID(path string) int {
 
 // isProcessAlive checks whether a process with the given PID is running.
 // Uses kill -0 which tests existence without sending a signal.
-func isProcessAlive(pid int) bool {
+func isLifecycleProcessAlive(pid int) bool {
 	cmd := exec.Command("kill", "-0", strconv.Itoa(pid))
 	return cmd.Run() == nil
 }
@@ -162,7 +162,7 @@ func AcquireWatch(homeDir string) (bool, error) {
 
 	// Stale lock recovery: if lock file contains a dead PID, clear it
 	if pid := readLockPID(path); pid > 0 {
-		if !isProcessAlive(pid) {
+		if !isLifecycleProcessAlive(pid) {
 			fmt.Fprintf(os.Stderr, "WARNING: stale watch lock from dead PID %d — clearing\n", pid)
 			os.Remove(path)
 		}

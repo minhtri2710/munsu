@@ -7,7 +7,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -107,7 +106,7 @@ func fleetSummary(w io.Writer, homeDir string) {
 	}
 
 	watcherStatus := "--"
-	beat := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	beat := orchestrator.ReadBeatStatus(homeDir, time.Now())
 	if beat.Exists {
 		if beat.Stale {
 			watcherStatus = "stale"

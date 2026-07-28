@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -57,7 +56,7 @@ func cleanupTestWatcher(t *testing.T, home string, launchedPID int) {
 	pid := launchedPID
 	if pid <= 0 {
 		id := orchestrator.ReadIdentity(home)
-		_, beatPID, beatOK := lifecycle.ReadBeat(home)
+		_, beatPID, beatOK := orchestrator.ReadBeat(home)
 		if id != nil {
 			pid = id.PID
 		} else if beatOK {

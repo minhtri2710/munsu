@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -61,11 +60,11 @@ func defaultStartWatcherProcess(homeDir string) (int, error) {
 
 // ensureWatcher checks the watcher state and starts one if needed.
 func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
-	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	beatStatus := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If restart requested, signal existing watcher using identity validation
 	if restart && beatStatus.Exists {
-		_, pid, ok := lifecycle.ReadBeat(homeDir)
+		_, pid, ok := orchestrator.ReadBeat(homeDir)
 		if ok && pid > 0 && orchestrator.ValidatePIDOwnership(homeDir, pid) {
 			proc, err := os.FindProcess(pid)
 			if err == nil {
@@ -73,12 +72,12 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 				time.Sleep(500 * time.Millisecond)
 			}
 		}
-		beatStatus = lifecycle.ReadBeatStatus(homeDir, time.Now())
+		beatStatus = orchestrator.ReadBeatStatus(homeDir, time.Now())
 	}
 
 	// A fresh beat is healthy only when its PID has validated ownership.
 	if beatStatus.Exists && !beatStatus.Stale {
-		_, pid, ok := lifecycle.ReadBeat(homeDir)
+		_, pid, ok := orchestrator.ReadBeat(homeDir)
 		if ok && pid > 0 && orchestrator.ValidatePIDOwnership(homeDir, pid) {
 			return Response[WatchEnsure]{
 				SchemaVersion: SchemaVersion,
@@ -159,11 +158,11 @@ func ensureWatcher(homeDir string, restart bool) Response[WatchEnsure] {
 // waitForWatcherBeacon polls until the watcher beat exists and identity ownership
 // validates for pid, or until timeout. Returns the last beat status and whether
 // ownership was validated.
-func waitForWatcherBeacon(homeDir string, pid int, timeout time.Duration) (lifecycle.BeatStatus, bool) {
+func waitForWatcherBeacon(homeDir string, pid int, timeout time.Duration) (orchestrator.BeatStatus, bool) {
 	deadline := time.Now().Add(timeout)
-	var status lifecycle.BeatStatus
+	var status orchestrator.BeatStatus
 	for {
-		status = lifecycle.ReadBeatStatus(homeDir, time.Now())
+		status = orchestrator.ReadBeatStatus(homeDir, time.Now())
 		if status.Exists && !status.Stale && orchestrator.ValidatePIDOwnership(homeDir, pid) {
 			return status, true
 		}
@@ -180,7 +179,7 @@ func identifyWatcher(homeDir string) string {
 	if id := orchestrator.ReadIdentity(homeDir); id != nil {
 		return fmt.Sprintf("watch-%d-v%s", id.PID, id.BuildVersion)
 	}
-	_, pid, ok := lifecycle.ReadBeat(homeDir)
+	_, pid, ok := orchestrator.ReadBeat(homeDir)
 	if ok && pid > 0 {
 		return fmt.Sprintf("watch-%d", pid)
 	}
@@ -189,7 +188,7 @@ func identifyWatcher(homeDir string) string {
 
 // watcherLeaseInfo builds WatchLeaseInfo from the current beat and identity.
 func watcherLeaseInfo(homeDir string) *WatchLeaseInfo {
-	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	beatStatus := orchestrator.ReadBeatStatus(homeDir, time.Now())
 	heartbeatAge := ""
 	if beatStatus.Exists {
 		heartbeatAge = beatStatus.Age.Round(time.Second).String()
@@ -255,7 +254,7 @@ func newWatchRunCmd() *cobra.Command {
 
 // countQueuedWakes returns the number of entries in the wake queue file.
 func countQueuedWakes(homeDir string) int {
-	data, err := os.ReadFile(lifecycle.QueuePath(homeDir))
+	data, err := os.ReadFile(orchestrator.QueuePath(homeDir))
 	if err != nil {
 		return 0
 	}
@@ -292,7 +291,7 @@ func newWatchStopCmd() *cobra.Command {
 //
 // Ownership must be proven from the identity file; beat-only state is ambiguous.
 func stopWatcher(homeDir string) Response[WatchStop] {
-	_, pid, ok := lifecycle.ReadBeat(homeDir)
+	_, pid, ok := orchestrator.ReadBeat(homeDir)
 
 	// No watcher running — report already-stopped
 	if !ok || pid <= 0 {
@@ -343,7 +342,7 @@ func stopWatcher(homeDir string) Response[WatchStop] {
 		state = "unresponsive"
 	}
 
-	lifecycle.ClearBeat(homeDir)
+	orchestrator.ClearBeat(homeDir)
 	orchestrator.ClearIdentity(homeDir)
 	return Response[WatchStop]{
 		SchemaVersion: SchemaVersion,
@@ -381,7 +380,7 @@ func newWatchStatusCmd() *cobra.Command {
 // evaluateWatcherStatus builds a bounded watcher status from beat, identity,
 // and wake queue state. Never enters daemon mode; pure stateless read.
 func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
-	beatStatus := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	beatStatus := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	watchID := identifyWatcher(homeDir)
 	var identity string
@@ -390,7 +389,7 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 	if id := orchestrator.ReadIdentity(homeDir); id != nil {
 		identity = orchestrator.IdentitySummary(id)
 		pid = id.PID
-	} else if _, beatPID, ok := lifecycle.ReadBeat(homeDir); ok {
+	} else if _, beatPID, ok := orchestrator.ReadBeat(homeDir); ok {
 		pid = beatPID
 	}
 
@@ -460,7 +459,7 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 // (wake with done/failed/needs-decision/blocked payload). Returns 0 if no
 // material wakes are found.
 func oldestMaterialWakeAge(homeDir string) int64 {
-	data, err := os.ReadFile(lifecycle.QueuePath(homeDir))
+	data, err := os.ReadFile(orchestrator.QueuePath(homeDir))
 	if err != nil {
 		return 0
 	}

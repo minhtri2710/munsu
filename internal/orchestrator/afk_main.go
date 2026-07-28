@@ -10,8 +10,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 const (
@@ -114,7 +112,7 @@ func scanStatusFiles(homeDir string) {
 			payload = strings.TrimPrefix(payload, "failed:")
 			payload = strings.TrimPrefix(payload, "needs-decision:")
 			payload = strings.TrimSpace(payload)
-			_ = lifecycle.EnqueueWake(homeDir, "afk", taskID, payload)
+			_ = EnqueueWake(homeDir, "afk", taskID, payload)
 		}
 	}
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // Daemon is the Go-native AFK sub-supervisor daemon.
-// It manages the consent flag, identity lock, and wake triage lifecycle.
+// It manages the consent flag, identity lock, and wake triage
 // Phase 2.2: runLoop integrates digester, wedge detection, and stale clearing.
 type Daemon struct {
 	homeDir  string

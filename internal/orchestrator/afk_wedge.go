@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 const (
@@ -75,7 +73,7 @@ func (w *WedgeDetector) Check(now time.Time) *WedgeAlarm {
 	w.mu.Unlock()
 
 	// 1. Check watcher beat staleness.
-	beatStatus := lifecycle.ReadBeatStatus(w.homeDir, now)
+	beatStatus := ReadBeatStatus(w.homeDir, now)
 	if beatStatus.Exists && beatStatus.Stale {
 		return &WedgeAlarm{
 			Reason:     fmt.Sprintf("watcher beat stale: age=%s threshold=%s", beatStatus.Age.Round(time.Second), staleThreshold.Round(time.Second)),

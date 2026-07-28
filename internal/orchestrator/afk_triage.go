@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // Digest holds the result of one wake triage cycle.
@@ -25,7 +24,7 @@ type WakeDigest struct {
 // Returns nil digest (not an error) when no wake queue exists or it is empty.
 // Consent-gating (state/.afk check) is the caller's responsibility.
 func OneCycle(homeDir string) (*Digest, error) {
-	records, err := lifecycle.DrainWakes(homeDir)
+	records, err := DrainWakes(homeDir)
 	if err != nil {
 		return nil, err
 	}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +20,7 @@ func guardCooldownPath(homeDir string) string {
 	return filepath.Join(homeDir, "state", ".guard-cooldown")
 }
 
-func guardStateKey(beat lifecycle.BeatStatus, inFlight int) string {
+func guardStateKey(beat orchestrator.BeatStatus, inFlight int) string {
 	if !beat.Exists {
 		return "missing:" + strconv.Itoa(inFlight)
 	}

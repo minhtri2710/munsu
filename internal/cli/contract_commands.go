@@ -9,7 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -190,7 +189,7 @@ func newContractGuardCmd() *cobra.Command {
 					Code: orchestrator.ConditionWatcherStale,
 					Message: fmt.Sprintf(
 						"WATCHER BEACON STALE - last beat %v ago (grace %v)",
-						beatStatus.Age.Round(time.Second), lifecycle.StaleThreshold()),
+						beatStatus.Age.Round(time.Second), orchestrator.StaleThreshold()),
 				})
 			}
 			allConditions = append(allConditions, result.Conditions...)

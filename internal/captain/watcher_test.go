@@ -9,7 +9,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -59,8 +58,8 @@ func TestWatcherStatusSummary_StoppedStaleBeat(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Write an old beat beyond the stale threshold.
-	old := time.Now().Add(-2 * lifecycle.StaleThreshold())
-	beatPath := lifecycle.BeatPath(tmp)
+	old := time.Now().Add(-2 * orchestrator.StaleThreshold())
+	beatPath := orchestrator.BeatPath(tmp)
 	os.WriteFile(beatPath, []byte(old.Format("060102150405")+" 99999\n"), 0644)
 
 	status := WatcherStatusSummary(tmp)
@@ -117,7 +116,7 @@ func TestEnsureWatcher_StopsWhenNoChildWork(t *testing.T) {
 	// Simulate a watcher identity and beat.
 	id := orchestrator.NewIdentity(tmp)
 	orchestrator.WriteIdentity(tmp, id)
-	lifecycle.WriteBeat(tmp)
+	orchestrator.WriteBeat(tmp)
 
 	status := WatcherStatusSummary(tmp)
 	if status != WatcherStopped {

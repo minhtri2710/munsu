@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -29,7 +28,7 @@ const (
 // stopping the watcher.
 func WatcherStatusSummary(captainHome string) WatcherStatus {
 	// Check beat first — authoritative liveness signal.
-	beatStatus := lifecycle.ReadBeatStatus(captainHome, time.Now())
+	beatStatus := orchestrator.ReadBeatStatus(captainHome, time.Now())
 	if !beatStatus.Exists {
 		// No beat — check identity as secondary signal (leftover from crash).
 		if id := orchestrator.ReadIdentity(captainHome); id != nil {
@@ -42,7 +41,7 @@ func WatcherStatusSummary(captainHome string) WatcherStatus {
 	}
 
 	// Beat is fresh. Validate PID ownership to confirm it's our watcher.
-	_, pid, ok := lifecycle.ReadBeat(captainHome)
+	_, pid, ok := orchestrator.ReadBeat(captainHome)
 	if ok && pid > 0 && orchestrator.ValidatePIDOwnership(captainHome, pid) {
 		return WatcherRunning
 	}
@@ -99,7 +98,7 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		if err := orchestrator.Stop(captainHome); err != nil {
 			return fmt.Errorf("stopping watcher for captain home %s: %w", captainHome, err)
 		}
-		lifecycle.ClearBeat(captainHome)
+		orchestrator.ClearBeat(captainHome)
 		orchestrator.ClearIdentity(captainHome)
 	}
 	return nil

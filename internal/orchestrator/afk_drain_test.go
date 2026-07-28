@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 func TestDrainCycle_NoConsumer(t *testing.T) {
@@ -46,14 +44,14 @@ func TestDrainCycle_EmptyQueue(t *testing.T) {
 func TestDrainCycle_ClassifiesActionable(t *testing.T) {
 	home := t.TempDir()
 	// Actionable: general-relevant payloads.
-	if err := lifecycle.EnqueueWake(home, "signal", "task-1", "done: PR merged"); err != nil {
+	if err := EnqueueWake(home, "signal", "task-1", "done: PR merged"); err != nil {
 		t.Fatal(err)
 	}
-	if err := lifecycle.EnqueueWake(home, "signal", "task-2", "blocked: missing auth"); err != nil {
+	if err := EnqueueWake(home, "signal", "task-2", "blocked: missing auth"); err != nil {
 		t.Fatal(err)
 	}
 	// Routine: not general-relevant.
-	if err := lifecycle.EnqueueWake(home, "stale", "task-3", "still working on tests"); err != nil {
+	if err := EnqueueWake(home, "stale", "task-3", "still working on tests"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +80,7 @@ func TestDrainCycle_ClassifiesActionable(t *testing.T) {
 
 func TestDrainCycle_DrainsQueue(t *testing.T) {
 	home := t.TempDir()
-	if err := lifecycle.EnqueueWake(home, "signal", "task-1", "done: shipped"); err != nil {
+	if err := EnqueueWake(home, "signal", "task-1", "done: shipped"); err != nil {
 		t.Fatal(err)
 	}
 

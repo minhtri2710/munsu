@@ -12,7 +12,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/spf13/cobra"
@@ -164,7 +163,7 @@ func newBootstrapCmd() *cobra.Command {
 		Use:   "bootstrap [install <tools>...]",
 		Short: "Detect toolchain and run setup sweeps",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			locked := lifecycle.IsSessionLocked(ctx.Home)
+			locked := orchestrator.IsSessionLocked(ctx.Home)
 			var installTools []string
 			if len(args) > 1 && args[0] == "install" {
 				installTools = args[1:]
@@ -317,7 +316,7 @@ func runGuardClaude(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
@@ -406,7 +405,7 @@ func runGuardCodexLike(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
@@ -490,7 +489,7 @@ func runGuardGrok(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
@@ -588,7 +587,7 @@ func runGuardAgy(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {

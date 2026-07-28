@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -271,7 +270,7 @@ func currentBranch(root string) (string, error) {
 // Returns a snapshot with Active=false if no watcher is clearly running.
 func snapshotWatcher(homeDir string) *WatcherSnapshot {
 	id := orchestrator.ReadIdentity(homeDir)
-	_, pid, ok := lifecycle.ReadBeat(homeDir)
+	_, pid, ok := orchestrator.ReadBeat(homeDir)
 	if !ok || pid <= 0 || id == nil {
 		return &WatcherSnapshot{Active: false}
 	}
@@ -286,7 +285,7 @@ func snapshotWatcher(homeDir string) *WatcherSnapshot {
 		return &WatcherSnapshot{Active: false}
 	}
 	// Reject stale or future heartbeats using canonical lifecycle staleness.
-	bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	bt := orchestrator.ReadBeatStatus(homeDir, time.Now())
 	if !bt.Exists || bt.Stale {
 		return &WatcherSnapshot{Active: false}
 	}
@@ -387,9 +386,9 @@ func waitForNewWatcher(homeDir string, snap *WatcherSnapshot) error {
 	for time.Now().Before(deadline) {
 		// Check beat: watcher should be writing beats with a new PID
 		// and the beat content-timestamp must be fresh (not stale or future).
-		_, pid, ok := lifecycle.ReadBeat(homeDir)
+		_, pid, ok := orchestrator.ReadBeat(homeDir)
 		if ok && pid > 0 && pid != snap.OldPID {
-			bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+			bt := orchestrator.ReadBeatStatus(homeDir, time.Now())
 			if bt.Exists && !bt.Stale && bt.Age >= -5*time.Second {
 				beatOK = true
 			} else {
@@ -403,12 +402,12 @@ func waitForNewWatcher(homeDir string, snap *WatcherSnapshot) error {
 		if id := orchestrator.ReadIdentity(homeDir); id != nil {
 			if orchestrator.NewBuildIdentity(id.CommitSHA).Matches(orchestrator.NewBuildIdentity(snap.InstalledCommitSHA)) && id.PID > 0 {
 				identityOK = true
-				_, beatPID, beatOK2 := lifecycle.ReadBeat(homeDir)
+				_, beatPID, beatOK2 := orchestrator.ReadBeat(homeDir)
 				if beatOK2 && beatPID == id.PID && beatPID != snap.OldPID {
 					// Verify beat freshness and process ownership before
 					// declaring success. This rejects spoofed identity+beat
 					// files and stale/future heartbeats.
-					bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+					bt := orchestrator.ReadBeatStatus(homeDir, time.Now())
 					if bt.Exists && !bt.Stale && bt.Age >= -5*time.Second &&
 						orchestrator.ValidatePIDOwnership(homeDir, id.PID) {
 						return nil
@@ -444,12 +443,12 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 		ownershipOK = orchestrator.ValidatePIDOwnership(homeDir, newID.PID)
 	}
 
-	beatTS, beatPID, beatOKLive := lifecycle.ReadBeat(homeDir)
+	beatTS, beatPID, beatOKLive := orchestrator.ReadBeat(homeDir)
 	beatPIDStr := ""
 	beatFresh := false
 	if beatOKLive {
 		beatPIDStr = fmt.Sprintf("%d", beatPID)
-		bt := lifecycle.ReadBeatStatus(homeDir, time.Now())
+		bt := orchestrator.ReadBeatStatus(homeDir, time.Now())
 		beatFresh = bt.Exists && !bt.Stale && bt.Age >= -5*time.Second
 	}
 

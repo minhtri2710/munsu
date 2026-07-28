@@ -14,7 +14,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 const watcherPollInterval = 5 * time.Second
@@ -79,14 +78,14 @@ func signalChannel() <-chan os.Signal {
 }
 
 func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (*WakeReason, error) {
-	acquired, err := lifecycle.AcquireWatch(homeDir)
+	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
 	}
 	if !acquired {
 		return nil, fmt.Errorf("another watcher is already running")
 	}
-	defer lifecycle.ReleaseWatch(homeDir)
+	defer ReleaseWatch(homeDir)
 
 	// Write watcher identity on start and clear it on exit.
 	identity := NewIdentity(homeDir)
@@ -95,7 +94,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	}
 	defer ClearIdentityIfMatches(homeDir, identity)
 
-	lifecycle.WriteBeat(homeDir)
+	WriteBeat(homeDir)
 	ticker := newTicker(watcherPollInterval)
 	defer ticker.Stop()
 
@@ -104,7 +103,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 		case <-sigCh:
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
-			lifecycle.WriteBeat(homeDir)
+			WriteBeat(homeDir)
 			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states); err != nil {
 				return nil, err
 			}
@@ -159,7 +158,7 @@ func ArmBackground(homeDir string, restart bool) error {
 // stopRunningWatcher signals the running watcher identified by beat + identity.
 // Uses identity-based PID ownership validation to avoid signaling unrelated processes.
 func stopRunningWatcher(homeDir string) error {
-	_, pid, ok := lifecycle.ReadBeat(homeDir)
+	_, pid, ok := ReadBeat(homeDir)
 	if !ok || pid <= 0 {
 		return nil // no watcher running
 	}
@@ -171,7 +170,7 @@ func stopRunningWatcher(homeDir string) error {
 
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		lifecycle.ClearBeat(homeDir)
+		ClearBeat(homeDir)
 		return nil
 	}
 
@@ -319,7 +318,7 @@ func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskS
 	statusPath := filepath.Join(homeDir, "state", id+".status")
 	if fi, err := os.Stat(statusPath); err == nil {
 		age := time.Since(fi.ModTime())
-		if age > lifecycle.StaleThreshold() {
+		if age > StaleThreshold() {
 			if isStatusGeneralRelevant(homeDir, id) {
 				return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold (general-relevant status)", windowID))
 			}
@@ -441,7 +440,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			continue
 		}
-		if err := lifecycle.EnqueueWake(homeDir, reason.Kind, id, reason.Message); err != nil {
+		if err := EnqueueWake(homeDir, reason.Kind, id, reason.Message); err != nil {
 			return emitted, fmt.Errorf("enqueue watcher wake: %w", err)
 		}
 		if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
@@ -504,7 +503,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		if data, err := os.ReadFile(marker); err == nil && string(data) == fingerprint {
 			continue
 		}
-		if err := lifecycle.EnqueueWake(homeDir, "check", checkID, msg); err != nil {
+		if err := EnqueueWake(homeDir, "check", checkID, msg); err != nil {
 			return emitted, fmt.Errorf("enqueue check wake: %w", err)
 		}
 		if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {

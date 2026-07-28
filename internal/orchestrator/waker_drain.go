@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // ConditionCode is a stable machine-readable code for a guard condition.
@@ -32,7 +30,7 @@ type ConditionInfo struct {
 
 // Drain reads and clears the wake queue.
 func Drain(homeDir string) ([]WakeRecord, error) {
-	records, err := lifecycle.DrainWakes(homeDir)
+	records, err := DrainWakes(homeDir)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +55,7 @@ func PrintRecords(records []WakeRecord) {
 // GuardResult summarizes the shared guard evaluation for both the CLI
 // middleware and the contract guard command.
 type GuardResult struct {
-	BeatStatus lifecycle.BeatStatus
+	BeatStatus BeatStatus
 	InFlight   int
 	Conditions []ConditionInfo
 }
@@ -73,9 +71,9 @@ func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
 		InFlight: inFlight,
 	}
 
-	result.BeatStatus = lifecycle.ReadBeatStatus(homeDir, now)
+	result.BeatStatus = ReadBeatStatus(homeDir, now)
 
-	if lifecycle.HasQueuedWakes(homeDir) {
+	if HasQueuedWakes(homeDir) {
 		msg := "QUEUED WAKES PENDING - drain with munsu wake-drain"
 		if HasAgedMaterialWake(homeDir, now) {
 			msg = "QUEUED WAKES PENDING (aged) - material wake beyond threshold, guard unhealthy"
@@ -98,7 +96,7 @@ func EvaluateGuard(homeDir string, inFlight int, now time.Time) GuardResult {
 // material wake (done/failed/needs-decision/blocked) older than
 // MaterialWakeAgeThreshold.
 func HasAgedMaterialWake(homeDir string, now time.Time) bool {
-	data, err := os.ReadFile(lifecycle.QueuePath(homeDir))
+	data, err := os.ReadFile(QueuePath(homeDir))
 	if err != nil {
 		return false
 	}
@@ -129,15 +127,15 @@ func HasAgedMaterialWake(homeDir string, now time.Time) bool {
 func GuardWarnings(homeDir string) []string {
 	var warnings []string
 
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := ReadBeatStatus(homeDir, time.Now())
 	if !status.Exists {
 		warnings = append(warnings, "WATCHER NEVER STARTED - no liveness beacon")
 	} else if status.Stale {
 		warnings = append(warnings, fmt.Sprintf(
 			"WATCHER BEACON STALE - last beat %v ago (grace %v)",
-			status.Age.Round(time.Second), lifecycle.StaleThreshold()))
+			status.Age.Round(time.Second), StaleThreshold()))
 	}
-	if lifecycle.HasQueuedWakes(homeDir) {
+	if HasQueuedWakes(homeDir) {
 		warnings = append(warnings, "QUEUED WAKES PENDING - drain with munsu wake-drain")
 	}
 	return warnings

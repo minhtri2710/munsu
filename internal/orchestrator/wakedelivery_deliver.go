@@ -17,7 +17,6 @@ import (
 	"time"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // DeliverRequest captures all inputs needed to deliver a terminal report
@@ -161,7 +160,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if isMaterial(req.State) {
 		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, syntheticID)
 		receipt.EnqueueUnix = time.Now().Unix()
-		lifecycle.EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload)
+		EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload)
 	}
 
 	return receipt, nil

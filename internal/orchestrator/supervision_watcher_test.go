@@ -12,7 +12,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 type testEndpointProbe struct{}
@@ -437,7 +436,7 @@ func TestScanFleet_StaleStatusFile(t *testing.T) {
 	os.WriteFile(statusPath, []byte("working: started\n"), 0644)
 
 	// Set mod time to be older than stale threshold
-	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
+	past := time.Now().Add(-(StaleThreshold() + time.Second))
 	os.Chtimes(statusPath, past, past)
 
 	reason := testScanFleet(tmp)
@@ -524,7 +523,7 @@ func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
 
 	statusPath := filepath.Join(stateDir, "old-status-task.status")
 	os.WriteFile(statusPath, []byte("working: started\n"), 0644)
-	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
+	past := time.Now().Add(-(StaleThreshold() + time.Second))
 	os.Chtimes(statusPath, past, past)
 
 	// scanFleet processes meta files in directory order — should find a stale task
@@ -543,7 +542,7 @@ func TestRunCycle_QueuedWakeDoesNotEmitAnotherWake(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	mhome.WriteMeta(tmp, "no-window-task", map[string]string{"kind": "ship"})
-	if err := lifecycle.EnqueueWake(tmp, "status", "task-1", "done: ready"); err != nil {
+	if err := EnqueueWake(tmp, "status", "task-1", "done: ready"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -555,7 +554,7 @@ func TestRunCycle_QueuedWakeDoesNotEmitAnotherWake(t *testing.T) {
 		t.Fatal("queued wakes must not cause the watcher to enqueue another wake")
 	}
 
-	records, err := lifecycle.DrainWakes(tmp)
+	records, err := DrainWakes(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +589,7 @@ func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T
 		t.Fatalf("changed condition emitted=%v err=%v, want true nil", emitted, err)
 	}
 
-	records, err := lifecycle.DrainWakes(tmp)
+	records, err := DrainWakes(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +750,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// 4) General leases the wake via claim (not legacy drain).
-	claim, err := lifecycle.ClaimWakes(homeDir, "general-e2e", 60, 10)
+	claim, err := ClaimWakes(homeDir, "general-e2e", 60, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,7 +776,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// Queue emptied for claimed records; second claim is empty unless new signal.
-	claim2, err := lifecycle.ClaimWakes(homeDir, "general-e2e", 60, 10)
+	claim2, err := ClaimWakes(homeDir, "general-e2e", 60, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -930,7 +929,7 @@ func TestScanFleet_CaptainKindAbsorbsStale(t *testing.T) {
 		"backend": "tmux",
 	})
 	os.WriteFile(filepath.Join(stateDir, "captain:domain.status"), []byte("working: idle healthy\n"), 0644)
-	past := time.Now().Add(-(lifecycle.StaleThreshold() + time.Second))
+	past := time.Now().Add(-(StaleThreshold() + time.Second))
 	os.Chtimes(filepath.Join(stateDir, "captain:domain.status"), past, past)
 
 	reason := testScanFleet(tmp)
@@ -981,7 +980,7 @@ func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 			t.Fatalf("cycle %d re-emitted stale despite stable fingerprint", i+2)
 		}
 	}
-	records, err := lifecycle.DrainWakes(tmp)
+	records, err := DrainWakes(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1121,7 +1120,7 @@ func TestNormalRunCycle_NoDiagnosticWake(t *testing.T) {
 	}
 
 	// Verify NO diagnostic wake about parent-home was enqueued
-	records, drainErr := lifecycle.DrainWakes(tmp)
+	records, drainErr := DrainWakes(tmp)
 	if drainErr != nil {
 		t.Fatalf("DrainWakes: %v", drainErr)
 	}
@@ -1477,16 +1476,16 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Set up a stale watcher beat.
-	old := time.Now().Add(-(lifecycle.StaleThreshold() + time.Minute))
+	old := time.Now().Add(-(StaleThreshold() + time.Minute))
 	beatContent := fmt.Sprintf("%d %d", old.Unix(), 99999)
-	os.WriteFile(lifecycle.BeatPath(tmp), []byte(beatContent), 0644)
+	os.WriteFile(BeatPath(tmp), []byte(beatContent), 0644)
 
 	// Add an in-flight task.
 	mhome.WriteMeta(tmp, "task-stale", map[string]string{"window": "@test"})
 	os.WriteFile(filepath.Join(stateDir, "task-stale.status"), []byte("working: started\n"), 0644)
 
 	// Enqueue a material wake.
-	lifecycle.EnqueueWake(tmp, "signal", "task-stale", "done: PR merged")
+	EnqueueWake(tmp, "signal", "task-stale", "done: PR merged")
 
 	// Evaluate guard — should detect stale + pending.
 	result := EvaluateGuard(tmp, 1, time.Now())
@@ -1516,13 +1515,13 @@ func TestDeadStaleWatcher_AutoRecoverOrFailClosed(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// No watcher beat = absent watcher.
-	beatStatus := lifecycle.ReadBeatStatus(tmp, time.Now())
+	beatStatus := ReadBeatStatus(tmp, time.Now())
 	if beatStatus.Exists {
 		t.Fatal("beat should not exist in clean temp dir")
 	}
 
 	// Enqueue a material wake.
-	lifecycle.EnqueueWake(tmp, "signal", "task-fail", "done: PR merged")
+	EnqueueWake(tmp, "signal", "task-fail", "done: PR merged")
 
 	// Bounded status command should detect the situation.
 	// (Unit test for the diagnostic evaluation logic)
