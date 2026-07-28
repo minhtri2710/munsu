@@ -15,10 +15,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func init() {
-	orchestrator.GateRefuseFromCWD = fleet.GateRefuseFromCWD
-}
-
 func runtimeTaskEndpointProbe() orchestrator.TaskEndpointProbe {
 	return cliEndpointProbe{resolve: backend.BackendForTask}
 }

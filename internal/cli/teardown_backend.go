@@ -17,6 +17,8 @@ func newSessionBoundTeardown() orchestrator.BoundTeardown {
 	return sessionBoundTeardown{resolve: backend.BackendForTask}
 }
 
+func (s sessionBoundTeardown) RefuseGate() error { return fleet.GateRefuseFromCWD() }
+
 func (s sessionBoundTeardown) resolveBound(home string, meta map[string]string) (backend.Backend, string, error) {
 	if home == "" || meta["backend"] == "" || meta["window"] == "" {
 		return nil, "", fmt.Errorf("bound teardown identity is incomplete")

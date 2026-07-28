@@ -17,6 +17,7 @@ type fakeTeardown struct {
 	alive                bool
 }
 
+func (f fakeTeardown) RefuseGate() error { return nil }
 func (f fakeTeardown) Probe(string, map[string]string) (EndpointStatus, error) {
 	return EndpointStatus{Alive: f.alive}, f.probeErr
 }

@@ -18,8 +18,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/soldier"
 )
 
-var GateRefuseFromCWD = func() error { return nil }
-
 // Options controls teardown behavior.
 type Options struct {
 	HomeDir string // munsu home directory
@@ -42,7 +40,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-	if err := GateRefuseFromCWD(); err != nil {
+	if err := backend.RefuseGate(); err != nil {
 		return nil, fmt.Errorf("teardown refused: %w", err)
 	}
 
