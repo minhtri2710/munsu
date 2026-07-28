@@ -13,7 +13,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/soldier"
 )
 
 // Options controls teardown behavior.
@@ -279,7 +278,7 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 		// normal  Any other untracked/modified files still fail.
 		lines := strings.Split(raw, "\n")
 		allowlist := make(map[string]bool)
-		for _, name := range soldier.LaunchArtifactNames() {
+		for _, name := range LaunchArtifactNames() {
 			allowlist[name] = true
 		}
 		var remaining []string

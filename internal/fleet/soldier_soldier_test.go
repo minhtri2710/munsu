@@ -1,4 +1,4 @@
-package soldier
+package fleet
 
 import (
 	"os"

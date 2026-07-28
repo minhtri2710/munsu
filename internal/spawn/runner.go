@@ -13,7 +13,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/soldier"
 )
 
 // Runner orchestrates the full spawn sequence through private phase methods.
@@ -39,7 +38,7 @@ type Runner struct {
 
 	// soldier launch prompt state
 	prompt     string
-	promptEnv  *soldier.LaunchEnvelope
+	promptEnv  *fleet.LaunchEnvelope
 	launchArgs []string
 	launchBin  string
 }
@@ -608,7 +607,7 @@ func labelComponent(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// Phase 11: createSession creates a session window for the soldier.
+// Phase 11: createSession creates a session window for the fleet.
 func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
@@ -653,7 +652,7 @@ func (r *Runner) buildSoldierPrompt() error {
 	}
 
 	// Build the prompt input struct.
-	input := soldier.LaunchPromptInput{
+	input := fleet.LaunchPromptInput{
 		TaskID:          r.args.ID,
 		TaskKind:        r.args.Kind,
 		DeliveryMode:    r.effectiveMode,
@@ -669,12 +668,12 @@ func (r *Runner) buildSoldierPrompt() error {
 	}
 
 	// Fail-closed: validate before building.
-	if err := soldier.FailClosedDuringLaunch(input); err != nil {
+	if err := fleet.FailClosedDuringLaunch(input); err != nil {
 		return fmt.Errorf("pre-launch fail-closed: %w", err)
 	}
 
 	// Build the complete prompt and envelope.
-	promptText, env, err := soldier.BuildLaunchPrompt(input)
+	promptText, env, err := fleet.BuildLaunchPrompt(input)
 	if err != nil {
 		return fmt.Errorf("building soldier launch prompt: %w", err)
 	}
@@ -682,13 +681,13 @@ func (r *Runner) buildSoldierPrompt() error {
 	r.promptEnv = env
 
 	// Persist durable files to the worktree.
-	charter := soldier.DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
-	if err := soldier.PersistLaunchFiles(r.wtPath, charter, briefData, env, promptText); err != nil {
+	charter := fleet.DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
+	if err := fleet.PersistLaunchFiles(r.wtPath, charter, briefData, env, promptText); err != nil {
 		return fmt.Errorf("persisting soldier launch files: %w", err)
 	}
 
 	// Build launch arguments with the complete prompt, passing model and effort.
-	bin, args, err := soldier.BuildLaunchArgs(r.wtPath, r.harness, r.model, r.effort, promptText)
+	bin, args, err := fleet.BuildLaunchArgs(r.wtPath, r.harness, r.model, r.effort, promptText)
 	if err != nil {
 		return fmt.Errorf("building soldier launch arguments: %w", err)
 	}
@@ -701,11 +700,11 @@ func (r *Runner) buildSoldierPrompt() error {
 // resolveSkills returns deterministic required/optional skills for the current
 // spawn based on task kind, delivery mode, and lifecycle policy.
 // Uses explicit typed declarations — no keyword guessing or load-all.
-func (r *Runner) resolveSkills() (required, optional []soldier.SkillEntry, diags []string) {
+func (r *Runner) resolveSkills() (required, optional []fleet.SkillEntry, diags []string) {
 	// Catalog of skills available to spawns.
 	// In a production system this would come from a registry or config file;
 	// here we build it from known skills and their authority classifications.
-	catalog := []soldier.SkillEntry{
+	catalog := []fleet.SkillEntry{
 		// Soldier-applicable skills
 		{Name: "gh-axi", Role: "soldier"},
 		{Name: "chrome-devtools-axi", Role: "soldier"},
@@ -741,7 +740,7 @@ func (r *Runner) resolveSkills() (required, optional []soldier.SkillEntry, diags
 		requiredNames = append(requiredNames, "gh-axi")
 	}
 
-	required, optional, diags = soldier.CollectSkills(catalog, requiredNames, optionalNames)
+	required, optional, diags = fleet.CollectSkills(catalog, requiredNames, optionalNames)
 	return required, optional, diags
 }
 

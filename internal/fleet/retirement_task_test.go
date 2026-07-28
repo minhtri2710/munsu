@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/soldier"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,7 +151,7 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 	}
 
 	// Write known launch artifacts (untracked).
-	for _, name := range soldier.LaunchArtifactNames() {
+	for _, name := range LaunchArtifactNames() {
 		os.WriteFile(filepath.Join(wt, name), []byte("test content\n"), 0644)
 	}
 
@@ -236,7 +235,7 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 	}
 
 	// Write all known launch artifacts.
-	for _, name := range soldier.LaunchArtifactNames() {
+	for _, name := range LaunchArtifactNames() {
 		os.WriteFile(filepath.Join(wt, name), []byte("test\n"), 0644)
 	}
 	// Write an unknown untracked file.

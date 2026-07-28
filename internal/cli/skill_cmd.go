@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/soldier"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
 
@@ -60,7 +60,7 @@ captain-provisioning, stuck-soldier-recovery).`,
 		Args: ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			if os.Getenv("MUNSU_ROLE") == "soldier" && soldier.SoldierSkillDenied[name] {
+			if os.Getenv("MUNSU_ROLE") == "soldier" && fleet.SoldierSkillDenied[name] {
 				return fmt.Errorf("access denied: soldier role cannot inspect management skill %q", name)
 			}
 			content, err := readEmbeddedSkill(name)

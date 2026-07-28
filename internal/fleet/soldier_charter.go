@@ -1,6 +1,6 @@
 // Package soldier implements the Soldier launch prompt, charter, envelope,
 // and skill manifest — the full verifiable launch context contract.
-package soldier
+package fleet
 
 import (
 	"crypto/sha256"
