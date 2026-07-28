@@ -6,49 +6,33 @@
 package orchestrator
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 const (
-	wakeQueueFile   = "state/.wake-queue"
-	watcherBeatFile = "state/.last-watcher-beat"
-	lockFile        = "state/.lock"
-	watchLockFile   = "state/.watch.lock"
-	staleThreshold  = 300 * time.Second // 5 min watcher grace period
+	lockFile      = "state/.lock"
+	watchLockFile = "state/.watch.lock"
 )
 
-// WakeRecord represents a single wake queue entry.
-type WakeRecord struct {
-	Epoch   string
-	Seq     string
-	Kind    string
-	Key     string
-	Payload string
-}
-
-// BeatStatus summarizes the watcher liveness beat state.
-type BeatStatus struct {
-	Exists bool
-	Stale  bool
-	Age    time.Duration
-}
+type WakeRecord = home.WakeRecord
+type BeatStatus = home.WatcherBeatStatus
 
 // StaleThreshold returns the watcher stale grace period (300s).
-func StaleThreshold() time.Duration { return staleThreshold }
+func StaleThreshold() time.Duration { return home.WatcherStaleThreshold() }
 
 // BeatPath returns the full path to the watcher liveness beat file.
-func BeatPath(homeDir string) string { return filepath.Join(homeDir, watcherBeatFile) }
+func BeatPath(homeDir string) string { return home.WatcherBeatPath(homeDir) }
 
 // QueuePath returns the full path to the wake queue file.
-func QueuePath(homeDir string) string { return filepath.Join(homeDir, wakeQueueFile) }
+func QueuePath(homeDir string) string { return home.WakeQueuePath(homeDir) }
 
 // LockPath returns the full path to the session lock file.
 func LockPath(homeDir string) string { return filepath.Join(homeDir, lockFile) }
@@ -239,111 +223,15 @@ func isWatchProcess(pid int) bool {
 	return strings.Contains(line, "munsu watch") || strings.HasSuffix(line, " watch")
 }
 
-// --- Beat operations ---
-
-// WriteBeat writes the current Unix timestamp (content-timestamp that drives
-// staleness) and PID to the liveness beat file.
-// Format: "<unix_epoch> <pid>" — mtime alone does NOT drive staleness.
-func WriteBeat(homeDir string) {
-	path := BeatPath(homeDir)
-	os.MkdirAll(filepath.Dir(path), 0755)
-	content := fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())
-	os.WriteFile(path, []byte(content), 0644)
-}
-
-// ReadBeat reads the content-timestamp and PID from the liveness beat file.
-// The content-timestamp (unix epoch) drives staleness; mtime fallback
-// is used only if content parse fails.
-// Format: "<unix_epoch> <pid>" (or older single-value "<unix_epoch>").
-// Returns false for ok if the file cannot be read or parsed.
-func ReadBeat(homeDir string) (timestamp int64, pid int, ok bool) {
-	data, err := os.ReadFile(BeatPath(homeDir))
-	if err != nil {
-		return 0, 0, false
-	}
-	_, err = fmt.Sscanf(strings.TrimSpace(string(data)), "%d %d", &timestamp, &pid)
-	if err != nil {
-		// Try just timestamp (older single-value format)
-		_, err = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &timestamp)
-		if err != nil {
-			return 0, 0, false
-		}
-	}
-	return timestamp, pid, true
-}
-
-// ClearBeat removes the watcher liveness beat file.
-func ClearBeat(homeDir string) {
-	os.Remove(BeatPath(homeDir))
-}
-
-// ReadBeatStatus returns whether the beat exists and whether it is stale
-// relative to the stale threshold and the given time.
-// Staleness is driven entirely by the content-timestamp (unix epoch)
-// written by WriteBeat. File mtime is NOT authoritative.
-// When the beat file does not exist, Age is 0 (signaling never existed).
+// --- Durable beat and queue operations (owned by home) ---
+func WriteBeat(homeDir string)                   { home.WriteWatcherBeat(homeDir) }
+func ReadBeat(homeDir string) (int64, int, bool) { return home.ReadWatcherBeat(homeDir) }
+func ClearBeat(homeDir string)                   { home.ClearWatcherBeat(homeDir) }
 func ReadBeatStatus(homeDir string, now time.Time) BeatStatus {
-	ts, _, ok := ReadBeat(homeDir)
-	if !ok {
-		return BeatStatus{Exists: false, Stale: true, Age: 0}
-	}
-	age := now.Sub(time.Unix(ts, 0))
-	return BeatStatus{Exists: true, Stale: age > staleThreshold, Age: age}
+	return home.ReadWatcherBeatStatus(homeDir, now)
 }
-
-// --- Queue operations ---
-
-var wakeSeqCounter int64
-
-// EnqueueWake appends a wake record to the durable wake queue.
 func EnqueueWake(homeDir, kind, key, payload string) error {
-	qPath := QueuePath(homeDir)
-	os.MkdirAll(filepath.Dir(qPath), 0755)
-	f, err := os.OpenFile(qPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	seq := fmt.Sprintf("%d-%d", os.Getpid(), atomic.AddInt64(&wakeSeqCounter, 1))
-	line := fmt.Sprintf("%d\t%s\t%s\t%s\t%s\n", time.Now().Unix(), seq, kind, key, payload)
-	_, err = f.WriteString(line)
-	return err
+	return home.EnqueueWake(homeDir, kind, key, payload)
 }
-
-// DrainWakes reads all wake records from the queue, removes the queue file,
-// and returns the records. Returns nil, nil if no queue file exists.
-func DrainWakes(homeDir string) ([]WakeRecord, error) {
-	qPath := QueuePath(homeDir)
-	f, err := os.Open(qPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer f.Close()
-
-	var records []WakeRecord
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 5)
-		if len(parts) < 5 {
-			continue
-		}
-		records = append(records, WakeRecord{
-			Epoch:   parts[0],
-			Seq:     parts[1],
-			Kind:    parts[2],
-			Key:     parts[3],
-			Payload: parts[4],
-		})
-	}
-	os.Remove(qPath)
-	return records, scanner.Err()
-}
-
-// HasQueuedWakes returns true if the wake queue file exists and has content.
-func HasQueuedWakes(homeDir string) bool {
-	fi, err := os.Stat(QueuePath(homeDir))
-	return err == nil && fi.Size() > 0
-}
+func DrainWakes(homeDir string) ([]WakeRecord, error) { return home.DrainWakes(homeDir) }
+func HasQueuedWakes(homeDir string) bool              { return home.HasQueuedWakes(homeDir) }
