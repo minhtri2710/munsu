@@ -8,7 +8,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
@@ -205,7 +204,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	// Count unresolved holds across all tasks
 	unresolvedHolds := 0
 	for _, entry := range snapshot.Tasks {
-		holds, err := decisionhold.ListUnresolved(ctx.Home, entry.ID)
+		holds, err := fleet.ListUnresolved(ctx.Home, entry.ID)
 		if err == nil {
 			unresolvedHolds += len(holds)
 		}

@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"os"
 	"os/exec"
@@ -539,11 +538,11 @@ func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
 
 	// Create unresolved decision holds.
-	_, err := decisionhold.Create(tmp, "scout-1", "approach", "Pick the UI framework")
+	_, err := Create(tmp, "scout-1", "approach", "Pick the UI framework")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = decisionhold.Create(tmp, "scout-1", "db-schema", "Choose DB schema")
+	_, err = Create(tmp, "scout-1", "db-schema", "Choose DB schema")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,11 +569,11 @@ func TestScoutSafetyCheck_NoUnresolvedHolds(t *testing.T) {
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
 
 	// Create a hold and resolve it.
-	_, err := decisionhold.Create(tmp, "scout-1", "approach", "Pick the UI framework")
+	_, err := Create(tmp, "scout-1", "approach", "Pick the UI framework")
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = decisionhold.Resolve(tmp, "scout-1", "approach", "Choose React", nil)
+	err = Resolve(tmp, "scout-1", "approach", "Choose React", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +601,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	os.MkdirAll(reportDir, 0755)
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
 	// Create unresolved decision holds.
-	_, err := decisionhold.Create(tmp, "scout-test", "approach", "Pick the UI framework")
+	_, err := Create(tmp, "scout-test", "approach", "Pick the UI framework")
 	if err != nil {
 		t.Fatal(err)
 	}

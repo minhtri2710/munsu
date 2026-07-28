@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/soldier"
@@ -234,7 +233,7 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 	}
 
 	// After report exists, check for unresolved decision holds.
-	unresolvedKeys, err := decisionhold.Verify(opts.HomeDir, opts.ID, nil)
+	unresolvedKeys, err := Verify(opts.HomeDir, opts.ID, nil)
 	if err != nil {
 		return fmt.Errorf("checking decision holds: %w", err)
 	}

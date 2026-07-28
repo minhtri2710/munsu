@@ -7,7 +7,7 @@
 //   - Complete  → records completion attestation on the originating task
 //   - Verify    → read-only check that no stale needs-decision lines remain
 //   - Resolve   → records the answer and unblocks dependent work
-package decisionhold
+package fleet
 
 import (
 	"bufio"
