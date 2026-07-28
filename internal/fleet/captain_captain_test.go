@@ -4137,3 +4137,40 @@ func TestSeedCaptainFromWorktree_InvokesIntegrationOnce(t *testing.T) {
 		t.Fatalf("error=%v calls=%d", err, port.calls)
 	}
 }
+
+func TestMigrateCaptainToWorktree_InvokesIntegrationOnce(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	id := "test-captain"
+	h := stateOnlyHomeFixture(t, parent, id)
+	port := &countingIntegrationPort{}
+	err := MigrateCaptainToWorktree(CaptainMigrationOptions{CaptainHome: h, Repo: project, ID: id, ParentHome: parent, Integration: port})
+	if err != nil || port.calls != 1 {
+		t.Fatalf("error=%v calls=%d", err, port.calls)
+	}
+}
+
+func TestMigrateCaptainToWorktree_IntegrationFailureRestoresHome(t *testing.T) {
+	project := newWorktreeFixture(t)
+	parent := t.TempDir()
+	id := "test-captain"
+	h := stateOnlyHomeFixture(t, parent, id)
+	sentinel := filepath.Join(h, "state", "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("preserve me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	port := &countingIntegrationPort{err: fmt.Errorf("install failed")}
+	err := MigrateCaptainToWorktree(CaptainMigrationOptions{CaptainHome: h, Repo: project, ID: id, ParentHome: parent, Integration: port})
+	if err == nil || port.calls != 1 {
+		t.Fatalf("error=%v calls=%d", err, port.calls)
+	}
+	if got, readErr := os.ReadFile(sentinel); readErr != nil || string(got) != "preserve me" {
+		t.Fatalf("sentinel=%q error=%v", got, readErr)
+	}
+	if managed, _ := isManagedWorktree(h); managed {
+		t.Fatal("failed migration remained authoritative worktree")
+	}
+	if !isStateOnlyHome(h) {
+		t.Fatal("original state-only home was not restored")
+	}
+}
