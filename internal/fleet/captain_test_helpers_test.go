@@ -48,3 +48,13 @@ func seedFromWorktreeTest(id, h, repo, parent, charter string, force bool, ref s
 func migrateToWorktreeTest(h, repo, id, parent string) error {
 	return migrateToWorktree(h, repo, id, parent, fakeIntegrationPort{})
 }
+
+type countingIntegrationPort struct {
+	calls int
+	err   error
+}
+
+func (p *countingIntegrationPort) EnsureCaptain(string) error { p.calls++; return p.err }
+func (p *countingIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+	return IntegrationStatus{}, nil
+}

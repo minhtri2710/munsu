@@ -4098,3 +4098,42 @@ func TestMigrateToWorktree_HoldsPreservedClean(t *testing.T) {
 		t.Errorf("%s missing after migration", CaptainProvenanceName)
 	}
 }
+
+func TestSeedCaptainFromWorktree_RequiresIntegrationBeforeMutation(t *testing.T) {
+	h := filepath.Join(t.TempDir(), "captain")
+	err := SeedCaptainFromWorktree(CaptainWorktreeSeedOptions{ID: "test", Home: h, Repo: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "integration capability") {
+		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Stat(h); !os.IsNotExist(err) {
+		t.Fatalf("home mutated before capability check: %v", err)
+	}
+}
+
+func TestSeedCaptainFromWorktree_IntegrationFailureRollsBack(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+	h := filepath.Join(t.TempDir(), "captain")
+	port := &countingIntegrationPort{err: fmt.Errorf("install failed")}
+	err := SeedCaptainFromWorktree(CaptainWorktreeSeedOptions{ID: "test-captain", Home: h, Repo: repo, ParentHome: parent, Integration: port})
+	if err == nil || port.calls != 1 {
+		t.Fatalf("error=%v calls=%d", err, port.calls)
+	}
+	if _, statErr := os.Stat(h); !os.IsNotExist(statErr) {
+		t.Fatalf("home not rolled back: %v", statErr)
+	}
+}
+
+func TestSeedCaptainFromWorktree_InvokesIntegrationOnce(t *testing.T) {
+	parent := t.TempDir()
+	initTestRepo(t, parent, "https://github.com/test/repo.git")
+	repo := t.TempDir()
+	initTestRepo(t, repo, "https://github.com/test/repo.git")
+	port := &countingIntegrationPort{}
+	err := SeedCaptainFromWorktree(CaptainWorktreeSeedOptions{ID: "test-captain", Home: filepath.Join(parent, "captains/test-captain"), Repo: repo, ParentHome: parent, Integration: port})
+	if err != nil || port.calls != 1 {
+		t.Fatalf("error=%v calls=%d", err, port.calls)
+	}
+}
