@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type WatcherLockPolicy struct {
@@ -25,6 +26,12 @@ func readWatcherLockPID(p string) int {
 	}
 	return pid
 }
+
+var watcherLocks = struct {
+	sync.Mutex
+	files map[string]*os.File
+}{files: make(map[string]*os.File)}
+
 func acquireWatcherLock(p string, policy WatcherLockPolicy, session bool) (bool, error) {
 	if e := os.MkdirAll(filepath.Dir(p), 0755); e != nil {
 		return false, fmt.Errorf("creating lock directory %s: %w", filepath.Dir(p), e)
@@ -43,6 +50,9 @@ func acquireWatcherLock(p string, policy WatcherLockPolicy, session bool) (bool,
 		return false, nil
 	}
 	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
+	watcherLocks.Lock()
+	watcherLocks.files[p] = f
+	watcherLocks.Unlock()
 	return true, nil
 }
 func AcquireSessionLock(h string, p WatcherLockPolicy) (bool, error) {
@@ -52,15 +62,18 @@ func AcquireWatchLock(h string, p WatcherLockPolicy) (bool, error) {
 	return acquireWatcherLock(WatchLockPath(h), p, false)
 }
 func releaseWatcherLock(p string) error {
-	f, e := os.OpenFile(p, os.O_RDWR, 0644)
-	if os.IsNotExist(e) {
+	watcherLocks.Lock()
+	f := watcherLocks.files[p]
+	delete(watcherLocks.files, p)
+	watcherLocks.Unlock()
+	if f == nil {
 		return nil
 	}
-	if e != nil {
-		return e
+	if err := unlockWatcherFile(f); err != nil {
+		_ = f.Close()
+		return err
 	}
-	defer f.Close()
-	return unlockWatcherFile(f)
+	return f.Close()
 }
 func ReleaseSessionLock(h string) error { return releaseWatcherLock(SessionLockPath(h)) }
 func ReleaseWatchLock(h string) error   { return releaseWatcherLock(WatchLockPath(h)) }
