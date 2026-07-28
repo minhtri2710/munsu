@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -13,7 +12,7 @@ type sessionBoundTeardown struct {
 	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
-func newSessionBoundTeardown() orchestrator.BoundTeardown {
+func newSessionBoundTeardown() fleet.BoundTeardown {
 	return sessionBoundTeardown{resolve: backend.BackendForTask}
 }
 
@@ -39,15 +38,15 @@ func (s sessionBoundTeardown) resolveBound(home string, meta map[string]string) 
 	return bk, name, nil
 }
 
-func (s sessionBoundTeardown) Probe(home string, meta map[string]string) (orchestrator.EndpointStatus, error) {
+func (s sessionBoundTeardown) Probe(home string, meta map[string]string) (fleet.RetirementEndpointStatus, error) {
 	bk, _, err := s.resolveBound(home, meta)
 	if err != nil {
-		return orchestrator.EndpointStatus{}, err
+		return fleet.RetirementEndpointStatus{}, err
 	}
-	return orchestrator.EndpointStatus{Alive: bk.Alive(meta["window"])}, nil
+	return fleet.RetirementEndpointStatus{Alive: bk.Alive(meta["window"])}, nil
 }
 
-func (s sessionBoundTeardown) Dispose(home string, meta map[string]string, req orchestrator.DisposeRequest) error {
+func (s sessionBoundTeardown) Dispose(home string, meta map[string]string, req fleet.DisposeRequest) error {
 	if req.Home != home || req.Backend != meta["backend"] || req.Handle != meta["window"] || req.SessionOwner != meta["herdr_session"] || req.WorkspaceID != meta["herdr_workspace_id"] || req.TabID != meta["herdr_tab_id"] {
 		return fmt.Errorf("dispose request does not match bound endpoint metadata")
 	}

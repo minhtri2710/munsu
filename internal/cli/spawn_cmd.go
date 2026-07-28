@@ -363,13 +363,13 @@ With --force:
 				return fmt.Errorf("teardown refused: %w", err)
 			}
 
-			opts := orchestrator.Options{
+			opts := fleet.Options{
 				HomeDir: ctx.Home,
 				ID:      id,
 				Force:   force,
 			}
 
-			result, err := orchestrator.RunWithBackend(opts, newSessionBoundTeardown())
+			result, err := fleet.RetireTask(opts, newSessionBoundTeardown(), orchestratorRetirementJournals{})
 			if err != nil {
 				return err
 			}
