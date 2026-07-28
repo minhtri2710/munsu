@@ -24,7 +24,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 |---|---|---|---|
 | Home directory | `munsu home` | `internal/home` | **implemented** |
 | Task meta + status protocol (append-only event log; keyed open/close) | `munsu task add/show/status`; current via `soldier-state` | `internal/home`, `internal/orchestrator`, `internal/soldierstate` | **implemented** (list: delegated to tasks-axi) |
-| Send message to soldier | `munsu send` | `internal/cli`, `internal/captain` (send outbox) | **implemented** (kind=captain: dead pane queues `state/.captain-send-outbox/<id>/`; flush on `munsu captain converge`) |
+| Send message to soldier | `munsu send` | `internal/cli`, `internal/fleet`, `internal/home` (durable mailbox) | **implemented** (typed mailbox envelope/pending/ack; reconciliation through CLI-composed lifecycle ports) |
 | Spawn soldier | `munsu spawn` | `internal/cli` | **implemented** |
 | Brief soldier | `munsu brief` | `internal/brief` | **implemented** |
 | Teardown soldier context | `munsu teardown` | `internal/orchestrator` | **implemented** |
@@ -42,7 +42,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Session start | `munsu session-start` | `internal/session` | **implemented** |
 | Watch soldier | `munsu watch` | `internal/orchestrator` | **implemented** |
 | Arm watcher | `munsu watch-arm` | `internal/cli` | **implemented** |
-| Wake claim / drain | `munsu wake claim` / `munsu wake-drain` | `internal/lifecycle`, `internal/waker` | **implemented** (prefer claim; drain is legacy) |
+| Wake claim / drain | `munsu wake claim` / `munsu wake-drain` | `internal/orchestrator` | **implemented** (prefer claim; drain is legacy) |
 | Guard supervision | `munsu guard` | `internal/cli` | **implemented** |
 | Stow skill | `munsu stow` | `internal/stow` | **implemented** |
 | Ensure AGENTS.md | `munsu ensure-agents-md` | `internal/agentsmd` | **implemented** |
@@ -57,8 +57,8 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Dispatch profiles | `config/soldier-dispatch.json` | `internal/harness` | **implemented** |
 | Home init | `munsu init` | `internal/cli` | **implemented** |
 | AFK away-mode supervision | munsu afk | internal/orchestrator | **implemented** (Go-native, full lifecycle -- see `docs/skills/afk.md`) |
-| Captain lifecycle | `munsu captain seed/launch/retire/list/handoff/config-push` | `internal/captain` | **implemented** |
-| Native harness integration | `munsu integrate install/repair/status` | `internal/integrate` | **implemented** (Pi, Claude, Grok, Codex, OpenCode, agy adapters verified by contract + unit tests; Pi + agy runtime-verifiable locally; Claude/Grok/Codex/OpenCode deferred until installed) |
+| Captain lifecycle | `munsu captain seed/launch/retire/list/handoff/config-push` | `internal/fleet` with `internal/cli` adapters | **implemented** |
+| Native harness integration | `munsu integrate install/repair/status` | `internal/bootstrap` | **implemented** (Pi, Claude, Grok, Codex, OpenCode, agy adapters verified by contract + unit tests; Pi + agy runtime-verifiable locally; Claude/Grok/Codex/OpenCode deferred until installed) |
 
 ## Architecture overview
 
