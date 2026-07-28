@@ -15,7 +15,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/soldierstate"
 )
 
 const watcherPollInterval = 5 * time.Second
@@ -39,6 +38,19 @@ type WatcherHooks interface {
 	Activate(homeDir string)
 }
 
+type ObservedTaskState struct {
+	Status, Description, NoMistakesRunStep string
+	PaneAlive                              bool
+}
+type TaskStatePort interface {
+	ReadTaskState(homeDir, taskID string) (*ObservedTaskState, error)
+}
+type NoopTaskStatePort struct{}
+
+func (NoopTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, error) {
+	return nil, fmt.Errorf("task state capability unavailable")
+}
+
 type RetirementPort interface {
 	RecoverPendingRetirements(homeDir string) (int, []error)
 	RetireMergedPoll(homeDir, taskID, checkPath string) error
@@ -56,8 +68,8 @@ type NoopWatcherHooks struct{}
 func (NoopWatcherHooks) Reconcile(string, bool) error { return nil }
 func (NoopWatcherHooks) Activate(string)              {}
 
-func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement)
+func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, states)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -66,7 +78,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (*WakeReason, error) {
 	acquired, err := lifecycle.AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -93,7 +105,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
 			lifecycle.WriteBeat(homeDir)
-			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement); err != nil {
+			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states); err != nil {
 				return nil, err
 			}
 		}
@@ -194,7 +206,7 @@ var (
 	pauseResurfaceThreshold = 5 * time.Minute
 )
 
-func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe) []*WakeReason {
+func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointProbe, states TaskStatePort) []*WakeReason {
 	entries, err := os.ReadDir(filepath.Join(homeDir, "state"))
 	if err != nil {
 		return nil
@@ -221,7 +233,7 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 			// Status signal already actionable for this id; skip stale scan.
 			continue
 		}
-		reason := scanTaskWithProbe(homeDir, id, probe)
+		reason := scanTaskWithProbe(homeDir, id, probe, states)
 		if reason == nil {
 			if clearResolved {
 				clearWakeMarker(homeDir, id)
@@ -268,7 +280,7 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 	return out
 }
 
-func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe) *WakeReason {
+func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe, states TaskStatePort) *WakeReason {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil
@@ -297,7 +309,7 @@ func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe) *WakeReason 
 			// here (race), surface once with a stable message.
 			return handleStale(id, fmt.Sprintf("pane %s is dead (general-relevant status)", windowID))
 		}
-		if shouldAbsorbStale(homeDir, id, false) {
+		if shouldAbsorbStale(homeDir, id, false, states) {
 			resetStreak(id)
 			return nil
 		}
@@ -311,7 +323,7 @@ func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe) *WakeReason 
 			if isStatusGeneralRelevant(homeDir, id) {
 				return handleStale(id, fmt.Sprintf("pane %s idle beyond threshold (general-relevant status)", windowID))
 			}
-			if shouldAbsorbStale(homeDir, id, true) {
+			if shouldAbsorbStale(homeDir, id, true, states) {
 				resetStreak(id)
 				return nil
 			}
@@ -329,8 +341,8 @@ var recoveryDone sync.Map
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (bool, error) {
-	return runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement)
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (bool, error) {
+	return runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states)
 }
 
 // runRecovery executes the one-shot recovery on watcher startup.
@@ -370,7 +382,7 @@ func runRecovery(homeDir string, sender BoundSender, hooks WatcherHooks) error {
 	return nil
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
@@ -419,7 +431,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	}
 
 	emitted := false
-	for _, reason := range scanFleetWithProbe(homeDir, true, probe) {
+	for _, reason := range scanFleetWithProbe(homeDir, true, probe, states) {
 		if len(reason.TaskIDs) == 0 {
 			continue
 		}
@@ -576,8 +588,8 @@ func resetStreak(id string) {
 // run-step that indicates it is provably working. Tasks driving the
 // no-mistakes pipeline (running, fixing, ci, fix_review, awaiting_approval)
 // should not trigger stale wakes.
-func isNoMistakesActive(homeDir, id string) bool {
-	s, err := soldierstate.Read(homeDir, id)
+func isNoMistakesActive(homeDir, id string, states TaskStatePort) bool {
+	s, err := states.ReadTaskState(homeDir, id)
 	if err != nil {
 		return false
 	}
@@ -586,7 +598,7 @@ func isNoMistakesActive(homeDir, id string) bool {
 
 // absorbStaleSignal returns true when the soldier state has an active
 // no-mistakes run-step that should absorb a stale signal.
-func absorbStaleSignal(s *soldierstate.State) bool {
+func absorbStaleSignal(s *ObservedTaskState) bool {
 	if s == nil {
 		return false
 	}
@@ -601,8 +613,8 @@ func absorbStaleSignal(s *soldierstate.State) bool {
 // paneAlive gates status-only "working" absorb: a dead pane with a leftover
 // working: line is still actionable; an alive idle pane with working: is healthy.
 // A paused task beyond the resurface threshold is NOT absorbed — it surfaces as stale.
-func shouldAbsorbStale(homeDir, id string, paneAlive bool) bool {
-	if isNoMistakesActive(homeDir, id) {
+func shouldAbsorbStale(homeDir, id string, paneAlive bool, states TaskStatePort) bool {
+	if isNoMistakesActive(homeDir, id, states) {
 		return true
 	}
 	// Check pause status: absorb only if within the resurface threshold.

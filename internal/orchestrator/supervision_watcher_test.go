@@ -13,12 +13,17 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/marker"
-	"github.com/minhtri2710/munsu/internal/soldierstate"
 )
 
 type testEndpointProbe struct{}
 
 func (testEndpointProbe) Probe(string, map[string]string) (bool, error) { return false, nil }
+
+type testTaskStatePort struct{}
+
+func (testTaskStatePort) ReadTaskState(string, string) (*ObservedTaskState, error) {
+	return &ObservedTaskState{}, nil
+}
 
 type testCycleSender struct{}
 
@@ -28,7 +33,7 @@ func (testCycleSender) Send(string, map[string]string, string) BoundSendResult {
 }
 
 func testScanFleet(home string) *WakeReason {
-	reasons := scanFleetWithProbe(home, false, testEndpointProbe{})
+	reasons := scanFleetWithProbe(home, false, testEndpointProbe{}, testTaskStatePort{})
 	if len(reasons) == 0 {
 		return nil
 	}
@@ -55,7 +60,7 @@ func (h testWatcherHooks) Activate(home string) {
 var activeTestHooks WatcherHooks = NoopWatcherHooks{}
 
 func testRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{})
+	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{}, testTaskStatePort{})
 }
 
 // --- absorbStaleSignal tests (pure predicate) ---
@@ -67,70 +72,70 @@ func TestAbsorbStaleSignal_Nil(t *testing.T) {
 }
 
 func TestAbsorbStaleSignal_EmptyStep(t *testing.T) {
-	s := &soldierstate.State{}
+	s := &ObservedTaskState{}
 	if absorbStaleSignal(s) {
 		t.Error("absorbStaleSignal with empty step should return false")
 	}
 }
 
 func TestAbsorbStaleSignal_Running(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "running"}
+	s := &ObservedTaskState{NoMistakesRunStep: "running"}
 	if !absorbStaleSignal(s) {
 		t.Error("running should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_Fixing(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "fixing"}
+	s := &ObservedTaskState{NoMistakesRunStep: "fixing"}
 	if !absorbStaleSignal(s) {
 		t.Error("fixing should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_CI(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "ci"}
+	s := &ObservedTaskState{NoMistakesRunStep: "ci"}
 	if !absorbStaleSignal(s) {
 		t.Error("ci should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_FixReview(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "fix_review"}
+	s := &ObservedTaskState{NoMistakesRunStep: "fix_review"}
 	if !absorbStaleSignal(s) {
 		t.Error("fix_review should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_AwaitingApproval(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "awaiting_approval"}
+	s := &ObservedTaskState{NoMistakesRunStep: "awaiting_approval"}
 	if !absorbStaleSignal(s) {
 		t.Error("awaiting_approval should absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_Done(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "done"}
+	s := &ObservedTaskState{NoMistakesRunStep: "done"}
 	if absorbStaleSignal(s) {
 		t.Error("done should NOT absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_Failed(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "failed"}
+	s := &ObservedTaskState{NoMistakesRunStep: "failed"}
 	if absorbStaleSignal(s) {
 		t.Error("failed should NOT absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_ChecksPassed(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "checks-passed"}
+	s := &ObservedTaskState{NoMistakesRunStep: "checks-passed"}
 	if absorbStaleSignal(s) {
 		t.Error("checks-passed should NOT absorb stale signal")
 	}
 }
 
 func TestAbsorbStaleSignal_UnknownStep(t *testing.T) {
-	s := &soldierstate.State{NoMistakesRunStep: "some-bogus-step"}
+	s := &ObservedTaskState{NoMistakesRunStep: "some-bogus-step"}
 	if absorbStaleSignal(s) {
 		t.Error("unknown step should NOT absorb stale signal")
 	}
@@ -399,7 +404,7 @@ func TestHandleStale_DemandDeepInspectionByIdleSeconds(t *testing.T) {
 func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
 	absorbSteps := []string{"running", "fixing", "ci", "fix_review", "awaiting_approval"}
 	for _, step := range absorbSteps {
-		s := &soldierstate.State{NoMistakesRunStep: step}
+		s := &ObservedTaskState{NoMistakesRunStep: step}
 		if !absorbStaleSignal(s) {
 			t.Errorf("%s should absorb stale signal", step)
 		}
@@ -409,7 +414,7 @@ func TestAbsorbStaleSignal_AllAbsorbSteps(t *testing.T) {
 func TestAbsorbStaleSignal_AllNonAbsorbSteps(t *testing.T) {
 	nonAbsorbSteps := []string{"", "done", "failed", "checks-passed", "passed", "cancelled", "some-unknown-step"}
 	for _, step := range nonAbsorbSteps {
-		s := &soldierstate.State{NoMistakesRunStep: step}
+		s := &ObservedTaskState{NoMistakesRunStep: step}
 		if absorbStaleSignal(s) {
 			t.Errorf("%q should NOT absorb stale signal", step)
 		}
@@ -639,7 +644,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
 	// Simulate a full lifecycle: working → done → no-mistakes run step active
 	t.Run("working to done with no-mistakes run", func(t *testing.T) {
-		s := &soldierstate.State{
+		s := &ObservedTaskState{
 			Status:            "done",
 			NoMistakesRunStep: "running",
 		}
@@ -650,7 +655,7 @@ func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
 	})
 
 	t.Run("done with checks-passed does NOT absorb stale", func(t *testing.T) {
-		s := &soldierstate.State{
+		s := &ObservedTaskState{
 			Status:            "done",
 			NoMistakesRunStep: "checks-passed",
 		}
@@ -660,7 +665,7 @@ func TestAbsorbStaleSignal_ComplexStatusTransitions(t *testing.T) {
 	})
 
 	t.Run("failed without run step does NOT absorb", func(t *testing.T) {
-		s := &soldierstate.State{
+		s := &ObservedTaskState{
 			Status: "failed",
 		}
 		if absorbStaleSignal(s) {
@@ -797,24 +802,24 @@ func TestShouldAbsorbStale(t *testing.T) {
 
 	// Dead pane + leftover working: must NOT absorb (possible finish/wedge).
 	os.WriteFile(filepath.Join(stateDir, "dead-working.status"), []byte("working: leftover\n"), 0644)
-	if shouldAbsorbStale(tmp, "dead-working", false) {
+	if shouldAbsorbStale(tmp, "dead-working", false, testTaskStatePort{}) {
 		t.Error("dead pane with working status should not absorb")
 	}
 
 	// Alive pane + working: idle-healthy absorb.
-	if !shouldAbsorbStale(tmp, "dead-working", true) {
+	if !shouldAbsorbStale(tmp, "dead-working", true, testTaskStatePort{}) {
 		t.Error("alive pane with working status should absorb")
 	}
 
 	// Paused absorbs regardless of pane liveness.
 	os.WriteFile(filepath.Join(stateDir, "paused.status"), []byte("paused: waiting on human\n"), 0644)
-	if !shouldAbsorbStale(tmp, "paused", false) {
+	if !shouldAbsorbStale(tmp, "paused", false, testTaskStatePort{}) {
 		t.Error("paused should absorb even when pane is dead")
 	}
 
 	// Terminal done with no active run: do not absorb as stale (signal path surfaces).
 	os.WriteFile(filepath.Join(stateDir, "done.status"), []byte("done: finished\n"), 0644)
-	if shouldAbsorbStale(tmp, "done", true) {
+	if shouldAbsorbStale(tmp, "done", true, testTaskStatePort{}) {
 		t.Error("done should not absorb via shouldAbsorbStale")
 	}
 }
@@ -904,7 +909,7 @@ func TestShouldAbsorbStale_PauseResurface(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got := shouldAbsorbStale(tmp, "test-pause", tt.paneAlive)
+			got := shouldAbsorbStale(tmp, "test-pause", tt.paneAlive, testTaskStatePort{})
 			if got != tt.wantAbsorb {
 				t.Errorf("shouldAbsorbStale = %v, want %v (pauseAge=%v, paneAlive=%v)",
 					got, tt.wantAbsorb, tt.pauseAge, tt.paneAlive)

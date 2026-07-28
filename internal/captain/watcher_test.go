@@ -25,7 +25,7 @@ func (captainTestSender) Send(string, map[string]string, string) orchestrator.Bo
 }
 
 func captainRunCycle(home string) (bool, error) {
-	return orchestrator.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil), orchestrator.NoopRetirementPort{})
+	return orchestrator.RunCycleWithProbeAndSender(home, captainTestProbe{}, captainTestSender{}, NewWatcherHooks(&captainNotificationTransport{acknowledged: true}, nil), orchestrator.NoopRetirementPort{}, orchestrator.NoopTaskStatePort{})
 }
 
 // --- WatcherStatusSummary tests ---
