@@ -1,17 +1,14 @@
-package orchestrator
+package fleet
 
 import (
 	"fmt"
+	"github.com/minhtri2710/munsu/internal/decisionhold"
+	"github.com/minhtri2710/munsu/internal/soldier"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/decisionhold"
-	"github.com/minhtri2710/munsu/internal/soldier"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -369,7 +366,7 @@ func TestRun_NoMeta(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	_, err := RunWithBackend(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{})
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{})
 	if err == nil {
 		t.Fatal("should fail for nonexistent task")
 	}
@@ -387,7 +384,7 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "nonexistent.meta"), []byte(metaContent), 0644)
 
 	// With --force, it should try to proceed (will fail at session/return steps but not at safety)
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
 	if err != nil {
 		t.Fatalf("with --force should not fail at safety: %v", err)
 	}
@@ -407,13 +404,13 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Without --force, should fail
-	_, err := RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{})
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{})
 	if err == nil {
 		t.Fatal("should fail for scout without report without --force")
 	}
 
 	// With --force, should proceed
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}
@@ -448,7 +445,7 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 
 	// Run teardown with --force to skip safety
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -508,7 +505,7 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	}
 
 	// Run teardown with --force
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -611,7 +608,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 
 	// Without --force, should fail due to unresolved holds.
-	_, err = RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{})
+	_, err = RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{})
 	if err == nil {
 		t.Fatal("should fail for scout with unresolved holds without --force")
 	}
@@ -620,7 +617,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 
 	// With --force, should proceed past safety checks.
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}
@@ -630,339 +627,4 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	if len(result.Steps) == 0 {
 		t.Error("expected teardown steps")
 	}
-}
-
-func TestCloseTerminalPhases_ClosesOpenKeyedPhases(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Create a status file with open keyed phases
-	statusPath := filepath.Join(stateDir, "test-task.status")
-	statusContent := `working [key=phase1]: Phase 1 started
-working [key=phase2]: Phase 2 started
-done [key=phase1]: Phase 1 completed
-working [key=phase3]: Phase 3 in progress`
-	if err := os.WriteFile(statusPath, []byte(statusContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify open phases before close
-	openActs := classify.OpenActivities(statusPath)
-	if len(openActs) != 2 {
-		t.Fatalf("expected 2 open phases, got %d", len(openActs))
-	}
-
-	// Create a minimal meta file so Run can read it
-	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Run teardown with --force to skip safety checks and reach cleanup
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-task", Force: true}, fakeTeardown{})
-	if err != nil {
-		t.Fatalf("teardown should not fail: %v", err)
-	}
-
-	// Verify steps mention phase closing
-	foundClose := false
-	for _, step := range result.Steps {
-		if strings.Contains(step, "closed keyed phase") {
-			foundClose = true
-			break
-		}
-	}
-	if !foundClose {
-		t.Errorf("expected teardown steps to mention keyed phase closing, got: %v", result.Steps)
-	}
-}
-
-func TestCloseTerminalPhases_Idempotent(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Create a status file where all phases are already closed
-	statusPath := filepath.Join(stateDir, "test-task.status")
-	statusContent := `working [key=phase1]: Phase 1 started
-done [key=phase1]: Phase 1 completed
-working [key=phase2]: Phase 2 started
-resolved [key=phase2]: Phase 2 done`
-	if err := os.WriteFile(statusPath, []byte(statusContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify no open phases before close (already closed)
-	openActs := classify.OpenActivities(statusPath)
-	if len(openActs) != 0 {
-		t.Fatalf("expected 0 open phases, got %d", len(openActs))
-	}
-
-	// Create minimal meta
-	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Run teardown -- should not emit any close events
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-task", Force: true}, fakeTeardown{})
-	if err != nil {
-		t.Fatalf("teardown should not fail: %v", err)
-	}
-
-	// Verify no "closed keyed phase" steps appeared (idempotent = no-op)
-	for _, step := range result.Steps {
-		if strings.Contains(step, "closed keyed phase") {
-			t.Errorf("unexpected phase close for already-closed phases: %s", step)
-		}
-	}
-}
-
-func TestCloseTerminalPhases_NoStatusFile(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Create minimal meta but NO status file
-	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Run teardown -- should not error on missing status file
-	result, err := RunWithBackend(Options{HomeDir: tmp, ID: "test-task", Force: true}, fakeTeardown{})
-	if err != nil {
-		t.Fatalf("teardown should not fail: %v", err)
-	}
-
-	// Verify no close steps (no status file to read)
-	for _, step := range result.Steps {
-		if strings.Contains(step, "closed keyed phase") {
-			t.Errorf("unexpected phase close with no status file: %s", step)
-		}
-	}
-}
-
-func TestUplinkCheck_MailboxOnlyKeyedOpenBlocks(t *testing.T) {
-	home, receiver := t.TempDir(), t.TempDir()
-	_, err := Report(ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: RankSoldier, SenderIdentity: "soldier", ReceiverRank: RankCaptain, ReceiverID: "captain", TaskID: "task:1", Key: "release", State: "done", Message: "complete"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := uplinkCheck(Options{HomeDir: home, ID: "task:1"}); err == nil {
-		t.Fatal("keyed open report must block")
-	}
-}
-
-func TestUplinkCheck_MailboxOnlyPendingWithoutOpenEvidenceBlocks(t *testing.T) {
-	home := t.TempDir()
-	env := &Envelope{Kind: "uplink-report", SenderRank: RankSoldier, SenderIdentity: "soldier", ReceiverRank: RankCaptain, ReceiverID: "captain", TaskID: "task:partial", Key: "x", Payload: "done"}
-	if err := NewStore(home).WriteEnvelope(env); err != nil {
-		t.Fatal(err)
-	}
-	if err := NewStore(home).WritePending(env); err != nil {
-		t.Fatal(err)
-	}
-	if err := uplinkCheck(Options{HomeDir: home, ID: "task:partial"}); err == nil {
-		t.Fatal("pending-only crash state must block")
-	}
-}
-
-func TestUplinkCheck_WrongAckBlocksExactAckOpens(t *testing.T) {
-	home, receiver := t.TempDir(), t.TempDir()
-	result, err := Report(ReportRequest{SenderHome: home, ReceiverHome: receiver, SenderRank: RankSoldier, SenderIdentity: "soldier", ReceiverRank: RankCaptain, ReceiverID: "captain", TaskID: "task:ack", Key: "default", State: "done", Message: "complete"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	env, _ := NewStore(receiver).ReadEnvelope("soldier", result.MessageID)
-	wrong := &ProcessingAck{MessageID: env.MessageID, SenderRank: env.SenderRank, SenderIdentity: env.SenderIdentity, ReceiverRank: env.ReceiverRank, ReceiverID: env.ReceiverID, TaskID: env.TaskID, Key: env.Key, PayloadHash: PayloadHashHex("wrong"), ProcessedAt: time.Now().UnixNano(), Outcome: OutcomeAccepted}
-	if err := NewStore(receiver).WriteAck(wrong); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Recover(RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err == nil {
-		t.Fatal("wrong ack should fail")
-	}
-	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err == nil {
-		t.Fatal("wrong ack must block")
-	}
-	os.Remove(filepath.Join(receiver, "state", InboxDir, "soldier", result.MessageID+".ack"))
-	exact := *wrong
-	exact.PayloadHash = env.PayloadHash
-	if err := NewStore(receiver).WriteAck(&exact); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Recover(RecoverRequest{SenderHome: home, ReceiverHome: receiver, SenderIdentity: "soldier"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := uplinkCheck(Options{HomeDir: home, ID: "task:ack"}); err != nil {
-		t.Fatalf("exact ack should open teardown: %v", err)
-	}
-}
-
-func TestUplinkCheck_NoMaterialStatusPasses(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	id := "test-task"
-	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
-
-	// No status file, no per-task obligations → should pass
-	err := uplinkCheck(Options{HomeDir: home, ID: id})
-	if err != nil {
-		t.Fatalf("uplinkCheck should pass without status file: %v", err)
-	}
-
-	// Non-material status → should pass even with per-task obligations
-	// Must init per-task obligations first for uplinkCheck to see them
-	if err := InitTaskObligations(home, id, "uplink"); err != nil {
-		t.Fatalf("init obligations: %v", err)
-	}
-	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("working: in progress\n"), 0644)
-	err = uplinkCheck(Options{HomeDir: home, ID: id})
-	if err != nil {
-		t.Fatalf("uplinkCheck should pass with non-material status: %v", err)
-	}
-}
-
-func TestUplinkCheck_MaterialStatusWithoutReportRelayFails(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	id := "test-task"
-	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
-
-	// Init per-task obligations so uplinkCheck checks this task
-	if err := InitTaskObligations(home, id, "uplink"); err != nil {
-		t.Fatalf("init obligations: %v", err)
-	}
-
-	// Write material status
-	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
-
-	// uplinkCheck should fail: material status + open ReportRelay
-	err := uplinkCheck(Options{HomeDir: home, ID: id})
-	if err == nil {
-		t.Fatal("uplinkCheck should fail with material status and open ReportRelay")
-	}
-	if !strings.Contains(err.Error(), "report-relay") {
-		t.Errorf("error should mention report-relay: %v", err)
-	}
-}
-
-func TestUplinkCheck_MaterialStatusWithCompletedReportRelayPasses(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	id := "test-task"
-	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
-
-	// Init per-task obligations
-	if err := InitTaskObligations(home, id, "uplink"); err != nil {
-		t.Fatalf("init obligations: %v", err)
-	}
-
-	// Write material status
-	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
-
-	// Complete the per-task ReportRelay obligation
-	found, err := CompleteTaskObligation(home, id, ReportRelay)
-	if err != nil {
-		t.Fatalf("CompleteTaskObligation error: %v", err)
-	}
-	if !found {
-		t.Fatal("expected to find ReportRelay to complete")
-	}
-
-	// Now uplinkCheck should pass: material status but ReportRelay is closed
-	err = uplinkCheck(Options{HomeDir: home, ID: id})
-	if err != nil {
-		t.Fatalf("uplinkCheck should pass after ReportRelay completed: %v", err)
-	}
-}
-
-func TestRun_TeardownFailsOnOpenReportRelayWithMaterialStatus(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	// Create report dir so scout safety check passes
-	reportDir := filepath.Join(home, "data", "test-uplink-fail")
-	os.MkdirAll(reportDir, 0755)
-	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings\n"), 0644)
-
-	id := "test-uplink-fail"
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
-
-	// Init per-task obligations
-	if err := InitTaskObligations(home, id, "uplink"); err != nil {
-		t.Fatalf("init obligations: %v", err)
-	}
-
-	// Write material done status.
-	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
-
-	// Teardown should fail because uplink is not acknowledged
-	_, err := RunWithBackend(Options{HomeDir: home, ID: id, Force: false}, fakeTeardown{})
-	if err == nil {
-		t.Fatal("teardown should fail with material status and open ReportRelay")
-	}
-	if !strings.Contains(err.Error(), "report-relay") {
-		t.Errorf("error should mention report-relay: %v", err)
-	}
-}
-
-func TestRun_TeardownForcePreservesEvidence(t *testing.T) {
-	home := t.TempDir()
-	stateDir := filepath.Join(home, "state")
-	receiptsDir := filepath.Join(home, "state", ".terminal-receipts")
-	os.MkdirAll(stateDir, 0755)
-	os.MkdirAll(receiptsDir, 0755)
-
-	id := "test-uplink-force"
-	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, id+".meta"), []byte(metaContent), 0644)
-
-	// Write material status
-	os.WriteFile(filepath.Join(stateDir, id+".status"), []byte("done: task complete\n"), 0644)
-	// Write a receipt file
-	os.WriteFile(filepath.Join(receiptsDir, id+".receipt"), []byte("state=done\n"), 0644)
-
-	// With --force, teardown should proceed but preserve evidence
-	result, err := RunWithBackend(Options{HomeDir: home, ID: id, Force: true}, fakeTeardown{})
-	if err != nil {
-		t.Fatalf("with --force should preserve evidence: %v", err)
-	}
-
-	// Verify evidence was preserved to .backup/
-	backupPath := filepath.Join(stateDir, ".backup", id, id+".status")
-	if _, err := os.Stat(backupPath); err != nil {
-		t.Fatalf("evidence should be preserved at %s: %v", backupPath, err)
-	}
-	// Verify receipt was also preserved
-	backupReceipt := filepath.Join(stateDir, ".backup", id, id+".receipt")
-	if _, err := os.Stat(backupReceipt); err != nil {
-		t.Fatalf("receipt evidence should be preserved at %s: %v", backupReceipt, err)
-	}
-
-	if !hasStepContaining(result.Steps, ".backup") {
-		t.Errorf("result.Steps should mention .backup backup: %v", result.Steps)
-	}
-}
-
-// hasStepContaining returns true if any step in the list contains substr.
-func hasStepContaining(steps []string, substr string) bool {
-	for _, s := range steps {
-		if strings.Contains(s, substr) {
-			return true
-		}
-	}
-	return false
 }

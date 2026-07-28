@@ -1,4 +1,4 @@
-package orchestrator
+package fleet
 
 import (
 	"fmt"
@@ -10,10 +10,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 )
-
-var QueryDeliveryMergeStatus = func(*domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	return nil, fmt.Errorf("merge status test capability unavailable")
-}
 
 // --- test helpers ---
 

@@ -1,5 +1,5 @@
 // Package teardown implements soldier teardown safety checks and lifecycle.
-package orchestrator
+package fleet
 
 import (
 	"fmt"
@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -33,10 +32,7 @@ type TeardownResult struct {
 
 // Run fails closed because teardown requires a task-bound endpoint capability.
 // Production callers must compose that capability through RunWithBackend.
-func Run(Options) (*TeardownResult, error) {
-	return nil, fmt.Errorf("teardown endpoint capability is required; use RunWithBackend")
-}
-func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error) {
+func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
@@ -65,29 +61,11 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 			result.Steps = append(result.Steps, "proof: "+p)
 		}
 	} else {
-		// --force: preserve evidence before destructive cleanup
-		// Copy status file and any terminal receipts to a .backup/ dir
-		// so unacked terminal evidence is not silently erased.
-		backupDir := filepath.Join(opts.HomeDir, "state", ".backup", opts.ID)
-		os.MkdirAll(backupDir, 0755)
-		stateDir := filepath.Join(opts.HomeDir, "state")
-		// Copy status file
-		if src, err := os.ReadFile(filepath.Join(stateDir, opts.ID+".status")); err == nil {
-			os.WriteFile(filepath.Join(backupDir, opts.ID+".status"), src, 0644)
+		steps, err := journals.PrepareForcedRetirementEvidence(opts.HomeDir, opts.ID)
+		if err != nil {
+			return nil, fmt.Errorf("teardown %s: preserving evidence: %w", opts.ID, err)
 		}
-		// Copy receipt files
-		receiptsDir := ReceiptDir(opts.HomeDir)
-		if entries, err := os.ReadDir(receiptsDir); err == nil {
-			prefix := opts.ID + "."
-			for _, e := range entries {
-				if strings.HasPrefix(e.Name(), prefix) {
-					if src, err := os.ReadFile(filepath.Join(receiptsDir, e.Name())); err == nil {
-						os.WriteFile(filepath.Join(backupDir, e.Name()), src, 0644)
-					}
-				}
-			}
-		}
-		result.Steps = append(result.Steps, "evidence preserved to state/.backup/"+opts.ID+" (--force)")
+		result.Steps = append(result.Steps, steps...)
 	}
 
 	// Step 0: Terminal uplink continuity check
@@ -97,7 +75,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	// fail closed — the parent supervisor must receive confirmation before
 	// local artifacts are removed. Use --force to override.
 	if !opts.Force {
-		if err := uplinkCheck(opts); err != nil {
+		if err := journals.VerifyRetirementContinuity(opts.HomeDir, opts.ID); err != nil {
 			return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
 		}
 	}
@@ -162,7 +140,11 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	// from appearing as the current reconciled state after
 	// Appending to both the status file (before cleanup) and the typed event log
 	// (for permanent durability) follows the current-state precedence pattern.
-	closeTerminalPhases(opts, result)
+	journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
+	if err != nil {
+		return nil, fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err)
+	}
+	result.Steps = append(result.Steps, journalSteps...)
 
 	// 4. Remove residual state artifacts
 	stateDir := filepath.Join(opts.HomeDir, "state")
@@ -186,14 +168,6 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 		} else {
 			result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", name))
 		}
-	}
-
-	// 4.5. Clear per-task obligation records for this task
-	// Uses per-task path instead of global per-role file.
-	if err := ClearTaskCompleted(opts.HomeDir, opts.ID); err != nil {
-		result.Steps = append(result.Steps, fmt.Sprintf("clear task obligations: %v", err))
-	} else {
-		result.Steps = append(result.Steps, "task obligations cleared")
 	}
 
 	// 5. Clean up data directory
@@ -564,77 +538,4 @@ func otherWorkspaceRefs(homeDir, excludeID, workspaceID string) []string {
 		}
 	}
 	return refs
-}
-
-// closeTerminalPhases reads the status file for the task being torn down,
-// finds any open keyed phases (working/paused), and appends a "resolved"
-// terminal event for each open phase. This prevents stale working/blocked
-// status from remaining as the current reconciled state after
-// It writes to both the status file (before cleanup) and the typed event
-// log (for permanent durability). Idempotent: already-closed keys are not
-// returned by OpenActivities, so repeating the same resolved key is safe.
-func closeTerminalPhases(opts Options, result *TeardownResult) {
-	statusPath := filepath.Join(opts.HomeDir, "state", opts.ID+".status")
-	openActs := classify.OpenActivities(statusPath)
-	if len(openActs) == 0 {
-		return
-	}
-	for _, act := range openActs {
-		closeLine := fmt.Sprintf("resolved [key=%s]: soldier torn down", act.Key)
-		// Append to the status file before cleanup so any concurrent reader
-		// sees the proper close event (even though teardown removes it shortly).
-		if err := home.AppendStatus(opts.HomeDir, opts.ID, closeLine); err != nil {
-			result.Steps = append(result.Steps, fmt.Sprintf("warning: close phase %s: %v", act.Key, err))
-			continue
-		}
-		result.Steps = append(result.Steps, fmt.Sprintf("closed keyed phase [key=%s]", act.Key))
-
-		// Also write to the typed event log for permanent durability beyond
-		syntheticID := SyntheticEventID()
-		if err := AppendWithID(opts.HomeDir, syntheticID, "task.status", opts.ID, act.Key, closeLine); err != nil {
-			result.Steps = append(result.Steps, fmt.Sprintf("warning: event log: %v", err))
-		}
-	}
-}
-
-// uplinkCheck verifies terminal uplink continuity before teardown removes
-// status/meta artifacts. It ensures material soldier reports are durably
-// acknowledged by the parent supervisor before local cleanup proceeds.
-//
-// Uses per-task obligations (state/.obligations/<taskID>.obligations) to check
-// the exact task+key, not a global per-role flag.
-//
-// If the task has material status (done/failed/blocked/needs-decision) AND the
-// ReportRelay obligation is still open, the check fails closed. This prevents
-// teardown from removing evidence that the parent supervisor has not yet seen.
-//
-// The check is idempotent after ReportRelay is completed. Use --force to bypass.
-func uplinkCheck(opts Options) error {
-	if HasPendingReport(opts.HomeDir, opts.ID) || HasAnyOpenReport(opts.HomeDir, opts.ID) {
-		return fmt.Errorf("uplink report not acknowledged: Processing Ack is still pending for task %s (use --force to override)", opts.ID)
-	}
-
-	// Legacy read compatibility: check the former ReportRelay obligation.
-	// Check if per-task ReportRelay obligation is still open.
-	// Per-task obligations are bound to exact taskID+terminalKey, not global role.
-	open, err := IsTaskReportRelayOpen(opts.HomeDir, opts.ID)
-	if err != nil {
-		return fmt.Errorf("reading task obligations: %w", err)
-	}
-	if !open {
-		return nil
-	}
-
-	// ReportRelay is open. Check if the task has material status.
-	// FAILS CLOSED: MaterialReportExists returns error for unreadable status.
-	hasMaterial, err := MaterialReportExists(opts.HomeDir, opts.ID)
-	if err != nil {
-		return fmt.Errorf("checking material report (fail-closed): %w", err)
-	}
-	if !hasMaterial {
-		return nil
-	}
-
-	// Material report exists AND ReportRelay is still open — fail closed.
-	return fmt.Errorf("terminal report-relay not acknowledged: material status exists but ReportRelay obligation is still open for task %s (use --force to override, or have captain relay this task)", opts.ID)
 }

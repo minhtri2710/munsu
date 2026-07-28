@@ -1,4 +1,4 @@
-package orchestrator
+package fleet
 
 import (
 	"errors"
@@ -18,8 +18,8 @@ type fakeTeardown struct {
 }
 
 func (f fakeTeardown) RefuseGate() error { return nil }
-func (f fakeTeardown) Probe(string, map[string]string) (EndpointStatus, error) {
-	return EndpointStatus{Alive: f.alive}, f.probeErr
+func (f fakeTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
+	return RetirementEndpointStatus{Alive: f.alive}, f.probeErr
 }
 func (f fakeTeardown) Dispose(string, map[string]string, DisposeRequest) error { return f.disposeErr }
 func (f fakeTeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
@@ -40,19 +40,9 @@ func teardownFixture(t *testing.T) (Options, string) {
 	os.WriteFile(meta, []byte("kind=ship\nbackend=tmux\nwindow=pane-1\n"), 0600)
 	return Options{HomeDir: h, ID: "task", Force: true}, meta
 }
-func TestRunRequiresEndpointCapabilityAndPreservesMeta(t *testing.T) {
-	opts, meta := teardownFixture(t)
-	if _, err := Run(opts); err == nil {
-		t.Fatal("expected endpoint capability error")
-	}
-	if _, err := os.Stat(meta); err != nil {
-		t.Fatalf("meta removed: %v", err)
-	}
-}
-
 func TestRunWithBackendPreservesMetaOnProbeError(t *testing.T) {
 	opts, meta := teardownFixture(t)
-	if _, err := RunWithBackend(opts, fakeTeardown{probeErr: errors.New("probe failed")}); err == nil {
+	if _, err := RetireTask(opts, fakeTeardown{probeErr: errors.New("probe failed")}, fakeRetirementJournals{}); err == nil {
 		t.Fatal("expected error")
 	}
 	if _, err := os.Stat(meta); err != nil {
@@ -61,7 +51,7 @@ func TestRunWithBackendPreservesMetaOnProbeError(t *testing.T) {
 }
 func TestRunWithBackendPreservesMetaOnDisposeError(t *testing.T) {
 	opts, meta := teardownFixture(t)
-	if _, err := RunWithBackend(opts, fakeTeardown{alive: true, disposeErr: errors.New("dispose failed")}); err == nil {
+	if _, err := RetireTask(opts, fakeTeardown{alive: true, disposeErr: errors.New("dispose failed")}, fakeRetirementJournals{}); err == nil {
 		t.Fatal("expected error")
 	}
 	if _, err := os.Stat(meta); err != nil {
@@ -81,7 +71,7 @@ func TestRunWithBackendReturnsWorktreeViaCapability(t *testing.T) {
 	var calls int
 	var gotPath string
 	fake := fakeTeardown{returnWorktreeFn: func(p string) error { calls++; gotPath = p; return nil }}
-	res, err := RunWithBackend(opts2, fake)
+	res, err := RetireTask(opts2, fake, fakeRetirementJournals{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +101,7 @@ func TestRunWithBackendWorktreeFailurePreventsCleanup(t *testing.T) {
 
 	var calls int
 	fake := fakeTeardown{returnWorktreeFn: func(string) error { calls++; return errors.New("pool full") }}
-	_, err := RunWithBackend(opts, fake)
+	_, err := RetireTask(opts, fake, fakeRetirementJournals{})
 	if err == nil || !strings.Contains(err.Error(), "worktree return failed") || !strings.Contains(err.Error(), "lease still held") {
 		t.Fatalf("error=%v, want worktree return failure with lease held", err)
 	}
@@ -122,4 +112,14 @@ func TestRunWithBackendWorktreeFailurePreventsCleanup(t *testing.T) {
 	if _, err := os.Stat(meta); err != nil {
 		t.Fatalf("meta removed on worktree failure: %v", err)
 	}
+}
+
+type fakeRetirementJournals struct{}
+
+func (fakeRetirementJournals) VerifyRetirementContinuity(string, string) error { return nil }
+func (fakeRetirementJournals) PrepareForcedRetirementEvidence(string, string) ([]string, error) {
+	return nil, nil
+}
+func (fakeRetirementJournals) FinalizeRetirementJournals(string, string) ([]string, error) {
+	return nil, nil
 }
