@@ -55,7 +55,7 @@ func (h testWatcherHooks) Activate(home string) {
 var activeTestHooks WatcherHooks = NoopWatcherHooks{}
 
 func testRunCycle(home string) (bool, error) {
-	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks)
+	return RunCycleWithProbeAndSender(home, testEndpointProbe{}, testCycleSender{}, activeTestHooks, NoopRetirementPort{})
 }
 
 // --- absorbStaleSignal tests (pure predicate) ---

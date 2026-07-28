@@ -39,13 +39,25 @@ type WatcherHooks interface {
 	Activate(homeDir string)
 }
 
+type RetirementPort interface {
+	RecoverPendingRetirements(homeDir string) (int, []error)
+	RetireMergedPoll(homeDir, taskID, checkPath string) error
+}
+
+type NoopRetirementPort struct{}
+
+func (NoopRetirementPort) RecoverPendingRetirements(string) (int, []error) { return 0, nil }
+func (NoopRetirementPort) RetireMergedPoll(string, string, string) error {
+	return fmt.Errorf("retirement capability unavailable")
+}
+
 type NoopWatcherHooks struct{}
 
 func (NoopWatcherHooks) Reconcile(string, bool) error { return nil }
 func (NoopWatcherHooks) Activate(string)              {}
 
-func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks)
+func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -54,7 +66,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (*WakeReason, error) {
 	acquired, err := lifecycle.AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -81,7 +93,7 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 			return &WakeReason{Kind: "signal", Message: "watcher interrupted"}, nil
 		case <-ticker.C:
 			lifecycle.WriteBeat(homeDir)
-			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks); err != nil {
+			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement); err != nil {
 				return nil, err
 			}
 		}
@@ -317,8 +329,8 @@ var recoveryDone sync.Map
 
 // RunCycle performs one durable scan/enqueue cycle with condition dedupe.
 // It is the shared path used by the persistent daemon and `munsu watch run`.
-func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (bool, error) {
-	return runCycleWithProbeAndSender(homeDir, probe, sender, hooks)
+func RunCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (bool, error) {
+	return runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement)
 }
 
 // runRecovery executes the one-shot recovery on watcher startup.
@@ -358,7 +370,7 @@ func runRecovery(homeDir string, sender BoundSender, hooks WatcherHooks) error {
 	return nil
 }
 
-func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks) (bool, error) {
+func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort) (bool, error) {
 	// Snapshot recovery state before the call — prevents double invocation
 	// of TerminalReconcileHook on cycle 1 (recovery handles startup).
 	_, recoveryWasDone := recoveryDone.Load(homeDir)
@@ -371,7 +383,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 	// Retirement recovery: scan pending records every cycle.
 	// This handles crashes during the merged-PR retirement sequence.
 	// Runs before check discovery so recovered tasks produce wake signals.
-	resolved, recErrs := RecoverAllPendingRetirements(homeDir)
+	resolved, recErrs := retirement.RecoverPendingRetirements(homeDir)
 	if resolved > 0 || len(recErrs) > 0 {
 		if resolved > 0 {
 			fmt.Fprintf(os.Stderr, "poll retirement recovery: %d resolved\n", resolved)
@@ -463,8 +475,8 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 			// On success, the poll is removed and a durable status line
 			// is published. The check wake is NOT emitted — the status
 			// scan will surface it as a signal wake on the next cycle.
-			if err := ValidateCheckWithLstat(plugin.Path); err == nil {
-				if retireErr := RetireMergedPoll(homeDir, plugin.Label, plugin.Path); retireErr == nil {
+			if err := ValidateCheck(plugin.Path); err == nil {
+				if retireErr := retirement.RetireMergedPoll(homeDir, plugin.Label, plugin.Path); retireErr == nil {
 					// Poll retired successfully. Skip wake emission;
 					// the status signal path will surface the publication.
 					continue

@@ -17,7 +17,7 @@ func (s *testMailboxSender) Send(_ string, _ map[string]string, payload string) 
 func TestRunCycleWithProbeAndSenderRejectsNilHooksWithoutMarkingRecoveryDone(t *testing.T) {
 	home := t.TempDir()
 	recoveryDone.Delete(home)
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, nil); err == nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, nil, NoopRetirementPort{}); err == nil {
 		t.Fatal("expected missing hooks error")
 	}
 	if _, loaded := recoveryDone.Load(home); loaded {
@@ -28,13 +28,13 @@ func TestRunCycleWithProbeAndSenderRejectsNilHooksWithoutMarkingRecoveryDone(t *
 func TestRunCycleWithProbeAndSenderRejectsNilSenderWithoutMarkingRecoveryDone(t *testing.T) {
 	home := t.TempDir()
 	recoveryDone.Delete(home)
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, nil, NoopWatcherHooks{}); err == nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, nil, NoopWatcherHooks{}, NoopRetirementPort{}); err == nil {
 		t.Fatal("expected missing sender error")
 	}
 	if _, loaded := recoveryDone.Load(home); loaded {
 		t.Fatal("nil sender marked recovery complete")
 	}
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, NoopWatcherHooks{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, NoopWatcherHooks{}, NoopRetirementPort{}); err != nil {
 		t.Fatalf("valid sender could not retry recovery: %v", err)
 	}
 }
@@ -49,7 +49,7 @@ func TestRunCycleRecoveryScanFailureCanRetry(t *testing.T) {
 	if err := os.WriteFile(inboxRoot, []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, NoopWatcherHooks{}); err == nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, NoopWatcherHooks{}, NoopRetirementPort{}); err == nil {
 		t.Fatal("expected inbox scan error")
 	}
 	if _, loaded := recoveryDone.Load(home); loaded {
@@ -58,7 +58,7 @@ func TestRunCycleRecoveryScanFailureCanRetry(t *testing.T) {
 	if err := os.Remove(inboxRoot); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, NoopWatcherHooks{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, NoopWatcherHooks{}, NoopRetirementPort{}); err != nil {
 		t.Fatalf("corrected recovery did not retry: %v", err)
 	}
 }
@@ -78,7 +78,7 @@ func TestRunCycleRecoveryUsesExplicitSenderAndWritesMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &testMailboxSender{}
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, sender, NoopWatcherHooks{}); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, sender, NoopWatcherHooks{}, NoopRetirementPort{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(sender.payloads) != 1 || sender.payloads[0] != "wake" {

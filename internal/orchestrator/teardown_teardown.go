@@ -19,6 +19,9 @@ import (
 )
 
 var GateRefuseFromCWD = func() error { return nil }
+var QueryDeliveryMergeStatus = func(*domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
+	return nil, fmt.Errorf("delivery merge status capability is required")
+}
 
 // Options controls teardown behavior.
 type Options struct {

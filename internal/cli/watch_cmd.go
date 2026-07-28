@@ -223,7 +223,7 @@ func newWatchRunCmd() *cobra.Command {
 			}
 
 			wakesBefore := countQueuedWakes(ctx.Home)
-			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), captain.NewWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport()))
+			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), captain.NewWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport()), fleetRetirementPort{})
 			if err != nil {
 				return err
 			}

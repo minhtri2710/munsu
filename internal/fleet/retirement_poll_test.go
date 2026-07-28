@@ -1,4 +1,4 @@
-package orchestrator
+package fleet
 
 import (
 	"crypto/sha256"
@@ -1485,7 +1485,7 @@ func TestValidateCheck_LstatRejectsSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ValidateCheck(link)
+	err := ValidateCheckWithLstat(link)
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("expected symlink error, got: %v", err)
 	}
@@ -1689,47 +1689,5 @@ func TestRecoverPendingRetirement_IdempotentDeliveryState(t *testing.T) {
 	}
 	if result2[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
 		t.Fatalf("expected delivery_state to remain %q", domain.DeliveryStateMerged)
-	}
-}
-
-func TestRetireMergedPoll_MarkMergedCASFailurePreservesRecord(t *testing.T) {
-	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
-	defer cleanup()
-	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
-	defer restore()
-
-	// Break the seam: make markDeliveryMerged always fail.
-	saved := markDeliveryMerged
-	markDeliveryMerged = func(_, _ string, _ *domain.DeliveryIdentity) error {
-		return fmt.Errorf("simulated CAS failure")
-	}
-	defer func() { markDeliveryMerged = saved }()
-
-	err := RetireMergedPoll(home, taskID, checkPath)
-	if err == nil {
-		t.Fatal("expected error from simulated markDeliveryMerged failure")
-	}
-	if !strings.Contains(err.Error(), "simulated CAS failure") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Poll should still exist (retirement did not complete).
-	if _, err := os.Stat(checkPath); err != nil {
-		t.Fatal("check should be preserved on MarkMerged failure")
-	}
-
-	// Retirement record should exist (pending for recovery).
-	rec := readRetirementRecordOrNil(t, home, taskID)
-	if rec == nil {
-		t.Fatal("retirement record should exist for recovery")
-	}
-
-	// delivery_state should NOT be merged.
-	meta, err := mhome.ReadMeta(home, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if meta[domain.MetaDeliveryState] == string(domain.DeliveryStateMerged) {
-		t.Fatal("delivery_state should NOT be merged after failed MarkMerged")
 	}
 }

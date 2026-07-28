@@ -20,10 +20,10 @@ func TestWatcherHooksRunStartupOnceThenCycleAndActivation(t *testing.T) {
 	home := t.TempDir()
 	recoveryDone.Delete(home)
 	hooks := &recordingHooks{}
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, hooks); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, hooks, NoopRetirementPort{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, hooks); err != nil {
+	if _, err := RunCycleWithProbeAndSender(home, testEndpointProbe{}, &testMailboxSender{}, hooks, NoopRetirementPort{}); err != nil {
 		t.Fatal(err)
 	}
 	if hooks.startup != 1 || hooks.cycles != 1 || hooks.activations != 1 {
@@ -36,13 +36,13 @@ func TestWatcherHooksAreIsolatedPerHomeAndInstance(t *testing.T) {
 	recoveryDone.Delete(homeA)
 	recoveryDone.Delete(homeB)
 	hooksA, hooksB := &recordingHooks{}, &recordingHooks{}
-	if _, err := RunCycleWithProbeAndSender(homeA, testEndpointProbe{}, &testMailboxSender{}, hooksA); err != nil {
+	if _, err := RunCycleWithProbeAndSender(homeA, testEndpointProbe{}, &testMailboxSender{}, hooksA, NoopRetirementPort{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RunCycleWithProbeAndSender(homeB, testEndpointProbe{}, &testMailboxSender{}, hooksB); err != nil {
+	if _, err := RunCycleWithProbeAndSender(homeB, testEndpointProbe{}, &testMailboxSender{}, hooksB, NoopRetirementPort{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RunCycleWithProbeAndSender(homeA, testEndpointProbe{}, &testMailboxSender{}, hooksA); err != nil {
+	if _, err := RunCycleWithProbeAndSender(homeA, testEndpointProbe{}, &testMailboxSender{}, hooksA, NoopRetirementPort{}); err != nil {
 		t.Fatal(err)
 	}
 	if hooksA.startup != 1 || hooksA.cycles != 1 || hooksA.activations != 1 {

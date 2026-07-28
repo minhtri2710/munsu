@@ -1,6 +1,6 @@
 // Package supervision provides watcher check plugin infrastructure including
 // crash-safe retirement of merged PR poll artifacts.
-package orchestrator
+package fleet
 
 import (
 	"crypto/sha256"
@@ -351,7 +351,7 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 	}
 
 	// Read task delivery identity.
-	ident, err := RequireIdentity(homeDir, taskID)
+	ident, err := requireRetirementIdentity(homeDir, taskID)
 	if err != nil {
 		return fmt.Errorf("delivery identity: %w", err)
 	}
@@ -423,7 +423,7 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 	// Fail-closed: if CAS fails, the retirement record stays pending and
 	// the next cycle retries via recovery. The publication and poll removal
 	// below do NOT proceed until meta is consistent.
-	if err := markDeliveryMerged(homeDir, taskID, ident); err != nil {
+	if err := MarkMerged(homeDir, taskID, ident); err != nil {
 		return fmt.Errorf("delivery_state CAS failed (pending record exists): %w", err)
 	}
 
@@ -496,9 +496,7 @@ func removePollWithValidation(checkPath, expectedDigest string) error {
 	return os.Remove(checkPath)
 }
 
-// markDeliveryMerged is a seam over fleet.MarkMerged, replaceable in tests.
-
-var RequireIdentity = func(homeDir, id string) (*domain.DeliveryIdentity, error) {
+func requireRetirementIdentity(homeDir, id string) (*domain.DeliveryIdentity, error) {
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading task meta for identity: %w", err)
@@ -514,23 +512,6 @@ var RequireIdentity = func(homeDir, id string) (*domain.DeliveryIdentity, error)
 		return nil, fmt.Errorf("incomplete delivery identity for task %s: %w", id, err)
 	}
 	return ident, nil
-}
-
-var QueryDeliveryMergeStatus = func(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {
-	return nil, fmt.Errorf("QueryDeliveryMergeStatus provider not set")
-}
-
-var MarkMerged = func(homeDir, taskID string, ident *domain.DeliveryIdentity) error {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateMerged)
-	return home.WriteMeta(homeDir, taskID, meta)
-}
-
-var markDeliveryMerged = func(homeDir, taskID string, ident *domain.DeliveryIdentity) error {
-	return MarkMerged(homeDir, taskID, ident)
 }
 
 // recordToIdentity builds a DeliveryIdentity from a PollRetirementRecord for
@@ -601,7 +582,7 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 		// (no-op if already merged). Fail-closed: preserves record
 		// and poll for the next recovery cycle.
 		if currentMeta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-			if err := markDeliveryMerged(homeDir, taskID, recordToIdentity(rec)); err != nil {
+			if err := MarkMerged(homeDir, taskID, recordToIdentity(rec)); err != nil {
 				return false, fmt.Errorf("recovery: delivery_state CAS failed: %w", err)
 			}
 		}
