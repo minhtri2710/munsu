@@ -1181,7 +1181,7 @@ func TestRunCycle_FailsGracefullyOnInvalidParent(t *testing.T) {
 //   - No hook = no-op
 //
 // Real-hook E2E tests (invoking RunCycle against the real captain
-// reconcileHook) live in internal/captain/watcher_test.go.
+// reconciliation hook) live in captain_relay_test.go.
 
 // setupRunCycleTest creates a home with state dir for runCycle tests.
 func setupRunCycleTest(t *testing.T) string {
