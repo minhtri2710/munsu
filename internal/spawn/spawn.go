@@ -12,7 +12,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/capability"
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"gopkg.in/yaml.v3"
 )
@@ -77,7 +76,7 @@ func noMistakesOnPath() bool {
 // using the full capability probe. Used by auto-detection paths where silent
 // fallback to direct-PR is acceptable (unlike explicit/project/config selection).
 func noMistakesAvailable() bool {
-	probe := delivery.NoMistakesProbe()
+	probe := fleet.NoMistakesProbe()
 	return probe.State == capability.Ready
 }
 
@@ -88,7 +87,7 @@ func EnsureDeliveryModeRunnable(mode string) error {
 	if mode != "no-mistakes" {
 		return nil
 	}
-	probe := delivery.NoMistakesProbe()
+	probe := fleet.NoMistakesProbe()
 	switch probe.State {
 	case capability.Absent:
 		return fmt.Errorf("delivery mode 'no-mistakes' requires the no-mistakes binary on PATH; run 'munsu doctor' or 'go install github.com/kunchenguid/no-mistakes@latest'")
@@ -158,7 +157,7 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 	}
 	// Binary on PATH but incompatible version: inform the user why.
 	if noMistakesOnPath() {
-		probe := delivery.NoMistakesProbe()
+		probe := fleet.NoMistakesProbe()
 		fmt.Fprintf(os.Stderr, "warning: no-mistakes found on PATH but not compatible: %s; defaulting to direct-PR. Upgrade no-mistakes or run 'munsu doctor'\n", probe.Detail)
 		return "direct-PR", nil
 	}
@@ -348,7 +347,7 @@ func defaultNoMistakesPreflight(repoPath string) error {
 // worktree acquisition. It verifies environmental readiness for the
 // resolved delivery mode (e.g. gh auth, remotes).
 func (r *Runner) preflightDelivery() error {
-	result, err := delivery.Preflight(r.effectiveMode, r.projPath)
+	result, err := fleet.Preflight(r.effectiveMode, r.projPath)
 	if err != nil {
 		return fmt.Errorf("delivery preflight: %w", err)
 	}
@@ -358,7 +357,7 @@ func (r *Runner) preflightDelivery() error {
 	return nil
 }
 
-func formatPreflightFailures(checks []delivery.Check) string {
+func formatPreflightFailures(checks []fleet.Check) string {
 	var b strings.Builder
 	for _, c := range checks {
 		if !c.OK {

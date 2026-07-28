@@ -9,7 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -97,14 +97,14 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// reports skip identity capture — they are intermediate/error states, not terminal.
 			if role == "soldier" && materialStates[state] {
 				if state == "done" {
-					if err := delivery.VerifyDoneIdentity(targetHome, taskID, msg); err != nil {
+					if err := fleet.VerifyDoneIdentity(targetHome, taskID, msg); err != nil {
 						return fmt.Errorf("report: %w", err)
 					}
-					if err := delivery.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
 						return fmt.Errorf("report: %w", err)
 					}
 				} else if state != "blocked" && state != "failed" && state != "needs-decision" {
-					if err := delivery.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
 						return fmt.Errorf("report: %w", err)
 					}
 				}

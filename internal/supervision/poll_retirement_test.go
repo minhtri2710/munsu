@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -360,12 +360,12 @@ exit 0
 	return home, taskID, checkPath, func() {}
 }
 
-// installMockMergeStatus installs a mock delivery.QueryDeliveryMergeStatus
+// installMockMergeStatus installs a mock fleet.QueryDeliveryMergeStatus
 // that returns a specific result. Returns the original for restoration.
 func installMockMergeStatus(t *testing.T, merged bool, headSHA, mergedSHA string) func() {
 	t.Helper()
-	orig := delivery.QueryDeliveryMergeStatus
-	delivery.QueryDeliveryMergeStatus = func(ident *delivery.DeliveryIdentity) (*delivery.PRMergeStatus, error) {
+	orig := fleet.QueryDeliveryMergeStatus
+	fleet.QueryDeliveryMergeStatus = func(ident *fleet.DeliveryIdentity) (*fleet.PRMergeStatus, error) {
 		state := "OPEN"
 		if merged {
 			state = "MERGED"
@@ -374,7 +374,7 @@ func installMockMergeStatus(t *testing.T, merged bool, headSHA, mergedSHA string
 		if mSHA == "" && merged {
 			mSHA = headSHA
 		}
-		return &delivery.PRMergeStatus{
+		return &fleet.PRMergeStatus{
 			Merged:    merged,
 			MergedSHA: mSHA,
 			Closed:    !merged,
@@ -383,7 +383,7 @@ func installMockMergeStatus(t *testing.T, merged bool, headSHA, mergedSHA string
 		}, nil
 	}
 	return func() {
-		delivery.QueryDeliveryMergeStatus = orig
+		fleet.QueryDeliveryMergeStatus = orig
 	}
 }
 
@@ -1064,9 +1064,9 @@ func TestRetireMergedPoll_OpenPreservesPoll(t *testing.T) {
 func TestRetireMergedPoll_ClosedUnmergedPreservesPoll(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
-	orig := delivery.QueryDeliveryMergeStatus
-	delivery.QueryDeliveryMergeStatus = func(ident *delivery.DeliveryIdentity) (*delivery.PRMergeStatus, error) {
-		return &delivery.PRMergeStatus{
+	orig := fleet.QueryDeliveryMergeStatus
+	fleet.QueryDeliveryMergeStatus = func(ident *fleet.DeliveryIdentity) (*fleet.PRMergeStatus, error) {
+		return &fleet.PRMergeStatus{
 			Merged:    false,
 			MergedSHA: "",
 			Closed:    true,
@@ -1074,7 +1074,7 @@ func TestRetireMergedPoll_ClosedUnmergedPreservesPoll(t *testing.T) {
 			State:     "CLOSED",
 		}, nil
 	}
-	defer func() { delivery.QueryDeliveryMergeStatus = orig }()
+	defer func() { fleet.QueryDeliveryMergeStatus = orig }()
 
 	err := RetireMergedPoll(home, taskID, checkPath)
 	if err == nil {
@@ -1092,11 +1092,11 @@ func TestRetireMergedPoll_ClosedUnmergedPreservesPoll(t *testing.T) {
 func TestRetireMergedPoll_ProviderErrorPreservesPoll(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
-	orig := delivery.QueryDeliveryMergeStatus
-	delivery.QueryDeliveryMergeStatus = func(ident *delivery.DeliveryIdentity) (*delivery.PRMergeStatus, error) {
+	orig := fleet.QueryDeliveryMergeStatus
+	fleet.QueryDeliveryMergeStatus = func(ident *fleet.DeliveryIdentity) (*fleet.PRMergeStatus, error) {
 		return nil, fmt.Errorf("network error")
 	}
-	defer func() { delivery.QueryDeliveryMergeStatus = orig }()
+	defer func() { fleet.QueryDeliveryMergeStatus = orig }()
 
 	err := RetireMergedPoll(home, taskID, checkPath)
 	if err == nil {
@@ -1195,9 +1195,9 @@ func TestRetirementGitLabIdentity(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	orig := delivery.QueryDeliveryMergeStatus
-	delivery.QueryDeliveryMergeStatus = func(ident *delivery.DeliveryIdentity) (*delivery.PRMergeStatus, error) {
-		return &delivery.PRMergeStatus{
+	orig := fleet.QueryDeliveryMergeStatus
+	fleet.QueryDeliveryMergeStatus = func(ident *fleet.DeliveryIdentity) (*fleet.PRMergeStatus, error) {
+		return &fleet.PRMergeStatus{
 			Merged:    true,
 			MergedSHA: "gl-merged-sha",
 			Closed:    false,
@@ -1205,7 +1205,7 @@ func TestRetirementGitLabIdentity(t *testing.T) {
 			State:     "MERGED",
 		}, nil
 	}
-	defer func() { delivery.QueryDeliveryMergeStatus = orig }()
+	defer func() { fleet.QueryDeliveryMergeStatus = orig }()
 
 	if err := RetireMergedPoll(home, taskID, checkPath); err != nil {
 		t.Fatalf("GitLab retirement: %v", err)
@@ -1510,8 +1510,8 @@ func TestRetireMergedPoll_SetsDeliveryStateMerged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if meta[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, meta[delivery.MetaDeliveryState])
+	if meta[fleet.MetaDeliveryState] != string(fleet.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", fleet.DeliveryStateMerged, meta[fleet.MetaDeliveryState])
 	}
 
 	// Verify other meta is preserved.
@@ -1531,7 +1531,7 @@ func TestRetireMergedPoll_SetsDeliveryStateMergedFromReviewReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	meta[delivery.MetaDeliveryState] = string(delivery.DeliveryStateReviewReady)
+	meta[fleet.MetaDeliveryState] = string(fleet.DeliveryStateReviewReady)
 	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
@@ -1544,8 +1544,8 @@ func TestRetireMergedPoll_SetsDeliveryStateMergedFromReviewReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if result[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, result[delivery.MetaDeliveryState])
+	if result[fleet.MetaDeliveryState] != string(fleet.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", fleet.DeliveryStateMerged, result[fleet.MetaDeliveryState])
 	}
 }
 
@@ -1600,8 +1600,8 @@ func TestRecoverPendingRetirement_SetsDeliveryStateMerged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if result[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, result[delivery.MetaDeliveryState])
+	if result[fleet.MetaDeliveryState] != string(fleet.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", fleet.DeliveryStateMerged, result[fleet.MetaDeliveryState])
 	}
 }
 
@@ -1621,8 +1621,8 @@ func TestRecoverPendingRetirement_IdempotentDeliveryState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if result[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", delivery.DeliveryStateMerged, result[delivery.MetaDeliveryState])
+	if result[fleet.MetaDeliveryState] != string(fleet.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state=%q, got %q", fleet.DeliveryStateMerged, result[fleet.MetaDeliveryState])
 	}
 
 	// Recovery with nothing pending should be idempotent.
@@ -1639,8 +1639,8 @@ func TestRecoverPendingRetirement_IdempotentDeliveryState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if result2[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state to remain %q", delivery.DeliveryStateMerged)
+	if result2[fleet.MetaDeliveryState] != string(fleet.DeliveryStateMerged) {
+		t.Fatalf("expected delivery_state to remain %q", fleet.DeliveryStateMerged)
 	}
 }
 
@@ -1652,7 +1652,7 @@ func TestRetireMergedPoll_MarkMergedCASFailurePreservesRecord(t *testing.T) {
 
 	// Break the seam: make markDeliveryMerged always fail.
 	saved := markDeliveryMerged
-	markDeliveryMerged = func(_, _ string, _ *delivery.DeliveryIdentity) error {
+	markDeliveryMerged = func(_, _ string, _ *fleet.DeliveryIdentity) error {
 		return fmt.Errorf("simulated CAS failure")
 	}
 	defer func() { markDeliveryMerged = saved }()
@@ -1681,7 +1681,7 @@ func TestRetireMergedPoll_MarkMergedCASFailurePreservesRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if meta[delivery.MetaDeliveryState] == string(delivery.DeliveryStateMerged) {
+	if meta[fleet.MetaDeliveryState] == string(fleet.DeliveryStateMerged) {
 		t.Fatal("delivery_state should NOT be merged after failed MarkMerged")
 	}
 }

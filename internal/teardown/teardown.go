@@ -12,7 +12,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
-	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -343,7 +342,7 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 		// Validate identity before any provider query or fallback.
 		// Partial/corrupt identity must fail closed and never silently
 		// degrade to the legacy branch check.
-		if err := delivery.ValidateIdentity(ident); err != nil {
+		if err := fleet.ValidateIdentity(ident); err != nil {
 			return nil, fmt.Errorf("invalid delivery identity (fail-closed, no legacy fallback): %w", err)
 		}
 
@@ -363,12 +362,12 @@ func shipSafetyCheck(opts Options, meta map[string]string) ([]string, error) {
 }
 
 // identityFromMeta reconstructs a delivery identity from task meta using the
-// authoritative delivery.IdentityFromMeta, which correctly distinguishes:
+// authoritative fleet.IdentityFromMeta, which correctly distinguishes:
 //   - nil, nil     (truly no identity metadata — legacy fallback allowed)
 //   - nil, error   (partial identity with missing pr_url — fail closed)
 //   - identity, nil (valid identity — proceed to topology-aware check)
-func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error) {
-	return delivery.IdentityFromMeta(meta)
+func identityFromMeta(meta map[string]string) (*fleet.DeliveryIdentity, error) {
+	return fleet.IdentityFromMeta(meta)
 }
 
 // topologyAwareMergeCheck verifies the work is landed using the provider's
@@ -378,15 +377,15 @@ func identityFromMeta(meta map[string]string) (*delivery.DeliveryIdentity, error
 //   - Unknown/unverifiable: refuses teardown
 //
 // Returns the proof string on success.
-func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *delivery.DeliveryIdentity) (string, error) {
+func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *fleet.DeliveryIdentity) (string, error) {
 	// Check lifecycle state if set: require merged state for landed delivery.
-	if ds := meta[delivery.MetaDeliveryState]; ds != "" && ds != string(delivery.DeliveryStateMerged) {
-		return "", fmt.Errorf("delivery lifecycle is in state %q, expected %q (use --force to override)", ds, delivery.DeliveryStateMerged)
+	if ds := meta[fleet.MetaDeliveryState]; ds != "" && ds != string(fleet.DeliveryStateMerged) {
+		return "", fmt.Errorf("delivery lifecycle is in state %q, expected %q (use --force to override)", ds, fleet.DeliveryStateMerged)
 	}
 
 	// Query the provider for the current PR/MR merge status using the
 	// provider-neutral seam that routes by identity provider.
-	status, err := delivery.QueryDeliveryMergeStatus(ident)
+	status, err := fleet.QueryDeliveryMergeStatus(ident)
 	if err != nil {
 		return "", fmt.Errorf("cannot verify merge status: %w (use --force to override)", err)
 	}

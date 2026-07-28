@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -350,13 +350,13 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 	}
 
 	// Read task delivery identity.
-	ident, err := delivery.RequireIdentity(homeDir, taskID)
+	ident, err := fleet.RequireIdentity(homeDir, taskID)
 	if err != nil {
 		return fmt.Errorf("delivery identity: %w", err)
 	}
 
 	// Step 1: Query provider merge status.
-	status, err := delivery.QueryDeliveryMergeStatus(ident)
+	status, err := fleet.QueryDeliveryMergeStatus(ident)
 	if err != nil {
 		// Provider unavailable / query error: preserve poll, do not fail fatal.
 		return fmt.Errorf("merge status query (preserving poll): %w", err)
@@ -495,13 +495,13 @@ func removePollWithValidation(checkPath, expectedDigest string) error {
 	return os.Remove(checkPath)
 }
 
-// markDeliveryMerged is a seam over delivery.MarkMerged, replaceable in tests.
-var markDeliveryMerged = delivery.MarkMerged
+// markDeliveryMerged is a seam over fleet.MarkMerged, replaceable in tests.
+var markDeliveryMerged = fleet.MarkMerged
 
 // recordToIdentity builds a DeliveryIdentity from a PollRetirementRecord for
 // use in the recovery path's MarkMerged call.
-func recordToIdentity(rec *PollRetirementRecord) *delivery.DeliveryIdentity {
-	return &delivery.DeliveryIdentity{
+func recordToIdentity(rec *PollRetirementRecord) *fleet.DeliveryIdentity {
+	return &fleet.DeliveryIdentity{
 		Provider: rec.Provider,
 		Owner:    rec.Owner,
 		Repo:     rec.Repo,
@@ -565,7 +565,7 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 		// This heals orphaned retirement records and is idempotent
 		// (no-op if already merged). Fail-closed: preserves record
 		// and poll for the next recovery cycle.
-		if currentMeta[delivery.MetaDeliveryState] != string(delivery.DeliveryStateMerged) {
+		if currentMeta[fleet.MetaDeliveryState] != string(fleet.DeliveryStateMerged) {
 			if err := markDeliveryMerged(homeDir, taskID, recordToIdentity(rec)); err != nil {
 				return false, fmt.Errorf("recovery: delivery_state CAS failed: %w", err)
 			}

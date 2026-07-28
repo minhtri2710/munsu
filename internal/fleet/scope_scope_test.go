@@ -9,7 +9,7 @@ import (
 )
 
 // runCmd is a test helper that runs a command in a directory.
-func runCmd(t *testing.T, dir, name string, args ...string) {
+func scopeRunCmd(t *testing.T, dir, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
@@ -23,14 +23,14 @@ func runCmd(t *testing.T, dir, name string, args ...string) {
 // returns the canonical resolved path.
 func initRepo(t *testing.T, dir string) string {
 	t.Helper()
-	runCmd(t, dir, "git", "init")
-	runCmd(t, dir, "git", "config", "user.email", "test@test.com")
-	runCmd(t, dir, "git", "config", "user.name", "Test")
+	scopeRunCmd(t, dir, "git", "init")
+	scopeRunCmd(t, dir, "git", "config", "user.email", "test@test.com")
+	scopeRunCmd(t, dir, "git", "config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	runCmd(t, dir, "git", "add", ".")
-	runCmd(t, dir, "git", "commit", "-m", "initial")
+	scopeRunCmd(t, dir, "git", "add", ".")
+	scopeRunCmd(t, dir, "git", "commit", "-m", "initial")
 	return dir
 }
 
@@ -38,7 +38,7 @@ func initRepo(t *testing.T, dir string) string {
 func initRepoWithRemote(t *testing.T, dir, originURL string) string {
 	t.Helper()
 	repo := initRepo(t, dir)
-	runCmd(t, repo, "git", "remote", "add", "origin", originURL)
+	scopeRunCmd(t, repo, "git", "remote", "add", "origin", originURL)
 	return repo
 }
 
@@ -49,7 +49,7 @@ func initGateCheckout(t *testing.T) (string, string) {
 	if err := os.MkdirAll(filepath.Dir(commonDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runCmd(t, filepath.Dir(commonDir), "git", "init", "--bare", commonDir)
+	scopeRunCmd(t, filepath.Dir(commonDir), "git", "init", "--bare", commonDir)
 	checkout := t.TempDir()
 	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: "+commonDir+"\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestClassifyIdentity_Worktree(t *testing.T) {
 
 	// Create a worktree
 	wtDir := filepath.Join(t.TempDir(), "worktree")
-	runCmd(t, primaryDir, "git", "worktree", "add", wtDir)
+	scopeRunCmd(t, primaryDir, "git", "worktree", "add", wtDir)
 
 	identity, gitDir, commonDir, err := ClassifyIdentity(wtDir)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestDetectGateCapability_MarkerNoMatch(t *testing.T) {
 	// Create a repo
 	repo := initRepo(t, t.TempDir())
 	originURL := "https://github.com/test-owner/other-repo.git"
-	runCmd(t, repo, "git", "remote", "add", "origin", originURL)
+	scopeRunCmd(t, repo, "git", "remote", "add", "origin", originURL)
 
 	// Create the no-mistakes repos marker directory with a DIFFERENT marker
 	nmHome := filepath.Join(t.TempDir(), ".no-mistakes")
@@ -303,7 +303,7 @@ func TestClassify_GitCommonDirGate(t *testing.T) {
 func TestClassify_WorktreeWithGate(t *testing.T) {
 	primaryDir := initRepoWithRemote(t, t.TempDir(), "https://github.com/test-owner/gated-repo.git")
 	wtDir := filepath.Join(t.TempDir(), "wt")
-	runCmd(t, primaryDir, "git", "worktree", "add", wtDir)
+	scopeRunCmd(t, primaryDir, "git", "worktree", "add", wtDir)
 
 	// Set gate via env
 	t.Setenv("NO_MISTAKES_GATE", "1")
@@ -327,7 +327,7 @@ func TestClassify_WorktreeWithGate(t *testing.T) {
 func TestClassify_WorktreeWithoutGate(t *testing.T) {
 	primaryDir := initRepo(t, t.TempDir())
 	wtDir := filepath.Join(t.TempDir(), "wt")
-	runCmd(t, primaryDir, "git", "worktree", "add", wtDir)
+	scopeRunCmd(t, primaryDir, "git", "worktree", "add", wtDir)
 
 	res := Classify(wtDir)
 

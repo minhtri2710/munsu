@@ -1,9 +1,9 @@
 package fleet_test
 
 import (
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/testutil"
 )
 

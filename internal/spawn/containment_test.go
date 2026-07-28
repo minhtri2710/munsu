@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/delivery"
+	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 // TestNoMistakesYAML_DisableProjectSettingsIsTrue asserts that the repository's
@@ -95,7 +95,7 @@ func TestPreflight_NoMistakes_FailedProbe(t *testing.T) {
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
 	// Preflight should see the binary on PATH but the probe will fail
-	result, err := delivery.Preflight("no-mistakes", "")
+	result, err := fleet.Preflight("no-mistakes", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ exit 1
 	}
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
-	err := delivery.NoMistakesRun("test-intent", nil)
+	err := fleet.NoMistakesRun("test-intent", nil)
 	if err == nil {
 		t.Fatal("expected error for failing axi run")
 	}
