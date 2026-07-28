@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -71,13 +71,13 @@ soldier finishes. This command is a safety net for orphaned leases.`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			// Get all active worktree paths from task meta
-			entries, err := task.ListMeta(ctx.Home)
+			entries, err := home.ListMeta(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing task meta: %w", err)
 			}
 			active := make(map[string]bool)
 			for _, e := range entries {
-				meta, err := task.ReadMeta(ctx.Home, e.ID)
+				meta, err := home.ReadMeta(ctx.Home, e.ID)
 				if err != nil {
 					continue
 				}

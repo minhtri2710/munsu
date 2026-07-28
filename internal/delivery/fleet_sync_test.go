@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // requireGH skips the test if the GitHub CLI is not available.
@@ -35,7 +35,7 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	meta := map[string]string{
 		"project": "munsu",
 	}
-	if err := task.WriteMeta(homeDir, "test-task", meta); err != nil {
+	if err := home.WriteMeta(homeDir, "test-task", meta); err != nil {
 		t.Fatalf("writing meta: %v", err)
 	}
 
@@ -48,7 +48,7 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	}
 
 	// Read the generated check.sh script
-	checkPath := filepath.Join(task.StateDir(homeDir), "test-task.check")
+	checkPath := filepath.Join(home.StateDir(homeDir), "test-task.check")
 	data, err := os.ReadFile(checkPath)
 	if err != nil {
 		t.Fatalf("reading check script: %v", err)
@@ -104,7 +104,7 @@ func TestPRCheck_GeneratesCheckScriptWithoutProjectFallback(t *testing.T) {
 	meta := map[string]string{
 		"kind": "ship",
 	}
-	if err := task.WriteMeta(homeDir, "test-task-no-project", meta); err != nil {
+	if err := home.WriteMeta(homeDir, "test-task-no-project", meta); err != nil {
 		t.Fatalf("writing meta: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestPRCheck_GeneratesCheckScriptWithoutProjectFallback(t *testing.T) {
 	}
 
 	// Read the generated check.sh script
-	checkPath := filepath.Join(task.StateDir(homeDir), "test-task-no-project.check")
+	checkPath := filepath.Join(home.StateDir(homeDir), "test-task-no-project.check")
 	data, err := os.ReadFile(checkPath)
 	if err != nil {
 		t.Fatalf("reading check script: %v", err)

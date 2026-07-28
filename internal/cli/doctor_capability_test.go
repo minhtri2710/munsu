@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/integrate"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
 )
 

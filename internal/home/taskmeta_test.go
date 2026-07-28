@@ -1,12 +1,10 @@
-package task
+package home
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
@@ -287,7 +285,7 @@ func TestResolveIntegration(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	h, err := home.Resolve("")
+	h, err := Resolve("")
 	if err != nil {
 		t.Fatal(err)
 	}

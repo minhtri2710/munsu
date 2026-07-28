@@ -8,18 +8,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/supervision"
-	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -51,7 +51,7 @@ func newBriefCmd() *cobra.Command {
 
 			// Require existing task meta unless --force
 			if !force {
-				if _, err := task.ReadMeta(ctx.Home, id); err != nil {
+				if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
 					return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
 				}
 			}

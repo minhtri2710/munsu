@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // SendToSoldierResult describes the outcome of sending a command to a soldier.
@@ -59,7 +59,7 @@ func SendToSoldier(senderHome, soldierTaskID, senderIdentity, line string, endpo
 	result := &SendToSoldierResult{}
 
 	// 1. Read soldier task meta for window and backend.
-	meta, err := task.ReadMeta(senderHome, soldierTaskID)
+	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading soldier meta: %w", err)
 		return result
@@ -170,7 +170,7 @@ func FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity strin
 	}
 
 	// Read soldier meta for window/backend.
-	meta, err := task.ReadMeta(senderHome, soldierTaskID)
+	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading soldier meta: %w", err)
 		return result
@@ -439,7 +439,7 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 	}
 
 	// Read task meta for durable key validation.
-	meta, metaErr := task.ReadMeta(senderHome, soldierTaskID)
+	meta, metaErr := mhome.ReadMeta(senderHome, soldierTaskID)
 	if metaErr != nil {
 		// If meta doesn't exist (task never spawned), there's nothing to flush.
 		// Clean up any stale ready events and return.
@@ -754,7 +754,7 @@ func ParseReadyEvent(s string) (*ReadyEvent, error) {
 // Returns true if a pending command was flushed, false if no pending existed.
 // Returns error if the event is invalid or the flush failed.
 func ConsumeReadyEvent(senderHome, soldierTaskID, senderIdentity string, event *ReadyEvent, metaGeneration string, endpoint SoldierEndpointCapabilities) (bool, error) {
-	meta, err := task.ReadMeta(senderHome, soldierTaskID)
+	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
 	if err != nil {
 		return false, fmt.Errorf("reading soldier meta: %w", err)
 	}

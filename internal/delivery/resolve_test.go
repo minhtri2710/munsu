@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestResolveTaskHome_Primary(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	if err := task.WriteMeta(home, "t1", map[string]string{"kind": "ship", "project": "munsu"}); err != nil {
+	if err := mhome.WriteMeta(home, "t1", map[string]string{"kind": "ship", "project": "munsu"}); err != nil {
 		t.Fatal(err)
 	}
 	gotHome, meta, err := ResolveTaskHome(home, "t1")
@@ -34,7 +34,7 @@ func TestResolveTaskHome_CaptainHome(t *testing.T) {
 
 	capHome := filepath.Join(parent, "captains", "munsu")
 	os.MkdirAll(filepath.Join(capHome, "state"), 0755)
-	if err := task.WriteMeta(capHome, "handed-ship", map[string]string{
+	if err := mhome.WriteMeta(capHome, "handed-ship", map[string]string{
 		"kind":    "ship",
 		"project": "munsu",
 		"pr":      "https://github.com/o/r/pull/1",
@@ -81,7 +81,7 @@ func TestResolveTaskHome_NotFound(t *testing.T) {
 func TestRequireShipMeta_RejectsScout(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	task.WriteMeta(home, "s1", map[string]string{"kind": "scout"})
+	mhome.WriteMeta(home, "s1", map[string]string{"kind": "scout"})
 	_, _, err := RequireShipMeta(home, "s1")
 	if err == nil || !strings.Contains(err.Error(), `kind="scout"`) {
 		t.Fatalf("err = %v", err)
@@ -93,7 +93,7 @@ func TestRequireShipMeta_CaptainShip(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 	capHome := filepath.Join(parent, "captains", "x")
 	os.MkdirAll(filepath.Join(capHome, "state"), 0755)
-	task.WriteMeta(capHome, "ship-1", map[string]string{"kind": "ship"})
+	mhome.WriteMeta(capHome, "ship-1", map[string]string{"kind": "ship"})
 	os.WriteFile(filepath.Join(parent, "data", "captains.md"),
 		[]byte("- x - (home: "+capHome+"; scope: ; projects: ; added: 2026-07-20)\n"), 0644)
 

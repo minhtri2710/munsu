@@ -8,7 +8,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 var fetchLiveIdentity = CaptureIdentity
@@ -91,7 +91,7 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	// Read existing meta (preserve the full identity, don't clear pr_head)
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		meta = make(map[string]string)
 	}
@@ -136,7 +136,7 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	updates[MetaDeliveryState] = string(DeliveryStateMerged)
 	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
 
-	_, casErr := task.CompareAndSwapMeta(homeDir, id, checks, updates)
+	_, casErr := home.CompareAndSwapMeta(homeDir, id, checks, updates)
 	if casErr != nil {
 		return fmt.Errorf("post-merge cas: %w", casErr)
 	}

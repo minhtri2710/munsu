@@ -9,11 +9,11 @@ import (
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
-	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -108,14 +108,14 @@ func newTaskObserveCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			if _, err := task.ReadMeta(ctx.Home, args[0]); err != nil {
+			if _, err := home.ReadMeta(ctx.Home, args[0]); err != nil {
 				return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
 			}
 			state, err := soldierstate.Read(ctx.Home, args[0])
 			if err != nil {
 				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to observe task state")
 			}
-			meta, _ := task.ReadMeta(ctx.Home, args[0])
+			meta, _ := home.ReadMeta(ctx.Home, args[0])
 			result := contract.TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
 			if fields["description"] {
 				result.Description = state.Description

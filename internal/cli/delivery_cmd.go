@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/teardown"
 	"github.com/spf13/cobra"
 )
@@ -178,7 +178,7 @@ Use 'delivery reconcile' to recover from already-stale metadata.`,
 
 			// Begin amendment (CAS review-ready -> amending) — idempotent: if already
 			// in amending state (e.g. retry after partial failure), skip begin.
-			currentMeta, err := task.ReadMeta(ctx.Home, id)
+			currentMeta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-amend: reading meta: %w", err)
 			}
@@ -254,7 +254,7 @@ state. Use 'pr-check' to recapture from scratch after such events.`,
 // resolveWorktree reads the worktree path from task meta for a given task.
 // Returns an error if the worktree is not set in meta.
 func resolveWorktree(homeDir, id string) (string, error) {
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return "", fmt.Errorf("reading meta: %w", err)
 	}

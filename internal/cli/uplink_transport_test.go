@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 type uplinkPromptBackend struct{ result backend.PromptResult }

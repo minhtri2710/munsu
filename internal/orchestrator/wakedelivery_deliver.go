@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-		"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // DeliverRequest captures all inputs needed to deliver a terminal report
@@ -26,7 +26,7 @@ type DeliverRequest struct {
 	HomeDir    string // soldier's home (status, event log, wake queue)
 	ParentHome string // captain's home (receipt, obligations); empty if no parent
 	TaskID     string
-	State      string // one of task.ValidStatusStates
+	State      string // one of mhome.ValidStatusStates
 	Message    string
 	Key        string // optional correlation/slug; empty defaults to "default"
 	Role       string // "soldier", "captain", "general"
@@ -118,7 +118,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if req.Message == "" {
 		return nil, fmt.Errorf("Message is required")
 	}
-	if !task.IsValidStatusState(req.State) {
+	if !mhome.IsValidStatusState(req.State) {
 		return nil, fmt.Errorf("invalid status state %q", req.State)
 	}
 	if req.Key == "" {
@@ -132,7 +132,7 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	if req.Key != "" {
 		statusLine += " [key=" + req.Key + "]"
 	}
-	if err := task.AppendStatus(req.HomeDir, req.TaskID, statusLine); err != nil {
+	if err := mhome.AppendStatus(req.HomeDir, req.TaskID, statusLine); err != nil {
 		return nil, fmt.Errorf("appending status: %w", err)
 	}
 
@@ -216,7 +216,7 @@ func reconcileOne(captainHome, parentHome string, pr PendingReceipt) ReconcileOu
 	// Step 1: Relay status to General.
 	relayTaskID := fmt.Sprintf("captain:%s.relay-%s", captainID, pr.TaskID)
 	relayLine := fmt.Sprintf("%s: soldier %s [key=%s]", pr.State, pr.TaskID, pr.TermKey)
-	if err := task.AppendStatus(parentHome, relayTaskID, relayLine); err != nil {
+	if err := mhome.AppendStatus(parentHome, relayTaskID, relayLine); err != nil {
 		base.Outcome = "relay-failed"
 		base.Err = fmt.Errorf("writing general relay status: %w", err)
 		return base
@@ -342,7 +342,7 @@ func resolveCaptainActivationTarget(captainHome, parentHome string) (TargetResul
 	}
 
 	taskID := "captain:" + captainID
-	meta, err := task.ReadMeta(parentHome, taskID)
+	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return TargetResult{}, fmt.Errorf("reading captain meta %s: %w", taskID, err)
 	}

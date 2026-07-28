@@ -12,8 +12,8 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/captain"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // TestE2E_TerminalUplinkContinuity proves the full Soldier → Captain → General
@@ -76,7 +76,7 @@ func TestE2E_TerminalUplinkContinuity(t *testing.T) {
 	// ---- Phase 1: Soldier reports done (material terminal report) ----
 	// Using production receipt + obligation paths (same as report_cmd.go)
 	statusLine := "done: task complete"
-	if err := task.AppendStatus(captainHome, soldierID, statusLine); err != nil {
+	if err := mhome.AppendStatus(captainHome, soldierID, statusLine); err != nil {
 		t.Fatalf("appending soldier status: %v", err)
 	}
 

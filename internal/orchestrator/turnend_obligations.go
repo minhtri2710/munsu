@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Role identifies which role the obligation set targets.
@@ -280,7 +280,7 @@ func RelayPendingReceipts(captainHome, parentHome string) (int, error) {
 		relayTaskID := fmt.Sprintf("captain:%s.relay-%s", captainID, pr.TaskID)
 		relayLine := fmt.Sprintf("%s: soldier %s [key=%s]", pr.State, pr.TaskID, pr.TermKey)
 
-		if err := task.AppendStatus(parentHome, relayTaskID, relayLine); err != nil {
+		if err := home.AppendStatus(parentHome, relayTaskID, relayLine); err != nil {
 			return relayed, fmt.Errorf("relaying receipt for %s/%s: %w", pr.TaskID, pr.TermKey, err)
 		}
 

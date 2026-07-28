@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // PollRetirementSchema is the schema version for PollRetirementRecord.
@@ -96,7 +96,7 @@ func pollContentDigest(path string) (string, error) {
 // Scans existing lines first to avoid duplicate publication.
 func durableAppendStatus(homeDir, taskID, line string) (bool, error) {
 	// Scan existing lines for exact match.
-	lines, err := task.ReadStatus(homeDir, taskID)
+	lines, err := home.ReadStatus(homeDir, taskID)
 	if err != nil {
 		// Status file may not exist yet; that's fine.
 		lines = nil
@@ -108,7 +108,7 @@ func durableAppendStatus(homeDir, taskID, line string) (bool, error) {
 	}
 
 	// Open file for append with fsync.
-	statusPath := filepath.Join(task.StateDir(homeDir), taskID+".status")
+	statusPath := filepath.Join(home.StateDir(homeDir), taskID+".status")
 	if err := os.MkdirAll(filepath.Dir(statusPath), 0755); err != nil {
 		return false, fmt.Errorf("creating state dir: %w", err)
 	}
@@ -545,11 +545,11 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 	}
 
 	// Build the poll path.
-	checkPath := filepath.Join(task.StateDir(homeDir), rec.PollPath)
+	checkPath := filepath.Join(home.StateDir(homeDir), rec.PollPath)
 
 	// Attempt to validate current task identity (best-effort; corruption
 	// preserves everything).
-	currentMeta, metaErr := task.ReadMeta(homeDir, taskID)
+	currentMeta, metaErr := home.ReadMeta(homeDir, taskID)
 	if metaErr == nil {
 		if currentProvider := currentMeta["pr_provider"]; currentProvider != "" && currentProvider != rec.Provider {
 			return false, fmt.Errorf("stale retirement: current provider=%q, record provider=%q", currentProvider, rec.Provider)
@@ -584,7 +584,7 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 
 	// Check if publication evidence exists.
 	hasPublication := false
-	lines, statusErr := task.ReadStatus(homeDir, taskID)
+	lines, statusErr := home.ReadStatus(homeDir, taskID)
 	if statusErr == nil {
 		for _, line := range lines {
 			if line == rec.PublicationLine {

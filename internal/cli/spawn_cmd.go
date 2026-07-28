@@ -9,12 +9,12 @@ import (
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/spawn"
-	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/teardown"
 	"github.com/spf13/cobra"
 )
@@ -131,7 +131,7 @@ func newSendCmd() *cobra.Command {
 			}
 
 			// Read meta to determine kind and resolve captain info.
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
@@ -217,7 +217,7 @@ func newPeekCmdWithCapture(capture BoundCapture) *cobra.Command {
 			id := args[0]
 
 			// Read meta to resolve window
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
@@ -300,7 +300,7 @@ func newPromoteCmd() *cobra.Command {
 			id := args[0]
 
 			// Preflight: verify task meta exists with kind=scout
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading meta for %s: %w", id, err)
 			}
@@ -314,9 +314,9 @@ func newPromoteCmd() *cobra.Command {
 			}
 
 			// Preflight: require last status to be done or resolved
-			if statusLines, err := task.ReadStatus(ctx.Home, id); err == nil && len(statusLines) > 0 {
+			if statusLines, err := home.ReadStatus(ctx.Home, id); err == nil && len(statusLines) > 0 {
 				lastLine := statusLines[len(statusLines)-1]
-				lastStatus, _ := task.ParseStatusKey(lastLine)
+				lastStatus, _ := home.ParseStatusKey(lastLine)
 				if !strings.HasPrefix(lastStatus, "done") && !strings.HasPrefix(lastStatus, "resolved") {
 					return fmt.Errorf("task %s has last status %q, need 'done' or 'resolved' before promote", id, lastStatus)
 				}
@@ -324,7 +324,7 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no status: report done or resolved before promoting", id)
 			}
 
-			if err := task.PromoteMeta(ctx.Home, id); err != nil {
+			if err := home.PromoteMeta(ctx.Home, id); err != nil {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
 

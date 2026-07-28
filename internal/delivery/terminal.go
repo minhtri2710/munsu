@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // captureTerminalIdentity is a variable for testing — can be replaced to
@@ -28,7 +28,7 @@ var captureTerminalIdentity = captureTerminalIdentityViaProvider
 //   - Provider is unavailable or ambiguous
 func VerifyDoneIdentity(homeDir, taskID, msg string) error {
 	// Read meta — may fail if no meta exists (e.g. scout task, no PR identity yet)
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		// No meta yet — this is a pre-identity report (scout or early ship).
 		// Only reject if the message contains a PR URL that needs verification;
@@ -188,7 +188,7 @@ func CaptureTerminalIdentity(homeDir, taskID, msg string) error {
 	}
 
 	// Check existing meta for already-complete identity (idempotent retry)
-	meta, metaErr := task.ReadMeta(homeDir, taskID)
+	meta, metaErr := home.ReadMeta(homeDir, taskID)
 	if metaErr == nil {
 		if existingURL, ok := meta["pr_url"]; ok && existingURL != "" {
 			// URL already stored — check if it matches the one being reported
@@ -231,7 +231,7 @@ func CaptureTerminalIdentity(homeDir, taskID, msg string) error {
 	meta["pr_head"] = ident.HeadSHA
 
 	// Persist atomically
-	if err := task.WriteMeta(homeDir, taskID, meta); err != nil {
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		return fmt.Errorf("terminal identity: persisting to task meta: %w", err)
 	}
 

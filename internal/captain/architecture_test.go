@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 	t.Run("returns false when meta kind is not captain", func(t *testing.T) {
 		// Write meta with wrong kind.
 		canon, _ := canonicalHome(smHome)
-		task.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
+		mhome.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
 			"kind":   "ship",
 			"sm_id":  "test-sm",
 			"home":   canon,
@@ -71,7 +71,7 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 
 	t.Run("returns false when meta sm_id does not match", func(t *testing.T) {
 		canon, _ := canonicalHome(smHome)
-		task.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
+		mhome.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
 			"kind":   "captain",
 			"sm_id":  "wrong-id",
 			"home":   canon,
@@ -88,7 +88,7 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 
 	t.Run("returns false when meta window is empty", func(t *testing.T) {
 		canon, _ := canonicalHome(smHome)
-		task.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
+		mhome.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
 			"kind":   "captain",
 			"sm_id":  "test-sm",
 			"home":   canon,
@@ -299,11 +299,11 @@ func TestTerminalPhases_StatusFileOverridesProse(t *testing.T) {
 			"done: task completed [key=task-1]",
 		}
 		for _, line := range lines {
-			if err := task.AppendStatus(home, id, line); err != nil {
+			if err := mhome.AppendStatus(home, id, line); err != nil {
 				t.Fatal(err)
 			}
 		}
-		got, err := task.ReadStatus(home, id)
+		got, err := mhome.ReadStatus(home, id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -318,16 +318,16 @@ func TestTerminalPhases_StatusFileOverridesProse(t *testing.T) {
 
 	t.Run("failed status overrides working", func(t *testing.T) {
 		id := "captain:other-sm"
-		task.AppendStatus(home, id, "working: in progress")
-		task.AppendStatus(home, id, "failed: something broke [key=bug-1]")
-		got, err := task.ReadStatus(home, id)
+		mhome.AppendStatus(home, id, "working: in progress")
+		mhome.AppendStatus(home, id, "failed: something broke [key=bug-1]")
+		got, err := mhome.ReadStatus(home, id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(got) != 2 {
 			t.Fatalf("expected 2 lines, got %d", len(got))
 		}
-		msg, key := task.ParseStatusKey(got[1])
+		msg, key := mhome.ParseStatusKey(got[1])
 		if !strings.Contains(msg, "failed") {
 			t.Errorf("expected failed status, got %q", msg)
 		}
@@ -337,12 +337,12 @@ func TestTerminalPhases_StatusFileOverridesProse(t *testing.T) {
 	})
 
 	t.Run("valid status states are recognized", func(t *testing.T) {
-		for _, s := range task.ValidStatusStates {
-			if !task.IsValidStatusState(s) {
+		for _, s := range mhome.ValidStatusStates {
+			if !mhome.IsValidStatusState(s) {
 				t.Errorf("status state %q should be valid", s)
 			}
 		}
-		if task.IsValidStatusState("invalid-state") {
+		if mhome.IsValidStatusState("invalid-state") {
 			t.Error("invalid-status should not be recognized")
 		}
 	})
@@ -359,10 +359,10 @@ func TestTerminalPhases_ResolvedOverridesWorking(t *testing.T) {
 	workingMsg := "working: fixing the widget"
 	resolvedMsg := "resolved: fixed the widget [key=widget-fix]"
 
-	task.AppendStatus(home, id, workingMsg)
-	task.AppendStatus(home, id, resolvedMsg)
+	mhome.AppendStatus(home, id, workingMsg)
+	mhome.AppendStatus(home, id, resolvedMsg)
 
-	got, err := task.ReadStatus(home, id)
+	got, err := mhome.ReadStatus(home, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestTerminalPhases_ResolvedOverridesWorking(t *testing.T) {
 	if !strings.Contains(last, "resolved") {
 		t.Errorf("last line = %q, want resolved", last)
 	}
-	msg, key := task.ParseStatusKey(last)
+	msg, key := mhome.ParseStatusKey(last)
 	if msg == "" {
 		t.Error("expected non-empty message")
 	}

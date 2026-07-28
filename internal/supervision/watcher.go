@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 const pollInterval = 5 * time.Second
@@ -258,7 +258,7 @@ func collectStatusIDs(stateDir string) map[string]struct{} {
 }
 
 func scanTaskWithProbe(homeDir, id string, probe TaskEndpointProbe) *WakeReason {
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil
 	}
@@ -453,7 +453,7 @@ func runCycleWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender 
 		msg := fmt.Sprintf("check ready: %s", plugin.Label)
 		if plugin.Kind == CheckPerTask {
 			// Include PR URL in message if available
-			if meta, err := task.ReadMeta(homeDir, plugin.Label); err == nil {
+			if meta, err := home.ReadMeta(homeDir, plugin.Label); err == nil {
 				if prURL, ok := meta["pr_url"]; ok && prURL != "" {
 					msg = fmt.Sprintf("PR poll ready for task %s: %s", plugin.Label, prURL)
 				}
@@ -510,7 +510,7 @@ func wakeFingerprint(homeDir string, reason *WakeReason) string {
 	message := strings.TrimSuffix(reason.Message, "; demand-deep-inspection")
 	status := ""
 	if len(reason.TaskIDs) > 0 {
-		if lines, err := task.ReadStatus(homeDir, reason.TaskIDs[0]); err == nil && len(lines) > 0 {
+		if lines, err := home.ReadStatus(homeDir, reason.TaskIDs[0]); err == nil && len(lines) > 0 {
 			status = lines[len(lines)-1]
 		}
 	}
@@ -611,7 +611,7 @@ func shouldAbsorbStale(homeDir, id string, paneAlive bool) bool {
 // isStatusPaused checks whether the task's last status line is a declared
 // deliberate external-wait pause. Returns false if no status file exists.
 func isStatusPaused(homeDir, id string) bool {
-	lines, err := task.ReadStatus(homeDir, id)
+	lines, err := home.ReadStatus(homeDir, id)
 	if err != nil || len(lines) == 0 {
 		return false
 	}
@@ -633,7 +633,7 @@ func isPausedBeyondResurface(homeDir, id string) bool {
 // isStatusGeneralRelevant checks whether the task's last status line contains
 // a general-relevant verb. Returns false if no status file exists.
 func isStatusGeneralRelevant(homeDir, id string) bool {
-	lines, err := task.ReadStatus(homeDir, id)
+	lines, err := home.ReadStatus(homeDir, id)
 	if err != nil || len(lines) == 0 {
 		return false
 	}

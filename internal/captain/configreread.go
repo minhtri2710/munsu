@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // ConfigRereadKey is the mailbox envelope Key for config-reread notifications.
@@ -204,7 +204,7 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 	// Absent meta means the captain is seeded but never launched — we still
 	// write the durable envelope/pending, but skip live notification.
 	taskID := taskIDForCaptain(captainIdentity)
-	meta, metaErr := task.ReadMeta(parentHome, taskID)
+	meta, metaErr := home.ReadMeta(parentHome, taskID)
 	if metaErr != nil {
 		fmt.Printf("  %s: no task meta — writing durable requirement only\n", captainIdentity)
 	}

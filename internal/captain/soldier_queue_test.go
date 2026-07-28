@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // --- Test helpers ---
@@ -62,7 +62,7 @@ func setupSoldierTestHomes(t *testing.T, agentStatus string) (captainHome, soldi
 		"kind":    "ship",
 		"harness": "pi",
 	}
-	if err := task.WriteMeta(captainHome, soldierTaskID, meta); err != nil {
+	if err := mhome.WriteMeta(captainHome, soldierTaskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -791,20 +791,20 @@ func TestSoldierLifecycleTransitions(t *testing.T) {
 		if step.key != "" {
 			line += " [key=" + step.key + "]"
 		}
-		if err := task.AppendStatus(captainHome, taskID, line); err != nil {
+		if err := mhome.AppendStatus(captainHome, taskID, line); err != nil {
 			t.Fatalf("appending %s: %v", step.state, err)
 		}
 	}
 
 	// Verify status states are all valid.
 	for _, step := range lifecycle {
-		if !task.IsValidStatusState(step.state) {
+		if !mhome.IsValidStatusState(step.state) {
 			t.Errorf("status state %q should be valid", step.state)
 		}
 	}
 
 	// Read back the status file and verify all transitions exist.
-	statusLines, err := task.ReadStatus(captainHome, taskID)
+	statusLines, err := mhome.ReadStatus(captainHome, taskID)
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -855,14 +855,14 @@ func TestNoReportSpam(t *testing.T) {
 	be := &fakeAgentEndpoint{busy: true, acknowledged: true}
 
 	// Count status lines before.
-	statusBefore, _ := task.ReadStatus(captainHome, "captain-status")
+	statusBefore, _ := mhome.ReadStatus(captainHome, "captain-status")
 	beforeCount := len(statusBefore)
 
 	// Send to busy soldier.
 	_ = SendToSoldier(captainHome, soldierTaskID, senderIdentity, "do: quiet", be)
 
 	// Count status lines after — should not have changed.
-	statusAfter, _ := task.ReadStatus(captainHome, "captain-status")
+	statusAfter, _ := mhome.ReadStatus(captainHome, "captain-status")
 	afterCount := len(statusAfter)
 	if afterCount != beforeCount {
 		t.Errorf("status lines changed: before=%d after=%d (expected no captain-side noise)", beforeCount, afterCount)
@@ -1378,7 +1378,7 @@ func TestConsumeAllReadyEvents_DuplicateReadyIdempotent(t *testing.T) {
 	}
 
 	// No report/status spam.
-	statusLines, _ := task.ReadStatus(captainHome, "captain-status")
+	statusLines, _ := mhome.ReadStatus(captainHome, "captain-status")
 	if len(statusLines) > 0 {
 		t.Errorf("expected 0 status lines (no captain spam), got %d", len(statusLines))
 	}

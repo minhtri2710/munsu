@@ -19,7 +19,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // State describes the current state of a soldier.
@@ -62,7 +62,7 @@ func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, erro
 	s := &State{TaskID: id, Status: "unknown"}
 
 	// Read meta (always needed for context)
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		// Missing meta means the task was never spawned or has been torn down.
 		// Return a soft "unknown" state instead of a hard error.
@@ -72,8 +72,8 @@ func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, erro
 	}
 
 	// Read status lines (needed by multiple tiers)
-	statusLines, _ := task.ReadStatus(homeDir, id)
-	statusPath := filepath.Join(task.StateDir(homeDir), id+".status")
+	statusLines, _ := home.ReadStatus(homeDir, id)
+	statusPath := filepath.Join(home.StateDir(homeDir), id+".status")
 	if len(statusLines) > 0 {
 		s.StatusLines = len(statusLines)
 	}
@@ -174,7 +174,7 @@ func ReadWithProbe(homeDir string, id string, probe EndpointProbe) (*State, erro
 		lastLine := lastStateBearingLine(statusLines)
 		if lastLine != "" {
 			state, msg := statusVerbAndNote(lastLine)
-			if task.IsValidStatusState(state) && state != "resolved" {
+			if home.IsValidStatusState(state) && state != "resolved" {
 				s.Status = state
 				s.Description = msg
 			}
@@ -303,7 +303,7 @@ func lastStateBearingLine(lines []string) string {
 		case "working", "paused", "blocked", "needs-decision", "done", "failed", "awaiting_approval":
 			return line
 		default:
-			if task.IsValidStatusState(verb) && verb != "resolved" {
+			if home.IsValidStatusState(verb) && verb != "resolved" {
 				return line
 			}
 			if strings.Contains(line, ":") {

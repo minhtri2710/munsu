@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // PRStatus represents the current state of a pull request.
@@ -260,7 +260,7 @@ func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
 // Returns an error if the identity is missing, incomplete, or inconsistent.
 // This refuses to guess or reconstruct identity from current branch state.
 func RequireIdentity(homeDir, id string) (*DeliveryIdentity, error) {
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading task meta for identity: %w", err)
 	}

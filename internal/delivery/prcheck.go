@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // PRCheck runs `munsu pr-check <id> <pr-url>`.
@@ -27,7 +27,7 @@ func PRCheck(homeDir string, id, prURL string) error {
 	}
 
 	// Read existing meta (ignore error if it doesn't exist)
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		meta = make(map[string]string)
 	}
@@ -40,7 +40,7 @@ func PRCheck(homeDir string, id, prURL string) error {
 	meta["pr_head"] = ident.HeadSHA                            // legacy key for compatibility
 	meta[MetaDeliveryState] = string(DeliveryStateReviewReady) // initialize lifecycle
 
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
 	}
 
@@ -81,7 +81,7 @@ else
 fi
 `, id, ident.Number, ident.Owner, ident.Repo, homeDir, project, ident.Owner, ident.Repo)
 
-	checkPath := filepath.Join(task.StateDir(homeDir), id+".check")
+	checkPath := filepath.Join(home.StateDir(homeDir), id+".check")
 	if err := os.MkdirAll(filepath.Dir(checkPath), 0755); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}

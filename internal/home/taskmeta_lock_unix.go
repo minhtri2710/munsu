@@ -1,6 +1,6 @@
 //go:build !windows
 
-package task
+package home
 
 import (
 	"os"

@@ -17,7 +17,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldier"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // Runner orchestrates the full spawn sequence through private phase methods.
@@ -197,7 +196,7 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 			return "", false, err
 		}
 	}
-	entries, err := os.ReadDir(task.StateDir(homeDir))
+	entries, err := os.ReadDir(home.StateDir(homeDir))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", false, nil
@@ -209,7 +208,7 @@ func currentEndpointKind(homeDir string) (string, bool, error) {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".meta")
-		meta, err := task.ReadMeta(homeDir, id)
+		meta, err := home.ReadMeta(homeDir, id)
 		if err != nil {
 			continue
 		}
@@ -285,7 +284,7 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 
 	// Already-live = meta proves a soldier was spawned (window or pane id).
 	// Kind-only meta (e.g. task add) is NOT live execution.
-	if meta, err := task.ReadMeta(r.homeDir, r.args.ID); err == nil {
+	if meta, err := home.ReadMeta(r.homeDir, r.args.ID); err == nil {
 		if win := meta["window"]; win != "" {
 			return fmt.Errorf("captain backlog authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
 		}
@@ -394,7 +393,7 @@ func (r *Runner) checkBacklogAuthority() error {
 	}
 
 	// Check already-live: existing meta with window means a soldier session exists
-	meta, metaErr := task.ReadMeta(r.homeDir, r.args.ID)
+	meta, metaErr := home.ReadMeta(r.homeDir, r.args.ID)
 	metaExists := metaErr == nil && meta["window"] != ""
 
 	// State-based checks. Backlog In flight without live meta is start→spawn — allow.
@@ -841,7 +840,7 @@ func (r *Runner) waitAndInjectBrief() error {
 	// for harness readiness to catch launch failures early.
 	if err := r.waitForHarnessReady(60); err != nil {
 		capture, _ := r.endpoints.Capture(r.endpoint, 60)
-		_ = task.AppendStatus(r.homeDir, r.args.ID, "failed: harness handshake")
+		_ = home.AppendStatus(r.homeDir, r.args.ID, "failed: harness handshake")
 		dataDir := filepath.Join(r.homeDir, "data", r.args.ID)
 		_ = os.MkdirAll(dataDir, 0755)
 		failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", r.harness, err, capture)
@@ -925,14 +924,14 @@ func (r *Runner) writeTaskMeta() {
 		meta[k] = v
 	}
 
-	if err := task.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
+	if err := home.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing task meta: %v\n", err)
 	}
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.
 func (r *Runner) appendSpawnedStatus() {
-	_ = task.AppendStatus(r.homeDir, r.args.ID, "working: spawned")
+	_ = home.AppendStatus(r.homeDir, r.args.ID, "working: spawned")
 }
 
 // Phase 16: printEndpointInfo prints the spawn endpoint information.

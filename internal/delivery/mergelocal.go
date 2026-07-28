@@ -6,14 +6,14 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // MergeLocal runs `munsu merge-local <id>`.
 // It fast-forward merges the soldier branch into the local default branch.
 // Only works for local-only mode projects (no remote).
 func MergeLocal(homeDir string, id string) error {
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("reading task %s meta: %w", id, err)
 	}

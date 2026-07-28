@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // TestPRMerge_FleetSyncReadsMeta verifies PRMerge reads meta correctly.
@@ -33,7 +33,7 @@ func TestPRMerge_FleetSyncReadsMeta(t *testing.T) {
 	}
 	meta := ident.ToMeta()
 	meta["project"] = "munsu"
-	if err := task.WriteMeta(homeDir, "test-merge-task", meta); err != nil {
+	if err := home.WriteMeta(homeDir, "test-merge-task", meta); err != nil {
 		t.Fatalf("writing meta: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 	meta := map[string]string{
 		"project": "munsu",
 	}
-	if err := task.WriteMeta(homeDir, "pattern-task", meta); err != nil {
+	if err := home.WriteMeta(homeDir, "pattern-task", meta); err != nil {
 		t.Fatalf("writing meta: %v", err)
 	}
 
@@ -76,7 +76,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 		t.Fatalf("PRCheck: %v", err)
 	}
 
-	checkPath := filepath.Join(task.StateDir(homeDir), "pattern-task.check")
+	checkPath := filepath.Join(home.StateDir(homeDir), "pattern-task.check")
 	data, err := os.ReadFile(checkPath)
 	if err != nil {
 		t.Fatalf("reading check script: %v", err)

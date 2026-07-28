@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- PollRetirementRecord helpers ---
@@ -260,7 +260,7 @@ func TestDurableAppendStatus_NewFile(t *testing.T) {
 		t.Fatal("expected appended=true")
 	}
 
-	lines, err := task.ReadStatus(home, "task-1")
+	lines, err := mhome.ReadStatus(home, "task-1")
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -274,10 +274,10 @@ func TestDurableAppendStatus_Deduplicate(t *testing.T) {
 	stateDir := filepath.Join(home, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	if err := task.AppendStatus(home, "task-1", "done: existing"); err != nil {
+	if err := mhome.AppendStatus(home, "task-1", "done: existing"); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.AppendStatus(home, "task-1", "working: progress"); err != nil {
+	if err := mhome.AppendStatus(home, "task-1", "working: progress"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -299,7 +299,7 @@ func TestDurableAppendStatus_Deduplicate(t *testing.T) {
 		t.Fatal("expected appended=true for new line")
 	}
 
-	lines, err := task.ReadStatus(home, "task-1")
+	lines, err := mhome.ReadStatus(home, "task-1")
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -343,7 +343,7 @@ func setupMergedPollTest(t *testing.T, headSHA, baseRef string) (home, taskID, c
 		"pr_head_sha":  headSHA,
 		"pr_timestamp": "2024-01-01T00:00:00Z",
 	}
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -420,7 +420,7 @@ func TestRetireMergedPoll_CrashBeforePublication(t *testing.T) {
 	}
 
 	// Verify: publication line exists.
-	lines, err := task.ReadStatus(home, taskID)
+	lines, err := mhome.ReadStatus(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestRetireMergedPoll_CrashAfterRecordBeforePublication(t *testing.T) {
 	}
 
 	// Verify everything is clean.
-	lines, err := task.ReadStatus(home, taskID)
+	lines, err := mhome.ReadStatus(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestRecoverPendingRetirement_IncompleteSequence(t *testing.T) {
 	}
 
 	// Verify publication exists.
-	lines, err := task.ReadStatus(home, taskID)
+	lines, err := mhome.ReadStatus(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -759,7 +759,7 @@ func TestRecoverPendingRetirement_RepeatedRecovery(t *testing.T) {
 	}
 
 	// Now set up a real pending record and recover.
-	checkPath := filepath.Join(task.StateDir(home), taskID+".check")
+	checkPath := filepath.Join(mhome.StateDir(home), taskID+".check")
 	os.WriteFile(checkPath, []byte("#!/bin/bash\necho\n"), 0755)
 	digest, _ := pollContentDigest(checkPath)
 
@@ -1159,7 +1159,7 @@ func TestRetirementGitHubIdentity(t *testing.T) {
 		t.Fatalf("GitHub retirement: %v", err)
 	}
 
-	lines, err := task.ReadStatus(home, taskID)
+	lines, err := mhome.ReadStatus(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -1180,7 +1180,7 @@ func TestRetirementGitLabIdentity(t *testing.T) {
 	defer cleanup()
 
 	// Change meta to GitLab identity.
-	meta, err := task.ReadMeta(home, taskID)
+	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -1191,7 +1191,7 @@ func TestRetirementGitLabIdentity(t *testing.T) {
 	meta["pr_url"] = "https://gitlab.com/glowner/glrepo/-/merge_requests/7"
 	meta["pr_head"] = "gitlab-sha-0000111122223333444455556666777788889999"
 	meta["pr_head_sha"] = "gitlab-sha-0000111122223333444455556666777788889999"
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -1211,7 +1211,7 @@ func TestRetirementGitLabIdentity(t *testing.T) {
 		t.Fatalf("GitLab retirement: %v", err)
 	}
 
-	lines, err := task.ReadStatus(home, taskID)
+	lines, err := mhome.ReadStatus(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -1251,7 +1251,7 @@ func TestRecoverAllPendingRetirements_Multiple(t *testing.T) {
 			"pr_head_sha":  "0000111122223333444455556666777788889999",
 			"pr_timestamp": "2024-01-01T00:00:00Z",
 		}
-		task.WriteMeta(home, id, meta)
+		mhome.WriteMeta(home, id, meta)
 
 		checkPath := filepath.Join(stateDir, id+".check")
 		os.WriteFile(checkPath, []byte("#!/bin/bash\necho\n"), 0755)
@@ -1317,15 +1317,15 @@ func TestRetireMergedPoll_PreservesMetaWorktreeStatus(t *testing.T) {
 	defer restore()
 
 	// Add some initial status lines and worktree meta.
-	if err := task.AppendStatus(home, taskID, "working: started"); err != nil {
+	if err := mhome.AppendStatus(home, taskID, "working: started"); err != nil {
 		t.Fatal(err)
 	}
-	meta, err := task.ReadMeta(home, taskID)
+	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	meta["worktree"] = "/tmp/some-worktree"
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1334,7 +1334,7 @@ func TestRetireMergedPoll_PreservesMetaWorktreeStatus(t *testing.T) {
 	}
 
 	// Verify meta still exists.
-	meta2, err := task.ReadMeta(home, taskID)
+	meta2, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("meta should be preserved: %v", err)
 	}
@@ -1343,7 +1343,7 @@ func TestRetireMergedPoll_PreservesMetaWorktreeStatus(t *testing.T) {
 	}
 
 	// Verify status still exists with original + publication lines.
-	lines, err := task.ReadStatus(home, taskID)
+	lines, err := mhome.ReadStatus(home, taskID)
 	if err != nil {
 		t.Fatalf("status should be preserved: %v", err)
 	}
@@ -1401,7 +1401,7 @@ func TestRetireMergedPoll_WatcherRestartGenerations(t *testing.T) {
 	}
 
 	// Count publications.
-	lines, err := task.ReadStatus(home, taskID)
+	lines, err := mhome.ReadStatus(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadStatus: %v", err)
 	}
@@ -1506,7 +1506,7 @@ func TestRetireMergedPoll_SetsDeliveryStateMerged(t *testing.T) {
 	}
 
 	// Verify delivery_state is merged in meta.
-	meta, err := task.ReadMeta(home, taskID)
+	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -1527,12 +1527,12 @@ func TestRetireMergedPoll_SetsDeliveryStateMergedFromReviewReady(t *testing.T) {
 	defer restore()
 
 	// Add delivery_state=review-ready to meta.
-	meta, err := task.ReadMeta(home, taskID)
+	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
 	meta[delivery.MetaDeliveryState] = string(delivery.DeliveryStateReviewReady)
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -1540,7 +1540,7 @@ func TestRetireMergedPoll_SetsDeliveryStateMergedFromReviewReady(t *testing.T) {
 		t.Fatalf("RetireMergedPoll: %v", err)
 	}
 
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -1596,7 +1596,7 @@ func TestRecoverPendingRetirement_SetsDeliveryStateMerged(t *testing.T) {
 		t.Fatal("expected resolved=true")
 	}
 
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -1617,7 +1617,7 @@ func TestRecoverPendingRetirement_IdempotentDeliveryState(t *testing.T) {
 	}
 
 	// Check delivery_state is merged.
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -1635,7 +1635,7 @@ func TestRecoverPendingRetirement_IdempotentDeliveryState(t *testing.T) {
 	}
 
 	// delivery_state should still be merged.
-	result2, err := task.ReadMeta(home, taskID)
+	result2, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -1677,7 +1677,7 @@ func TestRetireMergedPoll_MarkMergedCASFailurePreservesRecord(t *testing.T) {
 	}
 
 	// delivery_state should NOT be merged.
-	meta, err := task.ReadMeta(home, taskID)
+	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}

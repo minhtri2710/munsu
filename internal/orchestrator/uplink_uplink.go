@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-		"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/config"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 const retryInterval = 60 * time.Second
@@ -316,7 +316,7 @@ func resolveReceiverTarget(receiverHome string, ref NotificationRef) (TargetResu
 		if err != nil {
 			return TargetResult{}, fmt.Errorf("captain parent-home unavailable: %w", err)
 		}
-		meta, err := task.ReadMeta(parentHome, "captain:"+env.ReceiverID)
+		meta, err := mhome.ReadMeta(parentHome, "captain:"+env.ReceiverID)
 		if err != nil {
 			return TargetResult{}, err
 		}

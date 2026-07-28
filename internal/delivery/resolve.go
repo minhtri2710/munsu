@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ResolveTaskHome finds which munsu home owns state/<id>.meta.
@@ -26,7 +26,7 @@ func ResolveTaskHome(homeDir, id string) (taskHome string, meta map[string]strin
 		return "", nil, fmt.Errorf("task id is empty")
 	}
 
-	meta, primaryErr := task.ReadMeta(homeDir, id)
+	meta, primaryErr := home.ReadMeta(homeDir, id)
 	if primaryErr == nil {
 		return homeDir, meta, nil
 	}
@@ -37,7 +37,7 @@ func ResolveTaskHome(homeDir, id string) (taskHome string, meta map[string]strin
 			continue
 		}
 		searched = append(searched, ch)
-		cm, cErr := task.ReadMeta(ch, id)
+		cm, cErr := home.ReadMeta(ch, id)
 		if cErr == nil {
 			return ch, cm, nil
 		}

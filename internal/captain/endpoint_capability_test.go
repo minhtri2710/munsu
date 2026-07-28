@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 type orderedRetireEndpoint struct {
@@ -61,7 +61,7 @@ func TestRetireInvalidMetadataDoesNotInvokeEndpoint(t *testing.T) {
 		canon, _ := canonicalHome(home)
 		meta["home"] = canon
 		mutate(meta)
-		if err := task.WriteMeta(parent, taskIDForCaptain("bad"), meta); err != nil {
+		if err := mhome.WriteMeta(parent, taskIDForCaptain("bad"), meta); err != nil {
 			t.Fatal(err)
 		}
 		endpoint := &testRetireEndpoint{}
@@ -85,7 +85,7 @@ func TestRetireEndpointFailurePreservesDurableState(t *testing.T) {
 	if err := Retire(home, parent, true, false, endpoint); err == nil {
 		t.Fatal("expected endpoint failure")
 	}
-	if _, err := task.ReadMeta(parent, taskIDForCaptain("failed")); err != nil {
+	if _, err := mhome.ReadMeta(parent, taskIDForCaptain("failed")); err != nil {
 		t.Fatalf("meta lost: %v", err)
 	}
 	if _, err := os.Stat(home); err != nil {
@@ -114,7 +114,7 @@ func TestRetireSuccessInvokesEndpointBeforeCleanup(t *testing.T) {
 	if endpoint.calls != 1 {
 		t.Fatalf("calls=%d", endpoint.calls)
 	}
-	if _, err := task.ReadMeta(parent, taskIDForCaptain("success")); err == nil {
+	if _, err := mhome.ReadMeta(parent, taskIDForCaptain("success")); err == nil {
 		t.Fatal("meta remains")
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
@@ -133,7 +133,7 @@ func TestLaunchEndpointFailureWritesNoMetadata(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "launch failed") {
 		t.Fatalf("error=%v", err)
 	}
-	if _, err := task.ReadMeta(parent, taskIDForCaptain("failed-launch")); err == nil {
+	if _, err := mhome.ReadMeta(parent, taskIDForCaptain("failed-launch")); err == nil {
 		t.Fatal("metadata written")
 	}
 }

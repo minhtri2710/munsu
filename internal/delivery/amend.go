@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // DeliveryState represents the lifecycle state of a delivery.
@@ -245,7 +245,7 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 // Returns the updated meta on success. Fail-closed if state is not review-ready
 // or if stored identity doesn't match the expected values.
 func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("begin amendment: reading meta: %w", err)
 	}
@@ -285,7 +285,7 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 		MetaIdentityRevision:  nextRev,
 	}
 
-	result, err := task.CompareAndSwapMeta(homeDir, taskID, checks, updates)
+	result, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates)
 	if err != nil {
 		return nil, fmt.Errorf("begin amendment: %w", err)
 	}
@@ -304,7 +304,7 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 // On success, atomically updates the identity and appends an audit record.
 // Returns the updated identity and audit record.
 func AcceptAmendment(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *AmendRecord, error) {
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("accept amendment: reading meta: %w", err)
 	}
@@ -401,7 +401,7 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *
 	// Append audit record
 	updates[MetaAmendHistory] = appendAmendHistory(meta[MetaAmendHistory], record)
 
-	_, err = task.CompareAndSwapMeta(homeDir, taskID, checks, updates)
+	_, err = home.CompareAndSwapMeta(homeDir, taskID, checks, updates)
 	if err != nil {
 		return nil, nil, fmt.Errorf("accept amendment: cas: %w", err)
 	}
@@ -423,7 +423,7 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *
 // This is the recovery route for PR #339 and similar cases. It requires only
 // the stored identity and provider access — no manual meta edits or --force.
 func ReconcileIdentity(homeDir, taskID, worktreePath string) (*DeliveryIdentity, *AmendRecord, error) {
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile: reading meta: %w", err)
 	}
@@ -498,7 +498,7 @@ func ReconcileIdentity(homeDir, taskID, worktreePath string) (*DeliveryIdentity,
 	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
 	updates[MetaAmendHistory] = appendAmendHistory(meta[MetaAmendHistory], record)
 
-	_, err = task.CompareAndSwapMeta(homeDir, taskID, checks, updates)
+	_, err = home.CompareAndSwapMeta(homeDir, taskID, checks, updates)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile: cas: %w", err)
 	}

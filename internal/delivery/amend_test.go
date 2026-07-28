@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- Test helpers ---
@@ -133,7 +133,7 @@ func TestBeginAmendment_Success(t *testing.T) {
 	// Write meta with identity and delivery_state=review-ready
 	meta := testIdentity().ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateReviewReady)
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -159,7 +159,7 @@ func TestBeginAmendment_DefaultsToReviewReady(t *testing.T) {
 	// Write meta with identity but no delivery_state
 	meta := testIdentity().ToMeta()
 	// No MetaDeliveryState
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestBeginAmendment_RejectsWrongState(t *testing.T) {
 
 	meta := testIdentity().ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateAmending)
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestBeginAmendment_RejectsMergedState(t *testing.T) {
 
 	meta := testIdentity().ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateMerged)
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -213,7 +213,7 @@ func TestBeginAmendment_NoIdentity(t *testing.T) {
 	id := "test-begin-no-ident"
 
 	meta := map[string]string{"project": "test", "delivery_state": string(DeliveryStateReviewReady)}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -234,26 +234,26 @@ func TestBeginAmendment_CASConflict(t *testing.T) {
 	meta := ident.ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateReviewReady)
 	meta["project"] = "test-project"
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
 	// CAS with wrong expected head should fail
-	_, err := task.CompareAndSwapMeta(homeDir, id,
+	_, err := home.CompareAndSwapMeta(homeDir, id,
 		map[string]string{"pr_head_sha": "WRONGWRONGWRONGWRONGWRONGWRONGWRONGWRONGWR"},
 		map[string]string{MetaDeliveryState: string(DeliveryStateAmending)},
 	)
 	if err == nil {
 		t.Fatal("expected CAS error for wrong expected head")
 	}
-	var casErr *task.CASError
+	var casErr *home.CASError
 	if !strings.Contains(err.Error(), "cas conflict") {
 		t.Errorf("expected 'cas conflict' error, got: %v", err)
 	}
 	_ = casErr
 
 	// CAS with correct expected head should succeed
-	result, err := task.CompareAndSwapMeta(homeDir, id,
+	result, err := home.CompareAndSwapMeta(homeDir, id,
 		map[string]string{"pr_head_sha": ident.HeadSHA, MetaDeliveryState: string(DeliveryStateReviewReady)},
 		map[string]string{MetaDeliveryState: string(DeliveryStateAmending)},
 	)
@@ -265,7 +265,7 @@ func TestBeginAmendment_CASConflict(t *testing.T) {
 	}
 
 	// Second CAS with stale state should fail (already amending)
-	_, err = task.CompareAndSwapMeta(homeDir, id,
+	_, err = home.CompareAndSwapMeta(homeDir, id,
 		map[string]string{MetaDeliveryState: string(DeliveryStateReviewReady)},
 		map[string]string{MetaDeliveryState: string(DeliveryStateAmending)},
 	)
@@ -290,7 +290,7 @@ func TestAcceptAmendment_Success(t *testing.T) {
 	meta := stored.ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateAmending)
 	meta[MetaAmendExpectedHead] = oldSHA
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestAcceptAmendment_Success(t *testing.T) {
 	}
 
 	// Verify meta was updated
-	readMeta, err := task.ReadMeta(homeDir, id)
+	readMeta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestAcceptAmendment_ForcePushRejected(t *testing.T) {
 	meta := stored.ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateAmending)
 	meta[MetaAmendExpectedHead] = oldSHA
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -447,7 +447,7 @@ func TestAcceptAmendment_WrongState(t *testing.T) {
 	meta := stored.ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateReviewReady) // not amending
 	meta[MetaAmendExpectedHead] = stored.HeadSHA
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -470,7 +470,7 @@ func TestAcceptAmendment_CASConflict(t *testing.T) {
 	meta := stored.ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateAmending)
 	meta[MetaAmendExpectedHead] = oldSHA
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -487,7 +487,7 @@ func TestAcceptAmendment_CASConflict(t *testing.T) {
 
 	// Change head SHA behind our back (simulate concurrent modification)
 	meta["pr_head_sha"] = "otherhashotherhashotherhashotherhashotherhash"
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -507,7 +507,7 @@ func TestAcceptAmendment_HeadRefChanged(t *testing.T) {
 	meta := stored.ToMeta()
 	meta[MetaDeliveryState] = string(DeliveryStateAmending)
 	meta[MetaAmendExpectedHead] = oldSHA
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -542,7 +542,7 @@ func TestReconcileIdentity_AlreadyUpToDate(t *testing.T) {
 	stored := testIdentity()
 	stored.HeadSHA = oldSHA
 	meta := stored.ToMeta()
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -578,7 +578,7 @@ func TestReconcileIdentity_AdvancedHead(t *testing.T) {
 	stored := testIdentity()
 	stored.HeadSHA = oldSHA
 	meta := stored.ToMeta()
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -608,7 +608,7 @@ func TestReconcileIdentity_AdvancedHead(t *testing.T) {
 	}
 
 	// Verify meta was updated
-	readMeta, err := task.ReadMeta(homeDir, id)
+	readMeta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -628,7 +628,7 @@ func TestReconcileIdentity_MergedPR(t *testing.T) {
 	stored := testIdentity()
 	stored.HeadSHA = oldSHA
 	meta := stored.ToMeta()
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -654,7 +654,7 @@ func TestReconcileIdentity_MergedPR(t *testing.T) {
 	}
 
 	// Verify meta shows merged state
-	readMeta, err := task.ReadMeta(homeDir, id)
+	readMeta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -704,7 +704,7 @@ func TestReconcileIdentity_ForcePushRejected(t *testing.T) {
 	stored := testIdentity()
 	stored.HeadSHA = oldSHA
 	meta := stored.ToMeta()
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -733,7 +733,7 @@ func TestReconcileIdentity_WrongRef(t *testing.T) {
 	stored := testIdentity()
 	stored.HeadSHA = oldSHA
 	meta := stored.ToMeta()
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -763,7 +763,7 @@ func TestReconcileIdentity_DuplicateIdempotent(t *testing.T) {
 	stored := testIdentity()
 	stored.HeadSHA = oldSHA
 	meta := stored.ToMeta()
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -808,7 +808,7 @@ func TestReconcileIdentity_CASConflict(t *testing.T) {
 	stored := testIdentity()
 	stored.HeadSHA = oldSHA
 	meta := stored.ToMeta()
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -825,7 +825,7 @@ func TestReconcileIdentity_CASConflict(t *testing.T) {
 
 	// Change stored head behind our back
 	meta["pr_head_sha"] = "stalehashstalehashstalehashstalehashstalehash"
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -869,7 +869,7 @@ func TestVerifyDoneIdentity_NonPR(t *testing.T) {
 
 	// Write minimal meta so ReadMeta succeeds
 	meta := map[string]string{"kind": "ship", "project": "test"}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -886,7 +886,7 @@ func TestVerifyDoneIdentity_OpenPR(t *testing.T) {
 
 	// Write minimal meta so ReadMeta succeeds
 	meta := map[string]string{"kind": "ship"}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -917,7 +917,7 @@ func TestVerifyDoneIdentity_ClosedUnmerged(t *testing.T) {
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
 
 	meta := map[string]string{"kind": "ship"}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -948,7 +948,7 @@ func TestVerifyDoneIdentity_MergedHeadMatches(t *testing.T) {
 
 	// Write matching identity
 	ident := testIdentity()
-	if err := task.WriteMeta(homeDir, id, ident.ToMeta()); err != nil {
+	if err := home.WriteMeta(homeDir, id, ident.ToMeta()); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -978,7 +978,7 @@ func TestVerifyDoneIdentity_MergedHeadMismatch(t *testing.T) {
 	// Write identity with different head
 	ident := testIdentity()
 	ident.HeadSHA = "storedshastoredshastoredshastoredshastoreds"
-	if err := task.WriteMeta(homeDir, id, ident.ToMeta()); err != nil {
+	if err := home.WriteMeta(homeDir, id, ident.ToMeta()); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -1011,7 +1011,7 @@ func TestVerifyDoneIdentity_NoIdentity(t *testing.T) {
 
 	// Write meta without PR identity (ship task, no pr_url)
 	meta := map[string]string{"kind": "ship", "project": "test"}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 

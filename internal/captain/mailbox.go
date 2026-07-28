@@ -3,9 +3,9 @@ package captain
 import (
 	"fmt"
 
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // SendMailboxResult describes the outcome of a General→Captain mailbox send.
@@ -34,7 +34,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender orchestrator.
 
 	// 1. Validate task meta fully.
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := task.ReadMeta(parentHome, taskID)
+	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		result.Err = fmt.Errorf("reading meta for %s: %w", sm.ID, err)
 		return result
@@ -203,7 +203,7 @@ func ReconcileMailboxPending(parentHome string, sm Info, sender orchestrator.Bou
 // for config-reread records.
 func resendNotification(parentHome string, sm Info, env *orchestrator.Envelope, sender orchestrator.BoundSender) error {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := task.ReadMeta(parentHome, taskID)
+	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		// State-only homes have no task meta — skip resend gracefully.
 		// The durable pending record persists for future reconciliation.

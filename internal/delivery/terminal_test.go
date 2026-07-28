@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- ExtractPRURL tests ---
@@ -160,7 +160,7 @@ func TestCaptureTerminalIdentity_SkipsNonPRMessage(t *testing.T) {
 		t.Fatalf("expected nil for non-PR message: %v", err)
 	}
 	// No meta should have been written
-	_, err = task.ReadMeta(homeDir, "test-task")
+	_, err = home.ReadMeta(homeDir, "test-task")
 	if err == nil {
 		t.Fatal("expected error reading meta — no meta should have been written")
 	}
@@ -173,7 +173,7 @@ func TestCaptureTerminalIdentity_IdempotentCompleteIdentity(t *testing.T) {
 
 	// Write a complete identity to meta first (simulating a previous capture)
 	existingIdent := validIdentity()
-	if err := task.WriteMeta(homeDir, taskID, existingIdent.ToMeta()); err != nil {
+	if err := home.WriteMeta(homeDir, taskID, existingIdent.ToMeta()); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestCaptureTerminalIdentity_IdempotentCompleteIdentity(t *testing.T) {
 	}
 
 	// Verify meta was not rewritten (timestamp should be unchanged)
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("reading meta: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestCaptureTerminalIdentity_IdempotentWithLegacyKeys(t *testing.T) {
 		"pr_head_ref":  "fm/feature-branch",
 		"pr_timestamp": "2026-07-18T00:00:00Z",
 	}
-	if err := task.WriteMeta(homeDir, taskID, meta); err != nil {
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -245,7 +245,7 @@ func TestCaptureTerminalIdentity_URLConflictFailsClosed(t *testing.T) {
 		"pr_url":      "https://github.com/minhtri2710/munsu/pull/99",
 		"pr_provider": "github",
 	}
-	if err := task.WriteMeta(homeDir, taskID, meta); err != nil {
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -270,7 +270,7 @@ func TestCaptureTerminalIdentity_IncompleteIdentityReplaced(t *testing.T) {
 		"pr_head":   "",
 		// Missing pr_base, pr_head_ref, pr_timestamp, pr_provider, pr_owner, pr_repo
 	}
-	if err := task.WriteMeta(homeDir, taskID, meta); err != nil {
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -297,7 +297,7 @@ func TestCaptureTerminalIdentity_IncompleteIdentityReplaced(t *testing.T) {
 	}
 
 	// Verify meta now has complete identity
-	readMeta, err := task.ReadMeta(homeDir, taskID)
+	readMeta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("reading meta: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestCaptureTerminalIdentity_ProviderFailureFailsClosed(t *testing.T) {
 	}
 
 	// No meta should have been written on failure
-	_, metaErr := task.ReadMeta(homeDir, taskID)
+	_, metaErr := home.ReadMeta(homeDir, taskID)
 	if metaErr == nil {
 		t.Fatal("expected meta NOT to exist after provider failure")
 	}
@@ -427,7 +427,7 @@ func TestCaptureTerminalIdentity_SuccessfulCapture(t *testing.T) {
 	}
 
 	// Verify all fields were written
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("reading meta: %v", err)
 	}

@@ -7,8 +7,8 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -43,7 +43,7 @@ Flags:
 			}
 
 			// Read generation from meta for staleness check.
-			meta, err := task.ReadMeta(ctx.Home, taskID)
+			meta, err := home.ReadMeta(ctx.Home, taskID)
 			if err != nil {
 				return fmt.Errorf("consume-ready: reading meta for %s: %w", taskID, err)
 			}

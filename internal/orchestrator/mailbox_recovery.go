@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // RecoveryAttempt describes one recovery retry attempt.
@@ -59,7 +59,7 @@ func RecoverInboxWithSender(sender BoundSender, receiverHome string, env *Envelo
 	}
 
 	taskID := env.TaskID
-	meta, err := task.ReadMeta(receiverHome, taskID)
+	meta, err := home.ReadMeta(receiverHome, taskID)
 	if err != nil {
 		ra.Err = fmt.Errorf("reading meta for recovery: %w", err)
 		return ra

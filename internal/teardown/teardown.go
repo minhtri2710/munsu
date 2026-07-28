@@ -14,10 +14,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/delivery"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldier"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // Options controls teardown behavior.
@@ -47,7 +47,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	}
 
 	// Read task meta
-	meta, err := task.ReadMeta(opts.HomeDir, opts.ID)
+	meta, err := home.ReadMeta(opts.HomeDir, opts.ID)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: reading meta: %w", opts.ID, err)
 	}
@@ -585,7 +585,7 @@ func closeTerminalPhases(opts Options, result *TeardownResult) {
 		closeLine := fmt.Sprintf("resolved [key=%s]: soldier torn down", act.Key)
 		// Append to the status file before cleanup so any concurrent reader
 		// sees the proper close event (even though teardown removes it shortly).
-		if err := task.AppendStatus(opts.HomeDir, opts.ID, closeLine); err != nil {
+		if err := home.AppendStatus(opts.HomeDir, opts.ID, closeLine); err != nil {
 			result.Steps = append(result.Steps, fmt.Sprintf("warning: close phase %s: %v", act.Key, err))
 			continue
 		}

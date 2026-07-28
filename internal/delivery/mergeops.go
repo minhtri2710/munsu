@@ -3,7 +3,7 @@ package delivery
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // MarkMerged atomically transitions delivery_state to merged for a task,
@@ -17,7 +17,7 @@ import (
 // Returns a CASError when another writer modified meta concurrently.
 // Returns an error when meta cannot be read or written.
 func MarkMerged(homeDir, taskID string, expected *DeliveryIdentity) error {
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return fmt.Errorf("mark merged: reading meta: %w", err)
 	}
@@ -52,7 +52,7 @@ func MarkMerged(homeDir, taskID string, expected *DeliveryIdentity) error {
 		MetaIdentityRevision: incrementRevision(meta[MetaIdentityRevision]),
 	}
 
-	if _, err := task.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
+	if _, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
 		return fmt.Errorf("mark merged: %w", err)
 	}
 

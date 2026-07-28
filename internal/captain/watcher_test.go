@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/supervision"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 type captainTestProbe struct{}
@@ -97,7 +97,7 @@ func TestEnsureWatcher_StartsWhenChildWorkInFlight(t *testing.T) {
 
 	// Simulate child work by creating a soldier meta file.
 	soldierMeta := map[string]string{"kind": "ship", "window": "win-1"}
-	if err := task.WriteMeta(tmp, "soldier-1", soldierMeta); err != nil {
+	if err := mhome.WriteMeta(tmp, "soldier-1", soldierMeta); err != nil {
 		t.Fatal(err)
 	}
 
@@ -192,7 +192,7 @@ func TestInFlightSoldierPath_WithSoldier(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	task.WriteMeta(tmp, "soldier-1", map[string]string{"kind": "ship", "window": "w1"})
+	mhome.WriteMeta(tmp, "soldier-1", map[string]string{"kind": "ship", "window": "w1"})
 
 	if !inFlightSoldierPath(tmp) {
 		t.Error("expected true when soldier meta exists")
@@ -205,7 +205,7 @@ func TestInFlightSoldierPath_IgnoresNonShip(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Captain meta should not count as child work.
-	task.WriteMeta(tmp, "captain:test", map[string]string{"kind": "captain", "window": "w1"})
+	mhome.WriteMeta(tmp, "captain:test", map[string]string{"kind": "captain", "window": "w1"})
 
 	if inFlightSoldierPath(tmp) {
 		t.Error("expected false for non-ship/scout meta")

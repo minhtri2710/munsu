@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 type testEndpointProbe struct{}
@@ -327,7 +327,7 @@ func TestScanFleet_NoWindow(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	if err := task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"}); err != nil {
+	if err := mhome.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -343,9 +343,9 @@ func TestScanFleet_MultipleTasks_OnlyOneWithWindow(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Task with no window
-	task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"})
+	mhome.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"})
 	// Task with a window (but window doesn't exist, so pane is dead)
-	task.WriteMeta(tmp, "has-win", map[string]string{"window": "@nonexistent99"})
+	mhome.WriteMeta(tmp, "has-win", map[string]string{"window": "@nonexistent99"})
 
 	reason := testScanFleet(tmp)
 	if reason == nil {
@@ -426,7 +426,7 @@ func TestScanFleet_StaleStatusFile(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	task.WriteMeta(tmp, "stale-task", map[string]string{"window": "@nonexistent99"})
+	mhome.WriteMeta(tmp, "stale-task", map[string]string{"window": "@nonexistent99"})
 
 	// Write a status file with old modification time
 	statusPath := filepath.Join(stateDir, "stale-task.status")
@@ -454,7 +454,7 @@ func TestScanFleet_RecentStatusNoStale(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	task.WriteMeta(tmp, "recent-task", map[string]string{"window": "@nonexistent99"})
+	mhome.WriteMeta(tmp, "recent-task", map[string]string{"window": "@nonexistent99"})
 
 	// Write a recent status file
 	statusPath := filepath.Join(stateDir, "recent-task.status")
@@ -498,7 +498,7 @@ func TestScanFleet_IgnoresNonWindowMeta(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Meta without window key should be skipped
-	task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship", "project": "munsu"})
+	mhome.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship", "project": "munsu"})
 
 	reason := testScanFleet(tmp)
 	if reason != nil {
@@ -512,11 +512,11 @@ func TestScanFleet_MultipleTasks_MixedStates(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Task 1: has window but pane is dead
-	task.WriteMeta(tmp, "dead-task", map[string]string{"window": "@nonexistent1"})
+	mhome.WriteMeta(tmp, "dead-task", map[string]string{"window": "@nonexistent1"})
 	// Task 2: no window (should be skipped)
-	task.WriteMeta(tmp, "no-win-task", map[string]string{"kind": "scout"})
+	mhome.WriteMeta(tmp, "no-win-task", map[string]string{"kind": "scout"})
 	// Task 3: has dead window and old status file
-	task.WriteMeta(tmp, "old-status-task", map[string]string{"window": "@nonexistent2"})
+	mhome.WriteMeta(tmp, "old-status-task", map[string]string{"window": "@nonexistent2"})
 
 	statusPath := filepath.Join(stateDir, "old-status-task.status")
 	os.WriteFile(statusPath, []byte("working: started\n"), 0644)
@@ -538,7 +538,7 @@ func TestRunCycle_QueuedWakeDoesNotEmitAnotherWake(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	task.WriteMeta(tmp, "no-window-task", map[string]string{"kind": "ship"})
+	mhome.WriteMeta(tmp, "no-window-task", map[string]string{"kind": "ship"})
 	if err := lifecycle.EnqueueWake(tmp, "status", "task-1", "done: ready"); err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +564,7 @@ func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	task.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-watch-cycle"})
+	mhome.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-watch-cycle"})
 
 	emitted, err := testRunCycle(tmp)
 	if err != nil || !emitted {
@@ -578,7 +578,7 @@ func TestRunCycle_DeduplicatesUnchangedConditionAndEmitsAfterChange(t *testing.T
 		t.Fatal("unchanged condition emitted a duplicate wake")
 	}
 
-	if err := task.AppendStatus(tmp, "task-1", "failed: changed condition"); err != nil {
+	if err := mhome.AppendStatus(tmp, "task-1", "failed: changed condition"); err != nil {
 		t.Fatal(err)
 	}
 	emitted, err = testRunCycle(tmp)
@@ -602,7 +602,7 @@ func TestScanFleet_StaleConsistency(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	task.WriteMeta(tmp, "consist-task", map[string]string{"window": "@nonexistentConsist"})
+	mhome.WriteMeta(tmp, "consist-task", map[string]string{"window": "@nonexistentConsist"})
 
 	// First call
 	r1 := testScanFleet(tmp)
@@ -719,12 +719,12 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	// 2) Captain answers on parent return channel (no pane required).
 	captainID := "captain:munsu"
 	statusLine := "done [key=return-channel-e2e]: closed-loop proof landed"
-	if err := task.AppendStatus(home, captainID, statusLine); err != nil {
+	if err := mhome.AppendStatus(home, captainID, statusLine); err != nil {
 		t.Fatal(err)
 	}
 	// Optional meta present as in a live captain registry entry; signal path
 	// must not require dead pane (return channel wakes while captain is alive).
-	if err := task.WriteMeta(home, captainID, map[string]string{
+	if err := mhome.WriteMeta(home, captainID, map[string]string{
 		"kind":    "captain",
 		"window":  "captain-pane-alive",
 		"backend": "tmux",
@@ -733,7 +733,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// Non-relevant status must stay quiet (working is not general-relevant).
-	if err := task.AppendStatus(home, "captain:noise", "working: still grinding"); err != nil {
+	if err := mhome.AppendStatus(home, "captain:noise", "working: still grinding"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -920,7 +920,7 @@ func TestScanFleet_CaptainKindAbsorbsStale(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Idle captain with dead pane and non-terminal status must not flood stale.
-	task.WriteMeta(tmp, "captain:domain", map[string]string{
+	mhome.WriteMeta(tmp, "captain:domain", map[string]string{
 		"kind":    "captain",
 		"window":  "@nonexistent-captain",
 		"backend": "tmux",
@@ -940,7 +940,7 @@ func TestScanFleet_CaptainTerminalStillSignals(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	task.WriteMeta(tmp, "captain:domain", map[string]string{
+	mhome.WriteMeta(tmp, "captain:domain", map[string]string{
 		"kind":    "captain",
 		"window":  "@nonexistent-captain",
 		"backend": "tmux",
@@ -960,7 +960,7 @@ func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	task.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-stable"})
+	mhome.WriteMeta(tmp, "task-1", map[string]string{"window": "@nonexistent-stable"})
 	os.WriteFile(filepath.Join(stateDir, "task-1.status"), []byte("working: started\n"), 0644)
 
 	emitted, err := testRunCycle(tmp)
@@ -1478,7 +1478,7 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	os.WriteFile(lifecycle.BeatPath(tmp), []byte(beatContent), 0644)
 
 	// Add an in-flight task.
-	task.WriteMeta(tmp, "task-stale", map[string]string{"window": "@test"})
+	mhome.WriteMeta(tmp, "task-stale", map[string]string{"window": "@test"})
 	os.WriteFile(filepath.Join(stateDir, "task-stale.status"), []byte("working: started\n"), 0644)
 
 	// Enqueue a material wake.

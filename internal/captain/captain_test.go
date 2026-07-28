@@ -11,11 +11,11 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
@@ -2743,7 +2743,7 @@ func writeCaptainMeta(t *testing.T, parent, smID, smHome, window string) {
 		"window":  window,
 		"backend": "fake",
 	}
-	if err := task.WriteMeta(parent, taskIDForCaptain(smID), meta); err != nil {
+	if err := mhome.WriteMeta(parent, taskIDForCaptain(smID), meta); err != nil {
 		t.Fatal(err)
 	}
 }

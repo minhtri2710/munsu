@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ReviewDiff runs `munsu review-diff` for the given task.
@@ -15,7 +15,7 @@ import (
 // a Markdown diff summary. It uses the stored delivery identity when available
 // rather than reconstructing from the current branch state.
 func ReviewDiff(homeDir string, id string) error {
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return fmt.Errorf("reading task %s meta: %w", id, err)
 	}

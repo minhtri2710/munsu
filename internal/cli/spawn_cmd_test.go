@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
@@ -445,7 +445,7 @@ func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 	}
 
 	// Create status with material state so uplinkCheck can detect it
-	if err := task.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
+	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -512,7 +512,7 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
+	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -566,7 +566,7 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, soldierID+".meta"), []byte(metaContent), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
+	if err := home.AppendStatus(tmpDir, soldierID, "done: task complete"); err != nil {
 		t.Fatal(err)
 	}
 

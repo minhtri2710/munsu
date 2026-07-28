@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // setupRelayTest creates a captain home and a general home with a provenance
@@ -559,7 +559,7 @@ func TestReconcileTerminalReceipts_CaptainID(t *testing.T) {
 	}
 }
 
-// TestReconcileTerminalReceipts_TaskAppendStatus verifies that task.AppendStatus
+// TestReconcileTerminalReceipts_TaskAppendStatus verifies that mhome.AppendStatus
 // is called with the correct relay line format.
 func TestReconcileTerminalReceipts_TaskAppendStatus(t *testing.T) {
 	captainHome, generalHome := setupRelayTest(t)

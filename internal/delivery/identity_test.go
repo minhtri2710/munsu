@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func validIdentity() *DeliveryIdentity {
@@ -308,7 +308,7 @@ func TestRequireIdentity_Success(t *testing.T) {
 		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
-	if err := task.WriteMeta(homeDir, id, original.ToMeta()); err != nil {
+	if err := home.WriteMeta(homeDir, id, original.ToMeta()); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -343,7 +343,7 @@ func TestRequireIdentity_NoPRURL(t *testing.T) {
 		"kind":    "ship",
 		"project": "munsu",
 	}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -365,7 +365,7 @@ func TestRequireIdentity_Incomplete(t *testing.T) {
 		"pr":     "https://github.com/minhtri2710/munsu/pull/42",
 		// Missing pr_head (headSHA), pr_base, pr_head_ref, etc.
 	}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -419,7 +419,7 @@ func TestRequireIdentity_LegacyPRKeyOnly(t *testing.T) {
 		"kind":    "ship",
 		"project": "munsu",
 	}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -461,7 +461,7 @@ func TestPRCheck_WritesIdentityKeys(t *testing.T) {
 		"kind":    "ship",
 		"project": "munsu",
 	}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -471,7 +471,7 @@ func TestPRCheck_WritesIdentityKeys(t *testing.T) {
 	}
 
 	// Verify meta contains all identity keys
-	readMeta, err := task.ReadMeta(homeDir, id)
+	readMeta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestPRMerge_ValidatesIdentity(t *testing.T) {
 		"kind":    "ship",
 		"project": "munsu",
 	}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -585,7 +585,7 @@ func TestPRMerge_RejectsURLMismatch(t *testing.T) {
 		HeadSHA:    "abc123def456abc123def456abc123def456abc1",
 		CapturedAt: "2026-07-18T12:00:00Z",
 	}
-	if err := task.WriteMeta(homeDir, id, original.ToMeta()); err != nil {
+	if err := home.WriteMeta(homeDir, id, original.ToMeta()); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -612,7 +612,7 @@ func TestPRMerge_RejectsLiveIdentityDrift(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			homeDir := t.TempDir()
 			stored := validIdentity()
-			if err := task.WriteMeta(homeDir, "ship", stored.ToMeta()); err != nil {
+			if err := home.WriteMeta(homeDir, "ship", stored.ToMeta()); err != nil {
 				t.Fatal(err)
 			}
 			live := *stored
@@ -668,7 +668,7 @@ func TestReviewDiff_LegacyPRKeyRead(t *testing.T) {
 		"pr":       "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_head":  "abc123def456abc123def456abc123def456abc1",
 	}
-	if err := task.WriteMeta(homeDir, id, meta); err != nil {
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 

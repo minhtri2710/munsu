@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func captureStdout(fn func() error) (string, error) {
@@ -99,10 +99,10 @@ func TestBearings_WithTasks(t *testing.T) {
 		"mode":     "no-mistakes",
 		"yolo":     "off",
 	}
-	if err := task.WriteMeta(tmpDir, "task-ship", shipMeta); err != nil {
+	if err := home.WriteMeta(tmpDir, "task-ship", shipMeta); err != nil {
 		t.Fatalf("failed to write ship meta: %v", err)
 	}
-	if err := task.AppendStatus(tmpDir, "task-ship", "running builds"); err != nil {
+	if err := home.AppendStatus(tmpDir, "task-ship", "running builds"); err != nil {
 		t.Fatalf("failed to append ship status: %v", err)
 	}
 
@@ -117,10 +117,10 @@ func TestBearings_WithTasks(t *testing.T) {
 		"mode":     "no-mistakes",
 		"yolo":     "off",
 	}
-	if err := task.WriteMeta(tmpDir, "task-scout", scoutMeta); err != nil {
+	if err := home.WriteMeta(tmpDir, "task-scout", scoutMeta); err != nil {
 		t.Fatalf("failed to write scout meta: %v", err)
 	}
-	if err := task.AppendStatus(tmpDir, "task-scout", "scouting around"); err != nil {
+	if err := home.AppendStatus(tmpDir, "task-scout", "scouting around"); err != nil {
 		t.Fatalf("failed to append scout status: %v", err)
 	}
 
@@ -135,7 +135,7 @@ func TestBearings_WithTasks(t *testing.T) {
 		"mode":     "no-mistakes",
 		"yolo":     "off",
 	}
-	if err := task.WriteMeta(tmpDir, "task-other", otherMeta); err != nil {
+	if err := home.WriteMeta(tmpDir, "task-other", otherMeta); err != nil {
 		t.Fatalf("failed to write other meta: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestView_RegisteredPhase(t *testing.T) {
 		"kind":    "ship",
 		"mode":    "no-mistakes",
 	}
-	if err := task.WriteMeta(tmp, "pre-spawn-task", preSpawnMeta); err != nil {
+	if err := home.WriteMeta(tmp, "pre-spawn-task", preSpawnMeta); err != nil {
 		t.Fatalf("failed to write meta: %v", err)
 	}
 
@@ -228,7 +228,7 @@ func TestCaptainStatus_Alive(t *testing.T) {
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
 
-	if err := task.WriteMeta(parent, "captain:test-sm", map[string]string{
+	if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{
 		"kind":    "captain",
 		"sm_id":   "test-sm",
 		"home":    smHome,
@@ -261,7 +261,7 @@ func TestCaptainStatus_Dead(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "state", ".lock"), []byte("999999\n"), 0644)
 
-	if err := task.WriteMeta(parent, "captain:test-sm", map[string]string{
+	if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{
 		"kind":    "captain",
 		"sm_id":   "test-sm",
 		"home":    smHome,
@@ -297,7 +297,7 @@ func TestCaptainStatus_BackendErrorIsDead(t *testing.T) {
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
 
-	if err := task.WriteMeta(parent, "captain:test-sm", map[string]string{
+	if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{
 		"kind":   "captain",
 		"sm_id":  "test-sm",
 		"window": "@cap",
@@ -329,7 +329,7 @@ func TestCurrentState_PaneAliveOverDone(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Create meta with window (pane assumed alive)
-	if err := task.WriteMeta(tmp, "t1", map[string]string{
+	if err := home.WriteMeta(tmp, "t1", map[string]string{
 		"window":   "@win",
 		"worktree": "/tmp/wt",
 		"project":  "munsu",
@@ -339,7 +339,7 @@ func TestCurrentState_PaneAliveOverDone(t *testing.T) {
 	}
 
 	// Status says 'done' but we wire a resolver that reports pane alive.
-	if err := task.AppendStatus(tmp, "t1", "done: build complete"); err != nil {
+	if err := home.AppendStatus(tmp, "t1", "done: build complete"); err != nil {
 		t.Fatalf("AppendStatus: %v", err)
 	}
 
@@ -372,7 +372,7 @@ func TestCurrentState_NoMistakesOverridesBlocked(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Create meta with window and worktree
-	if err := task.WriteMeta(tmp, "t1", map[string]string{
+	if err := home.WriteMeta(tmp, "t1", map[string]string{
 		"window":   "@win",
 		"worktree": "/tmp/wt",
 		"project":  "munsu",
@@ -382,7 +382,7 @@ func TestCurrentState_NoMistakesOverridesBlocked(t *testing.T) {
 	}
 
 	// Status says 'blocked' but no-mistakes run-step is active.
-	if err := task.AppendStatus(tmp, "t1", "blocked: waiting for review"); err != nil {
+	if err := home.AppendStatus(tmp, "t1", "blocked: waiting for review"); err != nil {
 		t.Fatalf("AppendStatus: %v", err)
 	}
 
@@ -420,7 +420,7 @@ func TestCurrentState_ResolvedNotCurrentStatus(t *testing.T) {
 	os.MkdirAll(stateDir, 0755)
 
 	// Create meta with window
-	if err := task.WriteMeta(tmp, "t1", map[string]string{
+	if err := home.WriteMeta(tmp, "t1", map[string]string{
 		"window":   "@win",
 		"worktree": "/tmp/wt",
 		"project":  "munsu",
@@ -430,10 +430,10 @@ func TestCurrentState_ResolvedNotCurrentStatus(t *testing.T) {
 	}
 
 	// Last line is 'resolved' which must not appear as current state.
-	if err := task.AppendStatus(tmp, "t1", "working [key=phase1]: initial work"); err != nil {
+	if err := home.AppendStatus(tmp, "t1", "working [key=phase1]: initial work"); err != nil {
 		t.Fatalf("AppendStatus: %v", err)
 	}
-	if err := task.AppendStatus(tmp, "t1", "resolved [key=phase1]: initial work complete"); err != nil {
+	if err := home.AppendStatus(tmp, "t1", "resolved [key=phase1]: initial work complete"); err != nil {
 		t.Fatalf("AppendStatus: %v", err)
 	}
 
@@ -465,7 +465,7 @@ func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 
 	// primary captain meta only
-	if err := task.WriteMeta(parent, "captain:munsu", map[string]string{
+	if err := home.WriteMeta(parent, "captain:munsu", map[string]string{
 		"kind": "captain", "window": "w1",
 	}); err != nil {
 		t.Fatal(err)
@@ -473,7 +473,7 @@ func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
 
 	capHome := filepath.Join(parent, "captains", "munsu")
 	os.MkdirAll(filepath.Join(capHome, "state"), 0755)
-	if err := task.WriteMeta(capHome, "ship-child", map[string]string{
+	if err := home.WriteMeta(capHome, "ship-child", map[string]string{
 		"kind": "ship", "project": "munsu", "window": "w-child",
 	}); err != nil {
 		t.Fatal(err)
@@ -521,7 +521,7 @@ func TestSnapshot_PaneAliveProbeTrue(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	if err := task.WriteMeta(tmp, "t1", map[string]string{
+	if err := home.WriteMeta(tmp, "t1", map[string]string{
 		"window":   "@win",
 		"worktree": "/tmp/wt",
 		"project":  "munsu",
@@ -555,7 +555,7 @@ func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	if err := task.WriteMeta(tmp, "t1", map[string]string{
+	if err := home.WriteMeta(tmp, "t1", map[string]string{
 		"window":   "@win",
 		"worktree": "/tmp/wt",
 		"project":  "munsu",
@@ -589,7 +589,7 @@ func TestSnapshot_PaneAliveUnknownWhenNoProbe(t *testing.T) {
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
-	if err := task.WriteMeta(tmp, "t1", map[string]string{
+	if err := home.WriteMeta(tmp, "t1", map[string]string{
 		"window":   "@win",
 		"worktree": "/tmp/wt",
 		"project":  "munsu",

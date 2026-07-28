@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // setManualMode forces manual backlog backend for tests that use native backlog.md.
@@ -49,7 +49,7 @@ func TestRead_NoWindow(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"}); err != nil {
+	if err := home.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,7 +71,7 @@ func TestRead_WithWindow(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "with-win", map[string]string{
+	if err := home.WriteMeta(tmp, "with-win", map[string]string{
 		"window":   "@nonexistent99",
 		"worktree": tmp,
 	}); err != nil {
@@ -96,7 +96,7 @@ func TestRead_HerdrPaneNotFound_ReturnsPaneAliveFalse(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "incident-soldier", map[string]string{
+	if err := home.WriteMeta(tmp, "incident-soldier", map[string]string{
 		"backend":       "herdr",
 		"herdr_session": "default",
 		"window":        "default:w6E:p3",
@@ -127,14 +127,14 @@ func TestRead_StatusLogOverrides(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "status-test", map[string]string{
+	if err := home.WriteMeta(tmp, "status-test", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Append a done status
-	if err := task.AppendStatus(tmp, "status-test", "done: implemented feature X"); err != nil {
+	if err := home.AppendStatus(tmp, "status-test", "done: implemented feature X"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,13 +154,13 @@ func TestRead_FailedStatus(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "fail-test", map[string]string{
+	if err := home.WriteMeta(tmp, "fail-test", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := task.AppendStatus(tmp, "fail-test", "failed: tests not passing"); err != nil {
+	if err := home.AppendStatus(tmp, "fail-test", "failed: tests not passing"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,16 +177,16 @@ func TestRead_MultipleStatusLines(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "multi-status", map[string]string{
+	if err := home.WriteMeta(tmp, "multi-status", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	task.AppendStatus(tmp, "multi-status", "working: started investigation")
-	task.AppendStatus(tmp, "multi-status", "needs-decision: which approach")
-	task.AppendStatus(tmp, "multi-status", "resolved: chose approach A")
-	task.AppendStatus(tmp, "multi-status", "done: all done")
+	home.AppendStatus(tmp, "multi-status", "working: started investigation")
+	home.AppendStatus(tmp, "multi-status", "needs-decision: which approach")
+	home.AppendStatus(tmp, "multi-status", "resolved: chose approach A")
+	home.AppendStatus(tmp, "multi-status", "done: all done")
 
 	s, err := Read(tmp, "multi-status")
 	if err != nil {
@@ -206,13 +206,13 @@ func TestRead_MultipleStatusLines(t *testing.T) {
 func TestRead_ResolvedIsNotCurrentState(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
-	if err := task.WriteMeta(tmp, "resolved-only", map[string]string{
+	if err := home.WriteMeta(tmp, "resolved-only", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	task.AppendStatus(tmp, "resolved-only", "working: started")
-	task.AppendStatus(tmp, "resolved-only", "resolved: closed key without terminal")
+	home.AppendStatus(tmp, "resolved-only", "working: started")
+	home.AppendStatus(tmp, "resolved-only", "resolved: closed key without terminal")
 
 	s, err := Read(tmp, "resolved-only")
 	if err != nil {
@@ -235,16 +235,16 @@ func TestRead_ResolvedIsNotCurrentState(t *testing.T) {
 func TestRead_KeyedOpenActivitiesMultiEvent(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
-	if err := task.WriteMeta(tmp, "keyed-phases", map[string]string{
+	if err := home.WriteMeta(tmp, "keyed-phases", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	task.AppendStatus(tmp, "keyed-phases", "working [key=phase7]: Phase 7 started")
-	task.AppendStatus(tmp, "keyed-phases", "working [key=phase6]: Phase 6 started")
-	task.AppendStatus(tmp, "keyed-phases", "done [key=phase6]: Phase 6 completed")
-	task.AppendStatus(tmp, "keyed-phases", "resolved [key=phase7]: Phase 7 done")
-	task.AppendStatus(tmp, "keyed-phases", "working [key=phase8]: Phase 8 started")
+	home.AppendStatus(tmp, "keyed-phases", "working [key=phase7]: Phase 7 started")
+	home.AppendStatus(tmp, "keyed-phases", "working [key=phase6]: Phase 6 started")
+	home.AppendStatus(tmp, "keyed-phases", "done [key=phase6]: Phase 6 completed")
+	home.AppendStatus(tmp, "keyed-phases", "resolved [key=phase7]: Phase 7 done")
+	home.AppendStatus(tmp, "keyed-phases", "working [key=phase8]: Phase 8 started")
 
 	s, err := Read(tmp, "keyed-phases")
 	if err != nil {
@@ -264,12 +264,12 @@ func TestRead_KeyedOpenActivitiesMultiEvent(t *testing.T) {
 func TestRead_KeyedVerbBeforeColon(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
-	if err := task.WriteMeta(tmp, "keyed-verb", map[string]string{
+	if err := home.WriteMeta(tmp, "keyed-verb", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	task.AppendStatus(tmp, "keyed-verb", "done [key=ship]: PR https://example/1")
+	home.AppendStatus(tmp, "keyed-verb", "done [key=ship]: PR https://example/1")
 
 	s, err := Read(tmp, "keyed-verb")
 	if err != nil {
@@ -298,7 +298,7 @@ func TestRead_GitBranch(t *testing.T) {
 
 	// We need git available for this test
 	// Skip if no git
-	if err := task.WriteMeta(tmp, "git-test", map[string]string{
+	if err := home.WriteMeta(tmp, "git-test", map[string]string{
 		"window":   "@nonexistent99",
 		"worktree": tmp,
 	}); err != nil {
@@ -319,14 +319,14 @@ func TestRead_LastNonTerminalStatus(t *testing.T) {
 	tmp := t.TempDir()
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "nonterm", map[string]string{
+	if err := home.WriteMeta(tmp, "nonterm", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	task.AppendStatus(tmp, "nonterm", "paused: waiting for review")
-	task.AppendStatus(tmp, "nonterm", "blocked: dependency not ready")
+	home.AppendStatus(tmp, "nonterm", "paused: waiting for review")
+	home.AppendStatus(tmp, "nonterm", "blocked: dependency not ready")
 
 	s, err := Read(tmp, "nonterm")
 	if err != nil {
@@ -421,14 +421,14 @@ func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
 	setHomeEnv(t, tmp)
 
 	// Create meta with window
-	if err := task.WriteMeta(tmp, "backlog-test", map[string]string{
+	if err := home.WriteMeta(tmp, "backlog-test", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Add a stale "working" status line
-	if err := task.AppendStatus(tmp, "backlog-test", "working: stale work"); err != nil {
+	if err := home.AppendStatus(tmp, "backlog-test", "working: stale work"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -467,14 +467,14 @@ func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
 	setManualMode(t, tmp)
 	setHomeEnv(t, tmp)
 
-	if err := task.WriteMeta(tmp, "blocked-test", map[string]string{
+	if err := home.WriteMeta(tmp, "blocked-test", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Add a stale "working" status line
-	if err := task.AppendStatus(tmp, "blocked-test", "working: active work"); err != nil {
+	if err := home.AppendStatus(tmp, "blocked-test", "working: active work"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -510,14 +510,14 @@ func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
 	setHomeEnv(t, tmp)
 
 	// Create meta with window
-	if err := task.WriteMeta(tmp, "in-flight-test", map[string]string{
+	if err := home.WriteMeta(tmp, "in-flight-test", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Add a "blocked" status line
-	if err := task.AppendStatus(tmp, "in-flight-test", "blocked: waiting for dep"); err != nil {
+	if err := home.AppendStatus(tmp, "in-flight-test", "blocked: waiting for dep"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -554,7 +554,7 @@ func TestRead_BacklogQueuedWhenUnknown(t *testing.T) {
 	setHomeEnv(t, tmp)
 
 	// Create meta only (no status file, no window)
-	if err := task.WriteMeta(tmp, "queued-test", map[string]string{
+	if err := home.WriteMeta(tmp, "queued-test", map[string]string{
 		"kind": "ship",
 	}); err != nil {
 		t.Fatal(err)
@@ -592,12 +592,12 @@ func TestRead_NoBacklogItemFallsThrough(t *testing.T) {
 	setHomeEnv(t, tmp)
 
 	// Create meta with a "done" status
-	if err := task.WriteMeta(tmp, "no-backlog-item", map[string]string{
+	if err := home.WriteMeta(tmp, "no-backlog-item", map[string]string{
 		"kind": "ship",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.AppendStatus(tmp, "no-backlog-item", "done: completed without backlog"); err != nil {
+	if err := home.AppendStatus(tmp, "no-backlog-item", "done: completed without backlog"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -5,7 +5,7 @@ package orchestrator
 import (
 	"time"
 
-		"github.com/minhtri2710/munsu/internal/lifecycle"
+	"github.com/minhtri2710/munsu/internal/lifecycle"
 )
 
 // Re-export lifecycle & waker helpers

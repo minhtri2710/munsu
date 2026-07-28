@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // --- Test helpers ---
@@ -68,7 +68,7 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 		"window":  "test-window",
 		"backend": "test",
 	}
-	if err := task.WriteMeta(parentHome, taskID, meta); err != nil {
+	if err := home.WriteMeta(parentHome, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -198,9 +198,9 @@ func TestSendMailboxToCaptain_InvalidMeta(t *testing.T) {
 
 	// Corrupt the meta: change kind to something else.
 	taskID := taskIDForCaptain(captainID)
-	meta, _ := task.ReadMeta(parentHome, taskID)
+	meta, _ := home.ReadMeta(parentHome, taskID)
 	meta["kind"] = "ship"
-	task.WriteMeta(parentHome, taskID, meta)
+	home.WriteMeta(parentHome, taskID, meta)
 
 	sm := Info{ID: captainID, Home: captainHome}
 	result := SendMailboxToCaptain(sm, parentHome, "line", &captainTestMailboxSender{acknowledged: true})
@@ -511,7 +511,7 @@ func TestSendMailboxToCaptain_UnmarkedCaptainHome(t *testing.T) {
 	// Write task meta using canonical path (as Launch would).
 	canonHome, _ := canonicalHome(captainHome)
 	taskID := taskIDForCaptain("unmarked")
-	task.WriteMeta(parentHome, taskID, map[string]string{
+	home.WriteMeta(parentHome, taskID, map[string]string{
 		"kind": "captain", "sm_id": "unmarked", "home": canonHome,
 		"window": "test-window", "backend": "test",
 	})

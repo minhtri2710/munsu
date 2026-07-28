@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -54,9 +54,9 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			msg := args[1]
 
 			// Validate state
-			if !task.IsValidStatusState(state) {
+			if !home.IsValidStatusState(state) {
 				return usageError("invalid_argument",
-					fmt.Sprintf("Valid states: %s", strings.Join(task.ValidStatusStates, ", ")),
+					fmt.Sprintf("Valid states: %s", strings.Join(home.ValidStatusStates, ", ")),
 					fmt.Sprintf("Invalid status state %q", state))
 			}
 
@@ -157,7 +157,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// 1.6. For soldier review-ready/idle states: emit a durable ready event
 			// and flush one pending command automatically.
 			if role == "soldier" && state == "review-ready" {
-				meta, metaErr := task.ReadMeta(homeDir, taskID)
+				meta, metaErr := home.ReadMeta(homeDir, taskID)
 				if metaErr == nil {
 					metaGeneration := meta["generation"]
 					captain.EmitReadyEvent(homeDir, taskID, "", metaGeneration)

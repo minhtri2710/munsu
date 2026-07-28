@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // FleetSnapshot represents the full fleet state.
@@ -82,7 +82,7 @@ func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo 
 		State: PhaseFromMeta(meta["window"], paneAlive),
 	}
 
-	statusPath := filepath.Join(task.StateDir(homeDir), id+".status")
+	statusPath := filepath.Join(mhome.StateDir(homeDir), id+".status")
 	info.OpenActivities = classify.OpenActivities(statusPath)
 
 	if data, err := os.ReadFile(statusPath); err == nil {
@@ -182,7 +182,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".meta")
-		meta, err := task.ReadMeta(taskHome, id)
+		meta, err := mhome.ReadMeta(taskHome, id)
 		if err != nil {
 			continue
 		}
@@ -333,7 +333,7 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 	}
 
 	taskID := "captain:" + captainID
-	meta, err := task.ReadMeta(parentHome, taskID)
+	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return "seeded"
 	}

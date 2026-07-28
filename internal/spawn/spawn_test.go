@@ -10,7 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestCheckScopeGate_YoloDoesNotBypassGate(t *testing.T) {
@@ -907,7 +907,7 @@ func TestCheckBacklogAuthority_RefusesInFlightWithLiveMeta(t *testing.T) {
 	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [-] live-task: Currently in-flight\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.WriteMeta(tmpDir, "live-task", map[string]string{"window": "@1"}); err != nil {
+	if err := home.WriteMeta(tmpDir, "live-task", map[string]string{"window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -935,7 +935,7 @@ func TestCheckBacklogAuthority_RefusesAlreadyLiveMeta(t *testing.T) {
 	}
 
 	// Create meta file simulating already-live soldier session
-	if err := task.WriteMeta(tmpDir, "queued-task", map[string]string{"window": "@1"}); err != nil {
+	if err := home.WriteMeta(tmpDir, "queued-task", map[string]string{"window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1003,7 +1003,7 @@ func TestAuthorizeSpawnRejectsRegularSoldier(t *testing.T) {
 
 func TestCheckSpawnAuthorityRejectsManagedHerdrSoldierEvenWithoutRole(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := task.WriteMeta(homeDir, "soldier-1", map[string]string{
+	if err := home.WriteMeta(homeDir, "soldier-1", map[string]string{
 		"kind":          "ship",
 		"herdr_pane_id": "w1:p9",
 	}); err != nil {
@@ -1021,7 +1021,7 @@ func TestCheckSpawnAuthorityRejectsManagedHerdrSoldierEvenWithoutRole(t *testing
 
 func TestCurrentEndpointKindFindsCaptainHerdrPane(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := task.WriteMeta(homeDir, "captain:sm-1", map[string]string{
+	if err := home.WriteMeta(homeDir, "captain:sm-1", map[string]string{
 		"kind":          "captain",
 		"herdr_pane_id": "w1:p8",
 	}); err != nil {
@@ -1037,7 +1037,7 @@ func TestCurrentEndpointKindFindsCaptainHerdrPane(t *testing.T) {
 
 func TestCurrentEndpointKindFindsTmuxWindowForPane(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := task.WriteMeta(homeDir, "soldier-2", map[string]string{
+	if err := home.WriteMeta(homeDir, "soldier-2", map[string]string{
 		"kind":   "ship",
 		"window": "munsu:@7",
 	}); err != nil {
@@ -1365,7 +1365,7 @@ func TestCheckCaptainBacklogAuthority_RefusesDoneTask(t *testing.T) {
 
 func TestCheckCaptainBacklogAuthority_RefusesLiveSessionWithWindow(t *testing.T) {
 	homeDir := t.TempDir()
-	_ = task.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})
+	_ = home.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})
 	r := &Runner{
 		args:      Args{ID: "live-task"},
 		spawnRole: "captain",
@@ -1382,7 +1382,7 @@ func TestCheckCaptainBacklogAuthority_RefusesLiveSessionWithWindow(t *testing.T)
 
 func TestCheckCaptainBacklogAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T) {
 	homeDir := t.TempDir()
-	_ = task.WriteMeta(homeDir, "pre-spawn", map[string]string{"kind": "ship"})
+	_ = home.WriteMeta(homeDir, "pre-spawn", map[string]string{"kind": "ship"})
 	restore := mockReadBacklogTaskState("in_flight", "", true, nil)
 	defer restore()
 	r := &Runner{
@@ -1579,7 +1579,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Errorf("task meta file should NOT exist on failed verification: %s", metaPath)
 	}
 
-	statusLines, _ := task.ReadStatus(homeDir, "reconcile-task")
+	statusLines, _ := home.ReadStatus(homeDir, "reconcile-task")
 	for _, l := range statusLines {
 		if strings.Contains(l, "working: spawned") {
 			t.Errorf("status log should NOT contain 'working: spawned', got: %s", l)

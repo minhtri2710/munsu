@@ -9,7 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // HomeSummary is a bounded structured view of one Captain home.
@@ -159,12 +159,12 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	}
 	sum.Counts.Landed = len(landedAll)
 
-	entries, err := task.ListMeta(homeDir)
+	entries, err := home.ListMeta(homeDir)
 	if err != nil {
 		entries = nil
 	}
 	sum.Counts.Endpoints = len(entries)
-	metaByID := map[string]task.MetaEntry{}
+	metaByID := map[string]home.MetaEntry{}
 	for _, e := range entries {
 		metaByID[e.ID] = e
 	}
@@ -203,7 +203,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	var decisionsAll []DecisionBrief
 	seenDecision := map[string]bool{}
-	stateDir := task.StateDir(homeDir)
+	stateDir := home.StateDir(homeDir)
 	for _, c := range children {
 		path := filepath.Join(stateDir, c.id+".status")
 		for _, d := range classify.OpenDecisions(path) {
@@ -288,7 +288,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 			break
 		}
 		pr := ""
-		if lines, err := task.ReadStatus(homeDir, item.ID); err == nil {
+		if lines, err := home.ReadStatus(homeDir, item.ID); err == nil {
 			for k := len(lines) - 1; k >= 0; k-- {
 				if u := extractPRURL(lines[k]); u != "" {
 					pr = u
@@ -403,7 +403,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 // LastParentStatus returns the last line of parent state/captain:<id>.status.
 func LastParentStatus(parentHome, captainID string) string {
-	lines, err := task.ReadStatus(parentHome, "captain:"+captainID)
+	lines, err := home.ReadStatus(parentHome, "captain:"+captainID)
 	if err != nil || len(lines) == 0 {
 		return ""
 	}

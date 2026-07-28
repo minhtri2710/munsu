@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // TestE2E_CaptainUpdate_Scenario1_SeedLaunch verifies the seed + launch Captain lifecycle
@@ -151,7 +151,7 @@ func TestE2E_CaptainUpdate_Scenario2_ChildSoldier(t *testing.T) {
 		"home":     filepath.Join(homePath, "projects", soldierID),
 		"worktree": filepath.Join(homePath, "projects", soldierID, "repo"),
 	}
-	if err := task.WriteMeta(homePath, soldierID, metaData); err != nil {
+	if err := home.WriteMeta(homePath, soldierID, metaData); err != nil {
 		t.Fatalf("writing soldier meta: %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestE2E_CaptainUpdate_Scenario2_ChildSoldier(t *testing.T) {
 	}
 
 	// Phase 2b: Verify child soldier meta is UNCHANGED after update.
-	metaAfter, err := task.ReadMeta(homePath, soldierID)
+	metaAfter, err := home.ReadMeta(homePath, soldierID)
 	if err != nil {
 		t.Fatalf("reading soldier meta after update: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestE2E_CaptainUpdate_Scenario3_NoDisruption(t *testing.T) {
 			"window": "@win-" + sid,
 			"home":   filepath.Join(homePath, "projects", sid),
 		}
-		if err := task.WriteMeta(homePath, sid, meta); err != nil {
+		if err := home.WriteMeta(homePath, sid, meta); err != nil {
 			t.Fatalf("writing meta for %s: %v", sid, err)
 		}
 		// Write status.
@@ -284,7 +284,7 @@ func TestE2E_CaptainUpdate_Scenario3_NoDisruption(t *testing.T) {
 
 	// Phase 3b: Verify ALL soldier meta files survive.
 	for _, sid := range soldiers {
-		meta, err := task.ReadMeta(homePath, sid)
+		meta, err := home.ReadMeta(homePath, sid)
 		if err != nil {
 			t.Fatalf("soldier %s meta lost after update: %v", sid, err)
 		}
@@ -333,7 +333,7 @@ func TestE2E_CaptainUpdate_Scenario3_NoDisruption(t *testing.T) {
 
 	// Verify all 3 soldier metas STILL survive after AGENTS.md update.
 	for _, sid := range soldiers {
-		meta, err := task.ReadMeta(homePath, sid)
+		meta, err := home.ReadMeta(homePath, sid)
 		if err != nil {
 			t.Fatalf("soldier %s meta lost after AGENTS.md update: %v", sid, err)
 		}
@@ -495,7 +495,7 @@ func TestE2E_CaptainUpdate_Scenario5_MergeTeardown(t *testing.T) {
 		"kind":   "ship",
 		"window": "@test-window",
 	}
-	if err := task.WriteMeta(homePath, soldierID, meta); err != nil {
+	if err := home.WriteMeta(homePath, soldierID, meta); err != nil {
 		t.Fatalf("writing soldier meta: %v", err)
 	}
 

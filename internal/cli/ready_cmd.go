@@ -6,7 +6,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +50,7 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 			}
 
 			// Resolve endpoint generation from task meta for staleness validation.
-			meta, err := task.ReadMeta(homeDir, taskID)
+			meta, err := home.ReadMeta(homeDir, taskID)
 			if err != nil {
 				return fmt.Errorf("ready: reading task meta: %w", err)
 			}

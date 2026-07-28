@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +35,7 @@ func newTaskCmd() *cobra.Command {
 				meta["project"] = repo // --repo maps directly to the project name
 			}
 
-			if err := task.WriteMeta(ctx.Home, id, meta); err != nil {
+			if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
 				return err
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
@@ -57,7 +57,7 @@ func newTaskCmd() *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			stateFilter, _ := cmd.Flags().GetString("state")
 
-			entries, err := task.ListMeta(ctx.Home)
+			entries, err := home.ListMeta(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing tasks: %w", err)
 			}
@@ -112,7 +112,7 @@ func newTaskCmd() *cobra.Command {
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
 
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return err
 			}
@@ -124,7 +124,7 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			if full {
-				statusLines, err := task.ReadStatus(ctx.Home, id)
+				statusLines, err := home.ReadStatus(ctx.Home, id)
 				if err == nil && len(statusLines) > 0 {
 					b.WriteString("---\nStatus:\n")
 					for _, line := range statusLines {
@@ -154,7 +154,7 @@ func newTaskCmd() *cobra.Command {
 			msg := args[2]
 			line := fmt.Sprintf("%s: %s", state, msg)
 
-			if err := task.AppendStatus(ctx.Home, id, line); err != nil {
+			if err := home.AppendStatus(ctx.Home, id, line); err != nil {
 				return err
 			}
 

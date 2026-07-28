@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/classify"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // FleetTaskSnapshot is the typed task reading for fleet peek.
@@ -198,7 +198,7 @@ func peekFleet(homeDir string, provider FleetSnapshotProvider) (*DrainFleetPeek,
 			for _, e := range entries {
 				if strings.HasSuffix(e.Name(), ".meta") && !strings.HasPrefix(e.Name(), ".") {
 					id := strings.TrimSuffix(e.Name(), ".meta")
-					meta, err := task.ReadMeta(homeDir, id)
+					meta, err := home.ReadMeta(homeDir, id)
 					if err == nil {
 						tasks = append(tasks, FleetTaskSnapshot{
 							ID:         id,

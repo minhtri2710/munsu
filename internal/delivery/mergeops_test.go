@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func identityFor(owner, repo string, number int, headSHA string) *DeliveryIdentity {
@@ -41,7 +41,7 @@ func TestMarkMerged_TransitionsToMerged(t *testing.T) {
 		"pr_timestamp":         "2024-01-01T00:00:00Z",
 		"pr_identity_revision": "1",
 	}
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func TestMarkMerged_TransitionsToMerged(t *testing.T) {
 	}
 
 	// Verify delivery_state is merged.
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestMarkMerged_Idempotent(t *testing.T) {
 		"pr_timestamp":         "2024-01-01T00:00:00Z",
 		"pr_identity_revision": "5",
 	}
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestMarkMerged_Idempotent(t *testing.T) {
 	}
 
 	// Revision should still be "5" (not incremented).
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestMarkMerged_EmptyDeliveryState(t *testing.T) {
 		"pr_head_sha":  "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
 		"pr_timestamp": "2024-01-01T00:00:00Z",
 	}
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestMarkMerged_EmptyDeliveryState(t *testing.T) {
 		t.Fatalf("MarkMerged: %v", err)
 	}
 
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestMarkMerged_CASFailOnIdentityMismatch(t *testing.T) {
 		"pr_timestamp":         "2024-01-01T00:00:00Z",
 		"pr_identity_revision": "1",
 	}
-	if err := task.WriteMeta(home, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestMarkMerged_CASFailOnIdentityMismatch(t *testing.T) {
 	}
 
 	// delivery_state should remain unchanged.
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestMarkMergedFromRecord_Valid(t *testing.T) {
 	taskID := "test-ship"
 
 	stateDir := filepath.Join(home, "state")
-	if err := task.WriteMeta(home, taskID, map[string]string{
+	if err := mhome.WriteMeta(home, taskID, map[string]string{
 		"delivery_state": string(DeliveryStateReviewReady),
 		"pr_provider":    "github",
 		"pr_owner":       "testowner",
@@ -228,7 +228,7 @@ func TestMarkMergedFromRecord_Valid(t *testing.T) {
 		t.Fatalf("MarkMergedFromRecord: %v", err)
 	}
 
-	result, err := task.ReadMeta(home, taskID)
+	result, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}

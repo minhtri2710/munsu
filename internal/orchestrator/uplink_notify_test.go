@@ -2,8 +2,7 @@ package orchestrator
 
 import (
 	"testing"
-
-	)
+)
 
 type notifyTransport struct{ submitted string }
 

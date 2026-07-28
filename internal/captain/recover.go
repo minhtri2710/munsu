@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/harness"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // StepState is the outcome of one recovery step.
@@ -251,7 +251,7 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 
 	// Not alive. Distinguish launched-but-dead from seeded-never-launched.
 	taskID := taskIDForCaptain(sm.ID)
-	meta, mErr := task.ReadMeta(parentHome, taskID)
+	meta, mErr := mhome.ReadMeta(parentHome, taskID)
 	launched := false
 	if mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != "" {
 		launched = true

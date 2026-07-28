@@ -14,11 +14,11 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // ProvenanceMarkerName is the marker file written to a seeded captain home root.
@@ -1109,7 +1109,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	}
 
 	taskID := taskIDForCaptain(markerID)
-	if err := task.WriteMeta(parentHome, taskID, meta); err != nil {
+	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
 		_ = endpoint.Cleanup(parentHome, launched)
 		return fmt.Errorf("writing captain task meta: %w", err)
 	}
@@ -1136,7 +1136,7 @@ func inFlightSoldierIDs(captainHome string) ([]string, error) {
 			continue
 		}
 		id := strings.TrimSuffix(name, ".meta")
-		meta, err := task.ReadMeta(captainHome, id)
+		meta, err := mhome.ReadMeta(captainHome, id)
 		if err != nil {
 			continue
 		}
@@ -1180,7 +1180,7 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	}
 
 	taskID := taskIDForCaptain(markerID)
-	meta, metaErr := task.ReadMeta(parentHome, taskID)
+	meta, metaErr := mhome.ReadMeta(parentHome, taskID)
 
 	if metaErr == nil {
 		// Validate meta fields before use.
@@ -2260,7 +2260,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			// Not alive. Check if launched (meta has window) to distinguish
 			// dead captain (auto-recover) from not-yet-launched (seeded).
 			taskID := taskIDForCaptain(sm.ID)
-			meta, mErr := task.ReadMeta(parentHome, taskID)
+			meta, mErr := mhome.ReadMeta(parentHome, taskID)
 			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
 			if launched {
 				// Launched-but-dead: auto-recover via Launch.
@@ -2487,7 +2487,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 
 		// Not alive. Distinguish launched-but-dead (meta+window) from seeded-never-launched.
 		taskID := taskIDForCaptain(sm.ID)
-		meta, mErr := task.ReadMeta(parentHome, taskID)
+		meta, mErr := mhome.ReadMeta(parentHome, taskID)
 		launched := false
 		if mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != "" {
 			launched = true
@@ -2539,7 +2539,7 @@ func ProbeLiveness(parentHome string, registered []Info, probe ProbeEndpoint) []
 			p.Status = "unknown"
 		} else if alive {
 			p.Status = "alive"
-		} else if _, metaErr := task.ReadMeta(parentHome, taskIDForCaptain(sm.ID)); metaErr != nil {
+		} else if _, metaErr := mhome.ReadMeta(parentHome, taskIDForCaptain(sm.ID)); metaErr != nil {
 			p.Status = "seeded"
 		} else {
 			p.Status = "dead"
@@ -2559,7 +2559,7 @@ type LivenessProbe struct {
 // checkAliveWithProbe validates Captain endpoint metadata before probing.
 func checkAliveWithProbe(parentHome string, sm Info, probe ProbeEndpoint) (bool, error) {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := task.ReadMeta(parentHome, taskID)
+	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return false, nil
 	}
@@ -2611,7 +2611,7 @@ func hasSurfaceDiff(home, before, after string) bool {
 // On failure, the marker remains.
 func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	taskID := taskIDForCaptain(sm.ID)
-	meta, err := task.ReadMeta(parentHome, taskID)
+	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return fmt.Errorf("%s: no task meta — marker remains", sm.ID)
 	}
@@ -2683,7 +2683,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	// commit and deterministic digest BEFORE removing marker.
 	meta["applied_commit"] = marker["commit"]
 	meta["applied_digest"] = marker["instructions"]
-	if metaErr := task.WriteMeta(parentHome, taskID, meta); metaErr != nil {
+	if metaErr := mhome.WriteMeta(parentHome, taskID, meta); metaErr != nil {
 		return fmt.Errorf("%s: meta update failed after send (marker remains): %v", sm.ID, metaErr)
 	}
 

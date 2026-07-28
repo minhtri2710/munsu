@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/minhtri2710/munsu/internal/backlog"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -78,7 +78,7 @@ Example:
 					meta["repo"] = repo
 					meta["project"] = repo
 				}
-				if err := task.WriteMeta(ctx.Home, id, meta); err != nil {
+				if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
 					// Non-fatal: log but don't fail the backlog add
 					fmt.Fprintf(os.Stderr, "warning: writing task meta for %s: %v\n", id, err)
 				}

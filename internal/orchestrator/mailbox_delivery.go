@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // DeliveryResult describes the outcome of trying to deliver an envelope.
@@ -57,7 +57,7 @@ func DeliverEnvelopeWithSender(sender BoundSender, receiverHome, senderIdentity 
 
 // DeliverEnvelopeWithMeta reads task meta and delivers.
 func DeliverEnvelopeWithMetaAndSender(sender BoundSender, homeDir, taskID, senderIdentity string, env *Envelope) *DeliveryResult {
-	meta, err := task.ReadMeta(homeDir, taskID)
+	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return &DeliveryResult{
 			MessageID: env.MessageID,

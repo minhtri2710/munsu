@@ -1,6 +1,6 @@
 // Package task manages task lifecycle data, including reading and writing
 // task meta files (key=value lines stored at $MUNSU_HOME/state/<id>.meta).
-package task
+package home
 
 import (
 	"bufio"

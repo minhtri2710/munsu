@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
@@ -41,7 +41,7 @@ func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
 
 func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	home := t.TempDir()
-	if err := task.WriteMeta(home, "observe-me", map[string]string{"description": "inspect state", "worktree": filepath.Join(home, "branch-name")}); err != nil {
+	if err := mhome.WriteMeta(home, "observe-me", map[string]string{"description": "inspect state", "worktree": filepath.Join(home, "branch-name")}); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", home)
@@ -276,7 +276,7 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	}
 
 	// Non-empty snapshot: add a task
-	if err := task.WriteMeta(home, "alpha", map[string]string{"description": "inspect", "worktree": home}); err != nil {
+	if err := mhome.WriteMeta(home, "alpha", map[string]string{"description": "inspect", "worktree": home}); err != nil {
 		t.Fatal(err)
 	}
 	out2, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
@@ -350,7 +350,7 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	line := fmt.Sprintf("- domain-alpha - (home: %s; scope: domain; projects: sample; added: 2026-07-19)\n", captainHome)
 	os.WriteFile(filepath.Join(home, "data", "captains.md"), []byte("# Captains\n\n"+line), 0644)
 	// Stale parent event claims working while home is idle.
-	if err := task.AppendStatus(home, "captain:domain-alpha", "working [key=phase7]: Sample rollout Phase 7"); err != nil {
+	if err := mhome.AppendStatus(home, "captain:domain-alpha", "working [key=phase7]: Sample rollout Phase 7"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", home)
@@ -401,7 +401,7 @@ func TestTaskListShowsAggregateCount(t *testing.T) {
 	}
 
 	// Add one task
-	if err := task.WriteMeta(home, "beta", map[string]string{"kind": "ship"}); err != nil {
+	if err := mhome.WriteMeta(home, "beta", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/task"
 )
 
 // TestReportCmd_FailClosedOnReceiptWrite verifies that when WriteReceipt fails
@@ -104,7 +104,7 @@ func TestReportCmd_PRURL_NoStatusOnMalformedURL(t *testing.T) {
 	}
 
 	// Assert no meta was written
-	_, metaErr := task.ReadMeta(homeDir, "test-no-output")
+	_, metaErr := home.ReadMeta(homeDir, "test-no-output")
 	if metaErr == nil {
 		t.Error("meta should not exist after malformed PR URL")
 	}

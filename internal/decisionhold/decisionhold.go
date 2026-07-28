@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // HoldID returns the stable identity for a decision hold.
@@ -87,7 +87,7 @@ func Create(homeDir, originID, decisionKey, reason string) (*HoldResult, error) 
 
 	// Append needs-decision status to the originating task.
 	statusLine := fmt.Sprintf("needs-decision: %s [key=%s]", reason, decisionKey)
-	if err := task.AppendStatus(homeDir, originID, statusLine); err != nil {
+	if err := home.AppendStatus(homeDir, originID, statusLine); err != nil {
 		return nil, fmt.Errorf("appending needs-decision status: %w", err)
 	}
 
@@ -239,7 +239,7 @@ func Verify(homeDir, originID string, keys []string) ([]string, error) {
 	}
 
 	// Read status once.
-	statusLines, err := task.ReadStatus(homeDir, originID)
+	statusLines, err := home.ReadStatus(homeDir, originID)
 	if err != nil {
 		return nil, fmt.Errorf("reading status for %s: %w", originID, err)
 	}
@@ -248,7 +248,7 @@ func Verify(homeDir, originID string, keys []string) ([]string, error) {
 	resolvedMap := make(map[string]bool)
 	needsDecisionMap := make(map[string]bool)
 	for _, line := range statusLines {
-		_, key := task.ParseStatusKey(line)
+		_, key := home.ParseStatusKey(line)
 		if key == "" {
 			continue
 		}
@@ -365,7 +365,7 @@ func Complete(homeDir, originID string, keys []string) error {
 		}
 		// Append resolved status line so Verify sees resolution via status.
 		statusLine := fmt.Sprintf("resolved: recorded (decision noted) [key=%s]", key)
-		if err := task.AppendStatus(homeDir, originID, statusLine); err != nil {
+		if err := home.AppendStatus(homeDir, originID, statusLine); err != nil {
 			return fmt.Errorf("appending resolved status: %w", err)
 		}
 	}
@@ -410,7 +410,7 @@ func Resolve(homeDir, originID, decisionKey, answer string, unblockDeps []string
 
 	// Append resolved status to the originating task.
 	statusLine := fmt.Sprintf("resolved: %s [key=%s]", answer, decisionKey)
-	if err := task.AppendStatus(homeDir, originID, statusLine); err != nil {
+	if err := home.AppendStatus(homeDir, originID, statusLine); err != nil {
 		return fmt.Errorf("appending resolved status: %w", err)
 	}
 
@@ -419,7 +419,7 @@ func Resolve(homeDir, originID, decisionKey, answer string, unblockDeps []string
 		if depID == "" {
 			continue
 		}
-		if err := task.AppendStatus(homeDir, depID, fmt.Sprintf("unblocked: decision resolved [key=%s]", decisionKey)); err != nil {
+		if err := home.AppendStatus(homeDir, depID, fmt.Sprintf("unblocked: decision resolved [key=%s]", decisionKey)); err != nil {
 			return fmt.Errorf("unblocking %s: %w", depID, err)
 		}
 	}
