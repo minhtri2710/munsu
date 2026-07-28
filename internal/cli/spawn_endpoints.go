@@ -3,17 +3,17 @@ package cli
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/spawn"
 )
 
 type spawnSessionEndpoints struct {
-	resolve func(string, string) (session.Backend, string, error)
-	bound   map[string]session.Backend
+	resolve func(string, string) (backend.Backend, string, error)
+	bound   map[string]backend.Backend
 }
 
 func newSpawnSessionEndpoints() spawn.EndpointCapabilities {
-	return &spawnSessionEndpoints{resolve: session.Resolve, bound: map[string]session.Backend{}}
+	return &spawnSessionEndpoints{resolve: backend.Resolve, bound: map[string]backend.Backend{}}
 }
 
 func (s *spawnSessionEndpoints) Create(req spawn.CreateRequest) (spawn.CreatedEndpoint, error) {
@@ -21,7 +21,7 @@ func (s *spawnSessionEndpoints) Create(req spawn.CreateRequest) (spawn.CreatedEn
 	if err != nil {
 		return spawn.CreatedEndpoint{}, err
 	}
-	if hb, ok := bk.(*session.HerdrBackend); ok {
+	if hb, ok := bk.(*backend.HerdrBackend); ok {
 		hb.Cwd = req.Cwd
 	}
 	handle, err := bk.NewWindow(req.WorkspaceName, req.TabName)
@@ -29,7 +29,7 @@ func (s *spawnSessionEndpoints) Create(req spawn.CreateRequest) (spawn.CreatedEn
 		return spawn.CreatedEndpoint{}, fmt.Errorf("backend %q not available: %w. Configure via --backend flag, config/backend file, or HERDR_ENV env", name, err)
 	}
 	ep := spawn.CreatedEndpoint{Backend: name, Handle: handle, Metadata: map[string]string{}}
-	if ex, ok := bk.(session.BackendMetaExtras); ok {
+	if ex, ok := bk.(backend.BackendMetaExtras); ok {
 		for k, v := range ex.MetaExtras() {
 			ep.Metadata[k] = v
 		}
@@ -43,7 +43,7 @@ func (s *spawnSessionEndpoints) Create(req spawn.CreateRequest) (spawn.CreatedEn
 
 func spawnEndpointKey(ep spawn.CreatedEndpoint) string { return ep.Backend + "\x00" + ep.Handle }
 
-func (s *spawnSessionEndpoints) backend(ep spawn.CreatedEndpoint) (session.Backend, error) {
+func (s *spawnSessionEndpoints) backend(ep spawn.CreatedEndpoint) (backend.Backend, error) {
 	bk, ok := s.bound[spawnEndpointKey(ep)]
 	if !ok {
 		return nil, fmt.Errorf("endpoint %q on backend %q is not bound", ep.Handle, ep.Backend)

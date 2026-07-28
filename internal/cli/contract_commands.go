@@ -6,15 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/waker"
-	"github.com/minhtri2710/munsu/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
@@ -58,18 +57,18 @@ func newBackendCmd() *cobra.Command {
 		Short: "Show supported operations for one session backend",
 		Args:  contractNoArgs,
 		RunE: withHome(func(cmd *cobra.Command, _ []string, ctx Ctx) error {
-			backend, err := cmd.Flags().GetString("backend")
+			backendName, err := cmd.Flags().GetString("backend")
 			if err != nil {
 				return usageError("invalid_argument", "Run `munsu backend capabilities --help`", "Unable to read --backend")
 			}
-			if backend != "" && backend != "tmux" && backend != "herdr" {
-				return usageError("unsupported_input", "Run `munsu backend capabilities --backend tmux` or `munsu backend capabilities --backend herdr`", fmt.Sprintf("Unsupported backend %q", backend))
+			if backendName != "" && backendName != "tmux" && backendName != "herdr" {
+				return usageError("unsupported_input", "Run `munsu backend capabilities --backend tmux` or `munsu backend capabilities --backend herdr`", fmt.Sprintf("Unsupported backend %q", backendName))
 			}
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			if backend == "" {
-				_, backend, err = session.Resolve(ctx.Home, "")
+			if backendName == "" {
+				_, backendName, err = backend.Resolve(ctx.Home, "")
 				if err != nil {
 					return operationError("dependency_unavailable", "Configure a supported session backend and rerun `munsu backend capabilities`", "No supported session backend is available")
 				}
@@ -79,7 +78,7 @@ func newBackendCmd() *cobra.Command {
 				Kind:          "backend.capabilities",
 				Status:        "success",
 				Data: contract.BackendCapabilities{
-					Backend:  backend,
+					Backend:  backendName,
 					Features: []string{"create_session", "send_input", "pane_liveness"},
 				},
 				Help: []string{"Run `munsu task observe <task-id>` to inspect a task"},
@@ -191,7 +190,7 @@ func newContractGuardCmd() *cobra.Command {
 				})
 			} else if beatStatus.Stale {
 				allConditions = append(allConditions, waker.ConditionInfo{
-					Code:    waker.ConditionWatcherStale,
+					Code: waker.ConditionWatcherStale,
 					Message: fmt.Sprintf(
 						"WATCHER BEACON STALE - last beat %v ago (grace %v)",
 						beatStatus.Age.Round(time.Second), lifecycle.StaleThreshold()),
@@ -217,7 +216,7 @@ func newContractGuardCmd() *cobra.Command {
 					if resolveErr != nil {
 						continue
 					}
-					if guardErr := worktree.AssertNotTangled(projectDir, entry.Name); guardErr != nil {
+					if guardErr := backend.AssertNotTangled(projectDir, entry.Name); guardErr != nil {
 						v := contract.GuardViolation{
 							Condition: guardErr.Error(),
 							Evidence:  []string{"git worktree list", "project: " + entry.Name},

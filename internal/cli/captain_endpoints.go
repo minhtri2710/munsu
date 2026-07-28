@@ -4,23 +4,23 @@ import (
 	"errors"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/session"
 )
 
 type sessionLaunchEndpoint struct {
-	resolve func(string, string) (session.Backend, string, error)
+	resolve func(string, string) (backend.Backend, string, error)
 }
 
 func newSessionLaunchEndpoint() sessionLaunchEndpoint {
-	return sessionLaunchEndpoint{resolve: session.Resolve}
+	return sessionLaunchEndpoint{resolve: backend.Resolve}
 }
 func (e sessionLaunchEndpoint) Launch(home string, req captain.LaunchRequest) (captain.LaunchResult, error) {
 	bk, name, err := e.resolve(home, "")
 	if err != nil {
 		return captain.LaunchResult{}, err
 	}
-	if herdr, ok := bk.(*session.HerdrBackend); ok {
+	if herdr, ok := bk.(*backend.HerdrBackend); ok {
 		herdr.Cwd = req.WorkingDir
 	}
 	window, err := bk.NewWindow(req.ContainerLabel, req.WindowName)
@@ -32,7 +32,7 @@ func (e sessionLaunchEndpoint) Launch(home string, req captain.LaunchRequest) (c
 		return captain.LaunchResult{}, err
 	}
 	meta := map[string]string{}
-	if extras, ok := bk.(session.BackendMetaExtras); ok {
+	if extras, ok := bk.(backend.BackendMetaExtras); ok {
 		for k, v := range extras.MetaExtras() {
 			meta[k] = v
 		}
@@ -48,14 +48,14 @@ func (e sessionLaunchEndpoint) Cleanup(home string, result captain.LaunchResult)
 }
 
 type sessionProbeEndpoint struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
 func newSessionProbeEndpoint() sessionProbeEndpoint {
-	return sessionProbeEndpoint{resolve: session.BackendForTask}
+	return sessionProbeEndpoint{resolve: backend.BackendForTask}
 }
 
-func ownedCaptainBackend(home string, meta map[string]string, resolve func(string, map[string]string) (session.Backend, string, error)) (session.Backend, error) {
+func ownedCaptainBackend(home string, meta map[string]string, resolve func(string, map[string]string) (backend.Backend, string, error)) (backend.Backend, error) {
 	bk, name, err := resolve(home, meta)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func ownedCaptainBackend(home string, meta map[string]string, resolve func(strin
 		return nil, errors.New("captain backend ownership mismatch")
 	}
 	if name == "herdr" && meta["herdr_session"] != "" {
-		sessionID, _ := session.ParseWindow(meta["window"])
+		sessionID, _ := backend.ParseWindow(meta["window"])
 		if sessionID != "" && sessionID != meta["herdr_session"] {
 			return nil, errors.New("herdr session ownership mismatch")
 		}
@@ -72,10 +72,10 @@ func ownedCaptainBackend(home string, meta map[string]string, resolve func(strin
 	return bk, nil
 }
 
-func probeCaptainBackend(bk session.Backend, window string) (captain.ProbeResult, error) {
-	if aware, ok := bk.(session.AgentAwareBackend); ok {
+func probeCaptainBackend(bk backend.Backend, window string) (captain.ProbeResult, error) {
+	if aware, ok := bk.(backend.AgentAwareBackend); ok {
 		pane, agent, err := aware.CheckAgentAlive(window)
-		if errors.Is(err, session.ErrPaneNotFound) {
+		if errors.Is(err, backend.ErrPaneNotFound) {
 			return captain.ProbeResult{}, nil
 		}
 		return captain.ProbeResult{PaneAlive: pane, AgentAlive: agent}, err
@@ -93,11 +93,11 @@ func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (captai
 }
 
 type sessionNudgeEndpoint struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
 func newSessionNudgeEndpoint() sessionNudgeEndpoint {
-	return sessionNudgeEndpoint{resolve: session.BackendForTask}
+	return sessionNudgeEndpoint{resolve: backend.BackendForTask}
 }
 
 func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload string) (captain.NudgeResult, error) {
@@ -112,17 +112,17 @@ func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload
 	if !result.PaneAlive || !result.AgentAlive {
 		return captain.NudgeResult{Status: "unavailable"}, nil
 	}
-	prompt := session.SubmitPrompt(bk, meta["window"], payload)
+	prompt := backend.SubmitPrompt(bk, meta["window"], payload)
 	return captain.NudgeResult{Status: string(prompt.Status), Detail: prompt.Detail, Acknowledged: prompt.Acknowledged()}, prompt.Err
 }
 
 type sessionRetireEndpoint struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 	sleep   func(time.Duration)
 }
 
 func newSessionRetireEndpoint() sessionRetireEndpoint {
-	return sessionRetireEndpoint{resolve: session.BackendForTask, sleep: time.Sleep}
+	return sessionRetireEndpoint{resolve: backend.BackendForTask, sleep: time.Sleep}
 }
 
 func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error {

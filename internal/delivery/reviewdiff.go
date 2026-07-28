@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/ghurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -48,7 +48,7 @@ func ReviewDiff(homeDir string, id string) error {
 	ident, _ := IdentityFromMeta(meta)
 	if ident != nil && ident.URL != "" {
 		// Use the stored identity for the base reference
-		ghURL, err := ghurl.ParseGHURL(ident.URL)
+		ghURL, err := domain.ParseGHURL(ident.URL)
 		if err != nil {
 			return fmt.Errorf("parsing PR URL from delivery identity: %w", err)
 		}
@@ -57,7 +57,7 @@ func ReviewDiff(homeDir string, id string) error {
 		prURL, hasPR := meta["pr"]
 		if hasPR && prURL != "" {
 			// PR tasks: compare against PR's merge ref (legacy key)
-			ghURL, err := ghurl.ParseGHURL(prURL)
+			ghURL, err := domain.ParseGHURL(prURL)
 			if err != nil {
 				return fmt.Errorf("parsing PR URL from meta: %w", err)
 			}

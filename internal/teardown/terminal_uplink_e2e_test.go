@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
-	"github.com/minhtri2710/munsu/internal/worktree"
 )
 
 // TestE2E_TerminalUplinkContinuity proves the full Soldier → Captain → General
@@ -283,7 +283,7 @@ func setupGitWorktree(t *testing.T, captainHome string) string {
 	gitCmd(t, repoDir, "push", "-u", "origin", "main")
 
 	// Acquire worktree through production worktree.Get (git fallback)
-	wtPath, err := worktree.Get(captainHome, repoDir, false)
+	wtPath, err := backend.GetWorktree(captainHome, repoDir, false)
 	if err != nil {
 		t.Fatalf("worktree.Get: %v", err)
 	}
@@ -291,7 +291,7 @@ func setupGitWorktree(t *testing.T, captainHome string) string {
 	// Register cleanup: return worktree if test fails before Phase 7
 	t.Cleanup(func() {
 		if _, err := os.Stat(wtPath); err == nil {
-			if err := worktree.Return(captainHome, wtPath); err != nil {
+			if err := backend.ReturnWorktree(captainHome, wtPath); err != nil {
 				t.Errorf("worktree cleanup return: %v", err)
 			}
 		}

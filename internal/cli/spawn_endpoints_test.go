@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/spawn"
 )
 
@@ -24,14 +24,14 @@ func (*spawnEndpointBackend) Teardown(string) error               { return nil }
 func (b *spawnEndpointBackend) MetaExtras() map[string]string     { return b.metadata }
 
 func TestSpawnSessionEndpointsPreservesBackendIdentityAndMetadata(t *testing.T) {
-	backend := &spawnEndpointBackend{window: "window-1", metadata: map[string]string{
+	bk := &spawnEndpointBackend{window: "window-1", metadata: map[string]string{
 		"herdr_session":      "session-1",
 		"herdr_workspace_id": "workspace-1",
 		"herdr_tab_id":       "tab-1",
 	}}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (session.Backend, string, error) { return backend, "herdr", nil },
-		bound:   map[string]session.Backend{},
+		resolve: func(string, string) (backend.Backend, string, error) { return bk, "herdr", nil },
+		bound:   map[string]backend.Backend{},
 	}
 	created, err := endpoints.Create(spawn.CreateRequest{})
 	if err != nil {
@@ -43,22 +43,22 @@ func TestSpawnSessionEndpointsPreservesBackendIdentityAndMetadata(t *testing.T) 
 	if err := endpoints.Submit(created, "bound"); err != nil {
 		t.Fatal(err)
 	}
-	if len(backend.submitted) != 1 || backend.submitted[0] != "bound" {
-		t.Fatalf("created endpoint not bound to resolver backend: %v", backend.submitted)
+	if len(bk.submitted) != 1 || bk.submitted[0] != "bound" {
+		t.Fatalf("created endpoint not bound to resolver backend: %v", bk.submitted)
 	}
 }
 
 func TestSpawnSessionEndpointsKeepsCreatorBindingsSeparate(t *testing.T) {
 	first := &spawnEndpointBackend{window: "window-1"}
 	second := &spawnEndpointBackend{window: "window-2"}
-	resolved := []session.Backend{first, second}
+	resolved := []backend.Backend{first, second}
 	endpoints := &spawnSessionEndpoints{
-		resolve: func(string, string) (session.Backend, string, error) {
-			backend := resolved[0]
+		resolve: func(string, string) (backend.Backend, string, error) {
+			bk := resolved[0]
 			resolved = resolved[1:]
-			return backend, "tmux", nil
+			return bk, "tmux", nil
 		},
-		bound: map[string]session.Backend{},
+		bound: map[string]backend.Backend{},
 	}
 	firstEndpoint, err := endpoints.Create(spawn.CreateRequest{})
 	if err != nil {

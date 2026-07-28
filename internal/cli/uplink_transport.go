@@ -2,16 +2,16 @@ package cli
 
 import (
 	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/uplink"
 )
 
 type sessionUplinkTransport struct {
-	resolve func(string, string) (session.Backend, string, error)
+	resolve func(string, string) (backend.Backend, string, error)
 }
 
 func newSessionUplinkTransport() uplink.NotificationTransport {
-	return sessionUplinkTransport{resolve: session.Resolve}
+	return sessionUplinkTransport{resolve: backend.Resolve}
 }
 
 func (t sessionUplinkTransport) Notify(senderHome string, target afk.TargetResult, payload string) uplink.NotifyResult {
@@ -23,6 +23,6 @@ func (t sessionUplinkTransport) Notify(senderHome string, target afk.TargetResul
 	if err != nil || !safe {
 		return uplink.NotifyResult{Queued: true}
 	}
-	result := session.SubmitPrompt(bk, target.Handle, payload)
+	result := backend.SubmitPrompt(bk, target.Handle, payload)
 	return uplink.NotifyResult{Acknowledged: result.Acknowledged(), Queued: !result.Acknowledged()}
 }

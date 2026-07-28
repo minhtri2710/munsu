@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -547,7 +547,7 @@ func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
 	}
 
 	// 2. Check primary scope
-	scopeResult := session.CheckSessionScope(ctx.Home)
+	scopeResult := bootstrap.CheckSessionScope(ctx.Home)
 	if !scopeResult.IsPrimary {
 		return nil
 	}

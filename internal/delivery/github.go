@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/capability"
-	"github.com/minhtri2710/munsu/internal/ghurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // GitHubClient defines the GitHub operations used by delivery surfaces.
@@ -173,7 +173,7 @@ func (c *ghAxiClient) ViewPRJSON(owner, repo string, number int, fields string) 
 // Uses gh CLI through the consolidated adapter for JSON fields that
 // gh-axi does not expose (headRefOid, headRefName, baseRefName).
 func (c *ghAxiClient) CaptureIdentity(prURL string) (*DeliveryIdentity, error) {
-	ghURL, err := ghurl.ParseGHURL(prURL)
+	ghURL, err := domain.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PR URL: %w", err)
 	}

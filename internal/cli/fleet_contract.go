@@ -5,22 +5,22 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/soldierstate"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/spf13/cobra"
 )
 
 func runtimeTaskEndpointProbe() supervision.TaskEndpointProbe {
-	return cliEndpointProbe{resolve: session.BackendForTask}
+	return cliEndpointProbe{resolve: backend.BackendForTask}
 }
 
 type cliEndpointProbe struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
 func (p cliEndpointProbe) Probe(home string, meta map[string]string) (bool, error) {
@@ -41,7 +41,7 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 		return fleet.EndpointStatus{}, fmt.Errorf("unsupported bound backend %q", endpoint.Backend)
 	}
 	if endpoint.Backend == "herdr" && endpoint.SessionOwner != "" {
-		handleSession, _ := session.ParseWindow(endpoint.Handle)
+		handleSession, _ := backend.ParseWindow(endpoint.Handle)
 		if handleSession != "" && handleSession != endpoint.SessionOwner {
 			return fleet.EndpointStatus{}, fmt.Errorf("herdr session ownership mismatch")
 		}
@@ -56,7 +56,7 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 	}
 	resolve := p.resolve
 	if resolve == nil {
-		resolve = session.BackendForTask
+		resolve = backend.BackendForTask
 	}
 	bk, resolved, err := resolve(endpoint.Home, meta)
 	if err != nil {
@@ -70,9 +70,9 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 
 func init() {
 	// Fleet receives a typed probe port; session adapter wiring remains at the CLI composition root.
-	fleet.SetEndpointProbe(cliEndpointProbe{resolve: session.BackendForTask})
+	fleet.SetEndpointProbe(cliEndpointProbe{resolve: backend.BackendForTask})
 	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
-		st, err := soldierstate.ReadWithProbe(homeDir, id, cliEndpointProbe{resolve: session.BackendForTask})
+		st, err := soldierstate.ReadWithProbe(homeDir, id, cliEndpointProbe{resolve: backend.BackendForTask})
 		if err != nil {
 			return nil, err
 		}

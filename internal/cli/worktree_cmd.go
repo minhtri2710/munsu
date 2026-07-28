@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +23,7 @@ func newWorktreeCmd() *cobra.Command {
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			lease, _ := cmd.Flags().GetBool("lease")
-			path, err := worktree.Get(ctx.Home, args[0], lease)
+			path, err := backend.GetWorktree(ctx.Home, args[0], lease)
 			if err != nil {
 				return err
 			}
@@ -38,7 +38,7 @@ func newWorktreeCmd() *cobra.Command {
 		Short: "Return a worktree to the pool",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if err := worktree.Return(ctx.Home, args[0]); err != nil {
+			if err := backend.ReturnWorktree(ctx.Home, args[0]); err != nil {
 				return err
 			}
 			return nil
@@ -50,7 +50,7 @@ func newWorktreeCmd() *cobra.Command {
 		Short: "Show worktree pool status",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			out, err := worktree.Status(ctx.Home)
+			out, err := backend.WorktreeStatus(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -87,7 +87,7 @@ soldier finishes. This command is a safety net for orphaned leases.`,
 			}
 
 			// Get treehouse status and parse worktree list
-			out, err := worktree.Status(ctx.Home)
+			out, err := backend.WorktreeStatus(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("getting treehouse status: %w", err)
 			}
@@ -106,7 +106,7 @@ soldier finishes. This command is a safety net for orphaned leases.`,
 				wtPath := parts[len(parts)-1]
 				if !active[wtPath] {
 					fmt.Printf("returning orphaned worktree: %s\n", wtPath)
-					if err := worktree.Return(ctx.Home, wtPath); err != nil {
+					if err := backend.ReturnWorktree(ctx.Home, wtPath); err != nil {
 						fmt.Fprintf(os.Stderr, "  error: %v\n", err)
 					} else {
 						count++

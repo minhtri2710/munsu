@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -267,15 +267,15 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 
 // captainLivenessForSession backs the session-start Captain Liveness section. It always
 // probes; when recover is true it also relaunches launched-but-dead endpoints.
-func captainLivenessForSession(home string, recover bool) session.CaptainLivenessResult {
+func captainLivenessForSession(home string, recover bool) bootstrap.CaptainLivenessResult {
 	registered, err := captain.List(home)
 	if err != nil {
-		return session.CaptainLivenessResult{}
+		return bootstrap.CaptainLivenessResult{}
 	}
 	probes := captain.ProbeLiveness(home, registered, newSessionProbeEndpoint())
-	res := session.CaptainLivenessResult{Probes: make([]session.CaptainProbe, 0, len(probes))}
+	res := bootstrap.CaptainLivenessResult{Probes: make([]bootstrap.CaptainProbe, 0, len(probes))}
 	for _, p := range probes {
-		res.Probes = append(res.Probes, session.CaptainProbe{ID: p.ID, Home: p.Home, Status: p.Status})
+		res.Probes = append(res.Probes, bootstrap.CaptainProbe{ID: p.ID, Home: p.Home, Status: p.Status})
 		if p.Status == "dead" {
 			res.HasDead = true
 		}
@@ -285,7 +285,7 @@ func captainLivenessForSession(home string, recover bool) session.CaptainLivenes
 	}
 	rr, _ := captain.Recover(home, registered, captain.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 	if rr != nil {
-		res.Recover = &session.CaptainRecoverSummary{
+		res.Recover = &bootstrap.CaptainRecoverSummary{
 			Relaunched: rr.Relaunched,
 			Alive:      rr.Alive,
 			Seeded:     rr.Seeded,

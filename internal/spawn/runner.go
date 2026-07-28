@@ -8,17 +8,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/brief"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/hometag"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
 	"github.com/minhtri2710/munsu/internal/soldier"
 	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/worktree"
 )
 
 // Runner orchestrates the full spawn sequence through private phase methods.
@@ -102,7 +101,7 @@ func (r *Runner) Run() (string, error) {
 	// Fail-closed: return worktree on any subsequent error (but NOT on success).
 	defer func() {
 		if !success && r.wtPath != "" {
-			_ = worktree.Return(r.homeDir, r.wtPath)
+			_ = backend.ReturnWorktree(r.homeDir, r.wtPath)
 		}
 	}()
 
@@ -439,7 +438,7 @@ func (r *Runner) checkTangle() error {
 	if r.args.Yolo {
 		return nil
 	}
-	return worktree.AssertNotTangled(r.projPath, r.args.ProjectName)
+	return backend.AssertNotTangled(r.projPath, r.args.ProjectName)
 }
 
 // checkScopeGate refuses no-mistakes gate agents before worktree allocation.
@@ -463,7 +462,7 @@ func (r *Runner) preflightNoMistakes() error {
 
 // Phase 8: acquireWorktree acquires a leased worktree from the pool.
 func (r *Runner) acquireWorktree() error {
-	wtPath, err := worktree.Get(r.homeDir, r.projPath, true)
+	wtPath, err := backend.GetWorktree(r.homeDir, r.projPath, true)
 	if err != nil {
 		return fmt.Errorf("acquiring worktree: %w", err)
 	}
@@ -618,7 +617,7 @@ func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
 	}
-	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.args.Backend, WorkspaceName: hometag.WorkspaceTag(r.homeDir), TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
+	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.args.Backend, WorkspaceName: backend.WorkspaceTag(r.homeDir), TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
 	if err != nil {
 		return err
 	}

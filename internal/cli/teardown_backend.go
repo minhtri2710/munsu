@@ -3,19 +3,19 @@ package cli
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/teardown"
 )
 
 type sessionBoundTeardown struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
 func newSessionBoundTeardown() teardown.BoundTeardown {
-	return sessionBoundTeardown{resolve: session.BackendForTask}
+	return sessionBoundTeardown{resolve: backend.BackendForTask}
 }
 
-func (s sessionBoundTeardown) resolveBound(home string, meta map[string]string) (session.Backend, string, error) {
+func (s sessionBoundTeardown) resolveBound(home string, meta map[string]string) (backend.Backend, string, error) {
 	if home == "" || meta["backend"] == "" || meta["window"] == "" {
 		return nil, "", fmt.Errorf("bound teardown identity is incomplete")
 	}
@@ -27,7 +27,7 @@ func (s sessionBoundTeardown) resolveBound(home string, meta map[string]string) 
 		return nil, "", fmt.Errorf("bound backend resolved as %q", name)
 	}
 	if name == "herdr" && meta["herdr_session"] != "" {
-		hs, _ := session.ParseWindow(meta["window"])
+		hs, _ := backend.ParseWindow(meta["window"])
 		if hs != "" && hs != meta["herdr_session"] {
 			return nil, "", fmt.Errorf("herdr session ownership mismatch")
 		}
@@ -55,7 +55,7 @@ func (s sessionBoundTeardown) Dispose(home string, meta map[string]string, req t
 		if name != "herdr" || req.WorkspaceID == "" {
 			return fmt.Errorf("workspace-close denial is invalid for backend %q", name)
 		}
-		hb, ok := bk.(*session.HerdrBackend)
+		hb, ok := bk.(*backend.HerdrBackend)
 		if !ok {
 			return fmt.Errorf("herdr workspace-close policy is unsupported by resolved adapter")
 		}

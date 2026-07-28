@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	backendpkg "github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/classify"
 	"github.com/minhtri2710/munsu/internal/decisionhold"
 	"github.com/minhtri2710/munsu/internal/delivery"
@@ -20,7 +21,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/task"
 	"github.com/minhtri2710/munsu/internal/turnend"
 	"github.com/minhtri2710/munsu/internal/uplink"
-	"github.com/minhtri2710/munsu/internal/worktree"
 )
 
 // Options controls teardown behavior.
@@ -142,7 +142,7 @@ func RunWithBackend(opts Options, backend BoundTeardown) (*TeardownResult, error
 	//    so the lease is not falsely claimed as released.
 	if wtPath != "" {
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
-			if err := worktree.Return(opts.HomeDir, wtPath); err != nil {
+			if err := backendpkg.ReturnWorktree(opts.HomeDir, wtPath); err != nil {
 				return nil, fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err)
 			}
 			result.Steps = append(result.Steps, "worktree returned to pool")

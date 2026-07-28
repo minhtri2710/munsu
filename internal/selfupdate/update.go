@@ -16,13 +16,13 @@ import (
 // WatcherSnapshot captures whether a watcher was active before an update.
 // Fields carry evidence for reporting partial or failed restarts.
 type WatcherSnapshot struct {
-	Active              bool   // true if an identity and beat were found
-	OldVersion          string // build version of the watcher before update
-	OldPID              int    // PID of the watcher before update
-	OldCommitSHA        string // commit SHA of the old watcher
-	InstalledVersion    string // new build version after update
-	InstalledCommitSHA  string // verified commit SHA of the installed build
-	InstalledPath       string // path to the installed binary
+	Active             bool   // true if an identity and beat were found
+	OldVersion         string // build version of the watcher before update
+	OldPID             int    // PID of the watcher before update
+	OldCommitSHA       string // commit SHA of the old watcher
+	InstalledVersion   string // new build version after update
+	InstalledCommitSHA string // verified commit SHA of the installed build
+	InstalledPath      string // path to the installed binary
 }
 
 // handshakeTimeout is the maximum time to wait for a restarted watcher
@@ -473,20 +473,20 @@ func buildHandshakeError(homeDir string, snap *WatcherSnapshot, beatOK, identity
 
 // HandshakeError carries detailed evidence when the watcher handshake fails.
 type HandshakeError struct {
-	OldVersion      string
-	OldPID          string
-	OldCommitSHA    string
-	DesiredVersion  string
-	DesiredCommitSHA string
-	IdentityVersion string
-	IdentityPID     string
+	OldVersion        string
+	OldPID            string
+	OldCommitSHA      string
+	DesiredVersion    string
+	DesiredCommitSHA  string
+	IdentityVersion   string
+	IdentityPID       string
 	IdentityCommitSHA string
-	BeatPID         string
-	BeatTimestamp   int64
-	BeatOK          bool
-	IdentityOK      bool
-	OwnershipOK     bool
-	BeatFresh       bool
+	BeatPID           string
+	BeatTimestamp     int64
+	BeatOK            bool
+	IdentityOK        bool
+	OwnershipOK       bool
+	BeatFresh         bool
 }
 
 func (e *HandshakeError) Error() string {

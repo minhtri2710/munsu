@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 type activationPromptBackend struct {
 	capture string
 	err     error
 	aware   bool
-	result  session.PromptResult
+	result  backend.PromptResult
 }
 
 func (b activationPromptBackend) NewWindow(string, string) (string, error) { return "", nil }
@@ -23,7 +23,7 @@ func (b activationPromptBackend) Teardown(string) error                    { ret
 func (b activationPromptBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return true, b.aware, nil
 }
-func (b activationPromptBackend) AgentPrompt(string, string) session.PromptResult { return b.result }
+func (b activationPromptBackend) AgentPrompt(string, string) backend.PromptResult { return b.result }
 
 func TestActivationComposerSafeRecognizesIdleGlyphsAndGhostText(t *testing.T) {
 	for _, content := range []string{"", "❯ \n", "› \n", "> \n", "o \n", "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n"} {
@@ -51,16 +51,16 @@ func TestActivationComposerSafeRejectsBusyTypedAndCaptureFailure(t *testing.T) {
 }
 
 func TestSessionActivationTransportMapsTypedOutcomes(t *testing.T) {
-	for _, status := range []session.PromptStatus{
-		session.PromptSubmitted, session.PromptQueuedWhileBusy, session.PromptStalled,
-		session.PromptEndpointDead, session.PromptBackendFailed, session.PromptUnsupported,
+	for _, status := range []backend.PromptStatus{
+		backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled,
+		backend.PromptEndpointDead, backend.PromptBackendFailed, backend.PromptUnsupported,
 	} {
-		backend := activationPromptBackend{capture: "❯\n", result: session.PromptResult{Status: status}}
-		transport := sessionActivationTransport{resolve: func(string, string) (session.Backend, string, error) {
-			return backend, "tmux", nil
+		bk := activationPromptBackend{capture: "❯\n", result: backend.PromptResult{Status: status}}
+		transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+			return bk, "tmux", nil
 		}}
 		got := transport.Attempt("home", afk.TargetResult{Handle: "pane"}, "payload")
-		want := status == session.PromptSubmitted || status == session.PromptQueuedWhileBusy
+		want := status == backend.PromptSubmitted || status == backend.PromptQueuedWhileBusy
 		if got.Acknowledged != want || got.SubmitStatus != string(status) {
 			t.Fatalf("status %s: %+v", status, got)
 		}
@@ -68,13 +68,13 @@ func TestSessionActivationTransportMapsTypedOutcomes(t *testing.T) {
 }
 
 func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
-	backend := activationPromptBackend{
+	bk := activationPromptBackend{
 		capture: "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n",
 		aware:   true,
-		result:  session.PromptResult{Status: session.PromptSubmitted},
+		result:  backend.PromptResult{Status: backend.PromptSubmitted},
 	}
-	transport := sessionActivationTransport{resolve: func(string, string) (session.Backend, string, error) {
-		return backend, "tmux", nil
+	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+		return bk, "tmux", nil
 	}}
 	got := transport.Attempt("home", afk.TargetResult{Handle: "pane"}, "payload")
 	if !got.Acknowledged || got.SafetyVerdict != "empty" {
@@ -83,7 +83,7 @@ func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
 }
 
 func TestSessionActivationTransportQueuesResolutionFailure(t *testing.T) {
-	transport := sessionActivationTransport{resolve: func(string, string) (session.Backend, string, error) {
+	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 		return nil, "", errors.New("unavailable")
 	}}
 	got := transport.Attempt("home", afk.TargetResult{Handle: "pane"}, "payload")

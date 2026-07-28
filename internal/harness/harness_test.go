@@ -480,7 +480,6 @@ func TestCaptainProfileFromHome_SoldierFallback(t *testing.T) {
 	}
 }
 
-
 func TestCaptainProfileFromHome_ModelFileFallback(t *testing.T) {
 	tmp := t.TempDir()
 	configDir := filepath.Join(tmp, "config")

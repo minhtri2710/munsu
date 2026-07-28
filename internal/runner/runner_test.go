@@ -92,8 +92,8 @@ func TestRunError_Error(t *testing.T) {
 		check string
 	}{
 		{
-			name: "exit code only",
-			err:  &RunError{ExitCode: 1},
+			name:  "exit code only",
+			err:   &RunError{ExitCode: 1},
 			check: "exit code 1",
 		},
 		{

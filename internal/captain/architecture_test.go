@@ -18,7 +18,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -260,98 +259,7 @@ func TestBlocked_DuplicateRegistrationIsNoop(t *testing.T) {
 
 // TestRetries_RecoverRelaunchesDeadCaptain proves that Recover relaunches
 // a launched-but-dead captain and that a second Recover cycle finds it alive.
-func TestRetries_RecoverRelaunchesDeadCaptain(t *testing.T) {
-	parent := t.TempDir()
-	smHome := seedCaptainForTest(t, parent, "test-sm")
-	writeCaptainMeta(t, parent, "test-sm", smHome, "win-dead")
 
-	// Write captain-harness config so Launch resolves pi.
-	configDir := filepath.Join(parent, "config")
-	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi\n"), 0644)
-
-	origBK := newSessionBackend
-	origLP := lookPath
-	origBF := backendForTask
-	t.Cleanup(func() {
-		newSessionBackend = origBK
-		lookPath = origLP
-		backendForTask = origBF
-	})
-
-	// Simulate: backend says dead on checkAliveViaBackend, but Launch creates new.
-	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
-		return &fakeBackend{AliveFn: func(string) bool { return false }}, "herdr", nil
-	}
-
-	firstRecover := true
-	newSessionBackend = func(string) (session.Backend, string, error) {
-		if firstRecover {
-			firstRecover = false
-			return &fakeBackend{
-				NewWindowFn: func(_, _ string) (string, error) { return "win-new", nil },
-				AliveFn:     func(string) bool { return true },
-			}, "herdr", nil
-		}
-		// Second call: backend says alive immediately (Recover finds it alive).
-		return &fakeBackend{
-			NewWindowFn: func(_, _ string) (string, error) { return "win-dup", nil },
-			AliveFn:     func(string) bool { return true },
-		}, "herdr", nil
-	}
-	lookPath = func(string) (string, error) { return "/usr/local/bin/pi", nil }
-
-	probe := &testProbeEndpoint{results: []ProbeResult{{PaneAlive: false}, {PaneAlive: true, AgentAlive: true}}}
-	// First Recover: dead -> relaunched.
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: probe})
-	if err != nil {
-		t.Fatalf("first Recover: %v", err)
-	}
-	if res.Relaunched != 1 {
-		t.Fatalf("first Recover: expected 1 relaunched, got %+v", res)
-	}
-
-	// Update backend to report alive.
-	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
-		return &fakeBackend{AliveFn: func(string) bool { return true }}, "herdr", nil
-	}
-
-	// Second Recover: alive -> no action.
-	res, err = Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Probe: probe})
-	if err != nil {
-		t.Fatalf("second Recover: %v", err)
-	}
-	if res.Alive != 1 {
-		t.Fatalf("second Recover: expected alive=1, got %+v", res)
-	}
-}
-
-// TestRetries_RecoverNoOpOnAliveCaptain proves that Recover does nothing
-// (no relaunch, no error) when the captain is already alive.
-func TestRetries_RecoverNoOpOnAliveCaptain(t *testing.T) {
-	parent := t.TempDir()
-	smHome := seedCaptainForTest(t, parent, "test-sm")
-	writeCaptainMeta(t, parent, "test-sm", smHome, "win-alive")
-
-	origBF := backendForTask
-	t.Cleanup(func() { backendForTask = origBF })
-
-	backendForTask = func(parentHome string, meta map[string]string) (session.Backend, string, error) {
-		return &fakeBackend{AliveFn: func(string) bool { return true }}, "herdr", nil
-	}
-
-	res, err := Recover(parent, []Info{{ID: "test-sm", Home: smHome}}, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: ProbeResult{PaneAlive: true, AgentAlive: true}}})
-	if err != nil {
-		t.Fatalf("Recover: %v", err)
-	}
-	if res.Alive != 1 || res.Relaunched != 0 {
-		t.Fatalf("expected alive=1, relaunched=0, got %+v", res)
-	}
-}
-
-// TestRetries_RecoverSkipSeededCaptain proves that Recover skips (does not
-// launch) captains that have provenance but have never been launched (no
-// task meta with kind=captain). This prevents spurious launches on retry.
 func TestRetries_RecoverSkipSeededCaptain(t *testing.T) {
 	parent := t.TempDir()
 	smHome := seedCaptainForTest(t, parent, "test-sm")

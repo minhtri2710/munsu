@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 type captureBackend struct {
@@ -25,7 +25,7 @@ func (b *captureBackend) Teardown(string) error { return nil }
 
 func TestSessionBoundCapturePreservesBoundRequest(t *testing.T) {
 	b := &captureBackend{output: "captured"}
-	c := sessionBoundCapture{resolve: func(home string, meta map[string]string) (session.Backend, string, error) {
+	c := sessionBoundCapture{resolve: func(home string, meta map[string]string) (backend.Backend, string, error) {
 		if home != "/home" || meta["herdr_workspace_id"] != "workspace-1" || meta["herdr_tab_id"] != "tab-1" {
 			t.Fatalf("home=%q meta=%v", home, meta)
 		}
@@ -37,7 +37,7 @@ func TestSessionBoundCapturePreservesBoundRequest(t *testing.T) {
 	}
 }
 func TestSessionBoundCaptureRejectsIdentityAndMismatch(t *testing.T) {
-	c := sessionBoundCapture{resolve: func(string, map[string]string) (session.Backend, string, error) {
+	c := sessionBoundCapture{resolve: func(string, map[string]string) (backend.Backend, string, error) {
 		return &captureBackend{}, "tmux", nil
 	}}
 	cases := []map[string]string{{}, {"backend": "unknown", "window": "p"}, {"backend": "herdr", "window": "session-a:p", "herdr_session": "session-b"}, {"backend": "herdr", "window": "session:p"}}
@@ -48,7 +48,7 @@ func TestSessionBoundCaptureRejectsIdentityAndMismatch(t *testing.T) {
 	}
 }
 func TestSessionBoundCaptureRejectsResolvedBackendMismatch(t *testing.T) {
-	c := sessionBoundCapture{resolve: func(string, map[string]string) (session.Backend, string, error) {
+	c := sessionBoundCapture{resolve: func(string, map[string]string) (backend.Backend, string, error) {
 		return &captureBackend{}, "tmux", nil
 	}}
 	_, err := c.Capture("/home", map[string]string{"backend": "herdr", "window": "session:p"}, 1)
@@ -58,7 +58,7 @@ func TestSessionBoundCaptureRejectsResolvedBackendMismatch(t *testing.T) {
 }
 func TestSessionBoundCaptureReturnsAdapterError(t *testing.T) {
 	want := errors.New("capture failed")
-	c := sessionBoundCapture{resolve: func(string, map[string]string) (session.Backend, string, error) {
+	c := sessionBoundCapture{resolve: func(string, map[string]string) (backend.Backend, string, error) {
 		return &captureBackend{err: want}, "tmux", nil
 	}}
 	_, err := c.Capture("/home", map[string]string{"backend": "tmux", "window": "p"}, 1)

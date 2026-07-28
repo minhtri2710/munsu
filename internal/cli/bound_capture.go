@@ -3,11 +3,11 @@ package cli
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 type sessionBoundCapture struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
 func (c sessionBoundCapture) Capture(homeDir string, meta map[string]string, lines int) (string, error) {
@@ -21,14 +21,14 @@ func (c sessionBoundCapture) Capture(homeDir string, meta map[string]string, lin
 		return "", fmt.Errorf("unsupported bound backend %q", backendName)
 	}
 	if backendName == "herdr" && meta["herdr_session"] != "" {
-		handleSession, _ := session.ParseWindow(handle)
+		handleSession, _ := backend.ParseWindow(handle)
 		if handleSession != "" && handleSession != meta["herdr_session"] {
 			return "", fmt.Errorf("herdr session ownership mismatch")
 		}
 	}
 	resolve := c.resolve
 	if resolve == nil {
-		resolve = session.BackendForTask
+		resolve = backend.BackendForTask
 	}
 	bk, resolved, err := resolve(homeDir, meta)
 	if err != nil {

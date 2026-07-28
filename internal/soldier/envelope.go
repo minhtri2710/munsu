@@ -11,8 +11,8 @@ import (
 // SkillEntry records one selected skill in the launch envelope.
 type SkillEntry struct {
 	Name         string `json:"name"`
-	Role         string `json:"role"`         // "soldier", "captain", "general", or empty
-	Applicable   bool   `json:"applicable"`   // true when soldier-applicable
+	Role         string `json:"role"`       // "soldier", "captain", "general", or empty
+	Applicable   bool   `json:"applicable"` // true when soldier-applicable
 	SourcePath   string `json:"source_path,omitempty"`
 	SourceSHA256 string `json:"source_sha256,omitempty"`
 	Version      string `json:"version,omitempty"`
@@ -111,11 +111,12 @@ func ReadEnvelope(worktreePath string) (*LaunchEnvelope, error) {
 }
 
 // VerifyEnvelopeIntegrity validates all durable files against the envelope:
-// - charter must exist and match CharterSHA256
-// - brief must exist and match BriefSHA256
-// - prompt must exist and match PromptSHA256
-// - task meta fields (TaskID, DeliveryMode, ParentCaptainID, ParentHome)
-//   must be non-empty and self-consistent
+//   - charter must exist and match CharterSHA256
+//   - brief must exist and match BriefSHA256
+//   - prompt must exist and match PromptSHA256
+//   - task meta fields (TaskID, DeliveryMode, ParentCaptainID, ParentHome)
+//     must be non-empty and self-consistent
+//
 // Returns an error on any mismatch or missing file.
 func VerifyEnvelopeIntegrity(worktreePath string) error {
 	env, err := ReadEnvelope(worktreePath)

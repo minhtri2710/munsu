@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/ghurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -308,7 +308,7 @@ func captureGitHubIdentity(prURL string) (*DeliveryIdentity, error) {
 	}
 
 	// Degraded path: try gh CLI directly (read-only, permitted when gh-axi is Absent)
-	ghURL, err := ghurl.ParseGHURL(prURL)
+	ghURL, err := domain.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PR URL: %w", err)
 	}

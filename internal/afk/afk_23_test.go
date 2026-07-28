@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/composer"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // --- fakePaneCapture for safety tests ---
@@ -150,7 +150,7 @@ func TestIsSafeInjectTarget_ClaudePrompt(t *testing.T) {
 	if !safe {
 		t.Errorf("safe = false for claude prompt, want true")
 	}
-	if verdict != composer.Empty {
+	if verdict != domain.Empty {
 		t.Errorf("verdict = %v, want empty", verdict)
 	}
 }
@@ -165,7 +165,7 @@ func TestIsSafeInjectTarget_ClaudePromptBare(t *testing.T) {
 	if !safe {
 		t.Errorf("safe = false for claude prompt, want true")
 	}
-	if verdict != composer.Empty {
+	if verdict != domain.Empty {
 		t.Errorf("verdict = %v, want empty", verdict)
 	}
 }
@@ -180,7 +180,7 @@ func TestIsSafeInjectTarget_CodexPrompt(t *testing.T) {
 	if !safe {
 		t.Errorf("safe = false for codex prompt, want true")
 	}
-	if verdict != composer.Empty {
+	if verdict != domain.Empty {
 		t.Errorf("verdict = %v, want empty", verdict)
 	}
 }
@@ -195,7 +195,7 @@ func TestIsSafeInjectTarget_DeadShellGt(t *testing.T) {
 	if safe {
 		t.Errorf("safe = true for dead shell >, want false")
 	}
-	if verdict != composer.Unknown {
+	if verdict != domain.Unknown {
 		t.Errorf("verdict = %v, want unknown", verdict)
 	}
 }
@@ -210,7 +210,7 @@ func TestIsSafeInjectTarget_DeadShellDollar(t *testing.T) {
 	if safe {
 		t.Errorf("safe = true for dead shell $, want false")
 	}
-	if verdict != composer.Unknown {
+	if verdict != domain.Unknown {
 		t.Errorf("verdict = %v, want unknown", verdict)
 	}
 }
@@ -225,7 +225,7 @@ func TestIsSafeInjectTarget_PendingTypedText(t *testing.T) {
 	if safe {
 		t.Errorf("safe = true for pending text, want false")
 	}
-	if verdict != composer.Pending {
+	if verdict != domain.Pending {
 		t.Errorf("verdict = %v, want pending", verdict)
 	}
 }
@@ -240,7 +240,7 @@ func TestIsSafeInjectTarget_PendingWithGlyph(t *testing.T) {
 	if safe {
 		t.Errorf("safe = true for pending text with glyph, want false")
 	}
-	if verdict != composer.Pending {
+	if verdict != domain.Pending {
 		t.Errorf("verdict = %v, want pending", verdict)
 	}
 }
@@ -256,7 +256,7 @@ func TestIsSafeInjectTarget_GhostOnly(t *testing.T) {
 	if !safe {
 		t.Errorf("safe = false for ghost-only, want true")
 	}
-	if verdict != composer.Empty {
+	if verdict != domain.Empty {
 		t.Errorf("verdict = %v, want empty", verdict)
 	}
 }
@@ -271,7 +271,7 @@ func TestIsSafeInjectTarget_GrokPlaceholder(t *testing.T) {
 	if !safe {
 		t.Errorf("safe = false for grok placeholder, want true")
 	}
-	if verdict != composer.Empty {
+	if verdict != domain.Empty {
 		t.Errorf("verdict = %v, want empty", verdict)
 	}
 }
@@ -283,7 +283,7 @@ func TestIsSafeInjectTarget_CaptureError(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for failed capture, got nil")
 	}
-	if verdict != composer.Unknown {
+	if verdict != domain.Unknown {
 		t.Errorf("verdict = %v, want unknown on capture error", verdict)
 	}
 }
@@ -298,7 +298,7 @@ func TestIsSafeInjectTarget_CaptureErrImplementation(t *testing.T) {
 	if safe {
 		t.Errorf("safe = true on capture error, want false")
 	}
-	if verdict != composer.Unknown {
+	if verdict != domain.Unknown {
 		t.Errorf("verdict = %v, want unknown on capture error", verdict)
 	}
 }
@@ -466,7 +466,7 @@ func TestIsSafeInjectTarget_EmptyRow(t *testing.T) {
 	if !safe {
 		t.Errorf("safe = false for empty row, want true")
 	}
-	if verdict != composer.Empty {
+	if verdict != domain.Empty {
 		t.Errorf("verdict = %v, want empty", verdict)
 	}
 }
@@ -481,7 +481,7 @@ func TestIsSafeInjectTarget_MultiLine(t *testing.T) {
 	if !safe {
 		t.Errorf("safe = false for claude prompt on last line, want true")
 	}
-	if verdict != composer.Empty {
+	if verdict != domain.Empty {
 		t.Errorf("verdict = %v, want empty", verdict)
 	}
 }

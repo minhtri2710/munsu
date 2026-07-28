@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/session"
 )
 
 type probeBackend struct{ aliveHandle string }
@@ -18,7 +18,7 @@ func (p probeBackend) Teardown(string) error                    { return nil }
 func TestCLIEndpointProbePreservesBoundMetadata(t *testing.T) {
 	var gotHome string
 	var got map[string]string
-	probe := cliEndpointProbe{resolve: func(home string, meta map[string]string) (session.Backend, string, error) {
+	probe := cliEndpointProbe{resolve: func(home string, meta map[string]string) (backend.Backend, string, error) {
 		gotHome = home
 		got = meta
 		return probeBackend{aliveHandle: "session-1:pane-1"}, "herdr", nil

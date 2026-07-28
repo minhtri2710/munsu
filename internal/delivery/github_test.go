@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/capability"
-	"github.com/minhtri2710/munsu/internal/ghurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // --- Capability probe tests ---
@@ -178,7 +178,7 @@ func TestQueryPRMergeStatus_UsesGhAxiWhenReady(t *testing.T) {
 	}
 
 	// Query a non-existent PR to verify routing reaches gh-axi/adapter
-	ghURL := ghurl.GHURL{Owner: "minhtri2710", Repo: "munsu", Num: 999999}
+	ghURL := domain.GHURL{Owner: "minhtri2710", Repo: "munsu", Num: 999999}
 	_, err := QueryPRMergeStatus(ghURL)
 	if err == nil {
 		t.Fatal("expected error for non-existent PR")

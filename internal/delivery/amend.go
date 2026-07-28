@@ -8,8 +8,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/ghurl"
-	"github.com/minhtri2710/munsu/internal/glurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -115,7 +114,7 @@ func fetchProviderSnapshotImpl(prURL string) (*ProviderSnapshot, error) {
 }
 
 func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
-	ghURL, err := ghurl.ParseGHURL(prURL)
+	ghURL, err := domain.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid GitHub URL: %w", err)
 	}
@@ -179,7 +178,7 @@ func fetchGitHubProviderSnapshot(prURL string) (*ProviderSnapshot, error) {
 }
 
 func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
-	glURL, err := glurl.ParseMRURL(mrURL)
+	glURL, err := domain.ParseMRURL(mrURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid MR URL: %w", err)
 	}

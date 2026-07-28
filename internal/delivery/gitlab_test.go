@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/capability"
-	"github.com/minhtri2710/munsu/internal/ghurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // fakeGlabRunner implements GlabRunner for testing.
@@ -553,7 +553,7 @@ func TestQueryDeliveryMergeStatus_GitHub_Delegates(t *testing.T) {
 	// GitHub URL should route through QueryPRMergeStatus.
 	// Use a mock to verify delegation.
 	saved := QueryPRMergeStatus
-	QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
+	QueryPRMergeStatus = func(ghURL domain.GHURL) (*PRMergeStatus, error) {
 		if ghURL.Owner != "minhtri2710" || ghURL.Repo != "munsu" || ghURL.Num != 42 {
 			t.Errorf("unexpected ghURL: %+v", ghURL)
 		}
@@ -739,14 +739,14 @@ func TestGitLabIdentity_LegacyPRKey(t *testing.T) {
 
 func TestIdentityFromMeta_RejectsProviderURLMismatch(t *testing.T) {
 	meta := map[string]string{
-		"pr_provider": "github",
-		"pr_url":      "https://gitlab.com/owner/project/-/merge_requests/42",
-		"pr_number":   "42",
-		"pr_owner":    "owner",
-		"pr_repo":     "project",
-		"pr_base":     "main",
-		"pr_head_ref": "feature/test",
-		"pr_head":     sampleSHA,
+		"pr_provider":  "github",
+		"pr_url":       "https://gitlab.com/owner/project/-/merge_requests/42",
+		"pr_number":    "42",
+		"pr_owner":     "owner",
+		"pr_repo":      "project",
+		"pr_base":      "main",
+		"pr_head_ref":  "feature/test",
+		"pr_head":      sampleSHA,
 		"pr_timestamp": "2026-07-18T12:00:00Z",
 	}
 	_, err := IdentityFromMeta(meta)

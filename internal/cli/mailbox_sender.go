@@ -3,19 +3,19 @@ package cli
 import (
 	"fmt"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 )
 
 type sessionMailboxSender struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
 func newSessionMailboxSender() sessionMailboxSender {
-	return sessionMailboxSender{resolve: session.BackendForTask}
+	return sessionMailboxSender{resolve: backend.BackendForTask}
 }
 
-func (s sessionMailboxSender) backend(home string, meta map[string]string) (session.Backend, error) {
+func (s sessionMailboxSender) backend(home string, meta map[string]string) (backend.Backend, error) {
 	if home == "" || meta["backend"] == "" || meta["window"] == "" {
 		return nil, fmt.Errorf("bound sender identity is incomplete")
 	}
@@ -27,7 +27,7 @@ func (s sessionMailboxSender) backend(home string, meta map[string]string) (sess
 		return nil, fmt.Errorf("bound backend resolved as %q", name)
 	}
 	if meta["backend"] == "herdr" && meta["herdr_session"] != "" {
-		hs, _ := session.ParseWindow(meta["window"])
+		hs, _ := backend.ParseWindow(meta["window"])
 		if hs != "" && hs != meta["herdr_session"] {
 			return nil, fmt.Errorf("herdr session ownership mismatch")
 		}
@@ -48,6 +48,6 @@ func (s sessionMailboxSender) Send(home string, meta map[string]string, payload 
 	if err != nil {
 		return mailbox.BoundSendResult{Status: "backend-failed", Err: err}
 	}
-	result := session.SubmitPrompt(bk, meta["window"], payload)
+	result := backend.SubmitPrompt(bk, meta["window"], payload)
 	return mailbox.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
 }

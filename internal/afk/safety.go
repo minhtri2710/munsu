@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/composer"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // PaneCapture is the interface for capturing pane content.
@@ -20,10 +20,10 @@ type PaneCapture interface {
 // Returns false (with verdict Pending) when there is unsubmitted typed content.
 // Returns false (with verdict Unknown) for dead-shell bare prompts and other
 // unrecognised harness states — these are NEVER safe injection targets.
-func IsSafeInjectTarget(cap PaneCapture, paneHandle string) (bool, composer.Verdict, error) {
+func IsSafeInjectTarget(cap PaneCapture, paneHandle string) (bool, domain.Verdict, error) {
 	output, err := cap.Capture(paneHandle, 4)
 	if err != nil {
-		return false, composer.Unknown, fmt.Errorf("capturing pane %q: %w", paneHandle, err)
+		return false, domain.Unknown, fmt.Errorf("capturing pane %q: %w", paneHandle, err)
 	}
 
 	// Normalise line endings and take the last non-empty line (composer row).
@@ -38,9 +38,9 @@ func IsSafeInjectTarget(cap PaneCapture, paneHandle string) (bool, composer.Verd
 	}
 
 	// Strip ghost text and ANSI for classification.
-	stripped := composer.StripGhost(composerLine)
+	stripped := domain.StripGhost(composerLine)
 	trimmed := strings.TrimSpace(stripped)
-	plain := strings.TrimSpace(composer.StripANSI(composerLine))
+	plain := strings.TrimSpace(domain.StripANSI(composerLine))
 
 	// Determine bordered status heuristically.
 	// Agent glyphs (❯, ›) and detected borders → bordered=true (safe for
@@ -69,8 +69,8 @@ func IsSafeInjectTarget(cap PaneCapture, paneHandle string) (bool, composer.Verd
 		bordered = true
 	}
 
-	verdict := composer.ClassifyContent(trimmed, plain, bordered)
-	safe := verdict == composer.Empty
+	verdict := domain.ClassifyContent(trimmed, plain, bordered)
+	safe := verdict == domain.Empty
 	return safe, verdict, nil
 }
 

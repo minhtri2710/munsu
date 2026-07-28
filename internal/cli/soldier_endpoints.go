@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/session"
 )
 
 type recognizedAgentBackend interface {
@@ -12,14 +12,14 @@ type recognizedAgentBackend interface {
 }
 
 type sessionSoldierEndpoints struct {
-	resolve func(string, map[string]string) (session.Backend, string, error)
+	resolve func(string, map[string]string) (backend.Backend, string, error)
 }
 
 func newSessionSoldierEndpoints() sessionSoldierEndpoints {
-	return sessionSoldierEndpoints{resolve: session.BackendForTask}
+	return sessionSoldierEndpoints{resolve: backend.BackendForTask}
 }
 
-func (s sessionSoldierEndpoints) backend(home string, meta map[string]string) (session.Backend, error) {
+func (s sessionSoldierEndpoints) backend(home string, meta map[string]string) (backend.Backend, error) {
 	if home == "" || meta["window"] == "" {
 		return nil, fmt.Errorf("soldier endpoint identity is incomplete")
 	}
@@ -31,7 +31,7 @@ func (s sessionSoldierEndpoints) backend(home string, meta map[string]string) (s
 		return nil, fmt.Errorf("bound backend resolved as %q", name)
 	}
 	if name == "herdr" && meta["herdr_session"] != "" {
-		sessionID, _ := session.ParseWindow(meta["window"])
+		sessionID, _ := backend.ParseWindow(meta["window"])
 		if sessionID != "" && sessionID != meta["herdr_session"] {
 			return nil, fmt.Errorf("herdr session ownership mismatch")
 		}
@@ -52,7 +52,7 @@ func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool
 	if err != nil {
 		return false, err
 	}
-	if checker, ok := bk.(session.BusyChecker); ok {
+	if checker, ok := bk.(backend.BusyChecker); ok {
 		return checker.AgentBusy(meta["window"])
 	}
 	if herdr, ok := bk.(recognizedAgentBackend); ok {
@@ -80,6 +80,6 @@ func (s sessionSoldierEndpoints) Send(home string, meta map[string]string, paylo
 	if err != nil {
 		return mailbox.BoundSendResult{Status: "backend-failed", Err: err}
 	}
-	result := session.SubmitPrompt(bk, meta["window"], payload)
+	result := backend.SubmitPrompt(bk, meta["window"], payload)
 	return mailbox.BoundSendResult{Status: string(result.Status), Detail: result.Detail, Acknowledged: result.Acknowledged(), Err: result.Err}
 }

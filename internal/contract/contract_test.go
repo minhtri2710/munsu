@@ -258,9 +258,9 @@ func TestAllDefinitiveEmpties(t *testing.T) {
 			Kind:          "fleet.snapshot",
 			Status:        "success",
 			Data: FleetSnapshotV2{
-				Scope: "/",
-				Count: 0,
-				Total: 0,
+				Scope:    "/",
+				Count:    0,
+				Total:    0,
 				Soldiers: []Soldier{},
 			},
 		}

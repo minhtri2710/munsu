@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/hometag"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // PruneOptions controls the prune operation.
@@ -154,11 +154,11 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	}
 
 	// Step 1: Labels owned by this home (primary tag and WorkspaceTag for captains).
-	primaryTag := hometag.Tag(opts.HomeDir)
-	ownedLabels := map[string]bool{primaryTag: true, hometag.WorkspaceTag(opts.HomeDir): true}
+	primaryTag := backend.Hometag(opts.HomeDir)
+	ownedLabels := map[string]bool{primaryTag: true, backend.WorkspaceTag(opts.HomeDir): true}
 	// When pruning from the general home, also own registered captain workspace labels.
 	for _, smHome := range listCaptainHomes(opts.HomeDir) {
-		ownedLabels[hometag.WorkspaceTag(smHome)] = true
+		ownedLabels[backend.WorkspaceTag(smHome)] = true
 	}
 
 	// Step 2: List herdr workspaces.

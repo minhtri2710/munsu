@@ -258,9 +258,9 @@ func TestLaunchEnvelope_IntegrityEmptyMetaFields(t *testing.T) {
 	// Envelope with empty TaskID and empty DeliveryMode.
 	env := &LaunchEnvelope{
 		EnvelopeVersion: EnvelopeVersion,
-		CharterSHA256: sha256Content([]byte(charter)),
-		BriefSHA256:   sha256Content(brief),
-		PromptSHA256:  sha256Content([]byte(prompt)),
+		CharterSHA256:   sha256Content([]byte(charter)),
+		BriefSHA256:     sha256Content(brief),
+		PromptSHA256:    sha256Content([]byte(prompt)),
 	}
 	if err := WriteEnvelope(tmp, env); err != nil {
 		t.Fatal(err)

@@ -47,11 +47,12 @@ Captain-side subcommands:
 // and returns the envelope payload. Writes NO ack.
 //
 // Usage by captain agent (after receiving NotificationRef via SubmitPrompt):
-//   munsu inbox receive '{"message_id":"...","sender_identity":"..."}'
+//
+//	munsu inbox receive '{"message_id":"...","sender_identity":"..."}'
 //
 // This is the first step of the two-step inbox protocol:
-//   1. munsu inbox receive <ref>  — inspect the incoming command
-//   2. munsu inbox ack <ref>      — accept into context (after reading payload)
+//  1. munsu inbox receive <ref>  — inspect the incoming command
+//  2. munsu inbox ack <ref>      — accept into context (after reading payload)
 func newInboxReceiveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "receive <notification-ref>",
@@ -116,7 +117,8 @@ This produces output with kind=inbox.receive.`,
 // taking the command into its agent context.
 //
 // Usage by captain agent (after reading the payload via inbox receive):
-//   munsu inbox ack '{"message_id":"...","sender_identity":"..."}'
+//
+//	munsu inbox ack '{"message_id":"...","sender_identity":"..."}'
 //
 // The ack means the command was accepted into agent context — NOT that it
 // completed. Completion is tracked through separate report/relay flows.

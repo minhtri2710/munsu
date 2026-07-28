@@ -18,7 +18,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backlog"
 	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/nostatus"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -257,7 +257,7 @@ func (s *State) applyNoMistakesStep(step, outcome string) {
 // the structured nostatus package at the CLI boundary, and returns the conceptual
 // run-step, outcome, and whether the info is relevant.
 func checkNoMistakesRun(wtPath, currentBranch string) (step, outcome string, ok bool) {
-	r, err := nostatus.Read(wtPath)
+	r, err := fleet.Read(wtPath)
 	if err != nil {
 		return "", "", false
 	}

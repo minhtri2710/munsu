@@ -144,8 +144,8 @@ func TestE2E_SkillSelectionWithDenylist(t *testing.T) {
 	catalog := []SkillEntry{
 		{Name: "gh-axi", Role: "soldier"},
 		{Name: "qmd", Role: "soldier"},
-		{Name: "munsu-ops", Role: "soldier"},     // denied by denylist regardless of role
-		{Name: "tasks-axi", Role: "soldier"},      // denied by denylist
+		{Name: "munsu-ops", Role: "soldier"}, // denied by denylist regardless of role
+		{Name: "tasks-axi", Role: "soldier"}, // denied by denylist
 		{Name: "captain-provisioning", Role: "captain"},
 		{Name: "bootstrap-diagnostics", Role: "general"},
 	}

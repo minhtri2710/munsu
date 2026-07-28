@@ -17,7 +17,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/lifecycle"
 	"github.com/minhtri2710/munsu/internal/project"
 	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/minhtri2710/munsu/internal/spawn"
 	"github.com/minhtri2710/munsu/internal/supervision"
 	"github.com/minhtri2710/munsu/internal/task"
@@ -127,10 +126,10 @@ func newSessionStartCmd() *cobra.Command {
 				wantRecover = true
 			}
 
-			result, err := session.RunSessionStartWithWatcher(w, ctx.Home, func(home string) session.WatchEnsureResult {
+			result, err := bootstrap.RunSessionStartWithWatcher(w, ctx.Home, func(home string) bootstrap.WatchEnsureResult {
 				r := ensureWatcher(home, false)
-				return session.WatchEnsureResult{State: r.Data.State}
-			}, func(home string, doRecover bool) session.CaptainLivenessResult {
+				return bootstrap.WatchEnsureResult{State: r.Data.State}
+			}, func(home string, doRecover bool) bootstrap.CaptainLivenessResult {
 				return captainLivenessForSession(home, doRecover && wantRecover)
 			})
 			if err != nil {
@@ -149,7 +148,7 @@ func newSessionStartCmd() *cobra.Command {
 
 			return writeContract(cmd, contract.Response[contract.SessionStart]{
 				SchemaVersion: contract.SchemaVersion,
-				Kind:          "session.start",
+				Kind:          "backend.start",
 				Status:        "success",
 				Data: contract.SessionStart{
 					Lock:        lockState,

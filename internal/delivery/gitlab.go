@@ -8,8 +8,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/capability"
-	"github.com/minhtri2710/munsu/internal/ghurl"
-	"github.com/minhtri2710/munsu/internal/glurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // GlabRunner abstracts glab CLI operations for testability.
@@ -61,13 +60,13 @@ var defaultGlabFallback GlabFallbackFn = nil
 // Supports GitHub and GitLab URLs. Rejects unrecognized URLs fail closed.
 func ParseProviderURL(raw string) (provider string, owner string, repo string, number int, fullURL string, err error) {
 	// Try GitHub first (must not break existing behavior)
-	gh, ghErr := ghurl.ParseGHURL(raw)
+	gh, ghErr := domain.ParseGHURL(raw)
 	if ghErr == nil {
 		return "github", gh.Owner, gh.Repo, gh.Num, gh.FullURL(), nil
 	}
 
 	// Try GitLab
-	gl, glErr := glurl.ParseMRURL(raw)
+	gl, glErr := domain.ParseMRURL(raw)
 	if glErr == nil {
 		return "gitlab", gl.Owner, gl.Project, gl.IID, gl.FullURL(), nil
 	}
@@ -173,9 +172,10 @@ func (c *glabClient) ViewMRState(host, owner, project string, iid int) (string, 
 }
 
 // normalizeGlabState normalizes GitLab state strings to the domain convention.
-//   "opened" -> "OPEN"
-//   "merged" -> "MERGED"
-//   "closed" -> "CLOSED"
+//
+//	"opened" -> "OPEN"
+//	"merged" -> "MERGED"
+//	"closed" -> "CLOSED"
 func normalizeGlabState(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "opened":
@@ -205,7 +205,7 @@ func (c *glabClient) ViewMRJSON(host, owner, project string, iid int) ([]byte, e
 
 // CaptureIdentity captures a full DeliveryIdentity from a GitLab MR URL.
 func (c *glabClient) CaptureIdentity(mrURL string) (*DeliveryIdentity, error) {
-	glURL, err := glurl.ParseMRURL(mrURL)
+	glURL, err := domain.ParseMRURL(mrURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid MR URL: %w", err)
 	}
@@ -217,10 +217,10 @@ func (c *glabClient) CaptureIdentity(mrURL string) (*DeliveryIdentity, error) {
 
 	// GitLab API JSON uses snake_case fields
 	var result struct {
-		SHA             string `json:"sha"`
-		SourceBranch    string `json:"source_branch"`
-		TargetBranch    string `json:"target_branch"`
-		MergeCommitSHA  string `json:"merge_commit_sha"`
+		SHA            string `json:"sha"`
+		SourceBranch   string `json:"source_branch"`
+		TargetBranch   string `json:"target_branch"`
+		MergeCommitSHA string `json:"merge_commit_sha"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("parsing glab mr view JSON: %w", err)

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/ghurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // --- test helpers ---
@@ -129,8 +129,8 @@ func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath string) {
 
 // mockPRMergeStatus returns a function that replaces delivery.QueryPRMergeStatus
 // with a mock that returns the given status and error.
-func mockPRMergeStatus(status *delivery.PRMergeStatus, err error) func(ghurl.GHURL) (*delivery.PRMergeStatus, error) {
-	return func(ghurl.GHURL) (*delivery.PRMergeStatus, error) {
+func mockPRMergeStatus(status *delivery.PRMergeStatus, err error) func(domain.GHURL) (*delivery.PRMergeStatus, error) {
+	return func(domain.GHURL) (*delivery.PRMergeStatus, error) {
 		return status, err
 	}
 }

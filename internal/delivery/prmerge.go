@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/ghurl"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -41,7 +41,7 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	// Parse the PR URL
-	ghURL, err := ghurl.ParseGHURL(prURL)
+	ghURL, err := domain.ParseGHURL(prURL)
 	if err != nil {
 		return fmt.Errorf("invalid PR URL: %w", err)
 	}
@@ -53,7 +53,7 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	// Verify the requested and live PR identities still match the stored capture.
-	identURL := ghurl.GHURL{Owner: ident.Owner, Repo: ident.Repo, Num: ident.Number}.FullURL()
+	identURL := domain.GHURL{Owner: ident.Owner, Repo: ident.Repo, Num: ident.Number}.FullURL()
 	if identURL != ghURL.FullURL() {
 		return fmt.Errorf("PR URL mismatch: stored identity points to %s, but merge target is %s; re-run pr-check to update", identURL, ghURL.FullURL())
 	}
@@ -162,7 +162,7 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 // checkPROpen verifies that a PR is in OPEN state before attempting merge.
 // Uses gh-axi via the consolidated GitHubClient when the capability is Ready.
 // Falls back to gh CLI for the degraded path.
-func checkPROpen(ghURL ghurl.GHURL) error {
+func checkPROpen(ghURL domain.GHURL) error {
 	client, err := DefaultGitHubClient()
 	if err == nil {
 		state, err := client.ViewPRState(ghURL.Owner, ghURL.Repo, ghURL.Num)

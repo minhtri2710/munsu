@@ -7,8 +7,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/capability"
-	"github.com/minhtri2710/munsu/internal/ghurl"
-	"github.com/minhtri2710/munsu/internal/glurl"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // PRMergeStatus holds the provider-confirmed merge state of a pull request.
@@ -31,7 +30,7 @@ type PRMergeStatus struct {
 // Uses gh-axi via the consolidated GitHubClient when the capability is Ready.
 // Falls through to gh CLI through the adapter path for fields that gh-axi
 // does not expose directly.
-var QueryPRMergeStatus = func(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
+var QueryPRMergeStatus = func(ghURL domain.GHURL) (*PRMergeStatus, error) {
 	// Check gh-axi capability first
 	client, err := DefaultGitHubClient()
 	if err == nil {
@@ -62,7 +61,7 @@ var QueryDeliveryMergeStatus = func(ident *DeliveryIdentity) (*PRMergeStatus, er
 
 	switch ident.Provider {
 	case "github":
-		ghURL, err := ghurl.ParseGHURL(ident.URL)
+		ghURL, err := domain.ParseGHURL(ident.URL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid GitHub URL in identity: %w", err)
 		}
@@ -105,7 +104,7 @@ func fetchGLMergeStatus(client GitLabClient, ident *DeliveryIdentity) (*PRMergeS
 	// For GitLab MR JSON, we need host and project name separately.
 	// The identity stores Repo as the project name and Owner as the namespace.
 	// Host is not stored in the identity; we derive it from the URL.
-	glURL, err := glurl.ParseMRURL(ident.URL)
+	glURL, err := domain.ParseMRURL(ident.URL)
 	if err != nil {
 		return nil, fmt.Errorf("parsing GitLab URL from identity: %w", err)
 	}
@@ -171,7 +170,7 @@ func parseGLMergeStatus(data []byte) (*PRMergeStatus, error) {
 // queryPRMergeStatusDirect uses raw gh CLI to query PR merge status.
 // This is the degraded path when gh-axi is not available.
 // QueryPRMergeStatus prefers the consolidated gh-axi path first.
-func queryPRMergeStatusDirect(ghURL ghurl.GHURL) (*PRMergeStatus, error) {
+func queryPRMergeStatusDirect(ghURL domain.GHURL) (*PRMergeStatus, error) {
 	args := []string{
 		"pr", "view",
 		fmt.Sprintf("%d", ghURL.Num),

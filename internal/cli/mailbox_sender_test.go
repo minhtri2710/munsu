@@ -4,25 +4,25 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/session"
+	"github.com/minhtri2710/munsu/internal/backend"
 )
 
-type mailboxPromptBackend struct{ result session.PromptResult }
+type mailboxPromptBackend struct{ result backend.PromptResult }
 
 func (b mailboxPromptBackend) NewWindow(string, string) (string, error) { return "", nil }
 func (b mailboxPromptBackend) SendKeys(string, string) error            { return nil }
 func (b mailboxPromptBackend) Capture(string, int) (string, error)      { return "", nil }
 func (b mailboxPromptBackend) Alive(string) bool                        { return true }
 func (b mailboxPromptBackend) Teardown(string) error                    { return nil }
-func (b mailboxPromptBackend) AgentPrompt(string, string) session.PromptResult {
+func (b mailboxPromptBackend) AgentPrompt(string, string) backend.PromptResult {
 	return b.result
 }
 
 func TestSessionMailboxSenderPreservesTypedPromptResult(t *testing.T) {
-	for _, status := range []session.PromptStatus{session.PromptSubmitted, session.PromptQueuedWhileBusy, session.PromptStalled, session.PromptUnsupported, session.PromptEndpointDead, session.PromptBackendFailed} {
-		backend := mailboxPromptBackend{result: session.PromptResult{Status: status, Detail: "detail", Err: errors.New("typed")}}
-		sender := sessionMailboxSender{resolve: func(string, map[string]string) (session.Backend, string, error) {
-			return backend, "tmux", nil
+	for _, status := range []backend.PromptStatus{backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled, backend.PromptUnsupported, backend.PromptEndpointDead, backend.PromptBackendFailed} {
+		bk := mailboxPromptBackend{result: backend.PromptResult{Status: status, Detail: "detail", Err: errors.New("typed")}}
+		sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
+			return bk, "tmux", nil
 		}}
 		got := sender.Send("/home", map[string]string{"backend": "tmux", "window": "pane"}, "payload")
 		if got.Status != string(status) || got.Detail != "detail" || got.Err == nil {
@@ -32,7 +32,7 @@ func TestSessionMailboxSenderPreservesTypedPromptResult(t *testing.T) {
 }
 
 func TestSessionMailboxSenderRejectsBoundBackendMismatch(t *testing.T) {
-	sender := sessionMailboxSender{resolve: func(string, map[string]string) (session.Backend, string, error) {
+	sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
 		return mailboxPromptBackend{}, "herdr", nil
 	}}
 	got := sender.Send("/home", map[string]string{"backend": "tmux", "window": "pane"}, "payload")
@@ -42,7 +42,7 @@ func TestSessionMailboxSenderRejectsBoundBackendMismatch(t *testing.T) {
 }
 
 func TestSessionMailboxSenderRejectsHerdrOwnershipMismatch(t *testing.T) {
-	sender := sessionMailboxSender{resolve: func(string, map[string]string) (session.Backend, string, error) {
+	sender := sessionMailboxSender{resolve: func(string, map[string]string) (backend.Backend, string, error) {
 		return mailboxPromptBackend{}, "herdr", nil
 	}}
 	got := sender.Send("/home", map[string]string{"backend": "herdr", "window": "actual:tab", "herdr_session": "expected"}, "payload")

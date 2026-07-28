@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/hometag"
 )
 
 // ProtocolVersion identifies the watcher protocol format.
@@ -121,7 +121,7 @@ func NewIdentity(homeDir string) WatcherIdentity {
 	}
 	now := time.Now()
 	return WatcherIdentity{
-		Home:            hometag.Canonical(homeDir),
+		Home:            backend.Canonical(homeDir),
 		PID:             os.Getpid(),
 		ProcessStart:    processStart,
 		Executable:      executable,
@@ -212,7 +212,7 @@ func ValidatePIDOwnership(homeDir string, pid int) bool {
 	}
 	// Identity must bind to this home. Reject copied identity files and
 	// prevent ensure/stop from treating another home's watcher as local.
-	if id.Home == "" || hometag.Canonical(id.Home) != hometag.Canonical(homeDir) {
+	if id.Home == "" || backend.Canonical(id.Home) != backend.Canonical(homeDir) {
 		return false
 	}
 	if id.Executable == "" || id.Executable == "unknown" || id.ProcessStart == "" || id.ProcessStart == "unknown" {

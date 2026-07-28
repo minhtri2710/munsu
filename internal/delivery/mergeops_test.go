@@ -28,17 +28,17 @@ func TestMarkMerged_TransitionsToMerged(t *testing.T) {
 
 	// Write initial meta with review-ready state.
 	meta := map[string]string{
-		"kind":              "ship",
-		"delivery_state":    string(DeliveryStateReviewReady),
-		"pr_provider":       "github",
-		"pr_owner":          "testowner",
-		"pr_repo":           "testrepo",
-		"pr_number":         "42",
-		"pr_url":            "https://github.com/testowner/testrepo/pull/42",
-		"pr_base_ref":       "main",
-		"pr_head_ref":       "feature",
-		"pr_head_sha":       "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
-		"pr_timestamp":      "2024-01-01T00:00:00Z",
+		"kind":                 "ship",
+		"delivery_state":       string(DeliveryStateReviewReady),
+		"pr_provider":          "github",
+		"pr_owner":             "testowner",
+		"pr_repo":              "testrepo",
+		"pr_number":            "42",
+		"pr_url":               "https://github.com/testowner/testrepo/pull/42",
+		"pr_base_ref":          "main",
+		"pr_head_ref":          "feature",
+		"pr_head_sha":          "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+		"pr_timestamp":         "2024-01-01T00:00:00Z",
 		"pr_identity_revision": "1",
 	}
 	if err := task.WriteMeta(home, taskID, meta); err != nil {
@@ -78,16 +78,16 @@ func TestMarkMerged_Idempotent(t *testing.T) {
 
 	// Start with already-merged state.
 	meta := map[string]string{
-		"delivery_state":    string(DeliveryStateMerged),
-		"pr_provider":       "github",
-		"pr_owner":          "testowner",
-		"pr_repo":           "testrepo",
-		"pr_number":         "42",
-		"pr_url":            "https://github.com/testowner/testrepo/pull/42",
-		"pr_base_ref":       "main",
-		"pr_head_ref":       "feature",
-		"pr_head_sha":       "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
-		"pr_timestamp":      "2024-01-01T00:00:00Z",
+		"delivery_state":       string(DeliveryStateMerged),
+		"pr_provider":          "github",
+		"pr_owner":             "testowner",
+		"pr_repo":              "testrepo",
+		"pr_number":            "42",
+		"pr_url":               "https://github.com/testowner/testrepo/pull/42",
+		"pr_base_ref":          "main",
+		"pr_head_ref":          "feature",
+		"pr_head_sha":          "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+		"pr_timestamp":         "2024-01-01T00:00:00Z",
 		"pr_identity_revision": "5",
 	}
 	if err := task.WriteMeta(home, taskID, meta); err != nil {
@@ -157,16 +157,16 @@ func TestMarkMerged_CASFailOnIdentityMismatch(t *testing.T) {
 	taskID := "test-ship"
 
 	meta := map[string]string{
-		"delivery_state":    string(DeliveryStateReviewReady),
-		"pr_provider":       "github",
-		"pr_owner":          "testowner",
-		"pr_repo":           "testrepo",
-		"pr_number":         "42",
-		"pr_url":            "https://github.com/testowner/testrepo/pull/42",
-		"pr_base_ref":       "main",
-		"pr_head_ref":       "feature",
-		"pr_head_sha":       "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
-		"pr_timestamp":      "2024-01-01T00:00:00Z",
+		"delivery_state":       string(DeliveryStateReviewReady),
+		"pr_provider":          "github",
+		"pr_owner":             "testowner",
+		"pr_repo":              "testrepo",
+		"pr_number":            "42",
+		"pr_url":               "https://github.com/testowner/testrepo/pull/42",
+		"pr_base_ref":          "main",
+		"pr_head_ref":          "feature",
+		"pr_head_sha":          "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+		"pr_timestamp":         "2024-01-01T00:00:00Z",
 		"pr_identity_revision": "1",
 	}
 	if err := task.WriteMeta(home, taskID, meta); err != nil {
@@ -205,16 +205,16 @@ func TestMarkMergedFromRecord_Valid(t *testing.T) {
 
 	stateDir := filepath.Join(home, "state")
 	if err := task.WriteMeta(home, taskID, map[string]string{
-		"delivery_state":    string(DeliveryStateReviewReady),
-		"pr_provider":       "github",
-		"pr_owner":          "testowner",
-		"pr_repo":           "testrepo",
-		"pr_number":         "42",
-		"pr_url":            "https://github.com/testowner/testrepo/pull/42",
-		"pr_base_ref":       "main",
-		"pr_head_ref":       "feature",
-		"pr_head_sha":       "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
-		"pr_timestamp":      "2024-01-01T00:00:00Z",
+		"delivery_state": string(DeliveryStateReviewReady),
+		"pr_provider":    "github",
+		"pr_owner":       "testowner",
+		"pr_repo":        "testrepo",
+		"pr_number":      "42",
+		"pr_url":         "https://github.com/testowner/testrepo/pull/42",
+		"pr_base_ref":    "main",
+		"pr_head_ref":    "feature",
+		"pr_head_sha":    "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+		"pr_timestamp":   "2024-01-01T00:00:00Z",
 	}); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}

@@ -731,8 +731,8 @@ func TestReadParentPID(t *testing.T) {
 // session init.
 func TestSessionStartNudgeAlwaysExitsZero(t *testing.T) {
 	type testCase struct {
-		name   string
-		setup  func(tmpDir string)
+		name  string
+		setup func(tmpDir string)
 	}
 
 	tests := []testCase{

@@ -48,7 +48,7 @@ func MarkMerged(homeDir, taskID string, expected *DeliveryIdentity) error {
 
 	// Build updates.
 	updates := map[string]string{
-		MetaDeliveryState: string(DeliveryStateMerged),
+		MetaDeliveryState:    string(DeliveryStateMerged),
 		MetaIdentityRevision: incrementRevision(meta[MetaIdentityRevision]),
 	}
 
