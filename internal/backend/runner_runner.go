@@ -2,7 +2,7 @@
 // result and error taxonomy. The Runner interface allows callers to
 // execute external commands and receive structured results, enabling
 // hermetic testing through mock implementations.
-package runner
+package backend
 
 import (
 	"bytes"
