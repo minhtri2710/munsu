@@ -1,6 +1,6 @@
 //go:build windows
 
-package orchestrator
+package home
 
 import (
 	"errors"
@@ -12,7 +12,7 @@ import (
 
 var errLockUnavailable = errors.New("Windows file locking unavailable")
 
-func lockExclusive(file *os.File, nonblock bool) error {
+func lockWatcherFile(file *os.File, nonblock bool) error {
 	overlapped := new(windows.Overlapped)
 	flags := uint32(0)
 	if nonblock {
@@ -29,7 +29,7 @@ func lockExclusive(file *os.File, nonblock bool) error {
 	return nil
 }
 
-func unlockFile(file *os.File) error {
+func unlockWatcherFile(file *os.File) error {
 	ret, _, callErr := windows.NewLazySystemDLL("kernel32.dll").NewProc("UnlockFileEx").Call(
 		uintptr(file.Fd()), 0, ^uintptr(0), ^uintptr(0), 0)
 	if ret == 0 {
