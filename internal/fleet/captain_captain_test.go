@@ -1179,7 +1179,7 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := "- munsu - /Users/beowulf/Work/munsu (added 2026-07-16)\n"
-	if err := os.WriteFile(CaptainRegistryPath(parent), []byte(reg), 0644); err != nil {
+	if err := os.WriteFile(RegistryPath(parent), []byte(reg), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1191,7 +1191,7 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(sm, "config", "soldier-harness")); err != nil {
 		t.Fatalf("seed did not inherit soldier-harness: %v", err)
 	}
-	got, err := os.ReadFile(CaptainRegistryPath(sm))
+	got, err := os.ReadFile(RegistryPath(sm))
 	if err != nil {
 		t.Fatalf("seed did not inherit projects.md: %v", err)
 	}
