@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -135,14 +134,14 @@ func newSendCmd() *cobra.Command {
 
 			if isCaptain {
 				// Mailbox Store/Receiver flow for captain targets.
-				smID := captain.CaptainIDFromTask(id, meta)
+				smID := fleet.CaptainIDFromTask(id, meta)
 				captainHome := meta["home"]
 				if captainHome == "" {
 					return fmt.Errorf("captain %s has no home in meta", smID)
 				}
-				sm := captain.Info{ID: smID, Home: captainHome}
+				sm := fleet.Info{ID: smID, Home: captainHome}
 
-				result := captain.SendMailboxToCaptain(sm, ctx.Home, line, newSessionMailboxSender())
+				result := fleet.SendMailboxToCaptain(sm, ctx.Home, line, newSessionMailboxSender())
 				if result.Err != nil {
 					return fmt.Errorf("captain %s: %w", smID, result.Err)
 				}
@@ -169,7 +168,7 @@ func newSendCmd() *cobra.Command {
 				senderIdentity = filepath.Base(ctx.Home)
 			}
 
-			sendResult := captain.SendToSoldier(ctx.Home, id, senderIdentity, line, newSessionSoldierEndpoints())
+			sendResult := fleet.SendToSoldier(ctx.Home, id, senderIdentity, line, newSessionSoldierEndpoints())
 			if sendResult.Err != nil {
 				return fmt.Errorf("soldier %s: %w", id, sendResult.Err)
 			}
@@ -412,7 +411,7 @@ Calling when the soldier is busy returns with "still busy".
 				senderIdentity = filepath.Base(ctx.Home)
 			}
 
-			result := captain.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity, newSessionSoldierEndpoints())
+			result := fleet.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity, newSessionSoldierEndpoints())
 			if result.Err != nil {
 				return fmt.Errorf("soldier %s flush: %w", id, result.Err)
 			}

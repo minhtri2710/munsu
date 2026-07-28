@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/minhtri2710/munsu/internal/captain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -48,13 +48,13 @@ Flags:
 			}
 			metaGeneration := meta["generation"]
 
-			flushed, err := captain.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration, newSessionSoldierEndpoints())
+			flushed, err := fleet.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration, newSessionSoldierEndpoints())
 			if err != nil {
 				return fmt.Errorf("consume-ready: %w", err)
 			}
 
 			// Also reconcile soldier pending (remove matched acks).
-			if recErr := captain.ReconcileSoldierPending(ctx.Home, senderIdentity); recErr != nil {
+			if recErr := fleet.ReconcileSoldierPending(ctx.Home, senderIdentity); recErr != nil {
 				fmt.Fprintf(os.Stderr, "consume-ready: reconcile warning: %v\n", recErr)
 			}
 

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -119,7 +118,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		soldiers = append(soldiers, row)
 	}
 	// Collect captain entries with home-summary + parent return-channel status.
-	matedata, err := captain.List(ctx.Home)
+	matedata, err := fleet.ListCaptains(ctx.Home)
 	var captains []CaptainEntry
 	if err == nil {
 		for _, m := range matedata {

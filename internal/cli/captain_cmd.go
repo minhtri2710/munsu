@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/captain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
 
@@ -35,9 +35,9 @@ Flags for worktree provisioning:
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if seedRepo != "" {
-				return captain.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "", seedForce, seedRef)
+				return fleet.SeedFromWorktree(args[0], args[1], seedRepo, ctx.Home, "", seedForce, seedRef)
 			}
-			return captain.SeedWithParent(args[0], args[1], ctx.Home, "")
+			return fleet.SeedWithParent(args[0], args[1], ctx.Home, "")
 		}),
 	}
 	seedCmd.Flags().StringVar(&seedRepo, "repo", "", "Path to the project git repo for managed worktree captain home")
@@ -50,7 +50,7 @@ Flags for worktree provisioning:
 		Short: "Launch a captain in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return captain.Launch(args[0], ctx.Home, newSessionLaunchEndpoint())
+			return fleet.Launch(args[0], ctx.Home, newSessionLaunchEndpoint())
 		}),
 	})
 
@@ -61,7 +61,7 @@ Flags for worktree provisioning:
 		Long:  "Retire tears down the captain endpoint, clears parent meta, and unregisters from data/captains.md. Refuses while the captain home has in-flight soldiers (kind ship|scout) unless --force.",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return captain.Retire(args[0], ctx.Home, false, retireForce, newSessionRetireEndpoint())
+			return fleet.Retire(args[0], ctx.Home, false, retireForce, newSessionRetireEndpoint())
 		}),
 	}
 	retireCmd.Flags().BoolVar(&retireForce, "force", false, "Retire even if captain home has in-flight soldiers")
@@ -71,14 +71,14 @@ Flags for worktree provisioning:
 		Use:   "list",
 		Short: "List registered captains",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			mates, err := captain.List(ctx.Home)
+			mates, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
 				return err
 			}
 			if len(mates) == 0 {
 				return writeContract(cmd, Response[EmptyResult]{
 					SchemaVersion: SchemaVersion,
-					Kind:          "captain.list",
+					Kind:          "fleet.list",
 					Status:        "success",
 					Data:          EmptyResult{Count: 0, Context: "No captains registered."},
 				})
@@ -89,7 +89,7 @@ Flags for worktree provisioning:
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
-				Kind:          "captain.list",
+				Kind:          "fleet.list",
 				Status:        "success",
 				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
@@ -101,11 +101,11 @@ Flags for worktree provisioning:
 	cmd.AddCommand(&cobra.Command{
 		Use:   "handoff <captain-home> <item-key...>",
 		Short: "Hand off backlog items to a captain",
-		Long: `Hand off queued backlog items from the parent home to a captain.
+		Long: `Hand off queued backlog items from the parent home to a fleet.
 All keys must be in queued state. Uses tasks-axi mv atomically.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return captain.Handoff(ctx.Home, args[0], args[1:])
+			return fleet.Handoff(ctx.Home, args[0], args[1:])
 		}),
 	})
 
@@ -120,18 +120,18 @@ sends a NotificationRef through the AgentPrompt seam. The requirement
 is retried on the next converge cycle on failure.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			res, err := captain.ConfigPushWithResult(ctx.Home, args[0])
+			res, err := fleet.ConfigPushWithResult(ctx.Home, args[0])
 			if err != nil {
 				return err
 			}
 			if res.Changed {
 				fmt.Printf("inherited config changed: generation=%d\n", res.Generation)
 				// Legacy reconciliation before creating new requirement.
-				if legErr := captain.ReconcileLegacyConfigReread(ctx.Home, args[0], newSessionMailboxSender()); legErr != nil {
+				if legErr := fleet.ReconcileLegacyConfigReread(ctx.Home, args[0], newSessionMailboxSender()); legErr != nil {
 					fmt.Printf("  note: legacy config-reread reconciliation: %v\n", legErr)
 				}
 				// Create canonical mailbox config-reread requirement.
-				if err := captain.EnsureConfigRereadRequirement(ctx.Home, args[0], res.Generation, res.NewDigest, newSessionMailboxSender()); err != nil {
+				if err := fleet.EnsureConfigRereadRequirement(ctx.Home, args[0], res.Generation, res.NewDigest, newSessionMailboxSender()); err != nil {
 					fmt.Printf("  note: config-reread notification deferred: %v\n", err)
 				} else {
 					fmt.Printf("  sent config-reread gen=%d notification\n", res.Generation)
@@ -148,7 +148,7 @@ is retried on the next converge cycle on failure.`,
 		Short: "Validate a captain home structure and provenance",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if err := captain.Validate(args[0], ctx.Home); err != nil {
+			if err := fleet.Validate(args[0], ctx.Home); err != nil {
 				return fmt.Errorf("validation failed: %w", err)
 			}
 			fmt.Println("valid")
@@ -172,9 +172,9 @@ the old home is backed up at <home-path>.backup-<timestamp>.`,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if migrateRepo != "" {
-				return captain.MigrateToWorktree(args[0], migrateRepo, args[1], ctx.Home)
+				return fleet.MigrateToWorktree(args[0], migrateRepo, args[1], ctx.Home)
 			}
-			return captain.Migrate(args[0], args[1])
+			return fleet.Migrate(args[0], args[1])
 		}),
 	}
 	migrateCmd.Flags().StringVar(&migrateRepo, "repo", "", "Path to the project git repo for managed worktree migration")
@@ -189,9 +189,9 @@ wrong-remote, wrong-branch, or invalid-provenance.
 State-only homes (no git worktree) return state-only-skipped rather than failing.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			res := captain.Update(args[0], ctx.Home)
+			res := fleet.Update(args[0], ctx.Home)
 			fmt.Printf("outcome: %s\n", res.Outcome)
-			if res.Outcome == captain.FastForwarded {
+			if res.Outcome == fleet.FastForwarded {
 				fmt.Printf("  %s → %s\n", res.Before[:8], res.After[:8])
 			}
 			if res.Err != nil {
@@ -212,11 +212,11 @@ State-only homes (no git worktree) return state-only-skipped rather than failing
 retry pending nudges, safe local fast-forward, inheritance push, liveness check, and instruction
 surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			registered, err := captain.List(ctx.Home)
+			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := captain.Converge(ctx.Home, registered, captain.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
@@ -238,11 +238,11 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			registered, err := captain.List(ctx.Home)
+			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			var target *captain.Info
+			var target *fleet.Info
 			for _, m := range registered {
 				if m.ID == args[0] {
 					m2 := m
@@ -253,7 +253,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if target == nil {
 				return fmt.Errorf("no registered captain with id %q", args[0])
 			}
-			tx := &captain.RecoverTransaction{Capabilities: captain.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()}}
+			tx := &fleet.RecoverTransaction{Capabilities: fleet.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()}}
 			res := tx.Recover(ctx.Home, *target)
 			fmt.Println(res.StepsString())
 			return nil
@@ -267,11 +267,11 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 // captainLivenessForSession backs the session-start Captain Liveness section. It always
 // probes; when recover is true it also relaunches launched-but-dead endpoints.
 func captainLivenessForSession(home string, recover bool) bootstrap.CaptainLivenessResult {
-	registered, err := captain.List(home)
+	registered, err := fleet.ListCaptains(home)
 	if err != nil {
 		return bootstrap.CaptainLivenessResult{}
 	}
-	probes := captain.ProbeLiveness(home, registered, newSessionProbeEndpoint())
+	probes := fleet.ProbeLiveness(home, registered, newSessionProbeEndpoint())
 	res := bootstrap.CaptainLivenessResult{Probes: make([]bootstrap.CaptainProbe, 0, len(probes))}
 	for _, p := range probes {
 		res.Probes = append(res.Probes, bootstrap.CaptainProbe{ID: p.ID, Home: p.Home, Status: p.Status})
@@ -282,7 +282,7 @@ func captainLivenessForSession(home string, recover bool) bootstrap.CaptainLiven
 	if !recover {
 		return res
 	}
-	rr, _ := captain.Recover(home, registered, captain.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+	rr, _ := fleet.Recover(home, registered, fleet.RecoverCapabilities{Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 	if rr != nil {
 		res.Recover = &bootstrap.CaptainRecoverSummary{
 			Relaunched: rr.Relaunched,
@@ -298,15 +298,15 @@ func captainLivenessForSession(home string, recover bool) bootstrap.CaptainLiven
 }
 
 // captainRecoverEntryLine renders one RecoverEntry as a single summary line.
-func captainRecoverEntryLine(e captain.RecoverEntry) string {
+func captainRecoverEntryLine(e fleet.RecoverEntry) string {
 	switch e.Outcome {
-	case captain.RecoverAlive:
+	case fleet.RecoverAlive:
 		return e.ID + ": alive"
-	case captain.RecoverSeeded:
+	case fleet.RecoverSeeded:
 		return e.ID + ": seeded (not launched)"
-	case captain.RecoverRelaunched:
+	case fleet.RecoverRelaunched:
 		return e.ID + ": relaunched"
-	case captain.RecoverFailed:
+	case fleet.RecoverFailed:
 		return e.ID + ": FAILED: " + e.Error
 	}
 	return e.ID + ": " + string(e.Outcome)

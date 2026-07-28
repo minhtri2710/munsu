@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -159,13 +158,13 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				meta, metaErr := home.ReadMeta(homeDir, taskID)
 				if metaErr == nil {
 					metaGeneration := meta["generation"]
-					captain.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
+					fleet.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
 
 					senderIdentity, _, _ := orchestrator.ReadHomeIdentity(homeDir)
 					if senderIdentity == "" {
 						senderIdentity = filepath.Base(homeDir)
 					}
-					if fr := captain.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity, newSessionSoldierEndpoints()); fr.Err != nil {
+					if fr := fleet.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity, newSessionSoldierEndpoints()); fr.Err != nil {
 						fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
 					}
 				}

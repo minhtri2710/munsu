@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/minhtri2710/munsu/internal/captain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -57,7 +57,7 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 
 			// Emit the durable ready event marker.
 			// The ready marker is written atomically (temp-file + rename).
-			readyEvent, err := captain.EmitReadyEvent(homeDir, taskID, eventID, metaGeneration)
+			readyEvent, err := fleet.EmitReadyEvent(homeDir, taskID, eventID, metaGeneration)
 			if err != nil {
 				return fmt.Errorf("ready: emit: %w", err)
 			}

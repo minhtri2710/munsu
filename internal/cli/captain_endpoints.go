@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/captain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 type sessionLaunchEndpoint struct {
@@ -15,21 +15,21 @@ type sessionLaunchEndpoint struct {
 func newSessionLaunchEndpoint() sessionLaunchEndpoint {
 	return sessionLaunchEndpoint{resolve: backend.Resolve}
 }
-func (e sessionLaunchEndpoint) Launch(home string, req captain.LaunchRequest) (captain.LaunchResult, error) {
+func (e sessionLaunchEndpoint) Launch(home string, req fleet.LaunchRequest) (fleet.LaunchResult, error) {
 	bk, name, err := e.resolve(home, "")
 	if err != nil {
-		return captain.LaunchResult{}, err
+		return fleet.LaunchResult{}, err
 	}
 	if herdr, ok := bk.(*backend.HerdrBackend); ok {
 		herdr.Cwd = req.WorkingDir
 	}
 	window, err := bk.NewWindow(backend.WorkspaceTag(req.WorkingDir), req.WindowName)
 	if err != nil {
-		return captain.LaunchResult{}, err
+		return fleet.LaunchResult{}, err
 	}
 	if err := bk.SendKeys(window, req.Command); err != nil {
 		_ = bk.Teardown(window)
-		return captain.LaunchResult{}, err
+		return fleet.LaunchResult{}, err
 	}
 	meta := map[string]string{}
 	if extras, ok := bk.(backend.BackendMetaExtras); ok {
@@ -37,9 +37,9 @@ func (e sessionLaunchEndpoint) Launch(home string, req captain.LaunchRequest) (c
 			meta[k] = v
 		}
 	}
-	return captain.LaunchResult{Backend: name, Window: window, Meta: meta}, nil
+	return fleet.LaunchResult{Backend: name, Window: window, Meta: meta}, nil
 }
-func (e sessionLaunchEndpoint) Cleanup(home string, result captain.LaunchResult) error {
+func (e sessionLaunchEndpoint) Cleanup(home string, result fleet.LaunchResult) error {
 	bk, _, err := e.resolve(home, "")
 	if err != nil {
 		return err
@@ -72,22 +72,22 @@ func ownedCaptainBackend(home string, meta map[string]string, resolve func(strin
 	return bk, nil
 }
 
-func probeCaptainBackend(bk backend.Backend, window string) (captain.ProbeResult, error) {
+func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeResult, error) {
 	if aware, ok := bk.(backend.AgentAwareBackend); ok {
 		pane, agent, err := aware.CheckAgentAlive(window)
 		if errors.Is(err, backend.ErrPaneNotFound) {
-			return captain.ProbeResult{}, nil
+			return fleet.CaptainProbeResult{}, nil
 		}
-		return captain.ProbeResult{PaneAlive: pane, AgentAlive: agent}, err
+		return fleet.CaptainProbeResult{PaneAlive: pane, AgentAlive: agent}, err
 	}
 	alive := bk.Alive(window)
-	return captain.ProbeResult{PaneAlive: alive, AgentAlive: alive}, nil
+	return fleet.CaptainProbeResult{PaneAlive: alive, AgentAlive: alive}, nil
 }
 
-func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (captain.ProbeResult, error) {
+func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (fleet.CaptainProbeResult, error) {
 	bk, err := ownedCaptainBackend(home, meta, e.resolve)
 	if err != nil {
-		return captain.ProbeResult{}, err
+		return fleet.CaptainProbeResult{}, err
 	}
 	return probeCaptainBackend(bk, meta["window"])
 }
@@ -100,20 +100,20 @@ func newSessionNudgeEndpoint() sessionNudgeEndpoint {
 	return sessionNudgeEndpoint{resolve: backend.BackendForTask}
 }
 
-func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload string) (captain.NudgeResult, error) {
+func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload string) (fleet.NudgeResult, error) {
 	bk, err := ownedCaptainBackend(home, meta, e.resolve)
 	if err != nil {
-		return captain.NudgeResult{}, err
+		return fleet.NudgeResult{}, err
 	}
 	result, err := probeCaptainBackend(bk, meta["window"])
 	if err != nil {
-		return captain.NudgeResult{}, err
+		return fleet.NudgeResult{}, err
 	}
 	if !result.PaneAlive || !result.AgentAlive {
-		return captain.NudgeResult{Status: "unavailable"}, nil
+		return fleet.NudgeResult{Status: "unavailable"}, nil
 	}
 	prompt := backend.SubmitPrompt(bk, meta["window"], payload)
-	return captain.NudgeResult{Status: string(prompt.Status), Detail: prompt.Detail, Acknowledged: prompt.Acknowledged()}, prompt.Err
+	return fleet.NudgeResult{Status: string(prompt.Status), Detail: prompt.Detail, Acknowledged: prompt.Acknowledged()}, prompt.Err
 }
 
 type sessionRetireEndpoint struct {

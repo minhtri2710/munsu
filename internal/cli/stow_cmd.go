@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
@@ -167,7 +166,7 @@ Install root resolution (in order):
 			}
 
 			// Only reachable if self-update succeeded.
-			registered, err := captain.List(ctx.Home)
+			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
@@ -176,7 +175,7 @@ Install root resolution (in order):
 				return nil
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Fast-forwarding captains and nudging...")
-			result, convergeErr := captain.Converge(ctx.Home, registered, captain.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %-50s %s\n", step.Name+":", step.Status)
