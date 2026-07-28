@@ -1,4 +1,4 @@
-package agentsmd
+package cli
 
 import (
 	"os"

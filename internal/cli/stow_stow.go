@@ -1,5 +1,5 @@
 // Package stow provides knowledge-sweep functionality.
-package stow
+package cli
 
 import (
 	"bufio"

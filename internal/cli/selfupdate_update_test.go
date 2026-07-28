@@ -1,4 +1,4 @@
-package selfupdate
+package cli
 
 import (
 	"errors"

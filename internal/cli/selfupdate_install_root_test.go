@@ -1,5 +1,5 @@
 // Package selfupdate tests for install root resolution.
-package selfupdate
+package cli
 
 import (
 	"os"
@@ -20,16 +20,16 @@ func initMunsuRepo(t *testing.T, root, branch string) {
 	if branch == "" {
 		branch = "main"
 	}
-	runCmd(t, root, "git", "init", "--initial-branch="+branch)
-	runCmd(t, root, "git", "config", "user.email", "test@munsu")
-	runCmd(t, root, "git", "config", "user.name", "test")
+	runInstallRootCmd(t, root, "git", "init", "--initial-branch="+branch)
+	runInstallRootCmd(t, root, "git", "config", "user.email", "test@munsu")
+	runInstallRootCmd(t, root, "git", "config", "user.name", "test")
 	writeFile(t, root, "go.mod", "module github.com/minhtri2710/munsu\n\ngo 1.26\n")
-	runCmd(t, root, "git", "add", "go.mod")
-	runCmd(t, root, "git", "commit", "-m", "initial")
+	runInstallRootCmd(t, root, "git", "add", "go.mod")
+	runInstallRootCmd(t, root, "git", "commit", "-m", "initial")
 }
 
 // runCmd runs a command in root and fails the test on error.
-func runCmd(t *testing.T, root, name string, args ...string) {
+func runInstallRootCmd(t *testing.T, root, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = root
@@ -59,10 +59,10 @@ func mkDir(t *testing.T, root, name string) {
 func initRemote(t *testing.T, localRoot string) string {
 	t.Helper()
 	bare := t.TempDir()
-	runCmd(t, bare, "git", "init", "--bare")
-	runCmd(t, localRoot, "git", "remote", "add", "origin", bare)
-	runCmd(t, localRoot, "git", "push", "-u", "origin", "main")
-	runCmd(t, bare, "git", "symbolic-ref", "HEAD", "refs/heads/main")
+	runInstallRootCmd(t, bare, "git", "init", "--bare")
+	runInstallRootCmd(t, localRoot, "git", "remote", "add", "origin", bare)
+	runInstallRootCmd(t, localRoot, "git", "push", "-u", "origin", "main")
+	runInstallRootCmd(t, bare, "git", "symbolic-ref", "HEAD", "refs/heads/main")
 	return bare
 }
 
@@ -99,7 +99,7 @@ func TestResolveInstallRoot_Tier1_RepoOpt_InvalidFailClosed(t *testing.T) {
 
 	// Create a non-munsu git repo (git init with no go.mod).
 	otherRepo := t.TempDir()
-	runCmd(t, otherRepo, "git", "init")
+	runInstallRootCmd(t, otherRepo, "git", "init")
 
 	_, err := ResolveInstallRoot("", otherRepo)
 	if err == nil {
@@ -169,7 +169,7 @@ func TestResolveInstallRoot_Tier3_Persisted(t *testing.T) {
 // path pointing to a non-munsu repo fails closed.
 func TestResolveInstallRoot_Tier3_Persisted_Invalid(t *testing.T) {
 	otherRepo := t.TempDir()
-	runCmd(t, otherRepo, "git", "init")
+	runInstallRootCmd(t, otherRepo, "git", "init")
 
 	home := t.TempDir()
 	mkDir(t, home, "config")
@@ -312,7 +312,7 @@ func TestPersistInstallRoot(t *testing.T) {
 // TestPersistInstallRoot_NonMunsu verifies that non-munsu path is rejected.
 func TestPersistInstallRoot_NonMunsu(t *testing.T) {
 	otherRepo := t.TempDir()
-	runCmd(t, otherRepo, "git", "init")
+	runInstallRootCmd(t, otherRepo, "git", "init")
 
 	home := t.TempDir()
 
@@ -360,8 +360,8 @@ func TestUpdateIn_DirtyRefuses(t *testing.T) {
 
 	// Write a tracked file and commit it, then modify without staging.
 	writeFile(t, repo, "foo.go", "package foo\n")
-	runCmd(t, repo, "git", "add", "foo.go")
-	runCmd(t, repo, "git", "commit", "-m", "add foo")
+	runInstallRootCmd(t, repo, "git", "add", "foo.go")
+	runInstallRootCmd(t, repo, "git", "commit", "-m", "add foo")
 	writeFile(t, repo, "foo.go", "package foo\n// dirty\n")
 
 	err := UpdateIn(repo)
@@ -379,13 +379,13 @@ func TestUpdateIn_DetachedHeadRefuses(t *testing.T) {
 	initMunsuRepo(t, repo, "main")
 
 	writeFile(t, repo, "a.go", "package a\n")
-	runCmd(t, repo, "git", "add", "a.go")
-	runCmd(t, repo, "git", "commit", "-m", "add a")
+	runInstallRootCmd(t, repo, "git", "add", "a.go")
+	runInstallRootCmd(t, repo, "git", "commit", "-m", "add a")
 
 	// Add remote so UpdateIn can reach the detached-HEAD checks.
 	initRemote(t, repo)
 
-	runCmd(t, repo, "git", "checkout", "--detach")
+	runInstallRootCmd(t, repo, "git", "checkout", "--detach")
 
 	err := UpdateIn(repo)
 	if err == nil {
@@ -405,8 +405,8 @@ func TestUpdateIn_NonDefaultBranchRefuses(t *testing.T) {
 	// Add remote so UpdateIn can resolve default branch.
 	initRemote(t, repo)
 
-	runCmd(t, repo, "git", "branch", "develop", "main")
-	runCmd(t, repo, "git", "checkout", "develop")
+	runInstallRootCmd(t, repo, "git", "branch", "develop", "main")
+	runInstallRootCmd(t, repo, "git", "checkout", "develop")
 
 	err := UpdateIn(repo)
 	if err == nil {

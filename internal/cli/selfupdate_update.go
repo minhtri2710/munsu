@@ -1,5 +1,5 @@
 // Package selfupdate provides fast-forward-only self-update for munsu.
-package selfupdate
+package cli
 
 import (
 	"fmt"

@@ -5,12 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/agentsmd"
 	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/selfupdate"
-	"github.com/minhtri2710/munsu/internal/stow"
 	"github.com/spf13/cobra"
 )
 
@@ -39,13 +36,13 @@ Examples:
 		Args: MinimumNArgs(0),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if captain {
-				kind = stow.KindGeneral
+				kind = KindGeneral
 			}
 			if kind == "" {
-				kind = stow.KindLearning
+				kind = KindLearning
 			}
 
-			res, err := stow.RunKinded(ctx.Home, kind, args)
+			res, err := RunKinded(ctx.Home, kind, args)
 			if err != nil {
 				return err
 			}
@@ -105,7 +102,7 @@ or an absolute path to a project directory.`,
 				projectDir = resolved
 			}
 
-			res, err := agentsmd.Ensure(projectDir, false)
+			res, err := Ensure(projectDir, false)
 			if err != nil {
 				return err
 			}
@@ -120,7 +117,7 @@ or an absolute path to a project directory.`,
 			}
 			return writeContract(cmd, contract.Response[contract.MessageResult]{
 				SchemaVersion: contract.SchemaVersion,
-				Kind:          "stow.ensure-agents-md",
+				Kind:          "ensure-agents-md",
 				Status:        "success",
 				Data:          contract.MessageResult{Message: msg.String()},
 			})
@@ -153,7 +150,7 @@ Install root resolution (in order):
   Binary ancestry        when the munsu binary is inside a git checkout
   Current working directory         when inside a matching munsu checkout`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			snap, err := selfupdate.UpdateWithHandshakeEx(ctx.Home, repoOpt)
+			snap, err := UpdateWithHandshakeEx(ctx.Home, repoOpt)
 			if err != nil {
 				// Self-update failed: captains are NOT touched.
 				return err

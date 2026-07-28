@@ -1,5 +1,5 @@
 // Package agentsmd provides project AGENTS.md management.
-package agentsmd
+package cli
 
 import (
 	"fmt"
@@ -40,7 +40,7 @@ func Ensure(projectDir string, stage bool) (*EnsureResult, error) {
 	if !hasFile {
 		content += selfGov
 		res.SelfGovernSec = true
-	} else if !contains(content, "## Maintaining this file") {
+	} else if !agentsMDContains(content, "## Maintaining this file") {
 		content += "\n" + selfGov
 		res.SelfGovernSec = true
 	}
@@ -91,7 +91,7 @@ func ensureSymlink(projectDir, agentsPath string) error {
 	return nil
 }
 
-func contains(s, sub string) bool {
+func agentsMDContains(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {
 			return true
