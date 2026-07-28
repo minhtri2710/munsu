@@ -44,6 +44,9 @@ func TestPackageTopology(t *testing.T) {
 			if strings.HasPrefix(imp, root) && !allowed[strings.TrimPrefix(imp, root)] {
 				t.Errorf("%s imports package outside final topology: %s", path, imp)
 			}
+			if path == root+"fleet" && imp == root+"orchestrator" {
+				t.Errorf("fleet imports orchestrator")
+			}
 			if path == root+"orchestrator" && imp == root+"fleet" {
 				t.Errorf("orchestrator imports fleet")
 			}
