@@ -575,13 +575,11 @@ func TestSafetyCheck_UsesScopeClassify(t *testing.T) {
 
 // Test CheckPiCapability rejects malformed versions
 func TestCheckPiCapability_RejectsMalformedVersion(t *testing.T) {
-	// Create a script that returns a malformed version
-	scriptDir := t.TempDir()
-	scriptPath := filepath.Join(scriptDir, "pi")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho 'not-a-valid-semver'\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	err := CheckPiCapability(scriptPath)
+	previous := SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
+		return "not-a-valid-semver\n", nil
+	})
+	defer SetCapabilityCommandRunner(previous)
+	err := CheckPiCapability("/fake/pi")
 	if err == nil {
 		t.Fatal("CheckPiCapability must reject malformed non-semver version")
 	}
@@ -591,12 +589,11 @@ func TestCheckPiCapability_RejectsMalformedVersion(t *testing.T) {
 
 // Test CheckPiCapability rejects old 0.x versions
 func TestCheckPiCapability_RejectsOldVersion(t *testing.T) {
-	scriptDir := t.TempDir()
-	scriptPath := filepath.Join(scriptDir, "pi")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho '0.1.0'\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	err := CheckPiCapability(scriptPath)
+	previous := SetCapabilityCommandRunner(func(string, []string, string, time.Duration) (string, error) {
+		return "0.1.0\n", nil
+	})
+	defer SetCapabilityCommandRunner(previous)
+	err := CheckPiCapability("/fake/pi")
 	if err == nil {
 		t.Fatal("CheckPiCapability must reject old version 0.1.0 < minimum " + PiMinimumVersion)
 	}
