@@ -14,7 +14,7 @@ type listedPackage struct {
 	Imports    []string
 }
 
-func TestTransitionalPackagePolicy(t *testing.T) {
+func TestPackageTopology(t *testing.T) {
 	cmd := exec.Command("go", "list", "-json", "./...")
 	cmd.Dir = "../.."
 	out, err := cmd.Output()
@@ -35,14 +35,14 @@ func TestTransitionalPackagePolicy(t *testing.T) {
 		packages[p.ImportPath] = p
 	}
 	const root = "github.com/minhtri2710/munsu/internal/"
-	retired := map[string]bool{"session": true, "worktree": true, "hometag": true, "ghurl": true, "glurl": true, "composer": true, "nostatus": true, "event": true, "mailbox": true, "uplink": true, "wakedelivery": true, "waker": true, "turnend": true, "afk": true, "backlog": true, "project": true, "scope": true, "delivery": true, "supervision": true, "teardown": true, "decisionhold": true, "brief": true, "soldier": true, "soldierstate": true, "capability": true, "runner": true, "herdrprune": true, "agentsmd": true, "stow": true, "selfupdate": true, "contract": true, "marker": true, "integrate": true, "classify": true, "lifecycle": true}
+	allowed := map[string]bool{"domain": true, "backend": true, "orchestrator": true, "fleet": true, "config": true, "home": true, "harness": true, "bootstrap": true, "testutil": true, "cli": true}
 	for path, p := range packages {
+		if strings.HasPrefix(path, root) && !allowed[strings.TrimPrefix(path, root)] {
+			t.Errorf("unexpected internal package %s", path)
+		}
 		for _, imp := range p.Imports {
-			if retired[strings.TrimPrefix(imp, root)] && strings.HasPrefix(imp, root) {
-				t.Errorf("%s imports retired package %s", path, imp)
-			}
-			if path == root+"fleet" && imp == root+"orchestrator" {
-				t.Errorf("fleet imports orchestrator")
+			if strings.HasPrefix(imp, root) && !allowed[strings.TrimPrefix(imp, root)] {
+				t.Errorf("%s imports package outside final topology: %s", path, imp)
 			}
 			if path == root+"orchestrator" && imp == root+"fleet" {
 				t.Errorf("orchestrator imports fleet")
@@ -53,19 +53,9 @@ func TestTransitionalPackagePolicy(t *testing.T) {
 		}
 	}
 
-	// Workflow packages must not directly import concrete backend/session
-	// infrastructure. Transitive dependencies through other packages are
-	// expected; only direct imports violate the composition root.
-	backendFree := map[string]bool{"captain": true, "teardown": true, "supervision": true}
-	for _, p := range packages {
-		pkg := strings.TrimPrefix(p.ImportPath, root)
-		if !backendFree[pkg] || !strings.HasPrefix(p.ImportPath, root) {
-			continue
-		}
-		for _, imp := range p.Imports {
-			if imp == root+"backend" {
-				t.Errorf("%s directly imports backend; concrete backend belongs at the composition root", p.ImportPath)
-			}
+	for pkg := range allowed {
+		if _, ok := packages[root+pkg]; !ok {
+			t.Errorf("missing required internal package %s", pkg)
 		}
 	}
 }
