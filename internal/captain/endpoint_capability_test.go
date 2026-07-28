@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/task"
 )
 
@@ -123,6 +124,9 @@ func TestRetireSuccessInvokesEndpointBeforeCleanup(t *testing.T) {
 
 func TestLaunchEndpointFailureWritesNoMetadata(t *testing.T) {
 	parent := t.TempDir()
+	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
+		t.Fatal(err)
+	}
 	home := seedCaptainForTest(t, parent, "failed-launch")
 	endpoint := failingLaunchEndpoint{err: errors.New("launch failed")}
 	err := Launch(home, parent, endpoint)
