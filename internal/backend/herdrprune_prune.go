@@ -1,6 +1,6 @@
 // Package herdrprune implements the operator prune command for munsu-created
 // herdr workspaces that have zero live tabs.
-package herdrprune
+package backend
 
 import (
 	"encoding/json"
@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/minhtri2710/munsu/internal/backend"
 )
 
 // PruneOptions controls the prune operation.
@@ -41,14 +39,14 @@ type PruneResult struct {
 	Workspaces []PruneWorkspace `json:"workspaces"`
 }
 
-// herdrWorkspaceListResponse matches the herdr CLI JSON output for workspace list.
-type herdrWorkspaceListResponse struct {
+// pruneWorkspaceListResponse matches the herdr CLI JSON output for workspace list.
+type pruneWorkspaceListResponse struct {
 	Result struct {
-		Workspaces []herdrWorkspaceEntry `json:"workspaces"`
+		Workspaces []pruneWorkspaceEntry `json:"workspaces"`
 	} `json:"result"`
 }
 
-type herdrWorkspaceEntry struct {
+type pruneWorkspaceEntry struct {
 	WorkspaceID string `json:"workspace_id"`
 	Label       string `json:"label"`
 	TabCount    int    `json:"tab_count"`
@@ -154,11 +152,11 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	}
 
 	// Step 1: Labels owned by this home (primary tag and WorkspaceTag for captains).
-	primaryTag := backend.Hometag(opts.HomeDir)
-	ownedLabels := map[string]bool{primaryTag: true, backend.WorkspaceTag(opts.HomeDir): true}
+	primaryTag := Hometag(opts.HomeDir)
+	ownedLabels := map[string]bool{primaryTag: true, WorkspaceTag(opts.HomeDir): true}
 	// When pruning from the general home, also own registered captain workspace labels.
 	for _, smHome := range listCaptainHomes(opts.HomeDir) {
-		ownedLabels[backend.WorkspaceTag(smHome)] = true
+		ownedLabels[WorkspaceTag(smHome)] = true
 	}
 
 	// Step 2: List herdr workspaces.
@@ -166,7 +164,7 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
-	var resp herdrWorkspaceListResponse
+	var resp pruneWorkspaceListResponse
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		return nil, fmt.Errorf("parsing workspace list: %w", err)
 	}

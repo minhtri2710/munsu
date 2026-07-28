@@ -1,8 +1,8 @@
 package cli
 
 import (
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/herdrprune"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +36,7 @@ Safety invariants (always enforced):
   - --apply with no matching workspaces is a no-op (not an error).`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			result, err := herdrprune.RunPrune(herdrprune.PruneOptions{
+			result, err := backend.RunPrune(backend.PruneOptions{
 				Session: session,
 				Apply:   apply,
 				HomeDir: ctx.Home,
@@ -44,7 +44,7 @@ Safety invariants (always enforced):
 			if err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[herdrprune.PruneResult]{
+			return writeContract(cmd, contract.Response[backend.PruneResult]{
 				SchemaVersion: contract.SchemaVersion,
 				Kind:          "herdr.prune",
 				Status:        "success",
