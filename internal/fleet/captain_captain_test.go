@@ -14,7 +14,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
-	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // fakeBinDir is a temp directory with fake pi/munsu binaries prepended to PATH
@@ -306,31 +305,6 @@ func TestSeed_InvalidPath(t *testing.T) {
 
 // initTestRepo creates a minimal git repo in dir with an initial commit
 // on the default branch (main). The origin remote is set to parentRemote.
-func initTestRepo(t *testing.T, dir, parentRemote string) {
-	t.Helper()
-	cmds := [][]string{
-		{"init", "-b", "main"},
-		{"config", "user.email", "test@test"},
-		{"config", "user.name", "Test"},
-		{"remote", "add", "origin", parentRemote},
-		{"commit", "--allow-empty", "-m", "initial"},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %s", args, strings.TrimSpace(string(out)))
-		}
-	}
-	// Create origin/main tracking ref and origin/HEAD so resolveDefaultBranch finds them.
-	if _, err := exec.Command("git", "-C", dir, "update-ref", "refs/remotes/origin/main", "HEAD").CombinedOutput(); err != nil {
-		t.Fatalf("creating origin/main: %v", err)
-	}
-	if _, err := exec.Command("git", "-C", dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main").CombinedOutput(); err != nil {
-		t.Fatalf("setting origin/HEAD: %v", err)
-	}
-}
 
 func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 	parent := t.TempDir()
@@ -2636,37 +2610,8 @@ func TestEnsureCaptainPiExtensions_RefusesUnmarked(t *testing.T) {
 // --- Recover tests ---
 
 // writeCaptainMeta writes a captain task meta for test purposes.
-func writeCaptainMeta(t *testing.T, parent, smID, smHome, window string) {
-	t.Helper()
-	canon, err := canonicalCaptainHome(smHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	meta := map[string]string{
-		"kind":    "captain",
-		"sm_id":   smID,
-		"home":    canon,
-		"window":  window,
-		"backend": "fake",
-	}
-	if err := mhome.WriteMeta(parent, taskIDForCaptain(smID), meta); err != nil {
-		t.Fatal(err)
-	}
-}
 
 // seedCaptainForTest creates a captain home with provenance marker and optional AGENTS.md.
-func seedCaptainForTest(t *testing.T, parent, id string) string {
-	t.Helper()
-	smHome := filepath.Join(parent, "captains", id)
-	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
-	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# "+id+"\n"), 0644)
-	if err := SeedProvenance(smHome, id); err != nil {
-		t.Fatalf("SeedProvenance(%s): %v", id, err)
-	}
-	return smHome
-}
 
 func TestRecover_EmptyRegistry(t *testing.T) {
 	res, err := Recover(t.TempDir(), nil, RecoverCapabilities{Launch: testLaunchEndpoint{}, Nudge: &testNudgeEndpoint{result: NudgeResult{Status: "submitted", Acknowledged: true}}, Probe: &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}}})

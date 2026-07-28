@@ -296,8 +296,3 @@ func initGitRepo(t *testing.T, dir, remoteDir string) {
 
 // gitEnvForDir returns the current environment with GIT_CEILING_DIRECTORIES set
 // to prevent git from looking at parent directories.
-func gitEnvForDir(dir string) []string {
-	return append(os.Environ(),
-		"GIT_CEILING_DIRECTORIES="+dir,
-	)
-}
