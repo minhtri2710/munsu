@@ -853,15 +853,15 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 	trustHandled := false
 
 	deadline := time.After(time.Duration(timeoutSec) * time.Second)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	poll := time.NewTimer(0)
+	defer poll.Stop()
 
 	for {
 		select {
 		case <-deadline:
 			capture, _ := r.endpoints.Capture(r.endpoint, 60)
 			return fmt.Errorf("harness not ready after %ds: last capture: %q", timeoutSec, capture)
-		case <-ticker.C:
+		case <-poll.C:
 			status, probeErr := r.endpoints.Probe(r.endpoint)
 			if probeErr != nil {
 				return fmt.Errorf("probing bound endpoint: %w", probeErr)
@@ -877,6 +877,7 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if !trustHandled && harness.IsTrustPrompt(capture, r.harness) {
 				_ = r.endpoints.Submit(r.endpoint, "")
 				trustHandled = true
+				poll.Reset(2 * time.Second)
 				continue
 			}
 			// Check for failure patterns and abort early when detected.
@@ -886,6 +887,7 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if harness.HasReadyPattern(capture, r.harness) {
 				return nil
 			}
+			poll.Reset(2 * time.Second)
 		}
 	}
 }
