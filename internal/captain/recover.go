@@ -9,6 +9,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // StepState is the outcome of one recovery step.
@@ -322,7 +323,7 @@ func (tx *RecoverTransaction) stepTerminalReconcile(parentHome string, sm Info, 
 		return StepResult{Name: "terminal-reconcile", State: StepSkipped,
 			Detail: "skipped: config validation failed"}
 	}
-	result, err := ReconcileTerminalReceipts(sm.Home, parentHome)
+	result, err := orchestrator.ReconcileTerminalReceipts(sm.Home, parentHome)
 	if err != nil {
 		return StepResult{Name: "terminal-reconcile", State: StepFailed,
 			Detail: err.Error()}
@@ -331,7 +332,7 @@ func (tx *RecoverTransaction) stepTerminalReconcile(parentHome string, sm Info, 
 	if relayed > 0 {
 		var diags []string
 		for _, o := range result.Outcomes {
-			if o.Outcome != OutcomeRelayed {
+			if o.Outcome != orchestrator.OutcomeRelayed {
 				diags = append(diags, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
 			}
 		}

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/captain"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -221,7 +220,7 @@ func newWatchRunCmd() *cobra.Command {
 			}
 
 			wakesBefore := countQueuedWakes(ctx.Home)
-			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), captain.NewWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport()), fleetRetirementPort{}, runtimeTaskStatePort{})
+			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), orchestrator.NewCaptainWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport()), fleetRetirementPort{}, runtimeTaskStatePort{})
 			if err != nil {
 				return err
 			}

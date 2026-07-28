@@ -1,4 +1,4 @@
-package captain
+package orchestrator
 
 import (
 	"os"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // setupRelayTest creates a captain home and a general home with a provenance
@@ -59,10 +59,10 @@ func TestReconcileTerminalReceipts_SinglePending(t *testing.T) {
 	termKey := "test-key"
 
 	// Create soldier receipt (done state)
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "task complete"); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", "task complete"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestReconcileTerminalReceipts_SinglePending(t *testing.T) {
 	}
 
 	// Verify ack exists
-	if !orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
+	if !IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should be acked after reconciliation")
 	}
 
@@ -90,7 +90,7 @@ func TestReconcileTerminalReceipts_SinglePending(t *testing.T) {
 	}
 
 	// Verify ReportRelay obligation closed
-	open, err := orchestrator.IsTaskReportRelayOpen(captainHome, taskID)
+	open, err := IsTaskReportRelayOpen(captainHome, taskID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
@@ -107,10 +107,10 @@ func TestReconcileTerminalReceipts_MultiplePending(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		taskID := "test-soldier-" + string(rune('0'+i))
 		termKey := "key-" + string(rune('0'+i))
-		if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+		if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 			t.Fatalf("WriteReceipt %d: %v", i, err)
 		}
-		if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+		if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 			t.Fatalf("InitTaskObligations %d: %v", i, err)
 		}
 	}
@@ -132,10 +132,10 @@ func TestReconcileTerminalReceipts_AlreadyAcked(t *testing.T) {
 	termKey := "acked-key"
 
 	// Write receipt then ack it (simulating previous relay)
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "already done"); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", "already done"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.WriteAck(captainHome, taskID, termKey); err != nil {
+	if err := WriteAck(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("WriteAck: %v", err)
 	}
 
@@ -157,10 +157,10 @@ func TestReconcileTerminalReceipts_Idempotent(t *testing.T) {
 	taskID := "idempotent-task"
 	termKey := "idempotent-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -191,10 +191,10 @@ func TestReconcileTerminalReceipts_PR315Shape(t *testing.T) {
 	taskID := "herdr-v075-backend-compat"
 	termKey := "herdr-v075-backend-compat"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "PR #315"); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", "PR #315"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestReconcileTerminalReceipts_PR315Shape(t *testing.T) {
 	}
 
 	// Verify ack with task ID == key
-	if !orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
+	if !IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt for PR#315 should be acked")
 	}
 }
@@ -225,10 +225,10 @@ func TestReconcileTerminalReceipts_UnreadableGeneralState(t *testing.T) {
 	taskID := "unreadable-task"
 	termKey := "unreadable-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -251,7 +251,7 @@ func TestReconcileTerminalReceipts_UnreadableGeneralState(t *testing.T) {
 	}
 
 	// Receipt must NOT be acked (preserved for retry)
-	if orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
+	if IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should NOT be acked after relay failure")
 	}
 }
@@ -264,15 +264,15 @@ func TestReconcileTerminalReceipts_PostRelayAckFailure(t *testing.T) {
 	taskID := "ack-fail-task"
 	termKey := "ack-fail-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
 	// Make the terminal-receipts dir read-only so WriteAck fails
-	receiptsDir := orchestrator.ReceiptDir(captainHome)
+	receiptsDir := ReceiptDir(captainHome)
 	os.Chmod(receiptsDir, 0500)
 	t.Cleanup(func() { os.Chmod(receiptsDir, 0755) })
 
@@ -294,7 +294,7 @@ func TestReconcileTerminalReceipts_PostRelayAckFailure(t *testing.T) {
 	}
 
 	// Receipt must NOT be acked (preserved for retry)
-	if orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
+	if IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should NOT be acked after ack failure")
 	}
 
@@ -318,10 +318,10 @@ func TestReconcileTerminalReceipts_NoProvenanceMarker(t *testing.T) {
 	taskID := "no-marker-task"
 	termKey := "no-marker-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -348,10 +348,10 @@ func TestRelayTerminalReceipts_BackwardCompat(t *testing.T) {
 
 	taskID := "backward-compat"
 	termKey := "compat-key"
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -382,13 +382,13 @@ func TestReconcileTerminalReceipts_ObligationCloseFailure(t *testing.T) {
 	taskID := "obligation-fail"
 	termKey := "obl-fail-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
 
 	// Write the obligations file but then make it read-only so
 	// CompleteTaskObligation can't write to it.
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 	oblPath := filepath.Join(captainHome, "state", ".obligations", taskID+".obligations")
@@ -407,7 +407,7 @@ func TestReconcileTerminalReceipts_ObligationCloseFailure(t *testing.T) {
 	// if the file is readable (it reads then writes). For this test we verify
 	// that even if the obligation file is problematic, the relay+ack succeed.
 	// The obligation state is verified by checking if ack exists.
-	if !orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
+	if !IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt should be acked even if obligation close has issues")
 	}
 }
@@ -420,20 +420,20 @@ func TestReconcileTerminalReceipts_MultipleMixedOutcomes(t *testing.T) {
 	// Good receipt — will relay successfully
 	goodID := "good-task"
 	goodKey := "good-key"
-	if err := orchestrator.WriteReceipt(captainHome, goodID, goodKey, "done", "good"); err != nil {
+	if err := WriteReceipt(captainHome, goodID, goodKey, "done", "good"); err != nil {
 		t.Fatalf("WriteReceipt good: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, goodID, goodKey); err != nil {
+	if err := InitTaskObligations(captainHome, goodID, goodKey); err != nil {
 		t.Fatalf("InitTaskObligations good: %v", err)
 	}
 
 	// Receipt targeting an unreadable General state — will fail relay
 	badID := "bad-relay-task"
 	badKey := "bad-relay-key"
-	if err := orchestrator.WriteReceipt(captainHome, badID, badKey, "done", "bad"); err != nil {
+	if err := WriteReceipt(captainHome, badID, badKey, "done", "bad"); err != nil {
 		t.Fatalf("WriteReceipt bad: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, badID, badKey); err != nil {
+	if err := InitTaskObligations(captainHome, badID, badKey); err != nil {
 		t.Fatalf("InitTaskObligations bad: %v", err)
 	}
 
@@ -465,10 +465,10 @@ func TestReconcileTerminalReceipts_NonMaterialState(t *testing.T) {
 	taskID := "non-material-task"
 	termKey := "working-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "working", "still in progress"); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "working", "still in progress"); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -498,15 +498,15 @@ func TestReconcileTerminalReceipts_PreservesRetryable(t *testing.T) {
 	taskID := "retryable-task"
 	termKey := "retryable-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
 	// Make the terminal-receipts dir read-only to cause ack failure
-	receiptsDir := orchestrator.ReceiptDir(captainHome)
+	receiptsDir := ReceiptDir(captainHome)
 	os.Chmod(receiptsDir, 0500)
 	t.Cleanup(func() { os.Chmod(receiptsDir, 0755) })
 
@@ -519,12 +519,12 @@ func TestReconcileTerminalReceipts_PreservesRetryable(t *testing.T) {
 	}
 
 	// Receipt must NOT be acked
-	if orchestrator.IsReceiptAcked(captainHome, taskID, termKey) {
+	if IsReceiptAcked(captainHome, taskID, termKey) {
 		t.Fatal("receipt must not be acked after ack failure")
 	}
 
 	// ReportRelay obligation must still be open
-	open, err := orchestrator.IsTaskReportRelayOpen(captainHome, taskID)
+	open, err := IsTaskReportRelayOpen(captainHome, taskID)
 	if err != nil {
 		t.Fatalf("IsTaskReportRelayOpen: %v", err)
 	}
@@ -540,10 +540,10 @@ func TestReconcileTerminalReceipts_CaptainID(t *testing.T) {
 	taskID := "id-test"
 	termKey := "id-key"
 
-	if err := orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
+	if err := WriteReceipt(captainHome, taskID, termKey, "done", ""); err != nil {
 		t.Fatalf("WriteReceipt: %v", err)
 	}
-	if err := orchestrator.InitTaskObligations(captainHome, taskID, termKey); err != nil {
+	if err := InitTaskObligations(captainHome, taskID, termKey); err != nil {
 		t.Fatalf("InitTaskObligations: %v", err)
 	}
 
@@ -566,8 +566,8 @@ func TestReconcileTerminalReceipts_TaskAppendStatus(t *testing.T) {
 	taskID := "status-check"
 	termKey := "check-key"
 
-	orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "completed successfully")
-	orchestrator.InitTaskObligations(captainHome, taskID, termKey)
+	WriteReceipt(captainHome, taskID, termKey, "done", "completed successfully")
+	InitTaskObligations(captainHome, taskID, termKey)
 
 	_, err := ReconcileTerminalReceipts(captainHome, generalHome)
 	if err != nil {
@@ -596,8 +596,8 @@ func TestReconcileTerminalReceipts_ReconcileOneCleanPath(t *testing.T) {
 	taskID := "clean-path"
 	termKey := "clean-key"
 
-	orchestrator.WriteReceipt(captainHome, taskID, termKey, "done", "")
-	orchestrator.InitTaskObligations(captainHome, taskID, termKey)
+	WriteReceipt(captainHome, taskID, termKey, "done", "")
+	InitTaskObligations(captainHome, taskID, termKey)
 
 	result, err := ReconcileTerminalReceipts(captainHome, generalHome)
 	if err != nil {
@@ -634,9 +634,9 @@ func TestResolveParentHome_EnvPrecedence(t *testing.T) {
 	// Set env to a different value — env should win
 	t.Setenv("MUNSU_PARENT_STATUS", otherDir)
 
-	got := resolveParentHome(tmp)
+	got := ResolveCaptainParentHome(tmp)
 	if got != otherDir {
-		t.Errorf("resolveParentHome() = %q, want %q (env should precede config)", got, otherDir)
+		t.Errorf("ResolveCaptainParentHome() = %q, want %q (env should precede config)", got, otherDir)
 	}
 }
 
@@ -654,9 +654,9 @@ func TestResolveParentHome_ConfigFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := resolveParentHome(tmp)
+	got := ResolveCaptainParentHome(tmp)
 	if got != parentHome {
-		t.Errorf("resolveParentHome() = %q, want %q (config fallback)", got, parentHome)
+		t.Errorf("ResolveCaptainParentHome() = %q, want %q (config fallback)", got, parentHome)
 	}
 }
 
@@ -666,9 +666,9 @@ func TestResolveParentHome_EnvEmptyNoConfig(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	got := resolveParentHome(tmp)
+	got := ResolveCaptainParentHome(tmp)
 	if got != "" {
-		t.Errorf("resolveParentHome() = %q, want %q (no parent)", got, "")
+		t.Errorf("ResolveCaptainParentHome() = %q, want %q (no parent)", got, "")
 	}
 }
 
@@ -678,9 +678,9 @@ func TestResolveParentHome_EnvEqualsHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", tmp)
 
-	got := resolveParentHome(tmp)
+	got := ResolveCaptainParentHome(tmp)
 	if got != "" {
-		t.Errorf("resolveParentHome() = %q, want %q (env equals home, rejected)", got, "")
+		t.Errorf("ResolveCaptainParentHome() = %q, want %q (env equals home, rejected)", got, "")
 	}
 }
 
@@ -695,9 +695,9 @@ func TestResolveParentHome_ConfigEqualsHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := resolveParentHome(tmp)
+	got := ResolveCaptainParentHome(tmp)
 	if got != "" {
-		t.Errorf("resolveParentHome() = %q, want %q (config equals home, rejected)", got, "")
+		t.Errorf("ResolveCaptainParentHome() = %q, want %q (config equals home, rejected)", got, "")
 	}
 }
 
@@ -709,9 +709,9 @@ func TestResolveParentHome_ConfigMissingDoesNotCrash(t *testing.T) {
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 	// No config/parent-home file
 
-	got := resolveParentHome(tmp)
+	got := ResolveCaptainParentHome(tmp)
 	if got != "" {
-		t.Errorf("resolveParentHome() = %q, want %q (missing config, no crash)", got, "")
+		t.Errorf("ResolveCaptainParentHome() = %q, want %q (missing config, no crash)", got, "")
 	}
 }
 
@@ -726,9 +726,9 @@ func TestResolveParentHome_ConfigEmptyDoesNotCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := resolveParentHome(tmp)
+	got := ResolveCaptainParentHome(tmp)
 	if got != "" {
-		t.Errorf("resolveParentHome() = %q, want %q (empty config, no crash)", got, "")
+		t.Errorf("ResolveCaptainParentHome() = %q, want %q (empty config, no crash)", got, "")
 	}
 }
 
@@ -737,9 +737,9 @@ type captainNotificationTransport struct {
 	calls        int
 }
 
-func (t *captainNotificationTransport) Notify(string, orchestrator.TargetResult, string) orchestrator.UplinkNotifyResult {
+func (t *captainNotificationTransport) Notify(string, TargetResult, string) UplinkNotifyResult {
 	t.calls++
-	return orchestrator.UplinkNotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
+	return UplinkNotifyResult{Acknowledged: t.acknowledged, Queued: !t.acknowledged}
 }
 
 // TestResolveParentHome_HookConsistency_ConfigFallback verifies that when
@@ -753,7 +753,7 @@ func TestResolveParentHome_HookConsistency_ConfigFallback(t *testing.T) {
 	// Both captain and parent need state dir
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
 	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
-	SeedProvenance(tmp, "test-captain")
+	home.SeedCaptainProvenance(tmp, "test-captain")
 
 	// Write config/parent-home
 	if err := config.Set(tmp, "parent-home", parentHome); err != nil {
@@ -761,7 +761,7 @@ func TestResolveParentHome_HookConsistency_ConfigFallback(t *testing.T) {
 	}
 
 	// reconcileHook should now resolve parent from config and proceed
-	err := reconcileHook(tmp, false, &captainNotificationTransport{acknowledged: true})
+	err := ReconcileCaptainHook(tmp, false, &captainNotificationTransport{acknowledged: true})
 	if err != nil {
 		t.Errorf("reconcileHook should not return error when config fallback resolves parent, got: %v", err)
 	}
@@ -785,7 +785,7 @@ func TestActivationHook_ConfigFallback(t *testing.T) {
 	}
 
 	// Should not panic — activation is best-effort even if no receipts
-	captainActivationHook(tmp, nil)
+	CaptainActivationHook(tmp, nil)
 }
 
 // TestActivationHook_NoParent verifies that the explicit watcher hook is a no-op
@@ -795,13 +795,13 @@ func TestActivationHook_NoParent(t *testing.T) {
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Should not panic and should not try to activate
-	captainActivationHook(tmp, nil)
+	CaptainActivationHook(tmp, nil)
 }
 func TestReconcileHook_ReturnsNilWhenParentStatusEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	err := reconcileHook(tmp, false, nil)
+	err := ReconcileCaptainHook(tmp, false, nil)
 	if err != nil {
 		t.Errorf("expected nil when MUNSU_PARENT_STATUS is empty, got: %v", err)
 	}
@@ -814,7 +814,7 @@ func TestReconcileHook_ReturnsNilWhenParentStatusEqualsHomeDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", tmp)
 
-	err := reconcileHook(tmp, false, nil)
+	err := ReconcileCaptainHook(tmp, false, nil)
 	if err != nil {
 		t.Errorf("expected nil when MUNSU_PARENT_STATUS equals homeDir, got: %v", err)
 	}
@@ -825,9 +825,9 @@ func TestReconcileHook_RequiresNotificationTransportWhenParentSet(t *testing.T) 
 	parentHome := t.TempDir()
 	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
-	SeedProvenance(tmp, "test-captain")
+	home.SeedCaptainProvenance(tmp, "test-captain")
 
-	err := reconcileHook(tmp, false, nil)
+	err := ReconcileCaptainHook(tmp, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "uplink notification transport capability is required") {
 		t.Fatalf("error = %v, want missing transport capability", err)
 	}

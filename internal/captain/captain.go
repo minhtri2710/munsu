@@ -2242,7 +2242,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		// Scans the captain home for un-acked soldier terminal reports
 		// and relays each one to the General's state using the shared
 		// reconciliation seam.
-		relayResult, relayErr := ReconcileTerminalReceipts(sm.Home, parentHome)
+		relayResult, relayErr := orchestrator.ReconcileTerminalReceipts(sm.Home, parentHome)
 		if relayErr != nil {
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeFailed, Detail: relayErr.Error()})
 			errs = append(errs, fmt.Sprintf("%s: terminal relay failed: %v", sm.ID, relayErr))
@@ -2253,7 +2253,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			}
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": terminal relay", Status: ConvergeOK, Detail: detail})
 			for _, o := range relayResult.Outcomes {
-				if o.Outcome != OutcomeRelayed {
+				if o.Outcome != orchestrator.OutcomeRelayed {
 					errs = append(errs, fmt.Sprintf("%s/%s: %s (%v)", o.TaskID, o.TermKey, o.Outcome, o.Err))
 				}
 			}
