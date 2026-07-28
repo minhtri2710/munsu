@@ -12,9 +12,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -201,7 +201,7 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 func TestDefaultCharter_ContainsReturnChannel(t *testing.T) {
 	parent := "/tmp/marshal-home"
 	charter := DefaultCharter("api", parent)
-	if !strings.Contains(charter, marker.FromGeneralLabel) {
+	if !strings.Contains(charter, home.FromGeneralLabel) {
 		t.Fatalf("charter missing marshal marker label")
 	}
 	status := filepath.Join(parent, "state", "captain:api.status")
@@ -369,7 +369,7 @@ func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 		t.Errorf("%s not created: %v", CaptainCharterName, err)
 	}
 
-	// Verify provenance marker.
+	// Verify provenance home.
 	if _, err := os.Stat(filepath.Join(homePath, ProvenanceMarkerName)); err != nil {
 		t.Errorf("provenance marker not created: %v", err)
 	}
@@ -2791,7 +2791,7 @@ func TestRecover_SeededCaptainNotLaunched(t *testing.T) {
 
 func TestRecover_BadProvenanceFailsEntry(t *testing.T) {
 	parent := t.TempDir()
-	// Home exists but has no provenance marker.
+	// Home exists but has no provenance home.
 	smHome := filepath.Join(parent, "captains", "sm-bad")
 	os.MkdirAll(smHome, 0755)
 

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/marker"
 )
 
 type testEndpointProbe struct{}
@@ -703,8 +703,8 @@ func TestRunCycle_StatusSignalFromParentStatus(t *testing.T) {
 // marked General send (contract) → Captain appends parent state/captain:<id>.status
 // → watcher RunCycle enqueues a signal wake → wake claim leases it.
 func TestReturnChannelClosedLoop(t *testing.T) {
-	home := t.TempDir()
-	state := filepath.Join(home, "state")
+	homeDir := t.TempDir()
+	state := filepath.Join(homeDir, "state")
 	if err := os.MkdirAll(state, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -712,23 +712,23 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	// 1) Marked send path (General → Captain). Pane inject is backend-specific;
 	// the greppable contract is the marker prefix used by munsu send for kind=captain.
 	req := "report progress on return-channel-e2e"
-	marked := marker.MarkFromGeneral(req)
-	if !marker.IsFromGeneral(marked) {
+	marked := home.MarkFromGeneral(req)
+	if !home.IsFromGeneral(marked) {
 		t.Fatal("expected FromGeneral marker on captain send line")
 	}
-	if !strings.HasPrefix(marked, marker.FromGeneralLabel) {
+	if !strings.HasPrefix(marked, home.FromGeneralLabel) {
 		t.Fatalf("marker label missing: %q", marked)
 	}
 
 	// 2) Captain answers on parent return channel (no pane required).
 	captainID := "captain:munsu"
 	statusLine := "done [key=return-channel-e2e]: closed-loop proof landed"
-	if err := mhome.AppendStatus(home, captainID, statusLine); err != nil {
+	if err := mhome.AppendStatus(homeDir, captainID, statusLine); err != nil {
 		t.Fatal(err)
 	}
 	// Optional meta present as in a live captain registry entry; signal path
 	// must not require dead pane (return channel wakes while captain is alive).
-	if err := mhome.WriteMeta(home, captainID, map[string]string{
+	if err := mhome.WriteMeta(homeDir, captainID, map[string]string{
 		"kind":    "captain",
 		"window":  "captain-pane-alive",
 		"backend": "tmux",
@@ -737,12 +737,12 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// Non-relevant status must stay quiet (working is not general-relevant).
-	if err := mhome.AppendStatus(home, "captain:noise", "working: still grinding"); err != nil {
+	if err := mhome.AppendStatus(homeDir, "captain:noise", "working: still grinding"); err != nil {
 		t.Fatal(err)
 	}
 
 	// 3) Watcher one-shot cycle enqueues captain-relevant signal.
-	emitted, err := testRunCycle(home)
+	emitted, err := testRunCycle(homeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +751,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// 4) General leases the wake via claim (not legacy drain).
-	claim, err := lifecycle.ClaimWakes(home, "general-e2e", 60, 10)
+	claim, err := lifecycle.ClaimWakes(homeDir, "general-e2e", 60, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,7 +777,7 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 	}
 
 	// Queue emptied for claimed records; second claim is empty unless new signal.
-	claim2, err := lifecycle.ClaimWakes(home, "general-e2e", 60, 10)
+	claim2, err := lifecycle.ClaimWakes(homeDir, "general-e2e", 60, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -785,8 +785,8 @@ func TestReturnChannelClosedLoop(t *testing.T) {
 		t.Fatalf("expected empty second claim, got %+v", claim2.Wakes)
 	}
 
-	// Unchanged status must not re-emit after fingerprint marker.
-	emitted2, err := testRunCycle(home)
+	// Unchanged status must not re-emit after fingerprint state.
+	emitted2, err := testRunCycle(homeDir)
 	if err != nil {
 		t.Fatal(err)
 	}

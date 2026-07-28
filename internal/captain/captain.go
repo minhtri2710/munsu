@@ -15,9 +15,9 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -496,7 +496,7 @@ You MUST NOT:
 | Start task | %[5]stasks-axi start <key> --file data/backlog.md%[5]s |
 | Complete task | %[5]stasks-axi done <key> --file data/backlog.md%[5]s |
 
-`, id, CharterVersion, marker.FromGeneralLabel, shQuote(statusFile), bt)
+`, id, CharterVersion, home.FromGeneralLabel, shQuote(statusFile), bt)
 }
 
 // writeCharter writes the charter to .captain-charter.md (runtime-owned, untracked).
@@ -510,7 +510,7 @@ func writeCharter(homePath, charter string) error {
 	return nil
 }
 
-// Seed creates a new captain home with a charter brief and a provenance marker.
+// Seed creates a new captain home with a charter brief and a provenance home.
 // When charter is empty, DefaultCharter(id, parentHome) is used. parentHome may be
 // empty only when an explicit charter is provided.
 // The full charter is written to .captain-charter.md (runtime-owned, canonical).
@@ -676,7 +676,7 @@ func SeedProvenance(homePath, id string) error {
 	return os.WriteFile(markerPath, []byte(content), 0644)
 }
 
-// ValidateProvenance reads and validates the provenance marker.
+// ValidateProvenance reads and validates the provenance home.
 // Rejects v1 (missing canonical-home), extra fields, and copied/moved homes.
 func ValidateProvenance(homePath string) (string, error) {
 	markerPath := filepath.Join(homePath, ProvenanceMarkerName)
@@ -765,8 +765,8 @@ func Validate(homePath, parentHome string) error {
 }
 
 // validateStructure checks that a captain home has the expected directory
-// structure and AGENTS.md, WITHOUT requiring a provenance marker.
-// Used by Migrate before it writes the marker.
+// structure and AGENTS.md, WITHOUT requiring a provenance home.
+// Used by Migrate before it writes the home.
 func validateStructure(homePath string) error {
 	for _, dir := range []string{"state", "data", "config"} {
 		fi, err := os.Stat(filepath.Join(homePath, dir))
@@ -2039,7 +2039,7 @@ func acquireExclusiveLock(lockPath string) (func(), error) {
 	}, nil
 }
 
-// nudgeMarkerPath returns the path for a pending nudge marker.
+// nudgeMarkerPath returns the path for a pending nudge home.
 func nudgeMarkerPath(parentHome, smID string) string {
 	return filepath.Join(parentHome, "state", NudgePendingDir, smID+".pending")
 }
@@ -2056,7 +2056,7 @@ func writeNudgeMarker(parentHome, smID, smHome, commit, instructions, message st
 	return os.WriteFile(nudgeMarkerPath(parentHome, smID), []byte(content), 0644)
 }
 
-// readNudgeMarker reads and returns the fields from a pending nudge marker.
+// readNudgeMarker reads and returns the fields from a pending nudge home.
 func readNudgeMarker(parentHome, smID string) (map[string]string, error) {
 	data, err := os.ReadFile(nudgeMarkerPath(parentHome, smID))
 	if err != nil {
@@ -2079,7 +2079,7 @@ func readNudgeMarker(parentHome, smID string) (map[string]string, error) {
 	return result, nil
 }
 
-// removeNudgeMarker deletes a pending nudge marker.
+// removeNudgeMarker deletes a pending nudge home.
 func removeNudgeMarker(parentHome, smID string) {
 	os.Remove(nudgeMarkerPath(parentHome, smID))
 }
@@ -2680,7 +2680,7 @@ func sendNudge(parentHome string, sm Info, endpoint NudgeEndpoint) error {
 	}
 
 	// After successful prompt submission, update durable meta with actual applied
-	// commit and deterministic digest BEFORE removing marker.
+	// commit and deterministic digest BEFORE removing home.
 	meta["applied_commit"] = marker["commit"]
 	meta["applied_digest"] = marker["instructions"]
 	if metaErr := mhome.WriteMeta(parentHome, taskID, meta); metaErr != nil {

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -123,8 +122,8 @@ func TestSendMailboxToCaptain_HappyPath(t *testing.T) {
 	if env == nil {
 		t.Fatal("envelope not found in captain inbox")
 	}
-	if env.Payload != marker.MarkFromGeneral(line) {
-		t.Errorf("envelope payload=%q, want marked=%q", env.Payload, marker.MarkFromGeneral(line))
+	if env.Payload != home.MarkFromGeneral(line) {
+		t.Errorf("envelope payload=%q, want marked=%q", env.Payload, home.MarkFromGeneral(line))
 	}
 
 	// Verify pending record was written in General outbox.
@@ -373,7 +372,7 @@ func TestInboxAckCmd_AckRef(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	// Set up captain home with identity marker.
+	// Set up captain home with identity home.
 	if err := orchestrator.WriteHomeIdentity(captainHome, "test-captain", orchestrator.RankCaptain); err != nil {
 		t.Fatalf("WriteHomeIdentity: %v", err)
 	}
@@ -474,21 +473,21 @@ func TestSendMailboxToCaptain_MarkerInPayload(t *testing.T) {
 		t.Fatalf("SendMailboxToCaptain: %v", result.Err)
 	}
 
-	// Verify notification text does NOT contain the marker.
-	if strings.Contains(sender.lastPayload, marker.FromGeneralLabel) {
+	// Verify notification text does NOT contain the home.
+	if strings.Contains(sender.lastPayload, home.FromGeneralLabel) {
 		t.Error("notification text must NOT contain the marker")
 	}
 
-	// Verify envelope payload DOES contain the marker.
+	// Verify envelope payload DOES contain the home.
 	captainStore := orchestrator.NewStore(captainHome)
 	env, err := captainStore.ReadEnvelope(filepath.Base(parentHome), result.MessageID)
 	if err != nil || env == nil {
 		t.Fatalf("ReadEnvelope: %v", err)
 	}
-	if !strings.HasPrefix(env.Payload, marker.FromGeneralMark) {
+	if !strings.HasPrefix(env.Payload, home.FromGeneralMark) {
 		t.Errorf("envelope payload should start with marker, got: %q", env.Payload)
 	}
-	// Verify payload has the command after the marker.
+	// Verify payload has the command after the home.
 	if !strings.Contains(env.Payload, line) {
 		t.Errorf("envelope payload should contain the original line %q, got %q", line, env.Payload)
 	}

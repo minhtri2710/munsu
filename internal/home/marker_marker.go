@@ -4,7 +4,7 @@
 // human captain typing. Marked sends tell the Captain to answer via the parent
 // status file (and optional doc pointer), never chat-only — the General does
 // not read Captain chat.
-package marker
+package home
 
 import "strings"
 

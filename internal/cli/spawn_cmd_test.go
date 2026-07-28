@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -233,8 +232,8 @@ func TestSendCmd_MarksCaptainLine(t *testing.T) {
 	// Contract: General→Captain sends must carry the from-general marker so the
 	// Second answers via parent status, not chat-only.
 	line := "report progress on munsu-rank-rename"
-	marked := marker.MarkFromGeneral(line)
-	if !marker.IsFromGeneral(marked) {
+	marked := home.MarkFromGeneral(line)
+	if !home.IsFromGeneral(marked) {
 		t.Fatalf("expected marker on captain send line")
 	}
 	if marked == line {

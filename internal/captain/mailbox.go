@@ -3,8 +3,8 @@ package captain
 import (
 	"fmt"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -20,7 +20,7 @@ type SendMailboxResult struct {
 // Steps:
 //  1. Validates task meta fully: kind=captain, sm_id matches, canonical home, window/backend
 //  2. Derives General sender identity/rank from durable parent home provenance
-//  3. Creates a mailbox Envelope (General→Captain) with marker.MarkFromGeneral(line) as payload
+//  3. Creates a mailbox Envelope (General→Captain) with home.MarkFromGeneral(line) as payload
 //  4. Writes envelope to the captain's inbox (receiver-owned)
 //  5. Writes pending record in the General's outbox (sender-identity scoped)
 //  6. Sends the canonical NotificationRef through the bound sender capability
@@ -78,7 +78,7 @@ func SendMailboxToCaptain(sm Info, parentHome, line string, sender orchestrator.
 	// The marker preserves command semantics so the captain agent can distinguish
 	// General-routed commands from human chat. The notification ref (not the payload)
 	// is what gets sent through the bound sender capability.
-	markedLine := marker.MarkFromGeneral(line)
+	markedLine := home.MarkFromGeneral(line)
 	env := &orchestrator.Envelope{
 		SenderRank:     senderRank,
 		SenderIdentity: senderIdentity,

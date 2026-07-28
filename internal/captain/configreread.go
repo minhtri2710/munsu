@@ -11,7 +11,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/marker"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -211,7 +210,7 @@ func EnsureConfigRereadRequirement(parentHome, captainHome string, gen int, dige
 
 	// Build the message marked for General→Captain routing.
 	msg := ConfigRereadMessage(gen, digest)
-	markedLine := marker.MarkFromGeneral(msg)
+	markedLine := home.MarkFromGeneral(msg)
 
 	// Create a deterministic envelope.
 	env := &orchestrator.Envelope{
@@ -385,7 +384,7 @@ func ReconcileConfigRereadPending(parentHome string, captainHome string) error {
 // legacyConfigRereadNudgeName is the old nudge marker filename.
 const legacyConfigRereadNudgeName = ".config-reread-nudge"
 
-// legacyConfigRereadNudgePath returns the path to the old nudge marker.
+// legacyConfigRereadNudgePath returns the path to the old nudge home.
 func legacyConfigRereadNudgePath(captainHome string) string {
 	return filepath.Join(captainHome, "state", legacyConfigRereadNudgeName)
 }
@@ -401,7 +400,7 @@ func legacyConfigRereadQuarantineDir(captainHome string) string {
 //
 // Rules:
 //   - If a .config-reread-nudge marker exists, parse gen/digest from it,
-//     materialize the equivalent mailbox requirement, then delete the marker.
+//     materialize the equivalent mailbox requirement, then delete the home.
 //   - If .config-reread-quarantine exists, scan each file for gen/digest,
 //     materialize the latest, then delete the quarantine directory.
 //   - Malformed or unparseable records are left in place with a diagnostic
@@ -419,7 +418,7 @@ func ReconcileLegacyConfigReread(parentHome, captainHome string, sender orchestr
 		return fmt.Errorf("reconcile legacy config-reread: reading gen: %w", genErr)
 	}
 
-	// Try to parse a nudge marker.
+	// Try to parse a nudge home.
 	nudgeGen, nudgeDigest, nudgeFound, nudgeErr := readLegacyNudgeMarker(captainHome)
 	if nudgeErr != nil {
 		return fmt.Errorf("reconcile legacy config-reread: reading nudge: %w", nudgeErr)
@@ -472,7 +471,7 @@ func ReconcileLegacyConfigReread(parentHome, captainHome string, sender orchestr
 	return nil
 }
 
-// readLegacyNudgeMarker reads the old two-line .config-reread-nudge marker.
+// readLegacyNudgeMarker reads the old two-line .config-reread-nudge home.
 func readLegacyNudgeMarker(captainHome string) (int, string, bool, error) {
 	data, err := os.ReadFile(legacyConfigRereadNudgePath(captainHome))
 	if err != nil {
