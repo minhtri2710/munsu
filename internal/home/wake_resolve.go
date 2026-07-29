@@ -49,6 +49,7 @@ func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 	}
 	if found {
 		if err := AckWakes(homeDir, leaseID, []string{eventID}); err != nil {
+			_ = os.Remove(resolutionPath(homeDir, leaseID, eventID))
 			return err
 		}
 	}
@@ -117,7 +118,7 @@ func wakeResolutionPrepared(homeDir, eventID string) bool {
 			continue
 		}
 		var record wakeResolutionRecord
-		if json.Unmarshal(data, &record) == nil && record.EventID == eventID && (record.State == "prepared" || record.State == "completed") {
+		if json.Unmarshal(data, &record) == nil && record.EventID == eventID && record.State == "completed" {
 			return true
 		}
 	}

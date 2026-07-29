@@ -3,6 +3,7 @@ package home
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +30,28 @@ func TestResolveWakeRequiresExactClaimEventAndSummary(t *testing.T) {
 	}
 	if _, err := os.Stat(LeaseFilePath(home, claim.LeaseID)); err != nil {
 		t.Fatalf("failed resolve removed lease: %v", err)
+	}
+}
+
+func TestPreparedResolutionDoesNotSuppressLeaseReclaim(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(LeaseDir(home), 0755); err != nil {
+		t.Fatal(err)
+	}
+	leaseID := "lease-prepared"
+	if err := os.WriteFile(LeaseFilePath(home, leaseID), []byte(leaseID+"\tconsumer\t1\t0\n100\t1\tsignal\ttask\tpayload\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWakeResolution(home, wakeResolutionRecord{LeaseID: leaseID, EventID: "100:1", Summary: "pending", State: "prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	ReclaimExpiredLeases(home)
+	data, err := os.ReadFile(WakeQueuePath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "signal\ttask\tpayload") {
+		t.Fatalf("prepared resolution suppressed retry: %q", data)
 	}
 }
 

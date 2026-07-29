@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -14,7 +15,9 @@ type wakeDispatchHooks struct {
 
 func (h wakeDispatchHooks) Activate(homeDir string) {
 	h.WatcherHooks.Activate(homeDir)
-	_ = dispatchHerdrWake(homeDir)
+	if err := dispatchHerdrWake(homeDir); err != nil {
+		fmt.Fprintf(os.Stderr, "wake dispatch: %v\n", err)
+	}
 }
 
 func watcherHooks() orchestrator.WatcherHooks {
