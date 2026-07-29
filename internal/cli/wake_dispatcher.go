@@ -27,7 +27,10 @@ func dispatchHerdrWake(homeDir string) error {
 		return err
 	}
 	target, err := orchestrator.ResolveTargetWithSource(homeDir)
-	if err != nil || target.Handle == "" {
+	if err != nil || target.Handle == "" || target.Session == "" {
+		return err
+	}
+	if err := orchestrator.ValidateTargetOwnership(&target); err != nil {
 		return err
 	}
 	meta := map[string]string{"backend": "herdr", "window": target.Handle, "herdr_session": target.Session}

@@ -176,7 +176,7 @@ export default function (pi: ExtensionAPI) {
     if (modeResult.code === 0) {
       let modeEnvelope: any;
       try { modeEnvelope = JSON.parse(modeResult.stdout); } catch { return; }
-      if (modeEnvelope?.status !== "success" || modeEnvelope?.data?.value !== "native") return;
+      if (modeEnvelope?.status !== "success" || modeEnvelope?.data?.message !== "native") return;
     }
     claimInFlight = true;
     try {
