@@ -137,14 +137,17 @@ func wakeEventExists(homeDir, eventID string) (bool, error) {
 	}
 	for _, entry := range entries {
 		found, err := leaseContainsEvent(homeDir, entry.Name(), eventID)
-		if err == nil && found {
+		if err != nil {
+			return false, err
+		}
+		if found {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
-func wakeResolutionPrepared(homeDir, eventID string) bool {
+func wakeResolutionCompleted(homeDir, eventID string) bool {
 	entries, err := os.ReadDir(filepath.Join(homeDir, wakeResolutionDir))
 	if err != nil {
 		return false

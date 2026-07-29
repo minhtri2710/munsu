@@ -71,6 +71,20 @@ func TestPreparedResolutionRejectsReclaimedEvent(t *testing.T) {
 	}
 }
 
+func TestPreparedResolutionCompletesWhenEventAbsentEverywhere(t *testing.T) {
+	home := t.TempDir()
+	if err := writeWakeResolution(home, wakeResolutionRecord{LeaseID: "acked", EventID: "100:1", Summary: "checked", State: "prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResolveWake(home, "acked", "100:1", "checked"); err != nil {
+		t.Fatal(err)
+	}
+	record, err := readWakeResolution(home, "acked", "100:1")
+	if err != nil || record.State != "completed" {
+		t.Fatalf("record=%+v err=%v", record, err)
+	}
+}
+
 func TestResolveWakeAcknowledgesOnceAndRecordsEvidence(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {
