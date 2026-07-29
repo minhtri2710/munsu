@@ -64,6 +64,31 @@ func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	}
 }
 
+func TestTaskObserveCaptainUsesStructuredHomeState(t *testing.T) {
+	home := t.TempDir()
+	captainHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	if err := mhome.WriteMeta(home, "captain:test", map[string]string{"kind": "captain", "sm_id": "test", "home": captainHome}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(captainHome, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(captainHome, "data", "backlog.md"), []byte("# Backlog\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mhome.AppendStatus(home, "captain:test", "working: historical parent state"); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runContract(t, []string{"task", "observe", "captain:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "status: no_active_work") {
+		t.Fatalf("task observe did not use structured Captain state: %s", output)
+	}
+}
+
 func TestWakeClaimEmptyQueueReturnsEmptyWithoutLease(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)

@@ -115,6 +115,9 @@ func newTaskObserveCmd() *cobra.Command {
 			if meta["kind"] == "captain" {
 				status := fleet.CaptainStatus(ctx.Home, fleet.CaptainIDFromTask(args[0], meta), meta["home"])
 				state.PaneAlive = status == "alive"
+				if summary := fleet.SummarizeCaptainHome(meta["home"]); summary.Valid {
+					state.Status = summary.State
+				}
 			}
 			result := TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
 			if fields["description"] {
