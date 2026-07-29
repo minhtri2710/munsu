@@ -288,6 +288,9 @@ func ReclaimExpiredLeases(homeDir string) int {
 			if len(wakeParts) < 5 {
 				continue
 			}
+			if wakeResolutionPrepared(homeDir, wakeParts[0]+":"+wakeParts[1]) {
+				continue
+			}
 			if err := EnqueueWake(homeDir, wakeParts[2], wakeParts[3], wakeParts[4]); err == nil {
 				enqueued++
 			}

@@ -2,6 +2,7 @@ package home
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,15 @@ import (
 	"time"
 )
 
-const wakeResolutionLog = ".wake-resolutions"
+const wakeResolutionDir = "state/.wake-resolutions"
+
+type wakeResolutionRecord struct {
+	LeaseID   string `json:"lease_id"`
+	EventID   string `json:"event_id"`
+	Summary   string `json:"summary"`
+	State     string `json:"state"`
+	UpdatedAt int64  `json:"updated_at"`
+}
 
 func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 	leaseID = strings.TrimSpace(leaseID)
@@ -18,31 +27,32 @@ func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 	if leaseID == "" || eventID == "" || summary == "" {
 		return fmt.Errorf("claim-id, event-id, and summary are required")
 	}
-	if wakeResolutionExists(homeDir, leaseID, eventID) {
+	record, _ := readWakeResolution(homeDir, leaseID, eventID)
+	if record != nil && record.State == "completed" {
 		return nil
 	}
+	if record == nil {
+		found, err := leaseContainsEvent(homeDir, leaseID, eventID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("event %q is not present in lease %q", eventID, leaseID)
+		}
+		if err := writeWakeResolution(homeDir, wakeResolutionRecord{LeaseID: leaseID, EventID: eventID, Summary: summary, State: "prepared", UpdatedAt: time.Now().Unix()}); err != nil {
+			return err
+		}
+	}
 	found, err := leaseContainsEvent(homeDir, leaseID, eventID)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) && !strings.Contains(err.Error(), "not found or expired") {
 		return err
 	}
-	if !found {
-		return fmt.Errorf("event %q is not present in lease %q", eventID, leaseID)
+	if found {
+		if err := AckWakes(homeDir, leaseID, []string{eventID}); err != nil {
+			return err
+		}
 	}
-	if err := AckWakes(homeDir, leaseID, []string{eventID}); err != nil {
-		return err
-	}
-	path := filepath.Join(homeDir, "state", wakeResolutionLog)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	line := fmt.Sprintf("%d\t%s\t%s\t%s\n", time.Now().Unix(), leaseID, eventID, strings.ReplaceAll(summary, "\n", " "))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString(line)
-	return err
+	return writeWakeResolution(homeDir, wakeResolutionRecord{LeaseID: leaseID, EventID: eventID, Summary: summary, State: "completed", UpdatedAt: time.Now().Unix()})
 }
 
 func leaseContainsEvent(homeDir, leaseID, eventID string) (bool, error) {
@@ -67,16 +77,47 @@ func leaseContainsEvent(homeDir, leaseID, eventID string) (bool, error) {
 	return false, scanner.Err()
 }
 
-func wakeResolutionExists(homeDir, leaseID, eventID string) bool {
-	f, err := os.Open(filepath.Join(homeDir, "state", wakeResolutionLog))
+func resolutionPath(homeDir, leaseID, eventID string) string {
+	name := strings.NewReplacer("/", "_", ":", "_").Replace(leaseID + "-" + eventID + ".json")
+	return filepath.Join(homeDir, wakeResolutionDir, name)
+}
+
+func readWakeResolution(homeDir, leaseID, eventID string) (*wakeResolutionRecord, error) {
+	data, err := os.ReadFile(resolutionPath(homeDir, leaseID, eventID))
+	if err != nil {
+		return nil, err
+	}
+	var record wakeResolutionRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func writeWakeResolution(homeDir string, record wakeResolutionRecord) error {
+	path := resolutionPath(homeDir, record.LeaseID, record.EventID)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, data)
+}
+
+func wakeResolutionPrepared(homeDir, eventID string) bool {
+	entries, err := os.ReadDir(filepath.Join(homeDir, wakeResolutionDir))
 	if err != nil {
 		return false
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 4)
-		if len(parts) >= 3 && parts[1] == leaseID && parts[2] == eventID {
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(homeDir, wakeResolutionDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var record wakeResolutionRecord
+		if json.Unmarshal(data, &record) == nil && record.EventID == eventID && (record.State == "prepared" || record.State == "completed") {
 			return true
 		}
 	}

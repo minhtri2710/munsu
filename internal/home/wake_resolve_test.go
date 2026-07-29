@@ -3,7 +3,6 @@ package home
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -51,11 +50,11 @@ func TestResolveWakeAcknowledgesOnceAndRecordsEvidence(t *testing.T) {
 	if err := ResolveWake(home, claim.LeaseID, "100:1", "duplicate"); err != nil {
 		t.Fatalf("repeated resolve must be idempotent: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(home, "state", wakeResolutionLog))
+	record, err := readWakeResolution(home, claim.LeaseID, "100:1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(data), claim.LeaseID+"\t100:1\t") != 1 {
-		t.Fatalf("resolution evidence = %q", data)
+	if record.State != "completed" || record.Summary != "checked" {
+		t.Fatalf("resolution evidence = %+v", record)
 	}
 }
