@@ -173,7 +173,11 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_settled", async (_event, ctx) => {
     if (!ctx.isIdle() || pendingWake || claimInFlight) return;
     const modeResult = await pi.exec(MUNSU_BIN, ["config", "get", "wake-delivery-mode", "--output", "json"]);
-    if (modeResult.code === 0 && !modeResult.stdout.includes("native")) return;
+    if (modeResult.code === 0) {
+      let modeEnvelope: any;
+      try { modeEnvelope = JSON.parse(modeResult.stdout); } catch { return; }
+      if (modeEnvelope?.status !== "success" || modeEnvelope?.data?.value !== "native") return;
+    }
     claimInFlight = true;
     try {
 
