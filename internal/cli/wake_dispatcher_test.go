@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -73,6 +74,25 @@ func TestDispatchHerdrWakeClaimsAndSubmitsExactPrompt(t *testing.T) {
 		if !strings.Contains((*prompts)[0], want) {
 			t.Fatalf("prompt missing %q: %s", want, (*prompts)[0])
 		}
+	}
+}
+
+func TestDispatchHerdrWakeSubmitFailurePreservesLease(t *testing.T) {
+	home := t.TempDir()
+	if err := orchestrator.EnqueueWake(home, "signal", "task", "payload"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = setupWakeDispatcher(t, orchestrator.WakeDeliveryHerdr, true)
+	claimWake = orchestrator.ClaimWakes
+	submitWakePrompt = func(backend.Backend, string, string) backend.PromptResult {
+		return backend.PromptResult{Status: backend.PromptBackendFailed, Detail: "backend failed", Err: errors.New("backend failed")}
+	}
+	if err := dispatchHerdrWake(home); err == nil {
+		t.Fatal("submit failure unexpectedly succeeded")
+	}
+	entries, err := os.ReadDir(orchestrator.LeaseDir(home))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("lease was not preserved: entries=%v err=%v", entries, err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,6 +219,59 @@ func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
 	}
 	if !strings.Contains(guard, "kind: guard") || !strings.Contains(guard, "state: unhealthy") {
 		t.Errorf("guard output = %s", guard)
+	}
+}
+
+func TestWakeResolveCommandJSONContract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	if err := mhome.EnqueueWake(home, "signal", "task", "payload"); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := mhome.ClaimWakes(home, "test", 60, 1)
+	if err != nil || len(claim.Wakes) != 1 {
+		t.Fatalf("claim: %+v err=%v", claim, err)
+	}
+	eventID := claim.Wakes[0].Epoch + ":" + claim.Wakes[0].Seq
+	args := []string{"wake", "resolve", "--claim-id", claim.LeaseID, "--event-id", eventID, "--summary", "done", "--output", "json"}
+	out, err := runContract(t, args)
+	if err != nil {
+		t.Fatalf("resolve: %v\n%s", err, out)
+	}
+	assertOneJSONWakeResponse(t, out, "wake.resolve")
+	out, err = runContract(t, args)
+	if err != nil {
+		t.Fatalf("repeat resolve: %v\n%s", err, out)
+	}
+	assertOneJSONWakeResponse(t, out, "wake.resolve")
+	for _, bad := range [][]string{
+		{"missing", eventID, "done"},
+		{claim.LeaseID, "missing", "done"},
+		{claim.LeaseID, eventID, ""},
+	} {
+		badOut, badErr := runContract(t, []string{"wake", "resolve", "--claim-id", bad[0], "--event-id", bad[1], "--summary", bad[2], "--output", "json"})
+		if badErr == nil {
+			t.Fatalf("invalid resolve succeeded: %v", bad)
+		}
+		assertOneJSONWakeResponse(t, badOut, "error")
+	}
+}
+
+func assertOneJSONWakeResponse(t *testing.T, output, wantKind string) {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(output))
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := dec.Decode(&envelope); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, output)
+	}
+	if envelope.Kind != wantKind {
+		t.Fatalf("kind=%q want %q: %s", envelope.Kind, wantKind, output)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		t.Fatalf("stdout contains more than one JSON document: %v\n%s", err, output)
 	}
 }
 
