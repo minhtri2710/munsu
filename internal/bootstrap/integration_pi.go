@@ -82,6 +82,7 @@ export default function (pi: ExtensionAPI) {
     leaseExpiry: number;
     deliveryState: string;
   } | null = null;
+  let claimInFlight = false;
 
   // 1. Session-start: exactly once per native Pi session (including /reload).
   //    Invokes 'munsu session-start --output json' after safety check passes.
@@ -170,7 +171,9 @@ export default function (pi: ExtensionAPI) {
   //    follow-up messages are exhausted. agent_end is NOT sufficient for
   //    status integration because Pi may still continue running.
   pi.on("agent_settled", async (_event, ctx) => {
-    if (!ctx.isIdle() || pendingWake) return;
+    if (!ctx.isIdle() || pendingWake || claimInFlight) return;
+    claimInFlight = true;
+    try {
 
     // Check scope/gate safety before claiming (fail closed).
     const safetyCheck = await pi.exec(MUNSU_BIN, [
@@ -207,9 +210,9 @@ export default function (pi: ExtensionAPI) {
 
     const wakeId = d.wake_id || "";
     const eventIds = wakeId ? wakeId.split(",").filter((id: string) => id.trim()) : [];
-    const key = d.key || eventIds[0] || claimId;
+    if (eventIds.length === 0) return;
+    const key = d.key || eventIds[0];
     const summary = d.summary || "wake";
-    const keyAttr = key !== claimId ? " [key=" + key + "]" : "";
 
     pendingWake = { leaseId: claimId, eventIds, key, leaseExpiry, deliveryState: "pending" };
 
@@ -223,15 +226,75 @@ export default function (pi: ExtensionAPI) {
     });
 
     pi.sendUserMessage(
-      "Wake: " + summary + "\n\nRespond with:\n" +
-      "- /munsu:wake resolved" + keyAttr + ": <summary> to close this wake",
+      "Wake: " + summary + "\n\nAfter checking the wake, call munsu_wake_resolve with key " + key + " and a non-empty summary. Do not use munsu report or print a slash command.",
       { deliverAs: "followUp" },
     );
+    } finally {
+      claimInFlight = false;
+    }
   });
 
-  // 3. Turn-end guard: only fires when idle, no pending followUp, and
-  //    actionable fleet state exists.
-  pi.on("turn_end", async (_event, ctx) => {
+  async function resolvePendingWake(text: string, ctx: any): Promise<boolean> {
+    if (!pendingWake || !text) return false;
+    const match = text.match(/(?:^|\n)\s*\/munsu:wake\s+resolved\s+\[key=([^\]]+)\]\s*:\s*(\S[^\n]*)/);
+    if (!match || match[1] !== pendingWake.key || !match[2].trim()) return false;
+    const ackArgs = ["wake", "ack", pendingWake.leaseId, ...pendingWake.eventIds, "--output", "json"];
+    const ackResult = await pi.exec(MUNSU_BIN, ackArgs);
+    if (ackResult.code !== 0) return false;
+    const ackParsed = parseContract<{ claim_id: string; state: string }>(ackResult.stdout, "wake.ack");
+    if (!ackParsed.ok || ackParsed.data.claim_id !== pendingWake.leaseId) return false;
+    pi.appendEntry("munsu-pending-wake", {
+      leaseId: pendingWake.leaseId,
+      eventIds: pendingWake.eventIds,
+      key: pendingWake.key,
+      leaseExpiry: 0,
+      deliveryState: "acknowledged",
+    });
+    ctx.ui.notify("Wake " + pendingWake.key + " resolved: " + match[2].trim(), "info");
+    pendingWake = null;
+    return true;
+  }
+
+  pi.registerTool({
+    name: "munsu_wake_resolve",
+    label: "Resolve munsu wake",
+    description: "Resolve the currently pending munsu wake after checking its payload. Use the exact key from the wake prompt.",
+    promptSnippet: "Resolve the current durable munsu wake by exact key.",
+    promptGuidelines: ["Use munsu_wake_resolve for Wake prompts; do not print slash commands or use munsu report to resolve a wake."],
+    parameters: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "Exact key shown in the Wake prompt" },
+        summary: { type: "string", description: "Non-empty resolution summary" },
+      },
+      required: ["key", "summary"],
+      additionalProperties: false,
+    } as any,
+    async execute(_toolCallId: string, params: { key: string; summary: string }, _signal: any, _onUpdate: any, ctx: any) {
+      if (!pendingWake) return { content: [{ type: "text", text: "No pending wake." }], details: {}, isError: true };
+      if (params.key !== pendingWake.key || !params.summary.trim()) {
+        return { content: [{ type: "text", text: "Wake key mismatch or empty summary." }], details: {}, isError: true };
+      }
+      const marker = "/munsu:wake resolved [key=" + params.key + "]: " + params.summary.trim();
+      const resolved = await resolvePendingWake(marker, ctx);
+      return {
+        content: [{ type: "text", text: resolved ? "Wake acknowledged." : "Wake acknowledgment failed; lease preserved." }],
+        details: { key: params.key, resolved },
+        isError: !resolved,
+      };
+    },
+  });
+
+  // 3. Turn-end resolves model-produced wake markers, then performs only
+  //    non-delivery guard/UI work. agent_settled is the sole claim producer.
+  pi.on("turn_end", async (event, ctx) => {
+    const message = event && event.message;
+    if (message && message.role === "assistant") {
+      const text = Array.isArray(message.content)
+        ? message.content.filter((part: any) => part && part.type === "text").map((part: any) => part.text || "").join("\n")
+        : "";
+      if (await resolvePendingWake(text, ctx)) return;
+    }
     if (!ctx.isIdle() || pendingWake) return;
 
     // Check scope/gate safety before guard (fail closed).
@@ -253,52 +316,7 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
-    const guardResult = await pi.exec(MUNSU_BIN, ["guard", "--output", "json"]);
-
-    // If guard found issues, try to claim a wake.
-    const claimResult = await pi.exec(MUNSU_BIN, [
-      "wake", "claim", "--consumer", SESSION_CONSUMER,
-      "--lease-captains", "120", "--limit", "1",
-      "--output", "json",
-    ]);
-    if (claimResult.code !== 0) return;
-
-    const parsed = parseContract<{
-      claim_id: string;
-      wake_id?: string;
-      key?: string;
-      lease_expires?: number;
-    }>(claimResult.stdout, "wake.claim");
-    if (!parsed.ok) return;
-
-    const d = parsed.data;
-    const claimId = d.claim_id;
-    if (typeof claimId !== "string" || !claimId.trim()) return;  // Non-empty string claim_id required
-
-    // Require numeric finite lease_expires; do not silently default.
-    if (typeof d.lease_expires !== "number" || !isFinite(d.lease_expires)) return;
-    const leaseExpiry = d.lease_expires * 1000;
-
-    const wakeId = d.wake_id || "";
-    const eventIds = wakeId ? wakeId.split(",").filter((id: string) => id.trim()) : [];
-    const key = d.key || eventIds[0] || claimId;
-    const keyAttr = key !== claimId ? " [key=" + key + "]" : "";
-
-    pendingWake = { leaseId: claimId, eventIds, key, leaseExpiry, deliveryState: "pending" };
-
-    pi.appendEntry("munsu-pending-wake", {
-      leaseId: claimId,
-      eventIds: eventIds,
-      key: key,
-      leaseExpiry: leaseExpiry,
-      deliveryState: "pending",
-    });
-
-    pi.sendUserMessage(
-      "Actionable fleet state remains.\n\n" +
-      "Respond with /munsu:wake resolved" + keyAttr + ": <summary> to close.",
-      { deliverAs: "followUp" },
-    );
+    await pi.exec(MUNSU_BIN, ["guard", "--output", "json"]);
   });
 
   // 4. Pre-tool safety checks — block unsafe operations. Fail closed on any error.

@@ -96,37 +96,6 @@ func printFleetState(w io.Writer, home string) {
 	}
 }
 
-// printDrainSummary runs one drain cycle against the wake queue and prints
-// only actionable wakes. Called only when the session holds the lock;
-// read-only sessions must not claim wakes. Fleet peek is omitted because the
-// fleet state block above already shows in-flight phase.
-func printDrainSummary(w io.Writer, home string) {
-	report, err := orchestrator.DrainCycle(orchestrator.DrainCycleOptions{
-		HomeDir:   home,
-		Consumer:  "session-start",
-		Limit:     10,
-		PeekFleet: false,
-	})
-	if err != nil {
-		fmt.Fprintf(w, "  drain error (non-fatal): %v\n", err)
-		return
-	}
-	if report == nil || (len(report.Actionable) == 0 && report.RoutineCount == 0) {
-		fmt.Fprintln(w, "  (no queued wakes)")
-		return
-	}
-	fmt.Fprintf(w, "  claimed: %d actionable, %d routine (reclaimed %d)\n",
-		len(report.Actionable), report.RoutineCount, report.Reclaimed)
-	for _, a := range report.Actionable {
-		fmt.Fprintf(w, "    - [%s] %s: %s\n", a.EventID, a.Key, a.Payload)
-	}
-	if len(report.Actionable) > 0 {
-		fmt.Fprintf(w, "  Ack after steering: munsu wake ack %s <event-id...>\n", report.LeaseID)
-	} else {
-		fmt.Fprintln(w, "  all routine — no steering needed")
-	}
-}
-
 func supervisionMode(string) string { return "persistent daemon" }
 
 func printSupervisionBlock(w io.Writer, h string, acquired bool) {
@@ -378,12 +347,6 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 	printDataFile(w, home, "captains.md")
 
 	printFleetState(w, home)
-
-	if acquired {
-		fmt.Fprintln(w, "")
-		fmt.Fprintln(w, "--- AFK Drain ---")
-		printDrainSummary(w, home)
-	}
 
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "--- Supervision ---")

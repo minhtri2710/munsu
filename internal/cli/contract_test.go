@@ -64,6 +64,56 @@ func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	}
 }
 
+func TestWakeClaimEmptyQueueReturnsEmptyWithoutLease(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+
+	out, err := runContract(t, []string{"wake", "claim", "--consumer", "test", "--output", "json"})
+	if err != nil {
+		t.Fatalf("wake claim: %v\n%s", err, out)
+	}
+	var envelope struct {
+		Kind string `json:"kind"`
+		Data struct {
+			State   string `json:"state"`
+			ClaimID string `json:"claim_id"`
+			WakeID  string `json:"wake_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if envelope.Kind != "wake.claim" || envelope.Data.State != "empty" || envelope.Data.ClaimID != "" || envelope.Data.WakeID != "" {
+		t.Fatalf("unexpected empty claim: %+v", envelope)
+	}
+	entries, err := os.ReadDir(filepath.Join(home, "state", ".wake-leases"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("empty claim created lease files: %v", entries)
+	}
+}
+
+func TestSessionStartUsesSessionStartKind(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+
+	out, err := runContract(t, []string{"session-start", "--output", "json"})
+	if err != nil {
+		t.Fatalf("session-start: %v\n%s", err, out)
+	}
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if envelope.Kind != "session.start" {
+		t.Fatalf("kind=%q want session.start", envelope.Kind)
+	}
+}
+
 func TestContractRejectsInvalidInputBeforeStateLookup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
@@ -350,6 +400,16 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	// Registry entry for the captain.
 	line := fmt.Sprintf("- domain-alpha - (home: %s; scope: domain; projects: sample; added: 2026-07-19)\n", captainHome)
 	os.WriteFile(filepath.Join(home, "data", "captains.md"), []byte("# Captains\n\n"+line), 0644)
+	// Launched captain meta makes the supervisor visible in the raw task snapshot.
+	if err := mhome.WriteMeta(home, "captain:domain-alpha", map[string]string{
+		"kind":    "captain",
+		"sm_id":   "domain-alpha",
+		"home":    captainHome,
+		"backend": "herdr",
+		"window":  "session-1:pane-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// Stale parent event claims working while home is idle.
 	if err := mhome.AppendStatus(home, "captain:domain-alpha", "working [key=phase7]: Sample rollout Phase 7"); err != nil {
 		t.Fatal(err)
@@ -366,6 +426,9 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	}
 	if len(resp.Data.Captains) != 1 {
 		t.Fatalf("captains=%d want 1: %+v", len(resp.Data.Captains), resp.Data.Captains)
+	}
+	if len(resp.Data.Soldiers) != 0 {
+		t.Fatalf("captain supervisor must not be projected as a soldier: %+v", resp.Data.Soldiers)
 	}
 	c := resp.Data.Captains[0]
 	if c.Provenance != "structured-home" {

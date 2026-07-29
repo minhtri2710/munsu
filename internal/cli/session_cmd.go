@@ -139,7 +139,7 @@ func newSessionStartCmd() *cobra.Command {
 
 			return writeContract(cmd, Response[SessionStart]{
 				SchemaVersion: SchemaVersion,
-				Kind:          "backend.start",
+				Kind:          "session.start",
 				Status:        "success",
 				Data: SessionStart{
 					Lock:        lockState,

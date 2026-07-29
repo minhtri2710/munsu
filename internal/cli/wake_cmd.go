@@ -37,7 +37,9 @@ func newWakeCmd() *cobra.Command {
 			}
 
 			state := "claimed"
-			if result.Reclaimed > 0 {
+			if len(result.Wakes) == 0 {
+				state = "empty"
+			} else if result.Reclaimed > 0 {
 				state = "replayed"
 			}
 

@@ -46,20 +46,26 @@ type ClaimResult struct {
 // Unacked wakes that have expired leases are reclaimed (re-enqueued then claimed).
 // Returns the claim result or an error.
 func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResult, error) {
+	stateDir := filepath.Join(homeDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return nil, fmt.Errorf("creating state directory: %w", err)
+	}
+	lock, err := os.OpenFile(filepath.Join(stateDir, ".wake-claim.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("opening wake claim lock: %w", err)
+	}
+	defer lock.Close()
+	if err := lockWakeFile(lock); err != nil {
+		return nil, fmt.Errorf("locking wake claims: %w", err)
+	}
+	defer unlockWakeFile(lock)
+
 	if leaseCaptains < 0 {
 		leaseCaptains = 0
 	}
 	if limit < 1 {
 		limit = 10
 	}
-
-	leaseDir := LeaseDir(homeDir)
-	if err := os.MkdirAll(leaseDir, 0755); err != nil {
-		return nil, fmt.Errorf("creating lease directory: %w", err)
-	}
-
-	leaseID := fmt.Sprintf("lease-%d", time.Now().UnixNano())
-	expiresAt := time.Now().Unix() + int64(leaseCaptains)
 
 	// Reclaim expired leases first — re-enqueue their wakes
 	reclaimed := ReclaimExpiredLeases(homeDir)
@@ -94,6 +100,16 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 
 	claimed := queueRecords[:take]
 	remaining := queueRecords[take:]
+	if len(claimed) == 0 {
+		return &ClaimResult{Consumer: consumer, Reclaimed: reclaimed}, nil
+	}
+
+	leaseDir := LeaseDir(homeDir)
+	if err := os.MkdirAll(leaseDir, 0755); err != nil {
+		return nil, fmt.Errorf("creating lease directory: %w", err)
+	}
+	leaseID := fmt.Sprintf("lease-%d", time.Now().UnixNano())
+	expiresAt := time.Now().Unix() + int64(leaseCaptains)
 
 	// Write lease file
 	leasePath := LeaseFilePath(homeDir, leaseID)
