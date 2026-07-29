@@ -174,9 +174,8 @@ export default function (pi: ExtensionAPI) {
     if (!ctx.isIdle() || pendingWake || claimInFlight) return;
     const modeResult = await pi.exec(MUNSU_BIN, ["config", "get", "wake-delivery-mode", "--output", "json"]);
     if (modeResult.code === 0) {
-      let modeEnvelope: any;
-      try { modeEnvelope = JSON.parse(modeResult.stdout); } catch { return; }
-      if (modeEnvelope?.status !== "success" || modeEnvelope?.data?.message !== "native") return;
+      const mode = parseContract<{ message: string }>(modeResult.stdout, "message");
+      if (!mode.ok || mode.data.message !== "native") return;
     }
     claimInFlight = true;
     try {
