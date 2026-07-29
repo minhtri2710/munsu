@@ -82,7 +82,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	res.Steps = append(res.Steps, tx.stepConfigPush(parentHome, sm, configOk))
 
 	// Step d: launch readiness
-	res.Steps = append(res.Steps, tx.stepLaunchReadiness(sm))
+	res.Steps = append(res.Steps, tx.stepLaunchReadiness(parentHome, sm))
 
 	// Step e: relaunch pane if needed
 	res.Steps = append(res.Steps, tx.stepRelaunch(parentHome, sm))
@@ -213,8 +213,16 @@ func (tx *RecoverTransaction) stepConfigPush(parentHome string, sm Info, configO
 	return StepResult{Name: "config-push", State: StepOk, Detail: "inheritable config pushed including parent-home"}
 }
 
-func (tx *RecoverTransaction) stepLaunchReadiness(sm Info) StepResult {
-	h, err := harness.Captain(sm.Home)
+func (tx *RecoverTransaction) stepLaunchReadiness(parentHome string, sm Info) StepResult {
+	profile, err := harness.CaptainProfileFromHome(parentHome)
+	if err != nil {
+		return StepResult{Name: "launch-readiness", State: StepFailed,
+			Detail: fmt.Sprintf("cannot resolve captain profile: %v", err)}
+	}
+	h := profile.Harness
+	if h == "" {
+		h, err = harness.Captain(sm.Home)
+	}
 	if err != nil || h == "" {
 		return StepResult{Name: "launch-readiness", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
@@ -230,15 +238,12 @@ func (tx *RecoverTransaction) stepLaunchReadiness(sm Info) StepResult {
 		return StepResult{Name: "launch-readiness", State: StepFailed,
 			Detail: fmt.Sprintf("harness binary %q not found on PATH: %v", a.Name, err)}
 	}
-	// Check model config.
-	modelPath := filepath.Join(sm.Home, "config", "model")
-	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
-		// Model is optional — harness may have a default.
+	if profile.Model == "" {
 		return StepResult{Name: "launch-readiness", State: StepOk,
 			Detail: fmt.Sprintf("harness %q ready at %s (no model override)", h, binPath)}
 	}
 	return StepResult{Name: "launch-readiness", State: StepOk,
-		Detail: fmt.Sprintf("harness %q ready at %s (model configured)", h, binPath)}
+		Detail: fmt.Sprintf("harness %q ready at %s (model %q configured)", h, binPath, profile.Model)}
 }
 
 func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResult {

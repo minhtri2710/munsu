@@ -78,10 +78,18 @@ func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeR
 		if errors.Is(err, backend.ErrPaneNotFound) {
 			return fleet.CaptainProbeResult{}, nil
 		}
-		return fleet.CaptainProbeResult{PaneAlive: pane, AgentAlive: agent}, err
+		result := fleet.CaptainProbeResult{PaneAlive: pane, AgentAlive: agent, ReadyForPrompt: pane && agent}
+		if recognized, ok := bk.(interface {
+			IsRecognizedAgent(string) (bool, string)
+		}); ok {
+			isAgent, status := recognized.IsRecognizedAgent(window)
+			result.AgentStatus = status
+			result.ReadyForPrompt = isAgent && (status == "idle" || status == "done")
+		}
+		return result, err
 	}
 	alive := bk.Alive(window)
-	return fleet.CaptainProbeResult{PaneAlive: alive, AgentAlive: alive}, nil
+	return fleet.CaptainProbeResult{PaneAlive: alive, AgentAlive: alive, ReadyForPrompt: alive}, nil
 }
 
 func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (fleet.CaptainProbeResult, error) {
@@ -111,6 +119,9 @@ func (e sessionNudgeEndpoint) Nudge(home string, meta map[string]string, payload
 	}
 	if !result.PaneAlive || !result.AgentAlive {
 		return fleet.NudgeResult{Status: "unavailable"}, nil
+	}
+	if !result.ReadyForPrompt {
+		return fleet.NudgeResult{Status: "deferred", Detail: "agent status: " + result.AgentStatus}, nil
 	}
 	prompt := backend.SubmitPrompt(bk, meta["window"], payload)
 	return fleet.NudgeResult{Status: string(prompt.Status), Detail: prompt.Detail, Acknowledged: prompt.Acknowledged()}, prompt.Err

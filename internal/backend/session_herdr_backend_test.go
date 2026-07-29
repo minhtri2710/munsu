@@ -309,6 +309,24 @@ func TestHerdrBackend_CheckAgentAlive_WithAgent(t *testing.T) {
 	}
 }
 
+func TestHerdrBackend_CheckAgentAlive_DoneAgentPaneRemainsAlive(t *testing.T) {
+	tmp := t.TempDir()
+	writeFakeHerdrWithAgent(t, tmp, "done")
+	t.Setenv("PATH", tmp+":"+os.Getenv("PATH"))
+
+	h := NewHerdrBackend("test-s")
+	paneAlive, agentAlive, err := h.CheckAgentAlive("wTest:p1")
+	if err != nil {
+		t.Fatalf("CheckAgentAlive error: %v", err)
+	}
+	if !paneAlive {
+		t.Fatal("pane should remain alive")
+	}
+	if !agentAlive {
+		t.Fatal("agent_status=done with a live pane must remain alive")
+	}
+}
+
 func TestHerdrBackend_CheckAgentAlive_NoAgent(t *testing.T) {
 	tmp := t.TempDir()
 	writeFakeHerdrWithAgent(t, tmp, "") // agent_not_found

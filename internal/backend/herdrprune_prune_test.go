@@ -130,7 +130,7 @@ func TestRunPrune_ApplyClosesHometagMatch(t *testing.T) {
 }
 
 func TestRunPrune_LiveAgentSkipped(t *testing.T) {
-	for _, status := range []string{"working", "idle", "done", "blocked"} {
+	for _, status := range []string{"working", "idle", "blocked"} {
 		t.Run("agent_"+status, func(t *testing.T) {
 			subTmp := t.TempDir()
 			homeDir := filepath.Join(subTmp, "home")
@@ -404,7 +404,7 @@ func TestIsLiveAgent(t *testing.T) {
 		{"idle", true},
 		{"done", true},
 		{"blocked", true},
-		{"unknown", false},
+		{"unknown", true},
 		{"none", false},
 		{"", false},
 	}

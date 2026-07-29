@@ -139,6 +139,9 @@ func newSendCmd() *cobra.Command {
 					return fmt.Errorf("captain %s has no home in meta", smID)
 				}
 				sm := fleet.Info{ID: smID, Home: captainHome}
+				if err := ensureCaptainReady(ctx.Home, sm, newSessionProbeEndpoint(), recoverCaptainEndpoint); err != nil {
+					return fmt.Errorf("captain %s: %w", smID, err)
+				}
 
 				result := fleet.SendMailboxToCaptain(sm, ctx.Home, line, newSessionMailboxSender())
 				if result.Err != nil {

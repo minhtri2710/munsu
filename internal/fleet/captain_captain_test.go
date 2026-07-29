@@ -103,18 +103,18 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	if binName != "pi" {
 		t.Fatalf("binName = %q, want pi", binName)
 	}
-	wantArgs := []string{string(charter)}
-	_ = wantArgs
-	if len(args) != len(wantArgs) {
-		t.Fatalf("args = %#v, want %#v", args, wantArgs)
+	if len(args) != 2 || args[0] != "--append-system-prompt" {
+		t.Fatalf("args = %#v, want system-context charter without user prompt", args)
 	}
-	for i := range wantArgs {
-		if args[i] != wantArgs[i] {
-			t.Errorf("args[%d] = %q, want %q", i, args[i], wantArgs[i])
-		}
+	prompt := args[1]
+	if !strings.Contains(prompt, "[mu-system:captain-bootstrap]") || !strings.Contains(prompt, "<captain-charter>") {
+		t.Fatalf("prompt missing bootstrap identity or charter wrapper: %q", prompt)
 	}
-	if strings.Contains(args[len(args)-1], "$(cat") {
-		t.Fatalf("prompt contains shell expression: %q", args[len(args)-1])
+	if strings.Count(prompt, string(charter)) != 1 {
+		t.Fatalf("prompt must embed resolved charter exactly once: %q", prompt)
+	}
+	if strings.Contains(prompt, "Read .captain-charter.md") || strings.Contains(prompt, "munsu session-start") || strings.Contains(prompt, "state/.inbox") {
+		t.Fatalf("prompt requests model-driven initialization or filesystem inspection: %q", prompt)
 	}
 }
 

@@ -1,8 +1,10 @@
 package fleet
 
 type CaptainProbeResult struct {
-	PaneAlive  bool
-	AgentAlive bool
+	PaneAlive      bool
+	AgentAlive     bool
+	ReadyForPrompt bool
+	AgentStatus    string
 }
 
 type ProbeEndpoint interface {

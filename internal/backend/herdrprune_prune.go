@@ -85,10 +85,7 @@ func denyListedLabel(label string) bool {
 
 // isLiveAgent returns true if the agent_status indicates a live agent.
 func isLiveAgent(status string) bool {
-	if status == "" || status == "unknown" || status == "none" {
-		return false
-	}
-	return true
+	return isAgentStatusAlive(status)
 }
 
 // liveWorkspaceIDsFromTaskMeta scans all task meta files in the state directory

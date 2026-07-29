@@ -397,12 +397,29 @@ func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {
 		return false, false, fmt.Errorf("agent get error: %s", resp.Error.Message)
 	}
 
-	if resp.Result == nil || resp.Result.Agent.AgentStatus == "" {
-		// Pane exists but no agent status in response.
+	if resp.Result == nil || !isAgentStatusAlive(resp.Result.Agent.AgentStatus) {
 		return true, false, nil
 	}
 
 	return true, true, nil
+}
+
+func isAgentStatusAlive(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "idle", "done", "working", "busy", "blocked", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAgentStatusReady(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "idle", "done":
+		return true
+	default:
+		return false
+	}
 }
 
 // CheckAlive checks whether the pane still exists via herdr pane get.

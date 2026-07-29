@@ -27,6 +27,15 @@ func (t sessionActivationTransport) Attempt(home string, target orchestrator.Tar
 		attempt.SafetyError = err.Error()
 		return attempt
 	}
+	if recognized, ok := bk.(interface {
+		IsRecognizedAgent(string) (bool, string)
+	}); ok {
+		isAgent, status := recognized.IsRecognizedAgent(target.Handle)
+		if !isAgent || (status != "idle" && status != "done") {
+			attempt.SafetyVerdict = "pending"
+			return attempt
+		}
+	}
 	if !safe {
 		if aware, ok := bk.(backend.AgentAwareBackend); ok {
 			alive, agentAlive, agentErr := aware.CheckAgentAlive(target.Handle)

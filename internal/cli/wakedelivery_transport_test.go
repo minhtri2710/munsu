@@ -9,10 +9,12 @@ import (
 )
 
 type activationPromptBackend struct {
-	capture string
-	err     error
-	aware   bool
-	result  backend.PromptResult
+	capture     string
+	err         error
+	aware       bool
+	status      string
+	result      backend.PromptResult
+	promptCalls int
 }
 
 func (b activationPromptBackend) NewWindow(string, string) (string, error) { return "", nil }
@@ -23,7 +25,13 @@ func (b activationPromptBackend) Teardown(string) error                    { ret
 func (b activationPromptBackend) CheckAgentAlive(string) (bool, bool, error) {
 	return true, b.aware, nil
 }
-func (b activationPromptBackend) AgentPrompt(string, string) backend.PromptResult { return b.result }
+func (b *activationPromptBackend) AgentPrompt(string, string) backend.PromptResult {
+	b.promptCalls++
+	return b.result
+}
+func (b *activationPromptBackend) IsRecognizedAgent(string) (bool, string) {
+	return b.aware, b.status
+}
 
 func TestActivationComposerSafeRecognizesIdleGlyphsAndGhostText(t *testing.T) {
 	for _, content := range []string{"", "❯ \n", "› \n", "> \n", "o \n", "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n"} {
@@ -55,7 +63,7 @@ func TestSessionActivationTransportMapsTypedOutcomes(t *testing.T) {
 		backend.PromptSubmitted, backend.PromptQueuedWhileBusy, backend.PromptStalled,
 		backend.PromptEndpointDead, backend.PromptBackendFailed, backend.PromptUnsupported,
 	} {
-		bk := activationPromptBackend{capture: "❯\n", result: backend.PromptResult{Status: status}}
+		bk := &activationPromptBackend{capture: "❯\n", aware: true, status: "idle", result: backend.PromptResult{Status: status}}
 		transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 			return bk, "tmux", nil
 		}}
@@ -67,10 +75,27 @@ func TestSessionActivationTransportMapsTypedOutcomes(t *testing.T) {
 	}
 }
 
-func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
-	bk := activationPromptBackend{
+func TestSessionActivationTransportDefersWorkingAgent(t *testing.T) {
+	bk := &activationPromptBackend{
 		capture: "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n",
 		aware:   true,
+		status:  "working",
+		result:  backend.PromptResult{Status: backend.PromptSubmitted},
+	}
+	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
+		return bk, "herdr", nil
+	}}
+	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
+	if got.Acknowledged || bk.promptCalls != 0 {
+		t.Fatalf("working agent should defer without submission: result=%+v calls=%d", got, bk.promptCalls)
+	}
+}
+
+func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
+	bk := &activationPromptBackend{
+		capture: "\x1b[1m> \x1b[0m\x1b[2mType a message...\x1b[0m\n",
+		aware:   true,
+		status:  "idle",
 		result:  backend.PromptResult{Status: backend.PromptSubmitted},
 	}
 	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {

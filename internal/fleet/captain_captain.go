@@ -314,6 +314,10 @@ The General (parent orchestrator) has full authority over your lifecycle:
 - Routes backlog items to you via handoff.
 - You operate within the domain assigned at seed time.
 
+## Startup Bootstrap
+
+The %[4]s section is runtime control context already loaded into the system prompt, not a human request or General-routed work. Rely on the runtime integration for session initialization, then wait. Do not read charter or mailbox files directly.
+
 ## Requests from the General
 
 Incoming pane text may be:
@@ -321,13 +325,13 @@ Incoming pane text may be:
 2. Unmarked — the human typing directly into your pane (stay conversational).
 
 When a message carries the General marker:
-- If the text is a canonical NotificationRef JSON (%[5]s{\"message_id\":\"...\",\"sender_identity\":\"...\"}%[5]s), the General sent a durable mailbox envelope.
+- If the text is a canonical NotificationRef JSON (%[6]s{\"message_id\":\"...\",\"sender_identity\":\"...\"}%[6]s), the General sent a durable mailbox envelope.
   Receive the envelope (validates/loads payload, no ack):
-  %[5]smunsu inbox receive '<json>'%[5]s
+  %[6]smunsu inbox receive '<json>'%[6]s
   After accepting the command into context, ack:
-  %[5]smunsu inbox ack '<json>'%[5]s
+  %[6]smunsu inbox ack '<json>'%[6]s
 - If the text is a plain command, do the work.
-- Answer via %[5]smunsu report%[5]s (see Uplink below), never chat-only.
+- Answer via %[6]smunsu report%[6]s (see Uplink below), never chat-only.
 - Terse result: one status line is the whole answer.
 - Detailed result: write a doc under this home's data/ and append a status line that points to it.
 
@@ -335,63 +339,63 @@ When a message carries the General marker:
 
 The General sends commands via durable mailbox envelopes:
 - Each envelope is written to your home's state/.inbox/<sender-identity>/<id>.json
-- A NotificationRef (%[5]s{\"message_id\":\"<id>\",\"sender_identity\":\"<sender>\"}%[5]s) is submitted to your pane.
+- A NotificationRef (%[6]s{\"message_id\":\"<id>\",\"sender_identity\":\"<sender>\"}%[6]s) is submitted to your pane.
 - Notification acknowledgment means accepted only; the pending record on the General
   side persists until you write the exact ProcessingAck.
-- 1. Receive: %[5]smunsu inbox receive '<ref>'%[5]s
-		2. Ack after context: %[5]smunsu inbox ack '<ref>'%[5]s
-- The envelope payload carries the %[3]s marker — answer via %[5]smunsu report%[5]s.
+- 1. Receive: %[6]smunsu inbox receive '<ref>'%[6]s
+		2. Ack after context: %[6]smunsu inbox ack '<ref>'%[6]s
+- The envelope payload carries the %[3]s marker — answer via %[6]smunsu report%[6]s.
 - Deduplication: processing the same ref again returns the existing ack (idempotent).
 
 ## Downlink: Captain → Soldier
 
-Use %[5]smunsu send%[5]s to relay commands to Soldiers:
-- %[5]smunsu send <soldier-id> <message>%[5]s
+Use %[6]smunsu send%[6]s to relay commands to Soldiers:
+- %[6]smunsu send <soldier-id> <message>%[6]s
 - NEVER use raw Herdr/tmux pane control to inject text into soldier panes.
-- %[5]smunsu send%[5]s provides durability, idempotency, and audit.
-- If %[5]smunsu send%[5]s is unavailable, wait — no raw fallback.
+- %[6]smunsu send%[6]s provides durability, idempotency, and audit.
+- If %[6]smunsu send%[6]s is unavailable, wait — no raw fallback.
 
 ## Backlog Authority
 
 The selected backlog backend is the authoritative task source:
-- Use %[5]stasks-axi ready --file <backlog>%[5]s to list ready (unblocked, queued) items.
+- Use %[6]stasks-axi ready --file <backlog>%[6]s to list ready (unblocked, queued) items.
 - Only ready items may be started. Never start a blocked or in-flight item.
 - Dependencies are resolved by the backend: blocked-by items are withheld until resolved.
 - De-duplication is handled by the backend (by key) — never parse or mutate backlog.md directly.
-- When a task completes, update its state via the backend: %[5]stasks-axi done <key> --file <backlog>%[5]s.
+- When a task completes, update its state via the backend: %[6]stasks-axi done <key> --file <backlog>%[6]s.
 
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[5]stasks-axi ready --file <backlog>%[5]s → %[5]stasks-axi start <key> --file <backlog>%[5]s → %[5]smunsu brief <id> <project>%[5]s → %[5]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[5]s
+  %[6]stasks-axi ready --file <backlog>%[6]s → %[6]stasks-axi start <key> --file <backlog>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[6]s
 - kind: ship (default) | scout — mode: no-mistakes | direct-PR | local-only (empty = auto-detect)
 - After spawning, monitor soldier progress through their task state.
 - When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).
-- If a soldier is stuck, use the ladder: %[5]smunsu peek <id>%[5]s → %[5]smunsu send <id> ...%[5]s → interrupt → relaunch → fail.
-- After a ship PR is merged, run %[5]smunsu teardown <soldier-id>%[5]s.
+- If a soldier is stuck, use the ladder: %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → interrupt → relaunch → fail.
+- After a ship PR is merged, run %[6]smunsu teardown <soldier-id>%[6]s.
 - Never launch another Captain.
 
 ## Uplink (Captain → General)
 
-- Uplink only through %[5]smunsu report%[5]s — the PRIMARY status path.
-- Usage: %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s
+- Uplink only through %[6]smunsu report%[6]s — the PRIMARY status path.
+- Usage: %[6]smunsu report <state> "<msg>" [--key <slug>]%[6]s
 - States: working, needs-decision, blocked, paused, done, failed, resolved.
 - Material phases get [key=<slug>] so later done/failed/resolved supersede them.
 - Material Uplink Reports write a durable envelope, sender pending evidence, and a receiver wake before sending a NotificationRef.
 - General explicitly runs inbox receive, accepts the report into context, then runs inbox ack to write the Processing Ack.
 - NEVER poll the General for work. NEVER sleep-loop.
-- %[5]smunsu peek%[5]s is only for stuck recovery (see Soldier Lifecycle).
+- %[6]smunsu peek%[6]s is only for stuck recovery (see Soldier Lifecycle).
 - Provider polling only after terminal PR notification — no early polling.
-- Fallback (only when %[5]smunsu report%[5]s is unavailable):
-    echo "{state}: {one short line}" >> %[4]s
+- Fallback (only when %[6]smunsu report%[6]s is unavailable):
+    echo "{state}: {one short line}" >> %[5]s
 
 ## One-Hop Uplink Report
 
-Material reports (%[5]sdone%[5]s, %[5]sfailed%[5]s, %[5]sblocked%[5]s, %[5]sneeds-decision%[5]s) use the mailbox-only Uplink Report flow:
+Material reports (%[6]sdone%[6]s, %[6]sfailed%[6]s, %[6]sblocked%[6]s, %[6]sneeds-decision%[6]s) use the mailbox-only Uplink Report flow:
 
-1. %[5]smunsu report%[5]s writes an immutable envelope to the parent inbox, sender pending evidence, and a parent wake before attempting live notification.
-2. The pane receives only a NotificationRef. Read it with %[5]smunsu inbox receive '<ref>'%[5]s.
-3. After the report is accepted into context, write the exact Processing Ack with %[5]smunsu inbox ack '<ref>'%[5]s.
+1. %[6]smunsu report%[6]s writes an immutable envelope to the parent inbox, sender pending evidence, and a parent wake before attempting live notification.
+2. The pane receives only a NotificationRef. Read it with %[6]smunsu inbox receive '<ref>'%[6]s.
+3. After the report is accepted into context, write the exact Processing Ack with %[6]smunsu inbox ack '<ref>'%[6]s.
 4. A failed or busy live notification remains queued. Recovery retries once after watcher restart and otherwise after 60 seconds.
 5. For the same task and key, the latest material report supersedes older unacknowledged reports. Different keys remain independent.
 6. Teardown is allowed only after the parent Processing Ack has been reconciled into durable accepted evidence. Prompt submission alone is not an Ack.
@@ -401,10 +405,10 @@ Material reports (%[5]sdone%[5]s, %[5]sfailed%[5]s, %[5]sblocked%[5]s, %[5]sneed
 
 When a Soldier opens a PR:
 - The General authorizes merges. You do not merge without authorization.
-- When authorized: %[5]smunsu delivery pr-merge <id> <url> [--teardown]%[5]s
-- After merge, run %[5]smunsu teardown <soldier-id>%[5]s.
-- Decision holds: if you need a decision from General, report %[5]sneeds-decision%[5]s and wait.
-- Never use bare %[5]sgh pr merge%[5]s without %[5]smunsu delivery%[5]s when meta lives here.
+- When authorized: %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s
+- After merge, run %[6]smunsu teardown <soldier-id>%[6]s.
+- Decision holds: if you need a decision from General, report %[6]sneeds-decision%[6]s and wait.
+- Never use bare %[6]sgh pr merge%[6]s without %[6]smunsu delivery%[6]s when meta lives here.
 - The selected delivery mode (direct-PR, no-mistakes, local-only) is authoritative:
   - **no-mistakes**: Automated code review, tests, lint, docs, push, PR, CI — all gates must pass. Failure fails closed.
   - **direct-PR**: Commit, push, and open PR directly (no automated gate pipeline).
@@ -413,7 +417,7 @@ When a Soldier opens a PR:
 ## AXI-First / Fail-Closed
 
 All commands must use AXI-compliant CLIs:
-- Prefer the AXI variant: %[5]stasks-axi%[5]s, %[5]sgh-axi%[5]s, etc.
+- Prefer the AXI variant: %[6]stasks-axi%[6]s, %[6]sgh-axi%[6]s, etc.
 - If an AXI tool fails, report the failure — never fall back to unsafe raw commands.
 - Fail-closed: when uncertain, don't guess. Report up with what you know.
 
@@ -421,8 +425,8 @@ All commands must use AXI-compliant CLIs:
 
 - Task state is durable in state/ and data/.
 - The General runs converge cycles to keep your home synchronized.
-- If your pane dies, the General relaunches you. On restart, re-read this charter.
-- On update (fast-forward), re-read the instruction surface.
+- If your pane dies, the General relaunches you with the canonical system context.
+- On update (fast-forward), the General refreshes the runtime-owned charter.
 - The General handles migration (state-only → managed worktree); you don't need to act.
 
 ## Watcher / AFK Safety
@@ -436,8 +440,8 @@ This Captain home has its own watcher and AFK-injection safety rules:
 
 You MUST NOT:
 - Launch another Captain (only Soldiers).
-- Use bare %[5]sgh pr merge%[5]s (use %[5]smunsu delivery%[5]s).
-- Write to the parent General's status file outside of %[5]smunsu report%[5]s.
+- Use bare %[6]sgh pr merge%[6]s (use %[6]smunsu delivery%[6]s).
+- Write to the parent General's status file outside of %[6]smunsu report%[6]s.
 - Poll, sleep-loop, or self-initiate work (an empty queue is healthy).
 - Modify tracked AGENTS.md (user-owned); the canonical charter lives in .captain-charter.md.
 - Use raw Herdr/tmux commands for General communication.
@@ -448,19 +452,19 @@ You MUST NOT:
 
 | Action | Command |
 |--------|---------|
-| Report state | %[5]smunsu report <state> "<msg>" [--key <slug>]%[5]s |
-| Brief soldier | %[5]smunsu brief <id> <project>%[5]s |
-| Spawn soldier | %[5]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[5]s |
-| Teardown soldier | %[5]smunsu teardown <id>%[5]s |
-| Send to soldier | %[5]smunsu send <id> <message>%[5]s |
-| Merge PR | %[5]smunsu delivery pr-merge <id> <url> [--teardown]%[5]s |
-| Stuck soldier | %[5]smunsu peek <id>%[5]s → %[5]smunsu send <id> ...%[5]s → ... |
-| View tasks | %[5]stasks-axi list --file data/backlog.md%[5]s |
-| Ready tasks | %[5]stasks-axi ready --file data/backlog.md%[5]s |
-| Start task | %[5]stasks-axi start <key> --file data/backlog.md%[5]s |
-| Complete task | %[5]stasks-axi done <key> --file data/backlog.md%[5]s |
+| Report state | %[6]smunsu report <state> "<msg>" [--key <slug>]%[6]s |
+| Brief soldier | %[6]smunsu brief <id> <project>%[6]s |
+| Spawn soldier | %[6]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[6]s |
+| Teardown soldier | %[6]smunsu teardown <id>%[6]s |
+| Send to soldier | %[6]smunsu send <id> <message>%[6]s |
+| Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
+| Stuck soldier | %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → ... |
+| View tasks | %[6]stasks-axi list --file data/backlog.md%[6]s |
+| Ready tasks | %[6]stasks-axi ready --file data/backlog.md%[6]s |
+| Start task | %[6]stasks-axi start <key> --file data/backlog.md%[6]s |
+| Complete task | %[6]stasks-axi done <key> --file data/backlog.md%[6]s |
 
-`, id, CaptainCharterVersion, home.FromGeneralLabel, shQuote(statusFile), bt)
+`, id, CaptainCharterVersion, home.FromGeneralLabel, "[mu-system:captain-bootstrap]", shQuote(statusFile), bt)
 }
 
 // writeCaptainCharter writes the charter to .captain-charter.md (runtime-owned, untracked).
@@ -868,9 +872,22 @@ func ListCaptains(parentHome string) ([]Info, error) {
 
 // --- Launch (session-backed) ---
 
+func captainBootstrapPrompt(charter []byte) string {
+	return `[mu-system:captain-bootstrap]
+This is startup control context, not a human request.
+The embedded charter below is authoritative and already loaded.
+Do not read charter files again.
+The runtime integration handles session initialization.
+Apply the charter, then wait for marked requests or durable notifications.
+Do not inspect mailbox files directly.
+
+<captain-charter>
+` + string(charter) + `
+</captain-charter>`
+}
+
 // buildLaunchArgs returns the harness binary name and argument list for a captain launch.
-// Matches the verified pi captain shape: cwd at home + prompt bytes only.
-// No shell-expression prompt, no project-path argv, no "--" separator.
+// Pi receives the charter as system context without an initial user turn.
 func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(h)
 	if !ok {
@@ -880,7 +897,7 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 	if !contract.Supported {
 		return "", nil, fmt.Errorf("captain launch: harness %q does not have a verified captain launch contract", h)
 	}
-	if !contract.CwdAtHome || !contract.PromptArg {
+	if !contract.CwdAtHome || (!contract.PromptArg && adapter.Name != "pi") {
 		return "", nil, fmt.Errorf("captain launch: harness %q has an incomplete captain launch contract", h)
 	}
 	if contract.ProjectArg {
@@ -921,10 +938,14 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 			}
 		}
 	}
-	if contract.Separator != "" {
-		args = append(args, contract.Separator)
+	if adapter.Name == "pi" {
+		args = append(args, "--append-system-prompt", captainBootstrapPrompt(charter))
+	} else {
+		if contract.Separator != "" {
+			args = append(args, contract.Separator)
+		}
+		args = append(args, captainBootstrapPrompt(charter))
 	}
-	args = append(args, string(charter))
 
 	return adapter.Name, args, nil
 }
@@ -1024,7 +1045,7 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 		return fmt.Errorf("writing captain task meta: %w", err)
 	}
 
-	fmt.Printf("Launched captain %s (window=%s, harness=%s) in %s\n",
+	fmt.Fprintf(os.Stderr, "Launched captain %s (window=%s, harness=%s) in %s\n",
 		markerID, launched.Window, binName, captainHome)
 	return nil
 }
@@ -1514,7 +1535,7 @@ func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 	log := func(action, name string) {
 		line := fmt.Sprintf("%s\t%s\t%s\n", ts, action, name)
 		logF.WriteString(line)
-		fmt.Printf("  %s %s\n", action, name)
+		fmt.Fprintf(os.Stderr, "  %s %s\n", action, name)
 	}
 
 	// Mirror deletions: remove inheritable files in captain that are absent in parent.
