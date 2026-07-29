@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
@@ -52,20 +51,20 @@ func newConfigDispatchShowCmd() *cobra.Command {
 			cfg, err := harness.LoadDispatch(path)
 			if err != nil {
 				if isMissingDispatch(err) {
-					return writeContract(cmd, contract.Response[contract.MessageResult]{
-						SchemaVersion: contract.SchemaVersion,
+					return writeContract(cmd, Response[MessageResult]{
+						SchemaVersion: SchemaVersion,
 						Kind:          "config.dispatch",
 						Status:        "success",
-						Data:          contract.MessageResult{Message: "dispatch: <not set>\n  path: " + path},
+						Data:          MessageResult{Message: "dispatch: <not set>\n  path: " + path},
 					})
 				}
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: formatDispatch(cfg, path)},
+				Data:          MessageResult{Message: formatDispatch(cfg, path)},
 			})
 		}),
 	}
@@ -79,11 +78,11 @@ func newConfigDispatchPathCmd() *cobra.Command {
 		Short: "Print the soldier-dispatch.json path",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: harness.DispatchPath(ctx.Home)},
+				Data:          MessageResult{Message: harness.DispatchPath(ctx.Home)},
 			})
 		}),
 	}
@@ -123,11 +122,11 @@ func newConfigDispatchSetDefaultCmd() *cobra.Command {
 			if err := harness.SaveDispatch(path, cfg); err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data: contract.MessageResult{Message: fmt.Sprintf(
+				Data: MessageResult{Message: fmt.Sprintf(
 					"default set: harness=%s model=%s effort=%s\n  path: %s",
 					cfg.DefaultHarness, emptyDash(cfg.DefaultModel), emptyDash(cfg.DefaultEffort), path,
 				)},
@@ -209,11 +208,11 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 			if idx >= 0 {
 				action = "replaced"
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data: contract.MessageResult{Message: fmt.Sprintf(
+				Data: MessageResult{Message: fmt.Sprintf(
 					"profile %s: %s (harness=%s model=%s effort=%s)\n  path: %s",
 					action, name, hName, emptyDash(model), emptyDash(effort), path,
 				)},
@@ -259,11 +258,11 @@ func newConfigDispatchRmCmd() *cobra.Command {
 			if err := harness.SaveDispatch(path, cfg); err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("removed profile %q\n  path: %s", name, path)},
+				Data:          MessageResult{Message: fmt.Sprintf("removed profile %q\n  path: %s", name, path)},
 			})
 		}),
 	}
@@ -281,11 +280,11 @@ func newConfigDispatchClearCmd() *cobra.Command {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: "dispatch cleared\n  path: " + path},
+				Data:          MessageResult{Message: "dispatch cleared\n  path: " + path},
 			})
 		}),
 	}

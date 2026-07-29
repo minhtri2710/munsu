@@ -6,8 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/soldier"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
 
@@ -36,11 +35,11 @@ func newSkillListCmd() *cobra.Command {
 				return err
 			}
 			sort.Strings(names)
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "skill.list",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.Join(names, "\n")},
+				Data:          MessageResult{Message: strings.Join(names, "\n")},
 			})
 		},
 	}
@@ -60,7 +59,7 @@ captain-provisioning, stuck-soldier-recovery).`,
 		Args: ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			if os.Getenv("MUNSU_ROLE") == "soldier" && soldier.SoldierSkillDenied[name] {
+			if os.Getenv("MUNSU_ROLE") == "soldier" && fleet.SoldierSkillDenied[name] {
 				return fmt.Errorf("access denied: soldier role cannot inspect management skill %q", name)
 			}
 			content, err := readEmbeddedSkill(name)

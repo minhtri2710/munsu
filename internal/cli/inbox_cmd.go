@@ -7,9 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/mailbox"
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -47,11 +46,12 @@ Captain-side subcommands:
 // and returns the envelope payload. Writes NO ack.
 //
 // Usage by captain agent (after receiving NotificationRef via SubmitPrompt):
-//   munsu inbox receive '{"message_id":"...","sender_identity":"..."}'
+//
+//	munsu inbox receive '{"message_id":"...","sender_identity":"..."}'
 //
 // This is the first step of the two-step inbox protocol:
-//   1. munsu inbox receive <ref>  — inspect the incoming command
-//   2. munsu inbox ack <ref>      — accept into context (after reading payload)
+//  1. munsu inbox receive <ref>  — inspect the incoming command
+//  2. munsu inbox ack <ref>      — accept into context (after reading payload)
 func newInboxReceiveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "receive <notification-ref>",
@@ -73,14 +73,14 @@ This produces output with kind=inbox.receive.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			refJSON := args[0]
 
-			ref, err := mailbox.ParseNotificationRef(refJSON)
+			ref, err := orchestrator.ParseNotificationRef(refJSON)
 			if err != nil {
 				return usageError("invalid_ref",
 					"NotificationRef must be valid JSON with message_id and sender_identity fields",
 					fmt.Sprintf("parsing NotificationRef: %v", err))
 			}
 
-			recv, err := mailbox.NewReceiver(ctx.Home)
+			recv, err := orchestrator.NewReceiver(ctx.Home)
 			if err != nil {
 				return operationError("receiver_init_failed",
 					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",
@@ -94,11 +94,11 @@ This produces output with kind=inbox.receive.`,
 					fmt.Sprintf("receiving notification: %v", err))
 			}
 
-			return writeContract(cmd, contract.Response[contract.InboxReceiveResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[InboxReceiveResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "inbox.receive",
 				Status:        "success",
-				Data: contract.InboxReceiveResult{
+				Data: InboxReceiveResult{
 					MessageID:      env.MessageID,
 					SenderIdentity: env.SenderIdentity,
 					Payload:        env.Payload,
@@ -116,7 +116,8 @@ This produces output with kind=inbox.receive.`,
 // taking the command into its agent context.
 //
 // Usage by captain agent (after reading the payload via inbox receive):
-//   munsu inbox ack '{"message_id":"...","sender_identity":"..."}'
+//
+//	munsu inbox ack '{"message_id":"...","sender_identity":"..."}'
 //
 // The ack means the command was accepted into agent context — NOT that it
 // completed. Completion is tracked through separate report/relay flows.
@@ -142,14 +143,14 @@ This produces output with kind=inbox.ack.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			refJSON := args[0]
 
-			ref, err := mailbox.ParseNotificationRef(refJSON)
+			ref, err := orchestrator.ParseNotificationRef(refJSON)
 			if err != nil {
 				return usageError("invalid_ref",
 					"NotificationRef must be valid JSON with message_id and sender_identity fields",
 					fmt.Sprintf("parsing NotificationRef: %v", err))
 			}
 
-			recv, err := mailbox.NewReceiver(ctx.Home)
+			recv, err := orchestrator.NewReceiver(ctx.Home)
 			if err != nil {
 				return operationError("receiver_init_failed",
 					"Ensure MUNSU_HOME points to a valid captain or general home with provenance",
@@ -163,11 +164,11 @@ This produces output with kind=inbox.ack.`,
 					fmt.Sprintf("acknowledging notification: %v", err))
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "inbox.ack",
 				Status:        "success",
-				Data: contract.MessageResult{
+				Data: MessageResult{
 					Message: fmt.Sprintf("accepted message %s from %s (outcome=%s)", ref.MessageID, ref.SenderIdentity, ack.Outcome),
 				},
 			})
@@ -244,7 +245,7 @@ func formatCaptainStatusLines(stateDir string) []string {
 
 		captainID := strings.TrimPrefix(name[:len(name)-len(".status")], "captain:")
 		marker := " "
-		if classify.GeneralRelevant(lastLine) {
+		if domain.GeneralRelevant(lastLine) {
 			marker = "!"
 		}
 		lines = append(lines, fmt.Sprintf("%s %s: %s", marker, captainID, lastLine))

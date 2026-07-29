@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/minhtri2710/munsu/internal/afk"
+	"github.com/minhtri2710/munsu/internal/bootstrap"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // CapabilityDiagnostics groups all extended capability reports for doctor output.
@@ -57,7 +56,7 @@ func (d IntegrationDiagnostic) Fix() string {
 
 // WatcherDiagnostic reports watcher identity and version status.
 type WatcherDiagnostic struct {
-	Identity       *supervision.WatcherIdentity
+	Identity       *orchestrator.WatcherIdentity
 	Running        bool
 	VersionMatched bool
 	CliVersion     string
@@ -67,7 +66,7 @@ func (d *WatcherDiagnostic) String() string {
 	if d.Identity == nil || !d.Running {
 		return "watcher: not running or identity unverified"
 	}
-	s := fmt.Sprintf("watcher: %s", supervision.IdentitySummary(d.Identity))
+	s := fmt.Sprintf("watcher: %s", orchestrator.IdentitySummary(d.Identity))
 	switch {
 	case !d.VersionMatched && d.CliVersion != "":
 		s += fmt.Sprintf(", CLI version: %s [VERSION MISMATCH]", d.CliVersion)
@@ -89,7 +88,7 @@ func (d *WatcherDiagnostic) Fix() string {
 
 // GeneralDiagnostic reports general target resolution status.
 type GeneralDiagnostic struct {
-	Result afk.TargetResult
+	Result orchestrator.TargetResult
 	Err    error
 }
 
@@ -97,14 +96,14 @@ func (d *GeneralDiagnostic) String() string {
 	if d.Err != nil {
 		return fmt.Sprintf("general target: error: %v", d.Err)
 	}
-	if d.Result.Source == afk.Unsupported {
+	if d.Result.Source == orchestrator.Unsupported {
 		return fmt.Sprintf("general target: %s (%s)", d.Result.Source, d.Result.SourceDetail)
 	}
 	return fmt.Sprintf("general target: resolved via %s → %q", d.Result.Source, d.Result.Handle)
 }
 
 func (d *GeneralDiagnostic) Fix() string {
-	if d.Result.Source == afk.Unsupported {
+	if d.Result.Source == orchestrator.Unsupported {
 		return "set config/general-pane or ensure TMUX_PANE/HERDR_ENV is active"
 	}
 	return ""
@@ -158,7 +157,7 @@ func collectIntegrationDiagnostics(home, cwd string) []IntegrationDiagnostic {
 		}
 
 		// Check integration status.
-		result, err := integrate.Status(home, cwd, name, integrate.ScopeProject)
+		result, err := bootstrap.Status(home, cwd, name, bootstrap.ScopeProject)
 		if err != nil {
 			d.State = "error"
 			d.Detail = fmt.Sprintf("status check failed: %v", err)
@@ -180,20 +179,20 @@ func collectIntegrationDiagnostics(home, cwd string) []IntegrationDiagnostic {
 func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 	d := &WatcherDiagnostic{CliVersion: version}
 
-	id := supervision.ReadIdentity(home)
+	id := orchestrator.ReadIdentity(home)
 	if id == nil {
 		return d
 	}
 	d.Identity = id
-	d.Running = supervision.ValidatePIDOwnership(home, id.PID)
+	d.Running = orchestrator.ValidatePIDOwnership(home, id.PID)
 
 	// Compare via CommitSHA first; fall back to display-version comparison
 	// for backward compatibility with watcher identity files that predate
 	// the CommitSHA field.
-	// Use supervision.CommitSHA (the linker-injected value) rather than the
-	// CLI-local CommitSHA, because ldflags set supervision.CommitSHA directly.
-	if id.CommitSHA != "" && supervision.CommitSHA != "" {
-		d.VersionMatched = supervision.NewBuildIdentity(id.CommitSHA).Matches(supervision.NewBuildIdentity(supervision.CommitSHA))
+	// Use orchestrator.CommitSHA (the linker-injected value) rather than the
+	// CLI-local CommitSHA, because ldflags set orchestrator.CommitSHA directly.
+	if id.CommitSHA != "" && orchestrator.CommitSHA != "" {
+		d.VersionMatched = orchestrator.NewBuildIdentity(id.CommitSHA).Matches(orchestrator.NewBuildIdentity(orchestrator.CommitSHA))
 	} else if version != "" && id.BuildVersion != "" {
 		d.VersionMatched = id.BuildVersion == version
 	}
@@ -203,14 +202,14 @@ func collectWatcherDiagnostic(home, version string) *WatcherDiagnostic {
 func collectGeneralDiagnostic(home string) *GeneralDiagnostic {
 	d := &GeneralDiagnostic{}
 
-	result, err := afk.ResolveTargetWithSource(home)
+	result, err := orchestrator.ResolveTargetWithSource(home)
 	if err != nil {
 		d.Err = err
 		return d
 	}
 	d.Result = result
 
-	if err := afk.ValidateTargetOwnership(&result); err != nil {
+	if err := orchestrator.ValidateTargetOwnership(&result); err != nil {
 		d.Err = fmt.Errorf("ownership validation: %w", err)
 	}
 	return d
@@ -218,7 +217,7 @@ func collectGeneralDiagnostic(home string) *GeneralDiagnostic {
 
 func collectScopeDiagnostic(cwd string) *ScopeDiagnostic {
 	d := &ScopeDiagnostic{Path: cwd}
-	r := scope.Classify(cwd)
+	r := fleet.Classify(cwd)
 	d.Identity = r.Identity.String()
 	d.GateCap = r.GateCap.String()
 	d.Path = r.CanonicalPath

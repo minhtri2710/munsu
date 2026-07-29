@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
@@ -37,11 +36,11 @@ func newFleetSyncCmd() *cobra.Command {
 				return err
 			}
 			if len(result.Synced) == 0 && len(result.Stuck) == 0 && len(result.Errors) == 0 {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "fleet.sync",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: "No projects to sync."},
+					Data:          MessageResult{Message: "No projects to sync."},
 				})
 			}
 			var b strings.Builder
@@ -54,11 +53,11 @@ func newFleetSyncCmd() *cobra.Command {
 			for _, e := range result.Errors {
 				b.WriteString(fmt.Sprintf("error: %s\n", e))
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "fleet.sync",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -81,8 +80,8 @@ func newFleetSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[fleet.FleetSnapshot]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[fleet.FleetSnapshot]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "fleet.snapshot.v1",
 				Status:        "success",
 				Data:          *snap,
@@ -92,7 +91,7 @@ func newFleetSnapshotCmd() *cobra.Command {
 	cmd.Flags().Int("version", 1, "Snapshot schema version")
 	cmd.Flags().String("fields", "", "Optional row fields for version 2")
 	cmd.Flags().Bool("full", false, "Include full truncated content for version 2")
-	cmd.Flags().String("output", contract.OutputTOON, "Output format for version 2 (toon|json)")
+	cmd.Flags().String("output", OutputTOON, "Output format for version 2 (toon|json)")
 	return cmd
 }
 

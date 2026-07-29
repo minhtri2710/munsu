@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/minhtri2710/munsu/internal/contract"
 )
 
 // WriteContractError writes a structured contract error and returns its exit code.
@@ -17,11 +15,11 @@ func WriteContractError(writer io.Writer, err error, args []string) int {
 		// Wrap non-contract errors as generic operation errors
 		contractErr = &contractError{
 			status: exitOperation,
-			value: contract.ErrorResponse{
-				SchemaVersion: contract.SchemaVersion,
+			value: ErrorResponse{
+				SchemaVersion: SchemaVersion,
 				Kind:          "error",
 				Status:        "error",
-				Error: contract.ErrorEnvelope{
+				Error: ErrorEnvelope{
 					ErrorCode: "error",
 					Action:    "See the error message and retry",
 					Message:   err.Error(),
@@ -29,16 +27,16 @@ func WriteContractError(writer io.Writer, err error, args []string) int {
 			},
 		}
 	}
-	output := contract.OutputTOON
+	output := OutputTOON
 	for index, arg := range args {
 		if arg == "--output=json" {
-			output = contract.OutputJSON
+			output = OutputJSON
 		}
-		if arg == "--output" && index+1 < len(args) && args[index+1] == contract.OutputJSON {
-			output = contract.OutputJSON
+		if arg == "--output" && index+1 < len(args) && args[index+1] == OutputJSON {
+			output = OutputJSON
 		}
 	}
-	encoded, encodeErr := contract.Encode(contractErr.value, output)
+	encoded, encodeErr := Encode(contractErr.value, output)
 	if encodeErr != nil {
 		return 1
 	}

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // TestReportCmd_FailClosedOnReceiptWrite verifies that when WriteReceipt fails
@@ -98,13 +98,13 @@ func TestReportCmd_PRURL_NoStatusOnMalformedURL(t *testing.T) {
 	}
 
 	// Assert no receipt was written
-	receiptPath := turnend.ReceiptPath(parentHome, "test-no-output", "default")
+	receiptPath := orchestrator.ReceiptPath(parentHome, "test-no-output", "default")
 	if _, err := os.Stat(receiptPath); err == nil {
 		t.Error("receipt should not exist after malformed PR URL")
 	}
 
 	// Assert no meta was written
-	_, metaErr := task.ReadMeta(homeDir, "test-no-output")
+	_, metaErr := home.ReadMeta(homeDir, "test-no-output")
 	if metaErr == nil {
 		t.Error("meta should not exist after malformed PR URL")
 	}

@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // FleetSnapshot represents the full fleet state.
@@ -39,20 +40,20 @@ type TaskSnapshot struct {
 	Source string `json:"source,omitempty"`
 
 	// Resolved current-state projection (populated when a resolver is wired).
-	CurrentState        string              `json:"current_state,omitempty"`
-	CurrentDescription  string              `json:"current_description,omitempty"`
-	NoMistakesRunStep   string              `json:"no_mistakes_run_step,omitempty"`
-	StatusLogSuperseded bool                `json:"status_log_superseded"`
-	OpenActivities      []classify.Activity `json:"open_activities,omitempty"`
+	CurrentState        string            `json:"current_state,omitempty"`
+	CurrentDescription  string            `json:"current_description,omitempty"`
+	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
+	StatusLogSuperseded bool              `json:"status_log_superseded"`
+	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
 
 // CurrentStateInfo carries the resolved current-state projection for a task.
 type CurrentStateInfo struct {
-	State               string              `json:"state"`
-	Description         string              `json:"description"`
-	NoMistakesRunStep   string              `json:"no_mistakes_run_step,omitempty"`
-	StatusLogSuperseded bool                `json:"status_log_superseded"`
-	OpenActivities      []classify.Activity `json:"open_activities,omitempty"`
+	State               string            `json:"state"`
+	Description         string            `json:"description"`
+	NoMistakesRunStep   string            `json:"no_mistakes_run_step,omitempty"`
+	StatusLogSuperseded bool              `json:"status_log_superseded"`
+	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
 
 // resolveCurrentState is a function pointer wired from CLI to use soldierstate.Read().
@@ -82,8 +83,8 @@ func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo 
 		State: PhaseFromMeta(meta["window"], paneAlive),
 	}
 
-	statusPath := filepath.Join(task.StateDir(homeDir), id+".status")
-	info.OpenActivities = classify.OpenActivities(statusPath)
+	statusPath := filepath.Join(mhome.StateDir(homeDir), id+".status")
+	info.OpenActivities = home.OpenActivities(statusPath)
 
 	if data, err := os.ReadFile(statusPath); err == nil {
 		lines := strings.TrimSpace(string(data))
@@ -182,7 +183,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".meta")
-		meta, err := task.ReadMeta(taskHome, id)
+		meta, err := mhome.ReadMeta(taskHome, id)
 		if err != nil {
 			continue
 		}
@@ -201,8 +202,8 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			Source:   source,
 		}
 		if w := meta["window"]; w != "" {
-			if paneAliveForCaptain != nil {
-				alive, err := paneAliveForCaptain(taskHome, meta)
+			if endpointProbe != nil || paneAliveForCaptain != nil {
+				alive, err := probeEndpoint(taskHome, meta)
 				if err != nil {
 					ts.PaneAlive = false
 					ts.PaneAliveUnknown = true
@@ -333,7 +334,7 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 	}
 
 	taskID := "captain:" + captainID
-	meta, err := task.ReadMeta(parentHome, taskID)
+	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return "seeded"
 	}
@@ -348,10 +349,10 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 		return "seeded"
 	}
 
-	if paneAliveForCaptain == nil {
+	if endpointProbe == nil && paneAliveForCaptain == nil {
 		return "unknown"
 	}
-	alive, aliveErr := paneAliveForCaptain(parentHome, meta)
+	alive, aliveErr := probeEndpoint(parentHome, meta)
 	if aliveErr != nil {
 		return "dead"
 	}
@@ -361,12 +362,42 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 	return "dead"
 }
 
-// paneAliveForCaptain probes endpoint liveness from parent meta.
-// Wired by SetPaneAliveProbe (CLI) so fleet does not import session (cycle).
-// Nil means no probe is wired → unknown when meta has a window.
+// EndpointProbe is the narrow backend port used by fleet projections.
+type EndpointRef struct {
+	Backend      string
+	Handle       string
+	SessionOwner string
+	WorkspaceID  string
+	TabID        string
+	Home         string
+}
+
+type EndpointStatus struct{ Alive bool }
+
+type EndpointProbe interface {
+	ProbeEndpoint(EndpointRef) (EndpointStatus, error)
+}
+
+var endpointProbe EndpointProbe
+
+// SetEndpointProbe installs the typed endpoint probe at the composition root.
+func SetEndpointProbe(probe EndpointProbe) { endpointProbe = probe }
+
+// paneAliveForCaptain remains only as a test seam while existing fleet tests are cut over.
 var paneAliveForCaptain func(parentHome string, meta map[string]string) (bool, error)
 
-// SetPaneAliveProbe installs the session-backend Alive probe used by CaptainStatus.
 func SetPaneAliveProbe(fn func(parentHome string, meta map[string]string) (bool, error)) {
 	paneAliveForCaptain = fn
+}
+
+func probeEndpoint(parentHome string, meta map[string]string) (bool, error) {
+	if endpointProbe != nil {
+		ownerHome := meta["home"]
+		if ownerHome == "" {
+			ownerHome = parentHome
+		}
+		status, err := endpointProbe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome})
+		return status.Alive, err
+	}
+	return paneAliveForCaptain(parentHome, meta)
 }

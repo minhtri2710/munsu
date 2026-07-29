@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/integrate"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +37,7 @@ Use --role for role-specific integration matrix:
 
 			// Role-specific doctor scan
 			if role != "" {
-				r, err := integrate.Doctor(ctx.Home, integrate.Role(role))
+				r, err := bootstrap.Doctor(ctx.Home, bootstrap.Role(role))
 				if err != nil {
 					return fmt.Errorf("doctor: %w", err)
 				}

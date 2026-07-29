@@ -6,17 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/brief"
-	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/session"
-	"github.com/minhtri2710/munsu/internal/soldierstate"
-	"github.com/minhtri2710/munsu/internal/spawn"
-	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/teardown"
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +47,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			if len(args) >= 2 {
 				projectName = args[1]
 			} else {
-				p, err := project.ResolveFromCwd(ctx.Home)
+				p, err := fleet.ResolveFromCwd(ctx.Home)
 				if err != nil {
 					return fmt.Errorf("no project argument and cannot infer from cwd: %w\n  Pass the project name: munsu spawn %s <project>\n  Or register this repo: munsu project add <name> <path>", err, id)
 				}
@@ -64,12 +56,12 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 			}
 
 			// Resolve project mode from registry
-			projectMode, _, projErr := project.Mode(ctx.Home, projectName)
+			projectMode, _, projErr := fleet.Mode(ctx.Home, projectName)
 			if projErr != nil {
 				projectMode = "" // registry not set or not found — will use other fallbacks
 			}
 
-			_, err := spawn.Run(spawn.Args{
+			_, err := fleet.Spawn(fleet.Args{
 				ID:          id,
 				ProjectName: projectName,
 				Kind:        kind,
@@ -83,6 +75,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				ModelFlag:   modelFlag,
 				EffortFlag:  effortFlag,
 				HomeDir:     homeOverride,
+				Endpoints:   newSpawnSessionEndpoints(),
 				Arm:         arm,
 			})
 			if err != nil {
@@ -126,12 +119,12 @@ func newSendCmd() *cobra.Command {
 			}
 
 			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-			if err := scope.GateRefuseFromCWD(); err != nil {
+			if err := fleet.GateRefuseFromCWD(); err != nil {
 				return fmt.Errorf("send refused: %w", err)
 			}
 
 			// Read meta to determine kind and resolve captain info.
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
@@ -140,14 +133,17 @@ func newSendCmd() *cobra.Command {
 
 			if isCaptain {
 				// Mailbox Store/Receiver flow for captain targets.
-				smID := captain.CaptainIDFromTask(id, meta)
+				smID := fleet.CaptainIDFromTask(id, meta)
 				captainHome := meta["home"]
 				if captainHome == "" {
 					return fmt.Errorf("captain %s has no home in meta", smID)
 				}
-				sm := captain.Info{ID: smID, Home: captainHome}
+				sm := fleet.Info{ID: smID, Home: captainHome}
+				if err := ensureCaptainReady(ctx.Home, sm, newSessionProbeEndpoint(), recoverCaptainEndpoint); err != nil {
+					return fmt.Errorf("captain %s: %w", smID, err)
+				}
 
-				result := captain.SendMailboxToCaptain(sm, ctx.Home, line)
+				result := fleet.SendMailboxToCaptain(sm, ctx.Home, line, newSessionMailboxSender())
 				if result.Err != nil {
 					return fmt.Errorf("captain %s: %w", smID, result.Err)
 				}
@@ -158,41 +154,41 @@ func newSendCmd() *cobra.Command {
 					msg = fmt.Sprintf("sent to captain %s (message=%s, notification pending)", smID, result.MessageID)
 				}
 
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "send",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: msg},
+					Data:          MessageResult{Message: msg},
 				})
 			}
 
 			// Non-captain: mailbox-based send with busy-queueing for soldier tasks.
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := mailbox.ReadHomeIdentity(ctx.Home)
+			senderIdentity, _, identErr := orchestrator.ReadHomeIdentity(ctx.Home)
 			if identErr != nil {
 				// Fallback to home basename.
 				senderIdentity = filepath.Base(ctx.Home)
 			}
 
-			sendResult := captain.SendToSoldier(ctx.Home, id, senderIdentity, line)
+			sendResult := fleet.SendToSoldier(ctx.Home, id, senderIdentity, line, newSessionSoldierEndpoints())
 			if sendResult.Err != nil {
 				return fmt.Errorf("soldier %s: %w", id, sendResult.Err)
 			}
 
 			if sendResult.Queued {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "send",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("queued to %s (message=%s): soldier busy", id, sendResult.MessageID)},
+					Data:          MessageResult{Message: fmt.Sprintf("queued to %s (message=%s): soldier busy", id, sendResult.MessageID)},
 				})
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "send",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("sent to %s (message=%s)", id, sendResult.MessageID)},
+				Data:          MessageResult{Message: fmt.Sprintf("sent to %s (message=%s)", id, sendResult.MessageID)},
 			})
 		}),
 	}
@@ -200,7 +196,13 @@ func newSendCmd() *cobra.Command {
 	return cmd
 }
 
-func newPeekCmd() *cobra.Command {
+type BoundCapture interface {
+	Capture(homeDir string, meta map[string]string, lines int) (string, error)
+}
+
+func newPeekCmd() *cobra.Command { return newPeekCmdWithCapture(sessionBoundCapture{}) }
+
+func newPeekCmdWithCapture(capture BoundCapture) *cobra.Command {
 	var lines int
 
 	cmd := &cobra.Command{
@@ -211,20 +213,18 @@ func newPeekCmd() *cobra.Command {
 			id := args[0]
 
 			// Read meta to resolve window
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading task %s: %w", id, err)
 			}
-			windowID, ok := meta["window"]
-			if !ok {
+			if _, ok := meta["window"]; !ok {
 				return fmt.Errorf("task %s has no window endpoint", id)
 			}
 
-			bk, _, err := session.BackendForTask(ctx.Home, meta)
-			if err != nil {
-				return err
+			if capture == nil {
+				return fmt.Errorf("task-bound capture is not configured")
 			}
-			out, err := bk.Capture(windowID, lines)
+			out, err := capture.Capture(ctx.Home, meta, lines)
 			if err != nil {
 				return fmt.Errorf("capturing from %s: %w", id, err)
 			}
@@ -262,15 +262,15 @@ func newSoldierStateCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			state, err := soldierstate.Read(ctx.Home, id)
+			state, err := fleet.ReadSoldierState(ctx.Home, id)
 			if err != nil {
 				return operationError("internal", "Run `munsu soldier-state "+id+"` again", "Unable to read soldier state")
 			}
-			return writeContract(cmd, contract.Response[contract.TaskObserve]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[TaskObserve]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.observe",
 				Status:        "success",
-				Data: contract.TaskObserve{
+				Data: TaskObserve{
 					TaskID:              state.TaskID,
 					Status:              state.Status,
 					Description:         state.Description,
@@ -296,7 +296,7 @@ func newPromoteCmd() *cobra.Command {
 			id := args[0]
 
 			// Preflight: verify task meta exists with kind=scout
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("reading meta for %s: %w", id, err)
 			}
@@ -305,14 +305,14 @@ func newPromoteCmd() *cobra.Command {
 			}
 
 			// Preflight: require report.md to exist
-			if !brief.ReportExists(ctx.Home, id) {
-				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, brief.ReportPath(ctx.Home, id))
+			if !fleet.ReportExists(ctx.Home, id) {
+				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, fleet.ReportPath(ctx.Home, id))
 			}
 
 			// Preflight: require last status to be done or resolved
-			if statusLines, err := task.ReadStatus(ctx.Home, id); err == nil && len(statusLines) > 0 {
+			if statusLines, err := home.ReadStatus(ctx.Home, id); err == nil && len(statusLines) > 0 {
 				lastLine := statusLines[len(statusLines)-1]
-				lastStatus, _ := task.ParseStatusKey(lastLine)
+				lastStatus, _ := home.ParseStatusKey(lastLine)
 				if !strings.HasPrefix(lastStatus, "done") && !strings.HasPrefix(lastStatus, "resolved") {
 					return fmt.Errorf("task %s has last status %q, need 'done' or 'resolved' before promote", id, lastStatus)
 				}
@@ -320,15 +320,15 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no status: report done or resolved before promoting", id)
 			}
 
-			if err := task.PromoteMeta(ctx.Home, id); err != nil {
+			if err := home.PromoteMeta(ctx.Home, id); err != nil {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "promote",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship", id)},
 			})
 		}),
 	}
@@ -349,7 +349,7 @@ holds before teardown proceeds. Use --force to skip all safety checks.
 
 With --force:
   - Skips report.md and decision-hold checks
-  - Removes data/<id>/ including report.md and brief.md
+  - Removes data/<id>/ including report.md and fleet.md
   - Use when the scout completed without a formal report or for cleanup
 `,
 		Args: ExactArgs(1),
@@ -357,17 +357,17 @@ With --force:
 			id := args[0]
 
 			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
-			if err := scope.GateRefuseFromCWD(); err != nil {
+			if err := fleet.GateRefuseFromCWD(); err != nil {
 				return fmt.Errorf("teardown refused: %w", err)
 			}
 
-			opts := teardown.Options{
+			opts := fleet.Options{
 				HomeDir: ctx.Home,
 				ID:      id,
 				Force:   force,
 			}
 
-			result, err := teardown.Run(opts)
+			result, err := fleet.RetireTask(opts, newSessionBoundTeardown(), orchestratorRetirementJournals{})
 			if err != nil {
 				return err
 			}
@@ -377,11 +377,11 @@ With --force:
 			for _, step := range result.Steps {
 				b.WriteString(fmt.Sprintf("  - %s\n", step))
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "teardown",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -408,48 +408,48 @@ Calling when the soldier is busy returns with "still busy".
 			id := args[0]
 
 			// Derive sender identity from the captain/general home.
-			senderIdentity, _, identErr := mailbox.ReadHomeIdentity(ctx.Home)
+			senderIdentity, _, identErr := orchestrator.ReadHomeIdentity(ctx.Home)
 			if identErr != nil {
 				senderIdentity = filepath.Base(ctx.Home)
 			}
 
-			result := captain.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity)
+			result := fleet.FlushPendingSoldierCommands(ctx.Home, id, senderIdentity, newSessionSoldierEndpoints())
 			if result.Err != nil {
 				return fmt.Errorf("soldier %s flush: %w", id, result.Err)
 			}
 
 			if result.Queued {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "soldier-flush",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: soldier still busy, pending retained", id)},
+					Data:          MessageResult{Message: fmt.Sprintf("%s: soldier still busy, pending retained", id)},
 				})
 			}
 
 			if result.MessageID == "" {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "soldier-flush",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: no pending commands", id)},
+					Data:          MessageResult{Message: fmt.Sprintf("%s: no pending commands", id)},
 				})
 			}
 
 			if result.Sent {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "soldier-flush",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("%s: flushed pending command (message=%s)", id, result.MessageID)},
+					Data:          MessageResult{Message: fmt.Sprintf("%s: flushed pending command (message=%s)", id, result.MessageID)},
 				})
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "soldier-flush",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("%s: no action taken", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("%s: no action taken", id)},
 			})
 		}),
 	}

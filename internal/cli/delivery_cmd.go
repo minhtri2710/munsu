@@ -3,9 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/delivery"
-	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/teardown"
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +36,7 @@ Exit: 0 = merged, 1 = not merged/open/closed, 2+ = error.
 Used by watcher .check scripts.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return delivery.MergeStatus(ctx.Home, args[0])
+			return fleet.MergeStatus(ctx.Home, args[0])
 		}),
 	}
 }
@@ -54,7 +53,7 @@ For PR tasks (where meta has pr=), fetches the PR head and compares.
 Warns if local default branch is stale vs origin.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return delivery.ReviewDiff(ctx.Home, args[0])
+			return fleet.ReviewDiff(ctx.Home, args[0])
 		}),
 	}
 }
@@ -75,12 +74,12 @@ captain home (so general can arm checks after captain handoff + spawn).`,
 			id := args[0]
 			prURL := args[1]
 
-			taskHome, _, err := delivery.RequireShipMeta(ctx.Home, id)
+			taskHome, _, err := fleet.RequireShipMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-check %s: %w", id, err)
 			}
 
-			return delivery.PRCheck(taskHome, id, prURL)
+			return fleet.PRCheck(taskHome, id, prURL)
 		}),
 	}
 }
@@ -110,23 +109,23 @@ Without --teardown, the command prints the exact teardown invocation to run next
 			prURL := args[1]
 			extra := args[2:]
 
-			taskHome, _, err := delivery.RequireShipMeta(ctx.Home, id)
+			taskHome, _, err := fleet.RequireShipMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}
 
-			if err := delivery.PRMerge(taskHome, id, prURL, extra); err != nil {
+			if err := fleet.PRMerge(taskHome, id, prURL, extra); err != nil {
 				return err
 			}
 			if !doTeardown {
 				return nil
 			}
 			fmt.Printf("Running teardown for %s in %s after merge...\n", id, taskHome)
-			result, err := teardown.Run(teardown.Options{
+			result, err := fleet.RetireTask(fleet.Options{
 				HomeDir: taskHome,
 				ID:      id,
 				Force:   false,
-			})
+			}, newSessionBoundTeardown(), orchestratorRetirementJournals{})
 			if err != nil {
 				return fmt.Errorf("post-merge teardown %s: %w", id, err)
 			}
@@ -149,7 +148,7 @@ Only works for local-only mode projects (no remote).
 Refuses if the merge is not a clean fast-forward.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return delivery.MergeLocal(ctx.Home, args[0])
+			return fleet.MergeLocal(ctx.Home, args[0])
 		}),
 	}
 }
@@ -178,19 +177,19 @@ Use 'delivery reconcile' to recover from already-stale metadata.`,
 
 			// Begin amendment (CAS review-ready -> amending) — idempotent: if already
 			// in amending state (e.g. retry after partial failure), skip begin.
-			currentMeta, err := task.ReadMeta(ctx.Home, id)
+			currentMeta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return fmt.Errorf("pr-amend: reading meta: %w", err)
 			}
 
-			if currentMeta[delivery.MetaDeliveryState] != string(delivery.DeliveryStateAmending) {
-				if _, err := delivery.BeginAmendment(ctx.Home, id); err != nil {
+			if currentMeta[fleet.MetaDeliveryState] != string(fleet.DeliveryStateAmending) {
+				if _, err := fleet.BeginAmendment(ctx.Home, id); err != nil {
 					return fmt.Errorf("pr-amend: begin: %w", err)
 				}
 			}
 
 			// Accept amendment (verify provider, CAS update identity)
-			newIdent, record, err := delivery.AcceptAmendment(ctx.Home, id, wtPath)
+			newIdent, record, err := fleet.AcceptAmendment(ctx.Home, id, wtPath)
 			if err != nil {
 				return fmt.Errorf("pr-amend: accept: %w", err)
 			}
@@ -230,7 +229,7 @@ state. Use 'pr-check' to recapture from scratch after such events.`,
 				return fmt.Errorf("reconcile: %w", err)
 			}
 
-			newIdent, record, err := delivery.ReconcileIdentity(ctx.Home, id, wtPath)
+			newIdent, record, err := fleet.ReconcileIdentity(ctx.Home, id, wtPath)
 			if err != nil {
 				return fmt.Errorf("reconcile: %w", err)
 			}
@@ -254,7 +253,7 @@ state. Use 'pr-check' to recapture from scratch after such events.`,
 // resolveWorktree reads the worktree path from task meta for a given task.
 // Returns an error if the worktree is not set in meta.
 func resolveWorktree(homeDir, id string) (string, error) {
-	meta, err := task.ReadMeta(homeDir, id)
+	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		return "", fmt.Errorf("reading meta: %w", err)
 	}

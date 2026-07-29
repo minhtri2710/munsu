@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 func TestCountQueuedWakes_UsesLifecycleQueuePath(t *testing.T) {
@@ -15,11 +15,11 @@ func TestCountQueuedWakes_UsesLifecycleQueuePath(t *testing.T) {
 	if countQueuedWakes(home) != 0 {
 		t.Fatal("empty home should report 0 queued wakes")
 	}
-	if err := lifecycle.EnqueueWake(home, "status", "task-1", "done: ready"); err != nil {
+	if err := orchestrator.EnqueueWake(home, "status", "task-1", "done: ready"); err != nil {
 		t.Fatal(err)
 	}
 	if got := countQueuedWakes(home); got != 1 {
-		t.Fatalf("countQueuedWakes = %d, want 1 via lifecycle.QueuePath", got)
+		t.Fatalf("countQueuedWakes = %d, want 1 via orchestrator.QueuePath", got)
 	}
 }
 
@@ -30,7 +30,7 @@ func TestWatchRun_UsesRunCycleDedup(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	task.WriteMeta(home, "task-1", map[string]string{"window": "@missing-watch-run"})
+	mhome.WriteMeta(home, "task-1", map[string]string{"window": "@missing-watch-run"})
 
 	run := func() string {
 		root := NewRootCommand()

@@ -1,3 +1,5 @@
+//go:build integration
+
 package fleet
 
 import (
@@ -7,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
-// setManualMode forces manual backlog backend for tests that use native backlog.md.
+// setManualMode forces manual backlog backend for tests that use native md.
 func setManualMode(t *testing.T, homeDir string) {
 	t.Helper()
 	configDir := filepath.Join(homeDir, "config")
@@ -27,11 +29,11 @@ func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 	setManualMode(t, home)
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] t1: work\n- [ ] t2: queued\n"), 0644)
-	if err := task.WriteMeta(home, "t1", map[string]string{"kind": "ship", "window": "w1"}); err != nil {
+	os.WriteFile(filepath.Join(home, "data", "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] t1: work\n- [ ] t2: queued\n"), 0644)
+	if err := mhome.WriteMeta(home, "t1", map[string]string{"kind": "ship", "window": "w1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.AppendStatus(home, "t1", "working: implementing"); err != nil {
+	if err := mhome.AppendStatus(home, "t1", "working: implementing"); err != nil {
 		t.Fatal(err)
 	}
 	sum := SummarizeCaptainHome(home)
@@ -60,7 +62,7 @@ func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 	setManualMode(t, home)
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte(`# Backlog
+	os.WriteFile(filepath.Join(home, "data", "md"), []byte(`# Backlog
 
 ## day
 - [-] t-decision: needs input
@@ -68,16 +70,16 @@ func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 - [x] t-done: shipped feature
 - [ ] t-queued: next work
 `), 0644)
-	if err := task.WriteMeta(home, "t-decision", map[string]string{"kind": "ship"}); err != nil {
+	if err := mhome.WriteMeta(home, "t-decision", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.AppendStatus(home, "t-decision", "needs-decision [key=approach]: pick A or B"); err != nil {
+	if err := mhome.AppendStatus(home, "t-decision", "needs-decision [key=approach]: pick A or B"); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.WriteMeta(home, "t-done", map[string]string{"kind": "ship"}); err != nil {
+	if err := mhome.WriteMeta(home, "t-done", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := task.AppendStatus(home, "t-done", "done: PR https://github.com/example/repo/pull/9"); err != nil {
+	if err := mhome.AppendStatus(home, "t-done", "done: PR https://github.com/example/repo/pull/9"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +132,7 @@ func TestSummarizeCaptainHome_OmittedCaps(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		fmt.Fprintf(&b, "- [ ] q%02d: queued item\n", i)
 	}
-	os.WriteFile(filepath.Join(home, "data", "backlog.md"), []byte(b.String()), 0644)
+	os.WriteFile(filepath.Join(home, "data", "md"), []byte(b.String()), 0644)
 
 	sum := SummarizeCaptainHome(home)
 	if sum.Counts.Queued != 25 {
@@ -153,7 +155,7 @@ func TestSummarizeCaptainHome_OmittedCaps(t *testing.T) {
 func TestLastParentStatus(t *testing.T) {
 	parent := t.TempDir()
 	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	if err := task.AppendStatus(parent, "captain:api", "done [key=x]: PR https://example/1"); err != nil {
+	if err := mhome.AppendStatus(parent, "captain:api", "done [key=x]: PR https://example/1"); err != nil {
 		t.Fatal(err)
 	}
 	got := LastParentStatus(parent, "api")

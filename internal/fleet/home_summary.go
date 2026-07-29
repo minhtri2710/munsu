@@ -7,9 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/minhtri2710/munsu/internal/backlog"
-	"github.com/minhtri2710/munsu/internal/classify"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // HomeSummary is a bounded structured view of one Captain home.
@@ -131,26 +129,26 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		return sum
 	}
 
-	items, listErr := backlog.ListItems(homeDir, backlog.StateQueued) // zero filter = all
+	items, listErr := ListItems(homeDir, StateQueued) // zero filter = all
 	backlogPresent := listErr == nil
 	if !backlogPresent {
 		items = nil
 	}
 
-	inFlightByID := map[string]backlog.Item{}
-	var queuedAll []backlog.Item
-	var landedAll []backlog.Item
+	inFlightByID := map[string]Item{}
+	var queuedAll []Item
+	var landedAll []Item
 	for _, item := range items {
 		switch item.State {
-		case backlog.StateQueued:
+		case StateQueued:
 			sum.Counts.Queued++
 			queuedAll = append(queuedAll, item)
-		case backlog.StateInFlight:
+		case StateInFlight:
 			sum.Counts.InFlight++
 			inFlightByID[item.ID] = item
-		case backlog.StateBlocked:
+		case StateBlocked:
 			sum.Counts.Blocked++
-		case backlog.StateDone:
+		case StateDone:
 			sum.Counts.Done++
 			if item.Kind != "captain" {
 				landedAll = append(landedAll, item)
@@ -159,12 +157,12 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	}
 	sum.Counts.Landed = len(landedAll)
 
-	entries, err := task.ListMeta(homeDir)
+	entries, err := home.ListMeta(homeDir)
 	if err != nil {
 		entries = nil
 	}
 	sum.Counts.Endpoints = len(entries)
-	metaByID := map[string]task.MetaEntry{}
+	metaByID := map[string]home.MetaEntry{}
 	for _, e := range entries {
 		metaByID[e.ID] = e
 	}
@@ -203,10 +201,10 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	var decisionsAll []DecisionBrief
 	seenDecision := map[string]bool{}
-	stateDir := task.StateDir(homeDir)
+	stateDir := home.StateDir(homeDir)
 	for _, c := range children {
 		path := filepath.Join(stateDir, c.id+".status")
-		for _, d := range classify.OpenDecisions(path) {
+		for _, d := range home.OpenDecisions(path) {
 			key := c.id + "\x00" + d.Key + "\x00" + d.Verb
 			if seenDecision[key] {
 				continue
@@ -239,7 +237,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 	var holdsAll []HoldBrief
 	for _, item := range items {
-		if item.State != backlog.StateBlocked {
+		if item.State != StateBlocked {
 			continue
 		}
 		holdsAll = append(holdsAll, HoldBrief{
@@ -288,7 +286,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 			break
 		}
 		pr := ""
-		if lines, err := task.ReadStatus(homeDir, item.ID); err == nil {
+		if lines, err := home.ReadStatus(homeDir, item.ID); err == nil {
 			for k := len(lines) - 1; k >= 0; k-- {
 				if u := extractPRURL(lines[k]); u != "" {
 					pr = u
@@ -403,7 +401,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 
 // LastParentStatus returns the last line of parent state/captain:<id>.status.
 func LastParentStatus(parentHome, captainID string) string {
-	lines, err := task.ReadStatus(parentHome, "captain:"+captainID)
+	lines, err := home.ReadStatus(parentHome, "captain:"+captainID)
 	if err != nil || len(lines) == 0 {
 		return ""
 	}

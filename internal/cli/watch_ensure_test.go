@@ -8,8 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 func TestWaitForWatcherBeacon_TimeoutWithoutBeat(t *testing.T) {
@@ -27,10 +26,10 @@ func TestWaitForWatcherBeacon_SeesBeat(t *testing.T) {
 	home := t.TempDir()
 	pid := os.Getpid()
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	os.WriteFile(lifecycle.BeatPath(home), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
-	id := supervision.NewIdentity(home)
+	os.WriteFile(orchestrator.BeatPath(home), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	id := orchestrator.NewIdentity(home)
 	id.PID = pid
-	_ = supervision.WriteIdentity(home, id)
+	_ = orchestrator.WriteIdentity(home, id)
 
 	status, _ := waitForWatcherBeacon(home, pid, 200*time.Millisecond)
 	if !status.Exists {
@@ -77,12 +76,12 @@ func plantLocalWatcherBeacon(t *testing.T, homeDir string) {
 		t.Fatal(err)
 	}
 	pid := os.Getpid()
-	if err := os.WriteFile(lifecycle.BeatPath(homeDir), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644); err != nil {
+	if err := os.WriteFile(orchestrator.BeatPath(homeDir), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644); err != nil {
 		t.Fatal(err)
 	}
-	id := supervision.NewIdentity(homeDir)
+	id := orchestrator.NewIdentity(homeDir)
 	id.PID = pid
-	if err := supervision.WriteIdentity(homeDir, id); err != nil {
+	if err := orchestrator.WriteIdentity(homeDir, id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -109,7 +108,7 @@ func TestEnsureWatcher_CaptainHomeAttach(t *testing.T) {
 	if resp.Data.Lease == nil || !resp.Data.Lease.HeartbeatOK {
 		t.Fatal("expected healthy lease heartbeat on attach")
 	}
-	id := supervision.ReadIdentity(captainHome)
+	id := orchestrator.ReadIdentity(captainHome)
 	if id == nil || id.Home == "" {
 		t.Fatal("identity must remain bound to captain home")
 	}
@@ -133,10 +132,10 @@ func TestEnsureWatcher_CrossHomeDoesNotAttach(t *testing.T) {
 
 	pid := os.Getpid()
 	// Captain home has a fresh beat for this PID, but identity claims general home.
-	os.WriteFile(lifecycle.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
-	id := supervision.NewIdentity(general)
+	os.WriteFile(orchestrator.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	id := orchestrator.NewIdentity(general)
 	id.PID = pid
-	if err := supervision.WriteIdentity(captain, id); err != nil {
+	if err := orchestrator.WriteIdentity(captain, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,11 +158,11 @@ func TestStopWatcher_CrossHomeIdentityMismatch(t *testing.T) {
 
 	pid := os.Getpid()
 	// Plant beat on captain pointing at this process.
-	os.WriteFile(lifecycle.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
+	os.WriteFile(orchestrator.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), pid)), 0644)
 	// Identity under captain still names the general home.
-	id := supervision.NewIdentity(general)
+	id := orchestrator.NewIdentity(general)
 	id.PID = pid
-	if err := supervision.WriteIdentity(captain, id); err != nil {
+	if err := orchestrator.WriteIdentity(captain, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,11 +171,11 @@ func TestStopWatcher_CrossHomeIdentityMismatch(t *testing.T) {
 		t.Fatalf("state=%q, want identity-mismatch", resp.Data.State)
 	}
 	// Beat and identity must remain (refuse, do not clear foreign claim).
-	if _, gotPID, ok := lifecycle.ReadBeat(captain); !ok || gotPID != pid {
+	if _, gotPID, ok := orchestrator.ReadBeat(captain); !ok || gotPID != pid {
 		t.Fatal("beat should remain after refused stop")
 	}
-	if supervision.ReadIdentity(captain) == nil {
-		t.Fatal("identity should remain after refused stop")
+	if _, err := os.Stat(filepath.Join(captain, "state", ".watcher-identity")); err != nil {
+		t.Fatalf("identity should remain after refused stop: %v", err)
 	}
 }
 
@@ -185,7 +184,7 @@ func TestStopWatcher_CrossHomeIdentityMismatch(t *testing.T) {
 func TestStopWatcher_CaptainHomeBeatOnly(t *testing.T) {
 	captain := t.TempDir()
 	os.MkdirAll(filepath.Join(captain, "state"), 0755)
-	os.WriteFile(lifecycle.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), os.Getpid())), 0644)
+	os.WriteFile(orchestrator.BeatPath(captain), []byte(fmt.Sprintf("%d %d\n", time.Now().Unix(), os.Getpid())), 0644)
 
 	resp := stopWatcher(captain)
 	if resp.Data.State != "identity-mismatch" {
@@ -215,7 +214,7 @@ func TestWatchStatus_WithDiagnostics(t *testing.T) {
 	home := t.TempDir()
 
 	// Add a pending wake.
-	lifecycle.EnqueueWake(home, "signal", "task-1", "done: work")
+	orchestrator.EnqueueWake(home, "signal", "task-1", "done: work")
 
 	resp := evaluateWatcherStatus(home)
 	if resp.Kind != "watch.status" {
@@ -244,7 +243,7 @@ func TestWatchStatus_WithMaterialWake(t *testing.T) {
 
 	// Write a wake with an old timestamp.
 	oldEpoch := time.Now().Add(-10 * time.Minute).Unix()
-	queuePath := lifecycle.QueuePath(home)
+	queuePath := orchestrator.QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	line := fmt.Sprintf("%d\t%d\tsignal\ttask-old\tdone: old material\n", oldEpoch, 1)
 	os.WriteFile(queuePath, []byte(line), 0644)
@@ -264,7 +263,7 @@ func TestOldestMaterialWakeAge(t *testing.T) {
 
 	// Old material wake
 	oldEpoch := time.Now().Add(-10 * time.Minute).Unix()
-	queuePath := lifecycle.QueuePath(home)
+	queuePath := orchestrator.QueuePath(home)
 	os.MkdirAll(filepath.Dir(queuePath), 0755)
 	os.WriteFile(queuePath, []byte(fmt.Sprintf("%d\t%d\tsignal\ttask-old\tdone: old\n", oldEpoch, 1)), 0644)
 
@@ -286,7 +285,7 @@ func TestOldestMaterialWakeAge_NoQueue(t *testing.T) {
 // TestOldestMaterialWakeAge_RoutineOnly returns 0.
 func TestOldestMaterialWakeAge_RoutineOnly(t *testing.T) {
 	home := t.TempDir()
-	lifecycle.EnqueueWake(home, "stale", "task-routine", "working: in progress")
+	orchestrator.EnqueueWake(home, "stale", "task-routine", "working: in progress")
 	if age := oldestMaterialWakeAge(home); age != 0 {
 		t.Errorf("age = %d for routine wake, want 0", age)
 	}

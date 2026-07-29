@@ -5,12 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/agentsmd"
-	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/selfupdate"
-	"github.com/minhtri2710/munsu/internal/stow"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
 
@@ -39,38 +34,38 @@ Examples:
 		Args: MinimumNArgs(0),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if captain {
-				kind = stow.KindGeneral
+				kind = KindGeneral
 			}
 			if kind == "" {
-				kind = stow.KindLearning
+				kind = KindLearning
 			}
 
-			res, err := stow.RunKinded(ctx.Home, kind, args)
+			res, err := RunKinded(ctx.Home, kind, args)
 			if err != nil {
 				return err
 			}
 
 			switch {
 			case res.DataLearnings != "":
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "stow",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed learnings to %s", res.DataLearnings)},
+					Data:          MessageResult{Message: fmt.Sprintf("Stowed learnings to %s", res.DataLearnings)},
 				})
 			case res.DataCaptain != "":
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "stow",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("Stowed general preferences to %s", res.DataCaptain)},
+					Data:          MessageResult{Message: fmt.Sprintf("Stowed general preferences to %s", res.DataCaptain)},
 				})
 			default:
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "stow",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: "Nothing to stow (no text provided)", Noop: true},
+					Data:          MessageResult{Message: "Nothing to stow (no text provided)", Noop: true},
 				})
 			}
 		}),
@@ -98,14 +93,14 @@ or an absolute path to a project directory.`,
 			// Resolve project name to path if not already an absolute path
 			projectDir := projectArg
 			if !filepath.IsAbs(projectArg) {
-				resolved, err := project.ResolveRepoPath(ctx.Home, projectArg)
+				resolved, err := fleet.ResolveRepoPath(ctx.Home, projectArg)
 				if err != nil {
 					return fmt.Errorf("resolving project %q: %w", projectArg, err)
 				}
 				projectDir = resolved
 			}
 
-			res, err := agentsmd.Ensure(projectDir, false)
+			res, err := Ensure(projectDir, false)
 			if err != nil {
 				return err
 			}
@@ -118,11 +113,11 @@ or an absolute path to a project directory.`,
 			if res.SelfGovernSec {
 				msg.WriteString("\nAdded '## Maintaining this file' section")
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
-				Kind:          "stow.ensure-agents-md",
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "ensure-agents-md",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: msg.String()},
+				Data:          MessageResult{Message: msg.String()},
 			})
 		}),
 	}
@@ -153,7 +148,7 @@ Install root resolution (in order):
   Binary ancestry        when the munsu binary is inside a git checkout
   Current working directory         when inside a matching munsu checkout`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			snap, err := selfupdate.UpdateWithHandshakeEx(ctx.Home, repoOpt)
+			snap, err := UpdateWithHandshakeEx(ctx.Home, repoOpt)
 			if err != nil {
 				// Self-update failed: captains are NOT touched.
 				return err
@@ -171,7 +166,7 @@ Install root resolution (in order):
 			}
 
 			// Only reachable if self-update succeeded.
-			registered, err := captain.List(ctx.Home)
+			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
@@ -180,7 +175,7 @@ Install root resolution (in order):
 				return nil
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Fast-forwarding captains and nudging...")
-			result, convergeErr := captain.Converge(ctx.Home, registered)
+			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %-50s %s\n", step.Name+":", step.Status)

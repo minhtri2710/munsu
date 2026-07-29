@@ -8,22 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/afk"
 	"github.com/minhtri2710/munsu/internal/bootstrap"
-	"github.com/minhtri2710/munsu/internal/brief"
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/project"
-	"github.com/minhtri2710/munsu/internal/scope"
-	"github.com/minhtri2710/munsu/internal/session"
-	"github.com/minhtri2710/munsu/internal/spawn"
-	"github.com/minhtri2710/munsu/internal/supervision"
-	"github.com/minhtri2710/munsu/internal/task"
-	"github.com/minhtri2710/munsu/internal/turnend"
+	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
-
 
 func newBriefCmd() *cobra.Command {
 	var scout bool
@@ -41,23 +31,23 @@ func newBriefCmd() *cobra.Command {
 			// Resolve delivery mode using full auto-detection chain
 			projectMode := ""
 			projYolo := false
-			if m, y, err := project.Mode(ctx.Home, repo); err == nil {
+			if m, y, err := fleet.Mode(ctx.Home, repo); err == nil {
 				projectMode = m
 				projYolo = y
 			}
 
-			resolvedMode, err := spawn.ResolveDeliveryMode(ctx.Home, modeFlag, projectMode)
+			resolvedMode, err := fleet.ResolveDeliveryMode(ctx.Home, modeFlag, projectMode)
 			if err != nil {
 				return err
 			}
 
 			// Require existing task meta unless --force
 			if !force {
-				if _, err := task.ReadMeta(ctx.Home, id); err != nil {
+				if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
 					return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
 				}
 			}
-			opts := brief.ScaffoldOptions{
+			opts := fleet.ScaffoldOptions{
 				HomeDir: ctx.Home,
 				ID:      id,
 				Repo:    repo,
@@ -66,7 +56,7 @@ func newBriefCmd() *cobra.Command {
 				Yolo:    projYolo,
 			}
 
-			if err := brief.Scaffold(opts); err != nil {
+			if err := fleet.Scaffold(opts); err != nil {
 				return err
 			}
 
@@ -76,7 +66,7 @@ func newBriefCmd() *cobra.Command {
 			}
 
 			var b strings.Builder
-			b.WriteString(fmt.Sprintf("Brief scaffolded at %s\n", brief.Path(ctx.Home, id)))
+			b.WriteString(fmt.Sprintf("Brief scaffolded at %s\n", fleet.Path(ctx.Home, id)))
 			b.WriteString(fmt.Sprintf("  id:    %s\n", id))
 			b.WriteString(fmt.Sprintf("  repo:  %s\n", repo))
 			b.WriteString(fmt.Sprintf("  kind:  %s\n", kind))
@@ -87,11 +77,11 @@ func newBriefCmd() *cobra.Command {
 				b.WriteString("  yolo:  true\n")
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "brief",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -117,7 +107,7 @@ func newSessionStartCmd() *cobra.Command {
 
 			// Discard verbose output when JSON contract is requested.
 			var w io.Writer = cmd.OutOrStdout()
-			if output == contract.OutputJSON {
+			if output == OutputJSON {
 				w = io.Discard
 			}
 
@@ -127,10 +117,10 @@ func newSessionStartCmd() *cobra.Command {
 				wantRecover = true
 			}
 
-			result, err := session.RunSessionStartWithWatcher(w, ctx.Home, func(home string) session.WatchEnsureResult {
+			result, err := bootstrap.RunSessionStartWithWatcher(w, ctx.Home, func(home string) bootstrap.WatchEnsureResult {
 				r := ensureWatcher(home, false)
-				return session.WatchEnsureResult{State: r.Data.State}
-			}, func(home string, doRecover bool) session.CaptainLivenessResult {
+				return bootstrap.WatchEnsureResult{State: r.Data.State}
+			}, func(home string, doRecover bool) bootstrap.CaptainLivenessResult {
 				return captainLivenessForSession(home, doRecover && wantRecover)
 			})
 			if err != nil {
@@ -147,11 +137,11 @@ func newSessionStartCmd() *cobra.Command {
 				watcherState = "unknown"
 			}
 
-			return writeContract(cmd, contract.Response[contract.SessionStart]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[SessionStart]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "session.start",
 				Status:        "success",
-				Data: contract.SessionStart{
+				Data: SessionStart{
 					Lock:        lockState,
 					Watcher:     watcherState,
 					BootstrapOK: result.Bootstrap != nil,
@@ -171,7 +161,7 @@ func newBootstrapCmd() *cobra.Command {
 		Use:   "bootstrap [install <tools>...]",
 		Short: "Detect toolchain and run setup sweeps",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			locked := lifecycle.IsSessionLocked(ctx.Home)
+			locked := orchestrator.IsSessionLocked(ctx.Home)
 			var installTools []string
 			if len(args) > 1 && args[0] == "install" {
 				installTools = args[1:]
@@ -195,11 +185,11 @@ func newBootstrapCmd() *cobra.Command {
 				b.WriteString(result.GC.String() + "\n")
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "bootstrap",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -213,7 +203,7 @@ func newWatchCmd() *cobra.Command {
 		Short: "Run the persistent watcher daemon",
 		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			reason, err := supervision.Run(ctx.Home)
+			reason, err := orchestrator.RunWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), fleetRetirementPort{}, runtimeTaskStatePort{})
 			if err != nil {
 				return err
 			}
@@ -221,11 +211,11 @@ func newWatchCmd() *cobra.Command {
 			if reason != nil {
 				message = fmt.Sprintf("stopped: %s — %s", reason.Kind, reason.Message)
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "watch",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: message},
+				Data:          MessageResult{Message: message},
 			})
 		}),
 	}
@@ -264,7 +254,6 @@ func newWatchArmCmd() *cobra.Command {
 	return cmd
 }
 
-
 // runGuardClaude implements the Claude Stop hook guard.
 // It reads stdin JSON for stop_hook_active (true → exit 0 loop guard)
 // and checks fleet state + watcher health for blind-turn detection.
@@ -293,8 +282,8 @@ func runGuardClaude(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		if err := checkPendingRelayObligations(homeDir); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			exitWithCode(2)
@@ -325,7 +314,7 @@ func runGuardClaude(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
@@ -382,8 +371,8 @@ func runGuardCodexLike(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		if err := checkPendingRelayObligations(homeDir); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			exitWithCode(2)
@@ -414,7 +403,7 @@ func runGuardCodexLike(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
@@ -466,8 +455,8 @@ func runGuardGrok(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		if err := checkPendingRelayObligations(homeDir); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			exitWithCode(2)
@@ -498,7 +487,7 @@ func runGuardGrok(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
@@ -566,8 +555,8 @@ func runGuardAgy(homeDir string) error {
 	}
 
 	// Check scope: only guard primary checkouts
-	cls := scope.Classify(homeDir)
-	if cls.Err != nil || cls.Identity != scope.Primary {
+	cls := fleet.Classify(homeDir)
+	if cls.Err != nil || cls.Identity != fleet.Primary {
 		allowJSON, _ := json.Marshal(map[string]interface{}{
 			"decision": "allow",
 		})
@@ -596,7 +585,7 @@ func runGuardAgy(homeDir string) error {
 	}
 
 	// Check watcher liveness
-	status := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	status := orchestrator.ReadBeatStatus(homeDir, time.Now())
 
 	// If watcher is healthy and not stale, allow the stop
 	if status.Exists && !status.Stale {
@@ -636,12 +625,12 @@ func checkPendingRelayObligations(homeDir string) error {
 	}
 
 	for _, h := range homes {
-		receipts, err := turnend.ListPendingReceipts(h)
+		receipts, err := orchestrator.ListPendingReceipts(h)
 		if err != nil {
 			return fmt.Errorf("obligation gate fail-closed: reading terminal receipts from %s: %w", h, err)
 		}
 		for _, r := range receipts {
-			has, err := turnend.MaterialReportExists(h, r.TaskID)
+			has, err := orchestrator.MaterialReportExists(h, r.TaskID)
 			if err != nil {
 				return fmt.Errorf("obligation gate fail-closed: checking material report for task %s in %s: %w", r.TaskID, h, err)
 			}
@@ -669,7 +658,7 @@ Subcommands:
   return     Ordered AFK daemon shutdown with digest drain
   return check  Check if actionable AFK state remains`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			var d afk.Daemon
+			var d orchestrator.Daemon
 			return d.Start(ctx.Home)
 		}),
 	}
@@ -703,18 +692,34 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 				return err
 			}
 
-			report, err := afk.DrainCycle(afk.DrainCycleOptions{
+			report, err := orchestrator.DrainCycle(orchestrator.DrainCycleOptions{
 				HomeDir:       ctx.Home,
 				Consumer:      consumer,
 				LeaseCaptains: leaseCaptains,
 				Limit:         limit,
 				PeekFleet:     !noPeek,
+				FleetSnapshot: func(homeDir string) ([]orchestrator.FleetTaskSnapshot, error) {
+					snap, err := fleet.Snapshot(homeDir)
+					if err != nil {
+						return nil, err
+					}
+					var list []orchestrator.FleetTaskSnapshot
+					for _, t := range snap.Tasks {
+						list = append(list, orchestrator.FleetTaskSnapshot{
+							ID:         t.ID,
+							Kind:       t.Kind,
+							LastStatus: t.LastStatus,
+							Window:     t.Window,
+						})
+					}
+					return list, nil
+				},
 			})
 			if err != nil {
 				return operationError("internal", "Run `munsu afk drain --consumer "+consumer+"` again", err.Error())
 			}
 
-			if output == contract.OutputJSON {
+			if output == OutputJSON {
 				var actionable []string
 				for _, w := range report.Actionable {
 					actionable = append(actionable, fmt.Sprintf("[%s] %s: %s", w.EventID, w.Key, w.Payload))
@@ -728,11 +733,11 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 					inFlight = report.FleetPeek.InFlight
 					dead = report.FleetPeek.Dead
 				}
-				return writeContract(cmd, contract.Response[contract.DrainCycle]{
-					SchemaVersion: contract.SchemaVersion,
-					Kind:          "afk.drain",
+				return writeContract(cmd, Response[DrainCycle]{
+					SchemaVersion: SchemaVersion,
+					Kind:          "orchestrator.drain",
 					Status:        "success",
-					Data: contract.DrainCycle{
+					Data: DrainCycle{
 						ClaimID:      report.LeaseID,
 						Consumer:     report.Consumer,
 						Actionable:   actionable,
@@ -769,7 +774,7 @@ Check exit code via 'munsu afk return check' — returns 0 when
 no actionable AFK state remains.`,
 		Args: cobra.NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			report, err := afk.Return(ctx.Home)
+			report, err := orchestrator.Return(ctx.Home)
 			if err != nil {
 				return err
 			}
@@ -784,7 +789,7 @@ no actionable AFK state remains.`,
 non-zero if actionable items remain.`,
 		Args: cobra.NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if !afk.IsClean(ctx.Home) {
+			if !orchestrator.IsClean(ctx.Home) {
 				return fmt.Errorf("actionable AFK state remains — run 'munsu afk return' to reconcile")
 			}
 			return nil

@@ -6,9 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/afk"
-	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/bootstrap"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 // TestCollectCapabilities_WatcherNoIdentity verifies that when no watcher
@@ -40,7 +39,7 @@ func TestCollectCapabilities_WatcherVersionMismatch(t *testing.T) {
 	}
 
 	// Write a fake identity with a different version
-	id := supervision.WatcherIdentity{
+	id := orchestrator.WatcherIdentity{
 		Home:            home,
 		PID:             999999, // unlikely to be live
 		ProcessStart:    "1234567890",
@@ -49,7 +48,7 @@ func TestCollectCapabilities_WatcherVersionMismatch(t *testing.T) {
 		ProtocolVersion: 1,
 		StartTime:       1000000,
 	}
-	if err := supervision.WriteIdentity(home, id); err != nil {
+	if err := orchestrator.WriteIdentity(home, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,7 +76,7 @@ func TestCollectCapabilities_WatcherVersionMatch(t *testing.T) {
 	}
 
 	testVersion := "0.1.0-test"
-	id := supervision.WatcherIdentity{
+	id := orchestrator.WatcherIdentity{
 		Home:            home,
 		PID:             999999,
 		ProcessStart:    "1234567890",
@@ -86,7 +85,7 @@ func TestCollectCapabilities_WatcherVersionMatch(t *testing.T) {
 		ProtocolVersion: 1,
 		StartTime:       1000000,
 	}
-	if err := supervision.WriteIdentity(home, id); err != nil {
+	if err := orchestrator.WriteIdentity(home, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,10 +105,10 @@ func TestCollectCapabilities_WatcherVersionMatch(t *testing.T) {
 // CommitSHAs prevent VERSION MISMATCH even when display versions differ.
 // This regression test covers the watcher-version-identity-fix.
 func TestCollectCapabilities_WatcherCommitSHAMatch(t *testing.T) {
-	// Save and restore package-level supervision.CommitSHA
-	origCommitSHA := supervision.CommitSHA
-	defer func() { supervision.CommitSHA = origCommitSHA }()
-	supervision.CommitSHA = "abc1234def5678abc1234def5678abc1234def5"
+	// Save and restore package-level orchestrator.CommitSHA
+	origCommitSHA := orchestrator.CommitSHA
+	defer func() { orchestrator.CommitSHA = origCommitSHA }()
+	orchestrator.CommitSHA = "abc1234def5678abc1234def5678abc1234def5"
 
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
@@ -118,7 +117,7 @@ func TestCollectCapabilities_WatcherCommitSHAMatch(t *testing.T) {
 	}
 
 	// Identity has the same CommitSHA but a different display version
-	id := supervision.WatcherIdentity{
+	id := orchestrator.WatcherIdentity{
 		Home:            home,
 		PID:             999999,
 		ProcessStart:    "1234567890",
@@ -128,11 +127,11 @@ func TestCollectCapabilities_WatcherCommitSHAMatch(t *testing.T) {
 		StartTime:       1000000,
 		CommitSHA:       "abc1234", // short SHA prefix matches
 	}
-	if err := supervision.WriteIdentity(home, id); err != nil {
+	if err := orchestrator.WriteIdentity(home, id); err != nil {
 		t.Fatal(err)
 	}
 
-	// CLI version string is different, but supervision.CommitSHA matches
+	// CLI version string is different, but orchestrator.CommitSHA matches
 	capResult := CollectCapabilities(home, ".", "0.1.0-cli")
 
 	if !capResult.Watcher.VersionMatched {
@@ -150,9 +149,9 @@ func TestCollectCapabilities_WatcherCommitSHAMatch(t *testing.T) {
 // TestCollectCapabilities_WatcherCommitSHADifferent verifies that different
 // CommitSHAs correctly report VERSION MISMATCH.
 func TestCollectCapabilities_WatcherCommitSHADifferent(t *testing.T) {
-	origCommitSHA := supervision.CommitSHA
-	defer func() { supervision.CommitSHA = origCommitSHA }()
-	supervision.CommitSHA = "abc1234def5678abc1234def5678abc1234def5"
+	origCommitSHA := orchestrator.CommitSHA
+	defer func() { orchestrator.CommitSHA = origCommitSHA }()
+	orchestrator.CommitSHA = "abc1234def5678abc1234def5678abc1234def5"
 
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
@@ -161,7 +160,7 @@ func TestCollectCapabilities_WatcherCommitSHADifferent(t *testing.T) {
 	}
 
 	// Identity has a different CommitSHA
-	id := supervision.WatcherIdentity{
+	id := orchestrator.WatcherIdentity{
 		Home:            home,
 		PID:             999999,
 		ProcessStart:    "1234567890",
@@ -169,9 +168,9 @@ func TestCollectCapabilities_WatcherCommitSHADifferent(t *testing.T) {
 		BuildVersion:    "0.0.1-watcher",
 		ProtocolVersion: 2,
 		StartTime:       1000000,
-		CommitSHA:       "xyz7890", // different from supervision.CommitSHA
+		CommitSHA:       "xyz7890", // different from orchestrator.CommitSHA
 	}
-	if err := supervision.WriteIdentity(home, id); err != nil {
+	if err := orchestrator.WriteIdentity(home, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -268,7 +267,7 @@ func TestCollectCapabilities_GeneralTarget(t *testing.T) {
 
 	// If unsupported, there should be a fix hint available.
 	// If there's an ownership validation error, the fix is still relevant.
-	if capResult.General.Err == nil && capResult.General.Result.Source == afk.Unsupported {
+	if capResult.General.Err == nil && capResult.General.Result.Source == orchestrator.Unsupported {
 		if fix := capResult.General.Fix(); fix == "" {
 			t.Error("expected non-empty Fix for unsupported general target")
 		}
@@ -294,7 +293,7 @@ func TestCollectCapabilities_IntegrationInstalled(t *testing.T) {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	targetFile := filepath.Join(targetDir, "munsu-integrate.ts")
+	targetFile := filepath.Join(targetDir, "munsu-bootstrap.ts")
 	markerLine := "// munsu-integrate v1 -- do not edit this section\n"
 	content := markerLine + "export const integration = { version: '1.0.0' };\n"
 	if err := os.WriteFile(targetFile, []byte(content), 0644); err != nil {
@@ -316,7 +315,7 @@ func TestCollectCapabilities_IntegrationInstalled(t *testing.T) {
 	}
 
 	// Sanity: verify Status returns "installed" directly
-	result, err := integrate.Status(home, cwd, "pi", integrate.ScopeProject)
+	result, err := bootstrap.Status(home, cwd, "pi", bootstrap.ScopeProject)
 	if err != nil {
 		t.Fatalf("Status failed: %v", err)
 	}

@@ -1,21 +1,29 @@
-.PHONY: test integration lint build cover all
+BINDIR ?= $(if $(XDG_BIN_HOME),$(XDG_BIN_HOME),$(HOME)/.local/bin)
 
-# Thin targets that delegate to scripts/test.sh. See that file for phase details.
+.PHONY: install uninstall test integration lint build cover all
+
+install:
+	@mkdir -p "$(BINDIR)"
+	GOBIN="$(BINDIR)" go install ./cmd/munsu
+	@echo "installed munsu to $(BINDIR)/munsu"
+
+uninstall:
+	rm -f "$(BINDIR)/munsu"
 
 test:
-	./scripts/test.sh unit
+	go test -race -count=1 ./...
 
 integration:
-	./scripts/test.sh integration
+	go test -tags=integration -count=1 ./...
 
 lint:
-	./scripts/test.sh lint
+	go vet ./...
 
 build:
-	./scripts/test.sh build
+	go build ./...
 
 cover:
-	./scripts/test.sh coverage
+	go test -coverprofile=cover.out -covermode=atomic ./...
+	go tool cover -func=cover.out | tail -1
 
-all:
-	./scripts/test.sh --all
+all: lint build test integration cover

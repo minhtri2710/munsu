@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +49,7 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 			}
 
 			// Resolve endpoint generation from task meta for staleness validation.
-			meta, err := task.ReadMeta(homeDir, taskID)
+			meta, err := home.ReadMeta(homeDir, taskID)
 			if err != nil {
 				return fmt.Errorf("ready: reading task meta: %w", err)
 			}
@@ -58,16 +57,16 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 
 			// Emit the durable ready event marker.
 			// The ready marker is written atomically (temp-file + rename).
-			readyEvent, err := captain.EmitReadyEvent(homeDir, taskID, eventID, metaGeneration)
+			readyEvent, err := fleet.EmitReadyEvent(homeDir, taskID, eventID, metaGeneration)
 			if err != nil {
 				return fmt.Errorf("ready: emit: %w", err)
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "ready",
 				Status:        "success",
-				Data: contract.MessageResult{
+				Data: MessageResult{
 					Message: fmt.Sprintf("ready event emitted: task=%s event=%s gen=%s",
 						taskID, readyEvent.EventID, metaGeneration),
 				},

@@ -1,249 +1,140 @@
-// Package domain defines core munsu domain types, task state reading/writing,
-// event stream folding, and delivery business rules.
+// Package domain defines pure munsu business rules and value types.
 package domain
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
-	"syscall"
 )
 
-// --- Task State & Metadata ---
-
-// StateDir returns the path to the state directory under the given homeDir.
-func StateDir(homeDir string) string {
-	return filepath.Join(homeDir, "state")
+// MetaKeys returns the task meta keys used to persist this identity.
+func (id *DeliveryIdentity) MetaKeys() []string {
+	return []string{
+		"pr_provider", "pr_owner", "pr_repo",
+		"pr_number", "pr_url",
+		"pr_base", "pr_base_ref", "pr_head_ref", "pr_head", "pr_head_sha",
+		"pr_timestamp",
+	}
 }
 
-func metaPath(homeDir string, id string) (string, error) {
-	return filepath.Join(StateDir(homeDir), id+".meta"), nil
+// ToMeta serializes the identity into a task meta map.
+func (id *DeliveryIdentity) ToMeta() map[string]string {
+	return map[string]string{
+		"pr_provider":  id.Provider,
+		"pr_owner":     id.Owner,
+		"pr_repo":      id.Repo,
+		"pr_number":    fmt.Sprintf("%d", id.Number),
+		"pr_url":       id.URL,
+		"pr_base":      id.BaseRef,
+		"pr_base_ref":  id.BaseRef,
+		"pr_head_ref":  id.HeadRef,
+		"pr_head":      id.HeadSHA,
+		"pr_head_sha":  id.HeadSHA,
+		"pr_timestamp": id.CapturedAt,
+	}
 }
 
-func statusPath(homeDir string, id string) (string, error) {
-	return filepath.Join(StateDir(homeDir), id+".status"), nil
-}
-
-// WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
-func WriteMeta(homeDir string, id string, meta map[string]string) error {
-	_, unlock, err := acquireMetaLock(homeDir, id)
-	if err != nil {
-		return fmt.Errorf("write meta: %w", err)
-	}
-	defer unlock()
-
-	return writeMetaLocked(homeDir, id, meta)
-}
-
-func writeMetaLocked(homeDir string, id string, meta map[string]string) error {
-	p, err := metaPath(homeDir, id)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		return fmt.Errorf("creating state directory: %w", err)
-	}
-	var b strings.Builder
-	for k, v := range meta {
-		b.WriteString(fmt.Sprintf("%s=%s\n", k, v))
-	}
-	tmpF, err := os.CreateTemp(filepath.Dir(p), id+".meta.*.tmp")
-	if err != nil {
-		return fmt.Errorf("creating temp meta file: %w", err)
-	}
-	tmpPath := tmpF.Name()
-	if _, err := tmpF.WriteString(b.String()); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("writing temp meta file: %w", err)
-	}
-	if err := tmpF.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("closing temp meta file: %w", err)
-	}
-	if err := os.Rename(tmpPath, p); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("renaming temp meta file: %w", err)
-	}
-	return nil
-}
-
-// ReadMeta reads a task meta file at $MUNSU_HOME/state/<id>.meta.
-func ReadMeta(homeDir string, id string) (map[string]string, error) {
-	p, err := metaPath(homeDir, id)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(p)
-	if err != nil {
-		return nil, fmt.Errorf("reading task meta %s: %w", id, err)
-	}
-	defer f.Close()
-
-	meta := make(map[string]string)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+// ParseProviderURL parses a GitHub PR URL or GitLab MR URL.
+func ParseProviderURL(rawURL string) (provider, owner, repo string, num int, host string, err error) {
+	if strings.Contains(rawURL, "github.com") || strings.Contains(rawURL, "/pull/") {
+		ghURL, err := ParseGHURL(rawURL)
+		if err != nil {
+			return "", "", "", 0, "", err
 		}
-		k, v, ok := strings.Cut(line, "=")
-		if ok {
-			meta[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		return "github", ghURL.Owner, ghURL.Repo, ghURL.Num, "github.com", nil
+	}
+	if strings.Contains(rawURL, "gitlab.com") || strings.Contains(rawURL, "/merge_requests/") {
+		glURL, err := ParseMRURL(rawURL)
+		if err != nil {
+			return "", "", "", 0, "", err
 		}
+		return "gitlab", glURL.Owner, glURL.Project, glURL.IID, glURL.Host, nil
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning task meta %s: %w", id, err)
-	}
-	return meta, nil
+	return "", "", "", 0, "", fmt.Errorf("unsupported provider URL %q", rawURL)
 }
 
-// AppendStatus appends a status line to $MUNSU_HOME/state/<id>.status with OS flock safety.
-func AppendStatus(homeDir string, id, line string) error {
-	p, err := statusPath(homeDir, id)
-	if err != nil {
-		return err
+// IdentityFromMeta reconstructs a DeliveryIdentity from task meta.
+func IdentityFromMeta(meta map[string]string) (*DeliveryIdentity, error) {
+	prURL := meta["pr_url"]
+	if prURL == "" {
+		prURL = meta["pr"]
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		return fmt.Errorf("creating state directory: %w", err)
-	}
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("opening status file: %w", err)
-	}
-	defer f.Close()
-
-	// Atomic OS flock to prevent append clobbering by concurrent processes
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err == nil {
-		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	}
-
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		return fmt.Errorf("writing status line: %w", err)
-	}
-	return nil
-}
-
-// ReadStatus reads all status lines from $MUNSU_HOME/state/<id>.status.
-func ReadStatus(homeDir string, id string) ([]string, error) {
-	p, err := statusPath(homeDir, id)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(p)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading status %s: %w", id, err)
-	}
-	defer f.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	return lines, scanner.Err()
-}
-
-// ParseStatusKey extracts an optional [key=<slug>] annotation from a status message.
-func ParseStatusKey(line string) (message, key string) {
-	startMarker := " [key="
-	idx := strings.LastIndex(line, startMarker)
-	if idx < 0 {
-		startMarker = "[key="
-		idx = strings.LastIndex(line, startMarker)
-	}
-	if idx >= 0 {
-		end := strings.Index(line[idx+len(startMarker):], "]")
-		if end >= 0 {
-			keyVal := line[idx+len(startMarker) : idx+len(startMarker)+end]
-			if keyVal != "" {
-				key = keyVal
-				message = strings.TrimSpace(line[:idx])
-				return
+	if prURL == "" {
+		for _, key := range (&DeliveryIdentity{}).MetaKeys() {
+			if meta[key] != "" {
+				return nil, fmt.Errorf("delivery identity has %s but no pr_url", key)
 			}
 		}
-	}
-	return line, ""
-}
-
-// --- Compare-and-Swap Meta Lock ---
-
-type CASError struct {
-	Key      string
-	Expected string
-	Actual   string
-}
-
-func (e *CASError) Error() string {
-	return fmt.Sprintf("cas conflict: key %q expected %q but got %q", e.Key, e.Expected, e.Actual)
-}
-
-func lockPath(homeDir, id string) string {
-	p, _ := metaPath(homeDir, id)
-	return p + ".lock"
-}
-
-func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
-	lp := lockPath(homeDir, id)
-	if err := os.MkdirAll(filepath.Dir(lp), 0755); err != nil {
-		return nil, nil, fmt.Errorf("creating state directory for lock: %w", err)
-	}
-	f, err := os.OpenFile(lp, os.O_RDONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return nil, nil, fmt.Errorf("opening lock file: %w", err)
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, nil, fmt.Errorf("acquiring flock: %w", err)
-	}
-	return f, func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
-	}, nil
-}
-
-func CompareAndSwapMeta(homeDir, id string, checks, updates map[string]string) (map[string]string, error) {
-	_, unlock, err := acquireMetaLock(homeDir, id)
-	if err != nil {
-		return nil, fmt.Errorf("cas: %w", err)
-	}
-	defer unlock()
-
-	meta, err := ReadMeta(homeDir, id)
-	if err != nil {
-		return nil, fmt.Errorf("cas: reading meta: %w", err)
+		return nil, nil
 	}
 
-	for k, expectedV := range checks {
-		actualV, ok := meta[k]
-		if !ok {
-			if expectedV == "" {
-				continue
-			}
-			return nil, &CASError{Key: k, Expected: expectedV, Actual: actualV}
+	numStr := meta["pr_number"]
+	num := 0
+	if numStr != "" {
+		n, err := strconv.Atoi(numStr)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid pr_number %q", numStr)
 		}
-		if actualV != expectedV {
-			return nil, &CASError{Key: k, Expected: expectedV, Actual: actualV}
-		}
+		num = n
 	}
 
-	for k, v := range updates {
-		meta[k] = v
+	urlProvider, parsedOwner, parsedRepo, parsedNum, _, err := ParseProviderURL(prURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid pr_url %q: %w", prURL, err)
+	}
+	owner := meta["pr_owner"]
+	repo := meta["pr_repo"]
+
+	if metaProvider := meta["pr_provider"]; metaProvider != "" && metaProvider != urlProvider {
+		return nil, fmt.Errorf("provider mismatch: pr_provider=%q but URL provider=%q", metaProvider, urlProvider)
+	}
+	if owner != "" && owner != parsedOwner {
+		return nil, fmt.Errorf("pr_owner %q does not match pr_url owner %q", owner, parsedOwner)
+	}
+	if repo != "" && repo != parsedRepo {
+		return nil, fmt.Errorf("pr_repo %q does not match pr_url repo %q", repo, parsedRepo)
+	}
+	if num > 0 && num != parsedNum {
+		return nil, fmt.Errorf("pr_number %d does not match pr_url number %d", num, parsedNum)
+	}
+	if owner == "" {
+		owner = parsedOwner
+	}
+	if repo == "" {
+		repo = parsedRepo
+	}
+	if num <= 0 {
+		num = parsedNum
 	}
 
-	if err := writeMetaLocked(homeDir, id, meta); err != nil {
-		return nil, fmt.Errorf("cas: writing meta: %w", err)
+	headSHA := meta["pr_head_sha"]
+	if headSHA == "" {
+		headSHA = meta["pr_head"]
+	} else if other := meta["pr_head"]; other != "" && other != headSHA {
+		return nil, fmt.Errorf("pr_head_sha %q conflicts with pr_head %q", headSHA, other)
 	}
 
-	return meta, nil
+	baseRef := meta["pr_base_ref"]
+	if baseRef == "" {
+		baseRef = meta["pr_base"]
+	} else if other := meta["pr_base"]; other != "" && other != baseRef {
+		return nil, fmt.Errorf("pr_base_ref %q conflicts with pr_base %q", baseRef, other)
+	}
+
+	id := &DeliveryIdentity{
+		Provider:   meta["pr_provider"],
+		Owner:      owner,
+		Repo:       repo,
+		Number:     num,
+		URL:        prURL,
+		BaseRef:    baseRef,
+		HeadRef:    meta["pr_head_ref"],
+		HeadSHA:    headSHA,
+		CapturedAt: meta["pr_timestamp"],
+	}
+
+	return id, nil
 }
-
-// --- Delivery Domain Models ---
 
 type PRStatus string
 
@@ -295,14 +186,14 @@ func (pr PR) CanMerge() bool {
 	if pr.Status != PROpen {
 		return false
 	}
-	for _, c := range pr.Checks {
-		if c.Status == CheckFailed {
+	for _, check := range pr.Checks {
+		if check.Status == CheckFailed {
 			return false
 		}
 	}
 	hasApproval := false
-	for _, r := range pr.Reviews {
-		switch r.State {
+	for _, review := range pr.Reviews {
+		switch review.State {
 		case ReviewChangesRequested:
 			return false
 		case ReviewApproved:
@@ -353,3 +244,27 @@ func ValidateIdentity(id *DeliveryIdentity) error {
 	}
 	return nil
 }
+
+// PRMergeStatus holds the provider-confirmed merge state of a pull request.
+type PRMergeStatus struct {
+	State     string `json:"state"`
+	Merged    bool   `json:"merged"`
+	MergedAt  string `json:"mergedAt,omitempty"`
+	MergedSHA string `json:"mergedSha,omitempty"`
+	Closed    bool   `json:"closed"`
+	ClosedAt  string `json:"closedAt,omitempty"`
+	HeadSHA   string `json:"headRefOid,omitempty"`
+}
+
+// DeliveryState represents the task delivery lifecycle state.
+type DeliveryState string
+
+const (
+	DeliveryStateReviewReady DeliveryState = "review-ready"
+	DeliveryStatePRCheck     DeliveryState = "pr-check"
+	DeliveryStateMerged      DeliveryState = "merged"
+)
+
+const MetaDeliveryState = "delivery_state"
+
+// MetaKeys returns the task meta keys used to persist this identity.

@@ -2,7 +2,7 @@ disable_project_settings: true
 
 commands:
   lint: 'go build ./... && go vet ./...'
-  test: 'scripts/test-intent.sh'
+  test: 'go test ./... -count=1'
 
 test:
   evidence:

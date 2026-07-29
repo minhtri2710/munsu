@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +14,7 @@ const (
 
 type contractError struct {
 	status int
-	value  contract.ErrorResponse
+	value  ErrorResponse
 }
 
 func (err *contractError) Error() string {
@@ -25,11 +24,11 @@ func (err *contractError) Error() string {
 func usageError(code, action, message string) error {
 	return &contractError{
 		status: exitUsage,
-		value: contract.ErrorResponse{
-			SchemaVersion: contract.SchemaVersion,
+		value: ErrorResponse{
+			SchemaVersion: SchemaVersion,
 			Kind:          "error",
 			Status:        "error",
-			Error: contract.ErrorEnvelope{
+			Error: ErrorEnvelope{
 				ErrorCode: code,
 				Action:    action,
 				Message:   message,
@@ -41,11 +40,11 @@ func usageError(code, action, message string) error {
 func operationError(code, action, message string) error {
 	return &contractError{
 		status: exitOperation,
-		value: contract.ErrorResponse{
-			SchemaVersion: contract.SchemaVersion,
+		value: ErrorResponse{
+			SchemaVersion: SchemaVersion,
 			Kind:          "error",
 			Status:        "error",
-			Error: contract.ErrorEnvelope{
+			Error: ErrorEnvelope{
 				ErrorCode: code,
 				Action:    action,
 				Message:   message,
@@ -60,7 +59,7 @@ func configureContractCommand(cmd *cobra.Command) {
 	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return usageError("unknown_flag", fmt.Sprintf("Run `%s --help` (Expected syntax: %s %s)", commandPath(cmd), commandPath(cmd), cmd.Use), strings.ReplaceAll(err.Error(), "error: ", ""))
 	})
-	cmd.Flags().String("output", contract.OutputTOON, "Output format (toon|json)")
+	cmd.Flags().String("output", OutputTOON, "Output format (toon|json)")
 }
 
 func contractArgs(count int) cobra.PositionalArgs {
@@ -81,7 +80,7 @@ func contractOutput(cmd *cobra.Command) (string, error) {
 	if err != nil {
 		return "", usageError("invalid_argument", fmt.Sprintf("Run `%s --help`", commandPath(cmd)), "Unable to read --output")
 	}
-	if output != contract.OutputTOON && output != contract.OutputJSON {
+	if output != OutputTOON && output != OutputJSON {
 		return "", usageError("unsupported_input", fmt.Sprintf("Run `%s --output toon` or `%s --output json`", commandPath(cmd), commandPath(cmd)), fmt.Sprintf("Unsupported output format %q", output))
 	}
 	return output, nil
@@ -92,7 +91,7 @@ func writeContract(cmd *cobra.Command, value any) error {
 	if err != nil {
 		return err
 	}
-	encoded, err := contract.Encode(value, output)
+	encoded, err := Encode(value, output)
 	if err != nil {
 		return operationError("internal", "Run the command again", "Unable to format the command result")
 	}

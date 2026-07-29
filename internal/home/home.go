@@ -39,8 +39,11 @@ func Resolve(override string) (string, error) {
 func EnsureDirTree(path string) error {
 	for _, d := range append([]string{""}, HomeDirNames...) {
 		dir := filepath.Join(path, d)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("cannot create directory %s: %w", dir, err)
+		}
+		if err := os.Chmod(dir, 0700); err != nil {
+			return fmt.Errorf("cannot secure directory %s: %w", dir, err)
 		}
 	}
 	return nil

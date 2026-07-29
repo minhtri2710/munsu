@@ -7,24 +7,23 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/lifecycle"
-	"github.com/minhtri2710/munsu/internal/supervision"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
 var Version = "0.1.0-dev"
 
 // CommitSHA holds the verified commit SHA, set via ldflags at build time.
-// It is propagated to supervision.CommitSHA for watcher identity comparison.
+// It is propagated to orchestrator.CommitSHA for watcher identity comparison.
 var CommitSHA = ""
 
 func init() {
 	// Propagate version and commit SHA to supervision for watcher identity.
 	// Only propagate CommitSHA if the CLI explicitly provides one, to avoid
-	// clobbering the linker-injected supervision.CommitSHA with an empty value.
-	supervision.BuildVersion = Version
+	// clobbering the linker-injected orchestrator.CommitSHA with an empty value.
+	orchestrator.BuildVersion = Version
 	if CommitSHA != "" {
-		supervision.CommitSHA = CommitSHA
+		orchestrator.CommitSHA = CommitSHA
 	}
 }
 
@@ -107,7 +106,7 @@ func fleetSummary(w io.Writer, homeDir string) {
 	}
 
 	watcherStatus := "--"
-	beat := lifecycle.ReadBeatStatus(homeDir, time.Now())
+	beat := orchestrator.ReadBeatStatus(homeDir, time.Now())
 	if beat.Exists {
 		if beat.Stale {
 			watcherStatus = "stale"

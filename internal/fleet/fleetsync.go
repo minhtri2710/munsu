@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/minhtri2710/munsu/internal/project"
 )
 
 // SyncResult holds the result of a fleet-sync operation.
@@ -19,7 +17,7 @@ type SyncResult struct {
 }
 
 // Sync fast-forwards all remote-backed project clones under the given projects dir.
-// If projectName is non-empty, syncs only that project.
+// If projectName is non-empty, syncs only that
 func Sync(home string, projectName string) (*SyncResult, error) {
 	res := &SyncResult{}
 
@@ -62,7 +60,7 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 // Uses the project registry to find both cloned repos (in projects/<name>)
 // and local-path registrations (where Description is an absolute existing path).
 func readProjectDirs(projectsFile, projectsDir string) (dirs []string, localDirs []string, _ error) {
-	projects, err := project.ListFromFile(projectsFile)
+	projects, err := ListFromFile(projectsFile)
 	if err != nil {
 		return nil, nil, err
 	}

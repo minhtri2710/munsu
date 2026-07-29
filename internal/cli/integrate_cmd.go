@@ -10,10 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
+	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/harness"
-	"github.com/minhtri2710/munsu/internal/integrate"
-	"github.com/minhtri2710/munsu/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -164,12 +162,12 @@ Always exits 0 because Claude SessionStart exit 2 blocks session init.`,
 	return cmd
 }
 
-func resolveIntegrateScope(raw string) (integrate.Scope, error) {
+func resolveIntegrateScope(raw string) (bootstrap.Scope, error) {
 	switch raw {
 	case "user":
-		return integrate.ScopeUser, nil
+		return bootstrap.ScopeUser, nil
 	case "project":
-		return integrate.ScopeProject, nil
+		return bootstrap.ScopeProject, nil
 	default:
 		return "", fmt.Errorf("unsupported scope %q: must be 'user' or 'project'", raw)
 	}
@@ -191,14 +189,14 @@ func runIntegrateInstall(cmd *cobra.Command, ctx Ctx, flags integrateFlags) erro
 	}
 
 	cwd, _ := os.Getwd()
-	result, err := integrate.Install(ctx.Home, cwd, harnessName, scope, flags.dryRun)
+	result, err := bootstrap.Install(ctx.Home, cwd, harnessName, scope, flags.dryRun)
 	if err != nil {
 		return err
 	}
 
-	return writeContract(cmd, contract.Response[integrateResultData]{
-		SchemaVersion: contract.SchemaVersion,
-		Kind:          "integrate.install",
+	return writeContract(cmd, Response[integrateResultData]{
+		SchemaVersion: SchemaVersion,
+		Kind:          "bootstrap.install",
 		Status:        "success",
 		Data: integrateResultData{
 			Harness:     result.Harness,
@@ -226,14 +224,14 @@ func runIntegrateRepair(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 	}
 
 	cwd, _ := os.Getwd()
-	result, err := integrate.Repair(ctx.Home, cwd, harnessName, scope, flags.dryRun)
+	result, err := bootstrap.Repair(ctx.Home, cwd, harnessName, scope, flags.dryRun)
 	if err != nil {
 		return err
 	}
 
-	return writeContract(cmd, contract.Response[integrateResultData]{
-		SchemaVersion: contract.SchemaVersion,
-		Kind:          "integrate.repair",
+	return writeContract(cmd, Response[integrateResultData]{
+		SchemaVersion: SchemaVersion,
+		Kind:          "bootstrap.repair",
 		Status:        "success",
 		Data: integrateResultData{
 			Harness:     result.Harness,
@@ -260,14 +258,14 @@ func runIntegrateStatus(cmd *cobra.Command, ctx Ctx, flags integrateFlags) error
 	}
 
 	cwd, _ := os.Getwd()
-	result, err := integrate.Status(ctx.Home, cwd, harnessName, scope)
+	result, err := bootstrap.Status(ctx.Home, cwd, harnessName, scope)
 	if err != nil {
 		return err
 	}
 
-	return writeContract(cmd, contract.Response[integrateResultData]{
-		SchemaVersion: contract.SchemaVersion,
-		Kind:          "integrate.status",
+	return writeContract(cmd, Response[integrateResultData]{
+		SchemaVersion: SchemaVersion,
+		Kind:          "bootstrap.status",
 		Status:        "success",
 		Data: integrateResultData{
 			Harness:     result.Harness,
@@ -371,7 +369,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 	}
 
 	// Evaluate scope/gate safety.
-	result := integrate.SafetyCheck(checkPath)
+	result := bootstrap.SafetyCheck(checkPath)
 
 	// Evaluate command blocking rules.
 	block := false
@@ -490,7 +488,7 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 	}
 
 	// Default Pi-shaped output: JSON contract on stdout
-	data := contract.SafetyCheckData{
+	data := SafetyCheckData{
 		Identity:       result.Identity,
 		GateCapability: result.GateCapability,
 		CanonicalPath:  result.CanonicalPath,
@@ -500,8 +498,8 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 		Error:          result.Error,
 	}
 
-	return writeContract(cmd, contract.Response[interface{}]{
-		SchemaVersion: contract.SchemaVersion,
+	return writeContract(cmd, Response[interface{}]{
+		SchemaVersion: SchemaVersion,
 		Kind:          "integrate.safety-check",
 		Status:        "success",
 		Data:          data,
@@ -547,7 +545,7 @@ func runSessionStartNudge(cmd *cobra.Command, ctx Ctx) error {
 	}
 
 	// 2. Check primary scope
-	scopeResult := session.CheckSessionScope(ctx.Home)
+	scopeResult := bootstrap.CheckSessionScope(ctx.Home)
 	if !scopeResult.IsPrimary {
 		return nil
 	}

@@ -1,17 +1,19 @@
+//go:build integration
+
 package cli
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/task"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
@@ -41,7 +43,7 @@ func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
 
 func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	home := t.TempDir()
-	if err := task.WriteMeta(home, "observe-me", map[string]string{"description": "inspect state", "worktree": filepath.Join(home, "branch-name")}); err != nil {
+	if err := mhome.WriteMeta(home, "observe-me", map[string]string{"description": "inspect state", "worktree": filepath.Join(home, "branch-name")}); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", home)
@@ -60,6 +62,81 @@ func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	}
 	if !strings.Contains(expanded, "branch: branch-name") || !strings.Contains(expanded, "status: unknown") {
 		t.Errorf("expanded task observe = %s", expanded)
+	}
+}
+
+func TestTaskObserveCaptainUsesStructuredHomeState(t *testing.T) {
+	home := t.TempDir()
+	captainHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	if err := mhome.WriteMeta(home, "captain:test", map[string]string{"kind": "captain", "sm_id": "test", "home": captainHome}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(captainHome, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(captainHome, "data", "backlog.md"), []byte("# Backlog\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mhome.AppendStatus(home, "captain:test", "working: historical parent state"); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runContract(t, []string{"task", "observe", "captain:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "status: no_active_work") {
+		t.Fatalf("task observe did not use structured Captain state: %s", output)
+	}
+}
+
+func TestWakeClaimEmptyQueueReturnsEmptyWithoutLease(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+
+	out, err := runContract(t, []string{"wake", "claim", "--consumer", "test", "--output", "json"})
+	if err != nil {
+		t.Fatalf("wake claim: %v\n%s", err, out)
+	}
+	var envelope struct {
+		Kind string `json:"kind"`
+		Data struct {
+			State   string `json:"state"`
+			ClaimID string `json:"claim_id"`
+			WakeID  string `json:"wake_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if envelope.Kind != "wake.claim" || envelope.Data.State != "empty" || envelope.Data.ClaimID != "" || envelope.Data.WakeID != "" {
+		t.Fatalf("unexpected empty claim: %+v", envelope)
+	}
+	entries, err := os.ReadDir(filepath.Join(home, "state", ".wake-leases"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("empty claim created lease files: %v", entries)
+	}
+}
+
+func TestSessionStartUsesSessionStartKind(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+
+	out, err := runContract(t, []string{"session-start", "--output", "json"})
+	if err != nil {
+		t.Fatalf("session-start: %v\n%s", err, out)
+	}
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if envelope.Kind != "session.start" {
+		t.Fatalf("kind=%q want session.start", envelope.Kind)
 	}
 }
 
@@ -145,6 +222,59 @@ func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
 	}
 }
 
+func TestWakeResolveCommandJSONContract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNSU_HOME", home)
+	if err := mhome.EnqueueWake(home, "signal", "task", "payload"); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := mhome.ClaimWakes(home, "test", 60, 1)
+	if err != nil || len(claim.Wakes) != 1 {
+		t.Fatalf("claim: %+v err=%v", claim, err)
+	}
+	eventID := claim.Wakes[0].Epoch + ":" + claim.Wakes[0].Seq
+	args := []string{"wake", "resolve", "--claim-id", claim.LeaseID, "--event-id", eventID, "--summary", "done", "--output", "json"}
+	out, err := runContract(t, args)
+	if err != nil {
+		t.Fatalf("resolve: %v\n%s", err, out)
+	}
+	assertOneJSONWakeResponse(t, out, "wake.resolve")
+	out, err = runContract(t, args)
+	if err != nil {
+		t.Fatalf("repeat resolve: %v\n%s", err, out)
+	}
+	assertOneJSONWakeResponse(t, out, "wake.resolve")
+	for _, bad := range [][]string{
+		{"missing", eventID, "done"},
+		{claim.LeaseID, "missing", "done"},
+		{claim.LeaseID, eventID, ""},
+	} {
+		badOut, badErr := runContract(t, []string{"wake", "resolve", "--claim-id", bad[0], "--event-id", bad[1], "--summary", bad[2], "--output", "json"})
+		if badErr == nil {
+			t.Fatalf("invalid resolve succeeded: %v", bad)
+		}
+		assertOneJSONWakeResponse(t, badOut, "error")
+	}
+}
+
+func assertOneJSONWakeResponse(t *testing.T, output, wantKind string) {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(output))
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := dec.Decode(&envelope); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, output)
+	}
+	if envelope.Kind != wantKind {
+		t.Fatalf("kind=%q want %q: %s", envelope.Kind, wantKind, output)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		t.Fatalf("stdout contains more than one JSON document: %v\n%s", err, output)
+	}
+}
+
 func runContract(t *testing.T, args []string) (string, error) {
 	t.Helper()
 	root := NewRootCommand()
@@ -201,7 +331,7 @@ func TestWriteContractErrorWrapsNonContractErrors(t *testing.T) {
 func TestWriteContractErrorEncodeFailureReturnsNonZero(t *testing.T) {
 	var buf bytes.Buffer
 	// contractError with schema version that should fail encoding
-	// Use an unencodable struct — contract.Encode returns error for
+	// Use an unencodable struct — Encode returns error for
 	// nil values or broken output format.
 	err := fmt.Errorf("encode fail test")
 	exitCode := WriteContractError(&buf, err, []string{})
@@ -276,7 +406,7 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	}
 
 	// Non-empty snapshot: add a task
-	if err := task.WriteMeta(home, "alpha", map[string]string{"description": "inspect", "worktree": home}); err != nil {
+	if err := mhome.WriteMeta(home, "alpha", map[string]string{"description": "inspect", "worktree": home}); err != nil {
 		t.Fatal(err)
 	}
 	out2, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
@@ -319,7 +449,7 @@ func TestFleetSnapshotV2CaptainGuidanceJSON(t *testing.T) {
 		t.Fatalf("invalid json: %v\n%s", err, out)
 	}
 	g := resp.Data.CaptainGuidance
-	want := contract.DefaultCaptainGuidance()
+	want := DefaultCaptainGuidance()
 	if g.Note != want.Note {
 		t.Errorf("note = %q", g.Note)
 	}
@@ -349,8 +479,18 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	// Registry entry for the captain.
 	line := fmt.Sprintf("- domain-alpha - (home: %s; scope: domain; projects: sample; added: 2026-07-19)\n", captainHome)
 	os.WriteFile(filepath.Join(home, "data", "captains.md"), []byte("# Captains\n\n"+line), 0644)
+	// Launched captain meta makes the supervisor visible in the raw task snapshot.
+	if err := mhome.WriteMeta(home, "captain:domain-alpha", map[string]string{
+		"kind":    "captain",
+		"sm_id":   "domain-alpha",
+		"home":    captainHome,
+		"backend": "herdr",
+		"window":  "session-1:pane-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// Stale parent event claims working while home is idle.
-	if err := task.AppendStatus(home, "captain:domain-alpha", "working [key=phase7]: Sample rollout Phase 7"); err != nil {
+	if err := mhome.AppendStatus(home, "captain:domain-alpha", "working [key=phase7]: Sample rollout Phase 7"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MUNSU_HOME", home)
@@ -359,12 +499,15 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fleet snapshot v2: %v", err)
 	}
-	var resp contract.Response[contract.FleetSnapshotV2]
+	var resp Response[FleetSnapshotV2]
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, out)
 	}
 	if len(resp.Data.Captains) != 1 {
 		t.Fatalf("captains=%d want 1: %+v", len(resp.Data.Captains), resp.Data.Captains)
+	}
+	if len(resp.Data.Soldiers) != 0 {
+		t.Fatalf("captain supervisor must not be projected as a soldier: %+v", resp.Data.Soldiers)
 	}
 	c := resp.Data.Captains[0]
 	if c.Provenance != "structured-home" {
@@ -401,7 +544,7 @@ func TestTaskListShowsAggregateCount(t *testing.T) {
 	}
 
 	// Add one task
-	if err := task.WriteMeta(home, "beta", map[string]string{"kind": "ship"}); err != nil {
+	if err := mhome.WriteMeta(home, "beta", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -445,10 +588,10 @@ func TestSafetyCheckContractJSON(t *testing.T) {
 	}
 
 	var resp struct {
-		SchemaVersion string                   `json:"schema_version"`
-		Kind          string                   `json:"kind"`
-		Status        string                   `json:"status"`
-		Data          contract.SafetyCheckData `json:"data"`
+		SchemaVersion string          `json:"schema_version"`
+		Kind          string          `json:"kind"`
+		Status        string          `json:"status"`
+		Data          SafetyCheckData `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("safety-check JSON unmarshal: %v\nOutput: %s", err, out)
@@ -503,7 +646,7 @@ func TestSafetyCheckBlockTrue(t *testing.T) {
 	}
 
 	var resp struct {
-		Data contract.SafetyCheckData `json:"data"`
+		Data SafetyCheckData `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("JSON unmarshal: %v\nOutput: %s", err, out)

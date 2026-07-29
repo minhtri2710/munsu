@@ -1,0 +1,653 @@
+//go:build integration
+
+package fleet
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestParseEntrySimple(t *testing.T) {
+	p, err := ParseEntry("- my-project - A simple project (added 2026-01-15)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "my-project" {
+		t.Errorf("Name = %q, want %q", p.Name, "my-project")
+	}
+	if p.Mode != "" {
+		t.Errorf("Mode = %q, want empty", p.Mode)
+	}
+	if p.Yolo {
+		t.Error("Yolo = true, want false")
+	}
+	if p.Description != "A simple project" {
+		t.Errorf("Description = %q, want %q", p.Description, "A simple project")
+	}
+	if p.Added != "2026-01-15" {
+		t.Errorf("Added = %q, want %q", p.Added, "2026-01-15")
+	}
+}
+
+func TestParseEntryWithMode(t *testing.T) {
+	p, err := ParseEntry("- my-project feat - Feature project (added 2026-01-15)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Mode != "feat" {
+		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
+	}
+	if p.Yolo {
+		t.Error("Yolo = true, want false")
+	}
+}
+
+func TestParseEntryWithYolo(t *testing.T) {
+	p, err := ParseEntry("- my-project feat +yolo - Yolo project (added 2026-01-15)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Mode != "feat" {
+		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
+	}
+	if !p.Yolo {
+		t.Error("Yolo = false, want true")
+	}
+}
+
+func TestParseEntryYoloWithoutMode(t *testing.T) {
+	p, err := ParseEntry("- my-project +yolo - Yolo no mode (added 2026-01-15)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Mode != "" {
+		t.Errorf("Mode = %q, want empty", p.Mode)
+	}
+	if !p.Yolo {
+		t.Error("Yolo = false, want true")
+	}
+}
+
+func TestParseEntryDescriptionWithDashes(t *testing.T) {
+	p, err := ParseEntry("- my-project feat - Feature - with dashes (added 2026-01-15)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Description != "Feature - with dashes" {
+		t.Errorf("Description = %q, want %q", p.Description, "Feature - with dashes")
+	}
+}
+
+func TestFormatEntry(t *testing.T) {
+	p := &Project{
+		Name:        "test",
+		Mode:        "fix",
+		Yolo:        true,
+		Description: "A test project",
+		Added:       "2026-07-13",
+	}
+	got := FormatEntry(p)
+	want := "- test fix +yolo - A test project (added 2026-07-13)"
+	if got != want {
+		t.Errorf("FormatEntry() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatEntrySimple(t *testing.T) {
+	p := &Project{
+		Name:        "simple",
+		Description: "No mode",
+		Added:       "2026-01-01",
+	}
+	got := FormatEntry(p)
+	want := "- simple - No mode (added 2026-01-01)"
+	if got != want {
+		t.Errorf("FormatEntry() = %q, want %q", got, want)
+	}
+}
+
+func TestProjectRegistryRoundTrip(t *testing.T) {
+	original := "- my-project feat +yolo - Description here (added 2026-03-15)"
+	p, err := ParseEntry(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := FormatEntry(p)
+	if got != original {
+		t.Errorf("round-trip:\n  original: %q\n  got:      %q", original, got)
+	}
+}
+
+func TestListEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, ".munsu")
+	projects, err := List(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 0 {
+		t.Errorf("expected empty list, got %d items", len(projects))
+	}
+}
+
+func TestListAndAdd(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, ".munsu")
+
+	// Add by registering (no URL clone)
+	if err := Add(homeDir, "test-proj", "/tmp/test-path", "feat", true); err != nil {
+		t.Fatal(err)
+	}
+
+	projects, err := List(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(projects))
+	}
+	p := projects[0]
+	if p.Name != "test-proj" {
+		t.Errorf("Name = %q, want %q", p.Name, "test-proj")
+	}
+	if p.Mode != "feat" {
+		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
+	}
+	if !p.Yolo {
+		t.Error("Yolo = false, want true")
+	}
+	if p.Description != "/tmp/test-path" {
+		t.Errorf("Description = %q, want %q", p.Description, "/tmp/test-path")
+	}
+}
+
+func TestAddIdempotent(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, ".munsu")
+
+	// Add the same project twice
+	if err := Add(homeDir, "dup-proj", "/path/first", "feat", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(homeDir, "dup-proj", "/path/captain", "fix", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have exactly 1 entry, not 2
+	projects, err := List(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("expected 1 project after duplicate add, got %d: %+v", len(projects), projects)
+	}
+
+	// Entry should have been updated to captain call's values
+	p := projects[0]
+	if p.Name != "dup-proj" {
+		t.Errorf("Name = %q, want %q", p.Name, "dup-proj")
+	}
+	if p.Mode != "fix" {
+		t.Errorf("Mode = %q, want %q", p.Mode, "fix")
+	}
+	if p.Yolo {
+		t.Error("Yolo = true, want false")
+	}
+	if p.Description != "/path/captain" {
+		t.Errorf("Description = %q, want %q", p.Description, "/path/captain")
+	}
+}
+
+func TestFind(t *testing.T) {
+	tmp := t.TempDir()
+	if err := Add(tmp, "alpha", "/p/alpha", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(tmp, "beta", "/p/beta", "feat", true); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Find(tmp, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "alpha" {
+		t.Errorf("Name = %q, want %q", p.Name, "alpha")
+	}
+
+	_, err = Find(tmp, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent project")
+	}
+}
+
+func TestRm(t *testing.T) {
+	tmp := t.TempDir()
+	if err := Add(tmp, "alpha", "/p/alpha", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(tmp, "beta", "/p/beta", "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Rm(tmp, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+
+	projects, err := List(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("expected 1 project after removal, got %d", len(projects))
+	}
+	if projects[0].Name != "beta" {
+		t.Errorf("remaining project = %q, want %q", projects[0].Name, "beta")
+	}
+}
+
+func TestRmNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	err := Rm(tmp, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for removing nonexistent project")
+	}
+}
+
+func TestMode(t *testing.T) {
+	tmp := t.TempDir()
+	if err := Add(tmp, "test", "/p/test", "refactor", true); err != nil {
+		t.Fatal(err)
+	}
+
+	mode, yolo, err := Mode(tmp, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "refactor" {
+		t.Errorf("Mode = %q, want %q", mode, "refactor")
+	}
+	if !yolo {
+		t.Error("Yolo = false, want true")
+	}
+}
+
+func TestIsURL(t *testing.T) {
+	tests := []struct {
+		s    string
+		want bool
+	}{
+		{"https://github.com/user/repo.git", true},
+		{"http://example.com/repo", true},
+		{"git@github.com:user/repo.git", true},
+		{"ssh://git@example.com/repo", true},
+		{"/local/path/to/repo", false},
+		{"./relative/path", false},
+	}
+	for _, tc := range tests {
+		got := isURL(tc.s)
+		if got != tc.want {
+			t.Errorf("isURL(%q) = %v, want %v", tc.s, got, tc.want)
+		}
+	}
+}
+
+func TestRegistryFileFormat(t *testing.T) {
+	tmp := t.TempDir()
+	regPath := RegistryPath(tmp)
+
+	// Write entries directly to simulate real file format
+	entries := []string{
+		"- alpha feat - First project (added 2026-01-01)",
+		"- beta fix +yolo - Captain project (added 2026-03-15)",
+		"- gamma +yolo - Yolo without mode (added 2026-06-01)",
+		"- delta - No mode project (added 2026-07-01)",
+	}
+	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regPath, []byte(strings.Join(entries, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	projects, err := List(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 4 {
+		t.Fatalf("expected 4 projects, got %d", len(projects))
+	}
+
+	// Verify each entry
+	if projects[0].Name != "alpha" || projects[0].Mode != "feat" || projects[0].Yolo {
+		t.Errorf("alpha: %+v", projects[0])
+	}
+	if projects[1].Name != "beta" || projects[1].Mode != "fix" || !projects[1].Yolo {
+		t.Errorf("beta: %+v", projects[1])
+	}
+	if projects[2].Name != "gamma" || projects[2].Mode != "" || !projects[2].Yolo {
+		t.Errorf("gamma: %+v", projects[2])
+	}
+	if projects[3].Name != "delta" || projects[3].Mode != "" || projects[3].Yolo {
+		t.Errorf("delta: %+v", projects[3])
+	}
+}
+
+func TestResolveRepoPath_LocalPath(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	if err := os.MkdirAll(homeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a real directory to use as the local path
+	localRepo := filepath.Join(tmp, "my-project")
+	if err := os.MkdirAll(localRepo, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Register with local path
+	if err := Add(homeDir, "my-project", localRepo, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := ResolveRepoPath(homeDir, "my-project")
+	if err != nil {
+		t.Fatalf("ResolveRepoPath: %v", err)
+	}
+	if path != localRepo {
+		t.Errorf("expected path %q, got %q", localRepo, path)
+	}
+}
+
+func TestResolveRepoPath_ClonedProject(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	projectsDir := filepath.Join(homeDir, "projects")
+	if err := os.MkdirAll(projectsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write registry entry directly (avoid actual clone)
+	regPath := RegistryPath(homeDir)
+	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "- cloned-proj - https://github.com/user/repo.git (added 2026-07-01)\n"
+	if err := os.WriteFile(regPath, []byte(entry), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the projects/<name> dir to simulate a clone
+	cloneDir := filepath.Join(projectsDir, "cloned-proj")
+	if err := os.MkdirAll(cloneDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := ResolveRepoPath(homeDir, "cloned-proj")
+	if err != nil {
+		t.Fatalf("ResolveRepoPath: %v", err)
+	}
+	if path != cloneDir {
+		t.Errorf("expected path %q, got %q", cloneDir, path)
+	}
+}
+
+func TestResolveRepoPath_NotFound(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "munsu-home")
+	if err := os.MkdirAll(homeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ResolveRepoPath(homeDir, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent project")
+	}
+	if !strings.Contains(err.Error(), "not found in registry") {
+		t.Errorf("expected 'not found in registry' in error, got: %v", err)
+	}
+}
+
+func TestResolveAdhoc_InGitRepo(t *testing.T) {
+	// Create a temp git repo and test inference
+	tmp := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmp
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure a minimal user for the test repo
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = tmp
+		_ = cfg.Run()
+	}
+
+	// ResolveAdhoc should succeed and return the dir basename as project name
+	p, err := ResolveAdhoc()
+	if err != nil {
+		t.Fatalf("ResolveAdhoc in git repo should succeed, got: %v", err)
+	}
+	// p.Name should be "munsu" since that's the worktree root basename
+	// but we mainly care that it succeeded and returned a valid project
+	if p.Name == "" {
+		t.Error("ResolveAdhoc returned empty name")
+	}
+	if p.Description == "" {
+		t.Error("ResolveAdhoc returned empty description")
+	}
+}
+
+func TestResolveAdhoc_NotInGitRepo(t *testing.T) {
+	// Create a temp dir that is NOT a git repo and chdir there
+	tmp := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	// ResolveAdhoc should fail — not in a git repo
+	_, err = ResolveAdhoc()
+	if err == nil {
+		t.Fatal("expected error for non-git directory")
+	}
+	if !strings.Contains(err.Error(), "not in a git repository") {
+		t.Errorf("expected 'not in a git repository' error, got: %v", err)
+	}
+}
+
+func TestResolveFromCwd_RegistryAliasMatch(t *testing.T) {
+	// Create a git repo dir whose basename differs from the registered alias
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "repo-basename")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Init git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure minimal user
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = repoDir
+		_ = cfg.Run()
+	}
+
+	// Create munsu home dir
+	homeDir := filepath.Join(tmp, ".munsu")
+
+	// Register with alias name different from repo basename
+	aliasName := "my-custom-alias"
+	if err := Add(homeDir, aliasName, repoDir, "feat", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chdir into the repo so ResolveFromCwd detects it
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// ResolveFromCwd should match the registered alias, not the basename
+	p, err := ResolveFromCwd(homeDir)
+	if err != nil {
+		t.Fatalf("ResolveFromCwd: %v", err)
+	}
+	if p.Name != aliasName {
+		t.Errorf("Name = %q, want %q (registered alias should win over basename %q)", p.Name, aliasName, "repo-basename")
+	}
+	if p.Description != repoDir {
+		t.Errorf("Description = %q, want %q", p.Description, repoDir)
+	}
+	if p.Mode != "feat" {
+		t.Errorf("Mode = %q, want %q", p.Mode, "feat")
+	}
+}
+
+func TestResolveFromCwd_NoRegistryMatch(t *testing.T) {
+	// Create a git repo with no matching registry entry
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "some-repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Init git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure minimal user
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = repoDir
+		_ = cfg.Run()
+	}
+
+	// Create munsu home dir with a registry entry that points elsewhere
+	homeDir := filepath.Join(tmp, ".munsu")
+	otherPath := filepath.Join(tmp, "other-repo")
+	if err := Add(homeDir, "other-project", otherPath, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chdir into some-repo (not other-repo)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should fall back to adhoc (basename as name)
+	p, err := ResolveFromCwd(homeDir)
+	if err != nil {
+		t.Fatalf("ResolveFromCwd: %v", err)
+	}
+	if p.Name != "some-repo" {
+		t.Errorf("Name = %q, want %q (should fall back to basename)", p.Name, "some-repo")
+	}
+}
+
+func TestResolveFromCwd_NotInGitRepo(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, ".munsu")
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not in a git repo — should fail
+	_, err = ResolveFromCwd(homeDir)
+	if err == nil {
+		t.Fatal("expected error for non-git directory")
+	}
+	if !strings.Contains(err.Error(), "not in a git repository") {
+		t.Errorf("expected 'not in a git repository' error, got: %v", err)
+	}
+}
+
+func TestResolveFromCwd_UrlSkipsPathMatch(t *testing.T) {
+	// URL-based project entries should be skipped during path matching
+	tmp := t.TempDir()
+	repoDir := filepath.Join(tmp, "my-repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Init git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure minimal user
+	for _, kv := range []string{"user.name Test", "user.email test@test.com"} {
+		parts := strings.SplitN(kv, " ", 2)
+		cfg := exec.Command("git", "config", parts[0], parts[1])
+		cfg.Dir = repoDir
+		_ = cfg.Run()
+	}
+
+	// Create munsu home dir and register project ONLY via URL (not a local path)
+	homeDir := filepath.Join(tmp, ".munsu")
+	// Write registry entry directly (avoid actual clone)
+	regPath := RegistryPath(homeDir)
+	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	entry := "- url-project - https://github.com/user/repo.git (added 2026-07-01)\n"
+	if err := os.WriteFile(regPath, []byte(entry), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Chdir into the repo
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// URL should not match local path — falls back to adhoc
+	p, err := ResolveFromCwd(homeDir)
+	if err != nil {
+		t.Fatalf("ResolveFromCwd: %v", err)
+	}
+	if p.Name != "my-repo" {
+		t.Errorf("Name = %q, want %q (URL should be skipped, fallback to basename)", p.Name, "my-repo")
+	}
+}

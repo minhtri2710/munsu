@@ -5,8 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/decisionhold"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
 
@@ -57,24 +56,24 @@ Example:
 				return fmt.Errorf("--from is required")
 			}
 
-			result, err := decisionhold.Create(ctx.Home, from, key, reason)
+			result, err := fleet.Create(ctx.Home, from, key, reason)
 			if err != nil {
 				return fmt.Errorf("creating hold: %w", err)
 			}
 
 			if result.Created {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "decision-hold.hold",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("Hold %s created on %s", result.HoldID, from)},
+					Data:          MessageResult{Message: fmt.Sprintf("Hold %s created on %s", result.HoldID, from)},
 				})
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "decision-hold.hold",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("Hold %s already exists on %s (idempotent)", result.HoldID, from), Noop: true},
+				Data:          MessageResult{Message: fmt.Sprintf("Hold %s already exists on %s (idempotent)", result.HoldID, from), Noop: true},
 			})
 		}),
 	}
@@ -116,23 +115,23 @@ Examples:
 				return fmt.Errorf("specify at least one key or --none")
 			}
 
-			if err := decisionhold.Complete(ctx.Home, originID, keys); err != nil {
+			if err := fleet.Complete(ctx.Home, originID, keys); err != nil {
 				return fmt.Errorf("completing decision holds: %w", err)
 			}
 
 			if len(keys) == 1 && keys[0] == "--none" {
-				return writeContract(cmd, contract.Response[contract.MessageResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "decision-hold.complete",
 					Status:        "success",
-					Data:          contract.MessageResult{Message: fmt.Sprintf("Attested no pending decisions for %s", originID)},
+					Data:          MessageResult{Message: fmt.Sprintf("Attested no pending decisions for %s", originID)},
 				})
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "decision-hold.complete",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("Completed %d decision hold(s) for %s: %s", len(keys), originID, strings.Join(keys, ", "))},
+				Data:          MessageResult{Message: fmt.Sprintf("Completed %d decision hold(s) for %s: %s", len(keys), originID, strings.Join(keys, ", "))},
 			})
 		}),
 	}
@@ -165,9 +164,9 @@ Example:
 			var err error
 
 			if len(keys) > 0 {
-				unresolvedKeys, err = decisionhold.Verify(ctx.Home, originID, keys)
+				unresolvedKeys, err = fleet.Verify(ctx.Home, originID, keys)
 			} else {
-				unresolvedKeys, err = decisionhold.Verify(ctx.Home, originID, nil)
+				unresolvedKeys, err = fleet.Verify(ctx.Home, originID, nil)
 			}
 
 			if err != nil {
@@ -215,7 +214,7 @@ Examples:
 				return fmt.Errorf("--from is required")
 			}
 
-			if err := decisionhold.Resolve(ctx.Home, from, key, answer, unblock); err != nil {
+			if err := fleet.Resolve(ctx.Home, from, key, answer, unblock); err != nil {
 				return fmt.Errorf("resolving hold: %w", err)
 			}
 
@@ -223,11 +222,11 @@ Examples:
 			if len(unblock) > 0 {
 				msg += "\nUnblocked: " + strings.Join(unblock, ", ")
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "decision-hold.resolve",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: msg},
+				Data:          MessageResult{Message: msg},
 			})
 		}),
 	}
@@ -247,30 +246,30 @@ func newDecisionHoldListCmd() *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			originID := args[0]
 
-			holds, err := decisionhold.ListUnresolved(ctx.Home, originID)
+			holds, err := fleet.ListUnresolved(ctx.Home, originID)
 			if err != nil {
 				return fmt.Errorf("listing holds: %w", err)
 			}
 
 			if len(holds) == 0 {
-				return writeContract(cmd, contract.Response[contract.EmptyResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[EmptyResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "decision-hold.list",
 					Status:        "success",
-					Data:          contract.EmptyResult{Count: 0, Context: fmt.Sprintf("No unresolved decisions for %s", originID)},
+					Data:          EmptyResult{Count: 0, Context: fmt.Sprintf("No unresolved decisions for %s", originID)},
 				})
 			}
 
-			var holdEntries []contract.DecisionHoldInfo
+			var holdEntries []DecisionHoldInfo
 			for _, h := range holds {
-				holdEntries = append(holdEntries, contract.DecisionHoldInfo{
+				holdEntries = append(holdEntries, DecisionHoldInfo{
 					DecisionKey: h.DecisionKey,
 					Reason:      h.Reason,
 				})
 			}
 
-			return writeContract(cmd, contract.Response[[]contract.DecisionHoldInfo]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[[]DecisionHoldInfo]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "decision-hold.list",
 				Status:        "success",
 				Data:          holdEntries,

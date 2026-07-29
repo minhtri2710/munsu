@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/event"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -35,14 +34,14 @@ func newTaskCmd() *cobra.Command {
 				meta["project"] = repo // --repo maps directly to the project name
 			}
 
-			if err := task.WriteMeta(ctx.Home, id, meta); err != nil {
+			if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
 				return err
 			}
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.add",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("task %s added", id)},
+				Data:          MessageResult{Message: fmt.Sprintf("task %s added", id)},
 			})
 		}),
 	}
@@ -57,21 +56,21 @@ func newTaskCmd() *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			stateFilter, _ := cmd.Flags().GetString("state")
 
-			entries, err := task.ListMeta(ctx.Home)
+			entries, err := home.ListMeta(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing tasks: %w", err)
 			}
 
 			if len(entries) == 0 {
-				return writeContract(cmd, contract.Response[contract.EmptyResult]{
-					SchemaVersion: contract.SchemaVersion,
+				return writeContract(cmd, Response[EmptyResult]{
+					SchemaVersion: SchemaVersion,
 					Kind:          "task.list",
 					Status:        "success",
-					Data:          contract.EmptyResult{Count: 0, Context: "no tasks found"},
+					Data:          EmptyResult{Count: 0, Context: "no tasks found"},
 				})
 			}
 
-			var taskEntries []contract.TaskEntry
+			var taskEntries []TaskEntry
 			for _, e := range entries {
 				if stateFilter != "" && !strings.Contains(e.LastStatus, stateFilter) {
 					continue
@@ -84,7 +83,7 @@ func newTaskCmd() *cobra.Command {
 				if status == "" {
 					status = "registered"
 				}
-				taskEntries = append(taskEntries, contract.TaskEntry{
+				taskEntries = append(taskEntries, TaskEntry{
 					ID:      e.ID,
 					Kind:    e.Kind,
 					Project: project,
@@ -92,8 +91,8 @@ func newTaskCmd() *cobra.Command {
 				})
 			}
 
-			return writeContract(cmd, contract.Response[[]contract.TaskEntry]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[[]TaskEntry]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.list",
 				Status:        "success",
 				Data:          taskEntries,
@@ -112,7 +111,7 @@ func newTaskCmd() *cobra.Command {
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
 
-			meta, err := task.ReadMeta(ctx.Home, id)
+			meta, err := home.ReadMeta(ctx.Home, id)
 			if err != nil {
 				return err
 			}
@@ -124,7 +123,7 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			if full {
-				statusLines, err := task.ReadStatus(ctx.Home, id)
+				statusLines, err := home.ReadStatus(ctx.Home, id)
 				if err == nil && len(statusLines) > 0 {
 					b.WriteString("---\nStatus:\n")
 					for _, line := range statusLines {
@@ -133,11 +132,11 @@ func newTaskCmd() *cobra.Command {
 				}
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.show",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: strings.TrimSpace(b.String())},
+				Data:          MessageResult{Message: strings.TrimSpace(b.String())},
 			})
 		}),
 	}
@@ -154,19 +153,19 @@ func newTaskCmd() *cobra.Command {
 			msg := args[2]
 			line := fmt.Sprintf("%s: %s", state, msg)
 
-			if err := task.AppendStatus(ctx.Home, id, line); err != nil {
+			if err := home.AppendStatus(ctx.Home, id, line); err != nil {
 				return err
 			}
 
 			// Compatibility translator: also write as typed event
-			rec, _ := event.FromTaskStatus(ctx.Home, id, line)
-			_ = event.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
+			rec, _ := orchestrator.FromTaskStatus(ctx.Home, id, line)
+			_ = orchestrator.AppendWithID(ctx.Home, rec.ID, rec.Type, rec.Producer, rec.Key, rec.Payload)
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "task.status",
 				Status:        "success",
-				Data:          contract.MessageResult{Message: fmt.Sprintf("status appended: %s", line)},
+				Data:          MessageResult{Message: fmt.Sprintf("status appended: %s", line)},
 			})
 		}),
 	}

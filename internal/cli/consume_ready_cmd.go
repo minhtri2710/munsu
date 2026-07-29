@@ -5,10 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/minhtri2710/munsu/internal/captain"
-	"github.com/minhtri2710/munsu/internal/contract"
-	"github.com/minhtri2710/munsu/internal/mailbox"
-	"github.com/minhtri2710/munsu/internal/task"
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
 
@@ -36,34 +35,34 @@ Flags:
 			// Derive sender identity.
 			senderIdentity, _ := cmd.Flags().GetString("sender")
 			if senderIdentity == "" {
-				senderIdentity, _, _ = mailbox.ReadHomeIdentity(ctx.Home)
+				senderIdentity, _, _ = orchestrator.ReadHomeIdentity(ctx.Home)
 				if senderIdentity == "" {
 					senderIdentity = filepath.Base(ctx.Home)
 				}
 			}
 
 			// Read generation from meta for staleness check.
-			meta, err := task.ReadMeta(ctx.Home, taskID)
+			meta, err := home.ReadMeta(ctx.Home, taskID)
 			if err != nil {
 				return fmt.Errorf("consume-ready: reading meta for %s: %w", taskID, err)
 			}
 			metaGeneration := meta["generation"]
 
-			flushed, err := captain.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration)
+			flushed, err := fleet.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration, newSessionSoldierEndpoints())
 			if err != nil {
 				return fmt.Errorf("consume-ready: %w", err)
 			}
 
 			// Also reconcile soldier pending (remove matched acks).
-			if recErr := captain.ReconcileSoldierPending(ctx.Home, senderIdentity); recErr != nil {
+			if recErr := fleet.ReconcileSoldierPending(ctx.Home, senderIdentity); recErr != nil {
 				fmt.Fprintf(os.Stderr, "consume-ready: reconcile warning: %v\n", recErr)
 			}
 
-			return writeContract(cmd, contract.Response[contract.MessageResult]{
-				SchemaVersion: contract.SchemaVersion,
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
 				Kind:          "consume-ready",
 				Status:        "success",
-				Data: contract.MessageResult{
+				Data: MessageResult{
 					Message: fmt.Sprintf("consumed ready events for %s: %d command(s) flushed", taskID, flushed),
 				},
 			})

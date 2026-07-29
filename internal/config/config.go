@@ -18,6 +18,7 @@ var KnownKeys = []string{
 	"model",
 	"backlog-backend",
 	"default-mode",
+	"wake-delivery-mode",
 	"require-no-mistakes",
 	"afk-digest-window",
 	"afk-wedge-stale-beat",
@@ -66,11 +67,17 @@ func Get(homeDir, key string) (string, error) {
 // Set writes a config value to $MUNSU_HOME/config/<key>.
 func Set(homeDir, key, value string) error {
 	p := filepath.Join(ConfigDir(homeDir), key)
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := os.WriteFile(p, []byte(value+"\n"), 0644); err != nil {
+	if err := os.Chmod(filepath.Dir(p), 0700); err != nil {
+		return fmt.Errorf("securing config directory: %w", err)
+	}
+	if err := os.WriteFile(p, []byte(value+"\n"), 0600); err != nil {
 		return fmt.Errorf("writing config file %s: %w", p, err)
+	}
+	if err := os.Chmod(p, 0600); err != nil {
+		return fmt.Errorf("securing config file %s: %w", p, err)
 	}
 	return nil
 }
