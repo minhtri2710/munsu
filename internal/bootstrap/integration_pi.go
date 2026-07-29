@@ -172,6 +172,8 @@ export default function (pi: ExtensionAPI) {
   //    status integration because Pi may still continue running.
   pi.on("agent_settled", async (_event, ctx) => {
     if (!ctx.isIdle() || pendingWake || claimInFlight) return;
+    const modeResult = await pi.exec(MUNSU_BIN, ["config", "get", "wake-delivery-mode", "--output", "json"]);
+    if (modeResult.code === 0 && !modeResult.stdout.includes("native")) return;
     claimInFlight = true;
     try {
 
@@ -238,10 +240,11 @@ export default function (pi: ExtensionAPI) {
     if (!pendingWake || !text) return false;
     const match = text.match(/(?:^|\n)\s*\/munsu:wake\s+resolved\s+\[key=([^\]]+)\]\s*:\s*(\S[^\n]*)/);
     if (!match || match[1] !== pendingWake.key || !match[2].trim()) return false;
-    const ackArgs = ["wake", "ack", pendingWake.leaseId, ...pendingWake.eventIds, "--output", "json"];
+    if (pendingWake.eventIds.length !== 1) return false;
+    const ackArgs = ["wake", "resolve", "--claim-id", pendingWake.leaseId, "--event-id", pendingWake.eventIds[0], "--summary", match[2].trim(), "--output", "json"];
     const ackResult = await pi.exec(MUNSU_BIN, ackArgs);
     if (ackResult.code !== 0) return false;
-    const ackParsed = parseContract<{ claim_id: string; state: string }>(ackResult.stdout, "wake.ack");
+    const ackParsed = parseContract<{ claim_id: string; state: string }>(ackResult.stdout, "wake.resolve");
     if (!ackParsed.ok || ackParsed.data.claim_id !== pendingWake.leaseId) return false;
     pi.appendEntry("munsu-pending-wake", {
       leaseId: pendingWake.leaseId,
@@ -382,8 +385,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // Ack the wake with lease ID and event IDs.
-      const ackArgs = ["wake", "ack", pendingWake.leaseId, ...pendingWake.eventIds, "--output", "json"];
+      if (pendingWake.eventIds.length !== 1) {
+        ctx.ui.notify("Wake resolution requires exactly one event", "error");
+        return;
+      }
+      const ackArgs = ["wake", "resolve", "--claim-id", pendingWake.leaseId, "--event-id", pendingWake.eventIds[0], "--summary", summary, "--output", "json"];
       const ackResult = await pi.exec(MUNSU_BIN, ackArgs);
 
       // Reject nonzero code before parsing.
@@ -392,8 +398,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // Parse ack response — require exact contract envelope.
-      const ackParsed = parseContract<{ claim_id: string; state: string }>(ackResult.stdout, "wake.ack");
+      const ackParsed = parseContract<{ claim_id: string; state: string }>(ackResult.stdout, "wake.resolve");
       if (ackParsed.ok) {
         ctx.ui.notify("Wake " + pendingWake.key + " resolved: " + summary, "info");
 

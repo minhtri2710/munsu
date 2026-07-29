@@ -18,6 +18,7 @@ var KnownKeys = []string{
 	"model",
 	"backlog-backend",
 	"default-mode",
+	"wake-delivery-mode",
 	"require-no-mistakes",
 	"afk-digest-window",
 	"afk-wedge-stale-beat",

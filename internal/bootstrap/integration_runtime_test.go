@@ -218,6 +218,10 @@ class MockAPI {
       });
     }
 
+    if (args[0] === "config" && args[1] === "get") {
+      return Promise.resolve({ code: 1, stdout: "", stderr: "unset" });
+    }
+
     // wake claim: return proper contract envelope
     if (args[0] === "wake" && args[1] === "claim") {
       return Promise.resolve({
@@ -246,15 +250,15 @@ class MockAPI {
       return Promise.resolve({ code: 0, stdout: "guard condition found\n", stderr: "" });
     }
 
-    // wake ack: return proper contract envelope
-    if (args[0] === "wake" && args[1] === "ack") {
+    // wake resolve: return proper contract envelope
+    if (args[0] === "wake" && args[1] === "resolve") {
       return Promise.resolve({
         code: 0,
         stdout: JSON.stringify({
           schema_version: "munsu.orchestration/v2",
-          kind: "wake.ack",
+          kind: "wake.resolve",
           status: "success",
-          data: { claim_id: "lease-123", state: "acknowledged" },
+          data: { claim_id: "lease-123", state: "resolved" },
         }),
         stderr: "",
       });
@@ -395,16 +399,16 @@ if (!ackedEntry) {
 await mock.fire("agent_settled", {}, { ...mockCtx, isIdle: () => true });
 const wakeTool = (mock as any)["_tool_munsu_wake_resolve"];
 if (!wakeTool) throw new Error("Expected munsu_wake_resolve tool");
-const ackCallsBeforeTool = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "ack").length;
+const ackCallsBeforeTool = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 const toolResult = await wakeTool.execute("tool-1", { key: "test-wake", summary: "checked and settled" }, undefined, undefined, cmdCtx);
 if (toolResult.isError) throw new Error("wake resolution tool should succeed: " + JSON.stringify(toolResult));
-const ackCallsAfterTool = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "ack").length;
+const ackCallsAfterTool = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (ackCallsAfterTool !== ackCallsBeforeTool + 1) throw new Error("wake tool must ACK exactly once");
 const toolAckedEntry = mock.entries.find((e: any) => e.customType === "munsu-pending-wake" && e.data && e.data.deliveryState === "acknowledged");
 if (!toolAckedEntry) throw new Error("wake tool must append acknowledged tombstone");
 const repeatedToolResult = await wakeTool.execute("tool-2", { key: "test-wake", summary: "duplicate" }, undefined, undefined, cmdCtx);
 if (!repeatedToolResult.isError) throw new Error("repeated wake resolution should fail after pending wake is cleared");
-const ackCallsAfterRepeat = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "ack").length;
+const ackCallsAfterRepeat = mock.execCalls.filter((c: any) => c.args[0] === "wake" && c.args[1] === "resolve").length;
 if (ackCallsAfterRepeat !== ackCallsAfterTool) throw new Error("repeated wake resolution must not ACK twice");
 
 // --- Test 7: tool_call safety check works (fail-closed) ---
