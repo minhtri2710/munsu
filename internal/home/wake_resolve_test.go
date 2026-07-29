@@ -55,6 +55,22 @@ func TestPreparedResolutionDoesNotSuppressLeaseReclaim(t *testing.T) {
 	}
 }
 
+func TestPreparedResolutionRejectsReclaimedEvent(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(WakeQueuePath(home), []byte("100\t1\tsignal\ttask\tpayload\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWakeResolution(home, wakeResolutionRecord{LeaseID: "old", EventID: "100:1", Summary: "pending", State: "prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResolveWake(home, "old", "100:1", "retry"); err == nil {
+		t.Fatal("prepared resolution should not complete while event remains queued")
+	}
+}
+
 func TestResolveWakeAcknowledgesOnceAndRecordsEvidence(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {

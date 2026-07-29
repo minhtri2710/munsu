@@ -44,8 +44,18 @@ func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 		}
 	}
 	found, err := leaseContainsEvent(homeDir, leaseID, eventID)
-	if err != nil && !os.IsNotExist(err) && !strings.Contains(err.Error(), "not found or expired") {
+	if err != nil && !strings.Contains(err.Error(), "not found or expired") {
 		return err
+	}
+	if record != nil && record.State == "prepared" && !found {
+		elsewhere, findErr := wakeEventExists(homeDir, eventID)
+		if findErr != nil {
+			return findErr
+		}
+		if elsewhere {
+			_ = os.Remove(resolutionPath(homeDir, leaseID, eventID))
+			return fmt.Errorf("event %q was reclaimed and remains pending", eventID)
+		}
 	}
 	if found {
 		if err := AckWakes(homeDir, leaseID, []string{eventID}); err != nil {
@@ -105,6 +115,33 @@ func writeWakeResolution(homeDir string, record wakeResolutionRecord) error {
 		return err
 	}
 	return atomicWrite(path, data)
+}
+
+func wakeEventExists(homeDir, eventID string) (bool, error) {
+	if data, err := os.ReadFile(WakeQueuePath(homeDir)); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			parts := strings.SplitN(line, "\t", 3)
+			if len(parts) >= 2 && parts[0]+":"+parts[1] == eventID {
+				return true, nil
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	entries, err := os.ReadDir(LeaseDir(homeDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, entry := range entries {
+		found, err := leaseContainsEvent(homeDir, entry.Name(), eventID)
+		if err == nil && found {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func wakeResolutionPrepared(homeDir, eventID string) bool {
