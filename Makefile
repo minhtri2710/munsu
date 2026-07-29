@@ -1,4 +1,14 @@
-.PHONY: test integration lint build cover all
+BINDIR ?= $(if $(XDG_BIN_HOME),$(XDG_BIN_HOME),$(HOME)/.local/bin)
+
+.PHONY: install uninstall test integration lint build cover all
+
+install:
+	@mkdir -p "$(BINDIR)"
+	GOBIN="$(BINDIR)" go install ./cmd/munsu
+	@echo "installed munsu to $(BINDIR)/munsu"
+
+uninstall:
+	rm -f "$(BINDIR)/munsu"
 
 test:
 	go test -race -count=1 ./...

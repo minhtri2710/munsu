@@ -23,15 +23,15 @@ go install github.com/minhtri2710/munsu/cmd/munsu@latest
 
 Ensure `~/go/bin` is on your `$PATH`.
 
-### Option 2: git clone + install.sh
+### Option 2: git clone + make install
 
 ```sh
 git clone https://github.com/minhtri2710/munsu
 cd munsu
-./install.sh
+make install
 ```
 
-This builds the binary and symlinks `munsu` into `~/.local/bin`.
+This installs `munsu` into `${XDG_BIN_HOME:-$HOME/.local/bin}`. Override the destination with `make install BINDIR=/custom/bin`.
 
 ### Option 3: Download a release binary
 
@@ -43,8 +43,8 @@ Download the archive for your platform, extract it, and place the `munsu` binary
 After installation, ensure the binary directory is on your `$PATH`:
 
 - **go install path:** add `export PATH="$HOME/go/bin:$PATH"` to your shell rc.
-- **install.sh path:** `~/.local/bin` is added automatically by many distros; otherwise add
-  `export PATH="$HOME/.local/bin:$PATH"` to your shell rc.
+- **make install path:** `${XDG_BIN_HOME:-$HOME/.local/bin}` is commonly on `PATH`; otherwise add
+  `export PATH="${XDG_BIN_HOME:-$HOME/.local/bin}:$PATH"` to your shell rc.
 
 ### Home directory creation
 
