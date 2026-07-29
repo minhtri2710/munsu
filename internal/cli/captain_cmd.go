@@ -253,8 +253,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if target == nil {
 				return fmt.Errorf("no registered captain with id %q", args[0])
 			}
-			tx := &fleet.RecoverTransaction{Capabilities: fleet.RecoverCapabilities{Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Watcher: captainWatcherAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()}}
-			res := tx.Recover(ctx.Home, *target)
+			res := newCaptainRecoverTransaction().Recover(ctx.Home, *target)
 			fmt.Println(res.StepsString())
 			return nil
 		}),

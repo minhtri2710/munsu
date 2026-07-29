@@ -20,11 +20,19 @@ type cliEndpointProbe struct {
 }
 
 func (p cliEndpointProbe) Probe(home string, meta map[string]string) (bool, error) {
-	bk, _, err := p.resolve(home, meta)
+	ownerHome := meta["home"]
+	if ownerHome == "" {
+		ownerHome = home
+	}
+	bk, _, err := p.resolve(ownerHome, meta)
 	if err != nil {
 		return false, err
 	}
-	return bk.Alive(meta["window"]), nil
+	result, err := probeCaptainBackend(bk, meta["window"])
+	if err != nil {
+		return false, err
+	}
+	return result.PaneAlive && result.AgentAlive, nil
 }
 
 func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.EndpointStatus, error) {
@@ -61,7 +69,11 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 	if resolved != endpoint.Backend {
 		return fleet.EndpointStatus{}, fmt.Errorf("bound backend resolved as %q", resolved)
 	}
-	return fleet.EndpointStatus{Alive: bk.Alive(endpoint.Handle)}, nil
+	result, err := probeCaptainBackend(bk, endpoint.Handle)
+	if err != nil {
+		return fleet.EndpointStatus{}, err
+	}
+	return fleet.EndpointStatus{Alive: result.PaneAlive && result.AgentAlive}, nil
 }
 
 func init() {
@@ -104,6 +116,9 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	}
 	soldiers := make([]Soldier, 0, len(snapshot.Tasks))
 	for _, entry := range snapshot.Tasks {
+		if entry.Kind == "captain" {
+			continue
+		}
 		status := entry.LastStatus
 		if index := strings.Index(status, ":"); index >= 0 {
 			status = strings.TrimSpace(status[:index])

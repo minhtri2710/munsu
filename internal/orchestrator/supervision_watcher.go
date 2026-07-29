@@ -215,7 +215,14 @@ func scanFleetWithProbe(homeDir string, clearResolved bool, probe TaskEndpointPr
 	// Status-signal path: captain-relevant last lines (including Captain return-channel
 	// files state/captain:<id>.status) wake General even when the pane is alive.
 	seenStatus := map[string]bool{}
+	_, captainHomeErr := os.Stat(filepath.Join(homeDir, home.CaptainProvenanceMarkerName))
+	isCaptainHome := captainHomeErr == nil
 	for _, match := range home.ScanGeneralRelevant(filepath.Join(homeDir, "state")) {
+		if isCaptainHome {
+			if meta, err := home.ReadMeta(homeDir, match.TaskID); err == nil && meta["kind"] == "captain" {
+				continue
+			}
+		}
 		seenStatus[match.TaskID] = true
 		reasons = append(reasons, &WakeReason{
 			Kind:    "signal",
