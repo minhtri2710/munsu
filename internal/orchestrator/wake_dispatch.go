@@ -30,9 +30,11 @@ func SubmittedResult(reason, detail string) DispatchWakeResult {
 	return DispatchWakeResult{Outcome: WakeSubmitted, Reason: reason, Detail: detail}
 }
 
-// DeferredResult returns a Deferred outcome (claim taken, submit unacknowledged).
-func DeferredResult(detail string) DispatchWakeResult {
-	return DispatchWakeResult{Outcome: WakeDeferred, Reason: "submit-not-acknowledged", Detail: detail}
+// DeferredResult returns a Deferred outcome with a specific reason and detail.
+// The reason identifies the failure class (backend-error, stalled, endpoint-dead,
+// unsupported, rejected, backend-failed).
+func DeferredResult(reason, detail string) DispatchWakeResult {
+	return DispatchWakeResult{Outcome: WakeDeferred, Reason: reason, Detail: detail}
 }
 
 // ProbeResult carries the probe outcome from a backend port.
@@ -48,10 +50,19 @@ type ProbePort interface {
 	Probe(window string) (ProbeResult, error)
 }
 
+// SubmitResult carries the typed outcome of a prompt submission attempt.
+// Status preserves the backend's typed result (stalled, endpoint-dead, etc.).
+type SubmitResult struct {
+	Acknowledged bool
+	Status       string
+	Detail       string
+	Err          error
+}
+
 // SubmitPort is the Backend-facing prompt submission adapter interface.
 // Implementations wrap backend.SubmitPrompt.
 type SubmitPort interface {
-	Submit(window, prompt string) (acknowledged bool, detail string, err error)
+	Submit(window, prompt string) SubmitResult
 }
 
 // DispatchWakeRequest carries all inputs and adapter ports for a Wake dispatch.
@@ -137,12 +148,12 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 	if req.Submit == nil {
 		return DispatchWakeResult{}, fmt.Errorf("submit port is nil")
 	}
-	acknowledged, detail, err := req.Submit.Submit(req.Target.Handle, prompt)
-	if err != nil {
-		return DeferredResult("backend error: " + err.Error()), nil
+	result := req.Submit.Submit(req.Target.Handle, prompt)
+	if result.Err != nil {
+		return DeferredResult("backend-error", result.Err.Error()), nil
 	}
-	if !acknowledged {
-		return DeferredResult("submit not acknowledged: " + detail), nil
+	if !result.Acknowledged {
+		return DeferredResult(result.Status, result.Detail), nil
 	}
 
 	return SubmittedResult("acknowledged", "event="+eventID+" claim="+claim.LeaseID), nil

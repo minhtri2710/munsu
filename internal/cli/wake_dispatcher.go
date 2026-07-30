@@ -40,9 +40,14 @@ type cliSubmitAdapter struct {
 	bk backend.Backend
 }
 
-func (a *cliSubmitAdapter) Submit(window, prompt string) (bool, string, error) {
+func (a *cliSubmitAdapter) Submit(window, prompt string) orchestrator.SubmitResult {
 	result := submitWakePrompt(a.bk, window, prompt)
-	return result.Acknowledged(), result.Detail, result.Err
+	return orchestrator.SubmitResult{
+		Acknowledged: result.Acknowledged(),
+		Status:       string(result.Status),
+		Detail:       result.Detail,
+		Err:          result.Err,
+	}
 }
 
 type wakeDispatchHooks struct {
@@ -94,7 +99,8 @@ func dispatchHerdrWake(homeDir string) error {
 	case orchestrator.WakeSubmitted:
 		return nil
 	case orchestrator.WakeDeferred:
-		return fmt.Errorf("wake prompt deferred: %s", result.Detail)
+		fmt.Fprintf(os.Stderr, "wake prompt deferred: reason=%s detail=%s\n", result.Reason, result.Detail)
+		return nil
 	default:
 		// Skipped — not an error; the orchestrator handles the outcome type.
 		return nil
