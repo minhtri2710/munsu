@@ -821,6 +821,743 @@ func TestPropagateConfig_DetailedResultContent(t *testing.T) {
 	}
 }
 
+// --- Idempotency and crash healing ---
+
+// TestPropagateConfig_GenerationOnlyCrash_HealedWithoutAdvancing verifies that
+// when the generation was committed but the mailbox requirement was not created
+// (crash between ConfigPushWithResult and EnsureConfigRereadRequirement), the
+// next unchanged propagation creates the requirement without advancing the
+// generation.
+func TestPropagateConfig_GenerationOnlyCrash_HealedWithoutAdvancing(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	// Write captain meta so notification is attempted.
+	writeCaptainMeta(t, parent, "test-sm", captainHome, "test-window")
+
+	// First propagation — fully succeeds.
+	sender1 := &fakeBoundSender{acknowledged: true}
+	result1, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender1,
+	})
+	if err != nil {
+		t.Fatalf("first PropagateConfig error: %v", err)
+	}
+	if !result1.Changed {
+		t.Error("expected changed=true on first push")
+	}
+	if result1.Generation != 1 {
+		t.Errorf("generation = %d, want 1", result1.Generation)
+	}
+	if result1.RequirementState != RequirementCreated {
+		t.Errorf("requirement state = %q, want created", result1.RequirementState)
+	}
+
+	// Simulate crash: remove the inbox envelope and pending record while
+	// keeping the generation file intact.
+	gen, digest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("gen file not found after first propagation")
+	}
+
+	captainIdentity, err := ValidateProvenance(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderIdentity, _, err := home.ReadHomeIdentity(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+
+	canonCaptain, err := canonicalCaptainHome(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captainStore := home.NewStore(canonCaptain)
+	parentStore := home.NewStore(parent)
+
+	// Remove envelope from inbox.
+	os.Remove(filepath.Join(canonCaptain, "state", home.InboxDir, senderIdentity, envID+".json"))
+	// Remove pending from outbox.
+	os.Remove(filepath.Join(parent, "state", home.OutboxDir, senderIdentity, envID+".pending"))
+
+	// Verify envelope is gone.
+	env, _ := captainStore.ReadEnvelope(senderIdentity, envID)
+	if env != nil {
+		t.Fatal("envelope should have been removed")
+	}
+
+	// Second propagation with same content → unchanged generation but
+	// healed requirement.
+	sender2 := &fakeBoundSender{acknowledged: true}
+	result2, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender2,
+	})
+	if err != nil {
+		t.Fatalf("second PropagateConfig error: %v", err)
+	}
+
+	// Generation must NOT advance.
+	if result2.Changed {
+		t.Error("expected changed=false on unchanged push after crash healing")
+	}
+	if result2.Generation != 1 {
+		t.Errorf("generation = %d, want 1 (unchanged after healing)", result2.Generation)
+	}
+
+	// Requirement must be created (healing after crash).
+	if result2.RequirementState != RequirementCreated {
+		t.Errorf("requirement state = %q, want created (healed)", result2.RequirementState)
+	}
+
+	// Notification should succeed.
+	if result2.NotificationState != NotificationSubmitted {
+		t.Errorf("notification state = %q, want submitted", result2.NotificationState)
+	}
+
+	// Verify the envelope now exists again.
+	restoredEnv, err := captainStore.ReadEnvelope(senderIdentity, envID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restoredEnv == nil {
+		t.Error("envelope should exist after crash healing")
+	}
+
+	// Verify the pending record exists again.
+	pendingEnv, err := parentStore.ReadPending(senderIdentity, envID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pendingEnv == nil {
+		t.Error("pending should exist after crash healing")
+	}
+}
+
+// TestPropagateConfig_SameDigestSameEnvelopeID verifies that repeating
+// propagation with the same effective digest produces the same deterministic
+// envelope ID.
+func TestPropagateConfig_SameDigestSameEnvelopeID(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	captainIdentity, err := ValidateProvenance(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderIdentity, _, err := home.ReadHomeIdentity(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First propagation — get envelope ID.
+	sender1 := &fakeBoundSender{acknowledged: true}
+	result1, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender1,
+	})
+	if err != nil {
+		t.Fatalf("first PropagateConfig error: %v", err)
+	}
+
+	// Compute expected envelope ID from the gen/digest.
+	id1 := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, result1.Generation, "")
+	_ = id1 // We'll compute the actual digest from gen file.
+
+	// Read actual gen and digest for ID computation.
+	gen, digest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("gen file not found")
+	}
+
+	envID1 := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+
+	// Second propagation — same envelope ID.
+	sender2 := &fakeBoundSender{acknowledged: true}
+	result2, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender2,
+	})
+	if err != nil {
+		t.Fatalf("second PropagateConfig error: %v", err)
+	}
+
+	// Both should use same gen (unchanged).
+	if result2.Generation != result1.Generation {
+		t.Fatalf("generation changed: %d vs %d", result1.Generation, result2.Generation)
+	}
+
+	envID2 := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, result2.Generation, digest)
+	if envID1 != envID2 {
+		t.Errorf("envelope IDs differ: %q vs %q", envID1, envID2)
+	}
+}
+
+// TestPropagateConfig_RejectedNotificationRetriesOnUnchanged verifies that
+// when notification is rejected (not acknowledged) after durable commit,
+// the pending requirement is retained and notification is retried on the
+// next unchanged propagation.
+func TestPropagateConfig_RejectedNotificationRetriesOnUnchanged(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	writeCaptainMeta(t, parent, "test-sm", captainHome, "test-window")
+
+	// First propagation with UNACKNOWLEDGED sender → deferred.
+	sender1 := &fakeBoundSender{acknowledged: false}
+	result1, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender1,
+	})
+	if err != nil {
+		t.Fatalf("first PropagateConfig error: %v", err)
+	}
+	if !result1.Changed {
+		t.Error("expected changed=true on first push")
+	}
+	if result1.NotificationState != NotificationDeferred {
+		t.Errorf("notification state = %q, want deferred", result1.NotificationState)
+	}
+
+	// Verify durable requirement exists (envelope + pending).
+	gen, digest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("gen file not found")
+	}
+
+	captainIdentity, err := ValidateProvenance(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderIdentity, _, err := home.ReadHomeIdentity(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+
+	canonCaptain, err := canonicalCaptainHome(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captainStore := home.NewStore(canonCaptain)
+
+	// Envelope should exist.
+	env, err := captainStore.ReadEnvelope(senderIdentity, envID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env == nil {
+		t.Error("envelope should exist after deferred notification")
+	}
+
+	// Second propagation with ACKNOWLEDGED sender → retry should succeed.
+	sender2 := &fakeBoundSender{acknowledged: true}
+	callCount := 0
+	sender2.onSend = func(homeDir string, meta map[string]string, payload string) {
+		callCount++
+	}
+
+	result2, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender2,
+	})
+	if err != nil {
+		t.Fatalf("second PropagateConfig error: %v", err)
+	}
+
+	// Generation must NOT advance (unchanged content).
+	if result2.Changed {
+		t.Error("expected changed=false on second push")
+	}
+	// Requirement must be reused (envelope already existed).
+	if result2.RequirementState != RequirementReused {
+		t.Errorf("requirement state = %q, want reused", result2.RequirementState)
+	}
+	// Notification must have been submitted (retried successfully).
+	if result2.NotificationState != NotificationSubmitted {
+		t.Errorf("notification state = %q, want submitted", result2.NotificationState)
+	}
+
+	// Verify sender2.Send was called (notification retried).
+	if callCount == 0 {
+		t.Error("sender2.Send should have been called (notification retry)")
+	}
+}
+
+// TestPropagateConfig_EnvelopeOnlyCrash_Healed verifies that when the
+// envelope exists but the pending record is missing (crash after envelope
+// write but before pending write), the next propagation heals by writing
+// the pending record.
+func TestPropagateConfig_EnvelopeOnlyCrash_Healed(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	writeCaptainMeta(t, parent, "test-sm", captainHome, "test-window")
+
+	// First propagation — fully succeeds.
+	sender1 := &fakeBoundSender{acknowledged: true}
+	_, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender1,
+	})
+	if err != nil {
+		t.Fatalf("first PropagateConfig error: %v", err)
+	}
+
+	gen, digest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil || !found {
+		t.Fatal("gen file not found")
+	}
+
+	captainIdentity, _ := ValidateProvenance(captainHome)
+	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
+	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+	parentStore := home.NewStore(parent)
+
+	// Simulate crash: remove the pending record only.
+	if err := os.RemoveAll(filepath.Join(parent, "state", home.OutboxDir, senderIdentity)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify pending is gone.
+	pending, _ := parentStore.ReadPending(senderIdentity, envID)
+	if pending != nil {
+		t.Fatal("pending should have been removed")
+	}
+
+	// Second propagation with same content → heal pending.
+	sender2 := &fakeBoundSender{acknowledged: true}
+	result, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender2,
+	})
+	if err != nil {
+		t.Fatalf("second PropagateConfig error: %v", err)
+	}
+
+	// Generation unchanged.
+	if result.Changed {
+		t.Error("expected changed=false")
+	}
+	if result.Generation != gen {
+		t.Errorf("generation = %d, want %d", result.Generation, gen)
+	}
+
+	// Pending should exist again.
+	restoredPending, _ := parentStore.ReadPending(senderIdentity, envID)
+	if restoredPending == nil {
+		t.Error("pending should exist after healing")
+	}
+}
+
+// TestPropagateConfig_AckedRequirementNotResent verifies that when the
+// requirement is already acked, the notification is not resent.
+func TestPropagateConfig_AckedRequirementNotResent(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	writeCaptainMeta(t, parent, "test-sm", captainHome, "test-window")
+
+	// First propagation with acknowledged sender.
+	sender1 := &fakeBoundSender{acknowledged: true}
+	callCount := 0
+	sender1.onSend = func(homeDir string, meta map[string]string, payload string) {
+		callCount++
+	}
+
+	_, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender1,
+	})
+	if err != nil {
+		t.Fatalf("first PropagateConfig error: %v", err)
+	}
+
+	// Simulate ack by writing an ack file in the captain's inbox.
+	gen, digest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil || !found {
+		t.Fatal("gen file not found")
+	}
+	captainIdentity, _ := ValidateProvenance(captainHome)
+	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
+	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+
+	canonCaptain, _ := canonicalCaptainHome(captainHome)
+	captainStore := home.NewStore(canonCaptain)
+
+	// Write a fake ack to simulate captain having processed the requirement.
+	captainStore.WriteAck(&home.ProcessingAck{
+		MessageID:      envID,
+		SenderIdentity: senderIdentity,
+		ReceiverID:     captainIdentity,
+		Outcome:        "accepted",
+		ProcessedAt:    1000,
+	})
+
+	if !captainStore.IsAcked(senderIdentity, envID) {
+		t.Fatal("ack should be visible")
+	}
+
+	// Second propagation — must NOT send notification (already acked).
+	sender2 := &fakeBoundSender{acknowledged: true}
+	secondCallCount := 0
+	sender2.onSend = func(homeDir string, meta map[string]string, payload string) {
+		secondCallCount++
+	}
+
+	result2, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender2,
+	})
+	if err != nil {
+		t.Fatalf("second PropagateConfig error: %v", err)
+	}
+
+	if result2.Changed {
+		t.Error("expected changed=false")
+	}
+	if result2.RequirementState != RequirementReused {
+		t.Errorf("requirement state = %q, want reused", result2.RequirementState)
+	}
+	if result2.NotificationState != NotificationSkipped {
+		t.Errorf("notification state = %q, want skipped", result2.NotificationState)
+	}
+	if secondCallCount != 0 {
+		t.Errorf("sender2.Send should NOT be called for acked requirement, got %d calls", secondCallCount)
+	}
+}
+
+// TestPropagateConfig_LegacyReconciledOnUnchanged verifies that legacy
+// config-reread evidence is reconciled during an unchanged propagation.
+func TestPropagateConfig_LegacyReconciledOnUnchanged(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	// Set up parent config so propagation has content.
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	// First propagation to establish gen=1 with real digest.
+	sender0 := &fakeBoundSender{acknowledged: true}
+	_, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Read the actual gen/digest so our legacy nudge matches.
+	_, actualDigest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil || !found {
+		t.Fatal("gen file not found")
+	}
+
+	// Write legacy nudge with the same gen/digest that will be superseded.
+	// (gen=1 is already written by the first propagation.)
+	nudgeDir := filepath.Join(captainHome, "state")
+	legacyNudge := fmt.Sprintf("gen=1\ndigest=%s\n", actualDigest)
+	if err := os.WriteFile(filepath.Join(nudgeDir, ".config-reread-nudge"),
+		[]byte(legacyNudge), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second propagation with same content (unchanged).
+	sender := &fakeBoundSender{acknowledged: true}
+	result, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender,
+	})
+	if err != nil {
+		t.Fatalf("PropagateConfig error: %v", err)
+	}
+
+	// Generation unchanged (digest matches existing gen).
+	if result.Changed {
+		t.Error("expected unchanged for matching digest")
+	}
+
+	// Legacy nudge must be gone.
+	if _, err := os.Stat(filepath.Join(nudgeDir, ".config-reread-nudge")); !os.IsNotExist(err) {
+		t.Error("legacy nudge marker should be removed on unchanged propagation")
+	}
+
+	// Requirement should be reused (envelope from first call exists).
+	if result.RequirementState != RequirementReused {
+		t.Errorf("requirement state = %q, want reused", result.RequirementState)
+	}
+}
+
+// TestPropagateConfig_ChangedAfterHealing_CreatesNextGeneration verifies
+// that after a healed unchanged propagation, a subsequent content change
+// correctly creates generation 2 and a new corresponding requirement.
+func TestPropagateConfig_ChangedAfterHealing_CreatesNextGeneration(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	writeCaptainMeta(t, parent, "test-sm", captainHome, "test-window")
+
+	// First propagation.
+	sender1 := &fakeBoundSender{acknowledged: true}
+	result1, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender1,
+	})
+	if err != nil {
+		t.Fatalf("first PropagateConfig error: %v", err)
+	}
+	if result1.Generation != 1 {
+		t.Fatalf("generation = %d, want 1", result1.Generation)
+	}
+
+	captainIdentity, _ := ValidateProvenance(captainHome)
+	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
+	gen1, digest1, _, _ := ReadConfigRereadGen(captainHome)
+	envID1 := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen1, digest1)
+
+	// Simulate crash: remove the envelope, so next propagation heals.
+	canonCaptain, _ := canonicalCaptainHome(captainHome)
+	os.RemoveAll(filepath.Join(canonCaptain, "state", home.InboxDir))
+	os.RemoveAll(filepath.Join(parent, "state", home.OutboxDir))
+
+	// Second propagation — unchanged (heals).
+	sender2 := &fakeBoundSender{acknowledged: true}
+	result2, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender2,
+	})
+	if err != nil {
+		t.Fatalf("second PropagateConfig error: %v", err)
+	}
+	if result2.Changed {
+		t.Error("expected unchanged on second push")
+	}
+	if result2.Generation != 1 {
+		t.Errorf("generation = %d, want 1", result2.Generation)
+	}
+	if result2.RequirementState != RequirementCreated {
+		t.Errorf("requirement state = %q, want created (healed)", result2.RequirementState)
+	}
+
+	// Change content — should create gen=2.
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("codex\n"), 0644)
+
+	sender3 := &fakeBoundSender{acknowledged: true}
+	result3, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender3,
+	})
+	if err != nil {
+		t.Fatalf("third PropagateConfig error: %v", err)
+	}
+	if !result3.Changed {
+		t.Error("expected changed=true after content change")
+	}
+	if result3.Generation != 2 {
+		t.Errorf("generation = %d, want 2", result3.Generation)
+	}
+	if result3.RequirementState != RequirementCreated {
+		t.Errorf("requirement state = %q, want created", result3.RequirementState)
+	}
+
+	// Verify a NEW envelope ID for gen=2.
+	gen2, digest2, _, _ := ReadConfigRereadGen(captainHome)
+	if gen2 != 2 {
+		t.Errorf("gen file says %d, want 2", gen2)
+	}
+	envID2 := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen2, digest2)
+	if envID1 == envID2 {
+		t.Error("envelope IDs for gen=1 and gen=2 should differ")
+	}
+
+	// New envelope should exist.
+	captainStore := home.NewStore(canonCaptain)
+	env, err := captainStore.ReadEnvelope(senderIdentity, envID2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env == nil {
+		t.Error("envelope for gen=2 should exist")
+	}
+}
+
+// TestPropagateConfig_EnsureRequirementFailsOnHardError verifies that
+// corrupt state, failed durable writes, and invalid provenance produce
+// hard errors rather than silently returning RequirementFailed.
+func TestPropagateConfig_EnsureRequirementFailsOnHardError(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	// Remove the provenance marker to cause a hard identity failure.
+	os.Remove(filepath.Join(captainHome, ".munsu-captain-home"))
+
+	sender := &fakeBoundSender{acknowledged: true}
+	_, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender,
+	})
+	if err == nil {
+		t.Error("expected error for missing provenance")
+	}
+	if !strings.Contains(err.Error(), "no .munsu-captain-home marker") {
+		t.Errorf("error = %v, want marker error", err)
+	}
+}
+
+// TestPropagateConfig_DeferredSuccessRetainsRequirement verifies that
+// deferred notification (notification failure after durable commit) retains
+// the requirement for later retry and the result is not an error.
+func TestPropagateConfig_DeferredSuccessRetainsRequirement(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+	writeCaptainMeta(t, parent, "test-sm", captainHome, "test-window")
+
+	// Use a sender that does NOT acknowledge.
+	sender := &fakeBoundSender{acknowledged: false}
+	result, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender,
+	})
+	if err != nil {
+		t.Fatalf("PropagateConfig error: %v", err)
+	}
+
+	// Must not be an error — deferred success.
+	if result.Changed != true {
+		t.Error("expected changed=true")
+	}
+	if result.RequirementState != RequirementCreated {
+		t.Errorf("requirement state = %q, want created", result.RequirementState)
+	}
+	if result.NotificationState != NotificationDeferred {
+		t.Errorf("notification state = %q, want deferred", result.NotificationState)
+	}
+
+	// Requirement must still be durable.
+	gen, _, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Error("gen file should exist after deferred notification")
+	}
+	if gen != 1 {
+		t.Errorf("generation = %d, want 1", gen)
+	}
+}
+
+// TestEnsureOrHealRequirement_ExposedForTesting verifies that the
+// ensureOrHealRequirement helper correctly handles the no-op case where
+// requirement already exists and is acked.
+func TestEnsureOrHealRequirement_AckedNoop(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "test-sm")
+
+	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
+
+	// First propagation creates gen=1 with a requirement.
+	sender1 := &fakeBoundSender{acknowledged: true}
+	_, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parent,
+		CaptainHome: captainHome,
+		Mailbox:     sender1,
+	})
+	if err != nil {
+		t.Fatalf("PropagateConfig error: %v", err)
+	}
+
+	gen, digest, found, _ := ReadConfigRereadGen(captainHome)
+	if !found {
+		t.Fatal("gen file not found")
+	}
+
+	captainIdentity, _ := ValidateProvenance(captainHome)
+	senderIdentity, _, _ := home.ReadHomeIdentity(parent)
+	envID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+
+	canonCaptain, _ := canonicalCaptainHome(captainHome)
+	captainStore := home.NewStore(canonCaptain)
+
+	// Write an ack.
+	captainStore.WriteAck(&home.ProcessingAck{
+		MessageID:      envID,
+		SenderIdentity: senderIdentity,
+		ReceiverID:     captainIdentity,
+		Outcome:        "accepted",
+		ProcessedAt:    2000,
+	})
+
+	// Call ensureOrHealRequirement directly — should return reused/skipped
+	// without calling EnsureConfigRereadRequirement.
+	recorder := &boundSenderRecorder{actual: &fakeBoundSender{acknowledged: true}}
+	reqState, notifState, _, err := ensureOrHealRequirement(
+		parent, captainHome, gen, digest, recorder,
+	)
+	if err != nil {
+		t.Fatalf("ensureOrHealRequirement error: %v", err)
+	}
+	if reqState != RequirementReused {
+		t.Errorf("requirement state = %q, want reused", reqState)
+	}
+	if notifState != NotificationSkipped {
+		t.Errorf("notification state = %q, want skipped", notifState)
+	}
+	// Recorder should not have been called (no EnsureConfigRereadRequirement).
+	if recorder.called {
+		t.Error("recorder should not be called for acked requirement")
+	}
+}
+
 // Ensure compilation check for interface compliance.
 var _ = &fakeBoundSender{}
 
