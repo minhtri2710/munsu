@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -18,6 +17,33 @@ var (
 	claimWake          = orchestrator.ClaimWakes
 	submitWakePrompt   = backend.SubmitPrompt
 )
+
+// cliProbeAdapter wraps a backend.Backend into an orchestrator.ProbePort.
+type cliProbeAdapter struct {
+	bk backend.Backend
+}
+
+func (a *cliProbeAdapter) Probe(window string) (orchestrator.ProbeResult, error) {
+	status, err := probeWakeEndpoint(a.bk, window)
+	if err != nil {
+		return orchestrator.ProbeResult{}, err
+	}
+	return orchestrator.ProbeResult{
+		PaneAlive:      status.PaneAlive,
+		AgentAlive:     status.AgentAlive,
+		ReadyForPrompt: status.ReadyForPrompt,
+	}, nil
+}
+
+// cliSubmitAdapter wraps a backend.Backend into an orchestrator.SubmitPort.
+type cliSubmitAdapter struct {
+	bk backend.Backend
+}
+
+func (a *cliSubmitAdapter) Submit(window, prompt string) (bool, string, error) {
+	result := submitWakePrompt(a.bk, window, prompt)
+	return result.Acknowledged(), result.Detail, result.Err
+}
 
 type wakeDispatchHooks struct {
 	orchestrator.WatcherHooks
@@ -34,16 +60,16 @@ func watcherHooks() orchestrator.WatcherHooks {
 	return wakeDispatchHooks{WatcherHooks: orchestrator.NewCaptainWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport())}
 }
 
+// dispatchHerdrWake is a thin wrapper around orchestrator.DispatchWake.
+// It resolves the mode, target, and backend from the environment and
+// delegates the complete workflow to the orchestrator via adapter ports.
 func dispatchHerdrWake(homeDir string) error {
 	mode, err := resolveWakeMode(homeDir)
-	if err != nil || mode != orchestrator.WakeDeliveryHerdr {
+	if err != nil {
 		return err
 	}
 	target, err := resolveWakeTarget(homeDir)
-	if err != nil || target.Handle == "" || target.Session == "" {
-		return err
-	}
-	if err := validateWakeTarget(&target); err != nil {
+	if err != nil {
 		return err
 	}
 	meta := map[string]string{"backend": "herdr", "window": target.Handle, "herdr_session": target.Session}
@@ -51,20 +77,26 @@ func dispatchHerdrWake(homeDir string) error {
 	if err != nil || name != "herdr" {
 		return err
 	}
-	status, err := probeWakeEndpoint(bk, target.Handle)
-	if err != nil || !status.PaneAlive || !status.AgentAlive || !status.ReadyForPrompt {
+
+	req := orchestrator.DispatchWakeRequest{
+		HomeDir: homeDir,
+		Mode:    mode,
+		Target:  target,
+		Probe:   &cliProbeAdapter{bk: bk},
+		Submit:  &cliSubmitAdapter{bk: bk},
+	}
+
+	result, err := orchestrator.DispatchWake(req)
+	if err != nil {
 		return err
 	}
-	claim, err := claimWake(homeDir, "munsu:herdr", 60, 1)
-	if err != nil || len(claim.Wakes) == 0 {
-		return err
+	switch result.Outcome {
+	case orchestrator.WakeSubmitted:
+		return nil
+	case orchestrator.WakeDeferred:
+		return fmt.Errorf("wake prompt deferred: %s", result.Detail)
+	default:
+		// Skipped — not an error; the orchestrator handles the outcome type.
+		return nil
 	}
-	wake := claim.Wakes[0]
-	eventID := wake.Epoch + ":" + wake.Seq
-	prompt := fmt.Sprintf("[mu-system:wake]\nkey: %s\nclaim_id: %s\nevent_id: %s\n\n%s\n\nReview this durable wake, then run:\nmunsu wake resolve --claim-id %q --event-id %q --summary %q", eventID, claim.LeaseID, eventID, wake.Payload, claim.LeaseID, eventID, "<non-empty summary>")
-	result := submitWakePrompt(bk, target.Handle, prompt)
-	if !result.Acknowledged() {
-		return fmt.Errorf("wake prompt deferred: %s", strings.TrimSpace(result.Detail))
-	}
-	return nil
 }
