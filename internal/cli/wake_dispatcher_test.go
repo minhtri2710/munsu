@@ -91,8 +91,9 @@ func TestDispatchHerdrWakeSubmitFailurePreservesLease(t *testing.T) {
 	submitWakePrompt = func(backend.Backend, string, string) backend.PromptResult {
 		return backend.PromptResult{Status: backend.PromptBackendFailed, Detail: "backend failed", Err: errors.New("backend failed")}
 	}
-	if err := dispatchHerdrWake(home); err == nil {
-		t.Fatal("submit failure unexpectedly succeeded")
+	// Deferred outcome is treated as non-error; lease must still be preserved.
+	if err := dispatchHerdrWake(home); err != nil {
+		t.Fatalf("deferred outcome should not propagate as error, got: %v", err)
 	}
 	entries, err := os.ReadDir(orchestrator.LeaseDir(home))
 	if err != nil || len(entries) != 1 {
