@@ -72,21 +72,26 @@ func (r *PropagateConfigResult) Summary() PropagateConfigSummary {
 
 // PropagateConfig is the high Fleet-owned transaction that propagates a changed
 // Captain config end to end. It:
+//
 //  1. Validates non-empty homes, provenance, and destination path safety
 //     before any mutation.
 //  2. Copies inherited config surface (inheritable files, general-shared.md,
 //     projects.md) via ConfigPushWithResult.
 //  3. Mirror-deletes removed settings without escaping the captain home.
 //  4. Computes effective digest and compares against current generation.
-//  5. If unchanged → returns Changed=false with existing generation,
-//     requirementState=reused, notificationState=skipped.
-//  6. If changed → advances generation, reconciles legacy evidence, creates
-//     durable config-reread requirement, and attempts notification through
-//     the injected mailbox adapter.
+//  5. Reconciles legacy config-reread evidence in both changed and unchanged
+//     paths so that malformed legacy state is surfaced early.
+//  6. Ensures or heals the durable config-reread requirement for the current
+//     generation and digest. On the unchanged path this detects a crash where
+//     the generation was committed but the mailbox requirement was not
+//     materialized, or a deferred notification that needs retry.
+//  7. Returns the typed PropagateConfigResult with changed/changed state,
+//     generation, requirement state, notification state, and detail.
 //
 // Generation state and requirement are made durable BEFORE notification is
-// attempted. The function does not add idempotency, deferred-success, or
-// crash-healing behavior — those belong to #369.
+// attempted. Notification rejection or failure after durable commit returns
+// a deferred-success summary rather than a transaction error. Hard validation,
+// unsafe path, corrupt state, and failed durable writes remain errors.
 func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error) {
 	// 1. Validate non-empty homes.
 	if req.ParentHome == "" {
@@ -105,9 +110,6 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 	}
 
 	// 3. Run the full config push with generation tracking.
-	//    ConfigPushWithResult now includes a destination preflight and
-	//    handles copying, mirror-deletion, digest computation, and
-	//    generation advancement.
 	res, err := ConfigPushWithResult(req.ParentHome, req.CaptainHome)
 	if err != nil {
 		return nil, fmt.Errorf("propagate config: %w", err)
@@ -118,50 +120,151 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 		Generation: res.Generation,
 	}
 
-	// 4. If unchanged → return with reused/skipped.
-	if !res.Changed {
-		result.RequirementState = RequirementReused
-		result.NotificationState = NotificationSkipped
-		result.Detail = fmt.Sprintf("generation=%d (unchanged)", res.Generation)
-		return result, nil
-	}
-
-	// 5. Changed: generation is already advanced durably by ConfigPushWithResult.
-	//    Wrap the mailbox sender in a recording decorator so we can determine
-	//    the typed notification state after EnsureConfigRereadRequirement.
+	// 4. Reconcile legacy config-reread evidence in both changed and
+	//    unchanged paths so incomplete state is healed.
 	recorder := &boundSenderRecorder{actual: req.Mailbox}
 
-	// 6. Reconcile legacy config-reread evidence inside the transaction.
 	if legErr := ReconcileLegacyConfigReread(req.ParentHome, req.CaptainHome, recorder); legErr != nil {
+		// Legacy reconciliation failure is best-effort detail.
 		result.Detail = fmt.Sprintf("generation=%d, legacy reconciliation: %v", res.Generation, legErr)
-		// Continue — legacy reconciliation is best-effort.
 	}
 
-	// 7. Create durable config-reread requirement bound to the changed
-	//    generation. The recorder captures the notification outcome.
-	if mbErr := EnsureConfigRereadRequirement(req.ParentHome, req.CaptainHome, res.Generation, res.NewDigest, recorder); mbErr != nil {
-		result.RequirementState = RequirementFailed
-		result.NotificationState = NotificationFailed
-		result.Detail = fmt.Sprintf("generation=%d, requirement failed: %v", res.Generation, mbErr)
-		return result, nil
+	// 5. Determine the digest to use for requirement identity.
+	//    On the unchanged path, OldDigest == NewDigest. On the changed path
+	//    NewDigest reflects the new content. On first push with unchanged
+	//    content (no prior gen), NewDigest is set.
+	digest := res.NewDigest
+	if digest == "" {
+		digest = res.OldDigest
 	}
 
-	// 8. Derive typed notification state from the recorder.
-	result.RequirementState = RequirementCreated
-	if recorder.called {
-		if recorder.result.Acknowledged {
-			result.NotificationState = NotificationSubmitted
-			result.Detail = fmt.Sprintf("generation=%d, notified", res.Generation)
-		} else {
-			result.NotificationState = NotificationDeferred
-			result.Detail = fmt.Sprintf("generation=%d, notification deferred (status=%s)", res.Generation, recorder.result.Status)
-		}
-	} else {
-		result.NotificationState = NotificationSkipped
-		result.Detail = fmt.Sprintf("generation=%d, no notification (no meta or incomplete meta)", res.Generation)
+	// 6. Ensure or heal the durable config-reread requirement.
+	//    On the unchanged path, this detects a crash where the generation
+	//    was committed but the mailbox requirement was not materialized,
+	//    or a deferred notification that needs retry.
+	reqState, notifState, detail, reqErr := ensureOrHealRequirement(
+		req.ParentHome, req.CaptainHome,
+		res.Generation, digest, recorder,
+	)
+	if reqErr != nil {
+		// Durable requirement failure is a hard error.
+		return nil, fmt.Errorf("propagate config: %w", reqErr)
 	}
+
+	result.RequirementState = reqState
+	result.NotificationState = notifState
+	result.Detail = detail
 
 	return result, nil
+}
+
+// ensureOrHealRequirement handles requirement creation, healing, and
+// notification retry for a single propagation transaction. It:
+//
+//  1. Checks whether a durable inbox envelope for (gen, digest) already
+//     exists in the captain's mailbox.
+//  2. If the envelope exists and is acked → returns (Reused, Skipped).
+//  3. If the envelope exists and is not acked → calls
+//     EnsureConfigRereadRequirement to retry notification.
+//     Returns (Reused, <recorder outcome>).
+//  4. If the envelope does not exist → calls
+//     EnsureConfigRereadRequirement to create it.
+//     Returns (Created, <recorder outcome>).
+//
+// When the inbox envelope does not exist, this is a crash-healing scenario:
+// the generation was committed by ConfigPushWithResult but the mailbox
+// requirement (envelope + pending) was not materialized before the crash.
+// On the next propagation, we heal by creating it now.
+//
+// Durable requirement failures (invalid provenance, corrupt state, failed
+// writes) return errors.
+func ensureOrHealRequirement(
+	parentHome, captainHome string,
+	gen int, digest string,
+	recorder *boundSenderRecorder,
+) (RequirementState, NotificationState, string, error) {
+	// Derive identities for envelope lookup.
+	captainIdentity, err := ValidateProvenance(captainHome)
+	if err != nil {
+		return RequirementFailed, NotificationFailed, "",
+			fmt.Errorf("ensure requirement: %w", err)
+	}
+	senderIdentity, _, err := home.ReadHomeIdentity(parentHome)
+	if err != nil {
+		return RequirementFailed, NotificationFailed, "",
+			fmt.Errorf("ensure requirement: deriving sender identity: %w", err)
+	}
+
+	// Compute the expected deterministic envelope ID.
+	envelopeID := ConfigRereadEnvelopeID(senderIdentity, captainIdentity, gen, digest)
+
+	// Canonicalize the captain home for store access.
+	canonCaptain, err := canonicalCaptainHome(captainHome)
+	if err != nil {
+		return RequirementFailed, NotificationFailed, "",
+			fmt.Errorf("ensure requirement: canonicalizing captain home: %w", err)
+	}
+	captainStore := home.NewStore(canonCaptain)
+
+	// Check if the inbox envelope already exists.
+	existingEnv, readErr := captainStore.ReadEnvelope(senderIdentity, envelopeID)
+	if readErr != nil {
+		return RequirementFailed, NotificationFailed, "",
+			fmt.Errorf("ensure requirement: reading envelope: %w", readErr)
+	}
+
+	envExists := existingEnv != nil
+
+	// Validate an existing envelope has expected content.
+	if envExists {
+		if existingEnv.Key != ConfigRereadKey {
+			return RequirementFailed, NotificationFailed, "",
+				fmt.Errorf("ensure requirement: existing envelope ID %q has unexpected key %q", envelopeID, existingEnv.Key)
+		}
+	}
+
+	// Check ack state.
+	isAcked := captainStore.IsAcked(senderIdentity, envelopeID)
+	if envExists && isAcked {
+		// Already fully processed → no action needed.
+		return RequirementReused, NotificationSkipped,
+			fmt.Sprintf("generation=%d (acked)", gen), nil
+	}
+
+	// Call EnsureConfigRereadRequirement — idempotent for same envelope ID.
+	// This heals:
+	//   - generation-only crash (no envelope)
+	//   - envelope-only crash (no pending)
+	//   - missing pending record
+	//   - deferred notification retry
+	if reqErr := EnsureConfigRereadRequirement(parentHome, captainHome, gen, digest, recorder); reqErr != nil {
+		return RequirementFailed, NotificationFailed, "",
+			fmt.Errorf("ensure requirement: %w", reqErr)
+	}
+
+	reqState := RequirementReused
+	if !envExists {
+		// The envelope was not present — this is a crash-healing creation.
+		reqState = RequirementCreated
+	}
+
+	notifState, detail := deriveNotifyState(recorder, gen)
+	return reqState, notifState, detail, nil
+}
+
+// deriveNotifyState reads the boundSenderRecorder result and returns the
+// typed NotificationState and a descriptive detail string.
+func deriveNotifyState(recorder *boundSenderRecorder, gen int) (NotificationState, string) {
+	if recorder.called {
+		if recorder.result.Acknowledged {
+			return NotificationSubmitted,
+				fmt.Sprintf("generation=%d, notified", gen)
+		}
+		return NotificationDeferred,
+			fmt.Sprintf("generation=%d, notification deferred (status=%s)", gen, recorder.result.Status)
+	}
+	return NotificationSkipped,
+		fmt.Sprintf("generation=%d, no notification (no meta or incomplete meta)", gen)
 }
 
 // boundSenderRecorder wraps a home.BoundSender and records whether Send was
@@ -219,10 +322,16 @@ func PropagateConfigCLI(req PropagateConfigRequest) (string, error) {
 		return "", err
 	}
 	s := result.Summary()
+
+	var msg string
 	if !s.Changed {
-		return "inherited config unchanged (no notification sent)", nil
+		msg = fmt.Sprintf("inherited config unchanged: generation=%d, requirement=%s",
+			s.Generation, s.RequirementState)
+	} else {
+		msg = fmt.Sprintf("inherited config changed: generation=%d, requirement=%s",
+			s.Generation, s.RequirementState)
 	}
-	msg := fmt.Sprintf("inherited config changed: generation=%d, requirement=%s", s.Generation, s.RequirementState)
+
 	switch s.NotificationState {
 	case "submitted":
 		msg += ", notification submitted"
