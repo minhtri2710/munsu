@@ -116,29 +116,19 @@ All keys must be in queued state. Uses tasks-axi mv atomically.`,
 
 Reports whether the inherited surface changed and the new generation.
 On change, creates a durable mailbox config-reread requirement and
-sends a NotificationRef through the AgentPrompt seam. The requirement
+sends a NotificationRef through the agent session. The requirement
 is retried on the next converge cycle on failure.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			res, err := fleet.ConfigPushWithResult(ctx.Home, args[0])
+			msg, err := fleet.PropagateConfigCLI(fleet.PropagateConfigRequest{
+				ParentHome:  ctx.Home,
+				CaptainHome: args[0],
+				Mailbox:     newSessionMailboxSender(),
+			})
 			if err != nil {
 				return err
 			}
-			if res.Changed {
-				fmt.Printf("inherited config changed: generation=%d\n", res.Generation)
-				// Legacy reconciliation before creating new requirement.
-				if legErr := fleet.ReconcileLegacyConfigReread(ctx.Home, args[0], newSessionMailboxSender()); legErr != nil {
-					fmt.Printf("  note: legacy config-reread reconciliation: %v\n", legErr)
-				}
-				// Create canonical mailbox config-reread requirement.
-				if err := fleet.EnsureConfigRereadRequirement(ctx.Home, args[0], res.Generation, res.NewDigest, newSessionMailboxSender()); err != nil {
-					fmt.Printf("  note: config-reread notification deferred: %v\n", err)
-				} else {
-					fmt.Printf("  sent config-reread gen=%d notification\n", res.Generation)
-				}
-			} else {
-				fmt.Println("inherited config unchanged (no notification sent)")
-			}
+			fmt.Println(msg)
 			return nil
 		}),
 	})
