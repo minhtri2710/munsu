@@ -1504,6 +1504,61 @@ func isGitTracked(dir, name string) bool {
 	return err == nil && len(out) > 0
 }
 
+// preflightConfigPushDestinations validates all destination paths before any
+// mutation or log write in ConfigPushWithResult. Returns an error if any
+// destination escapes the captain container via symlink/.. or is git-tracked.
+func preflightConfigPushDestinations(parentHome, captainHome string) error {
+	inheritable := getInheritableList()
+
+	// Check inheritable config destinations (push side).
+	for _, name := range inheritable {
+		dst := filepath.Join(captainHome, "config", name)
+		if !isSafeConfigPath(dst, parentHome, captainHome) {
+			return fmt.Errorf("push destination %s escapes captain container — refuse", name)
+		}
+		if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
+			return fmt.Errorf("push destination %s is tracked in captain git — must be gitignored", name)
+		}
+	}
+
+	// Check inheritable config destinations (mirror-delete side) and shared files.
+	for _, name := range inheritable {
+		dst := filepath.Join(captainHome, "config", name)
+		if !isSafeConfigPath(dst, parentHome, captainHome) {
+			return fmt.Errorf("mirror-delete destination %s escapes captain container — refuse", name)
+		}
+		if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
+			return fmt.Errorf("mirror-delete destination %s is tracked in captain git — must be gitignored", name)
+		}
+	}
+
+	// Check general-shared.md destination.
+	sharedDst := filepath.Join(captainHome, "data", "general-shared.md")
+	if !isSafeConfigPath(sharedDst, parentHome, captainHome) {
+		return fmt.Errorf("general-shared.md destination escapes captain container — refuse")
+	}
+	if isGitTracked(filepath.Dir(sharedDst), filepath.Base(sharedDst)) {
+		return fmt.Errorf("general-shared.md is tracked in captain git — must be gitignored")
+	}
+
+	// Check projects.md destination.
+	projDst := filepath.Join(captainHome, "data", "projects.md")
+	if !isSafeConfigPath(projDst, parentHome, captainHome) {
+		return fmt.Errorf("projects.md destination escapes captain container — refuse")
+	}
+	if isGitTracked(filepath.Dir(projDst), filepath.Base(projDst)) {
+		return fmt.Errorf("projects.md is tracked in captain git — must be gitignored")
+	}
+
+	// Check parent-home config destination.
+	parentHomeDst := filepath.Join(captainHome, "config", "parent-home")
+	if !isSafeConfigPath(parentHomeDst, parentHome, captainHome) {
+		return fmt.Errorf("parent-home config destination escapes captain container — refuse")
+	}
+
+	return nil
+}
+
 // ConfigPush copies inheritable config from the parent home to the captain,
 // mirrors deletions, pushes data/general-shared.md and data/projects.md,
 // and logs actions. Legacy caller; use ConfigPushWithResult for generation
@@ -1519,6 +1574,11 @@ func ConfigPush(parentHome, captainHome string) error {
 func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, error) {
 	if _, err := ValidateProvenance(captainHome); err != nil {
 		return nil, fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
+	}
+
+	// Preflight all destinations before any mutation or log write.
+	if err := preflightConfigPushDestinations(parentHome, captainHome); err != nil {
+		return nil, fmt.Errorf("config-push preflight: %w", err)
 	}
 
 	inheritable := getInheritableList()
@@ -2132,40 +2192,30 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 		}
 
 		// e. Inheritance push with generation tracking and mailbox notification.
-		if res, err := ConfigPushWithResult(parentHome, sm.Home); err != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeFailed, Detail: err.Error()})
-			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, err))
+		propRes, propErr := PropagateConfig(PropagateConfigRequest{
+			ParentHome:  parentHome,
+			CaptainHome: sm.Home,
+			Mailbox:     sender,
+		})
+		if propErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeFailed, Detail: propErr.Error()})
+			errs = append(errs, fmt.Sprintf("%s: config-push failed: %v", sm.ID, propErr))
 		} else {
 			detail := "ok"
-			if res.Changed {
-				detail = fmt.Sprintf("generation=%d", res.Generation)
+			if propRes.Changed {
+				detail = fmt.Sprintf("generation=%d", propRes.Generation)
 			}
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": inheritance push", Status: ConvergeOK, Detail: detail})
 
-			// Legacy artifacts: reconcile before creating new requirement.
-			if legErr := ReconcileLegacyConfigReread(parentHome, sm.Home, sender); legErr != nil {
-				errs = append(errs, fmt.Sprintf("%s: legacy config-reread reconciliation failed: %v", sm.ID, legErr))
-			}
-
-			// Create canonical mailbox config-reread requirement when generation advanced.
-			if res.Changed {
-				if mbErr := EnsureConfigRereadRequirement(parentHome, sm.Home, res.Generation, res.NewDigest, sender); mbErr != nil {
-					// Mailbox write failed; the requirement is not persisted.
-					// Converge will retry on the next cycle. The generation
-					// is tracked durably so we can recreate the requirement.
-					result.Steps = append(result.Steps, ConvergeStepResult{
-						Name:   sm.ID + ": config-reread requirement",
-						Status: ConvergeFailed,
-						Detail: mbErr.Error(),
-					})
-					errs = append(errs, fmt.Sprintf("%s: config-reread requirement: %v", sm.ID, mbErr))
-				} else {
-					result.Steps = append(result.Steps, ConvergeStepResult{
-						Name:   sm.ID + ": config-reread requirement",
-						Status: ConvergeOK,
-						Detail: fmt.Sprintf("gen=%d", res.Generation),
-					})
-				}
+			// Report config-reread requirement state.
+			reqStep := sm.ID + ": config-reread requirement"
+			if !propRes.Changed {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: reqStep, Status: ConvergeSkipped, Detail: "unchanged"})
+			} else if propRes.RequirementState == RequirementFailed {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: reqStep, Status: ConvergeFailed, Detail: fmt.Sprintf("gen=%d %s", propRes.Generation, propRes.Detail)})
+				errs = append(errs, fmt.Sprintf("%s: config-reread requirement failed", sm.ID))
+			} else {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: reqStep, Status: ConvergeOK, Detail: fmt.Sprintf("gen=%d %s=%s", propRes.Generation, propRes.RequirementState, propRes.NotificationState)})
 			}
 		}
 
