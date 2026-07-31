@@ -143,10 +143,10 @@ func TestSendCmd_UnknownMetaBackendFallsThroughToResolve(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown backend (fallthrough), got nil")
 	}
-	// Error should mention the resolved backend (herdr from config) or the send operation,
-	// not the original unknown backend name.
-	if strings.Contains(err.Error(), "nonexistent") {
-		t.Errorf("the unknown backend name should be transparent to the caller after fallthrough, got: %v", err)
+	// A malformed bound backend is authoritative and must fail closed rather than
+	// falling through to a different backend.
+	if !strings.Contains(err.Error(), "unknown bound session backend") || !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("unknown bound backend error = %v", err)
 	}
 }
 

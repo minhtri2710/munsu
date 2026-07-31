@@ -24,6 +24,13 @@ func TestBacklogReadyReportsDistinctReasonsAndIsPure(t *testing.T) {
 		if _, err := home.CreateTaskAggregate(homeDir, tc.id, "owner", tc.id, "ship", ""); err != nil {
 			t.Fatal(err)
 		}
+		if tc.state == "working" {
+			if err := home.BindTaskEndpoint(homeDir, tc.id, "1", home.TaskEndpointBinding{
+				Backend: "tmux", Handle: "pane", LeaseID: "lease", FenceToken: "fence", BoundAtUnix: 1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if tc.state != "queued" {
 			if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, tc.id, tc.state, "reason"); err != nil {
 				t.Fatal(err)

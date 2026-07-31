@@ -61,6 +61,13 @@ func TestQueryTaskReadinessReportsEachBlockingReason(t *testing.T) {
 		if _, err := CreateTaskAggregate(homeDir, tc.id, "owner", tc.id, "ship", ""); err != nil {
 			t.Fatal(err)
 		}
+		if tc.state == "working" {
+			if err := BindTaskEndpoint(homeDir, tc.id, "1", TaskEndpointBinding{
+				Backend: "tmux", Handle: "pane", LeaseID: "lease", FenceToken: "fence", BoundAtUnix: 1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, _, err := UpdateCurrentTaskAggregateState(homeDir, tc.id, tc.state, "reason"); err != nil {
 			t.Fatal(err)
 		}

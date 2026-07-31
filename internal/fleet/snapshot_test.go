@@ -643,8 +643,8 @@ func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 	if ts.PaneAlive {
 		t.Errorf("PaneAlive = true, want false")
 	}
-	if ts.PaneAliveUnknown {
-		t.Errorf("PaneAliveUnknown = true, want false")
+	if !ts.PaneAliveUnknown {
+		t.Errorf("PaneAliveUnknown = false, want true for non-alive typed observation")
 	}
 }
 
