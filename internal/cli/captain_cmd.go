@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
@@ -13,14 +14,33 @@ import (
 func handoffCorrectionCommands(captainHome string, ambiguous interface {
 	CorrectionCommands(string) []string
 }) []string {
+	canonicalCaptain, err := filepath.Abs(captainHome)
+	if err != nil {
+		canonicalCaptain = filepath.Clean(captainHome)
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(canonicalCaptain); resolveErr == nil {
+		canonicalCaptain = resolved
+	}
 	var commands []string
 	for _, correction := range ambiguous.CorrectionCommands("munsu captain handoff " + captainHome) {
 		parts := strings.Split(correction, " --home ")
-		if len(parts) == 2 {
-			commands = append(commands, "munsu --home "+parts[1]+" captain handoff "+captainHome+" "+strings.TrimPrefix(parts[0], "munsu captain handoff "+captainHome+" "))
-		} else {
+		if len(parts) != 2 {
 			commands = append(commands, correction)
+			continue
 		}
+		sourceHome := strings.TrimSpace(parts[1])
+		canonicalSource := sourceHome
+		if abs, absErr := filepath.Abs(sourceHome); absErr == nil {
+			canonicalSource = abs
+			if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+				canonicalSource = resolved
+			}
+		}
+		if filepath.Clean(canonicalSource) == filepath.Clean(canonicalCaptain) {
+			continue
+		}
+		candidate := strings.TrimSpace(strings.TrimPrefix(parts[0], "munsu captain handoff "+captainHome+" "))
+		commands = append(commands, "munsu --home "+sourceHome+" captain handoff "+captainHome+" "+candidate)
 	}
 	return commands
 }

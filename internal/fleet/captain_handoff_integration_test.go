@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
@@ -43,6 +45,8 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 	}
 	runTasksAxi("add", "blocker-a", "Blocker", "--file", source)
 	runTasksAxi("add", "dependent-b", "Dependent", "--blocked-by", "blocker-a", "--file", source)
+	writeIntegrationHandoffAuthority(t, parent, "blocker-a", "Blocker")
+	writeIntegrationHandoffAuthority(t, parent, "dependent-b", "Dependent")
 	if err := os.WriteFile(destination, []byte("# Backlog\n\n## Queued\n\n## Done\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -74,5 +78,24 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 	}
 	if !bytes.Equal(destinationAfter, destinationBefore) {
 		t.Fatal("destination backlog changed after failed atomic handoff")
+	}
+}
+
+func writeIntegrationHandoffAuthority(t *testing.T, homeDir, taskID, description string) {
+	t.Helper()
+	if err := mhome.WriteTaskAggregate(homeDir, mhome.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: taskID, Generation: "1", Current: true, Owner: "general", Definition: description, State: "queued", Kind: "ship", Project: "munsu"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mhome.WriteMeta(homeDir, taskID, map[string]string{"description": description, "kind": "ship", "project": "munsu", "generation": "1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mhome.AppendStatus(homeDir, taskID, "queued: ready"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(Path(homeDir, taskID)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(homeDir, taskID), []byte("# "+description+"\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
 }

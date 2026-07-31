@@ -2,13 +2,308 @@ package fleet
 
 import (
 	"bytes"
+	"fmt"
+
+	"github.com/minhtri2710/munsu/internal/config"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
+
+func TestHandoffCrashAfterJournalResumesWithoutPrecommitMutation(t *testing.T) {
+	if os.Getenv("MUNSU_HANDOFF_CRASH_HELPER") == "1" {
+		captainLookPath = func(string) (string, error) { return os.Getenv("MUNSU_HANDOFF_TASKS_AXI"), nil }
+		boundary := os.Getenv("MUNSU_HANDOFF_CRASH_AFTER")
+		handoffCrashHook = func(got string) {
+			if got == boundary {
+				os.Exit(92)
+			}
+		}
+		keys := []string{"TASK-1"}
+		if os.Getenv("MUNSU_HANDOFF_CRASH_AFTER") != "journal" {
+			keys = []string{"TASK-1", "TASK-2"}
+		}
+		if err := Handoff(os.Getenv("MUNSU_HANDOFF_SOURCE"), os.Getenv("MUNSU_HANDOFF_DEST"), keys); err == nil {
+			os.Exit(0)
+		}
+		os.Exit(91)
+	}
+
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "captains", "test-sm")
+	if err := os.MkdirAll(sm, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(sm, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	writeHandoffTaskFixture(t, parent, "TASK-1")
+	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sm, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	srcBacklog := filepath.Join(parent, "data", "backlog.md")
+	dstBacklog := filepath.Join(sm, "data", "backlog.md")
+	if err := os.WriteFile(srcBacklog, []byte("# Backlog\n\n- [ ] TASK-1 - TASK-1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dstBacklog, []byte("# Backlog\\n\\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(parent, "tasks-axi")
+	if err := os.WriteFile(fake, []byte(`#!/bin/sh
+if [ "$1" = show ]; then echo 'state: queued'; exit 0; fi
+if [ "$1" = mv ]; then
+  to=""; file=""
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --to) to="$2"; shift 2 ;;
+      --file) file="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  cp "$file" "$file.tmp"
+  cp "$to" "$to.tmp"
+  printf '# Backlog\n\n' > "$file"
+  cat "$file.tmp" >> "$to"
+  rm -f "$file.tmp" "$to.tmp"
+  exit 0
+fi
+exit 2
+`), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := captainLookPath
+	oldBackend := isTasksAxiBackend
+	captainLookPath = func(string) (string, error) { return fake, nil }
+	isTasksAxiBackend = func(string) bool { return true }
+	t.Cleanup(func() { captainLookPath = oldPath; isTasksAxiBackend = oldBackend })
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestHandoffCrashAfterJournalResumesWithoutPrecommitMutation$", "--")
+	cmd.Env = append(os.Environ(),
+		"MUNSU_HANDOFF_CRASH_HELPER=1",
+		"MUNSU_HANDOFF_CRASH_AFTER=journal",
+		"MUNSU_HANDOFF_SOURCE="+parent,
+		"MUNSU_HANDOFF_DEST="+sm,
+		"PATH="+filepath.Dir(fake)+":"+os.Getenv("PATH"),
+		"MUNSU_HANDOFF_TASKS_AXI="+fake,
+	)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatal("expected helper subprocess to crash")
+	} else if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() != 92 {
+		t.Fatalf("helper exited at wrong boundary: %v\n%s", err, output)
+	}
+
+	journalRoot := filepath.Join(parent, "state", ".task-handoff")
+	entries, err := os.ReadDir(journalRoot)
+	if err != nil {
+		t.Fatalf("reading durable handoff journal: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("journal entries = %d, want one crash-resumable journal", len(entries))
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, "TASK-1"); err != nil || !ok {
+		t.Fatalf("source authority after precommit crash ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, "TASK-1"); err != nil || ok {
+		t.Fatalf("destination authority after precommit crash ok=%v err=%v", ok, err)
+	}
+
+	if err := Handoff(parent, sm, []string{"TASK-1"}); err != nil {
+		t.Fatalf("resume handoff: %v", err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, "TASK-1"); err != nil || ok {
+		t.Fatalf("source authority after resume ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, "TASK-1"); err != nil || !ok {
+		t.Fatalf("destination authority after resume ok=%v err=%v", ok, err)
+	}
+	if entries, err := os.ReadDir(journalRoot); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("journal entries after resume = %d, want none", len(entries))
+	}
+}
+
+func TestHandoffRecoveryRejectsCorruptStageAndRetainsJournal(t *testing.T) {
+	parent := t.TempDir()
+	captain := filepath.Join(parent, "captain")
+	if err := os.MkdirAll(filepath.Join(parent, "state", taskHandoffDirName, "tx", "stage"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(captain, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stagePath := filepath.Join(parent, "state", taskHandoffDirName, "tx", "stage", "post")
+	if err := os.WriteFile(stagePath, []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal := &taskHandoffJournal{
+		Version: 1, ID: "tx", Phase: "commit-decided", SourceHome: parent, DestinationHome: captain,
+		SourceBacklogPost: handoffFile{Target: "data/backlog.md", Stage: "stage/post", Exists: true, Mode: 0644, Size: 5, SHA256: digestHandoff([]byte("valid"))},
+		DestBacklogPost:   handoffFile{Target: "data/backlog.md", Stage: "stage/post", Exists: true, Mode: 0644, Size: 5, SHA256: digestHandoff([]byte("valid"))},
+	}
+	if err := writeHandoffJournal(filepath.Join(parent, "state", taskHandoffDirName, "tx"), journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverTaskHandoffs(parent); err == nil {
+		t.Fatal("expected corrupt stage recovery failure")
+	}
+	if _, err := os.Stat(filepath.Join(parent, "state", taskHandoffDirName, "tx", "journal.json")); err != nil {
+		t.Fatalf("corrupt journal was not retained: %v", err)
+	}
+}
+
+func TestHandoffRecoveryRejectsStaleSourceBeforeCommit(t *testing.T) {
+	parent := t.TempDir()
+	captain := filepath.Join(parent, "captain")
+	backlog := filepath.Join(parent, "data", "backlog.md")
+	if err := os.MkdirAll(filepath.Dir(backlog), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(captain, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlog, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pre, err := inventoryHandoffFile(parent, backlog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlog, []byte("changed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	journal := &taskHandoffJournal{Version: 1, ID: "stale", Phase: "prepared", SourceHome: parent, DestinationHome: captain, SourceBacklogPre: pre}
+	if err := os.MkdirAll(filepath.Join(parent, "state", taskHandoffDirName, "stale", "stage"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeHandoffJournal(filepath.Join(parent, "state", taskHandoffDirName, "stale"), journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := revalidateHandoff(journal); err == nil {
+		t.Fatal("expected stale source rejection")
+	}
+	if _, err := os.Stat(backlog); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHandoffLocksOppositeOrdersFailFastWithoutDeadlock(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	results := make(chan error, 2)
+	go func() {
+		unlock, err := acquireHandoffLocks(a, b)
+		if unlock != nil {
+			defer unlock()
+		}
+		results <- err
+	}()
+	go func() {
+		unlock, err := acquireHandoffLocks(b, a)
+		if unlock != nil {
+			defer unlock()
+		}
+		results <- err
+	}()
+	for range 2 {
+		select {
+		case <-results:
+		case <-time.After(2 * time.Second):
+			t.Fatal("opposite ordered handoff locks deadlocked")
+		}
+	}
+}
+
+func TestPublicDestinationWorkflowsRecoverCommittedHandoff(t *testing.T) {
+	parent := t.TempDir()
+	captain := filepath.Join(parent, "captains", "test-sm")
+	if err := os.MkdirAll(captain, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(captain, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Set(captain, "parent-home", parent); err != nil {
+		t.Fatal(err)
+	}
+	writeHandoffTaskFixture(t, parent, "TASK-1")
+	writeHandoffTaskFixture(t, parent, "TASK-2")
+	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(captain, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	sourceBacklog := filepath.Join(parent, "data", "backlog.md")
+	destinationBacklog := filepath.Join(captain, "data", "backlog.md")
+	if err := os.WriteFile(sourceBacklog, []byte("# Backlog\n\n- [ ] TASK-1 - TASK-1\n- [ ] TASK-2 - TASK-2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destinationBacklog, []byte("# Backlog\n\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fake := fakeMovingTasksAxi(t, parent)
+	oldPath := captainLookPath
+	oldBackend := isTasksAxiBackend
+	captainLookPath = func(string) (string, error) { return fake, nil }
+	isTasksAxiBackend = func(string) bool { return true }
+	t.Cleanup(func() { captainLookPath = oldPath; isTasksAxiBackend = oldBackend })
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestHandoffCrashAfterJournalResumesWithoutPrecommitMutation$", "--")
+	cmd.Env = append(os.Environ(), "MUNSU_HANDOFF_CRASH_HELPER=1", "MUNSU_HANDOFF_CRASH_AFTER=commit-decided", "MUNSU_HANDOFF_SOURCE="+parent, "MUNSU_HANDOFF_DEST="+captain, "MUNSU_HANDOFF_TASKS_AXI="+fake)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatal("expected committed handoff helper to crash")
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
+		t.Fatalf("helper exit = %v\n%s", err, output)
+	}
+
+	if err := Scaffold(ScaffoldOptions{HomeDir: captain, ID: "TASK-1", Repo: "munsu", Mode: "local-only"}); err != nil {
+		t.Fatalf("scaffold recovery: %v", err)
+	}
+	runner := NewRunner(Args{ID: "TASK-1", ProjectName: "munsu", HomeDir: captain, Mode: "local-only"})
+	runner.homeDir = captain
+	runner.effectiveMode = "local-only"
+	if err := runner.preflightBrief(); err != nil {
+		t.Fatalf("brief preflight recovery: %v", err)
+	}
+	if err := runner.checkBacklogAuthority(); err != nil {
+		t.Fatalf("backlog readiness recovery: %v", err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(captain, "TASK-1"); err != nil || !ok {
+		t.Fatalf("destination authority after public recovery ok=%v err=%v", ok, err)
+	}
+}
+
+func TestRecoverTaskHandoffsRejectsMalformedParentAndHeldLock(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, "config"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "config", "parent-home"), []byte("\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverTaskHandoffs(homeDir); err == nil {
+		t.Fatal("expected malformed parent-home rejection")
+	}
+	parent := t.TempDir()
+	captain := t.TempDir()
+	unlock, err := acquireHandoffLocks(parent, captain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err := RecoverTaskHandoffs(parent); err == nil {
+		t.Fatal("expected recovery to fail while source lock is held")
+	}
+}
 
 func TestHandoffFailureLeavesTaskAuthorityUnchanged(t *testing.T) {
 	parent := t.TempDir()
@@ -113,9 +408,24 @@ func TestHandoffProjectionPreflightFailureLeavesTaskAuthorityUnchanged(t *testin
 	}
 }
 
-func TestHandoffFailpointsRestoreBacklogsAndAllTaskAuthority(t *testing.T) {
-	for _, failpoint := range []string{"after-backlog", "after-first-projection", "between-tasks"} {
-		t.Run(failpoint, func(t *testing.T) {
+func TestHandoffCrashBoundariesResumeToSingleDestinationAuthority(t *testing.T) {
+	if os.Getenv("MUNSU_HANDOFF_CRASH_HELPER") == "1" {
+		captainLookPath = func(string) (string, error) { return os.Getenv("MUNSU_HANDOFF_TASKS_AXI"), nil }
+		boundary := os.Getenv("MUNSU_HANDOFF_CRASH_AFTER")
+		handoffCrashHook = func(got string) {
+			if got == boundary {
+				os.Exit(92)
+			}
+		}
+		if err := Handoff(os.Getenv("MUNSU_HANDOFF_SOURCE"), os.Getenv("MUNSU_HANDOFF_DEST"), []string{"TASK-1", "TASK-2"}); err == nil {
+			os.Exit(0)
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(91)
+	}
+	for _, boundary := range []string{"staging", "prepared", "commit-decided", "source-authority", "artifacts", "between-authority", "completed"} {
+		t.Run(boundary, func(t *testing.T) {
 			parent := t.TempDir()
 			sm := filepath.Join(parent, "captains", "test-sm")
 			if err := os.MkdirAll(sm, 0755); err != nil {
@@ -145,39 +455,49 @@ func TestHandoffFailpointsRestoreBacklogsAndAllTaskAuthority(t *testing.T) {
 
 			origPath := captainLookPath
 			origBackend := isTasksAxiBackend
-			origFailpoint := handoffFailpoint
 			defer func() {
 				captainLookPath = origPath
 				isTasksAxiBackend = origBackend
-				handoffFailpoint = origFailpoint
 			}()
 			isTasksAxiBackend = func(string) bool { return true }
-			captainLookPath = func(name string) (string, error) { return fakeMovingTasksAxi(t, parent), nil }
-			handoffFailpoint = failpoint
-
-			err := Handoff(parent, sm, []string{"TASK-1", "TASK-2"})
-			if err == nil {
-				t.Fatal("expected injected handoff failure")
+			fake := fakeMovingTasksAxi(t, parent)
+			captainLookPath = func(name string) (string, error) { return fake, nil }
+			cmd := exec.Command(os.Args[0], "-test.run", "^TestHandoffCrashBoundariesResumeToSingleDestinationAuthority$", "--")
+			cmd.Env = append(os.Environ(), "MUNSU_HANDOFF_CRASH_HELPER=1", "MUNSU_HANDOFF_CRASH_AFTER="+boundary, "MUNSU_HANDOFF_SOURCE="+parent, "MUNSU_HANDOFF_DEST="+sm, "MUNSU_HANDOFF_TASKS_AXI="+fake)
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatal("expected crash helper to exit abruptly")
+			} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
+				t.Fatalf("boundary %s exited unexpectedly: %v\\n%s", boundary, err, output)
 			}
-			if got := mustReadFleetTestFile(t, srcBacklog); !bytes.Equal(got, beforeSrcBacklog) {
-				t.Fatalf("source backlog not restored for %s\n%s", failpoint, got)
+			if boundary == "artifacts" {
+				for _, taskID := range []string{"TASK-1", "TASK-2"} {
+					if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, taskID); err != nil || ok {
+						t.Fatalf("destination authority published before artifact completion for %s: ok=%v err=%v", taskID, ok, err)
+					}
+				}
 			}
-			if got := mustReadFleetTestFile(t, dstBacklog); !bytes.Equal(got, beforeDstBacklog) {
-				t.Fatalf("destination backlog not restored for %s\n%s", failpoint, got)
+			if boundary == "staging" || boundary == "prepared" {
+				if got := mustReadFleetTestFile(t, srcBacklog); !bytes.Equal(got, beforeSrcBacklog) {
+					t.Fatalf("precommit source backlog changed at %s", boundary)
+				}
+				if got := mustReadFleetTestFile(t, dstBacklog); !bytes.Equal(got, beforeDstBacklog) {
+					t.Fatalf("precommit destination backlog changed at %s", boundary)
+				}
+				if err := Handoff(parent, sm, []string{"TASK-1", "TASK-2"}); err != nil {
+					t.Fatalf("resume at %s: %v", boundary, err)
+				}
+			} else if err := RecoverTaskHandoffs(parent); err != nil {
+				t.Fatalf("recover at %s: %v", boundary, err)
+			}
+			if got := mustReadFleetTestFile(t, dstBacklog); len(got) == 0 || bytes.Equal(got, beforeDstBacklog) {
+				t.Fatalf("destination backlog did not converge at %s", boundary)
 			}
 			for _, taskID := range []string{"TASK-1", "TASK-2"} {
-				sourceAgg, ok, err := mhome.ReadCurrentTaskAggregate(parent, taskID)
-				if err != nil || !ok || sourceAgg.Owner != "general" || sourceAgg.Generation != "7" {
-					t.Fatalf("source aggregate %s = %+v ok=%v err=%v", taskID, sourceAgg, ok, err)
+				if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, taskID); err != nil || ok {
+					t.Fatalf("source aggregate %s remains at %s: ok=%v err=%v", taskID, boundary, ok, err)
 				}
-				if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, taskID); err != nil || ok {
-					t.Fatalf("destination aggregate %s ok=%v err=%v, want none", taskID, ok, err)
-				}
-				if _, err := mhome.ReadMeta(parent, taskID); err != nil {
-					t.Fatalf("source meta %s missing after rollback: %v", taskID, err)
-				}
-				if _, err := mhome.ReadMeta(sm, taskID); err == nil {
-					t.Fatalf("destination meta %s visible after rollback", taskID)
+				if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, taskID); err != nil || !ok {
+					t.Fatalf("destination aggregate %s missing at %s: ok=%v err=%v", taskID, boundary, ok, err)
 				}
 			}
 		})

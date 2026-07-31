@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -114,6 +115,9 @@ func newTaskCmd() *cobra.Command {
 		Short: "Show task details",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := fleet.RecoverTaskHandoffs(ctx.Home); err != nil {
+				return err
+			}
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
 

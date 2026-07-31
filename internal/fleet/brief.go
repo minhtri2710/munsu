@@ -20,6 +20,9 @@ type ScaffoldOptions struct {
 
 // Scaffold writes a brief.md at $MUNSU_HOME/data/<id>/brief.md.
 func Scaffold(opts ScaffoldOptions) error {
+	if err := RecoverTaskHandoffs(opts.HomeDir); err != nil {
+		return err
+	}
 	// Ensure data/<id> directory exists
 	dir := filepath.Join(opts.HomeDir, "data", opts.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {

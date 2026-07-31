@@ -380,6 +380,9 @@ func (r *Runner) validateHarnessFlag() error {
 
 // Phase 4: preflightBrief checks that a brief exists before spawning.
 func (r *Runner) preflightBrief() error {
+	if err := RecoverTaskHandoffs(r.homeDir); err != nil {
+		return err
+	}
 	if !Exists(r.homeDir, r.args.ID) {
 		return fmt.Errorf("no brief found for task %s: scaffold it with 'munsu brief %s %s' before spawning",
 			r.args.ID, r.args.ID, r.args.ProjectName)
@@ -390,6 +393,9 @@ func (r *Runner) preflightBrief() error {
 // Phase 5: checkBacklogAuthority verifies the task is uniquely queued+ready in the backlog.
 // Fail closed unless the task is uniquely present and ready, or --reopen is used.
 func (r *Runner) checkBacklogAuthority() error {
+	if err := RecoverTaskHandoffs(r.homeDir); err != nil {
+		return err
+	}
 	item, found, err := GetItem(r.homeDir, r.args.ID)
 	if err != nil {
 		return fmt.Errorf("lifecycle guard: reading backlog: %w", err)
