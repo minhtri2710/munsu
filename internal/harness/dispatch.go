@@ -8,47 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
-// DispatchCandidate is one concrete harness/model/effort choice inside a rule's use list.
-type DispatchCandidate struct {
-	Harness string `json:"harness"`
-	Model   string `json:"model,omitempty"`
-	Effort  string `json:"effort,omitempty"`
-}
+type DispatchCandidate = config.DispatchCandidate
 
-// DispatchProfile defines a named dispatch profile with natural-language match
-// rules, a target harness, optional model/effort, and optional selection strategy.
-type DispatchProfile struct {
-	// Name is the profile identifier.
-	Name string `json:"name,omitempty"`
-	// Match is a list of natural-language patterns. The first profile whose
-	// match list contains words from the task description wins.
-	// A single "*" wildcard matches everything.
-	// Legacy "when" prose is stored as a single match entry (substring).
-	Match []string `json:"match,omitempty"`
-	// When is free-form prose retained for display; also used as match text when Match is empty.
-	When string `json:"when,omitempty"`
-	// Harness is the target harness for this profile (claude, codex, etc.).
-	Harness string `json:"harness,omitempty"`
-	// Model is an optional model id to pass via the harness model flag.
-	Model string `json:"model,omitempty"`
-	// Effort is an optional effort/thinking level for the harness effort flag.
-	Effort string `json:"effort,omitempty"`
-	// MaxConcurrent limits concurrent assignments (0 = unlimited).
-	MaxConcurrent int `json:"maxConcurrent,omitempty"`
-	// SelectStrategy identifies the profile selection method.
-	// Supported values: "" (default/first), "quota-balanced".
-	// When "quota-balanced", SelectProfile uses quota-axi data to pick
-	// the least-constrained vendor. Falls back to first profile when
-	// quota-axi is unavailable.
-	SelectStrategy string `json:"select,omitempty"`
-	// Why is optional human/agent rationale (ignored by resolve).
-	Why string `json:"why,omitempty"`
-	// Use is an optional multi-candidate list. When set, the first candidate
-	// (or quota-balanced pick) fills Harness/Model/Effort.
-	Use []DispatchCandidate `json:"use,omitempty"`
-}
+type DispatchProfile = config.DispatchProfile
 
 // DispatchConfig is the top-level structure for soldier-dispatch.json.
 // Supports defaultHarness/profiles and default/rules shapes.
@@ -133,11 +99,11 @@ func (cfg *DispatchConfig) normalize() {
 		cfg.Profiles = append([]DispatchProfile(nil), cfg.Rules...)
 	}
 	for i := range cfg.Profiles {
-		cfg.Profiles[i].normalize()
+		normalizeDispatchProfile(&cfg.Profiles[i])
 	}
 }
 
-func (p *DispatchProfile) normalize() {
+func normalizeDispatchProfile(p *DispatchProfile) {
 	if len(p.Match) == 0 && p.When != "" {
 		p.Match = []string{p.When}
 	}
