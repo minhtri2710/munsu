@@ -37,6 +37,15 @@ Use --role for role-specific integration matrix:
 
 			// Role-specific doctor scan
 			if role != "" {
+				cwd, err := os.Getwd()
+				if err != nil {
+					cwd = ctx.Home
+				}
+				runtimeIdentity := bootstrap.CollectRuntimeIdentity(ctx.Home, cwd, Version)
+				fmt.Println("Runtime Identity:")
+				for _, line := range bootstrap.RuntimeIdentityLines(&runtimeIdentity) {
+					fmt.Println("  " + line)
+				}
 				r, err := bootstrap.Doctor(ctx.Home, bootstrap.Role(role))
 				if err != nil {
 					return fmt.Errorf("doctor: %w", err)
@@ -57,6 +66,14 @@ Use --role for role-specific integration matrix:
 			}
 
 			exitCode := 0
+
+			if result.RuntimeIdentity != nil {
+				result.RuntimeIdentity.Build.CLIVersion = Version
+				fmt.Println("Runtime Identity:")
+				for _, line := range bootstrap.RuntimeIdentityLines(result.RuntimeIdentity) {
+					fmt.Println("  " + line)
+				}
+			}
 
 			for _, d := range result.Tools {
 				fmt.Println(d.String())

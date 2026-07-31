@@ -323,11 +323,87 @@ type TruncatedResult struct {
 
 // SessionStart is the structured session-start digest.
 type SessionStart struct {
-	Lock        string `json:"lock"`
-	Watcher     string `json:"watcher"`
-	BootstrapOK bool   `json:"bootstrap_ok"`
-	FleetSyncOK bool   `json:"fleet_sync_ok"`
-	Message     string `json:"message"`
+	Lock            string                   `json:"lock"`
+	Watcher         string                   `json:"watcher"`
+	BootstrapOK     bool                     `json:"bootstrap_ok"`
+	FleetSyncOK     bool                     `json:"fleet_sync_ok"`
+	RuntimeIdentity *RuntimeIdentityContract `json:"runtime_identity,omitempty"`
+	Message         string                   `json:"message"`
+}
+
+// RuntimeIdentityContract is the complete runtime identity and skew payload.
+type RuntimeIdentityContract struct {
+	ProtocolVersion   int                          `json:"protocol_version"`
+	RunningExecutable ExecutableIdentityContract   `json:"running_executable"`
+	PATHExecutable    ExecutableIdentityContract   `json:"path_executable"`
+	Build             BuildProvenanceContract      `json:"build"`
+	SourceCheckouts   []SourceCheckoutContract     `json:"source_checkouts,omitempty"`
+	Watcher           *WatcherRuntimeContract      `json:"watcher,omitempty"`
+	Captains          []CaptainRuntimeContract     `json:"captains,omitempty"`
+	Integrations      []IntegrationRuntimeContract `json:"integrations,omitempty"`
+	Skew              []RuntimeSkewContract        `json:"skew,omitempty"`
+}
+
+type ExecutableIdentityContract struct {
+	Path   string `json:"path,omitempty"`
+	Digest string `json:"digest,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type BuildProvenanceContract struct {
+	CLIVersion    string `json:"cli_version,omitempty"`
+	ModulePath    string `json:"module_path,omitempty"`
+	ModuleVersion string `json:"module_version,omitempty"`
+	VCSRevision   string `json:"vcs_revision,omitempty"`
+	VCSTime       string `json:"vcs_time,omitempty"`
+	VCSModified   bool   `json:"vcs_modified"`
+	Available     bool   `json:"available"`
+}
+
+type SourceCheckoutContract struct {
+	Path     string `json:"path"`
+	Revision string `json:"revision,omitempty"`
+	Dirty    bool   `json:"dirty"`
+	Error    string `json:"error,omitempty"`
+}
+
+type WatcherRuntimeContract struct {
+	Component        string `json:"component"`
+	Home             string `json:"home,omitempty"`
+	Executable       string `json:"executable,omitempty"`
+	ExecutableDigest string `json:"executable_digest,omitempty"`
+	BuildVersion     string `json:"build_version,omitempty"`
+	ProtocolVersion  int    `json:"protocol_version,omitempty"`
+	CommitSHA        string `json:"commit_sha,omitempty"`
+	Running          bool   `json:"running"`
+}
+
+type CaptainRuntimeContract struct {
+	ID             string                  `json:"id"`
+	Home           string                  `json:"home,omitempty"`
+	SourceCheckout *SourceCheckoutContract `json:"source_checkout,omitempty"`
+	Watcher        *WatcherRuntimeContract `json:"watcher,omitempty"`
+}
+
+type IntegrationRuntimeContract struct {
+	Harness        string `json:"harness"`
+	Scope          string `json:"scope"`
+	State          string `json:"state"`
+	Version        string `json:"version,omitempty"`
+	ManifestPath   string `json:"manifest_path,omitempty"`
+	ManifestSchema string `json:"manifest_schema,omitempty"`
+	ContentDigest  string `json:"content_digest,omitempty"`
+	Drifted        bool   `json:"drifted"`
+	Message        string `json:"message,omitempty"`
+	Remediation    string `json:"remediation,omitempty"`
+}
+
+// RuntimeSkewContract is one typed skew finding in contract output.
+type RuntimeSkewContract struct {
+	Classification string `json:"classification"`
+	Component      string `json:"component"`
+	Detail         string `json:"detail,omitempty"`
+	Remediation    string `json:"remediation"`
 }
 
 // TaskEntry is one row in a task list.

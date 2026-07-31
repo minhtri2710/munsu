@@ -29,12 +29,24 @@ func Encode(value any, output string) (string, error) {
 }
 
 func encodeValue(builder *strings.Builder, value reflect.Value, depth int, key string) error {
-	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+	for value.Kind() == reflect.Interface {
 		if value.IsNil() {
 			writeField(builder, depth, key, "null")
 			return nil
 		}
 		value = value.Elem()
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			writeField(builder, depth, key, "null")
+			return nil
+		}
+		elem := value.Elem()
+		if elem.Kind() == reflect.Struct && key != "" {
+			writeField(builder, depth, key, "")
+			return encodeValue(builder, elem, depth+1, "")
+		}
+		return encodeValue(builder, elem, depth, key)
 	}
 
 	switch value.Kind() {

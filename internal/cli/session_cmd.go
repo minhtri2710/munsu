@@ -94,6 +94,107 @@ func newBriefCmd() *cobra.Command {
 	return cmd
 }
 
+func sessionRuntimeIdentityContract(id *bootstrap.RuntimeIdentity) *RuntimeIdentityContract {
+	if id == nil {
+		return nil
+	}
+	out := &RuntimeIdentityContract{
+		ProtocolVersion: id.ProtocolVersion,
+		RunningExecutable: ExecutableIdentityContract{
+			Path:   id.RunningExecutable.Path,
+			Digest: id.RunningExecutable.Digest,
+			Error:  id.RunningExecutable.Error,
+		},
+		PATHExecutable: ExecutableIdentityContract{
+			Path:   id.PATHExecutable.Path,
+			Digest: id.PATHExecutable.Digest,
+			Error:  id.PATHExecutable.Error,
+		},
+		Build: BuildProvenanceContract{
+			CLIVersion:    id.Build.CLIVersion,
+			ModulePath:    id.Build.ModulePath,
+			ModuleVersion: id.Build.ModuleVersion,
+			VCSRevision:   id.Build.VCSRevision,
+			VCSTime:       id.Build.VCSTime,
+			VCSModified:   id.Build.VCSModified,
+			Available:     id.Build.Available,
+		},
+		Skew: sessionSkewContract(id),
+	}
+	for _, checkout := range id.SourceCheckouts {
+		out.SourceCheckouts = append(out.SourceCheckouts, sourceCheckoutContract(checkout))
+	}
+	if id.Watcher != nil {
+		watcher := watcherRuntimeContract(*id.Watcher)
+		out.Watcher = &watcher
+	}
+	for _, captain := range id.Captains {
+		capContract := CaptainRuntimeContract{ID: captain.ID, Home: captain.Home}
+		if captain.SourceCheckout != nil {
+			checkout := sourceCheckoutContract(*captain.SourceCheckout)
+			capContract.SourceCheckout = &checkout
+		}
+		if captain.Watcher != nil {
+			watcher := watcherRuntimeContract(*captain.Watcher)
+			capContract.Watcher = &watcher
+		}
+		out.Captains = append(out.Captains, capContract)
+	}
+	for _, integration := range id.Integrations {
+		out.Integrations = append(out.Integrations, IntegrationRuntimeContract{
+			Harness:        integration.Harness,
+			Scope:          string(integration.Scope),
+			State:          integration.State,
+			Version:        integration.Version,
+			ManifestPath:   integration.ManifestPath,
+			ManifestSchema: integration.ManifestSchema,
+			ContentDigest:  integration.ContentDigest,
+			Drifted:        integration.Drifted,
+			Message:        integration.Message,
+			Remediation:    integration.Remediation,
+		})
+	}
+	return out
+}
+
+func sourceCheckoutContract(checkout bootstrap.SourceCheckoutIdentity) SourceCheckoutContract {
+	return SourceCheckoutContract{
+		Path:     checkout.Path,
+		Revision: checkout.Revision,
+		Dirty:    checkout.Dirty,
+		Error:    checkout.Error,
+	}
+}
+
+func watcherRuntimeContract(watcher bootstrap.WatcherRuntimeIdentity) WatcherRuntimeContract {
+	return WatcherRuntimeContract{
+		Component:        watcher.Component,
+		Home:             watcher.Home,
+		Executable:       watcher.Executable,
+		ExecutableDigest: watcher.ExecutableDigest,
+		BuildVersion:     watcher.BuildVersion,
+		ProtocolVersion:  watcher.ProtocolVersion,
+		CommitSHA:        watcher.CommitSHA,
+		Running:          watcher.Running,
+	}
+}
+
+func sessionSkewContract(id *bootstrap.RuntimeIdentity) []RuntimeSkewContract {
+	if id == nil || len(id.Skew) == 0 {
+		return nil
+	}
+	out := make([]RuntimeSkewContract, 0, len(id.Skew))
+	for _, finding := range id.Skew {
+		out = append(out, RuntimeSkewContract{
+			Classification: string(finding.Classification),
+			Component:      finding.Component,
+			Detail:         finding.Detail,
+			Remediation:    finding.Remediation,
+		})
+	}
+	return out
+}
+
 func newSessionStartCmd() *cobra.Command {
 	var recover bool
 	cmd := &cobra.Command{
@@ -142,11 +243,12 @@ func newSessionStartCmd() *cobra.Command {
 				Kind:          "session.start",
 				Status:        "success",
 				Data: SessionStart{
-					Lock:        lockState,
-					Watcher:     watcherState,
-					BootstrapOK: result.Bootstrap != nil,
-					FleetSyncOK: result.FleetSync != nil,
-					Message:     "Session started. Lock: " + lockState + ". Watcher: " + watcherState + ".",
+					Lock:            lockState,
+					Watcher:         watcherState,
+					BootstrapOK:     result.Bootstrap != nil,
+					FleetSyncOK:     result.FleetSync != nil,
+					RuntimeIdentity: sessionRuntimeIdentityContract(result.RuntimeIdentity),
+					Message:         "Session started. Lock: " + lockState + ". Watcher: " + watcherState + ".",
 				},
 			})
 		}),

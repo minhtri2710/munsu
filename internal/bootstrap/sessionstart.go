@@ -15,6 +15,7 @@ import (
 
 type SessionStartResult struct {
 	LockAcquired    bool
+	RuntimeIdentity *RuntimeIdentity
 	Bootstrap       *Result
 	FleetSync       *fleet.SyncResult
 	Watcher         WatchEnsureResult
@@ -182,6 +183,14 @@ func RunSessionStart(w io.Writer, home string) (*SessionStartResult, error) {
 	return RunSessionStartWithWatcher(w, home, nil, nil)
 }
 
+func currentWorkingDirOrHome(home string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return home
+	}
+	return cwd
+}
+
 type ScopeCheckResult struct {
 	IsPrimary    bool
 	IsGateAgent  bool
@@ -242,6 +251,14 @@ func printIntegrationMatrix(w io.Writer, home string) {
 
 func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc, captainLiveness CaptainLivenessFunc) (*SessionStartResult, error) {
 	res := &SessionStartResult{}
+	runtimeIdentity := CollectRuntimeIdentity(home, currentWorkingDirOrHome(home), "")
+	res.RuntimeIdentity = &runtimeIdentity
+	fmt.Fprintln(w, "--- Runtime Identity ---")
+	for _, line := range RuntimeIdentityLines(res.RuntimeIdentity) {
+		fmt.Fprintln(w, "  "+line)
+	}
+	fmt.Fprintln(w, "")
+
 	if err := checkSessionScope(home); err != nil {
 		return res, fmt.Errorf("session-start refused: %w", err)
 	}
@@ -256,7 +273,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "WARNING: Another session holds the lock. Operating read-only.")
 	}
 
-	bootRes, err := Run(home, acquired, nil)
+	bootRes, err := runWithRuntimeIdentity(home, acquired, nil, res.RuntimeIdentity)
 	if err != nil {
 		return res, fmt.Errorf("bootstrap: %w", err)
 	}

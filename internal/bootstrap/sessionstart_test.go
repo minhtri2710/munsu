@@ -389,6 +389,95 @@ func TestEnsureWatcherForSession_HealthyWatcherIsReported(t *testing.T) {
 	}
 }
 
+func TestRunSessionStartReportsRuntimeIdentityBeforeScopeRefusal(t *testing.T) {
+	home := t.TempDir()
+	running := writeExecutable(t, home, "bin/munsu", "current")
+	shadow := writeExecutable(t, home, "shadow/munsu", "shadow")
+	saved := defaultRuntimeIdentityProbe
+	defaultRuntimeIdentityProbe = func() runtimeIdentityProbe {
+		p := saved()
+		p.executable = func() (string, error) { return running, nil }
+		p.lookPath = func(string) (string, error) { return shadow, nil }
+		p.buildInfo = cleanBuildInfo
+		p.integrationStatus = func(string, string, string, Scope) (*IntegrationResult, error) {
+			return &IntegrationResult{Harness: "pi", Scope: ScopeProject, State: "absent"}, nil
+		}
+		return p
+	}
+	defer func() { defaultRuntimeIdentityProbe = saved }()
+	t.Setenv("NO_MISTAKES_GATE", "1")
+
+	var buf bytes.Buffer
+	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {
+		t.Fatal("watcher ensure must not run after scope refusal")
+		return WatchEnsureResult{}
+	}, nil)
+	if err == nil {
+		t.Fatal("expected scope refusal")
+	}
+	if res.RuntimeIdentity == nil || findSkew(res.RuntimeIdentity.Skew, SkewPathShadowing) == nil {
+		t.Fatalf("refused session missing typed path_shadowing skew: %+v", res.RuntimeIdentity)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "--- Runtime Identity ---") || !strings.Contains(out, "skew: path_shadowing") {
+		t.Fatalf("refused session did not print runtime identity before returning: %s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "state", ".lock")); !os.IsNotExist(statErr) {
+		t.Fatalf("session lock should not be acquired before diagnostics/scope refusal: %v", statErr)
+	}
+}
+
+func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=scout\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	running := writeExecutable(t, home, "bin/munsu", "current")
+	shadow := writeExecutable(t, home, "shadow/munsu", "shadow")
+
+	saved := defaultRuntimeIdentityProbe
+	defaultRuntimeIdentityProbe = func() runtimeIdentityProbe {
+		p := saved()
+		p.executable = func() (string, error) { return running, nil }
+		p.lookPath = func(string) (string, error) { return shadow, nil }
+		p.buildInfo = cleanBuildInfo
+		p.integrationStatus = func(string, string, string, Scope) (*IntegrationResult, error) {
+			return &IntegrationResult{Harness: "pi", Scope: ScopeProject, State: "absent"}, nil
+		}
+		return p
+	}
+	defer func() { defaultRuntimeIdentityProbe = saved }()
+
+	var buf bytes.Buffer
+	ensured := false
+	res, err := RunSessionStartWithWatcher(&buf, home, func(string) WatchEnsureResult {
+		ensured = true
+		if !strings.Contains(buf.String(), "skew: path_shadowing") {
+			t.Fatalf("watcher ensure ran before runtime identity skew was printed; output so far:\n%s", buf.String())
+		}
+		return WatchEnsureResult{State: "healthy"}
+	}, nil)
+	if err != nil {
+		t.Fatalf("RunSessionStartWithWatcher: %v", err)
+	}
+	if !ensured {
+		t.Fatal("expected watcher ensure to run for in-flight scout")
+	}
+	if res.RuntimeIdentity == nil || findSkew(res.RuntimeIdentity.Skew, SkewPathShadowing) == nil {
+		t.Fatalf("session result missing typed path_shadowing skew: %+v", res.RuntimeIdentity)
+	}
+	out := buf.String()
+	identityIdx := strings.Index(out, "--- Runtime Identity ---")
+	watcherIdx := strings.Index(out, "--- Watcher Ensure ---")
+	if identityIdx < 0 || watcherIdx < 0 || identityIdx > watcherIdx {
+		t.Fatalf("runtime identity must print before watcher ensure; output:\n%s", out)
+	}
+}
+
 // --- Captain Liveness section tests ---
 
 func TestPrintCaptainLiveness_NilSeamIsNoop(t *testing.T) {

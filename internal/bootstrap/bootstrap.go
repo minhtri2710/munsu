@@ -60,19 +60,30 @@ type GCDiagnostic struct {
 
 // Result holds the full bootstrap diagnostic output.
 type Result struct {
-	LockAcquired bool
-	Tools        []ToolDiagnostic
-	Auth         *AuthDiagnostic
-	Configs      []ConfigDiagnostic
-	GC           *GCDiagnostic
-	MissingTools []string
+	LockAcquired    bool
+	RuntimeIdentity *RuntimeIdentity
+	Tools           []ToolDiagnostic
+	Auth            *AuthDiagnostic
+	Configs         []ConfigDiagnostic
+	GC              *GCDiagnostic
+	MissingTools    []string
 }
 
 // Run executes bootstrap diagnostics for the given munsu home.
 // If lockHeld is true, mutating sweeps (fleet-sync) may run.
 func Run(home string, lockHeld bool, installTools []string) (*Result, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = home
+	}
+	runtimeIdentity := CollectRuntimeIdentity(home, cwd, "")
+	return runWithRuntimeIdentity(home, lockHeld, installTools, &runtimeIdentity)
+}
+
+func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, runtimeIdentity *RuntimeIdentity) (*Result, error) {
 	res := &Result{
-		LockAcquired: lockHeld,
+		LockAcquired:    lockHeld,
+		RuntimeIdentity: runtimeIdentity,
 	}
 
 	// 1. Check required tools (uses shared ToolSpec registry)
