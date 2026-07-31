@@ -174,6 +174,13 @@ func PrepareDelivery(homeDir, taskID string) (*PrepareDeliveryResult, error) {
 			CheckDetail:      "PR is merged; checks confirmed at merge time",
 		}
 
+		// Step 4b: Verify issue links before delivery
+		if links := domain.IssueLinksFromMeta(meta); len(links) > 0 {
+			if err := PrepareDeliveryIssueLinks(links); err != nil {
+				return nil, fmt.Errorf("prepare delivery: issue link verification: %w", err)
+			}
+		}
+
 		// Step 5: CAS transition to delivered
 		checks := identityChecks(stored)
 		checks[MetaDeliveryState] = meta[MetaDeliveryState]
@@ -216,6 +223,13 @@ func PrepareDelivery(homeDir, taskID string) (*PrepareDeliveryResult, error) {
 			StoredHeadSHA:    stored.HeadSHA,
 			ProviderHeadSHA:  snap.HeadSHA,
 			CheckDetail:      detail,
+		}
+
+		// Step 4b: Verify issue links before delivery
+		if links := domain.IssueLinksFromMeta(meta); len(links) > 0 {
+			if err := PrepareDeliveryIssueLinks(links); err != nil {
+				return nil, fmt.Errorf("prepare delivery: issue link verification: %w", err)
+			}
 		}
 
 		// Step 5: CAS transition to delivered

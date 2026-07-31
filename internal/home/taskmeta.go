@@ -251,6 +251,7 @@ var ValidMetaFields = []string{
 	"delivery_state", "pr_identity_revision",
 	"amend_expected_head", "amend_started_at",
 	"amendment_history",
+	"issue_link_reconciliation", "issue_link_repair_history",
 }
 
 // MetaEntry represents a single task entry from state meta files.

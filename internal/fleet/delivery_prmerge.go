@@ -120,6 +120,16 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 				}
 			}
 		}
+
+		// Reconcile issue links after successful merge
+		if links := domain.IssueLinksFromMeta(meta); len(links) > 0 {
+			linkResults, linkErr := ReconcileAndStoreIssueLinks(homeDir, id, links, nil)
+			if linkErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: issue link reconciliation failed: %v\n", linkErr)
+			} else {
+				fmt.Print(RenderIssueLinkReconciliationResults(linkResults))
+			}
+		}
 	}
 
 	// Return non-zero exit code for partial/unknown outcomes

@@ -270,6 +270,10 @@ func (m *mockGitHubClient) CaptureIdentity(prURL string) (*domain.DeliveryIdenti
 	return nil, nil
 }
 
+func (m *mockGitHubClient) ViewIssueState(owner, repo string, number int) (string, error) {
+	return "OPEN", nil
+}
+
 // TestPRMerge_WiresReconcileMergeDelivery verifies that ReconcileMergeDelivery
 // is called after a successful merge mutation, with the correct parameters.
 func TestPRMerge_WiresReconcileMergeDelivery(t *testing.T) {

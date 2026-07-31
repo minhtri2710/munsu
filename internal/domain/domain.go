@@ -267,4 +267,184 @@ const (
 
 const MetaDeliveryState = "delivery_state"
 
+// --- IssueLink types ---
+
+// IssueLinkRelation specifies the semantic relationship between a task
+// and the linked issue. Implementation issues are automatically closed on
+// merge; related and parent links are never automatically closed.
+type IssueLinkRelation string
+
+const (
+	IssueLinkImplementation IssueLinkRelation = "implementation"
+	IssueLinkRelated        IssueLinkRelation = "related"
+	IssueLinkParent         IssueLinkRelation = "parent"
+)
+
+// IssueLinkClosurePolicy specifies how the linked issue should be closed
+// when the task's PR is merged.
+type IssueLinkClosurePolicy string
+
+const (
+	ClosurePolicyAuto   IssueLinkClosurePolicy = "auto-close"
+	ClosurePolicyManual IssueLinkClosurePolicy = "manual-close"
+	ClosurePolicyNever  IssueLinkClosurePolicy = "never-close"
+)
+
+// IssueLinkReconciliationStatus is the outcome of reconciling a single
+// issue link against the provider after a merge.
+type IssueLinkReconciliationStatus string
+
+const (
+	IssueLinkClosed       IssueLinkReconciliationStatus = "closed"
+	IssueLinkPending      IssueLinkReconciliationStatus = "pending"
+	IssueLinkOpen         IssueLinkReconciliationStatus = "open"
+	IssueLinkUnavailable  IssueLinkReconciliationStatus = "unavailable"
+	IssueLinkManualPolicy IssueLinkReconciliationStatus = "manual-policy"
+)
+
+// IssueLink is a structured reference to a GitHub/GitLab issue that a task
+// is connected to. It carries provider identity, the issue URL/number, the
+// semantic relation, and the closure policy.
+type IssueLink struct {
+	Provider      string                  `json:"provider"`
+	Owner         string                  `json:"owner"`
+	Repo          string                  `json:"repo"`
+	Number        int                     `json:"number"`
+	URL           string                  `json:"url"`
+	Relation      IssueLinkRelation       `json:"relation"`
+	ClosurePolicy IssueLinkClosurePolicy  `json:"closurePolicy"`
+	ClosingRef    string                  `json:"closingRef,omitempty"`
+}
+
+// IssueLinkReconciliationResult captures the outcome of reconciling one
+// issue link against the provider after a merge.
+type IssueLinkReconciliationResult struct {
+	Link   IssueLink                     `json:"link"`
+	Status IssueLinkReconciliationStatus `json:"status"`
+	Detail string                        `json:"detail,omitempty"`
+}
+
+// ValidateIssueLink returns an error if the link is missing required fields.
+func ValidateIssueLink(link *IssueLink) error {
+	switch {
+	case link == nil:
+		return fmt.Errorf("issue link is nil")
+	case link.URL == "":
+		return fmt.Errorf("issue link: URL is required")
+	case link.Number <= 0:
+		return fmt.Errorf("issue link: number must be positive, got %d", link.Number)
+	case link.Relation == "":
+		return fmt.Errorf("issue link: relation is required")
+	case link.ClosurePolicy == "":
+		return fmt.Errorf("issue link: closure policy is required")
+	}
+	switch link.Relation {
+	case IssueLinkImplementation, IssueLinkRelated, IssueLinkParent:
+	default:
+		return fmt.Errorf("issue link: invalid relation %q", link.Relation)
+	}
+	switch link.ClosurePolicy {
+	case ClosurePolicyAuto, ClosurePolicyManual, ClosurePolicyNever:
+	default:
+		return fmt.Errorf("issue link: invalid closure policy %q", link.ClosurePolicy)
+	}
+	return nil
+}
+
+// DefaultClosurePolicy returns the default closure policy for a given relation.
+// Implementation issues default to auto-close; related and parent to never-close.
+func DefaultClosurePolicy(relation IssueLinkRelation) IssueLinkClosurePolicy {
+	switch relation {
+	case IssueLinkImplementation:
+		return ClosurePolicyAuto
+	case IssueLinkRelated, IssueLinkParent:
+		return ClosurePolicyNever
+	default:
+		return ClosurePolicyManual
+	}
+}
+
+// MetaKeys returns the task meta keys used to persist a single issue link
+// at the given index in the task meta.
+func (l *IssueLink) MetaKeys(index int) []string {
+	prefix := fmt.Sprintf("issue_link_%d", index)
+	return []string{
+		prefix + "_url",
+		prefix + "_provider",
+		prefix + "_owner",
+		prefix + "_repo",
+		prefix + "_number",
+		prefix + "_relation",
+		prefix + "_policy",
+		prefix + "_closing_ref",
+	}
+}
+
+// ToMeta serializes the issue link into task meta key-value pairs.
+func (l *IssueLink) ToMeta(index int) map[string]string {
+	prefix := fmt.Sprintf("issue_link_%d", index)
+	m := map[string]string{
+		prefix + "_url":      l.URL,
+		prefix + "_provider": l.Provider,
+		prefix + "_owner":    l.Owner,
+		prefix + "_repo":     l.Repo,
+		prefix + "_number":   fmt.Sprintf("%d", l.Number),
+		prefix + "_relation": string(l.Relation),
+		prefix + "_policy":   string(l.ClosurePolicy),
+	}
+	if l.ClosingRef != "" {
+		m[prefix+"_closing_ref"] = l.ClosingRef
+	}
+	return m
+}
+
+// IssueLinkFromMeta reconstructs a single IssueLink from meta at the given
+// index. Returns nil when no issue link is stored at that index.
+func IssueLinkFromMeta(meta map[string]string, index int) *IssueLink {
+	prefix := fmt.Sprintf("issue_link_%d", index)
+	url := meta[prefix+"_url"]
+	if url == "" {
+		return nil
+	}
+	num, _ := strconv.Atoi(meta[prefix+"_number"])
+	return &IssueLink{
+		URL:           url,
+		Provider:      meta[prefix+"_provider"],
+		Owner:         meta[prefix+"_owner"],
+		Repo:          meta[prefix+"_repo"],
+		Number:        num,
+		Relation:      IssueLinkRelation(meta[prefix+"_relation"]),
+		ClosurePolicy: IssueLinkClosurePolicy(meta[prefix+"_policy"]),
+		ClosingRef:    meta[prefix+"_closing_ref"],
+	}
+}
+
+// IssueLinksFromMeta reconstructs all issue links from a task meta map.
+// It reads indexed issue_link_N keys until no more are found.
+func IssueLinksFromMeta(meta map[string]string) []IssueLink {
+	var links []IssueLink
+	for i := 0; ; i++ {
+		link := IssueLinkFromMeta(meta, i)
+		if link == nil {
+			break
+		}
+		links = append(links, *link)
+	}
+	return links
+}
+
+// ClosingReference returns the canonical closing reference for this issue link.
+// For same-repo issues, this is just "#N". For cross-repo issues, it is
+// "owner/repo#N". This is the string that should appear in the merge commit
+// message to trigger automatic closing.
+func (l *IssueLink) ClosingReference() string {
+	if l.ClosingRef != "" {
+		return l.ClosingRef
+	}
+	if l.Owner != "" && l.Repo != "" && l.Number > 0 {
+		return fmt.Sprintf("%s/%s#%d", l.Owner, l.Repo, l.Number)
+	}
+	return ""
+}
+
 // MetaKeys returns the task meta keys used to persist this identity.

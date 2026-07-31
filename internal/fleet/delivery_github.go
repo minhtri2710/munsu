@@ -29,6 +29,9 @@ type GitHubClient interface {
 
 	// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL.
 	CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error)
+
+	// ViewIssueState returns the issue state (OPEN, CLOSED) via gh CLI.
+	ViewIssueState(owner, repo string, number int) (string, error)
 }
 
 // ghAxiClient implements GitHubClient backed by gh-axi.
@@ -209,4 +212,34 @@ func (c *ghAxiClient) CaptureIdentity(prURL string) (*domain.DeliveryIdentity, e
 		HeadSHA:    result.HeadRefOid,
 		CapturedAt: time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// ViewIssueState returns the issue state (OPEN, CLOSED) via gh CLI.
+// Uses `gh issue view <number> --json state` to check the current state.
+func (c *ghAxiClient) ViewIssueState(owner, repo string, number int) (string, error) {
+	ghPath, err := ghCLILookPath()
+	if err != nil {
+		return "", fmt.Errorf("gh not found on PATH: %w", err)
+	}
+	args := []string{
+		"issue", "view",
+		fmt.Sprintf("%d", number),
+		"--repo", fmt.Sprintf("%s/%s", owner, repo),
+		"--json", "state",
+		"--jq", ".state",
+	}
+	out, err := exec.Command(ghPath, args...).Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("gh issue view: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", fmt.Errorf("gh issue view: %w", err)
+	}
+	state := strings.TrimSpace(string(out))
+	switch state {
+	case "OPEN", "CLOSED":
+		return state, nil
+	default:
+		return "", fmt.Errorf("gh issue view: unexpected state %q", state)
+	}
 }
