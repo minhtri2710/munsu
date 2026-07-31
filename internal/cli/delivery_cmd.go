@@ -114,23 +114,30 @@ Without --teardown, the command prints the exact teardown invocation to run next
 				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}
 
-			if err := fleet.PRMerge(taskHome, id, prURL, extra); err != nil {
-				return err
-			}
 			if !doTeardown {
+				// Without --teardown: run PRMerge only (no retirement).
+				// On retry, if already merged, PRMerge will fail closed —
+				// the user should retry with --teardown to resume retirement.
+				if err := fleet.PRMerge(taskHome, id, prURL, extra); err != nil {
+					return err
+				}
 				return nil
 			}
-			fmt.Printf("Running teardown for %s in %s after merge...\n", id, taskHome)
-			result, err := fleet.RetireTask(fleet.Options{
-				HomeDir: taskHome,
-				ID:      id,
-				Force:   false,
-			}, newSessionBoundTeardown(), orchestratorRetirementJournals{})
-			if err != nil {
-				return fmt.Errorf("post-merge teardown %s: %w", id, err)
+			// With --teardown: use MergeAndRetire which handles both the
+			// merge delivery and retirement. On retry after partial cleanup,
+			// it detects delivery_state=merged and resumes retirement only.
+			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
+			mars := fleet.MergeAndRetire(taskHome, id, prURL, extra, newSessionBoundTeardown(), orchestratorRetirementJournals{})
+			if mars.TeardownResult != nil {
+				for _, step := range mars.TeardownResult.Steps {
+					fmt.Println(step)
+				}
 			}
-			for _, step := range result.Steps {
-				fmt.Println(step)
+			if mars.IsError() {
+				if mars.TeardownError != nil {
+					return fmt.Errorf("post-merge teardown %s: %w", id, mars.TeardownError)
+				}
+				return fmt.Errorf("merge-and-retire %s: %s %s", id, mars.MergeOutcome, mars.MergeDetail)
 			}
 			return nil
 		}),
