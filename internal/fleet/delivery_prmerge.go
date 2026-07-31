@@ -89,72 +89,44 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 		return fmt.Errorf("merge via gh-axi: %w", err)
 	}
 
-	// Read existing meta (preserve the full identity, don't clear pr_head)
-	meta, err := home.ReadMeta(homeDir, id)
-	if err != nil {
-		meta = make(map[string]string)
+	// Reconcile merge delivery: query provider for remote truth, classify the
+	// outcome, and persist the result. This replaces the inline post-merge
+	// snapshot check with a structured reconciliation that handles merged,
+	// already-merged, open, remote-unknown, and failed outcomes.
+	result, reconcileErr := ReconcileMergeDelivery(homeDir, id, ident.URL)
+	if reconcileErr != nil {
+		return fmt.Errorf("post-merge reconciliation: %w", reconcileErr)
 	}
 
-	// Re-query provider snapshot after merge to get final state evidence.
-	// Use the stored identity URL for the query.
-	snap, snapErr := FetchProviderSnapshot(ident.URL)
-	if snapErr != nil {
-		return fmt.Errorf("post-merge provider snapshot: %w", snapErr)
-	}
-	if !snap.Merged {
-		return fmt.Errorf("post-merge provider snapshot: PR #%d is not merged (state=%s); retry or investigate manually", snap.Number, snap.State)
-	}
-	if snap.MergedSHA == "" {
-		return fmt.Errorf("post-merge provider snapshot: PR #%d merged but no merge-result evidence; merge may still be in progress, retry later", snap.Number)
-	}
+	// Set merge method on the result for rendering
+	result.MergeMethod = method
 
-	// Verify final head equality (provider-reported head must match stored identity)
-	if ident.HeadSHA != "" && snap.HeadSHA != ident.HeadSHA {
-		return fmt.Errorf("post-merge provider snapshot: head SHA mismatch: stored %s, provider reports %s for merged PR #%d",
-			ident.HeadSHA, snap.HeadSHA, snap.Number)
-	}
+	// Print the reconciliation result (human and AXI output)
+	fmt.Print(result.Render())
 
-	// Build updated identity from snapshot evidence
-	finalIdent := &domain.DeliveryIdentity{
-		Provider:   ident.Provider,
-		Owner:      ident.Owner,
-		Repo:       ident.Repo,
-		Number:     ident.Number,
-		URL:        ident.URL,
-		BaseRef:    snap.BaseRef,
-		HeadRef:    snap.HeadRef,
-		HeadSHA:    snap.HeadSHA,
-		CapturedAt: snap.ObservedAt,
-	}
-
-	// CAS: verify identity hasn't changed, then update state to merged
-	checks := identityChecks(ident)
-	checks[MetaDeliveryState] = meta[MetaDeliveryState]
-
-	updates := finalIdent.ToMeta()
-	updates[MetaDeliveryState] = string(DeliveryStateMerged)
-	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
-
-	_, casErr := home.CompareAndSwapMeta(homeDir, id, checks, updates)
-	if casErr != nil {
-		return fmt.Errorf("post-merge cas: %w", casErr)
-	}
-
-	fmt.Printf("PR merged: %s (%s method)\n", ghURL.FormatPRRef(), method)
 	// Always print the cleanup next step — merge does not teardown panes/worktrees.
-	fmt.Printf("Next: munsu teardown %s --home %s\n", id, homeDir)
-	fmt.Printf("  (or re-run pr-merge with --teardown to merge+cleanup in one step)\n")
+	if result.Outcome == MergeOutcomeMerged || result.Outcome == MergeOutcomeAlreadyMerged {
+		fmt.Printf("Next: munsu teardown %s --home %s\n", id, homeDir)
+		fmt.Printf("  (or re-run pr-merge with --teardown to merge+cleanup in one step)\n")
 
-	// Best-effort fleet-sync the project clone
-	if project := meta["project"]; project != "" {
-		if res, err := Sync(homeDir, project); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: fleet-sync for %s failed: %v\n", project, err)
-		} else if len(res.Stuck) > 0 {
-			for _, s := range res.Stuck {
-				fmt.Fprintf(os.Stderr, "Warning: fleet-sync: %s\n", s)
+		// Best-effort fleet-sync the project clone
+		meta, _ := home.ReadMeta(homeDir, id)
+		if project := meta["project"]; project != "" {
+			if res, err := Sync(homeDir, project); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: fleet-sync for %s failed: %v\n", project, err)
+			} else if len(res.Stuck) > 0 {
+				for _, s := range res.Stuck {
+					fmt.Fprintf(os.Stderr, "Warning: fleet-sync: %s\n", s)
+				}
 			}
 		}
 	}
+
+	// Return non-zero exit code for partial/unknown outcomes
+	if result.IsError() {
+		return fmt.Errorf("merge delivery: %s %s", result.Outcome, result.Detail)
+	}
+
 	return nil
 }
 

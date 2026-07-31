@@ -82,7 +82,9 @@ func GitHubClientForState(s backend.State) (GitHubClient, error) {
 
 // DefaultGitHubClient probes the current environment and returns a client
 // if gh-axi is Ready, or an error if it is Absent/Failed/Unsupported.
-func DefaultGitHubClient() (GitHubClient, error) {
+var DefaultGitHubClient = defaultGitHubClientImpl
+
+func defaultGitHubClientImpl() (GitHubClient, error) {
 	return GitHubClientForState(ProbeGitHubCapability())
 }
 

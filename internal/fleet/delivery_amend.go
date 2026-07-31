@@ -22,6 +22,9 @@ const (
 	DeliveryStateAmending DeliveryState = "amending"
 	// DeliveryStateMerged: PR/MR is merged, awaiting parent verification.
 	DeliveryStateMerged DeliveryState = "merged"
+	// DeliveryStateRemoteUnknown: provider result was ambiguous or unreachable;
+	// the same mutation attempt must never be repeated. Operator attention required.
+	DeliveryStateRemoteUnknown DeliveryState = "remote-unknown"
 	// DeliveryStateDelivered: parent-verified delivery complete.
 	// Set by PrepareDelivery after verifying provider identity, immutable head,
 	// and terminal green required checks. This is the terminal lifecycle state.
