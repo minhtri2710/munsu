@@ -13,12 +13,12 @@ import (
 // --- Mock ports ---
 
 type mockProbePort struct {
-	result ProbeResult
-	err    error
+	obs EndpointObservation
+	err error
 }
 
-func (m *mockProbePort) Probe(_ string) (ProbeResult, error) {
-	return m.result, m.err
+func (m *mockProbePort) Probe(_ string) (EndpointObservation, error) {
+	return m.obs, m.err
 }
 
 type mockSubmitPort struct {
@@ -39,13 +39,22 @@ func (m *mockSubmitPort) Submit(_ string, prompt string) SubmitResult {
 	}
 }
 
-func setupMockRequest(t *testing.T, mode WakeDeliveryMode, ready bool) (DispatchWakeRequest, string) {
+func aliveProbe() *mockProbePort {
+	return &mockProbePort{obs: EndpointObservation{State: EndpointAlive}}
+}
+
+func setupMockRequest(t *testing.T, mode WakeDeliveryMode, alive bool) (DispatchWakeRequest, string) {
 	t.Helper()
 	home := testutil.TempHome(t)
 
 	// Enqueue a wake so the queue has entries (except for empty-queue tests).
 	if err := EnqueueWake(home, "signal", "task-1", "test payload"); err != nil {
 		t.Fatalf("EnqueueWake: %v", err)
+	}
+
+	obs := EndpointObservation{State: EndpointAlive}
+	if !alive {
+		obs = EndpointObservation{State: EndpointUnresponsive, Detail: "mock not ready"}
 	}
 
 	target := TargetResult{
@@ -58,16 +67,8 @@ func setupMockRequest(t *testing.T, mode WakeDeliveryMode, ready bool) (Dispatch
 		HomeDir: home,
 		Mode:    mode,
 		Target:  target,
-		Probe: &mockProbePort{
-			result: ProbeResult{
-				PaneAlive:      ready,
-				AgentAlive:     ready,
-				ReadyForPrompt: ready,
-			},
-		},
-		Submit: &mockSubmitPort{
-			acknowledged: true,
-		},
+		Probe:   &mockProbePort{obs: obs},
+		Submit:  &mockSubmitPort{acknowledged: true},
 	}, home
 }
 
@@ -127,7 +128,7 @@ func TestDispatchWake_MissingHandleSkipped(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "", Session: "default"},
-		Probe:   &mockProbePort{result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true}},
+		Probe:   aliveProbe(),
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -150,7 +151,7 @@ func TestDispatchWake_MissingSessionSkipped(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "w1:p1", Session: ""},
-		Probe:   &mockProbePort{result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true}},
+		Probe:   aliveProbe(),
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -175,7 +176,7 @@ func TestDispatchWake_InvalidOwnershipErrors(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: Unsupported, Handle: "foreign:w1:p1", Session: "foreign", SourceDetail: "unsupported source"},
-		Probe:   &mockProbePort{result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true}},
+		Probe:   aliveProbe(),
 		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
@@ -188,7 +189,7 @@ func TestDispatchWake_InvalidOwnershipErrors(t *testing.T) {
 	}
 }
 
-// --- Test: probe gates ---
+// --- Test: probe gate errors ---
 
 func TestDispatchWake_ProbeErrorSkipped(t *testing.T) {
 	home := testutil.TempHome(t)
@@ -213,7 +214,18 @@ func TestDispatchWake_ProbeErrorSkipped(t *testing.T) {
 	}
 }
 
-func TestDispatchWake_UnreadyTargetSkipped(t *testing.T) {
+// --- Test: typed observation gates ---
+
+func TestDispatchWake_AliveProceeds(t *testing.T) {
+	req, _ := setupMockRequest(t, WakeDeliveryHerdr, true)
+
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSubmitted {
+		t.Fatalf("alive endpoint: expected Submitted, got outcome=%q err=%v", result.Outcome, err)
+	}
+}
+
+func TestDispatchWake_StartingSkipped(t *testing.T) {
 	home := testutil.TempHome(t)
 	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
 		t.Fatal(err)
@@ -223,10 +235,8 @@ func TestDispatchWake_UnreadyTargetSkipped(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe: &mockProbePort{
-			result: ProbeResult{PaneAlive: true, AgentAlive: false, ReadyForPrompt: false},
-		},
-		Submit: &mockSubmitPort{acknowledged: true},
+		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointStarting, Detail: "pane exists, agent not ready"}},
+		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
 	result, err := DispatchWake(req)
@@ -235,6 +245,148 @@ func TestDispatchWake_UnreadyTargetSkipped(t *testing.T) {
 	}
 	if result.Reason != "target-unready" {
 		t.Errorf("expected reason target-unready, got %q", result.Reason)
+	}
+}
+
+func TestDispatchWake_UnresponsiveSkipped(t *testing.T) {
+	home := testutil.TempHome(t)
+	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := DispatchWakeRequest{
+		HomeDir: home,
+		Mode:    WakeDeliveryHerdr,
+		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointUnresponsive, Detail: "timeout"}},
+		Submit:  &mockSubmitPort{acknowledged: true},
+	}
+
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSkipped {
+		t.Fatalf("expected Skipped, got outcome=%q err=%v", result.Outcome, err)
+	}
+	if result.Reason != "target-unready" {
+		t.Errorf("expected reason target-unready, got %q", result.Reason)
+	}
+}
+
+func TestDispatchWake_DeadSkipped(t *testing.T) {
+	home := testutil.TempHome(t)
+	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := DispatchWakeRequest{
+		HomeDir: home,
+		Mode:    WakeDeliveryHerdr,
+		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointDead, Detail: "pane not found"}},
+		Submit:  &mockSubmitPort{acknowledged: true},
+	}
+
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSkipped {
+		t.Fatalf("expected Skipped, got outcome=%q err=%v", result.Outcome, err)
+	}
+	if result.Reason != "endpoint-dead" {
+		t.Errorf("expected reason endpoint-dead, got %q", result.Reason)
+	}
+}
+
+func TestDispatchWake_UnknownSkippedWithoutClaim(t *testing.T) {
+	home := testutil.TempHome(t)
+	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := DispatchWakeRequest{
+		HomeDir: home,
+		Mode:    WakeDeliveryHerdr,
+		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointUnknown, Detail: "no authoritative probe"}},
+		Submit:  &mockSubmitPort{acknowledged: true},
+	}
+
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSkipped {
+		t.Fatalf("expected Skipped, got outcome=%q err=%v", result.Outcome, err)
+	}
+	if result.Reason != "endpoint-unknown" {
+		t.Errorf("expected reason endpoint-unknown, got %q", result.Reason)
+	}
+
+	// Wake must NOT be claimed
+	claim, err := ClaimWakes(home, "munsu:herdr", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if claim == nil || len(claim.Wakes) == 0 {
+		t.Fatal("unknown endpoint must NOT trigger wake claim")
+	}
+}
+
+func TestDispatchWake_StaleIdentitySkippedWithoutClaim(t *testing.T) {
+	home := testutil.TempHome(t)
+	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := DispatchWakeRequest{
+		HomeDir: home,
+		Mode:    WakeDeliveryHerdr,
+		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointStaleIdentity, Detail: "endpoint identity changed"}},
+		Submit:  &mockSubmitPort{acknowledged: true},
+	}
+
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSkipped {
+		t.Fatalf("expected Skipped, got outcome=%q err=%v", result.Outcome, err)
+	}
+	if result.Reason != "stale-identity" {
+		t.Errorf("expected reason stale-identity, got %q", result.Reason)
+	}
+
+	// Wake must NOT be claimed
+	claim, err := ClaimWakes(home, "munsu:herdr", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if claim == nil || len(claim.Wakes) == 0 {
+		t.Fatal("stale-identity endpoint must NOT trigger wake claim")
+	}
+}
+
+func TestDispatchWake_UnresolvedSkippedWithoutClaim(t *testing.T) {
+	home := testutil.TempHome(t)
+	if err := EnqueueWake(home, "signal", "task-1", "payload"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := DispatchWakeRequest{
+		HomeDir: home,
+		Mode:    WakeDeliveryHerdr,
+		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
+		Probe:   &mockProbePort{obs: EndpointObservation{State: EndpointUnresolved, Detail: "cannot resolve bound backend"}},
+		Submit:  &mockSubmitPort{acknowledged: true},
+	}
+
+	result, err := DispatchWake(req)
+	if err != nil || result.Outcome != WakeSkipped {
+		t.Fatalf("expected Skipped, got outcome=%q err=%v", result.Outcome, err)
+	}
+	if result.Reason != "endpoint-unresolved" {
+		t.Errorf("expected reason endpoint-unresolved, got %q", result.Reason)
+	}
+
+	// Wake must NOT be claimed
+	claim, err := ClaimWakes(home, "munsu:herdr", 60, 10)
+	if err != nil {
+		t.Fatalf("ClaimWakes: %v", err)
+	}
+	if claim == nil || len(claim.Wakes) == 0 {
+		t.Fatal("unresolved endpoint must NOT trigger wake claim")
 	}
 }
 
@@ -248,10 +400,8 @@ func TestDispatchWake_EmptyQueueSkipped(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe: &mockProbePort{
-			result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true},
-		},
-		Submit: &mockSubmitPort{acknowledged: true},
+		Probe:   aliveProbe(),
+		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
 	result, err := DispatchWake(req)
@@ -369,10 +519,8 @@ func TestDispatchWake_ClaimBeforeSubmitOrdering(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe: &mockProbePort{
-			result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true},
-		},
-		Submit: submitPort,
+		Probe:   aliveProbe(),
+		Submit:  submitPort,
 	}
 
 	// First call: should claim one wake and submit
@@ -420,10 +568,8 @@ func TestDispatchWake_OneWakeMax(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe: &mockProbePort{
-			result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true},
-		},
-		Submit: &mockSubmitPort{acknowledged: true},
+		Probe:   aliveProbe(),
+		Submit:  &mockSubmitPort{acknowledged: true},
 	}
 
 	// First dispatch: claims one wake, submits it
@@ -618,10 +764,8 @@ func TestDispatchWake_NilSubmitPortErrors(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe: &mockProbePort{
-			result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true},
-		},
-		Submit: nil,
+		Probe:   aliveProbe(),
+		Submit:  nil,
 	}
 
 	_, err := DispatchWake(req)
@@ -884,10 +1028,8 @@ func TestDispatchWake_DeferredDoesNotPreventSubsequentDispatch(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe: &mockProbePort{
-			result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true},
-		},
-		Submit: submit1,
+		Probe:   aliveProbe(),
+		Submit:  submit1,
 	}
 	result, err := DispatchWake(req1)
 	if err != nil || result.Outcome != WakeDeferred {
@@ -900,10 +1042,8 @@ func TestDispatchWake_DeferredDoesNotPreventSubsequentDispatch(t *testing.T) {
 		HomeDir: home,
 		Mode:    WakeDeliveryHerdr,
 		Target:  TargetResult{Source: RuntimeSource, Handle: "default:w1:p1", Session: "default"},
-		Probe: &mockProbePort{
-			result: ProbeResult{PaneAlive: true, AgentAlive: true, ReadyForPrompt: true},
-		},
-		Submit: submit2,
+		Probe:   aliveProbe(),
+		Submit:  submit2,
 	}
 	result2, err2 := DispatchWake(req2)
 	if err2 != nil || result2.Outcome != WakeSubmitted {

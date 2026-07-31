@@ -37,17 +37,52 @@ func DeferredResult(reason, detail string) DispatchWakeResult {
 	return DispatchWakeResult{Outcome: WakeDeferred, Reason: reason, Detail: detail}
 }
 
-// ProbeResult carries the probe outcome from a backend port.
-type ProbeResult struct {
-	PaneAlive      bool
-	AgentAlive     bool
-	ReadyForPrompt bool
+// EndpointObservationState enumerates typed Endpoint Observation states per ADR-0005.
+type EndpointObservationState uint8
+
+const (
+	EndpointObservationInvalid EndpointObservationState = iota
+	EndpointAlive
+	EndpointStarting
+	EndpointUnresponsive
+	EndpointDead
+	EndpointUnknown
+	EndpointStaleIdentity
+	EndpointUnresolved
+)
+
+// String returns a human-readable name for the observation state.
+func (s EndpointObservationState) String() string {
+	switch s {
+	case EndpointAlive:
+		return "alive"
+	case EndpointStarting:
+		return "starting"
+	case EndpointUnresponsive:
+		return "unresponsive"
+	case EndpointDead:
+		return "dead"
+	case EndpointUnknown:
+		return "unknown"
+	case EndpointStaleIdentity:
+		return "stale-identity"
+	case EndpointUnresolved:
+		return "unresolved"
+	default:
+		return "invalid"
+	}
+}
+
+// EndpointObservation carries the typed observation of a bound endpoint.
+type EndpointObservation struct {
+	State  EndpointObservationState
+	Detail string
 }
 
 // ProbePort is the Backend-facing probe adapter interface.
-// Implementations wrap backend.Backend and backend.AgentAwareBackend.
+// Implementations wrap backend.Backend and return a typed EndpointObservation.
 type ProbePort interface {
-	Probe(window string) (ProbeResult, error)
+	Probe(window string) (EndpointObservation, error)
 }
 
 // SubmitResult carries the typed outcome of a prompt submission attempt.
@@ -83,7 +118,9 @@ type DispatchWakeRequest struct {
 //  1. Delivery-mode gate: native/manual -> Skipped without claiming
 //  2. Target identity gate: missing/incomplete target -> Skipped
 //  3. Ownership validation: invalid target -> fail-closed error
-//  4. Backend probe gate: probe failure or unready target -> Skipped
+//  4. Endpoint probe gate: typed observation gates — alive proceeds;
+//     starting/unresponsive/dead defer; unknown/stale-identity/unresolved
+//     skip safely without claiming (NOT collapsed to dead)
 //  5. Wake claim: max 1 Wake, after all gates pass
 //  6. Empty queue after claim -> Skipped
 //  7. Prompt construction with exact claim_id, event_id, payload, resolve instruction
@@ -109,22 +146,34 @@ func DispatchWake(req DispatchWakeRequest) (DispatchWakeResult, error) {
 		return DispatchWakeResult{}, fmt.Errorf("invalid target ownership: %w", err)
 	}
 
-	// Step 4: Backend probe gate
+	// Step 4: Endpoint probe gate — typed observation gates
 	if req.Probe == nil {
 		return DispatchWakeResult{}, fmt.Errorf("probe port is nil")
 	}
-	probeResult, err := req.Probe.Probe(req.Target.Handle)
+	obs, err := req.Probe.Probe(req.Target.Handle)
 	if err != nil {
 		return SkippedResult("probe-error", err.Error()), nil
 	}
-	if !probeResult.PaneAlive {
-		return SkippedResult("target-unready", "pane is not alive"), nil
-	}
-	if !probeResult.AgentAlive {
-		return SkippedResult("target-unready", "agent is not alive"), nil
-	}
-	if !probeResult.ReadyForPrompt {
-		return SkippedResult("target-unready", "target is not ready for prompt"), nil
+	switch obs.State {
+	case EndpointAlive:
+		// Proceed to claim
+	case EndpointStarting:
+		return SkippedResult("target-unready", "endpoint is starting"), nil
+	case EndpointUnresponsive:
+		return SkippedResult("target-unready", "endpoint is unresponsive"), nil
+	case EndpointDead:
+		return SkippedResult("endpoint-dead", obs.Detail), nil
+	case EndpointUnknown:
+		// NOT collapsed to dead — skip safely without claiming
+		return SkippedResult("endpoint-unknown", obs.Detail), nil
+	case EndpointStaleIdentity:
+		// NOT collapsed to dead — skip safely without claiming
+		return SkippedResult("stale-identity", obs.Detail), nil
+	case EndpointUnresolved:
+		// NOT collapsed to dead — skip safely without claiming
+		return SkippedResult("endpoint-unresolved", obs.Detail), nil
+	default:
+		return SkippedResult("invalid-observation", "unrecognized endpoint observation state"), nil
 	}
 
 	// Step 5: Claim Wake (max 1, after all gates pass)

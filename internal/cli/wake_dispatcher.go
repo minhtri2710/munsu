@@ -8,40 +8,24 @@ import (
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
-var (
-	resolveWakeMode    = orchestrator.ResolveWakeDeliveryMode
-	resolveWakeTarget  = orchestrator.ResolveTargetWithSource
-	validateWakeTarget = orchestrator.ValidateTargetOwnership
-	resolveWakeBackend = backend.BackendForTask
-	probeWakeEndpoint  = probeCaptainBackend
-	claimWake          = orchestrator.ClaimWakes
-	submitWakePrompt   = backend.SubmitPrompt
-)
-
-// cliProbeAdapter wraps a backend.Backend into an orchestrator.ProbePort.
-type cliProbeAdapter struct {
+// probeAdapter wraps a backend.Backend into an orchestrator.ProbePort
+// using the typed backend.ObserveBackendEndpoint function.
+type probeAdapter struct {
 	bk backend.Backend
 }
 
-func (a *cliProbeAdapter) Probe(window string) (orchestrator.ProbeResult, error) {
-	status, err := probeWakeEndpoint(a.bk, window)
-	if err != nil {
-		return orchestrator.ProbeResult{}, err
-	}
-	return orchestrator.ProbeResult{
-		PaneAlive:      status.PaneAlive,
-		AgentAlive:     status.AgentAlive,
-		ReadyForPrompt: status.ReadyForPrompt,
-	}, nil
+func (a *probeAdapter) Probe(window string) (orchestrator.EndpointObservation, error) {
+	obs := backend.ObserveBackendEndpoint(a.bk, window)
+	return orchestrator.EndpointObservation{State: orchestrator.EndpointObservationState(obs.State), Detail: obs.Detail}, nil
 }
 
-// cliSubmitAdapter wraps a backend.Backend into an orchestrator.SubmitPort.
-type cliSubmitAdapter struct {
+// submitAdapter wraps a backend.Backend into an orchestrator.SubmitPort.
+type submitAdapter struct {
 	bk backend.Backend
 }
 
-func (a *cliSubmitAdapter) Submit(window, prompt string) orchestrator.SubmitResult {
-	result := submitWakePrompt(a.bk, window, prompt)
+func (a *submitAdapter) Submit(window, prompt string) orchestrator.SubmitResult {
+	result := backend.SubmitPrompt(a.bk, window, prompt)
 	return orchestrator.SubmitResult{
 		Acknowledged: result.Acknowledged(),
 		Status:       string(result.Status),
@@ -65,20 +49,21 @@ func watcherHooks() orchestrator.WatcherHooks {
 	return wakeDispatchHooks{WatcherHooks: orchestrator.NewCaptainWatcherHooks(newSessionUplinkTransport(), newSessionActivationTransport())}
 }
 
-// dispatchHerdrWake is a thin wrapper around orchestrator.DispatchWake.
-// It resolves the mode, target, and backend from the environment and
-// delegates the complete workflow to the orchestrator via adapter ports.
+// dispatchHerdrWake composes typed adapters, invokes the Orchestrator
+// transaction, and renders typed outcomes. It does NOT re-select a bound
+// backend or duplicate target, readiness, claim, prompt, submission, or
+// retry policy — those are owned by the Orchestrator.
 func dispatchHerdrWake(homeDir string) error {
-	mode, err := resolveWakeMode(homeDir)
+	mode, err := orchestrator.ResolveWakeDeliveryMode(homeDir)
 	if err != nil {
 		return err
 	}
-	target, err := resolveWakeTarget(homeDir)
+	target, err := orchestrator.ResolveTargetWithSource(homeDir)
 	if err != nil {
 		return err
 	}
 	meta := map[string]string{"backend": "herdr", "window": target.Handle, "herdr_session": target.Session}
-	bk, name, err := resolveWakeBackend(homeDir, meta)
+	bk, name, err := backend.BackendForTask(homeDir, meta)
 	if err != nil || name != "herdr" {
 		return err
 	}
@@ -87,8 +72,8 @@ func dispatchHerdrWake(homeDir string) error {
 		HomeDir: homeDir,
 		Mode:    mode,
 		Target:  target,
-		Probe:   &cliProbeAdapter{bk: bk},
-		Submit:  &cliSubmitAdapter{bk: bk},
+		Probe:   &probeAdapter{bk: bk},
+		Submit:  &submitAdapter{bk: bk},
 	}
 
 	result, err := orchestrator.DispatchWake(req)
