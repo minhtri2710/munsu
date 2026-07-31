@@ -64,4 +64,44 @@ A fail-closed state that isolates one corrupt or contradictory lifecycle from mu
 
 ## Config Snapshot
 
-An immutable, validated generation of resolved configuration used for the full duration of an operation. A newer snapshot takes effect only at an operation boundary.
+An immutable, validated generation of resolved configuration used for the full duration of an operation. A newer snapshot takes effect only at an operation boundary. *Resolved* means the fleet base overlaid with the owning project's Project Overlay (plus boundary-translated environment overrides). The General is the single resolution authority; Captains and Soldiers consume the resolved snapshot for their project's scope.
+
+## Project Overlay
+
+The project-scoped configuration layer (soldier dispatch profile set, delivery mode, harness, and operational knobs) that overlays the fleet base for every Soldier spawned for that project, whether by its owning Captain or by the General directly. Different projects carry different overlays, so one General can supervise many projects under different settings.
+
+## Captain–Project Binding
+
+The 1:1 domain rule that a Captain supervises exactly one project and a project has at most one owning Captain. A project may exist without a Captain (for General ad-hoc dispatch). The binding is the authoritative scope for task observation and config resolution, so a bare task or Captain ID never silently selects the wrong home.
+
+## Authoritative Task Aggregate
+
+The single current-state authority for a task, identified by Task ID and Task Generation and owned by exactly one rank/home. Definition and lifecycle are authoritative; backlog Markdown, `.meta`, `.status`, briefs, inbox summaries, and fleet snapshots are projections or audit records. Handoff transfers the same generation atomically. See [ADR-0004](docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md).
+
+## Delivery Transaction
+
+Delivery preparation verifies immutable provider identity, head SHA, and required checks before entering the pre-merge `delivered` phase. Merge authorization is a separate Decision bound to Task Generation and head SHA. Merge and retirement are separate durable transactions with typed partial/unknown outcomes; linked Issue reconciliation follows explicit `IssueLink` policy. See [ADR-0004](docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md).
+
+## Dispatch Hold
+
+A durable scoped overlay that blocks new handoff/start/spawn without changing queued or dependency state. Holds survive restart, compose conservatively, and require an explicit release; release does not auto-start work. See [ADR-0004](docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md).
+
+## Endpoint Binding
+
+The immutable Task-Generation-bound identity and lease for a runtime endpoint. Typed observations distinguish alive, starting, unresponsive, dead, unknown, stale identity, and unresolved. Mutable task metadata is only a projection. See [ADR-0005](docs/adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md).
+
+## Worktree Binding
+
+The immutable Task-Generation-bound worktree lease, repository identity, Git directory/common directory, path, and initial head. Managed Git mutation capabilities validate this binding before modifying local history, files, or remote refs. See [ADR-0005](docs/adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md).
+
+## Watcher Lease
+
+The typed per-home identity and heartbeat for the only watcher authorized to mutate that home's lifecycle. General supervises Captain watcher leases without directly processing Captain-owned task state. See [ADR-0005](docs/adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md).
+
+## Migration Plan
+
+An immutable read-only plan listing exact homes, source schemas/digests, target schemas, ordering, and tool provenance. Apply revalidates each home and runs independent explicit migrations; runtime load paths never permanently dual-read legacy state. See [ADR-0006](docs/adr/0006-state-migration-build-provenance-and-compatibility-gates.md).
+
+## Runtime Identity
+
+The running executable's canonical path and digest plus embedded build provenance, contract version, and integration digest. Compatibility gates are operation-specific: diagnostics remain available while incompatible mutations fail closed. See [ADR-0006](docs/adr/0006-state-migration-build-provenance-and-compatibility-gates.md).
