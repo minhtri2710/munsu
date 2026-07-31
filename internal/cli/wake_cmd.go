@@ -132,22 +132,7 @@ func newWakeCmd() *cobra.Command {
 		}),
 	}
 
-	// Legacy wake-drain compatibility sugar
-	drainCmd := &cobra.Command{
-		Use:   "drain",
-		Short: "Drain queued wakes (legacy compatibility)",
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			records, err := orchestrator.Drain(ctx.Home)
-			if err != nil {
-				return err
-			}
-			orchestrator.PrintRecords(records)
-			return nil
-		}),
-	}
-
-	// Only the new claim/ack commands use contract output.
-	// Legacy drain stays as plain output for compatibility.
+	// Activation evidence proves new contracts are safe — drain compatibility sugar removed.
 	configureContractCommand(claimCmd)
 	configureContractCommand(resolveCmd)
 	configureContractCommand(ackCmd)
@@ -155,7 +140,6 @@ func newWakeCmd() *cobra.Command {
 	cmd.AddCommand(claimCmd)
 	cmd.AddCommand(resolveCmd)
 	cmd.AddCommand(ackCmd)
-	cmd.AddCommand(drainCmd)
 
 	return cmd
 }
