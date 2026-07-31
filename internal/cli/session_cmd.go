@@ -41,10 +41,14 @@ func newBriefCmd() *cobra.Command {
 				return err
 			}
 
-			// Require existing task meta unless --force
+			// Require existing task aggregate or legacy task meta unless --force.
 			if !force {
-				if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
-					return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
+				if _, ok, err := mhome.ReadCurrentTaskAggregate(ctx.Home, id); err != nil {
+					return err
+				} else if !ok {
+					if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
+						return fmt.Errorf("task %q not found: create it with 'munsu task add %s ...' or use --force", id, id)
+					}
 				}
 			}
 			opts := fleet.ScaffoldOptions{

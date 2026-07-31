@@ -34,7 +34,13 @@ func newTaskCmd() *cobra.Command {
 				meta["project"] = repo // --repo maps directly to the project name
 			}
 
+			project := meta["project"]
+			agg, err := home.CreateTaskAggregate(ctx.Home, id, "", desc, kind, project)
+			if err != nil {
+				return err
+			}
 			if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
+				_ = home.DeleteTaskAggregate(ctx.Home, id, agg.Generation)
 				return err
 			}
 			return writeContract(cmd, Response[MessageResult]{
@@ -111,13 +117,27 @@ func newTaskCmd() *cobra.Command {
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
 
-			meta, err := home.ReadMeta(ctx.Home, id)
+			agg, hasAggregate, err := home.ReadCurrentTaskAggregate(ctx.Home, id)
 			if err != nil {
 				return err
+			}
+			meta, metaErr := home.ReadMeta(ctx.Home, id)
+			if metaErr != nil && !hasAggregate {
+				return metaErr
 			}
 
 			var b strings.Builder
 			b.WriteString(fmt.Sprintf("Task: %s\n---\n", id))
+			if hasAggregate {
+				b.WriteString(fmt.Sprintf("generation: %s\n", agg.Generation))
+				b.WriteString(fmt.Sprintf("owner: %s\n", agg.Owner))
+				if agg.Definition != "" {
+					b.WriteString(fmt.Sprintf("description: %s\n", agg.Definition))
+				}
+				if agg.State != "" {
+					b.WriteString(fmt.Sprintf("state: %s\n", agg.State))
+				}
+			}
 			for k, v := range meta {
 				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
@@ -153,8 +173,11 @@ func newTaskCmd() *cobra.Command {
 			msg := args[2]
 			line := fmt.Sprintf("%s: %s", state, msg)
 
-			if err := home.AppendStatus(ctx.Home, id, line); err != nil {
+			if _, _, err := home.UpdateCurrentTaskAggregateState(ctx.Home, id, state, msg); err != nil {
 				return err
+			}
+			if err := home.AppendStatus(ctx.Home, id, line); err != nil {
+				return fmt.Errorf("authoritative task state committed; status projection failed: %w", err)
 			}
 
 			// Compatibility translator: also write as typed event

@@ -155,18 +155,22 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// 1.6. For soldier review-ready/idle states: emit a durable ready event
 			// and flush one pending command automatically.
 			if role == "soldier" && state == "review-ready" {
-				meta, metaErr := home.ReadMeta(homeDir, taskID)
-				if metaErr == nil {
-					metaGeneration := meta["generation"]
-					fleet.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
+				fallbackGeneration := ""
+				if meta, metaErr := home.ReadMeta(homeDir, taskID); metaErr == nil {
+					fallbackGeneration = meta["generation"]
+				}
+				metaGeneration, genErr := home.CurrentTaskGeneration(homeDir, taskID, fallbackGeneration)
+				if genErr != nil {
+					return fmt.Errorf("report: reading task aggregate: %w", genErr)
+				}
+				fleet.EmitReadyEvent(homeDir, taskID, "", metaGeneration)
 
-					senderIdentity, _, _ := orchestrator.ReadHomeIdentity(homeDir)
-					if senderIdentity == "" {
-						senderIdentity = filepath.Base(homeDir)
-					}
-					if fr := fleet.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity, newSessionSoldierEndpoints()); fr.Err != nil {
-						fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
-					}
+				senderIdentity, _, _ := orchestrator.ReadHomeIdentity(homeDir)
+				if senderIdentity == "" {
+					senderIdentity = filepath.Base(homeDir)
+				}
+				if fr := fleet.FlushPendingSoldierCommands(homeDir, taskID, senderIdentity, newSessionSoldierEndpoints()); fr.Err != nil {
+					fmt.Fprintf(os.Stderr, "review-ready flush: %v\n", fr.Err)
 				}
 			}
 

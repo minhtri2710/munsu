@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -122,7 +123,7 @@ func newBacklogStartCmd() *cobra.Command {
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "start", args)
+			return runBacklogTransition(ctx.Home, "start", args, fleet.StateInFlight, "working", "backlog: in-flight")
 		}),
 	}
 }
@@ -133,7 +134,7 @@ func newBacklogDoneCmd() *cobra.Command {
 		Short: "Mark a backlog item as done",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "done", args)
+			return runBacklogTransition(ctx.Home, "done", args, fleet.StateDone, "done", "backlog: done")
 		}),
 	}
 }
@@ -151,7 +152,11 @@ When --by is omitted, falls back to manual backend.`,
 			if by != "" {
 				args = append(args, "--by", by)
 			}
-			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "block", args)
+			detail := "backlog: blocked"
+			if by != "" {
+				detail += " by " + by
+			}
+			return runBacklogTransition(ctx.Home, "block", args, fleet.StateBlocked, "blocked", detail)
 		}),
 	}
 	cmd.Flags().StringVar(&by, "by", "", "Dependency that blocks this item (required for tasks-axi backend)")
@@ -167,7 +172,7 @@ func newBacklogReadyCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "ready", args)
+			return runBacklogTransition(ctx.Home, "ready", args, fleet.StateQueued, "queued", "backlog: ready")
 		}),
 	}
 }
@@ -181,7 +186,7 @@ func newBacklogUnblockCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "unblock", args)
+			return runBacklogTransition(ctx.Home, "unblock", args, fleet.StateQueued, "queued", "backlog: ready")
 		}),
 	}
 }
@@ -216,6 +221,34 @@ func newBacklogPathsCmd() *cobra.Command {
 func refuseCaptainBacklogMutation() error {
 	if os.Getenv("MUNSU_ROLE") == "captain" {
 		return fmt.Errorf("captain backlog authority: captains may not modify the backlog without General instruction; use 'munsu send captain:<id> <task-add|unblock|ready> ...' from the General home")
+	}
+	return nil
+}
+
+func runBacklogTransition(homeDir, verb string, args []string, to fleet.TaskState, aggregateState, detail string) error {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return nil
+	}
+	taskID := args[0]
+	item, found, err := fleet.GetItem(homeDir, taskID)
+	if err != nil {
+		return err
+	}
+	if found && !item.State.CanTransitionTo(to) {
+		return fmt.Errorf("backlog: cannot transition from %s to %s", item.State, to)
+	}
+	prior, hadAggregate, err := home.ReadCurrentTaskAggregate(homeDir, taskID)
+	if err != nil {
+		return err
+	}
+	if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, taskID, aggregateState, detail); err != nil {
+		return err
+	}
+	if err := fleet.Run(homeDir, isDefaultHome(homeDir), verb, args); err != nil {
+		if hadAggregate {
+			_ = home.WriteTaskAggregate(homeDir, *prior)
+		}
+		return err
 	}
 	return nil
 }

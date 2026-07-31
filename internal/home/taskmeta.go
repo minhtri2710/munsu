@@ -296,6 +296,7 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 	}
 
 	var result []MetaEntry
+	seenResult := map[string]bool{}
 	for _, id := range taskIDs {
 		meta, err := ReadMeta(homeDir, id)
 		if err != nil {
@@ -315,12 +316,44 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 			}
 		}
 
+		kind := meta["kind"]
+		project := pickProject(meta)
+		if agg, ok, err := ReadCurrentTaskAggregate(homeDir, id); err == nil && ok {
+			if agg.Kind != "" {
+				kind = agg.Kind
+			}
+			if agg.Project != "" {
+				project = agg.Project
+			}
+			if agg.State != "" {
+				lastStatus = agg.State
+				if agg.StateDetail != "" {
+					lastStatus += ": " + agg.StateDetail
+				}
+			}
+		}
+
 		result = append(result, MetaEntry{
 			ID:         id,
-			Kind:       meta["kind"],
-			Project:    pickProject(meta),
+			Kind:       kind,
+			Project:    project,
 			LastStatus: lastStatus,
 		})
+		seenResult[id] = true
+	}
+	aggregates, err := ListCurrentTaskAggregates(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, agg := range aggregates {
+		if seenResult[agg.TaskID] {
+			continue
+		}
+		lastStatus := agg.State
+		if lastStatus != "" && agg.StateDetail != "" {
+			lastStatus += ": " + agg.StateDetail
+		}
+		result = append(result, MetaEntry{ID: agg.TaskID, Kind: agg.Kind, Project: agg.Project, LastStatus: lastStatus})
 	}
 
 	return result, nil

@@ -41,12 +41,15 @@ Flags:
 				}
 			}
 
-			// Read generation from meta for staleness check.
-			meta, err := home.ReadMeta(ctx.Home, taskID)
-			if err != nil {
-				return fmt.Errorf("consume-ready: reading meta for %s: %w", taskID, err)
+			// Read generation from the authoritative aggregate, with legacy meta fallback.
+			fallbackGeneration := ""
+			if meta, err := home.ReadMeta(ctx.Home, taskID); err == nil {
+				fallbackGeneration = meta["generation"]
 			}
-			metaGeneration := meta["generation"]
+			metaGeneration, err := home.CurrentTaskGeneration(ctx.Home, taskID, fallbackGeneration)
+			if err != nil {
+				return fmt.Errorf("consume-ready: reading aggregate for %s: %w", taskID, err)
+			}
 
 			flushed, err := fleet.ConsumeAllReadyEvents(ctx.Home, taskID, senderIdentity, metaGeneration, newSessionSoldierEndpoints())
 			if err != nil {

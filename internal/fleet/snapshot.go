@@ -178,6 +178,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 		return err
 	}
 
+	seenIDs := map[string]bool{}
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -187,13 +188,27 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 		if err != nil {
 			continue
 		}
+		agg, hasAggregate, err := mhome.ReadCurrentTaskAggregate(taskHome, id)
+		if err != nil {
+			continue
+		}
 
+		project := meta["project"]
+		kind := meta["kind"]
+		if hasAggregate {
+			if agg.Project != "" {
+				project = agg.Project
+			}
+			if agg.Kind != "" {
+				kind = agg.Kind
+			}
+		}
 		ts := TaskSnapshot{
 			ID:       id,
-			Project:  meta["project"],
+			Project:  project,
 			Harness:  meta["harness"],
 			Model:    meta["model"],
-			Kind:     meta["kind"],
+			Kind:     kind,
 			Mode:     meta["mode"],
 			Yolo:     meta["yolo"],
 			Window:   meta["window"],
@@ -227,12 +242,37 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 
 		// Resolve current-state projection when resolver is wired.
 		info := CurrentState(taskHome, id, meta)
-		ts.CurrentState = info.State
-		ts.CurrentDescription = info.Description
-		ts.NoMistakesRunStep = info.NoMistakesRunStep
-		ts.StatusLogSuperseded = info.StatusLogSuperseded
-		ts.OpenActivities = info.OpenActivities
+		if hasAggregate {
+			ts.CurrentState = agg.State
+			ts.CurrentDescription = agg.StateDetail
+			if ts.CurrentDescription == "" {
+				ts.CurrentDescription = agg.Definition
+			}
+			ts.StatusLogSuperseded = true
+			ts.OpenActivities = info.OpenActivities
+		} else {
+			ts.CurrentState = info.State
+			ts.CurrentDescription = info.Description
+			ts.NoMistakesRunStep = info.NoMistakesRunStep
+			ts.StatusLogSuperseded = info.StatusLogSuperseded
+			ts.OpenActivities = info.OpenActivities
+		}
 
+		snap.Tasks = append(snap.Tasks, ts)
+		seenIDs[id] = true
+	}
+	aggregates, err := mhome.ListCurrentTaskAggregates(taskHome)
+	if err != nil {
+		return err
+	}
+	for _, agg := range aggregates {
+		if seenIDs[agg.TaskID] {
+			continue
+		}
+		ts := TaskSnapshot{ID: agg.TaskID, Project: agg.Project, Kind: agg.Kind, Home: homeLabel, Source: source, CurrentState: agg.State, CurrentDescription: agg.StateDetail, StatusLogSuperseded: true}
+		if ts.CurrentDescription == "" {
+			ts.CurrentDescription = agg.Definition
+		}
 		snap.Tasks = append(snap.Tasks, ts)
 	}
 	return nil

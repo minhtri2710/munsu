@@ -48,12 +48,15 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 					"MUNSU_TASK_ID is not set")
 			}
 
-			// Resolve endpoint generation from task meta for staleness validation.
-			meta, err := home.ReadMeta(homeDir, taskID)
-			if err != nil {
-				return fmt.Errorf("ready: reading task meta: %w", err)
+			// Resolve endpoint generation from the authoritative aggregate, with legacy meta fallback.
+			fallbackGeneration := ""
+			if meta, err := home.ReadMeta(homeDir, taskID); err == nil {
+				fallbackGeneration = meta["generation"]
 			}
-			metaGeneration := meta["generation"]
+			metaGeneration, err := home.CurrentTaskGeneration(homeDir, taskID, fallbackGeneration)
+			if err != nil {
+				return fmt.Errorf("ready: reading task aggregate: %w", err)
+			}
 
 			// Emit the durable ready event marker.
 			// The ready marker is written atomically (temp-file + rename).

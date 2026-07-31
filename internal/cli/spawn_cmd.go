@@ -320,8 +320,11 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("task %s has no status: report done or resolved before promoting", id)
 			}
 
+			if _, _, err := home.UpdateCurrentTaskAggregateKind(ctx.Home, id, "ship"); err != nil {
+				return fmt.Errorf("promote %s aggregate: %w", id, err)
+			}
 			if err := home.PromoteMeta(ctx.Home, id); err != nil {
-				return fmt.Errorf("promote %s: %w", id, err)
+				return fmt.Errorf("authoritative task kind committed; promote meta projection failed for %s: %w", id, err)
 			}
 
 			return writeContract(cmd, Response[MessageResult]{

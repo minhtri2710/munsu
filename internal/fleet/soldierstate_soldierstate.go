@@ -1,10 +1,11 @@
 // Package soldierstate reads and reports the current state of a soldier.
 // The precedence hierarchy for current-state truth is:
-//  1. Backlog state (tasks-axi or manual backlog: done/blocked)
-//  2. Task meta file (status + description from last report)
-//  3. Provider state (GitHub PR merged/closed/open)
-//  4. Typed event log (keyed open/close transitions)
-//  5. Status file fallback (append-only .status lines)
+//  1. Task Aggregate, when present after migration
+//  2. Backlog state projection (legacy fallback only)
+//  3. Task meta/status projection (legacy fallback only)
+//  4. Provider state (GitHub PR merged/closed/open)
+//  5. Typed event log (keyed open/close transitions)
+//  6. Status file fallback (append-only .status lines)
 //
 // Pane prose is diagnostic only — never derived as current-state truth.
 package fleet
@@ -59,9 +60,25 @@ func ReadSoldierState(homeDir string, id string) (*State, error) {
 func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 
-	// Read meta (always needed for context)
+	agg, hasAggregate, aggErr := home.ReadCurrentTaskAggregate(homeDir, id)
+	if aggErr != nil {
+		return nil, aggErr
+	}
+	// Read meta for operational projections when present.
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
+		if hasAggregate {
+			s.Status = agg.State
+			if s.Status == "" {
+				s.Status = "unknown"
+			}
+			s.Description = agg.StateDetail
+			if s.Description == "" {
+				s.Description = agg.Definition
+			}
+			s.StatusLogSuperseded = true
+			return s, nil
+		}
 		// Missing meta means the task was never spawned or has been torn down.
 		// Return a soft "unknown" state instead of a hard error.
 		s.Status = "unknown"
@@ -77,8 +94,28 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	}
 	s.OpenActivities = home.OpenActivities(statusPath)
 
+	if hasAggregate {
+		s.Status = agg.State
+		if s.Status == "" {
+			s.Status = "unknown"
+		}
+		s.Description = agg.StateDetail
+		if s.Description == "" {
+			s.Description = agg.Definition
+		}
+		if backlogState, ok := readBacklogState(homeDir, id); ok {
+			s.BacklogState = backlogState.String()
+			s.StatusLogSuperseded = true
+		}
+		if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {
+			alive, err := probe.Probe(homeDir, meta)
+			s.PaneAlive = err == nil && alive
+		}
+		return s, nil
+	}
+
 	// --- No-mistakes run-step (pipeline state) ---
-	// This is a fast local check that feeds into the hierarchy below.
+	// This is a fast local check that feeds into the legacy hierarchy below.
 	wtPath := meta["worktree"]
 	if wtPath != "" {
 		currentBranch := getGitBranch(wtPath)
@@ -88,8 +125,7 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 		}
 	}
 
-	// --- TIER 1: Backlog state ---
-	// Highest precedence: tasks-axi or manual backlog is the captain's source of truth.
+	// --- TIER 2: Backlog state projection (legacy fallback) ---
 	if backlogState, ok := readBacklogState(homeDir, id); ok {
 		s.BacklogState = backlogState.String()
 		switch backlogState {
