@@ -29,6 +29,35 @@ func TestTaskShowDisplaysCurrentAggregateAuthority(t *testing.T) {
 	}
 }
 
+func TestBareAmbiguousTaskIDReturnsHomeScopedCorrections(t *testing.T) {
+	homeDir := t.TempDir()
+	captainHome := filepath.Join(homeDir, "captains", "api")
+	if err := os.MkdirAll(captainHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, scopedHome := range []string{homeDir, captainHome} {
+		if err := home.WriteTaskAggregate(scopedHome, home.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "ship-1", Generation: "1", Current: true, Owner: "general", Definition: scopedHome, State: "queued", Kind: "ship"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := runMigrateCommand([]string{"task", "show", "ship-1", "--home", homeDir, "--output", "json"})
+	if err == nil {
+		t.Fatalf("task show unexpectedly succeeded: %s", out)
+	}
+	contractErr, ok := err.(*contractError)
+	if !ok {
+		t.Fatalf("error type = %T, want *contractError", err)
+	}
+	if contractErr.value.Error.ErrorCode != "ambiguous_task_id" {
+		t.Fatalf("error code = %q", contractErr.value.Error.ErrorCode)
+	}
+	for _, want := range []string{"Task ID \"ship-1\" is ambiguous", "munsu task show ship-1 --home " + homeDir, "munsu task show ship-1 --home " + captainHome} {
+		if !strings.Contains(contractErr.value.Error.Message+contractErr.value.Error.Action, want) {
+			t.Fatalf("typed correction missing %q: %+v", want, contractErr.value.Error)
+		}
+	}
+}
+
 func TestAggregateOnlyTaskWorksInListShowAndSoldierState(t *testing.T) {
 	homeDir := t.TempDir()
 	writeTaskAggregateCLIFile(t, filepath.Join(homeDir, "state", "ship-1.meta"), "description=aggregate only\nowner=captain:api\ngeneration=7\nstate=working\n")

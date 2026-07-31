@@ -1709,6 +1709,11 @@ func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	for _, id := range []string{"TASK-1", "TASK-2"} {
+		if err := home.WriteTaskAggregate(parent, home.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: id, Generation: "1", Current: true, Owner: "general", Definition: id, State: "queued", Kind: "ship"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	origPath := captainLookPath
 	origBackend := isTasksAxiBackend

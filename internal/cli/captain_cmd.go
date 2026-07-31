@@ -10,6 +10,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func handoffCorrectionCommands(captainHome string, ambiguous interface {
+	CorrectionCommands(string) []string
+}) []string {
+	var commands []string
+	for _, correction := range ambiguous.CorrectionCommands("munsu captain handoff " + captainHome) {
+		parts := strings.Split(correction, " --home ")
+		if len(parts) == 2 {
+			commands = append(commands, "munsu --home "+parts[1]+" captain handoff "+captainHome+" "+strings.TrimPrefix(parts[0], "munsu captain handoff "+captainHome+" "))
+		} else {
+			commands = append(commands, correction)
+		}
+	}
+	return commands
+}
+
 func newCaptainCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "captain",
@@ -113,7 +128,13 @@ Flags for worktree provisioning:
 All keys must be in queued state. Uses tasks-axi mv atomically.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.Handoff(ctx.Home, args[0], args[1:])
+			if err := fleet.Handoff(ctx.Home, args[0], args[1:]); err != nil {
+				if ambiguous, ok := fleet.HandoffAmbiguousTaskID(err); ok {
+					return operationError("ambiguous_task_id", strings.Join(handoffCorrectionCommands(args[0], ambiguous), "; "), fmt.Sprintf("Task ID %q is ambiguous", ambiguous.Requested))
+				}
+				return err
+			}
+			return nil
 		}),
 	})
 

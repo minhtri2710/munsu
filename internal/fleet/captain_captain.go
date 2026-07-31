@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1194,13 +1195,24 @@ var isTasksAxiBackend = func(parentHome string) bool {
 	return val == "tasks-axi"
 }
 
+func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
+	var ambiguous *mhome.AmbiguousTaskIDError
+	if errors.As(err, &ambiguous) {
+		return ambiguous, true
+	}
+	return nil, false
+}
+
+var handoffFailpoint string
+
 // Handoff moves backlog items from the parent home to a captain atomically.
 // All requested keys must preclassify as queued before the command runs.
 // Tasks-axi mv is the only supported backend. On failure, both files remain
 // unchanged (atomic via tasks-axi mv).
 // Validates canonical captain destination and uses absolute --file paths.
 func Handoff(parentHome, captainHome string, itemKeys []string) error {
-	if _, err := ValidateProvenance(captainHome); err != nil {
+	captainID, err := ValidateProvenance(captainHome)
+	if err != nil {
 		return fmt.Errorf("refusing handoff to unmarked home %s: %w", captainHome, err)
 	}
 	// Validate canonical captain home path.
@@ -1233,25 +1245,36 @@ func Handoff(parentHome, captainHome string, itemKeys []string) error {
 		return fmt.Errorf("tasks-axi not found: %w", err)
 	}
 
-	// Preclassify: verify all requested keys exist and are queued.
+	// Preclassify: resolve all requested keys and verify they exist and are queued.
+	resolvedKeys := make([]string, 0, len(itemKeys))
 	for _, key := range itemKeys {
-		showOut, showErr := exec.Command(path, "show", key, "--file", srcBacklog).CombinedOutput()
+		resolvedKey, err := mhome.ResolveCurrentTaskID(parentHome, key)
+		if err != nil {
+			return fmt.Errorf("handoff: resolving task %s: %w", key, err)
+		}
+		showOut, showErr := exec.Command(path, "show", resolvedKey, "--file", srcBacklog).CombinedOutput()
 		if showErr != nil {
-			return fmt.Errorf("handoff: key %s not found in source backlog: %s", key, strings.TrimSpace(string(showOut)))
+			return fmt.Errorf("handoff: key %s not found in source backlog: %s", resolvedKey, strings.TrimSpace(string(showOut)))
 		}
 
 		state := extractTaskStateFromShow(string(showOut))
 		if state == "" {
-			return fmt.Errorf("handoff: key %s has no parseable state — only queued items may be handed off", key)
+			return fmt.Errorf("handoff: key %s has no parseable state — only queued items may be handed off", resolvedKey)
 		}
 		if state != "queued" {
-			return fmt.Errorf("handoff: key %s has state %q, only queued items may be handed off", key, state)
+			return fmt.Errorf("handoff: key %s has state %q, only queued items may be handed off", resolvedKey, state)
 		}
+		resolvedKeys = append(resolvedKeys, resolvedKey)
+	}
+
+	tx, err := buildTaskHandoffTx(parentHome, captainHome, resolvedKeys, "captain:"+captainID, srcBacklog, dstBacklog)
+	if err != nil {
+		return err
 	}
 
 	// All keys verified as queued. Run tasks-axi mv atomically with absolute paths.
 	cliArgs := []string{"mv"}
-	cliArgs = append(cliArgs, itemKeys...)
+	cliArgs = append(cliArgs, resolvedKeys...)
 	cliArgs = append(cliArgs, "--to", dstBacklog)
 	cliArgs = append(cliArgs, "--file", srcBacklog)
 
@@ -1262,10 +1285,196 @@ func Handoff(parentHome, captainHome string, itemKeys []string) error {
 		return fmt.Errorf("tasks-axi mv failed (both files unchanged): %w", err)
 	}
 
-	for _, key := range itemKeys {
+	if err := tx.apply(); err != nil {
+		if rollbackErr := tx.restore(); rollbackErr != nil {
+			return fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+		}
+		return err
+	}
+
+	for _, key := range resolvedKeys {
 		fmt.Printf("handed-off %s\n", key)
 	}
 	return nil
+}
+
+type taskHandoffTx struct {
+	sourceHome      string
+	destinationHome string
+	sourceBacklog   fileSnapshot
+	destBacklog     fileSnapshot
+	tasks           []taskHandoffRecord
+}
+
+type taskHandoffRecord struct {
+	taskID               string
+	sourceAggregate      mhome.TaskAggregate
+	destinationAggregate mhome.TaskAggregate
+	sourceProjections    []fileSnapshot
+	destProjections      []fileSnapshot
+}
+
+type fileSnapshot struct {
+	path   string
+	exists bool
+	mode   os.FileMode
+	data   []byte
+}
+
+func buildTaskHandoffTx(sourceHome, destinationHome string, taskIDs []string, destinationOwner, sourceBacklog, destBacklog string) (*taskHandoffTx, error) {
+	tx := &taskHandoffTx{sourceHome: sourceHome, destinationHome: destinationHome}
+	var err error
+	tx.sourceBacklog, err = snapshotFile(sourceBacklog)
+	if err != nil {
+		return nil, err
+	}
+	tx.destBacklog, err = snapshotFile(destBacklog)
+	if err != nil {
+		return nil, err
+	}
+	for _, taskID := range taskIDs {
+		agg, err := mhome.PreflightTaskTransfer(sourceHome, destinationHome, taskID)
+		if err != nil {
+			return nil, fmt.Errorf("handoff: preflight task transfer %s: %w", taskID, err)
+		}
+		destination := *agg
+		destination.Owner = destinationOwner
+		record := taskHandoffRecord{taskID: taskID, sourceAggregate: *agg, destinationAggregate: destination}
+		for _, rel := range taskHandoffProjectionRelPaths(taskID) {
+			srcSnap, err := snapshotFile(filepath.Join(sourceHome, rel))
+			if err != nil {
+				return nil, err
+			}
+			dstSnap, err := snapshotFile(filepath.Join(destinationHome, rel))
+			if err != nil {
+				return nil, err
+			}
+			record.sourceProjections = append(record.sourceProjections, srcSnap)
+			record.destProjections = append(record.destProjections, dstSnap)
+		}
+		tx.tasks = append(tx.tasks, record)
+	}
+	return tx, nil
+}
+
+func (tx *taskHandoffTx) apply() error {
+	if handoffFailpoint == "after-backlog" {
+		return fmt.Errorf("handoff failpoint after-backlog")
+	}
+	for i, task := range tx.tasks {
+		if err := writeTaskAggregateForHandoff(tx.destinationHome, task.destinationAggregate); err != nil {
+			return err
+		}
+		if err := mhome.DeleteTaskAggregate(tx.sourceHome, task.taskID, task.sourceAggregate.Generation); err != nil {
+			return err
+		}
+		for j, snap := range task.sourceProjections {
+			if err := writeProjectionSnapshot(tx.destinationHome, snap, tx.sourceHome); err != nil {
+				return err
+			}
+			if snap.exists {
+				if err := os.Remove(snap.path); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+			if handoffFailpoint == "after-first-projection" && i == 0 && j == 0 {
+				return fmt.Errorf("handoff failpoint after-first-projection")
+			}
+		}
+		if handoffFailpoint == "between-tasks" && i == 0 && len(tx.tasks) > 1 {
+			return fmt.Errorf("handoff failpoint between-tasks")
+		}
+	}
+	return nil
+}
+
+func (tx *taskHandoffTx) restore() error {
+	var errs []string
+	for i := len(tx.tasks) - 1; i >= 0; i-- {
+		task := tx.tasks[i]
+		if err := mhome.DeleteTaskAggregate(tx.destinationHome, task.taskID, task.destinationAggregate.Generation); err != nil {
+			errs = append(errs, err.Error())
+		}
+		if err := writeTaskAggregateForHandoff(tx.sourceHome, task.sourceAggregate); err != nil {
+			errs = append(errs, err.Error())
+		}
+		for _, snap := range task.sourceProjections {
+			if err := restoreSnapshot(snap); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+		for _, snap := range task.destProjections {
+			if err := restoreSnapshot(snap); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+	}
+	for _, snap := range []fileSnapshot{tx.sourceBacklog, tx.destBacklog} {
+		if err := restoreSnapshot(snap); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func snapshotFile(path string) (fileSnapshot, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fileSnapshot{path: path}, nil
+		}
+		return fileSnapshot{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fileSnapshot{}, err
+	}
+	return fileSnapshot{path: path, exists: true, mode: info.Mode().Perm(), data: data}, nil
+}
+
+func restoreSnapshot(snap fileSnapshot) error {
+	if !snap.exists {
+		if err := os.Remove(snap.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(snap.path), 0700); err != nil {
+		return err
+	}
+	if err := atomicWriteFile(snap.path, snap.data, snap.mode); err != nil {
+		return err
+	}
+	return os.Chmod(snap.path, snap.mode)
+}
+
+func writeProjectionSnapshot(destinationHome string, snap fileSnapshot, sourceHome string) error {
+	if !snap.exists {
+		return nil
+	}
+	rel, err := filepath.Rel(sourceHome, snap.path)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(destinationHome, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	if err := atomicWriteFile(path, snap.data, snap.mode); err != nil {
+		return err
+	}
+	return os.Chmod(path, snap.mode)
+}
+
+func writeTaskAggregateForHandoff(homeDir string, agg mhome.TaskAggregate) error {
+	return mhome.WriteTaskAggregate(homeDir, agg)
+}
+
+func taskHandoffProjectionRelPaths(taskID string) []string {
+	return []string{filepath.Join("state", taskID+".meta"), filepath.Join("state", taskID+".status"), filepath.Join("data", taskID, "brief.md")}
 }
 
 // --- Config inheritance ---

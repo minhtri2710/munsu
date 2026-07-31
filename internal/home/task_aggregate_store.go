@@ -30,6 +30,66 @@ func ReadTaskAggregate(homeDir, taskID, generation string) (*TaskAggregate, erro
 	return &agg, nil
 }
 
+type AmbiguousTaskIDError struct {
+	Requested string
+	Matches   []string
+}
+
+func (e *AmbiguousTaskIDError) Error() string {
+	return fmt.Sprintf("task ID %q is ambiguous; use one of: %s", e.Requested, strings.Join(e.Matches, ", "))
+}
+
+func (e *AmbiguousTaskIDError) CorrectionCommands(command string) []string {
+	commands := make([]string, 0, len(e.Matches))
+	for _, match := range e.Matches {
+		commands = append(commands, command+" "+e.Requested+" --home "+match)
+	}
+	return commands
+}
+
+func ResolveCurrentTaskID(homeDir, taskID string) (string, error) {
+	if err := validateTaskID(taskID); err != nil {
+		return "", err
+	}
+	matches, err := scopedCurrentTaskMatches(homeDir, taskID)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) > 1 {
+		return "", &AmbiguousTaskIDError{Requested: taskID, Matches: matches}
+	}
+	return taskID, nil
+}
+
+func scopedCurrentTaskMatches(homeDir, taskID string) ([]string, error) {
+	var matches []string
+	if _, ok, err := ReadCurrentTaskAggregate(homeDir, taskID); err != nil {
+		return nil, err
+	} else if ok {
+		matches = append(matches, homeDir)
+	}
+	captainsRoot := filepath.Join(homeDir, "captains")
+	entries, err := os.ReadDir(captainsRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return matches, nil
+		}
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		captainHome := filepath.Join(captainsRoot, entry.Name())
+		if _, ok, err := ReadCurrentTaskAggregate(captainHome, taskID); err != nil {
+			return nil, err
+		} else if ok {
+			matches = append(matches, captainHome)
+		}
+	}
+	return matches, nil
+}
+
 func ReadCurrentTaskAggregate(homeDir, taskID string) (*TaskAggregate, bool, error) {
 	if err := validateTaskID(taskID); err != nil {
 		return nil, false, err
@@ -157,6 +217,45 @@ func DeleteTaskAggregate(homeDir, taskID, generation string) error {
 		}
 	}
 	return nil
+}
+
+func PreflightTaskTransfer(sourceHome, destinationHome, taskID string) (*TaskAggregate, error) {
+	resolvedID, err := ResolveCurrentTaskID(sourceHome, taskID)
+	if err != nil {
+		return nil, err
+	}
+	agg, ok, err := ReadCurrentTaskAggregate(sourceHome, resolvedID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("source does not own task aggregate %s", resolvedID)
+	}
+	if existing, exists, err := ReadCurrentTaskAggregate(destinationHome, resolvedID); err != nil {
+		return nil, err
+	} else if exists && existing.Generation == agg.Generation {
+		return nil, fmt.Errorf("destination already owns task aggregate %s generation %s", resolvedID, agg.Generation)
+	}
+	for _, rel := range taskProjectionRelPaths(resolvedID) {
+		src := filepath.Join(sourceHome, rel)
+		if _, err := os.Stat(src); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		dst := filepath.Join(destinationHome, rel)
+		if _, err := os.Stat(dst); err == nil {
+			return nil, fmt.Errorf("destination projection already exists: %s", rel)
+		} else if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return agg, nil
+}
+
+func taskProjectionRelPaths(taskID string) []string {
+	return []string{filepath.Join("state", taskID+".meta"), filepath.Join("state", taskID+".status"), filepath.Join("data", taskID, "brief.md")}
 }
 
 func UpdateCurrentTaskAggregateOwner(homeDir, taskID, owner string) (*TaskAggregate, bool, error) {
