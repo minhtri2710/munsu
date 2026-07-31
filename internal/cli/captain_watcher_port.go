@@ -11,6 +11,10 @@ func (captainWatcherAdapter) Status(home string) fleet.WatcherStatus {
 	return fleet.WatcherStatus(orchestrator.WatcherStatusSummary(home))
 }
 
+func (captainWatcherAdapter) LeaseStatus(home string) fleet.WatcherStatus {
+	return fleet.WatcherStatus(orchestrator.LeaseStatusSummary(home))
+}
+
 func (captainWatcherAdapter) Ensure(home string, hasChildWork bool) error {
 	return orchestrator.EnsureWatcher(home, hasChildWork)
 }

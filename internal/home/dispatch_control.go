@@ -282,6 +282,10 @@ func ReleaseDispatchHold(homeDir, id string) error {
 
 func CheckDispatchHold(homeDir string, action DispatchAction, taskID, projectID, generation, parentID string) error {
 	return withDispatchControlLock(homeDir, func() error {
+		// Check watcher health first — degraded mode blocks handoff, start, and spawn.
+		if err := CheckWatcherHealthForDispatch(homeDir, action); err != nil {
+			return err
+		}
 		return checkDispatchHoldUnlocked(homeDir, action, taskID, projectID, generation, parentID)
 	})
 }

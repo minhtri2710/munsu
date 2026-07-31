@@ -87,6 +87,16 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	}
 	defer ReleaseWatch(homeDir)
 
+	// Claim the watcher lease — unique per home.
+	claimed, err := home.ClaimWatcherLease(homeDir, os.Getpid())
+	if err != nil {
+		return nil, fmt.Errorf("claiming watcher lease: %w", err)
+	}
+	if !claimed {
+		return nil, fmt.Errorf("watcher lease already held by another process")
+	}
+	defer home.ReleaseWatcherLease(homeDir)
+
 	// Write watcher identity on start and clear it on exit.
 	identity := NewIdentity(homeDir)
 	if err := WriteIdentity(homeDir, identity); err != nil {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // WatcherStatus describes the disposition of a per-captain watcher.
@@ -46,6 +47,22 @@ func WatcherStatusSummary(captainHome string) WatcherStatus {
 	}
 
 	// Beat exists but ownership verification failed — treat as stopped.
+	return WatcherStopped
+}
+
+// LeaseStatusSummary returns a watcher status based on the watcher lease.
+// This is used by the General to observe Captain watcher health without
+// reading Captain task state files. The lease file is the authoritative
+// source of watcher identity for a home.
+func LeaseStatusSummary(captainHome string) WatcherStatus {
+	summary := home.ObserveWatcherLease(captainHome)
+	if summary == nil || summary.Absent {
+		return WatcherAbsent
+	}
+	if summary.Healthy {
+		return WatcherRunning
+	}
+	// Lease exists but is unhealthy — beat is stale or PID is dead.
 	return WatcherStopped
 }
 
@@ -99,6 +116,7 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		}
 		ClearBeat(captainHome)
 		ClearIdentity(captainHome)
+		home.ReleaseWatcherLease(captainHome)
 	}
 	return nil
 }

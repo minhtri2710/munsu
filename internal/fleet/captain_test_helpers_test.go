@@ -26,8 +26,9 @@ func (noopCaptainMessaging) ReconcilePending(string, CaptainEndpoint, home.Bound
 
 type noopCaptainWatcher struct{}
 
-func (noopCaptainWatcher) Status(string) WatcherStatus { return WatcherAbsent }
-func (noopCaptainWatcher) Ensure(string, bool) error   { return nil }
+func (noopCaptainWatcher) Status(string) WatcherStatus          { return WatcherAbsent }
+func (noopCaptainWatcher) LeaseStatus(string) WatcherStatus     { return WatcherAbsent }
+func (noopCaptainWatcher) Ensure(string, bool) error            { return nil }
 
 type fakeIntegrationPort struct{}
 

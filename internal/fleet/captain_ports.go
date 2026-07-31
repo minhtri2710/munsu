@@ -14,6 +14,7 @@ type CaptainContinuityPort interface {
 type CaptainWatcherPort interface {
 	Status(home string) WatcherStatus
 	Ensure(home string, hasChildWork bool) error
+	LeaseStatus(home string) WatcherStatus
 }
 
 type CaptainMessagingPort interface {
