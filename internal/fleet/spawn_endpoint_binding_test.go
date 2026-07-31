@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +69,58 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	}
 	if working.State != "working" {
 		t.Fatalf("state=%q want working", working.State)
+	}
+}
+
+func TestBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) {
+	primary := initRepoForSpawnBinding(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSpawnBinding(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := t.TempDir()
+	agg, err := home.CreateTaskAggregate(homeDir, "bind-wt", "general", "Ready", "ship", "test-proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-wt", ProjectName: "test-proj"}, projPath: primary, wtPath: worktree}
+	if err := r.bindWorktree(); err != nil {
+		t.Fatalf("bindWorktree: %v", err)
+	}
+	bound, ok, err := home.ReadCurrentTaskAggregate(homeDir, "bind-wt")
+	if err != nil || !ok {
+		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
+	}
+	if bound.Worktree == nil || bound.Worktree.TaskGeneration != agg.Generation || bound.Worktree.RepositoryIdentity == "" || bound.Worktree.Path == "" || bound.Worktree.GitDir == "" || bound.Worktree.CommonDir == "" || bound.Worktree.GitDir == bound.Worktree.CommonDir || bound.Worktree.Head == "" || bound.Worktree.LeaseID == "" || bound.Worktree.FenceToken == "" {
+		t.Fatalf("worktree binding=%+v", bound.Worktree)
+	}
+	if bound.State == "working" {
+		t.Fatal("worktree binding alone must not mark task working")
+	}
+}
+
+func initRepoForSpawnBinding(t *testing.T, dir string) string {
+	t.Helper()
+	runGitForSpawnBinding(t, dir, "init", "-b", "main")
+	runGitForSpawnBinding(t, dir, "config", "user.email", "test@example.com")
+	runGitForSpawnBinding(t, dir, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGitForSpawnBinding(t, dir, "add", "README.md")
+	runGitForSpawnBinding(t, dir, "commit", "-m", "initial")
+	abs, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}
+
+func runGitForSpawnBinding(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test User", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test User", "GIT_COMMITTER_EMAIL=test@example.com")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
 	}
 }
 

@@ -65,9 +65,9 @@ Your authority is bounded by the task brief and this charter.
 
 1. Read all files in the worktree and repository.
 2. Create, edit, and delete files under the worktree to complete the task.
-3. Create branches from the worktree's detached HEAD.
-4. Commit changes to your branch.
-5. Push your branch to the remote origin.
+3. Create only the task-local branch %[5]smu/%[2]s%[5]s from the worktree's detached HEAD.
+4. Use %[5]sgit add%[5]s and %[5]sgit commit%[5]s only for task-local changes on that branch.
+5. Use only a normal (non-force) push of the task-local branch to %[5]sorigin%[5]s when policy requires push.
 6. Open a PR (only when delivery mode allows it).
 7. Use gh-axi for GitHub operations.
 8. Use %[5]smunsu report%[5]s for terminal state reporting.

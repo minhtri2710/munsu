@@ -397,6 +397,13 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 			}
 		}
 
+		if !block {
+			if gitBlock, gitReason := evaluateGitMutationSafety(checkPath, effectiveCommand); gitBlock {
+				block = true
+				reason = gitReason
+			}
+		}
+
 		nmHome := os.Getenv("NM_HOME")
 		if nmHome == "" {
 			if h, err := os.UserHomeDir(); err == nil {

@@ -58,6 +58,7 @@ type TaskAggregate struct {
 	State         string                  `json:"state,omitempty"`
 	StateDetail   string                  `json:"state_detail,omitempty"`
 	Endpoint      *TaskEndpointBinding    `json:"endpoint,omitempty"`
+	Worktree      *TaskWorktreeBinding    `json:"worktree,omitempty"`
 	Project       string                  `json:"project,omitempty"`
 	Kind          string                  `json:"kind,omitempty"`
 	Projections   []TaskAggregateEvidence `json:"projections,omitempty"`
@@ -247,6 +248,14 @@ func validateTaskAggregate(agg TaskAggregate) error {
 			return fmt.Errorf("aggregate %s/%s endpoint binding targets generation %s", agg.TaskID, agg.Generation, agg.Endpoint.TaskGeneration)
 		}
 		if err := validateTaskEndpointBinding(*agg.Endpoint); err != nil {
+			return err
+		}
+	}
+	if agg.Worktree != nil {
+		if agg.Worktree.TaskGeneration != agg.Generation {
+			return fmt.Errorf("aggregate %s/%s worktree binding targets generation %s", agg.TaskID, agg.Generation, agg.Worktree.TaskGeneration)
+		}
+		if err := validateTaskWorktreeBinding(*agg.Worktree); err != nil {
 			return err
 		}
 	}

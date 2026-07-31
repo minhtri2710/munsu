@@ -100,6 +100,9 @@ func (r *Runner) Run() (string, error) {
 			_ = backend.ReturnWorktree(r.homeDir, r.wtPath)
 		}
 	}()
+	if err := r.bindWorktree(); err != nil {
+		return "", err
+	}
 
 	if err := r.resolveHarness(); err != nil {
 		return "", err
@@ -966,6 +969,71 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state", r.windowID, status.State, r.endpoint.Backend)
 	}
 	return nil
+}
+
+func (r *Runner) bindWorktree() error {
+	agg, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("task aggregate %s has no current generation for worktree binding", r.args.ID)
+	}
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, agg.Generation)
+	if err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	if err := home.BindTaskWorktree(r.homeDir, r.args.ID, agg.Generation, binding); err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	return nil
+}
+
+func buildTaskWorktreeBinding(primaryPath, worktreePath, generation string) (home.TaskWorktreeBinding, error) {
+	canonicalWorktree, err := canonicalExistingPath(worktreePath)
+	if err != nil {
+		return home.TaskWorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
+	}
+	identity, gitDir, commonDir, err := ClassifyIdentity(canonicalWorktree)
+	if err != nil {
+		return home.TaskWorktreeBinding{}, err
+	}
+	if identity != Worktree {
+		return home.TaskWorktreeBinding{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
+	}
+	repoIdentity := commonDir
+	if primaryPath != "" {
+		_, _, primaryCommonDir, err := ClassifyIdentity(primaryPath)
+		if err != nil {
+			return home.TaskWorktreeBinding{}, fmt.Errorf("classifying repository identity: %w", err)
+		}
+		repoIdentity = primaryCommonDir
+	}
+	head, err := gitRevParseForBinding(canonicalWorktree, "HEAD")
+	if err != nil {
+		return home.TaskWorktreeBinding{}, fmt.Errorf("reading worktree head: %w", err)
+	}
+	return home.TaskWorktreeBinding{
+		TaskGeneration:     generation,
+		RepositoryIdentity: repoIdentity,
+		Path:               canonicalWorktree,
+		GitDir:             gitDir,
+		CommonDir:          commonDir,
+		Head:               head,
+		LeaseID:            newEndpointToken(),
+		FenceToken:         newEndpointToken(),
+		BoundAtUnix:        time.Now().Unix(),
+	}, nil
+}
+
+func gitRevParseForBinding(dir, flag string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", flag)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (r *Runner) bindEndpoint() error {
