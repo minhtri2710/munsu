@@ -124,7 +124,10 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	r.bootstrapWindow()
-	r.writeBriefToWorktree()
+	if err := r.writeLaunchManifest(); err != nil {
+		_ = r.endpoints.Dispose(r.endpoint)
+		return "", err
+	}
 	if err := r.waitAndInjectBrief(); err != nil {
 		return "", err
 	}
@@ -894,24 +897,26 @@ func (r *Runner) bootstrapWindow() {
 	}
 }
 
-// Phase 13a: writeBriefToWorktree writes the brief file into the worktree.
-func (r *Runner) writeBriefToWorktree() {
-	briefPath := Path(r.homeDir, r.args.ID)
-	data, readErr := os.ReadFile(briefPath)
-	if readErr != nil {
-		if !os.IsNotExist(readErr) {
-			fmt.Fprintf(os.Stderr, "warning: reading brief: %v\n", readErr)
+// Phase 13b: writeLaunchManifest writes the digest manifest after all launch
+// artifacts exist. The manifest is written after bootstrapWindow creates the
+// launch script, so all artifacts are present.
+func (r *Runner) writeLaunchManifest() error {
+	entries := []ManifestEntry{}
+	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+		entry, err := ManifestEntryForFile(r.wtPath, name, DisposalPolicyCleanable)
+		if err != nil {
+			return fmt.Errorf("building manifest entry for %s: %w", name, err)
 		}
-		return
+		entries = append(entries, entry)
 	}
-	r.briefData = data
-	briefWorktreePath := filepath.Join(r.wtPath, ".soldier-md")
-	if writeErr := os.WriteFile(briefWorktreePath, data, 0644); writeErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: writing brief to worktree: %v\n", writeErr)
+	manifest := BuildManifest(entries)
+	if err := WriteManifest(r.wtPath, manifest); err != nil {
+		return fmt.Errorf("writing launch manifest: %w", err)
 	}
+	return nil
 }
 
-// Phase 13b: waitForReady waits for the harness to be ready. No brief injection
+// Phase 13c: waitForReady waits for the harness to be ready. No brief injection
 // is needed — the full prompt was already passed as a launch argument.
 // For harnesses that reached bootstrapWindow, the prompt is in context;
 // this is a pure handshake wait with error handling.

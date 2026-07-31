@@ -272,15 +272,18 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 	}
 	raw := strings.TrimSpace(string(out))
 	if raw != "" {
-		// Filter out known munsu-owned launch artifacts (e.g. .soldier-charter.md,
-		// .soldier-envelope.json, .soldier-prompt.md, .soldier-brief.md,
-		// .soldier-launch.sh). These are lifecycle-owned and cleanable during
-		// normal  Any other untracked/modified files still fail.
 		lines := strings.Split(raw, "\n")
-		allowlist := make(map[string]bool)
+
+		// Try to read the manifest for digest-based verification.
+		manifest, manifestErr := ReadManifest(wtPath)
+		haveManifest := manifestErr == nil
+
+		// Build legacy name-based fallback allowlist.
+		nameAllowlist := make(map[string]bool)
 		for _, name := range LaunchArtifactNames() {
-			allowlist[name] = true
+			nameAllowlist[name] = true
 		}
+
 		var remaining []string
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
@@ -288,9 +291,71 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 				continue
 			}
 			// porcelain format: XY filename or XY "filename with spaces"
-			// Skip the two status chars and optional space, then parse filename.
+			status := ""
+			if len(line) >= 2 {
+				status = line[:2]
+			}
 			name := parsePorcelainFilename(line)
-			if name != "" && allowlist[name] {
+			if name == "" {
+				remaining = append(remaining, line)
+				continue
+			}
+
+			// Tracked or staged files block regardless of manifest.
+			isUntracked := status == "??"
+			if !isUntracked {
+				remaining = append(remaining, line)
+				continue
+			}
+
+			// The manifest file itself is always cleanable.
+			if name == ManifestName {
+				continue
+			}
+
+			if haveManifest {
+				// Manifest-based verification.
+				entry := manifest.Lookup(name)
+				if entry != nil {
+					// Check if the file's digest matches the manifest.
+					data, err := os.ReadFile(filepath.Join(wtPath, name))
+					if err != nil {
+						remaining = append(remaining, line)
+						continue
+					}
+					if entry.Policy == DisposalPolicyCleanable && sha256Content(data) == entry.SHA256 {
+						continue
+					}
+					// Digest mismatch — modified artifact.
+					remaining = append(remaining, line)
+					continue
+				}
+
+				// Not in manifest — check legacy migration.
+				// Strict: require canonical brief evidence to exist and match
+				// the manifest digest, then compare .soldier-md against it.
+				if name == ".soldier-md" && LegacyBriefMigrationEnabled {
+					briefData, briefErr := os.ReadFile(filepath.Join(wtPath, BriefName))
+					if briefErr == nil {
+						// Verify canonical brief matches manifest digest.
+						briefEntry := manifest.Lookup(BriefName)
+						if briefEntry != nil && briefEntry.Policy == DisposalPolicyCleanable &&
+							sha256Content(briefData) == briefEntry.SHA256 {
+							legacyData, legacyErr := os.ReadFile(filepath.Join(wtPath, name))
+							if legacyErr == nil && sha256Content(legacyData) == briefEntry.SHA256 {
+								continue
+							}
+						}
+					}
+				}
+
+				// Unlisted file — block.
+				remaining = append(remaining, line)
+				continue
+			}
+
+			// No manifest available — fall back to name-based allowlist.
+			if nameAllowlist[name] {
 				continue
 			}
 			remaining = append(remaining, line)
