@@ -21,6 +21,9 @@ func newTaskCmd() *cobra.Command {
 		Short: "Add a new task to the backlog",
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
+				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
+			}
 			id := args[0]
 			desc := args[1]
 			kind, _ := cmd.Flags().GetString("kind")
@@ -181,6 +184,9 @@ func newTaskCmd() *cobra.Command {
 		Short: "Append a status line to a task",
 		Args:  ExactArgs(3),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
+				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
+			}
 			id := args[0]
 			state := args[1]
 			msg := args[2]

@@ -40,6 +40,9 @@ remote/name heuristics.
 When inference fails, pass the project name explicitly or run 'munsu project add'.`,
 		Args: cobra.MatchAll(MinimumNArgs(1), cobra.MaximumNArgs(2)),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if result := fleet.CheckOperation(fleet.OpSpawn, ctx.Home); !result.IsCompatible() {
+				return fmt.Errorf("spawn compatibility check failed: %s", result.FormatErrors())
+			}
 			id := args[0]
 
 			// Resolve project name: explicit arg, or infer from cwd
@@ -293,6 +296,9 @@ func newPromoteCmd() *cobra.Command {
 		Short: "Promote a scout task to ship",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
+				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
+			}
 			id := args[0]
 
 			// Preflight: verify task meta exists with kind=scout
@@ -357,6 +363,9 @@ With --force:
 `,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if result := fleet.CheckOperation(fleet.OpTeardown, ctx.Home); !result.IsCompatible() {
+				return fmt.Errorf("teardown compatibility check failed: %s", result.FormatErrors())
+			}
 			id := args[0]
 
 			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.

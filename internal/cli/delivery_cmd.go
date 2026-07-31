@@ -71,6 +71,9 @@ Task meta is resolved from the current home first, then each registered
 captain home (so general can arm checks after captain handoff + spawn).`,
 		Args: ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if result := fleet.CheckOperation(fleet.OpDelivery, ctx.Home); !result.IsCompatible() {
+				return fmt.Errorf("delivery compatibility check failed: %s", result.FormatErrors())
+			}
 			id := args[0]
 			prURL := args[1]
 
