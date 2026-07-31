@@ -35,14 +35,7 @@ const ConvergeLockName = ".captain-converge.lock"
 const NudgePendingDir = ".captain-nudge-pending"
 
 // captainPiExtensionNames are project-local Pi extensions loaded with -e at captain launch.
-// Order matches captain launch: turnend guard then watch bridge, plus munsu bootstrap.
-var captainPiExtensionNames = []string{
-	"munsu-pi-integration.ts",
-	"munsu-captain-turnend-guard.ts",
-	"munsu-captain-pi-watch.ts",
-	"fm-primary-turnend-guard.ts",
-	"fm-primary-pi-watch.ts",
-}
+var captainPiExtensionNames = []string{"munsu-pi-integration.ts"}
 
 // UpdateOutcome is the typed result of a single captain update operation.
 type UpdateOutcome string
@@ -929,14 +922,16 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		args = append(args, adapter.LaunchTemplate.EffortFlag, prof.Effort)
 	}
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
-	// Pi captain homes get project-local integrate + captain-compat extensions via -e.
+	// Pi captain homes load the canonical project-local integration via -e.
 	if adapter.Name == "pi" {
-		for _, name := range captainPiExtensionNames {
-			path := filepath.Join(captainHome, ".pi", "extensions", name)
-			if _, err := os.Stat(path); err == nil {
-				args = append(args, "-e", path)
+		path := filepath.Join(captainHome, ".pi", "extensions", captainPiExtensionNames[0])
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				return "", nil, fmt.Errorf("captain launch: canonical Pi integration is missing; repair with: munsu integrate repair --harness pi --scope project")
 			}
+			return "", nil, fmt.Errorf("captain launch: checking canonical Pi integration: %w", err)
 		}
+		args = append(args, "-e", path)
 	}
 	if adapter.Name == "pi" {
 		args = append(args, "--append-system-prompt", captainBootstrapPrompt(charter))
@@ -2081,6 +2076,7 @@ type ConvergeCapabilities struct {
 	Messaging    CaptainMessagingPort
 	Watcher      CaptainWatcherPort
 	Mailbox      home.BoundSender
+	Integration  IntegrationPort
 	Launch       LaunchEndpoint
 	Probe        ProbeEndpoint
 	Nudge        NudgeEndpoint
@@ -2243,7 +2239,12 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			meta, mErr := mhome.ReadMeta(parentHome, taskID)
 			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
 			if launched {
-				// Launched-but-dead: auto-recover via Launch.
+				// Launched-but-dead: verify the canonical Pi integration before recovery.
+				if integrationErr := requireHealthyPiIntegration(parentHome, sm.Home, caps.Integration); integrationErr != nil {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
+					errs = append(errs, fmt.Sprintf("%s: auto-recover blocked: %v", sm.ID, integrationErr))
+					continue
+				}
 				if lErr := Launch(sm.Home, parentHome, caps.Launch); lErr != nil {
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
 					errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
@@ -2392,6 +2393,27 @@ func (r *RecoverResult) StepsString() string {
 // recorded on the entry) and continues with the remaining captains. Seeded-but-never-
 // launched captains are reported but not launched. The sweep holds the converge lock so
 // it does not race with an in-flight converge.
+func requireHealthyPiIntegration(parentHome, captainHome string, integration IntegrationPort) error {
+	h, err := harness.Captain(parentHome)
+	if err != nil || h == "" {
+		return fmt.Errorf("resolving captain harness: %v", err)
+	}
+	if h != harness.Pi {
+		return nil
+	}
+	if integration == nil {
+		return fmt.Errorf("canonical Pi integration status capability is required")
+	}
+	status, err := integration.Status(captainHome, h)
+	if err != nil {
+		return fmt.Errorf("checking canonical Pi integration: %w", err)
+	}
+	if status.State != "installed" {
+		return fmt.Errorf("canonical Pi integration is %s: %s; repair with: munsu integrate repair --harness pi --scope project", status.State, status.Message)
+	}
+	return nil
+}
+
 func Recover(parentHome string, registered []Info, capabilities RecoverCapabilities) (*RecoverResult, error) {
 	res := &RecoverResult{}
 	if len(registered) == 0 {
@@ -2460,7 +2482,14 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		// Launched-but-dead: relaunch. Fail-closed on unknown harness inside Launch.
+		// Launched-but-dead: verify the bound harness integration before relaunch.
+		if integrationErr := requireHealthyPiIntegration(parentHome, sm.Home, capabilities.Integration); integrationErr != nil {
+			entry.Outcome = RecoverFailed
+			entry.Error = integrationErr.Error()
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
 		if lErr := Launch(sm.Home, parentHome, capabilities.Launch); lErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = lErr.Error()

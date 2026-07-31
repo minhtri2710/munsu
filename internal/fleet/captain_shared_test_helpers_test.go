@@ -37,6 +37,17 @@ func writeCaptainMeta(t *testing.T, parent, id, captainHome, window string) {
 	}
 }
 
+func writeCanonicalPiIntegration(t *testing.T, home string) {
+	t.Helper()
+	path := filepath.Join(home, ".pi", "extensions", "munsu-pi-integration.ts")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("// munsu-owned\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seedCaptainForTest(t *testing.T, parent, id string) string {
 	t.Helper()
 	captainHome := filepath.Join(parent, "captains", id)

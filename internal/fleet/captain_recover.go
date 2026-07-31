@@ -70,7 +70,9 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	configOk := b.State == StepOk
 
 	// Step c: integration status
-	res.Steps = append(res.Steps, tx.stepIntegrationStatus(sm))
+	integration := tx.stepIntegrationStatus(parentHome, sm)
+	res.Steps = append(res.Steps, integration)
+	integrationAllowsRelaunch := integration.State != StepFailed
 
 	// Step c2: charter refresh — re-generate .captain-charter.md idempotently
 	res.Steps = append(res.Steps, tx.stepCharterRefresh(parentHome, sm))
@@ -85,7 +87,11 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	res.Steps = append(res.Steps, tx.stepLaunchReadiness(parentHome, sm))
 
 	// Step e: relaunch pane if needed
-	res.Steps = append(res.Steps, tx.stepRelaunch(parentHome, sm))
+	if integrationAllowsRelaunch {
+		res.Steps = append(res.Steps, tx.stepRelaunch(parentHome, sm))
+	} else {
+		res.Steps = append(res.Steps, StepResult{Name: "relaunch-pane", State: StepSkipped, Detail: "skipped: canonical integration is not healthy"})
+	}
 
 	// Step f: watcher ensure — only when config is OK
 	res.Steps = append(res.Steps, tx.stepWatcherEnsure(sm, configOk))
@@ -158,14 +164,17 @@ func (tx *RecoverTransaction) stepConfigValidation(parentHome string, sm Info) S
 	}
 }
 
-func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
-	h, err := harness.Captain(sm.Home)
+func (tx *RecoverTransaction) stepIntegrationStatus(parentHome string, sm Info) StepResult {
+	h, err := harness.Captain(parentHome)
 	if err != nil || h == "" {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
 	}
+	if h != harness.Pi {
+		return StepResult{Name: "integration-status", State: StepSkipped, Detail: fmt.Sprintf("canonical Pi integration not required for %s", h)}
+	}
 	if tx.Capabilities.Integration == nil {
-		return StepResult{Name: "integration-status", State: StepSkipped, Detail: "integration capability unavailable"}
+		return StepResult{Name: "integration-status", State: StepFailed, Detail: "canonical Pi integration status capability is required"}
 	}
 	result, err := tx.Capabilities.Integration.Status(sm.Home, h)
 	if err != nil {
@@ -177,11 +186,11 @@ func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
 		return StepResult{Name: "integration-status", State: StepOk,
 			Detail: fmt.Sprintf("integrated with %s (%s)", result.Harness, result.Scope)}
 	case "absent":
-		return StepResult{Name: "integration-status", State: StepSkipped,
-			Detail: fmt.Sprintf("integration absent for %s", result.Harness)}
+		return StepResult{Name: "integration-status", State: StepFailed,
+			Detail: fmt.Sprintf("integration absent for %s; repair with: munsu integrate repair --harness %s --scope project", result.Harness, result.Harness)}
 	case "drifted":
 		return StepResult{Name: "integration-status", State: StepFailed,
-			Detail: fmt.Sprintf("integration drifted for %s: %s", result.Harness, result.Message)}
+			Detail: fmt.Sprintf("integration drifted for %s: %s; repair with: munsu integrate repair --harness %s --scope project", result.Harness, result.Message, result.Harness)}
 	default:
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("integration state %q", result.State)}

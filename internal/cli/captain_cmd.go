@@ -6,6 +6,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
 
@@ -50,6 +51,13 @@ Flags for worktree provisioning:
 		Short: "Launch a captain in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			harnessName, err := harness.Captain(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("resolving captain harness: %w", err)
+			}
+			if err := requireCaptainIntegration(args[0], harnessName); err != nil {
+				return err
+			}
 			return fleet.Launch(args[0], ctx.Home, newSessionLaunchEndpoint())
 		}),
 	})
@@ -206,7 +214,7 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)
 			}
-			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+			result, convergeErr := fleet.Converge(ctx.Home, registered, fleet.ConvergeCapabilities{Notification: newSessionUplinkTransport(), Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Messaging: captainMessagingAdapter{}, Watcher: captainWatcherAdapter{}, Mailbox: newSessionMailboxSender(), Integration: captainIntegrationAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 			if result != nil {
 				for _, step := range result.Steps {
 					fmt.Printf("  %-50s %s\n", step.Name+":", step.Status)
@@ -271,7 +279,7 @@ func captainLivenessForSession(home string, recover bool) bootstrap.CaptainLiven
 	if !recover {
 		return res
 	}
-	rr, _ := fleet.Recover(home, registered, fleet.RecoverCapabilities{Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Watcher: captainWatcherAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
+	rr, _ := fleet.Recover(home, registered, fleet.RecoverCapabilities{Continuity: captainContinuityAdapter{notification: newSessionUplinkTransport()}, Watcher: captainWatcherAdapter{}, Integration: captainIntegrationAdapter{}, Launch: newSessionLaunchEndpoint(), Probe: newSessionProbeEndpoint(), Nudge: newSessionNudgeEndpoint()})
 	if rr != nil {
 		res.Recover = &bootstrap.CaptainRecoverSummary{
 			Relaunched: rr.Relaunched,

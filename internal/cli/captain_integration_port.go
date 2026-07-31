@@ -1,40 +1,35 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 type captainIntegrationAdapter struct{}
 
 func (captainIntegrationAdapter) EnsureCaptain(h string) error {
-	a := &bootstrap.PiAdapter{HomeDir: h, Cwd: h, Scope: string(bootstrap.ScopeProject)}
-	target, _, _, e := a.InstallPiExtension()
-	if e != nil {
-		m := e.Error()
-		if strings.Contains(m, "pi not found") || strings.Contains(m, "munsu not found") {
-			return nil
-		}
-		return e
-	}
-	b, e := os.ReadFile(target)
-	if e != nil {
-		return e
-	}
-	d := filepath.Join(h, ".pi", "extensions")
-	if e = os.MkdirAll(d, 0755); e != nil {
-		return e
-	}
-	for _, n := range []string{"munsu-captain-turnend-guard.ts", "munsu-captain-pi-watch.ts"} {
-		if e = os.WriteFile(filepath.Join(d, n), b, 0644); e != nil {
-			return e
-		}
+	_, err := bootstrap.Install(h, h, "pi", bootstrap.ScopeProject, false)
+	if err != nil {
+		return fmt.Errorf("installing canonical Pi integration: %w", err)
 	}
 	return nil
 }
+func requireCaptainIntegration(home, harnessName string) error {
+	if harnessName != "pi" {
+		return nil
+	}
+	status, err := (captainIntegrationAdapter{}).Status(home, harnessName)
+	if err != nil {
+		return fmt.Errorf("checking canonical Pi integration: %w", err)
+	}
+	if status.State != "installed" {
+		return fmt.Errorf("canonical Pi integration is %s: %s; repair with: munsu integrate repair --harness pi --scope project", status.State, status.Message)
+	}
+	return nil
+}
+
 func (captainIntegrationAdapter) Status(h, n string) (fleet.IntegrationStatus, error) {
 	r, e := bootstrap.Status(h, h, n, bootstrap.ScopeProject)
 	if e != nil {

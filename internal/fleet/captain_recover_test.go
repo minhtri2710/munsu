@@ -76,6 +76,133 @@ func TestRecoverTransaction_EmptyStepsString(t *testing.T) {
 	}
 }
 
+func TestRecoverIntegrationStatus_MissingCanonicalIntegrationFailsClosed(t *testing.T) {
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "absent", Message: "no integration manifest found — not installed"}}}}
+	step := tx.stepIntegrationStatus(captainHomeWithHarness(t, "pi"), Info{})
+	if step.State != StepFailed {
+		t.Fatalf("state = %s, want %s", step.State, StepFailed)
+	}
+	if !strings.Contains(step.Detail, "integration absent") || !strings.Contains(step.Detail, "munsu integrate repair --harness pi --scope project") {
+		t.Fatalf("detail = %q, want typed actionable repair", step.Detail)
+	}
+}
+
+func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *testing.T) {
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "healthy-integration")
+	writeCanonicalPiIntegration(t, home)
+	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "config", "captain-harness"), []byte("pi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeCaptainMeta(t, parent, "healthy-integration", home, "dead-window")
+	launch := &countingLaunchEndpoint{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+	}}
+
+	result := tx.Recover(parent, Info{ID: "healthy-integration", Home: home})
+	if launch.calls != 1 {
+		t.Fatalf("launch calls = %d, want 1", launch.calls)
+	}
+	step := findStep(result.Steps, "relaunch-pane")
+	if step == nil || step.State != StepOk || !strings.Contains(step.Detail, "relaunched") {
+		t.Fatalf("relaunch step = %+v, want successful relaunch", step)
+	}
+}
+
+func TestRecoverIntegrationStatus_MissingCanonicalIntegrationDoesNotRelaunch(t *testing.T) {
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "missing-integration")
+	writeCaptainMeta(t, parent, "missing-integration", home, "dead-window")
+	launch := &countingLaunchEndpoint{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "absent"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+	}}
+
+	result := tx.Recover(parent, Info{ID: "missing-integration", Home: home})
+	if launch.calls != 0 {
+		t.Fatalf("launch calls = %d, want 0", launch.calls)
+	}
+	step := findStep(result.Steps, "relaunch-pane")
+	if step == nil || step.State != StepSkipped || !strings.Contains(step.Detail, "integration") {
+		t.Fatalf("relaunch step = %+v, want integration-blocked skip", step)
+	}
+}
+
+func TestRecoverIntegrationStatus_DigestInvalidCanonicalIntegrationFailsClosed(t *testing.T) {
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "drifted", Message: "one or more integration artifacts are missing or modified"}}}}
+	step := tx.stepIntegrationStatus(captainHomeWithHarness(t, "pi"), Info{})
+	if step.State != StepFailed {
+		t.Fatalf("state = %s, want %s", step.State, StepFailed)
+	}
+	if !strings.Contains(step.Detail, "integration drifted") || !strings.Contains(step.Detail, "munsu integrate repair --harness pi --scope project") {
+		t.Fatalf("detail = %q, want typed actionable repair", step.Detail)
+	}
+}
+
+func TestRecoverIntegrationStatus_DriftedCanonicalIntegrationDoesNotRelaunch(t *testing.T) {
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "drifted-integration")
+	writeCaptainMeta(t, parent, "drifted-integration", home, "dead-window")
+	launch := &countingLaunchEndpoint{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "drifted", Message: "digest mismatch"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+	}}
+
+	result := tx.Recover(parent, Info{ID: "drifted-integration", Home: home})
+	if launch.calls != 0 {
+		t.Fatalf("launch calls = %d, want 0", launch.calls)
+	}
+	step := findStep(result.Steps, "relaunch-pane")
+	if step == nil || step.State != StepSkipped || !strings.Contains(step.Detail, "integration") {
+		t.Fatalf("relaunch step = %+v, want integration-blocked skip", step)
+	}
+}
+
+func captainHomeWithHarness(t *testing.T, name string) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config", "captain-harness"), []byte(name+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+type staticIntegrationPort struct{ status IntegrationStatus }
+
+func (p staticIntegrationPort) EnsureCaptain(string) error { return nil }
+func (p staticIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+	return p.status, nil
+}
+
+type countingStatusIntegrationPort struct{ calls int }
+
+func (p *countingStatusIntegrationPort) EnsureCaptain(string) error { return nil }
+func (p *countingStatusIntegrationPort) Status(string, string) (IntegrationStatus, error) {
+	p.calls++
+	return IntegrationStatus{State: "installed"}, nil
+}
+
+type countingLaunchEndpoint struct{ calls int }
+
+func (e *countingLaunchEndpoint) Launch(string, LaunchRequest) (LaunchResult, error) {
+	e.calls++
+	return LaunchResult{Backend: "test", Window: "window"}, nil
+}
+func (e *countingLaunchEndpoint) Cleanup(string, LaunchResult) error { return nil }
+
 // findStep locates a step by name in the result slice.
 func findStep(steps []StepResult, name string) *StepResult {
 	for i := range steps {

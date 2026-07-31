@@ -95,6 +95,7 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(smHome, "AGENTS.md"), charter, 0644); err != nil {
 		t.Fatal(err)
 	}
+	writeCanonicalPiIntegration(t, smHome)
 
 	binName, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
 	if err != nil {
@@ -103,10 +104,10 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	if binName != "pi" {
 		t.Fatalf("binName = %q, want pi", binName)
 	}
-	if len(args) != 2 || args[0] != "--append-system-prompt" {
-		t.Fatalf("args = %#v, want system-context charter without user prompt", args)
+	if len(args) != 4 || args[0] != "-e" || args[2] != "--append-system-prompt" {
+		t.Fatalf("args = %#v, want canonical integration and system-context charter", args)
 	}
-	prompt := args[1]
+	prompt := args[3]
 	if !strings.Contains(prompt, "[mu-system:captain-bootstrap]") || !strings.Contains(prompt, "<captain-charter>") {
 		t.Fatalf("prompt missing bootstrap identity or charter wrapper: %q", prompt)
 	}
@@ -115,6 +116,21 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	}
 	if strings.Contains(prompt, "Read .captain-charter.md") || strings.Contains(prompt, "munsu session-start") || strings.Contains(prompt, "state/.inbox") {
 		t.Fatalf("prompt requests model-driven initialization or filesystem inspection: %q", prompt)
+	}
+}
+
+func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("# charter\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := buildLaunchArgs(home, harness.Pi, t.TempDir())
+	if err == nil {
+		t.Fatal("expected missing canonical integration error")
+	}
+	if !strings.Contains(err.Error(), "canonical Pi integration") || !strings.Contains(err.Error(), "munsu integrate repair --harness pi --scope project") {
+		t.Fatalf("error = %v, want actionable canonical integration repair", err)
 	}
 }
 
@@ -157,6 +173,7 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
+	writeCanonicalPiIntegration(t, smHome)
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
@@ -2370,12 +2387,22 @@ func TestSeedWithParent_Registers(t *testing.T) {
 	}
 }
 
-func TestBuildLaunchArgs_PiIncludesExistingExtensions(t *testing.T) {
+func TestBuildLaunchArgs_PiLoadsOnlyCanonicalIntegration(t *testing.T) {
 	parent := t.TempDir()
 	sm := t.TempDir()
-	os.MkdirAll(filepath.Join(sm, ".pi", "extensions"), 0755)
+	extDir := filepath.Join(sm, ".pi", "extensions")
+	os.MkdirAll(extDir, 0755)
 	os.WriteFile(filepath.Join(sm, "AGENTS.md"), []byte("# charter\n"), 0644)
-	os.WriteFile(filepath.Join(sm, ".pi", "extensions", "munsu-captain-turnend-guard.ts"), []byte("//x\n"), 0644)
+	for _, name := range []string{
+		"munsu-pi-integration.ts",
+		"munsu-captain-turnend-guard.ts",
+		"munsu-captain-pi-watch.ts",
+		"fm-primary-turnend-guard.ts",
+		"fm-primary-pi-watch.ts",
+	} {
+		os.WriteFile(filepath.Join(extDir, name), []byte("//x\n"), 0644)
+	}
+
 	name, args, err := buildLaunchArgs(sm, "pi", parent)
 	if err != nil {
 		t.Fatal(err)
@@ -2384,8 +2411,13 @@ func TestBuildLaunchArgs_PiIncludesExistingExtensions(t *testing.T) {
 		t.Fatalf("name=%q", name)
 	}
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-e") || !strings.Contains(joined, "munsu-captain-turnend-guard.ts") {
-		t.Fatalf("args missing extension: %v", args)
+	if strings.Count(joined, "munsu-pi-integration.ts") != 1 {
+		t.Fatalf("canonical integration must load exactly once: %v", args)
+	}
+	for _, alias := range []string{"munsu-captain-turnend-guard.ts", "munsu-captain-pi-watch.ts", "fm-primary-turnend-guard.ts", "fm-primary-pi-watch.ts"} {
+		if strings.Contains(joined, alias) {
+			t.Fatalf("launch args load compatibility alias %q: %v", alias, args)
+		}
 	}
 }
 
@@ -2549,26 +2581,11 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 		if err := ensureCaptainIntegration(sm, fakeIntegrationPort{}); err != nil {
 			t.Fatalf("EnsureCaptainPiExtensions: %v", err)
 		}
-		// Manually plant extension to assert buildLaunchArgs -e path still works.
+		// Manually plant the canonical extension to assert buildLaunchArgs -e path still works.
 		os.MkdirAll(extDir, 0755)
-		os.WriteFile(filepath.Join(extDir, "munsu-captain-turnend-guard.ts"), []byte("// planted\n"), 0644)
-	} else {
-		// Prefer seeing munsu integrate + captain aliases when install succeeded.
-		wantAny := map[string]bool{
-			"munsu-pi-integration.ts":        true,
-			"munsu-captain-turnend-guard.ts": true,
-			"munsu-captain-pi-watch.ts":      true,
-		}
-		hit := false
-		for _, n := range found {
-			if wantAny[n] {
-				hit = true
-				break
-			}
-		}
-		if !hit {
-			t.Fatalf("seed installed unexpected extensions only: %v", found)
-		}
+		os.WriteFile(filepath.Join(extDir, "munsu-pi-integration.ts"), []byte("// planted\n"), 0644)
+	} else if len(found) != 1 || found[0] != "munsu-pi-integration.ts" {
+		t.Fatalf("seed installed non-canonical extensions: %v", found)
 	}
 
 	// ConfigPush must re-ensure without error.
@@ -2626,6 +2643,61 @@ func TestRecover_SeededCaptainNotLaunched(t *testing.T) {
 	}
 	if len(res.Entries) != 1 || res.Entries[0].Outcome != RecoverSeeded {
 		t.Errorf("entry = %+v, want RecoverSeeded", res.Entries)
+	}
+}
+
+func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		state      string
+		wantLaunch int
+		wantFailed int
+	}{
+		{name: "installed", state: "installed", wantLaunch: 1},
+		{name: "absent", state: "absent", wantFailed: 1},
+		{name: "drifted", state: "drifted", wantFailed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			if err := config.Set(parent, "captain-harness", "pi"); err != nil {
+				t.Fatal(err)
+			}
+			home := seedCaptainForTest(t, parent, "pi-captain")
+			writeCanonicalPiIntegration(t, home)
+			writeCaptainMeta(t, parent, "pi-captain", home, "dead-window")
+			launch := &countingLaunchEndpoint{}
+			result, err := Recover(parent, []Info{{ID: "pi-captain", Home: home}}, RecoverCapabilities{
+				Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: tc.state, Message: "test status"}},
+				Launch:      launch,
+				Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if launch.calls != tc.wantLaunch || result.Failed != tc.wantFailed {
+				t.Fatalf("launch calls=%d failed=%d, want %d/%d; result=%+v", launch.calls, result.Failed, tc.wantLaunch, tc.wantFailed, result)
+			}
+		})
+	}
+}
+
+func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
+	parent := t.TempDir()
+	if err := config.Set(parent, "captain-harness", harness.Claude); err != nil {
+		t.Fatal(err)
+	}
+	home := seedCaptainForTest(t, parent, "claude-captain")
+	writeCaptainMeta(t, parent, "claude-captain", home, "dead-window")
+	integration := &countingStatusIntegrationPort{}
+	result, err := Recover(parent, []Info{{ID: "claude-captain", Home: home}}, RecoverCapabilities{Integration: integration, Launch: &countingLaunchEndpoint{}, Probe: &testProbeEndpoint{result: CaptainProbeResult{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if integration.calls != 0 {
+		t.Fatalf("Pi integration status calls = %d, want 0 for non-Pi harness", integration.calls)
+	}
+	if result.Failed != 1 || !strings.Contains(result.Entries[0].Error, "verified captain launch contract") {
+		t.Fatalf("result=%+v, want unchanged non-Pi launch contract result", result)
 	}
 }
 
@@ -2687,6 +2759,7 @@ func TestBuildLaunchArgs_CaptainHarnessMultiToken(t *testing.T) {
 	smHome := filepath.Join(tmp, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# Test\n"), 0644)
+	writeCanonicalPiIntegration(t, smHome)
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
