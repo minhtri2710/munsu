@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
@@ -13,11 +15,11 @@ import (
 func newConfigDispatchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dispatch",
-		Short: "Manage soldier dispatch profiles (config/soldier-dispatch.json)",
+		Short: "Manage soldier dispatch profiles (config/base.json)",
 		Long: `Manage the soldier dispatch profile file used at spawn time.
 
-The file lives at $MUNSU_HOME/config/soldier-dispatch.json and selects
-harness/model/effort from ordered profiles (match/when rules).
+The dispatch profiles live in the fleet base document at $MUNSU_HOME/config/base.json
+and select harness/model/effort from ordered profiles (match/when rules).
 
 Spawn precedence: CLI --harness/--model/--effort > matched profile >
 adapter template defaults.
@@ -25,10 +27,10 @@ adapter template defaults.
 Subcommands:
   show         Print the active dispatch config
   path         Print the file path
-  set-default  Set default harness/model/effort
+  set-default  Set default harness/model
   add          Add or replace a named profile
   rm           Remove a named profile
-  clear        Delete the dispatch file
+  clear        Clear all dispatch profiles
 `,
 	}
 
@@ -47,15 +49,15 @@ func newConfigDispatchShowCmd() *cobra.Command {
 		Short: "Show the active soldier dispatch config",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			path := harness.DispatchPath(ctx.Home)
-			cfg, err := harness.LoadDispatch(path)
+			basePath := filepath.Join(ctx.Home, config.BaseDocumentPath)
+			base, err := config.LoadFleetBase(ctx.Home)
 			if err != nil {
-				if isMissingDispatch(err) {
+				if errors.Is(err, os.ErrNotExist) {
 					return writeContract(cmd, Response[MessageResult]{
 						SchemaVersion: SchemaVersion,
 						Kind:          "config.dispatch",
 						Status:        "success",
-						Data:          MessageResult{Message: "dispatch: <not set>\n  path: " + path},
+						Data:          MessageResult{Message: "dispatch: <not set>\n  path: " + basePath},
 					})
 				}
 				return err
@@ -64,7 +66,7 @@ func newConfigDispatchShowCmd() *cobra.Command {
 				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data:          MessageResult{Message: formatDispatch(cfg, path)},
+				Data:          MessageResult{Message: formatDispatchFromBase(base, basePath)},
 			})
 		}),
 	}
@@ -75,14 +77,14 @@ func newConfigDispatchShowCmd() *cobra.Command {
 func newConfigDispatchPathCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "path",
-		Short: "Print the soldier-dispatch.json path",
+		Short: "Print the fleet base document path",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "message",
 				Status:        "success",
-				Data:          MessageResult{Message: harness.DispatchPath(ctx.Home)},
+				Data:          MessageResult{Message: filepath.Join(ctx.Home, config.BaseDocumentPath)},
 			})
 		}),
 	}
@@ -91,35 +93,25 @@ func newConfigDispatchPathCmd() *cobra.Command {
 }
 
 func newConfigDispatchSetDefaultCmd() *cobra.Command {
-	var model, effort string
+	var model string
 	cmd := &cobra.Command{
 		Use:   "set-default <harness>",
-		Short: "Set default harness (and optional model/effort) for dispatch",
+		Short: "Set default harness (and optional model) for dispatch",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			hName := args[0]
 			if err := harness.ValidateHarness(hName); err != nil {
 				return fmt.Errorf("set-default: %w", err)
 			}
-			path := harness.DispatchPath(ctx.Home)
-			cfg, err := loadOrEmptyDispatch(path)
+			base, err := loadOrEmptyBase(ctx.Home)
 			if err != nil {
 				return err
 			}
-			cfg.DefaultHarness = hName
+			base.Config.SoldierHarness = hName
 			if cmd.Flags().Changed("model") {
-				cfg.DefaultModel = model
+				base.Config.Model = model
 			}
-			if cmd.Flags().Changed("effort") {
-				cfg.DefaultEffort = effort
-			}
-			// Keep object form in sync for dual-shape readers.
-			cfg.Default = &harness.DispatchCandidate{
-				Harness: cfg.DefaultHarness,
-				Model:   cfg.DefaultModel,
-				Effort:  cfg.DefaultEffort,
-			}
-			if err := harness.SaveDispatch(path, cfg); err != nil {
+			if err := config.StoreFleetBase(ctx.Home, base); err != nil {
 				return err
 			}
 			return writeContract(cmd, Response[MessageResult]{
@@ -127,14 +119,13 @@ func newConfigDispatchSetDefaultCmd() *cobra.Command {
 				Kind:          "config.dispatch",
 				Status:        "success",
 				Data: MessageResult{Message: fmt.Sprintf(
-					"default set: harness=%s model=%s effort=%s\n  path: %s",
-					cfg.DefaultHarness, emptyDash(cfg.DefaultModel), emptyDash(cfg.DefaultEffort), path,
+					"default set: harness=%s model=%s\n  path: %s",
+					base.Config.SoldierHarness, emptyDash(base.Config.Model), filepath.Join(ctx.Home, config.BaseDocumentPath),
 				)},
 			})
 		}),
 	}
 	cmd.Flags().StringVar(&model, "model", "", "Default model id")
-	cmd.Flags().StringVar(&effort, "effort", "", "Default effort/thinking level")
 	configureContractCommand(cmd)
 	return cmd
 }
@@ -152,7 +143,7 @@ func newConfigDispatchAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add or replace a dispatch profile",
-		Long: `Add a named profile to soldier-dispatch.json.
+		Long: `Add a named profile to the fleet base document.
 
 Requires --name, --harness, and at least one of --match or --when.
 If a profile with the same name exists, pass --replace to overwrite it.`,
@@ -171,14 +162,13 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 				return fmt.Errorf("add: at least one --match or --when is required")
 			}
 
-			path := harness.DispatchPath(ctx.Home)
-			cfg, err := loadOrEmptyDispatch(path)
+			base, err := loadOrEmptyBase(ctx.Home)
 			if err != nil {
 				return err
 			}
 
 			idx := -1
-			for i, p := range cfg.Profiles {
+			for i, p := range base.Config.DispatchProfiles {
 				if p.Name == name {
 					idx = i
 					break
@@ -188,7 +178,7 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 				return fmt.Errorf("add: profile %q already exists (pass --replace to overwrite)", name)
 			}
 
-			prof := harness.DispatchProfile{
+			prof := config.DispatchProfile{
 				Name:    name,
 				Match:   append([]string(nil), match...),
 				When:    when,
@@ -197,11 +187,11 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 				Effort:  effort,
 			}
 			if idx >= 0 {
-				cfg.Profiles[idx] = prof
+				base.Config.DispatchProfiles[idx] = prof
 			} else {
-				cfg.Profiles = append(cfg.Profiles, prof)
+				base.Config.DispatchProfiles = append(base.Config.DispatchProfiles, prof)
 			}
-			if err := harness.SaveDispatch(path, cfg); err != nil {
+			if err := config.StoreFleetBase(ctx.Home, base); err != nil {
 				return err
 			}
 			action := "added"
@@ -214,7 +204,7 @@ If a profile with the same name exists, pass --replace to overwrite it.`,
 				Status:        "success",
 				Data: MessageResult{Message: fmt.Sprintf(
 					"profile %s: %s (harness=%s model=%s effort=%s)\n  path: %s",
-					action, name, hName, emptyDash(model), emptyDash(effort), path,
+					action, name, hName, emptyDash(model), emptyDash(effort), filepath.Join(ctx.Home, config.BaseDocumentPath),
 				)},
 			})
 		}),
@@ -237,14 +227,13 @@ func newConfigDispatchRmCmd() *cobra.Command {
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			name := args[0]
-			path := harness.DispatchPath(ctx.Home)
-			cfg, err := harness.LoadDispatch(path)
+			base, err := config.LoadFleetBase(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("rm: %w", err)
 			}
-			out := cfg.Profiles[:0]
+			out := base.Config.DispatchProfiles[:0]
 			found := false
-			for _, p := range cfg.Profiles {
+			for _, p := range base.Config.DispatchProfiles {
 				if p.Name == name {
 					found = true
 					continue
@@ -254,15 +243,15 @@ func newConfigDispatchRmCmd() *cobra.Command {
 			if !found {
 				return fmt.Errorf("rm: profile %q not found", name)
 			}
-			cfg.Profiles = out
-			if err := harness.SaveDispatch(path, cfg); err != nil {
+			base.Config.DispatchProfiles = out
+			if err := config.StoreFleetBase(ctx.Home, base); err != nil {
 				return err
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("removed profile %q\n  path: %s", name, path)},
+				Data:          MessageResult{Message: fmt.Sprintf("removed profile %q\n  path: %s", name, filepath.Join(ctx.Home, config.BaseDocumentPath))},
 			})
 		}),
 	}
@@ -273,18 +262,32 @@ func newConfigDispatchRmCmd() *cobra.Command {
 func newConfigDispatchClearCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clear",
-		Short: "Delete soldier-dispatch.json (no dispatch profiles)",
+		Short: "Clear all dispatch profiles from the fleet base document",
 		Args:  NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			path := harness.DispatchPath(ctx.Home)
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			base, err := config.LoadFleetBase(ctx.Home)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return writeContract(cmd, Response[MessageResult]{
+						SchemaVersion: SchemaVersion,
+						Kind:          "config.dispatch",
+						Status:        "success",
+						Data:          MessageResult{Message: "dispatch: <not set>"},
+					})
+				}
+				return err
+			}
+			base.Config.DispatchProfiles = nil
+			base.Config.SoldierHarness = ""
+			base.Config.Model = ""
+			if err := config.StoreFleetBase(ctx.Home, base); err != nil {
 				return err
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "config.dispatch",
 				Status:        "success",
-				Data:          MessageResult{Message: "dispatch cleared\n  path: " + path},
+				Data:          MessageResult{Message: "dispatch cleared"},
 			})
 		}),
 	}
@@ -292,39 +295,30 @@ func newConfigDispatchClearCmd() *cobra.Command {
 	return cmd
 }
 
-func loadOrEmptyDispatch(path string) (*harness.DispatchConfig, error) {
-	cfg, err := harness.LoadDispatch(path)
+func loadOrEmptyBase(homeDir string) (config.FleetBaseDocument, error) {
+	base, err := config.LoadFleetBase(homeDir)
 	if err == nil {
-		return cfg, nil
-	}
-	if isMissingDispatch(err) {
-		return &harness.DispatchConfig{}, nil
-	}
-	return nil, err
-}
-
-func isMissingDispatch(err error) bool {
-	if err == nil {
-		return false
+		return base, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return true
+		return config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+		}, nil
 	}
-	// LoadDispatch wraps the read error.
-	return strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "reading dispatch config")
+	return base, err
 }
 
-func formatDispatch(cfg *harness.DispatchConfig, path string) string {
+func formatDispatchFromBase(base config.FleetBaseDocument, path string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "path: %s\n", path)
-	fmt.Fprintf(&b, "default: harness=%s model=%s effort=%s\n",
-		emptyDash(cfg.DefaultHarness), emptyDash(cfg.DefaultModel), emptyDash(cfg.DefaultEffort))
-	if len(cfg.Profiles) == 0 {
+	fmt.Fprintf(&b, "default: harness=%s model=%s\n",
+		emptyDash(base.Config.SoldierHarness), emptyDash(base.Config.Model))
+	if len(base.Config.DispatchProfiles) == 0 {
 		b.WriteString("profiles: (none)\n")
 		return strings.TrimSpace(b.String())
 	}
-	fmt.Fprintf(&b, "profiles: %d\n", len(cfg.Profiles))
-	for i, p := range cfg.Profiles {
+	fmt.Fprintf(&b, "profiles: %d\n", len(base.Config.DispatchProfiles))
+	for i, p := range base.Config.DispatchProfiles {
 		label := p.Name
 		if label == "" {
 			label = fmt.Sprintf("#%d", i+1)

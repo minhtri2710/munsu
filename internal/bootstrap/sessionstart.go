@@ -360,9 +360,6 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 	fmt.Fprintln(w, "--- Context ---")
 	printDataFile(w, home, "general.md")
 	printDataFile(w, home, "learnings.md")
-	printDataFile(w, home, "projects.md")
-	printDataFile(w, home, "captains.md")
-
 	printFleetState(w, home)
 
 	fmt.Fprintln(w, "")

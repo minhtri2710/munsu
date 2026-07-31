@@ -41,20 +41,6 @@ type DispatchSelection struct {
 	Effort  string
 }
 
-// LoadDispatch reads and parses a soldier-dispatch.json file.
-func LoadDispatch(path string) (*DispatchConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading dispatch config: %w", err)
-	}
-	var cfg DispatchConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing dispatch config: %w", err)
-	}
-	cfg.normalize()
-	return &cfg, nil
-}
-
 // SaveDispatch writes cfg as pretty JSON to path (creates parent dirs).
 // Emits the munsu profile shape (defaultHarness/defaultModel/defaultEffort + profiles).
 func SaveDispatch(path string, cfg *DispatchConfig) error {
@@ -312,13 +298,4 @@ func SelectProfile(profiles []DispatchProfile, strategy string) string {
 	return sel.selectCandidate(cands).Harness
 }
 
-// DispatchPath returns the path to soldier-dispatch.json under home.
-func DispatchPath(homeDir string) string {
-	return strings.TrimRight(homeDir, "/") + "/config/soldier-dispatch.json"
-}
 
-// DispatchActive reports whether a soldier-dispatch.json file exists under home.
-func DispatchActive(homeDir string) bool {
-	_, err := os.Stat(DispatchPath(homeDir))
-	return err == nil
-}

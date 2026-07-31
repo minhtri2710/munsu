@@ -6,15 +6,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/configmigration"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // ConfigRereadKey is the mailbox envelope Key for config-reread notifications.
 const ConfigRereadKey = "config-reread"
+
+// ErrNoPublishedSnapshot is returned when the published config snapshot does
+// not exist, indicating no config has been propagated yet.
+var ErrNoPublishedSnapshot = fmt.Errorf("no published config snapshot")
 
 // ConfigRereadGenName is the file name for config reread generation tracking.
 const ConfigRereadGenName = ".config-reread-gen"
@@ -36,70 +40,23 @@ type ConfigPushResult struct {
 }
 
 // ComputeInheritedConfigDigest returns a deterministic SHA-256 digest of
-// the complete inherited config surface managed by ConfigPush. The digest
-// covers all inheritable config files plus general-shared.md,
-// projects.md or the published resolved snapshot. The result depends only on content, not on timestamps or
-// filesystem metadata.
+// the published config snapshot. The digest covers the complete resolved
+// config surface. Before migration, fails with a legacy config error.
 func ComputeInheritedConfigDigest(captainHome string) (string, error) {
 	h := sha256.New()
 	snapshotPath := filepath.Join(captainHome, config.PublishedSnapshotPath)
-	if _, err := os.Stat(snapshotPath); err == nil {
-		data, readErr := os.ReadFile(snapshotPath)
-		if readErr != nil {
-			return "", fmt.Errorf("reading published config snapshot for digest: %w", readErr)
-		}
-		fmt.Fprintf(h, "%s:%s\n", config.PublishedSnapshotPath, string(data))
-		return fmt.Sprintf("%x", h.Sum(nil)), nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("checking published config snapshot for digest: %w", err)
-	}
-	configDir := filepath.Join(captainHome, "config")
-	inheritable := getInheritableList()
-
-	// Collect inheritable config files in sorted order for determinism.
-	var names []string
-	for _, name := range inheritable {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		path := filepath.Join(configDir, name)
-		data, err := os.ReadFile(path)
+	data, err := os.ReadFile(snapshotPath)
+	if err != nil {
 		if os.IsNotExist(err) {
-			// Absent inheritable file contributes 0 bytes.
-			fmt.Fprintf(h, "config/%s:ABSENT\n", name)
-			continue
+			// Check if legacy config exists.
+			if needed, cmd := configmigration.NeedsConfigMigration(captainHome); needed {
+				return "", fmt.Errorf("legacy configuration detected; run %s to migrate", cmd)
+			}
+			return "", ErrNoPublishedSnapshot
 		}
-		if err != nil {
-			return "", fmt.Errorf("reading %s for digest: %w", name, err)
-		}
-		fmt.Fprintf(h, "config/%s:%s\n", name, string(data))
+		return "", fmt.Errorf("reading published config snapshot for digest: %w", err)
 	}
-
-	// general-shared.md
-	sharedPath := filepath.Join(captainHome, "data", "general-shared.md")
-	data, err := os.ReadFile(sharedPath)
-	if os.IsNotExist(err) {
-		fmt.Fprintf(h, "data/general-shared.md:ABSENT\n")
-	} else if err != nil {
-		return "", fmt.Errorf("reading general-shared.md for digest: %w", err)
-	} else {
-		fmt.Fprintf(h, "data/general-shared.md:%s\n", string(data))
-	}
-
-	for _, name := range []string{"projects.md"} {
-		path := filepath.Join(captainHome, "data", name)
-		data, err = os.ReadFile(path)
-		if os.IsNotExist(err) {
-			fmt.Fprintf(h, "data/%s:ABSENT\n", name)
-		} else if err != nil {
-			return "", fmt.Errorf("reading %s for digest: %w", name, err)
-		} else {
-			fmt.Fprintf(h, "data/%s:%s\n", name, string(data))
-		}
-	}
-
+	fmt.Fprintf(h, "%s:%s\n", config.PublishedSnapshotPath, string(data))
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 

@@ -2,8 +2,6 @@ package harness
 
 import (
 	"encoding/json"
-	"os"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -102,82 +100,6 @@ func TestMatchesProfile(t *testing.T) {
 				t.Errorf("matchesProfile(%v, %q) = %v, want %v", tt.rules, tt.desc, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestLoadDispatch_FileNotFound(t *testing.T) {
-	_, err := LoadDispatch("/nonexistent/path/dispatch.json")
-	if err == nil {
-		t.Fatal("expected error for nonexistent file, got nil")
-	}
-}
-
-func TestLoadDispatch_InvalidJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := tmpDir + "/bad-dispatch.json"
-	if err := writeFile(path, `{invalid json}`); err != nil {
-		t.Fatal(err)
-	}
-	_, err := LoadDispatch(path)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON, got nil")
-	}
-}
-
-func TestLoadDispatch_Empty(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := tmpDir + "/empty-dispatch.json"
-	if err := writeFile(path, `{}`); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadDispatch(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.DefaultHarness != "" {
-		t.Errorf("DefaultHarness = %q, want empty", cfg.DefaultHarness)
-	}
-	if len(cfg.Profiles) != 0 {
-		t.Errorf("expected 0 profiles, got %d", len(cfg.Profiles))
-	}
-}
-
-func TestLoadDispatch_Full(t *testing.T) {
-	cfg, err := LoadDispatch("testdata/dispatch.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.DefaultHarness != "pi" {
-		t.Errorf("DefaultHarness = %q, want pi", cfg.DefaultHarness)
-	}
-	expectedProfiles := []DispatchProfile{
-		{Name: "code-review", Match: []string{"review", "audit", "check"}, Harness: "codex", MaxConcurrent: 2},
-		{Name: "research", Match: []string{"research", "investigate"}, Harness: "claude", MaxConcurrent: 1},
-		{Name: "default", Match: []string{"*"}, Harness: "pi"},
-	}
-	if !reflect.DeepEqual(cfg.Profiles, expectedProfiles) {
-		t.Errorf("Profiles = %+v, want %+v", cfg.Profiles, expectedProfiles)
-	}
-}
-
-func TestLoadDispatch_WithSelect(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := tmpDir + "/dispatch-select.json"
-	jsonContent := `{
-		"defaultHarness": "codex",
-		"profiles": [
-			{"name": "quota", "match": ["*"], "harness": "codex", "select": "quota-balanced"}
-		]
-	}`
-	if err := writeFile(path, jsonContent); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadDispatch(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Profiles[0].SelectStrategy != "quota-balanced" {
-		t.Errorf("SelectStrategy = %q, want quota-balanced", cfg.Profiles[0].SelectStrategy)
 	}
 }
 
@@ -506,10 +428,6 @@ func splitWords(s string) []string {
 	return w
 }
 
-func writeFile(path, content string) error {
-	return os.WriteFile(path, []byte(content), 0644)
-}
-
 func TestSplitWords(t *testing.T) {
 	tests := []struct {
 		input string
@@ -530,57 +448,6 @@ func TestSplitWords(t *testing.T) {
 				t.Errorf("splitWords(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
 			}
 		}
-	}
-}
-
-func TestLoadDispatch_LegacyShape(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := tmpDir + "/crew-dispatch.json"
-	jsonContent := `{
-  "rules": [
-    {
-      "when": "Trivial mechanical edit such as a rote rename",
-      "use": [
-        { "harness": "pi", "model": "opencode-go/deepseek-v4-flash", "effort": "low" }
-      ],
-      "why": "cheap"
-    },
-    {
-      "when": "Ordinary mid-size work",
-      "use": [
-        { "harness": "pi", "model": "cline-pass/deepseek-v4-flash", "effort": "medium" }
-      ]
-    }
-  ],
-  "default": { "harness": "pi", "model": "opencode-go/deepseek-v4-flash", "effort": "low" }
-}`
-	if err := writeFile(path, jsonContent); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadDispatch(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.DefaultHarness != "pi" {
-		t.Errorf("DefaultHarness = %q, want pi", cfg.DefaultHarness)
-	}
-	if cfg.DefaultModel != "opencode-go/deepseek-v4-flash" {
-		t.Errorf("DefaultModel = %q", cfg.DefaultModel)
-	}
-	if cfg.DefaultEffort != "low" {
-		t.Errorf("DefaultEffort = %q", cfg.DefaultEffort)
-	}
-	if len(cfg.Profiles) != 2 {
-		t.Fatalf("Profiles len = %d, want 2", len(cfg.Profiles))
-	}
-	if cfg.Profiles[0].Harness != "pi" {
-		t.Errorf("Profiles[0].Harness = %q, want pi", cfg.Profiles[0].Harness)
-	}
-	if cfg.Profiles[0].Model != "opencode-go/deepseek-v4-flash" {
-		t.Errorf("Profiles[0].Model = %q", cfg.Profiles[0].Model)
-	}
-	if cfg.Profiles[0].Effort != "low" {
-		t.Errorf("Profiles[0].Effort = %q", cfg.Profiles[0].Effort)
 	}
 }
 

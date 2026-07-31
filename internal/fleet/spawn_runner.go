@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -639,15 +640,38 @@ func (r *Runner) resolveHarness() error {
 	return nil
 }
 
-// dispatchSelection loads soldier-dispatch.json and matches against the brief body.
+// dispatchSelection loads the typed config dispatch profiles and matches
+// against the brief body. Checks the published snapshot first (captain
+// context), then the fleet base document (general context).
 func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
-	path := harness.DispatchPath(r.homeDir)
-	cfg, err := harness.LoadDispatch(path)
-	if err != nil {
-		return harness.DispatchSelection{}, false
+	// 1. Try published snapshot (captain context).
+	snapshot, err := config.LoadPublishedSnapshot(r.homeDir)
+	if err == nil {
+		cfg := snapshot.Config()
+		if len(cfg.DispatchProfiles) > 0 || cfg.SoldierHarness != "" {
+			dispatch := &harness.DispatchConfig{
+				DefaultHarness: cfg.SoldierHarness,
+				DefaultModel:   cfg.Model,
+				Profiles:       append([]harness.DispatchProfile(nil), cfg.DispatchProfiles...),
+			}
+			desc := r.taskDescription()
+			return harness.ResolveDispatchSelection(dispatch, desc), true
+		}
 	}
-	desc := r.taskDescription()
-	return harness.ResolveDispatchSelection(cfg, desc), true
+
+	// 2. Try fleet base document (general context).
+	base, err := config.LoadFleetBase(r.homeDir)
+	if err == nil && (len(base.Config.DispatchProfiles) > 0 || base.Config.SoldierHarness != "") {
+		dispatch := &harness.DispatchConfig{
+			DefaultHarness: base.Config.SoldierHarness,
+			DefaultModel:   base.Config.Model,
+			Profiles:       append([]harness.DispatchProfile(nil), base.Config.DispatchProfiles...),
+		}
+		desc := r.taskDescription()
+		return harness.ResolveDispatchSelection(dispatch, desc), true
+	}
+
+	return harness.DispatchSelection{}, false
 }
 
 // taskDescription returns text used to match dispatch profiles (brief body or id).

@@ -2,7 +2,6 @@
 package fleet
 
 import (
-	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -11,9 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/configmigration"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
@@ -484,6 +483,47 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	return fmt.Errorf("captain integration capability is required")
 }
 
+// ensureParentTypedConfig creates minimal typed config documents in the parent
+// home if they do not already exist. This allows SeedCaptain and ConfigPush to
+// work without requiring the operator to set up typed config first.
+func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
+	// Check if fleet base already exists.
+	if _, err := os.Stat(filepath.Join(parentHome, config.BaseDocumentPath)); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	// Create fleet base document.
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "pi",
+		},
+	}
+	if err := config.StoreFleetBase(parentHome, base); err != nil {
+		return fmt.Errorf("creating fleet base: %w", err)
+	}
+
+	// Create project registry with a default project matching the captain ID.
+	projects := config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: captainID, Path: captainHome, Mode: "no-mistakes"},
+		},
+	}
+	if err := config.StoreProjectRegistry(parentHome, projects); err != nil {
+		return fmt.Errorf("creating project registry: %w", err)
+	}
+
+	// Register the captain with the default project so publishResolvedSnapshot works.
+	if err := Register(parentHome, captainID, captainHome, "", captainID); err != nil {
+		return fmt.Errorf("registering captain: %w", err)
+	}
+
+	return nil
+}
+
 func SeedCaptain(opts CaptainSeedOptions) error {
 	id, homePath, parentHome, charter := opts.ID, opts.Home, opts.ParentHome, opts.Charter
 	if err := os.MkdirAll(homePath, 0755); err != nil {
@@ -523,6 +563,11 @@ func SeedCaptain(opts CaptainSeedOptions) error {
 	}
 
 	if parentHome != "" {
+		// Ensure typed config documents exist in the parent home before
+		// registration and config push. Create minimal documents if absent.
+		if err := ensureParentTypedConfig(parentHome, homePath, id); err != nil {
+			return fmt.Errorf("ensuring parent typed config: %w", err)
+		}
 		if err := Register(parentHome, id, homePath, "", ""); err != nil {
 			return fmt.Errorf("registering captain %s: %w", id, err)
 		}
@@ -704,13 +749,7 @@ func Migrate(homePath, id string) error {
 
 // --- Registry ---
 
-// CaptainRegistryPath returns the path to the authoritative captain registry.
-func CaptainRegistryPath(parentHome string) string {
-	return filepath.Join(parentHome, "data", "captains.md")
-}
-
-// Register appends a captain to the parent registry if not already present.
-// Format matches ParseRegistry: "- <id> - (home: <path>; scope: <scope>; projects: <project>; added: <date>)".
+// Register appends a captain to the typed captain registry if not already present.
 func Register(parentHome, id, homePath, scope, project string) error {
 	if id == "" || homePath == "" {
 		return fmt.Errorf("register requires id and home path")
@@ -719,146 +758,109 @@ func Register(parentHome, id, homePath, scope, project string) error {
 	if err != nil {
 		return err
 	}
-	path := CaptainRegistryPath(parentHome)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
+
+	// Check for legacy config before writing.
+	if needed, _ := configmigration.NeedsConfigMigration(parentHome); needed {
+		return configmigration.LegacyConfigCheckError(parentHome)
 	}
-	existing, err := ParseRegistry(path)
+
+	// Load or initialize typed captain registry.
+	registry, err := config.LoadCaptainRegistry(parentHome)
 	if err != nil {
-		existing = nil
-	}
-	for _, e := range existing {
-		if e.ID == id {
-			return nil // already registered
+		if errors.Is(err, os.ErrNotExist) {
+			registry = config.CaptainRegistryDocument{
+				SchemaVersion: config.CaptainRegistrySchemaVersion,
+			}
+		} else {
+			return fmt.Errorf("reading captain registry: %w", err)
 		}
 	}
-	added := time.Now().UTC().Format("2006-01-02")
-	meta := fmt.Sprintf("home: %s; scope: %s; projects: %s; added: %s", canon, scope, project, added)
-	line := fmt.Sprintf("- %s - (%s)\n", id, meta)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if st, _ := f.Stat(); st != nil && st.Size() == 0 {
-		if _, err := f.WriteString("# Captains\n\n"); err != nil {
-			return err
+
+	// Check if already registered.
+	for _, c := range registry.Captains {
+		if c.ID == id {
+			return nil
 		}
 	}
-	_, err = f.WriteString(line)
-	return err
+
+	registry.Captains = append(registry.Captains, config.CaptainRecord{
+		ID:      id,
+		Home:    canon,
+		Project: project,
+	})
+
+	if err := config.StoreCaptainRegistry(parentHome, registry); err != nil {
+		return fmt.Errorf("writing captain registry: %w", err)
+	}
+
+	return nil
 }
 
-// Unregister removes a captain id from the parent registry.
+// Unregister removes a captain id from the typed captain registry.
 // Missing registry or missing id is a no-op (idempotent cleanup).
 func Unregister(parentHome, id string) error {
 	if id == "" {
 		return fmt.Errorf("unregister requires id")
 	}
-	path := CaptainRegistryPath(parentHome)
-	existing, err := ParseRegistry(path)
+
+	// Check for legacy config before writing.
+	if needed, _ := configmigration.NeedsConfigMigration(parentHome); needed {
+		return configmigration.LegacyConfigCheckError(parentHome)
+	}
+
+	registry, err := config.LoadCaptainRegistry(parentHome)
 	if err != nil {
-		return err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reading captain registry: %w", err)
 	}
-	if len(existing) == 0 {
-		return nil
-	}
+
 	found := false
-	var kept []Info
-	for _, e := range existing {
-		if e.ID == id {
+	var kept []config.CaptainRecord
+	for _, c := range registry.Captains {
+		if c.ID == id {
 			found = true
 			continue
 		}
-		kept = append(kept, e)
+		kept = append(kept, c)
 	}
 	if !found {
 		return nil
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("rewriting registry %s: %w", path, err)
+
+	registry.Captains = kept
+	if err := config.StoreCaptainRegistry(parentHome, registry); err != nil {
+		return fmt.Errorf("writing captain registry: %w", err)
 	}
-	defer f.Close()
-	if _, err := f.WriteString("# Captains\n\n"); err != nil {
-		return err
-	}
-	for _, e := range kept {
-		meta := fmt.Sprintf("home: %s; scope: %s; projects: %s; added: %s", e.Home, e.Scope, e.Project, e.Added)
-		if _, err := fmt.Fprintf(f, "- %s - (%s)\n", e.ID, meta); err != nil {
-			return fmt.Errorf("writing registry: %w", err)
-		}
-	}
+
 	return nil
 }
 
-// ParseRegistry parses the generals registry file and returns Info entries.
-func ParseRegistry(registryPath string) ([]Info, error) {
-	f, err := os.Open(registryPath)
+// ListCaptains returns all registered captains by reading the typed captain registry.
+func ListCaptains(parentHome string) ([]Info, error) {
+	// Check for legacy config.
+	if needed, _ := configmigration.NeedsConfigMigration(parentHome); needed {
+		return nil, configmigration.LegacyConfigCheckError(parentHome)
+	}
+
+	registry, err := config.LoadCaptainRegistry(parentHome)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("opening registry %s: %w", registryPath, err)
+		return nil, fmt.Errorf("reading captain registry: %w", err)
 	}
-	defer f.Close()
 
-	var mates []Info
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !strings.HasPrefix(line, "- ") {
-			continue
-		}
-		rest := strings.TrimPrefix(line, "- ")
-		parts := strings.SplitN(rest, " - ", 2)
-		if len(parts) < 1 {
-			continue
-		}
-		id := strings.TrimSpace(parts[0])
-		if id == "" {
-			continue
-		}
-		entry := Info{ID: id}
-
-		if len(parts) >= 2 {
-			metaPart := parts[1]
-			if idx := strings.LastIndex(metaPart, "("); idx >= 0 {
-				meta := metaPart[idx+1:]
-				if endIdx := strings.LastIndex(meta, ")"); endIdx >= 0 {
-					meta = meta[:endIdx]
-				}
-				entry.Home = extractMetaValue(meta, "home:")
-				entry.Scope = extractMetaValue(meta, "scope:")
-				entry.Project = extractMetaValue(meta, "projects:")
-				entry.Added = extractMetaValue(meta, "added:")
-			}
-		}
-
-		mates = append(mates, entry)
+	var result []Info
+	for _, c := range registry.Captains {
+		result = append(result, Info{
+			ID:      c.ID,
+			Home:    c.Home,
+			Project: c.Project,
+		})
 	}
-	return mates, scanner.Err()
-}
-
-func extractMetaValue(meta, key string) string {
-	parts := strings.Split(meta, ";")
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if strings.HasPrefix(p, key) {
-			v := strings.TrimSpace(strings.TrimPrefix(p, key))
-			return v
-		}
-	}
-	return ""
-}
-
-// ListCaptains returns all registered captains by reading the authoritative registry.
-func ListCaptains(parentHome string) ([]Info, error) {
-	return ParseRegistry(CaptainRegistryPath(parentHome))
+	return result, nil
 }
 
 // --- Launch (session-backed) ---
@@ -1205,22 +1207,7 @@ func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
 
 // --- Config inheritance ---
 
-func getInheritableList() []string {
-	env := os.Getenv("MUNSU_INHERITABLE_CONFIG")
-	if env != "" {
-		return strings.Split(env, ":")
-	}
-	return []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
-}
 
-func isInheritable(name string, list []string) bool {
-	for _, n := range list {
-		if n == name {
-			return true
-		}
-	}
-	return false
-}
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if existing, err := os.ReadFile(path); err == nil {
@@ -1334,106 +1321,7 @@ func isSafeConfigPath(dst, parentHome, captainHome string) bool {
 	return true
 }
 
-func pushConfigFile(parentHome, captainHome, name string, logFn func(action, name string)) error {
-	src := filepath.Join(parentHome, "config", name)
-	dst := filepath.Join(captainHome, "config", name)
 
-	if !isSafeConfigPath(dst, parentHome, captainHome) {
-		return fmt.Errorf("config path %s escapes captain container — refuse", dst)
-	}
-	// Check git tracking BEFORE write — tracked destination must remain byte-identical.
-	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-		return fmt.Errorf("inheritance destination %s is tracked in captain git — must be gitignored", name)
-	}
-
-	data, err := os.ReadFile(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		logFn("skipped", name+" — "+err.Error())
-		return nil
-	}
-
-	if err := atomicWriteFile(dst, data, 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", name, err)
-	}
-	logFn("pushed", name)
-
-	return nil
-}
-
-func pushSharedFile(parentHome, captainHome string, logFn func(action, name string)) error {
-	src := filepath.Join(parentHome, "data", "general-shared.md")
-	dst := filepath.Join(captainHome, "data", "general-shared.md")
-
-	if !isSafeConfigPath(dst, parentHome, captainHome) {
-		return fmt.Errorf("general-shared.md path escapes captain container — refuse")
-	}
-	// Check git tracking BEFORE write.
-	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-		return fmt.Errorf("general-shared.md is tracked in captain git — must be gitignored")
-	}
-
-	data, err := os.ReadFile(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		logFn("skipped", "general-shared.md — "+err.Error())
-		return nil
-	}
-
-	if err := atomicWriteFile(dst, data, 0444); err != nil {
-		return fmt.Errorf("writing general-shared.md: %w", err)
-	}
-	logFn("pushed", "general-shared.md")
-
-	return nil
-}
-
-// pushProjectsRegistry copies the parent's data/projects.md into the captain
-// home. Entries keep absolute path descriptions so ResolveRepoPath works
-// without cloning into the captain projects/ tree (no auto-clone).
-func pushProjectsRegistry(parentHome, captainHome string, logFn func(action, name string)) error {
-	src := RegistryPath(parentHome)
-	dst := RegistryPath(captainHome)
-
-	if !isSafeConfigPath(dst, parentHome, captainHome) {
-		return fmt.Errorf("projects.md path escapes captain container — refuse")
-	}
-	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-		return fmt.Errorf("projects.md is tracked in captain git — must be gitignored")
-	}
-
-	data, err := os.ReadFile(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Mirror deletion: parent has no registry → remove captain copy if present.
-			if _, stErr := os.Stat(dst); stErr == nil {
-				if err := os.Remove(dst); err != nil {
-					logFn("delete-failed", "projects.md — "+err.Error())
-					return fmt.Errorf("mirror deletion: removing projects.md: %w", err)
-				}
-				logFn("deleted", "projects.md")
-			}
-			return nil
-		}
-		logFn("skipped", "projects.md — "+err.Error())
-		return nil
-	}
-
-	// Validate parent registry before writing so captains never inherit a corrupt file.
-	if _, err := ListFromFile(src); err != nil {
-		return fmt.Errorf("reading parent projects.md: %w", err)
-	}
-
-	if err := atomicWriteFile(dst, data, 0644); err != nil {
-		return fmt.Errorf("writing projects.md: %w", err)
-	}
-	logFn("pushed", "projects.md")
-	return nil
-}
 
 func isGitTracked(dir, name string) bool {
 	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", name).CombinedOutput()
@@ -1443,65 +1331,14 @@ func isGitTracked(dir, name string) bool {
 // preflightConfigPushDestinations validates all destination paths before any
 // mutation or log write in ConfigPushWithResult. Returns an error if any
 // destination escapes the captain container via symlink/.. or is git-tracked.
-func preflightConfigPushDestinations(parentHome, captainHome string, typed bool) error {
-	inheritable := getInheritableList()
-	if typed {
-		inheritable = nil
+func preflightConfigPushDestinations(parentHome, captainHome string) error {
+	// Check published resolved snapshot destination.
+	snapshotDst := filepath.Join(captainHome, config.PublishedSnapshotPath)
+	if !isSafeConfigPath(snapshotDst, parentHome, captainHome) {
+		return fmt.Errorf("published config snapshot destination escapes captain container — refuse")
 	}
-
-	// Check inheritable config destinations (push side).
-	for _, name := range inheritable {
-		dst := filepath.Join(captainHome, "config", name)
-		if !isSafeConfigPath(dst, parentHome, captainHome) {
-			return fmt.Errorf("push destination %s escapes captain container — refuse", name)
-		}
-		if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-			return fmt.Errorf("push destination %s is tracked in captain git — must be gitignored", name)
-		}
-	}
-
-	// Check inheritable config destinations (mirror-delete side) and shared files.
-	for _, name := range inheritable {
-		dst := filepath.Join(captainHome, "config", name)
-		if !isSafeConfigPath(dst, parentHome, captainHome) {
-			return fmt.Errorf("mirror-delete destination %s escapes captain container — refuse", name)
-		}
-		if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
-			return fmt.Errorf("mirror-delete destination %s is tracked in captain git — must be gitignored", name)
-		}
-	}
-
-	if !typed {
-		// Check general-shared.md destination.
-		sharedDst := filepath.Join(captainHome, "data", "general-shared.md")
-		if !isSafeConfigPath(sharedDst, parentHome, captainHome) {
-			return fmt.Errorf("general-shared.md destination escapes captain container — refuse")
-		}
-		if isGitTracked(filepath.Dir(sharedDst), filepath.Base(sharedDst)) {
-			return fmt.Errorf("general-shared.md is tracked in captain git — must be gitignored")
-		}
-
-		// Check projects.md destination.
-		projDst := filepath.Join(captainHome, "data", "projects.md")
-		if !isSafeConfigPath(projDst, parentHome, captainHome) {
-			return fmt.Errorf("projects.md destination escapes captain container — refuse")
-		}
-		if isGitTracked(filepath.Dir(projDst), filepath.Base(projDst)) {
-			return fmt.Errorf("projects.md is tracked in captain git — must be gitignored")
-		}
-	}
-
-	// Typed registry documents remain General-owned; Captains receive only a
-	// resolved project snapshot through the propagation transaction.
-	if typed {
-		// Check published resolved snapshot destination.
-		snapshotDst := filepath.Join(captainHome, config.PublishedSnapshotPath)
-		if !isSafeConfigPath(snapshotDst, parentHome, captainHome) {
-			return fmt.Errorf("published config snapshot destination escapes captain container — refuse")
-		}
-		if isGitTracked(filepath.Dir(snapshotDst), filepath.Base(snapshotDst)) {
-			return fmt.Errorf("published config snapshot is tracked in captain git — must be gitignored")
-		}
+	if isGitTracked(filepath.Dir(snapshotDst), filepath.Base(snapshotDst)) {
+		return fmt.Errorf("published config snapshot is tracked in captain git — must be gitignored")
 	}
 
 	// Check parent-home config destination.
@@ -1585,93 +1422,11 @@ func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 		return nil, fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
 	}
 
-	typed, err := typedConfigMode(parentHome)
-	if err != nil {
-		return nil, fmt.Errorf("config-push typed config: %w", err)
-	}
-
 	// Preflight all destinations before any mutation or log write.
-	if err := preflightConfigPushDestinations(parentHome, captainHome, typed); err != nil {
+	if err := preflightConfigPushDestinations(parentHome, captainHome); err != nil {
 		return nil, fmt.Errorf("config-push preflight: %w", err)
 	}
 
-	inheritable := getInheritableList()
-
-	logPath := filepath.Join(captainHome, "state", "config-push.log")
-	os.MkdirAll(filepath.Dir(logPath), 0755)
-	logF, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("opening config-push.log: %w", err)
-	}
-	defer logF.Close()
-
-	ts := time.Now().UTC().Format(time.RFC3339)
-	log := func(action, name string) {
-		line := fmt.Sprintf("%s\t%s\t%s\n", ts, action, name)
-		logF.WriteString(line)
-		fmt.Fprintf(os.Stderr, "  %s %s\n", action, name)
-	}
-
-	if !typed {
-		// Mirror deletions: remove inheritable files in captain that are absent in parent.
-		// Validate safety BEFORE any deletion. Return error on unsafe/tracked paths.
-		configDir := filepath.Join(captainHome, "config")
-		if entries, err := os.ReadDir(configDir); err == nil {
-			for _, e := range entries {
-				name := e.Name()
-				if !isInheritable(name, inheritable) {
-					continue
-				}
-				srcPath := filepath.Join(parentHome, "config", name)
-				if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-					dstPath := filepath.Join(configDir, name)
-					if !isSafeConfigPath(dstPath, parentHome, captainHome) {
-						return nil, fmt.Errorf("mirror deletion: %s path escapes captain container — refuse", name)
-					}
-					if isGitTracked(configDir, name) {
-						return nil, fmt.Errorf("mirror deletion: %s is tracked in captain git — must be gitignored", name)
-					}
-					if err := os.Remove(dstPath); err != nil {
-						log("delete-failed", name+" — "+err.Error())
-						return nil, fmt.Errorf("mirror deletion: removing %s: %w", name, err)
-					}
-					log("deleted", name)
-				}
-			}
-		}
-
-		// Mirror deletion for general-shared.md — validate before mutation.
-		sharedDst := filepath.Join(captainHome, "data", "general-shared.md")
-		if _, err := os.Stat(filepath.Join(parentHome, "data", "general-shared.md")); os.IsNotExist(err) {
-			if _, err := os.Stat(sharedDst); err == nil {
-				if !isSafeConfigPath(sharedDst, parentHome, captainHome) {
-					return nil, fmt.Errorf("mirror deletion: general-shared.md path escapes captain container — refuse")
-				}
-				if isGitTracked(filepath.Dir(sharedDst), filepath.Base(sharedDst)) {
-					return nil, fmt.Errorf("mirror deletion: general-shared.md is tracked in captain git — must be gitignored")
-				}
-				if err := os.Remove(sharedDst); err != nil {
-					log("delete-failed", "general-shared.md — "+err.Error())
-					return nil, fmt.Errorf("mirror deletion: removing general-shared.md: %w", err)
-				}
-				log("deleted", "general-shared.md")
-			}
-		}
-
-		for _, name := range inheritable {
-			if err := pushConfigFile(parentHome, captainHome, name, log); err != nil {
-				return nil, err
-			}
-		}
-
-		if err := pushSharedFile(parentHome, captainHome, log); err != nil {
-			return nil, err
-		}
-
-		if err := pushProjectsRegistry(parentHome, captainHome, log); err != nil {
-			return nil, err
-		}
-	}
 	// Refresh parent-home config so the captain always has a durable reference to its General.
 	if err := config.Set(captainHome, "parent-home", parentHome); err != nil {
 		return nil, fmt.Errorf("refreshing parent-home: %w", err)
@@ -1682,27 +1437,37 @@ func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 		return nil, fmt.Errorf("refreshing captain charter: %w", err)
 	}
 
-	if typed {
+	// Publish resolved snapshot if typed config documents exist in parent home.
+	// During initial captain setup (SeedCaptain/seedFromWorktree), the typed
+	// config may not exist yet — skip gracefully and let the first propagation
+	// establish the snapshot.
+	snapshotPublished := false
+	if _, statErr := os.Stat(filepath.Join(parentHome, config.BaseDocumentPath)); statErr == nil {
 		if err := publishResolvedSnapshot(parentHome, captainHome); err != nil {
 			return nil, fmt.Errorf("publishing resolved config snapshot: %w", err)
 		}
+		snapshotPublished = true
 	}
 
-	// Generation tracking: advance the config reread generation if inherited
-	// surface changed. This runs AFTER all propagation succeeds, so a partial
-	// failure never writes a generation that doesn't match the actual files.
-	// On failure, return the error but do not roll back propagation (the
-	// generation file is optional tracking, not the authoritative config).
-	changed, newGen, oldDigest, newDigest, genErr := AdvanceConfigRereadGen(captainHome)
-	if genErr != nil {
-		return nil, fmt.Errorf("advancing config-reread generation: %w", genErr)
+	// Generation tracking: advance the config reread generation when the
+	// snapshot was published. Skip during initial captain setup when typed
+	// config is not available yet.
+	if snapshotPublished {
+		changed, newGen, oldDigest, newDigest, genErr := AdvanceConfigRereadGen(captainHome)
+		if genErr != nil {
+			return nil, fmt.Errorf("advancing config-reread generation: %w", genErr)
+		}
+		return &ConfigPushResult{
+			Changed:    changed,
+			Generation: newGen,
+			OldDigest:  oldDigest,
+			NewDigest:  newDigest,
+		}, nil
 	}
 
 	return &ConfigPushResult{
-		Changed:    changed,
-		Generation: newGen,
-		OldDigest:  oldDigest,
-		NewDigest:  newDigest,
+		Changed:    false,
+		Generation: 0,
 	}, nil
 }
 

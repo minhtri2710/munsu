@@ -410,32 +410,21 @@ func TestPropagateConfig_FirstChangeHappyPath(t *testing.T) {
 		t.Errorf("NotificationState = %q, want %q", result.NotificationState, NotificationSubmitted)
 	}
 
-	// Verify files were copied.
-	for _, name := range []string{"soldier-harness", "soldier-dispatch.json"} {
-		data, err := os.ReadFile(filepath.Join(captainHome, "config", name))
-		if err != nil {
-			t.Errorf("config/%s was not copied: %v", name, err)
-			continue
-		}
-		if name == "soldier-harness" && string(data) != "pi\n" {
-			t.Errorf("config/soldier-harness = %q, want %q", string(data), "pi\n")
-		}
+	// Verify published snapshot was written instead of individual config files.
+	snapshotPath := filepath.Join(captainHome, config.PublishedSnapshotPath)
+	if _, err := os.Stat(snapshotPath); os.IsNotExist(err) {
+		t.Errorf("published snapshot not written at %s", snapshotPath)
 	}
 
-	// Verify general-shared.md was copied.
-	sharedData, err := os.ReadFile(filepath.Join(captainHome, "data", "general-shared.md"))
-	if err != nil {
-		t.Errorf("general-shared.md was not copied: %v", err)
-	} else if !strings.Contains(string(sharedData), "# General Shared") {
-		t.Errorf("general-shared.md content missing, got: %s", string(sharedData))
+	// Verify parent-home config was written.
+	parentHomePath := filepath.Join(captainHome, "config", "parent-home")
+	if _, err := os.Stat(parentHomePath); err != nil {
+		t.Errorf("parent-home config not written: %v", err)
 	}
 
-	// Verify projects.md was copied.
-	projData, err := os.ReadFile(filepath.Join(captainHome, "data", "projects.md"))
-	if err != nil {
-		t.Errorf("projects.md was not copied: %v", err)
-	} else if !strings.Contains(string(projData), "munsu") {
-		t.Errorf("projects.md content missing, got: %s", string(projData))
+	// Verify captain charter was refreshed.
+	if _, err := os.Stat(filepath.Join(captainHome, CaptainCharterName)); err != nil {
+		t.Errorf("captain charter not refreshed: %v", err)
 	}
 
 	// Verify generation tracking exists.
@@ -567,18 +556,13 @@ func TestPropagateConfig_NoParentConfig_MirrorDeletions(t *testing.T) {
 		t.Error("expected changed=true (mirror deletions are a change)")
 	}
 
-	// Verify inheritable files were deleted.
-	if _, err := os.Stat(filepath.Join(captainHome, "config", "soldier-harness")); !os.IsNotExist(err) {
-		t.Error("soldier-harness should have been deleted (mirror deletion)")
+	// Verify the typed snapshot reflects the parent's empty config.
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		t.Fatalf("loading published snapshot: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(captainHome, "config", "soldier-dispatch.json")); !os.IsNotExist(err) {
-		t.Error("soldier-dispatch.json should have been deleted (mirror deletion)")
-	}
-	if _, err := os.Stat(filepath.Join(captainHome, "data", "general-shared.md")); !os.IsNotExist(err) {
-		t.Error("general-shared.md should have been deleted (mirror deletion)")
-	}
-	if _, err := os.Stat(filepath.Join(captainHome, "data", "projects.md")); !os.IsNotExist(err) {
-		t.Error("projects.md should have been deleted (mirror deletion)")
+	if snapshot.Config().SoldierHarness != "" {
+		t.Errorf("expected empty SoldierHarness in snapshot, got %q", snapshot.Config().SoldierHarness)
 	}
 }
 
@@ -586,11 +570,29 @@ func TestPropagateConfig_MultipleInheritableProps(t *testing.T) {
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "test-sm")
 
-	// Set up parent with all three inheritable files.
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{\"strategy\":\"all\"}\n"), 0644)
-	os.WriteFile(filepath.Join(parent, "config", "backlog-backend"), []byte("tasks-axi\n"), 0644)
+	// Set up parent with typed config containing inheritable properties.
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "pi",
+			BacklogBackend: "tasks-axi",
+		},
+	}
+	captains := config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains: []config.CaptainRecord{
+			{ID: "test-sm", Home: captainHome, Project: "test-sm"},
+		},
+	}
+	projects := config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: parent, Mode: "no-mistakes"},
+		},
+	}
+	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
+		t.Fatal(err)
+	}
 
 	sender := &fakeBoundSender{acknowledged: true}
 	result, err := PropagateConfig(PropagateConfigRequest{
@@ -608,11 +610,16 @@ func TestPropagateConfig_MultipleInheritableProps(t *testing.T) {
 		t.Errorf("Generation = %d, want 1", result.Generation)
 	}
 
-	// Verify all three inheritable files were copied.
-	for _, name := range []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"} {
-		if _, err := os.Stat(filepath.Join(captainHome, "config", name)); os.IsNotExist(err) {
-			t.Errorf("config/%s was not copied", name)
-		}
+	// Verify all inheritable properties were propagated via typed snapshot.
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		t.Fatalf("loading published snapshot: %v", err)
+	}
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("expected SoldierHarness=pi, got %q", snapshot.Config().SoldierHarness)
+	}
+	if snapshot.Config().BacklogBackend != "tasks-axi" {
+		t.Errorf("expected BacklogBackend=tasks-axi, got %q", snapshot.Config().BacklogBackend)
 	}
 }
 
@@ -990,12 +997,11 @@ func TestPropagateConfig_InvalidParentRegistry(t *testing.T) {
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "test-sm")
 
-	// Write a malformed projects.md.
+	// Write a malformed projects.json (invalid schema version).
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
-	os.WriteFile(filepath.Join(parent, "data", "projects.md"), []byte("not-a-valid-entry\n"), 0644)
+	os.WriteFile(filepath.Join(parent, config.ProjectDocumentPath), []byte(`{"schemaVersion":"invalid","projects":[]}`+"\n"), 0644)
 
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 
 	sender := &fakeBoundSender{acknowledged: true}
 	_, err := PropagateConfig(PropagateConfigRequest{
@@ -1004,10 +1010,10 @@ func TestPropagateConfig_InvalidParentRegistry(t *testing.T) {
 		Mailbox:     sender,
 	})
 	if err == nil {
-		t.Fatal("expected error for invalid parent projects.md")
+		t.Fatal("expected error for invalid parent project registry")
 	}
-	if !strings.Contains(err.Error(), "reading parent projects.md") {
-		t.Errorf("error = %v, want projects.md validation error", err)
+	if !strings.Contains(err.Error(), "schemaVersion") {
+		t.Errorf("error = %v, want schema validation error", err)
 	}
 }
 
@@ -1592,7 +1598,14 @@ func TestPropagateConfig_ChangedAfterHealing_CreatesNextGeneration(t *testing.T)
 	}
 
 	// Change content — should create gen=2.
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("codex\n"), 0644)
+	base, lErr := config.LoadFleetBase(parent)
+	if lErr != nil {
+		t.Fatal(lErr)
+	}
+	base.Config.SoldierHarness = "codex"
+	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
 
 	sender3 := &fakeBoundSender{acknowledged: true}
 	result3, err := PropagateConfig(PropagateConfigRequest{

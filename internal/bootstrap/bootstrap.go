@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // ToolStatus represents whether a tool was found during bootstrap.
@@ -113,12 +113,10 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 		}
 	}
 
-	// 4. Check soldier-dispatch profiles
-	configDir := filepath.Join(home, "config")
-	dispatchPath := filepath.Join(configDir, "soldier-dispatch.json")
-	if cfg, err := harness.LoadDispatch(dispatchPath); err == nil {
-		ruleCount := len(cfg.Profiles)
-		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", ruleCount)})
+	// 4. Check soldier-dispatch profiles from fleet base document
+	base, baseErr := config.LoadFleetBase(home)
+	if baseErr == nil && len(base.Config.DispatchProfiles) > 0 {
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", len(base.Config.DispatchProfiles))})
 	}
 
 	// 4b. Check require-no-mistakes config

@@ -194,16 +194,28 @@ func lookupConfig(homeDir, key string) (string, bool) {
 //
 // The config/soldier-harness value "default" is treated as unset.
 func Soldier(homeDir string) (string, error) {
-	// 1. Try dispatch config default
-	dp, err := LoadDispatch(filepath.Join(config.ConfigDir(homeDir), "soldier-dispatch.json"))
-	if err == nil && dp.DefaultHarness != "" {
-		if err := ValidateHarness(dp.DefaultHarness); err != nil {
-			return "", fmt.Errorf("dispatch default harness: %w", err)
+	// 1. Try published snapshot (captain context)
+	snapshot, err := config.LoadPublishedSnapshot(homeDir)
+	if err == nil {
+		cfg := snapshot.Config()
+		if cfg.SoldierHarness != "" {
+			if err := ValidateHarness(cfg.SoldierHarness); err != nil {
+				return "", fmt.Errorf("published snapshot soldier harness: %w", err)
+			}
+			return cfg.SoldierHarness, nil
 		}
-		return dp.DefaultHarness, nil
 	}
 
-	// 2. Try config/soldier-harness
+	// 2. Try fleet base document (general context)
+	base, err := config.LoadFleetBase(homeDir)
+	if err == nil && base.Config.SoldierHarness != "" {
+		if err := ValidateHarness(base.Config.SoldierHarness); err != nil {
+			return "", fmt.Errorf("fleet base soldier harness: %w", err)
+		}
+		return base.Config.SoldierHarness, nil
+	}
+
+	// 3. Try config/soldier-harness
 	if v, ok := lookupConfig(homeDir, "soldier-harness"); ok {
 		if err := ValidateHarness(v); err != nil {
 			return "", err
@@ -211,7 +223,7 @@ func Soldier(homeDir string) (string, error) {
 		return v, nil
 	}
 
-	// 3. Fall back to detected harness
+	// 4. Fall back to detected harness
 	return Detect()
 }
 

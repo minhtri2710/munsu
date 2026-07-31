@@ -2,11 +2,15 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/configmigration"
 )
 
 // SyncResult holds the result of a fleet-sync operation.
@@ -22,10 +26,9 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 	res := &SyncResult{}
 
 	projectsDir := filepath.Join(home, "projects")
-	projectsFile := filepath.Join(home, "data", "projects.md")
 
 	// Read the project registry to find directories
-	dirs, localDirs, err := readProjectDirs(projectsFile, projectsDir)
+	dirs, localDirs, err := readProjectDirs(home, projectsDir)
 	if err != nil {
 		return res, fmt.Errorf("reading projects: %w", err)
 	}
@@ -57,20 +60,28 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 }
 
 // readProjectDirs reads the project registry and resolves project directories.
-// Uses the project registry to find both cloned repos (in projects/<name>)
-// and local-path registrations (where Description is an absolute existing path).
-func readProjectDirs(projectsFile, projectsDir string) (dirs []string, localDirs []string, _ error) {
-	projects, err := ListFromFile(projectsFile)
+// Uses the typed project registry to find both cloned repos (in projects/<name>)
+// and local-path registrations (where Path is an absolute existing path).
+func readProjectDirs(homeDir, projectsDir string) (dirs []string, localDirs []string, _ error) {
+	// Check for legacy config before reading typed registry.
+	if needed, _ := configmigration.NeedsConfigMigration(homeDir); needed {
+		return nil, nil, configmigration.LegacyConfigCheckError(homeDir)
+	}
+
+	registry, err := config.LoadProjectRegistry(homeDir)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
+		}
 		return nil, nil, err
 	}
 
-	for _, p := range projects {
-		// 1. Check if Description is an absolute existing path (local path registration)
-		if filepath.IsAbs(p.Description) {
-			if fi, statErr := os.Stat(p.Description); statErr == nil && fi.IsDir() {
-				dirs = append(dirs, p.Description)
-				localDirs = append(localDirs, p.Description)
+	for _, p := range registry.Projects {
+		// 1. Check if Path is an absolute existing path (local path registration)
+		if filepath.IsAbs(p.Path) {
+			if fi, statErr := os.Stat(p.Path); statErr == nil && fi.IsDir() {
+				dirs = append(dirs, p.Path)
+				localDirs = append(localDirs, p.Path)
 				continue
 			}
 		}

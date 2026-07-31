@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -40,6 +41,31 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 		t.Fatalf("mkdir captain: %v", err)
 	}
 
+	// Set up typed documents in parent home so ConfigPush works.
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "pi",
+		},
+	}
+	if err := config.StoreFleetBase(parentHome, base); err != nil {
+		t.Fatalf("StoreFleetBase: %v", err)
+	}
+	projects := config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-project", Path: captainHome, Mode: "no-mistakes"},
+		},
+	}
+	if err := config.StoreProjectRegistry(parentHome, projects); err != nil {
+		t.Fatalf("StoreProjectRegistry: %v", err)
+	}
+	// Register captain with a project BEFORE seeding, so ConfigPush inside
+	// SeedCaptain can resolve the project for the published snapshot.
+	if err := Register(parentHome, captainID, captainHome, "", "test-project"); err != nil {
+		t.Fatalf("pre-register: %v", err)
+	}
+
 	// Seed captain home.
 	if err := Seed(captainID, captainHome, ""); err != nil {
 		// Seed requires parentHome for charter; seed with explicit parent.
@@ -48,8 +74,8 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 		}
 	}
 
-	// Register captain.
-	if err := Register(parentHome, captainID, captainHome, "", ""); err != nil {
+	// Register captain (idempotent; ensures registry entry exists).
+	if err := Register(parentHome, captainID, captainHome, "", "test-project"); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 

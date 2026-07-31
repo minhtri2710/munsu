@@ -126,9 +126,6 @@ func (d CaptainRegistryDocument) Validate() error {
 		if captain.Home == "" {
 			return fmt.Errorf("Captain %q home is required", captain.ID)
 		}
-		if captain.Project == "" {
-			return fmt.Errorf("Captain %q must own exactly one project", captain.ID)
-		}
 		if _, exists := ids[captain.ID]; exists {
 			return fmt.Errorf("duplicate Captain %q", captain.ID)
 		}
@@ -177,6 +174,9 @@ func ValidateFleetBindings(captains CaptainRegistryDocument, projects ProjectReg
 	}
 	owners := make(map[string]string)
 	for _, captain := range captains.Captains {
+		if captain.Project == "" {
+			continue
+		}
 		if _, exists := known[captain.Project]; !exists {
 			return fmt.Errorf("Captain %q references unknown project %q", captain.ID, captain.Project)
 		}

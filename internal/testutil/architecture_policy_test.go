@@ -35,7 +35,7 @@ func TestPackageTopology(t *testing.T) {
 		packages[p.ImportPath] = p
 	}
 	const root = "github.com/minhtri2710/munsu/internal/"
-	allowed := map[string]bool{"domain": true, "backend": true, "orchestrator": true, "fleet": true, "config": true, "home": true, "harness": true, "bootstrap": true, "testutil": true, "cli": true}
+	allowed := map[string]bool{"domain": true, "backend": true, "orchestrator": true, "fleet": true, "config": true, "configmigration": true, "home": true, "harness": true, "bootstrap": true, "testutil": true, "cli": true}
 	for path, p := range packages {
 		if strings.HasPrefix(path, root) && !allowed[strings.TrimPrefix(path, root)] {
 			t.Errorf("unexpected internal package %s", path)

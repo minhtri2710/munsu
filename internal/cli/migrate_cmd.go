@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/configmigration"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
@@ -16,6 +19,7 @@ func newMigrateCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newMigrateWakeResolutionsCmd())
 	cmd.AddCommand(newMigrateTaskAggregatesCmd())
+	cmd.AddCommand(newMigrateConfigCmd())
 	return cmd
 }
 
@@ -210,6 +214,90 @@ func newMigrateTaskAggregatesCmd() *cobra.Command {
 		}),
 	}
 	apply.Flags().String("plan", "", "Path to reviewed task aggregate migration plan JSON")
+	configureContractCommand(apply)
+	cmd.AddCommand(planCmd)
+	cmd.AddCommand(apply)
+	return cmd
+}
+
+func newMigrateConfigCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Migrate legacy config files to typed documents",
+		Long: `Migrate legacy captains.md, projects.md, and soldier-dispatch.json
+files to the typed document system (config/base.json, data/captains.json,
+data/projects.json). Legacy files are archived and migration receipts are
+produced.`,
+	}
+	planCmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Plan config migration without source mutation",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan-out")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate config plan --plan-out <plan.json>`", "--plan-out is required")
+			}
+			plan, err := configmigration.PlanConfigMigration(ctx.Home)
+			if err != nil {
+				return operationError("invalid_argument", configmigration.MigrationCommand(ctx.Home), err.Error())
+			}
+			data, err := json.MarshalIndent(plan, "", "  ")
+			if err != nil {
+				return operationError("internal", configmigration.MigrationCommand(ctx.Home), err.Error())
+			}
+			if err := os.WriteFile(planPath, append(data, '\n'), 0600); err != nil {
+				return operationError("internal", configmigration.MigrationCommand(ctx.Home), err.Error())
+			}
+			message := fmt.Sprintf("Planned %d legacy config file(s); digest=%s; plan=%s; apply=%s",
+				len(plan.LegacyFiles), plan.PlanDigest, planPath, configmigration.MigrationCommand(ctx.Home))
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.config.plan",
+				Status:        "success",
+				Data:          MessageResult{Message: message},
+			})
+		}),
+	}
+	planCmd.Flags().String("plan-out", "", "Path to write reviewed config migration plan JSON")
+	configureContractCommand(planCmd)
+	apply := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply one reviewed config migration plan",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate config plan` first, then `munsu migrate config apply --plan <plan.json>`", "--plan is required")
+			}
+			data, err := os.ReadFile(planPath)
+			if err != nil {
+				return operationError("invalid_argument", "Run `munsu migrate config plan` again", err.Error())
+			}
+			var plan configmigration.ConfigMigrationPlan
+			if err := json.Unmarshal(data, &plan); err != nil {
+				return operationError("invalid_argument", "Run `munsu migrate config plan` again", err.Error())
+			}
+			receipt, err := configmigration.ApplyConfigMigration(&plan)
+			if err != nil {
+				return operationError("internal", "Re-run the same `munsu migrate config apply --plan <plan.json>` after fixing the reported state", err.Error())
+			}
+			message := fmt.Sprintf("Migrated %d legacy config file(s); archive=%s", len(receipt.LegacyFiles), receipt.ArchivePath)
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.config.apply",
+				Status:        "success",
+				Data:          MessageResult{Message: message},
+			})
+		}),
+	}
+	apply.Flags().String("plan", "", "Path to reviewed config migration plan JSON")
 	configureContractCommand(apply)
 	cmd.AddCommand(planCmd)
 	cmd.AddCommand(apply)

@@ -35,7 +35,7 @@ func TestValidateFleetBindings(t *testing.T) {
 		mutate func(*CaptainRegistryDocument, *ProjectRegistryDocument)
 		want   string
 	}{
-		{name: "captain missing project", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) { c.Captains[0].Project = "" }, want: "exactly one project"},
+		{name: "captain missing project", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) { c.Captains[0].Project = "" }, want: ""},
 		{name: "unknown project", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) { c.Captains[0].Project = "missing" }, want: "unknown project"},
 		{name: "duplicate owner", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) {
 			c.Captains = append(c.Captains, CaptainRecord{ID: "c2", Home: "/c2", Project: "alpha"})
@@ -52,8 +52,16 @@ func TestValidateFleetBindings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, c, p := validDocuments()
 			tc.mutate(&c, &p)
-			if err := ValidateFleetBindings(c, p); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ValidateFleetBindings() error = %v, want %q", err, tc.want)
+			err := ValidateFleetBindings(c, p)
+			if tc.want == "" {
+				// Empty want means expect no error.
+				if err != nil {
+					t.Fatalf("ValidateFleetBindings() error = %v, want nil", err)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("ValidateFleetBindings() error = %v, want %q", err, tc.want)
+				}
 			}
 		})
 	}

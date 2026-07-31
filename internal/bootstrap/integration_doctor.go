@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
@@ -245,32 +246,23 @@ func checkCaptainConfig(homeDir string) StatusEntry {
 }
 
 func checkCaptainHomes(homeDir string) StatusEntry {
-	registryPath := filepath.Join(homeDir, "data", "captains.md")
-	if _, err := os.Stat(registryPath); err != nil {
-		return StatusEntry{
-			Subsystem: "captain_homes",
-			Status:    StatusAbsent,
-			Detail:    "no captain registry found",
-			RepairCmd: "munsu captain seed <id> <home>",
-		}
-	}
-	// Count non-empty lines in registry as a proxy for registered captains
-	data, err := os.ReadFile(registryPath)
+	registry, err := config.LoadCaptainRegistry(homeDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return StatusEntry{
+				Subsystem: "captain_homes",
+				Status:    StatusAbsent,
+				Detail:    "no captain registry found",
+				RepairCmd: "munsu migrate config plan --plan-out <plan.json> && munsu migrate config apply --plan <plan.json>",
+			}
+		}
 		return StatusEntry{
 			Subsystem: "captain_homes",
 			Status:    StatusStale,
 			Detail:    fmt.Sprintf("registry read error: %v", err),
 		}
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	var registered int
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			registered++
-		}
-	}
+	registered := len(registry.Captains)
 	if registered == 0 {
 		return StatusEntry{
 			Subsystem: "captain_homes",

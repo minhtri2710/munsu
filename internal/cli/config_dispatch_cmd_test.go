@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 )
 
@@ -20,7 +21,7 @@ func TestConfigDispatchSetDefaultAndAdd(t *testing.T) {
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	root.SetArgs([]string{"config", "dispatch", "set-default", "pi", "--model", "opencode-go/deepseek-v4-flash", "--effort", "low"})
+	root.SetArgs([]string{"config", "dispatch", "set-default", "pi", "--model", "opencode-go/deepseek-v4-flash"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("set-default: %v\n%s", err, buf.String())
 	}
@@ -42,17 +43,17 @@ func TestConfigDispatchSetDefaultAndAdd(t *testing.T) {
 		t.Fatalf("add: %v\n%s", err, buf.String())
 	}
 
-	cfg, err := harness.LoadDispatch(harness.DispatchPath(tmp))
+	base, err := config.LoadFleetBase(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DefaultHarness != "pi" || cfg.DefaultModel != "opencode-go/deepseek-v4-flash" || cfg.DefaultEffort != "low" {
-		t.Fatalf("default = %+v", cfg)
+	if base.Config.SoldierHarness != "pi" || base.Config.Model != "opencode-go/deepseek-v4-flash" {
+		t.Fatalf("default = %+v", base.Config)
 	}
-	if len(cfg.Profiles) != 1 {
-		t.Fatalf("profiles = %d, want 1", len(cfg.Profiles))
+	if len(base.Config.DispatchProfiles) != 1 {
+		t.Fatalf("profiles = %d, want 1", len(base.Config.DispatchProfiles))
 	}
-	p := cfg.Profiles[0]
+	p := base.Config.DispatchProfiles[0]
 	if p.Name != "review" || p.Harness != "codex" || p.Model != "gpt-5.2-codex" || p.Effort != "high" {
 		t.Fatalf("profile = %+v", p)
 	}
@@ -77,12 +78,12 @@ func TestConfigDispatchSetDefaultAndAdd(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("replace: %v\n%s", err, buf.String())
 	}
-	cfg, err = harness.LoadDispatch(harness.DispatchPath(tmp))
+	base, err = config.LoadFleetBase(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Profiles[0].Harness != "pi" || cfg.Profiles[0].Effort != "medium" {
-		t.Fatalf("replaced profile = %+v", cfg.Profiles[0])
+	if base.Config.DispatchProfiles[0].Harness != "pi" || base.Config.DispatchProfiles[0].Effort != "medium" {
+		t.Fatalf("replaced profile = %+v", base.Config.DispatchProfiles[0])
 	}
 
 	// show
@@ -108,21 +109,26 @@ func TestConfigDispatchSetDefaultAndAdd(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("rm: %v\n%s", err, buf.String())
 	}
-	cfg, err = harness.LoadDispatch(harness.DispatchPath(tmp))
+	base, err = config.LoadFleetBase(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Profiles) != 0 {
-		t.Fatalf("after rm profiles=%d", len(cfg.Profiles))
+	if len(base.Config.DispatchProfiles) != 0 {
+		t.Fatalf("after rm profiles=%d", len(base.Config.DispatchProfiles))
 	}
 }
 
 func TestConfigDispatchClear(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmp)
-	path := harness.DispatchPath(tmp)
-	os.MkdirAll(filepath.Dir(path), 0755)
-	if err := harness.SaveDispatch(path, &harness.DispatchConfig{DefaultHarness: "pi"}); err != nil {
+	os.MkdirAll(filepath.Join(tmp, "config"), 0755)
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "pi",
+		},
+	}
+	if err := config.StoreFleetBase(tmp, base); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,8 +140,12 @@ func TestConfigDispatchClear(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("clear: %v\n%s", err, buf.String())
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("expected file removed, stat err=%v", err)
+	loaded, err := config.LoadFleetBase(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Config.SoldierHarness != "" || len(loaded.Config.DispatchProfiles) != 0 {
+		t.Fatalf("expected cleared config, got %+v", loaded.Config)
 	}
 }
 
@@ -153,16 +163,16 @@ func TestSaveDispatchRoundTrip(t *testing.T) {
 	if err := harness.SaveDispatch(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	got, err := harness.LoadDispatch(path)
+	// Re-read the file and verify the shape via json round-trip.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DefaultHarness != "pi" || got.Profiles[0].Name != "hard" {
-		t.Fatalf("got %+v", got)
-	}
-	// when-only profile should still match via phrase
-	sel := harness.ResolveDispatchSelection(got, "please do deep architectural redesign")
+	sel := harness.ResolveDispatchSelection(cfg, "please do deep architectural redesign")
 	if sel.Model != "glm" || sel.Effort != "high" {
 		t.Fatalf("selection = %+v", sel)
+	}
+	if !strings.Contains(string(data), "defaultHarness") {
+		t.Fatalf("saved dispatch missing defaultHarness: %s", string(data))
 	}
 }

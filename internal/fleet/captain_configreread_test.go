@@ -125,6 +125,7 @@ func TestComputeInheritedConfigDigest_Empty(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, "config"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 	os.MkdirAll(filepath.Join(home, "projects"), 0755)
+	createTestPublishedSnapshot(t, home)
 
 	digest, err := ComputeInheritedConfigDigest(home)
 	if err != nil {
@@ -146,10 +147,17 @@ func TestComputeInheritedConfigDigest_Deterministic(t *testing.T) {
 		os.MkdirAll(filepath.Join(home, "data"), 0755)
 		os.MkdirAll(filepath.Join(home, "projects"), 0755)
 
-		// Write soldier-harness config.
-		config.Set(home, "soldier-harness", "pi")
-		// Write general-shared.md.
-		os.WriteFile(filepath.Join(home, "data", "general-shared.md"), []byte("shared content\n"), 0644)
+		// Same published snapshot content for determinism (fixed project path).
+		resolved := config.ResolvedProjectConfig{
+			Project:           "test-project",
+			ProjectPath:       "/fixed/path",
+			SoldierHarness:    "pi",
+			RequireNoMistakes: true,
+			Digest:            "0000000000000000000000000000000000000000000000000000000000000000",
+		}
+		if err := config.StorePublishedSnapshot(home, resolved); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	d1, err := ComputeInheritedConfigDigest(home1)
@@ -172,6 +180,7 @@ func TestAdvanceConfigRereadGen_FirstPush(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "config"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
+	createTestPublishedSnapshot(t, home)
 
 	changed, gen, oldDigest, newDigest, err := AdvanceConfigRereadGen(home)
 	if err != nil {
@@ -196,8 +205,7 @@ func TestAdvanceConfigRereadGen_NoChange(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "config"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
-
-	// First push → advances
+	createTestPublishedSnapshot(t, home)
 	changed, gen, _, _, err := AdvanceConfigRereadGen(home)
 	if err != nil {
 		t.Fatal(err)
@@ -225,6 +233,7 @@ func TestAdvanceConfigRereadGen_ContentChange(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "config"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
+	createTestPublishedSnapshot(t, home)
 
 	// First push → gen=1
 	changed, _, _, _, err := AdvanceConfigRereadGen(home)
@@ -235,8 +244,17 @@ func TestAdvanceConfigRereadGen_ContentChange(t *testing.T) {
 		t.Fatal("expected changed=true on first push")
 	}
 
-	// Write a config file → push → gen=2
-	config.Set(home, "soldier-harness", "codex")
+	// Change the published snapshot → push → gen=2
+	resolved := config.ResolvedProjectConfig{
+		Project:           "test-project",
+		ProjectPath:       home,
+		SoldierHarness:    "codex",
+		RequireNoMistakes: true,
+		Digest:            "1111111111111111111111111111111111111111111111111111111111111111",
+	}
+	if err := config.StorePublishedSnapshot(home, resolved); err != nil {
+		t.Fatal(err)
+	}
 	changed, gen, _, newDigest, err := AdvanceConfigRereadGen(home)
 	if err != nil {
 		t.Fatal(err)
@@ -248,14 +266,23 @@ func TestAdvanceConfigRereadGen_ContentChange(t *testing.T) {
 		t.Errorf("gen = %d, want 2", gen)
 	}
 
-	// Delete the config file → push → gen=3
-	os.Remove(filepath.Join(home, "config", "soldier-harness"))
+	// Change the published snapshot back → push → gen=3 (different content)
+	resolved2 := config.ResolvedProjectConfig{
+		Project:           "test-project",
+		ProjectPath:       home,
+		SoldierHarness:    "pi",
+		RequireNoMistakes: false,
+		Digest:            "2222222222222222222222222222222222222222222222222222222222222222",
+	}
+	if err := config.StorePublishedSnapshot(home, resolved2); err != nil {
+		t.Fatal(err)
+	}
 	changed, gen, _, _, err = AdvanceConfigRereadGen(home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
-		t.Fatal("expected changed=true after config deletion")
+		t.Fatal("expected changed=true after config change")
 	}
 	if gen != 3 {
 		t.Errorf("gen = %d, want 3", gen)
@@ -270,10 +297,7 @@ func TestAdvanceConfigRereadGen_IdempotentRepeat(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, "config"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
-
-	config.Set(home, "soldier-harness", "pi")
-
-	// First push → gen=1
+	createTestPublishedSnapshot(t, home)
 	AdvanceConfigRereadGen(home)
 
 	// Push 5 more times with same content
@@ -539,6 +563,13 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
 	os.MkdirAll(filepath.Join(captainHome, "projects"), 0755)
 
+	// Set up typed documents in parent home.
+	setupTypedParentHome(t, parent, "test-project")
+	// Register captain with project so publishResolvedSnapshot works.
+	if err := Register(parent, "test", captainHome, "", "test-project"); err != nil {
+		t.Fatal(err)
+	}
+
 	// First push → advances (no existing gen file)
 	res, err := ConfigPushWithResult(parent, captainHome)
 	if err != nil {
@@ -563,8 +594,13 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 		t.Errorf("generation = %d, want 1", res.Generation)
 	}
 
-	// Change PARENT config → push → changed
-	if err := config.Set(parent, "soldier-harness", "codex"); err != nil {
+	// Change PARENT fleet base → push → changed
+	base, lErr := config.LoadFleetBase(parent)
+	if lErr != nil {
+		t.Fatal(lErr)
+	}
+	base.Config.SoldierHarness = "codex"
+	if err := config.StoreFleetBase(parent, base); err != nil {
 		t.Fatal(err)
 	}
 	res, err = ConfigPushWithResult(parent, captainHome)
@@ -609,6 +645,13 @@ func TestConfigPushWithResult_HealCrash(t *testing.T) {
 	writeFakeCaptainMarker(t, captainHome, "test")
 	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
 	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
+
+	// Set up typed documents in parent home.
+	setupTypedParentHome(t, parent, "test-project")
+	// Register captain with project so publishResolvedSnapshot works.
+	if err := Register(parent, "test", captainHome, "", "test-project"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Simulate crash: gen file was written at gen=1 but no mailbox envelope.
 	// Push with same content → unchanged (generation stays at 1).

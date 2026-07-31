@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 func TestContextCmd_SyncsAndPrintsManual(t *testing.T) {
@@ -19,7 +21,14 @@ func TestContextCmd_SyncsAndPrintsManual(t *testing.T) {
 	if err := os.WriteFile(stale, []byte("# stale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "data", "projects.md"), []byte("- demo - /tmp/demo (added 2026-01-01)\n"), 0644); err != nil {
+	// Create typed project registry instead of legacy projects.md.
+	projects := config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "demo", Path: "/tmp/demo", Mode: "no-mistakes"},
+		},
+	}
+	if err := config.StoreProjectRegistry(tmp, projects); err != nil {
 		t.Fatal(err)
 	}
 

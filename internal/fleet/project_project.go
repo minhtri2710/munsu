@@ -1,12 +1,16 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/configmigration"
 )
 
 // Project represents a registered or ad-hoc project entry.
@@ -18,80 +22,9 @@ type Project struct {
 	Added       string // date string
 }
 
-// RegistryPath returns the path to the projects.md registry file.
-func RegistryPath(homeDir string) string {
-	return filepath.Join(homeDir, "data", "projects.md")
-}
-
 // ProjectsDir returns the path where cloned project repos live.
 func ProjectsDir(homeDir string) string {
 	return filepath.Join(homeDir, "projects")
-}
-
-// ParseEntry parses a single registry line into a Project.
-// Format: - <name> [<mode>] [+yolo] - <description> (added <date>)
-func ParseEntry(line string) (*Project, error) {
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, "- ") {
-		return nil, fmt.Errorf("invalid project entry format: %q", line)
-	}
-
-	rest := line[2:] // skip "- "
-
-	// Find the first " - " as the LHS/RHS separator
-	sepIdx := strings.Index(rest, " - ")
-	if sepIdx < 0 {
-		return nil, fmt.Errorf("missing ' - ' separator in: %q", line)
-	}
-
-	lhs := rest[:sepIdx]
-	rhs := strings.TrimSpace(rest[sepIdx+3:])
-
-	// Parse RHS: "<description> (added <date>)"
-	addedIdx := strings.LastIndex(rhs, "(added ")
-	if addedIdx < 0 {
-		return nil, fmt.Errorf("missing '(added ...)' in: %q", line)
-	}
-
-	desc := strings.TrimSpace(rhs[:addedIdx])
-	datePart := rhs[addedIdx+7:] // skip "(added "
-	date := strings.TrimSuffix(strings.TrimSpace(datePart), ")")
-
-	// Parse LHS tokens: <name> [<mode>] [+yolo]
-	tokens := strings.Fields(lhs)
-	if len(tokens) == 0 {
-		return nil, fmt.Errorf("missing project name in: %q", line)
-	}
-
-	p := &Project{
-		Name:        tokens[0],
-		Description: desc,
-		Added:       date,
-	}
-
-	for _, tok := range tokens[1:] {
-		if tok == "+yolo" {
-			p.Yolo = true
-		} else {
-			p.Mode = tok
-		}
-	}
-
-	return p, nil
-}
-
-// FormatEntry formats a Project as a registry line.
-func FormatEntry(p *Project) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "- %s", p.Name)
-	if p.Mode != "" {
-		fmt.Fprintf(&b, " %s", p.Mode)
-	}
-	if p.Yolo {
-		b.WriteString(" +yolo")
-	}
-	fmt.Fprintf(&b, " - %s (added %s)", p.Description, p.Added)
-	return b.String()
 }
 
 // today returns today's date as YYYY-MM-DD.
@@ -107,13 +40,27 @@ func isURL(s string) bool {
 		strings.HasPrefix(s, "ssh://")
 }
 
-// Add registers a  If pathOrURL is a URL, clones it first.
-// If the name is already registered, updates the existing entry in-place (no duplicate).
+// checkLegacyConfig returns an error if legacy config files exist and the
+// typed documents are not yet installed. This is called at the top of
+// registry-mutating functions to prevent writes to legacy files.
+func checkLegacyConfig(homeDir string) error {
+	needed, _ := configmigration.NeedsConfigMigration(homeDir)
+	if needed {
+		return configmigration.LegacyConfigCheckError(homeDir)
+	}
+	return nil
+}
+
+// Add registers a project. If pathOrURL is a URL, clones it first.
+// If the name is already registered, updates the existing entry in-place.
 func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
-	regPath := RegistryPath(homeDir)
+	// Check for legacy config before writing.
+	if err := checkLegacyConfig(homeDir); err != nil {
+		return err
+	}
 
 	// Ensure data directory exists
-	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0755); err != nil {
 		return fmt.Errorf("creating data directory: %w", err)
 	}
 
@@ -131,43 +78,41 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 		}
 	}
 
-	p := &Project{
-		Name:        name,
-		Mode:        mode,
-		Yolo:        yolo,
-		Description: pathOrURL,
-		Added:       today(),
+	// Load or initialize typed project registry.
+	registry, err := config.LoadProjectRegistry(homeDir)
+	if err != nil {
+		// If the file doesn't exist yet, start with an empty registry.
+		if errors.Is(err, os.ErrNotExist) {
+			registry = config.ProjectRegistryDocument{
+				SchemaVersion: config.ProjectRegistrySchemaVersion,
+			}
+		} else {
+			return fmt.Errorf("reading project registry: %w", err)
+		}
 	}
 
-	// Check if name already exists — update in-place to avoid duplicates
-	existing, _ := ListFromFile(regPath)
-	for i, ep := range existing {
-		if ep.Name == name {
-			existing[i] = p
-			// Rewrite entire file with updated entry
-			f, err := os.Create(regPath)
-			if err != nil {
-				return fmt.Errorf("opening registry: %w", err)
-			}
-			defer f.Close()
-			for _, proj := range existing {
-				if _, err := fmt.Fprintln(f, FormatEntry(proj)); err != nil {
-					return fmt.Errorf("writing registry: %w", err)
-				}
+	record := config.ProjectRecord{
+		Name: name,
+		Path: pathOrURL,
+		Mode: mode,
+	}
+
+	// Check if name already exists — update in-place to avoid duplicates.
+	for i, p := range registry.Projects {
+		if p.Name == name {
+			registry.Projects[i] = record
+			if err := config.StoreProjectRegistry(homeDir, registry); err != nil {
+				return fmt.Errorf("writing project registry: %w", err)
 			}
 			fmt.Printf("Updated project %q (%s)\n", name, pathOrURL)
 			return nil
 		}
 	}
 
-	// Append new entry
-	f, err := os.OpenFile(regPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("opening registry: %w", err)
-	}
-	defer f.Close()
-	if _, err := fmt.Fprintln(f, FormatEntry(p)); err != nil {
-		return fmt.Errorf("writing registry: %w", err)
+	// Append new entry.
+	registry.Projects = append(registry.Projects, record)
+	if err := config.StoreProjectRegistry(homeDir, registry); err != nil {
+		return fmt.Errorf("writing project registry: %w", err)
 	}
 
 	fmt.Printf("Registered project %q (%s)\n", name, pathOrURL)
@@ -176,57 +121,29 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 
 // List reads and returns all registered projects.
 func List(homeDir string) ([]*Project, error) {
-	regPath := RegistryPath(homeDir)
-	data, err := os.ReadFile(regPath)
+	if err := checkLegacyConfig(homeDir); err != nil {
+		return nil, err
+	}
+
+	registry, err := config.LoadProjectRegistry(homeDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("reading registry: %w", err)
+		return nil, fmt.Errorf("reading project registry: %w", err)
 	}
 
 	var projects []*Project
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		p, err := ParseEntry(line)
-		if err != nil {
-			return nil, fmt.Errorf("parsing registry line %q: %w", line, err)
-		}
-		projects = append(projects, p)
+	for _, p := range registry.Projects {
+		projects = append(projects, &Project{
+			Name:        p.Name,
+			Mode:        p.Mode,
+			Description: p.Path,
+			Added:       today(),
+		})
 	}
 	return projects, nil
 }
-
-// ListFromFile reads and returns all registered projects from a specific registry file.
-// This is used by consumers outside the project package that need to specify a path.
-func ListFromFile(regPath string) ([]*Project, error) {
-	data, err := os.ReadFile(regPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading registry: %w", err)
-	}
-
-	var projects []*Project
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		p, err := ParseEntry(line)
-		if err != nil {
-			return nil, fmt.Errorf("parsing registry line %q: %w", line, err)
-		}
-		projects = append(projects, p)
-	}
-	return projects, nil
-}
-
-// Find looks up a project by name in the registry.
 
 // Find looks up a project by name in the registry.
 func Find(homeDir, name string) (*Project, error) {
@@ -244,37 +161,40 @@ func Find(homeDir, name string) (*Project, error) {
 
 // Rm removes a project from the registry (but does not delete cloned repos).
 func Rm(homeDir, name string) error {
-	projects, err := List(homeDir)
-	if err != nil {
+	if err := checkLegacyConfig(homeDir); err != nil {
 		return err
 	}
 
-	regPath := RegistryPath(homeDir)
-	f, err := os.Create(regPath)
+	registry, err := config.LoadProjectRegistry(homeDir)
 	if err != nil {
-		return fmt.Errorf("rewriting registry: %w", err)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("project %q not found in registry", name)
+		}
+		return fmt.Errorf("reading project registry: %w", err)
 	}
-	defer f.Close()
 
 	found := false
-	for _, p := range projects {
+	var updated []config.ProjectRecord
+	for _, p := range registry.Projects {
 		if p.Name == name {
 			found = true
 			continue
 		}
-		if _, err := fmt.Fprintln(f, FormatEntry(p)); err != nil {
-			return fmt.Errorf("writing registry: %w", err)
-		}
+		updated = append(updated, p)
 	}
-
 	if !found {
 		return fmt.Errorf("project %q not found in registry", name)
+	}
+
+	registry.Projects = updated
+	if err := config.StoreProjectRegistry(homeDir, registry); err != nil {
+		return fmt.Errorf("writing project registry: %w", err)
 	}
 	fmt.Printf("Removed project %q from registry\n", name)
 	return nil
 }
 
-// Mode returns the delivery mode and yolo flag for a
+// Mode returns the delivery mode for a project.
 // If mode is empty, defaults to "no-mistakes" (the default delivery mode).
 func Mode(homeDir, name string) (mode string, yolo bool, err error) {
 	p, err := Find(homeDir, name)
@@ -290,16 +210,16 @@ func Mode(homeDir, name string) (mode string, yolo bool, err error) {
 
 // ResolveRepoPath resolves a project name to an absolute repo path.
 // Priority:
-//  1. If the project Description is an existing absolute directory → use it
-//  2. If projects/<name> is an existing directory → use it
-//  3. Otherwise → error
+//  1. If the project Path is an existing absolute directory -> use it
+//  2. If projects/<name> is an existing directory -> use it
+//  3. Otherwise -> error
 func ResolveRepoPath(homeDir, name string) (string, error) {
 	p, err := Find(homeDir, name)
 	if err != nil {
 		return "", err
 	}
 
-	// 1. Check if Description is an absolute existing path
+	// 1. Check if Path is an absolute existing path
 	if filepath.IsAbs(p.Description) {
 		if fi, statErr := os.Stat(p.Description); statErr == nil && fi.IsDir() {
 			return p.Description, nil
@@ -342,33 +262,28 @@ func ResolveAdhoc() (*Project, error) {
 }
 
 // ResolveFromCwd detects the git repo from cwd and tries to match its root
-// against registered project paths. If a registry project's Description (stored path)
-// matches the git root, the registered project (with its alias name) is returned.
-// If no registry path matches, falls back to ResolveAdhoc (transient project).
+// against registered project paths. If a registry project matches, the
+// registered project is returned. Falls back to ResolveAdhoc.
 func ResolveFromCwd(homeDir string) (*Project, error) {
 	repoRoot, err := gitRoot()
 	if err != nil {
 		return nil, err
 	}
 
-	// Normalize git root (resolve symlinks for robust matching)
 	cleanRoot, err := filepath.EvalSymlinks(repoRoot)
 	if err != nil {
 		cleanRoot = filepath.Clean(repoRoot)
 	}
 
-	// Check registered projects for a path match
 	projects, err := List(homeDir)
 	if err != nil {
-		// Can't read registry — fall back to adhoc
 		return ResolveAdhoc()
 	}
 
 	for _, p := range projects {
 		if !filepath.IsAbs(p.Description) {
-			continue // skip URLs and relative paths
+			continue
 		}
-		// Normalize stored path
 		cleanDesc, err := filepath.EvalSymlinks(p.Description)
 		if err != nil {
 			cleanDesc = filepath.Clean(p.Description)
@@ -378,6 +293,5 @@ func ResolveFromCwd(homeDir string) (*Project, error) {
 		}
 	}
 
-	// No registry match — fall back to adhoc
 	return ResolveAdhoc()
 }

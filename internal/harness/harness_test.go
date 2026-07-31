@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // clearEnvMarkers unsets all known harness env markers to avoid
@@ -208,11 +210,15 @@ func TestTemplates(t *testing.T) {
 func TestSoldier_HasDispatchDefault(t *testing.T) {
 	tmp := t.TempDir()
 
-	// Write a dispatch config with a default harness
-	configDir := filepath.Join(tmp, "config")
-	os.MkdirAll(configDir, 0755)
-	dispatchFile := filepath.Join(configDir, "soldier-dispatch.json")
-	if err := os.WriteFile(dispatchFile, []byte(`{"defaultHarness":"codex"}`+"\n"), 0644); err != nil {
+	// Write a fleet base document with a soldier harness
+	os.MkdirAll(filepath.Join(tmp, "config"), 0755)
+	base := config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "codex",
+		},
+	}
+	if err := config.StoreFleetBase(tmp, base); err != nil {
 		t.Fatal(err)
 	}
 
@@ -315,9 +321,11 @@ func TestCaptain_NoConfig(t *testing.T) {
 }
 
 func TestDispatchDefaultHarness(t *testing.T) {
-	cfg, err := LoadDispatch("testdata/dispatch.json")
-	if err != nil {
-		t.Fatal(err)
+	cfg := &DispatchConfig{
+		DefaultHarness: "pi",
+		Profiles: []DispatchProfile{
+			{Name: "code-review", Match: []string{"review"}, Harness: "codex"},
+		},
 	}
 	if cfg.DefaultHarness != "pi" {
 		t.Errorf("DefaultHarness = %q, want %q", cfg.DefaultHarness, "pi")

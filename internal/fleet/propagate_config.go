@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -301,6 +302,9 @@ func propagateConfigLogPath(captainHome string) string {
 func IsPropagateConfigUnchanged(captainHome string) (bool, error) {
 	newDigest, err := ComputeInheritedConfigDigest(captainHome)
 	if err != nil {
+		if errors.Is(err, ErrNoPublishedSnapshot) {
+			return false, nil
+		}
 		return false, fmt.Errorf("is-propagate-config-unchanged: computing digest: %w", err)
 	}
 

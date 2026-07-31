@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
@@ -134,7 +135,7 @@ func (tx *RecoverTransaction) stepConfigValidation(parentHome string, sm Info) S
 	}{
 		{filepath.Join(sm.Home, "config", "captain-harness"), "captain-harness config"},
 		{filepath.Join(sm.Home, "config", "soldier-harness"), "soldier-harness config"},
-		{CaptainRegistryPath(parentHome), "parent captains.md registry"},
+		{filepath.Join(parentHome, config.CaptainDocumentPath), "typed captain registry"},
 	}
 	var diags []ConfigDiagnostic
 	for _, c := range checks {

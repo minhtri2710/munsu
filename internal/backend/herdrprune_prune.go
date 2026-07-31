@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // PruneOptions controls the prune operation.
@@ -244,26 +246,14 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 
 // listCaptainHomes returns registered captain home paths under parentHome.
 func listCaptainHomes(parentHome string) []string {
-	reg := filepath.Join(parentHome, "data", "captains.md")
-	data, err := os.ReadFile(reg)
+	registry, err := config.LoadCaptainRegistry(parentHome)
 	if err != nil {
 		return nil
 	}
 	var homes []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// expected: - id | home | scope | ...
-		line = strings.TrimPrefix(line, "- ")
-		parts := strings.Split(line, "|")
-		if len(parts) < 2 {
-			continue
-		}
-		home := strings.TrimSpace(parts[1])
-		if home != "" {
-			homes = append(homes, home)
+	for _, c := range registry.Captains {
+		if c.Home != "" {
+			homes = append(homes, c.Home)
 		}
 	}
 	return homes
