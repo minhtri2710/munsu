@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -118,12 +119,26 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 	if currentBranch != taskBranch {
 		return "unexpected head: bound worktree is not on the task-local branch"
 	}
+
+	// Resolve the git capability tier from meta (defaults to write if not set).
+	tier, _ := fleet.ResolveGitCapabilityTier(homeDir, taskID)
+
+	// Read git auth context (amendment, retirement, or empty).
+	ctx, _ := fleet.ReadGitAuthContext(homeDir, taskID)
+
 	switch g.verb {
 	case "add", "commit":
 		return ""
 	case "branch":
 		if branchOpAllowed(taskBranch, g.args) {
 			return ""
+		}
+		// Branch deletion requires cleanup tier and retirement context.
+		if isBranchDelete(g.args) {
+			if ctx == "retirement" && fleet.TierEnough(tier, fleet.GitTierCleanup) {
+				return ""
+			}
+			return "branch deletion requires cleanup authority (retirement context)"
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "checkout", "switch":
@@ -132,8 +147,23 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "push":
-		if containsGitForce(g.args) {
-			return "force push is not allowed"
+		// Unrestricted force (--force, -f) is always denied.
+		if fleet.UnrestrictedForceDenied(g.args) {
+			return "unrestricted force push is not allowed; use --force-with-lease with authorization instead"
+		}
+		// Force-with-lease requires authorization with expected-state comparison.
+		if fleet.ForceWithLeaseRequested(g.args) {
+			if _, err := fleet.CheckGitMutationAuthorization(homeDir, taskID, fleet.GitOpForceWithLease, ""); err != nil {
+				return "force-with-lease is not authorized: " + err.Error()
+			}
+			return ""
+		}
+		// Push --delete requires cleanup tier and retirement context.
+		if fleet.PushDeleteRequested(g.args, g.pushRefspec) {
+			if ctx == "retirement" && fleet.TierEnough(tier, fleet.GitTierCleanup) {
+				return ""
+			}
+			return "push --delete requires cleanup authority (retirement context)"
 		}
 		if len(g.args) == 0 || g.args[0] != "origin" {
 			return "default Ship authority permits only task-local branch, add, commit, and normal push"
@@ -142,6 +172,12 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 			return ""
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
+	case "rebase", "reset", "merge", "cherry-pick", "revert":
+		// Rewrite operations require amendment context and rewrite tier.
+		if ctx == "amendment" && fleet.TierEnough(tier, fleet.GitTierRewrite) {
+			return ""
+		}
+		return "rewrite operations require amendment context and rewrite authority"
 	default:
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	}
@@ -329,7 +365,16 @@ func shipGitCommandAllowed(taskID string, g gitCommandSafety) bool {
 	case "checkout", "switch":
 		return createsBranch(g.args) && g.branchName == taskBranch
 	case "push":
-		if containsGitForce(g.args) {
+		// Unrestricted force is always denied.
+		if fleet.UnrestrictedForceDenied(g.args) {
+			return false
+		}
+		// Force-with-lease is not allowed without authorization.
+		if fleet.ForceWithLeaseRequested(g.args) {
+			return false
+		}
+		// Push --delete is not allowed without context.
+		if fleet.PushDeleteRequested(g.args, g.pushRefspec) {
 			return false
 		}
 		if len(g.args) == 0 || g.args[0] != "origin" {
@@ -382,9 +427,9 @@ func createsBranch(args []string) bool {
 	return false
 }
 
-func containsGitForce(args []string) bool {
+func isBranchDelete(args []string) bool {
 	for _, arg := range args {
-		if arg == "--force" || arg == "-f" || strings.HasPrefix(arg, "--force-") {
+		if arg == "-d" || arg == "-D" {
 			return true
 		}
 	}

@@ -290,6 +290,7 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 		MetaAmendExpectedHead: ident.HeadSHA,
 		MetaAmendStartedAt:    time.Now().UTC().Format(time.RFC3339),
 		MetaIdentityRevision:  nextRev,
+		MetaGitAuthContext:    "amendment",
 	}
 
 	result, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates)
@@ -405,6 +406,8 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*domain.DeliveryIden
 	updates[MetaAmendExpectedHead] = ""
 	updates[MetaAmendStartedAt] = ""
 	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
+	// Clear git auth context
+	updates[MetaGitAuthContext] = ""
 	// Append audit record
 	updates[MetaAmendHistory] = appendAmendHistory(meta[MetaAmendHistory], record)
 
@@ -503,6 +506,8 @@ func ReconcileIdentity(homeDir, taskID, worktreePath string) (*domain.DeliveryId
 	updates[MetaAmendExpectedHead] = ""
 	updates[MetaAmendStartedAt] = ""
 	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
+	// Clear git auth context (reconciliation ends any amendment context)
+	updates[MetaGitAuthContext] = ""
 	updates[MetaAmendHistory] = appendAmendHistory(meta[MetaAmendHistory], record)
 
 	_, err = home.CompareAndSwapMeta(homeDir, taskID, checks, updates)

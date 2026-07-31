@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -180,6 +181,252 @@ func TestSafetyCheckDefaultShipAuthorityGitAllowlist(t *testing.T) {
 		if !block || reason == "" {
 			t.Fatalf("%q block=%v reason=%q, want deny", command, block, reason)
 		}
+	}
+}
+
+// TestSafetyCheckForceWithLeaseDeniedWithoutAuth verifies that --force-with-lease
+// is denied when no git mutation authorization exists.
+func TestSafetyCheckForceWithLeaseDeniedWithoutAuth(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-fwl-deny", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-fwl-deny")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fwl-deny")
+
+	block, reason := runPiSafetyForGit(t, worktree, "git push --force-with-lease origin HEAD:refs/heads/mu/ship-fwl-deny")
+	if !block || reason == "" {
+		t.Fatalf("force-with-lease without auth block=%v reason=%q, want deny", block, reason)
+	}
+	if !strings.Contains(reason, "not authorized") {
+		t.Errorf("expected 'not authorized' in reason, got: %q", reason)
+	}
+}
+
+// TestSafetyCheckUnrestrictedForceAlwaysDenied verifies that --force and -f
+// are always denied regardless of authorization.
+func TestSafetyCheckUnrestrictedForceAlwaysDenied(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-force", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-force")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-force")
+
+	for _, command := range []string{
+		"git push --force origin HEAD:refs/heads/mu/ship-force",
+		"git push -f origin HEAD:refs/heads/mu/ship-force",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if !block || reason == "" {
+			t.Fatalf("%q block=%v reason=%q, want deny", command, block, reason)
+		}
+		if !strings.Contains(reason, "unrestricted force push") {
+			t.Errorf("expected 'unrestricted force push' in reason, got: %q", reason)
+		}
+	}
+}
+
+// TestSafetyCheckBranchDeletionDeniedWithoutContext verifies that branch
+// deletion is denied without retirement context.
+func TestSafetyCheckBranchDeletionDeniedWithoutContext(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-bdel", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-bdel")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-bdel")
+
+	// git branch -d should be denied without retirement context
+	block, reason := runPiSafetyForGit(t, worktree, "git branch -d mu/ship-bdel")
+	if !block || reason == "" {
+		t.Fatalf("branch -d without context block=%v reason=%q, want deny", block, reason)
+	}
+	if !strings.Contains(reason, "cleanup authority") {
+		t.Errorf("expected 'cleanup authority' in reason, got: %q", reason)
+	}
+}
+
+// TestSafetyCheckRewriteDeniedWithoutContext verifies that rewrite operations
+// (rebase, reset, merge) are denied without amendment context.
+func TestSafetyCheckRewriteDeniedWithoutContext(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-rewrite", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-rewrite")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-rewrite")
+
+	for _, command := range []string{
+		"git rebase main",
+		"git reset --hard HEAD~1",
+		"git merge main",
+		"git cherry-pick HEAD",
+		"git revert HEAD",
+	} {
+		block, reason := runPiSafetyForGit(t, worktree, command)
+		if !block || reason == "" {
+			t.Fatalf("%q block=%v reason=%q, want deny", command, block, reason)
+		}
+		if !strings.Contains(reason, "rewrite operations") {
+			t.Errorf("expected 'rewrite operations' in reason, got: %q", reason)
+		}
+	}
+}
+
+// TestSafetyCheckPushDeleteDeniedWithoutContext verifies that push --delete
+// is denied without retirement context.
+func TestSafetyCheckPushDeleteDeniedWithoutContext(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-pdel", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-pdel")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-pdel")
+
+	// git push --delete should be denied without retirement context
+	block, reason := runPiSafetyForGit(t, worktree, "git push --delete origin mu/ship-pdel")
+	if !block || reason == "" {
+		t.Fatalf("push --delete without context block=%v reason=%q, want deny", block, reason)
+	}
+	if !strings.Contains(reason, "cleanup authority") {
+		t.Errorf("expected 'cleanup authority' in reason, got: %q", reason)
+	}
+}
+
+// TestSafetyCheckForceWithLeaseAuthorizedWithContext verifies that force-with-lease
+// is allowed when authorized via git mutation authorization.
+func TestSafetyCheckForceWithLeaseAuthorizedWithContext(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-fwl-auth", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-fwl-auth")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fwl-auth")
+
+	// Set git capability tier to rewrite (force-with-lease requires rewrite tier)
+	if err := fleet.SetGitCapabilityTier(homeDir, "ship-fwl-auth", fleet.GitTierRewrite); err != nil {
+		t.Fatalf("SetGitCapabilityTier: %v", err)
+	}
+
+	// Set up git auth context and authorization
+	if err := fleet.SetGitAuthContext(homeDir, "ship-fwl-auth", "amendment"); err != nil {
+		t.Fatalf("SetGitAuthContext: %v", err)
+	}
+
+	// Authorize force-with-lease
+	_, err := fleet.AuthorizeForceWithLease(homeDir, "ship-fwl-auth", "1",
+		"refs/heads/mu/ship-fwl-auth",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"amendment", "amendment")
+	if err != nil {
+		t.Fatalf("AuthorizeForceWithLease: %v", err)
+	}
+
+	// Force-with-lease should be allowed
+	block, reason := runPiSafetyForGit(t, worktree, "git push --force-with-lease origin HEAD:refs/heads/mu/ship-fwl-auth")
+	if block {
+		t.Fatalf("force-with-lease with auth blocked=%v reason=%q, want allow", block, reason)
+	}
+}
+
+// TestSafetyCheckBranchDeletionAllowedWithRetirementContext verifies that branch
+// deletion is allowed with retirement context and cleanup tier.
+func TestSafetyCheckBranchDeletionAllowedWithRetirementContext(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-bdel-ok", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-bdel-ok")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-bdel-ok")
+
+	// Set git capability tier to cleanup
+	if err := fleet.SetGitCapabilityTier(homeDir, "ship-bdel-ok", fleet.GitTierCleanup); err != nil {
+		t.Fatalf("SetGitCapabilityTier: %v", err)
+	}
+
+	// Set retirement context
+	if err := fleet.SetGitAuthContext(homeDir, "ship-bdel-ok", "retirement"); err != nil {
+		t.Fatalf("SetGitAuthContext: %v", err)
+	}
+
+	// Branch deletion should be allowed in retirement context
+	block, reason := runPiSafetyForGit(t, worktree, "git branch -d mu/ship-bdel-ok")
+	if block {
+		t.Fatalf("branch -d in retirement blocked=%v reason=%q, want allow", block, reason)
+	}
+}
+
+// TestSafetyCheckRewriteAllowedWithAmendmentContext verifies that rewrite
+// operations are allowed with amendment context and rewrite tier.
+func TestSafetyCheckRewriteAllowedWithAmendmentContext(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-rewrite-ok", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-rewrite-ok")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-rewrite-ok")
+
+	// Set git capability tier to rewrite
+	if err := fleet.SetGitCapabilityTier(homeDir, "ship-rewrite-ok", fleet.GitTierRewrite); err != nil {
+		t.Fatalf("SetGitCapabilityTier: %v", err)
+	}
+
+	// Set amendment context
+	if err := fleet.SetGitAuthContext(homeDir, "ship-rewrite-ok", "amendment"); err != nil {
+		t.Fatalf("SetGitAuthContext: %v", err)
+	}
+
+	// Rebase should be allowed in amendment context
+	block, reason := runPiSafetyForGit(t, worktree, "git rebase main")
+	if block {
+		t.Fatalf("rebase in amendment blocked=%v reason=%q, want allow", block, reason)
+	}
+}
+
+// TestSafetyCheckPushDeleteAllowedWithRetirementContext verifies that push --delete
+// is allowed with retirement context and cleanup tier.
+func TestSafetyCheckPushDeleteAllowedWithRetirementContext(t *testing.T) {
+	primary := initGitRepoForSafety(t, t.TempDir())
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
+	homeDir := bindSafetyWorktree(t, "ship-pdel-ok", "direct-PR", primary, worktree)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "ship-pdel-ok")
+
+	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-pdel-ok")
+
+	// Set git capability tier to cleanup
+	if err := fleet.SetGitCapabilityTier(homeDir, "ship-pdel-ok", fleet.GitTierCleanup); err != nil {
+		t.Fatalf("SetGitCapabilityTier: %v", err)
+	}
+
+	// Set retirement context
+	if err := fleet.SetGitAuthContext(homeDir, "ship-pdel-ok", "retirement"); err != nil {
+		t.Fatalf("SetGitAuthContext: %v", err)
+	}
+
+	// Push --delete should be allowed in retirement context
+	block, reason := runPiSafetyForGit(t, worktree, "git push --delete origin mu/ship-pdel-ok")
+	if block {
+		t.Fatalf("push --delete in retirement blocked=%v reason=%q, want allow", block, reason)
 	}
 }
 
