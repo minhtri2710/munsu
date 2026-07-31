@@ -36,8 +36,8 @@ type ConfigPushResult struct {
 
 // ComputeInheritedConfigDigest returns a deterministic SHA-256 digest of
 // the complete inherited config surface managed by ConfigPush. The digest
-// covers all inheritable config files plus general-shared.md and
-// projects.md. The result depends only on content, not on timestamps or
+// covers all inheritable config files plus general-shared.md,
+// projects.md, and typed registry documents. The result depends only on content, not on timestamps or
 // filesystem metadata.
 func ComputeInheritedConfigDigest(captainHome string) (string, error) {
 	h := sha256.New()
@@ -76,15 +76,16 @@ func ComputeInheritedConfigDigest(captainHome string) (string, error) {
 		fmt.Fprintf(h, "data/general-shared.md:%s\n", string(data))
 	}
 
-	// projects.md
-	projPath := CaptainRegistryPath(captainHome)
-	data, err = os.ReadFile(projPath)
-	if os.IsNotExist(err) {
-		fmt.Fprintf(h, "data/projects.md:ABSENT\n")
-	} else if err != nil {
-		return "", fmt.Errorf("reading projects.md for digest: %w", err)
-	} else {
-		fmt.Fprintf(h, "data/projects.md:%s\n", string(data))
+	for _, name := range []string{"projects.md", "captains.json", "projects.json"} {
+		path := filepath.Join(captainHome, "data", name)
+		data, err = os.ReadFile(path)
+		if os.IsNotExist(err) {
+			fmt.Fprintf(h, "data/%s:ABSENT\n", name)
+		} else if err != nil {
+			return "", fmt.Errorf("reading %s for digest: %w", name, err)
+		} else {
+			fmt.Fprintf(h, "data/%s:%s\n", name, string(data))
+		}
 	}
 
 	return fmt.Sprintf("%x", h.Sum(nil)), nil

@@ -1273,9 +1273,18 @@ func Handoff(parentHome, captainHome string, itemKeys []string) error {
 func getInheritableList() []string {
 	env := os.Getenv("MUNSU_INHERITABLE_CONFIG")
 	if env != "" {
-		return strings.Split(env, ":")
+		return ensureInheritable(strings.Split(env, ":"), "base.json")
 	}
-	return []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
+	return []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend", "base.json"}
+}
+
+func ensureInheritable(list []string, required string) []string {
+	for _, name := range list {
+		if name == required {
+			return list
+		}
+	}
+	return append(list, required)
 }
 
 func isInheritable(name string, list []string) bool {
@@ -1500,6 +1509,37 @@ func pushProjectsRegistry(parentHome, captainHome string, logFn func(action, nam
 	return nil
 }
 
+func pushTypedConfigRegistry(parentHome, captainHome, name string, logFn func(action, name string)) error {
+	src := filepath.Join(parentHome, "data", name)
+	dst := filepath.Join(captainHome, "data", name)
+	if !isSafeConfigPath(dst, parentHome, captainHome) {
+		return fmt.Errorf("%s path escapes captain container — refuse", name)
+	}
+	if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
+		return fmt.Errorf("%s is tracked in captain git — must be gitignored", name)
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if _, stErr := os.Stat(dst); stErr == nil {
+				if err := os.Remove(dst); err != nil {
+					logFn("delete-failed", name+" — "+err.Error())
+					return fmt.Errorf("mirror deletion: removing %s: %w", name, err)
+				}
+				logFn("deleted", name)
+			}
+			return nil
+		}
+		logFn("skipped", name+" — "+err.Error())
+		return nil
+	}
+	if err := atomicWriteFile(dst, data, 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", name, err)
+	}
+	logFn("pushed", name)
+	return nil
+}
+
 func isGitTracked(dir, name string) bool {
 	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", name).CombinedOutput()
 	return err == nil && len(out) > 0
@@ -1549,6 +1589,16 @@ func preflightConfigPushDestinations(parentHome, captainHome string) error {
 	}
 	if isGitTracked(filepath.Dir(projDst), filepath.Base(projDst)) {
 		return fmt.Errorf("projects.md is tracked in captain git — must be gitignored")
+	}
+
+	for _, name := range []string{"captains.json", "projects.json"} {
+		dst := filepath.Join(captainHome, "data", name)
+		if !isSafeConfigPath(dst, parentHome, captainHome) {
+			return fmt.Errorf("%s destination escapes captain container — refuse", name)
+		}
+		if isGitTracked(filepath.Dir(dst), filepath.Base(dst)) {
+			return fmt.Errorf("%s is tracked in captain git — must be gitignored", name)
+		}
 	}
 
 	// Check parent-home config destination.
@@ -1654,6 +1704,12 @@ func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, er
 	}
 
 	if err := pushProjectsRegistry(parentHome, captainHome, log); err != nil {
+		return nil, err
+	}
+	if err := pushTypedConfigRegistry(parentHome, captainHome, "captains.json", log); err != nil {
+		return nil, err
+	}
+	if err := pushTypedConfigRegistry(parentHome, captainHome, "projects.json", log); err != nil {
 		return nil, err
 	}
 

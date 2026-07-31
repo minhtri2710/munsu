@@ -28,6 +28,7 @@ type Args struct {
 	HarnessFlag         string               // --harness flag value; empty = resolve from config
 	ModelFlag           string               // --model flag; empty = dispatch/template default
 	EffortFlag          string               // --effort flag; empty = dispatch/template default
+	TaskDescription     string               // optional dispatch matching text; empty = brief/id fallback
 	HomeDir             string               // if empty, resolved via home.Resolve
 	Endpoints           EndpointCapabilities // required endpoint lifecycle capability
 	Arm                 bool

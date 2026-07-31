@@ -20,19 +20,21 @@ type Runner struct {
 	args Args
 
 	// phase state populated during Run
-	homeDir       string
-	effectiveMode string
-	projPath      string
-	wtPath        string
-	harness       string
-	model         string
-	effort        string
-	launchCmd     string
-	endpoints     EndpointCapabilities
-	endpoint      CreatedEndpoint
-	briefData     []byte
-	windowID      string
-	spawnRole     string
+	homeDir             string
+	effectiveMode       string
+	projPath            string
+	wtPath              string
+	harness             string
+	model               string
+	effort              string
+	launchCmd           string
+	endpoints           EndpointCapabilities
+	endpoint            CreatedEndpoint
+	briefData           []byte
+	windowID            string
+	spawnRole           string
+	projectConfig       SpawnProjectConfig
+	projectConfigLoaded bool
 
 	// soldier launch prompt state
 	prompt     string
@@ -341,6 +343,18 @@ var readBacklogTaskState = func(homeDir, id string) (string, string, bool, error
 
 // Phase 2: resolveMode resolves the effective delivery mode.
 func (r *Runner) resolveMode() error {
+	if TypedConfigAvailable(r.homeDir) {
+		args := r.args
+		args.TaskDescription = r.taskDescription()
+		resolved, err := ResolveSpawnProjectConfig(r.homeDir, args, r.spawnRole)
+		if err != nil {
+			return err
+		}
+		r.projectConfig = resolved
+		r.projectConfigLoaded = true
+		r.effectiveMode = resolved.Soldier.Mode
+		return nil
+	}
 	mode, err := effectiveModeForSpawn(r.homeDir, r.args)
 	if err != nil {
 		return err
@@ -418,6 +432,10 @@ func (r *Runner) checkBacklogAuthority() error {
 
 // Phase 6: resolveProject resolves the project repo path from registry.
 func (r *Runner) resolveProject() error {
+	if r.projectConfigLoaded {
+		r.projPath = r.projectConfig.ProjectPath
+		return nil
+	}
 	projPath, err := ResolveRepoPath(r.homeDir, r.args.ProjectName)
 	if err != nil {
 		return fmt.Errorf("resolving project %q: %w", r.args.ProjectName, err)
@@ -468,6 +486,9 @@ func (r *Runner) acquireWorktree() error {
 // any resources. Unknown-level preflight results pass through without error.
 func (r *Runner) preflightHarness() error {
 	harnessName := r.args.HarnessFlag
+	if harnessName == "" && r.projectConfigLoaded {
+		harnessName = r.projectConfig.Soldier.Harness
+	}
 	if harnessName == "" {
 		if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
 			harnessName = sel.Harness
@@ -504,6 +525,10 @@ func (r *Runner) preflightHarness() error {
 func (r *Runner) resolveHarness() error {
 	if r.harness != "" {
 		return nil // already resolved by preflightHarness
+	}
+	if r.projectConfigLoaded && r.projectConfig.Soldier.Harness != "" {
+		r.harness = r.projectConfig.Soldier.Harness
+		return nil
 	}
 	if r.args.HarnessFlag != "" {
 		if err := harness.ValidateHarness(r.args.HarnessFlag); err != nil {
@@ -564,7 +589,14 @@ func (r *Runner) resolveLaunchConfig() {
 	r.effort = tmpl.DefaultEffort
 
 	// Dispatch profile overrides template defaults (when present).
-	if sel, ok := r.dispatchSelection(); ok {
+	if r.projectConfigLoaded {
+		if r.projectConfig.Soldier.Model != "" {
+			r.model = r.projectConfig.Soldier.Model
+		}
+		if r.projectConfig.Soldier.Effort != "" {
+			r.effort = r.projectConfig.Soldier.Effort
+		}
+	} else if sel, ok := r.dispatchSelection(); ok {
 		if sel.Model != "" {
 			r.model = sel.Model
 		}
@@ -787,6 +819,11 @@ func (r *Runner) bootstrapWindow() {
 	b.WriteString("export MUNSU_PARENT_STATUS=")
 	b.WriteString(spawnShQuote(r.homeDir))
 	b.WriteString("\n")
+	if r.projectConfigLoaded {
+		b.WriteString("export MUNSU_CONFIG_SNAPSHOT_DIGEST=")
+		b.WriteString(spawnShQuote(r.projectConfig.SnapshotDigest))
+		b.WriteString("\n")
+	}
 	b.WriteString("exec ")
 	b.WriteString(spawnShQuote(r.launchBin))
 	for _, arg := range r.launchArgs {
@@ -914,6 +951,9 @@ func (r *Runner) writeTaskMeta() {
 	}
 	if r.effort != "" {
 		meta["effort"] = r.effort
+	}
+	if r.projectConfigLoaded {
+		meta["config_snapshot_digest"] = r.projectConfig.SnapshotDigest
 	}
 
 	for k, v := range r.endpoint.Metadata {
