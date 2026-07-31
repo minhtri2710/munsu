@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,8 @@ type Runner struct {
 	// phase state populated during Run
 	homeDir             string
 	effectiveMode       string
+	requestedMode       string // what was asked for (--mode flag, project registry, or config/default-mode)
+	fallbackReason      string // why effective mode differs from requested mode
 	projPath            string
 	wtPath              string
 	harness             string
@@ -46,6 +49,10 @@ type Runner struct {
 	// manifestSHA256 is the SHA-256 digest of the written launch manifest,
 	// persisted to task metadata for external anchoring.
 	manifestSHA256 string
+
+	// attestation is the capability attestation snapshot created during mode
+	// resolution and checked before soldier launch.
+	attestation *CapabilityAttestation
 }
 
 // NewRunner creates a Runner for the given Args.
@@ -121,7 +128,13 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	r.resolveLaunchConfig()
+	if err := r.createAttestation(); err != nil {
+		return "", err
+	}
 	if err := r.buildSoldierPrompt(); err != nil {
+		return "", err
+	}
+	if err := r.checkAttestation(); err != nil {
 		return "", err
 	}
 	if err := r.createSession(); err != nil {
@@ -379,13 +392,28 @@ func (r *Runner) resolveMode() error {
 		r.projectConfig = resolved
 		r.projectConfigLoaded = true
 		r.effectiveMode = resolved.Soldier.Mode
+		r.requestedMode = r.args.Mode
+		if r.requestedMode == "" {
+			r.requestedMode = r.effectiveMode
+		}
 		return nil
+	}
+	// Determine requested mode (the first non-empty value in precedence).
+	r.requestedMode = r.args.Mode
+	if r.requestedMode == "" {
+		if pm, _, _ := Mode(r.homeDir, r.args.ProjectName); pm != "" {
+			r.requestedMode = pm
+		}
 	}
 	mode, err := effectiveModeForSpawn(r.homeDir, r.args)
 	if err != nil {
 		return err
 	}
 	r.effectiveMode = mode
+	// Capture fallback reason when modes differ.
+	if r.requestedMode != "" && r.requestedMode != r.effectiveMode {
+		r.fallbackReason = fmt.Sprintf("requested mode %q resolved to %q", r.requestedMode, r.effectiveMode)
+	}
 	return nil
 }
 
@@ -674,6 +702,65 @@ func (r *Runner) resolveLaunchConfig() {
 
 	r.launchCmd = harness.LaunchStringWith(r.harness, tmpl, r.model, r.effort)
 }
+
+// createAttestation creates a capability attestation snapshot after the harness
+// and launch config are resolved. It captures the current state of all delivery
+// capabilities and binds them to the project, home, harness, gate agent, and modes.
+func (r *Runner) createAttestation() error {
+	gateAgent := r.harness
+	if r.harness == "" {
+		gateAgent = "unknown"
+	}
+
+	// Build a fallback policy when the effective mode differs from requested.
+	var fallbackPolicy *FallbackPolicy
+	if r.fallbackReason != "" && r.effectiveMode != r.requestedMode {
+		fallbackPolicy = &FallbackPolicy{
+			AuthorizedMode: r.effectiveMode,
+			Reason:         r.fallbackReason,
+		}
+	}
+
+	r.attestation = CreateCapabilityAttestation(
+		r.args.ProjectName,
+		r.homeDir,
+		r.harness,
+		gateAgent,
+		r.requestedMode,
+		r.effectiveMode,
+		r.fallbackReason,
+		fallbackPolicy,
+	)
+	return nil
+}
+
+// checkAttestation verifies that the capability attestation is still valid
+// before soldier launch. Late capability loss is handled by preserving work
+// and either proceeding with a pre-authorized fallback or blocking for a
+// parent Decision.
+func (r *Runner) checkAttestation() error {
+	if r.attestation == nil {
+		return nil
+	}
+	result := HandleLateCapabilityLoss(r.attestation)
+	if !result.Changed {
+		return nil
+	}
+	if result.CanProceed {
+		if result.FallbackMode != "" {
+			fmt.Fprintf(os.Stderr, "warning: late capability loss, falling back to %s: %s\n", result.FallbackMode, result.Detail)
+			r.effectiveMode = result.FallbackMode
+			if r.fallbackReason == "" {
+				r.fallbackReason = result.Detail
+			} else {
+				r.fallbackReason += "; " + result.Detail
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("launch blocked: %s", result.BlockReason)
+}
+
 func soldierTabLabel(projectName, taskID string) string {
 	return "mu-" + labelComponent(projectName) + "-" + labelComponent(taskID)
 }
@@ -1151,10 +1238,32 @@ func (r *Runner) writeTaskMeta() error {
 		meta[k] = v
 	}
 
+	// Persist capability attestation for lifecycle visibility.
+	if r.attestation != nil {
+		meta[MetaCapabilityAttestation] = r.attestationJSON()
+		meta[MetaRequestedMode] = r.attestation.RequestedMode
+		meta[MetaEffectiveMode] = r.attestation.EffectiveMode
+		if r.attestation.FallbackReason != "" {
+			meta[MetaFallbackReason] = r.attestation.FallbackReason
+		}
+	}
+
 	if err := home.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
 	}
 	return nil
+}
+
+// attestationJSON returns the JSON serialization of the attestation.
+func (r *Runner) attestationJSON() string {
+	if r.attestation == nil {
+		return ""
+	}
+	data, err := json.Marshal(r.attestation)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.
@@ -1182,6 +1291,12 @@ func (r *Runner) printEndpointInfo() {
 	}
 	fmt.Printf("  kind:     %s\n", r.args.Kind)
 	fmt.Printf("  mode:     %s\n", r.effectiveMode)
+	if r.requestedMode != "" && r.requestedMode != r.effectiveMode {
+		fmt.Printf("  requested: %s\n", r.requestedMode)
+	}
+	if r.fallbackReason != "" {
+		fmt.Printf("  reason:   %s\n", r.fallbackReason)
+	}
 	fmt.Printf("  yolo:     %s\n", yoloVal)
 }
 
