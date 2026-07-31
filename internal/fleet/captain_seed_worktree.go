@@ -189,8 +189,12 @@ func seedFromWorktree(id, homePath, repoPath, parentHome, charter string, force 
 			return
 		}
 		registered = true
-		if err = ConfigPush(parentHome, absHome); err != nil {
-			err = fmt.Errorf("seed inherit: %w", err)
+		if _, pErr := PropagateConfig(PropagateConfigRequest{
+			ParentHome:  parentHome,
+			CaptainHome: absHome,
+			Mailbox:     &noopBoundSender{},
+		}); pErr != nil {
+			err = fmt.Errorf("seed inherit: %w", pErr)
 			return
 		}
 	}
@@ -594,8 +598,12 @@ func migrateToWorktree(captainHome, repoPath, id, parentHome string, integration
 		if err = Register(parentHome, id, absHome, "", ""); err != nil {
 			return fmt.Errorf("registering captain after migration: %w", err)
 		}
-		if err = ConfigPush(parentHome, absHome); err != nil {
-			return fmt.Errorf("config push after migration: %w", err)
+		if _, pErr := PropagateConfig(PropagateConfigRequest{
+			ParentHome:  parentHome,
+			CaptainHome: absHome,
+			Mailbox:     &noopBoundSender{},
+		}); pErr != nil {
+			return fmt.Errorf("config push after migration: %w", pErr)
 		}
 	}
 
@@ -695,11 +703,4 @@ func MigrateCaptainToWorktree(opts CaptainMigrationOptions) error {
 		return err
 	}
 	return nil
-}
-
-func SeedFromWorktree(id, homePath, repoPath, parentHome, charter string, force bool, ref string) error {
-	return fmt.Errorf("captain integration capability is required")
-}
-func MigrateToWorktree(captainHome, repoPath, id, parentHome string) error {
-	return fmt.Errorf("captain integration capability is required")
 }

@@ -77,7 +77,7 @@ func (r *PropagateConfigResult) Summary() PropagateConfigSummary {
 //  1. Validates non-empty homes, provenance, and destination path safety
 //     before any mutation.
 //  2. Copies inherited config surface (inheritable files, general-shared.md,
-//     projects.md) via ConfigPushWithResult.
+//     projects.md) via configPushWithResult.
 //  3. Mirror-deletes removed settings without escaping the captain home.
 //  4. Computes effective digest and compares against current generation.
 //  5. Reconciles legacy config-reread evidence in both changed and unchanged
@@ -111,7 +111,7 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 	}
 
 	// 3. Run the full config push with generation tracking.
-	res, err := ConfigPushWithResult(req.ParentHome, req.CaptainHome)
+	res, err := configPushWithResult(req.ParentHome, req.CaptainHome)
 	if err != nil {
 		return nil, fmt.Errorf("propagate config: %w", err)
 	}
@@ -173,7 +173,7 @@ func PropagateConfig(req PropagateConfigRequest) (*PropagateConfigResult, error)
 //     Returns (Created, <recorder outcome>).
 //
 // When the inbox envelope does not exist, this is a crash-healing scenario:
-// the generation was committed by ConfigPushWithResult but the mailbox
+// the generation was committed by configPushWithResult but the mailbox
 // requirement (envelope + pending) was not materialized before the crash.
 // On the next propagation, we heal by creating it now.
 //
@@ -289,6 +289,25 @@ func (r *boundSenderRecorder) Send(homeDir string, meta map[string]string, paylo
 
 // Ensure recordingSender implements home.BoundSender.
 var _ home.BoundSender = (*boundSenderRecorder)(nil)
+
+// noopBoundSender is a home.BoundSender that never sends. It returns
+// Acknowledged: false with status "deferred" so the pending record
+// remains for converge to retry when a real mailbox sender is available.
+// Used during seed and update where no running session exists yet.
+type noopBoundSender struct{}
+
+func (n *noopBoundSender) Alive(_ string, _ map[string]string) (bool, error) {
+	return false, nil
+}
+
+func (n *noopBoundSender) Send(_ string, _ map[string]string, _ string) home.BoundSendResult {
+	return home.BoundSendResult{
+		Status:       "deferred",
+		Acknowledged: false,
+	}
+}
+
+var _ home.BoundSender = (*noopBoundSender)(nil)
 
 // propagateConfigLogPath returns the path to the propagation state directory.
 func propagateConfigLogPath(captainHome string) string {

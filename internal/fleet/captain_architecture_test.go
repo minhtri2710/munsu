@@ -701,9 +701,9 @@ func TestConfigPush_DoesNotLeakOutsideCaptain(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 
-	err := ConfigPush(parent, smHome)
+	err := configPush(parent, smHome)
 	if err == nil || !strings.Contains(err.Error(), "escapes captain container") {
-		t.Fatalf("ConfigPush error = %v, want symlink-escape refusal", err)
+		t.Fatalf("configPush error = %v, want symlink-escape refusal", err)
 	}
 	// Outside must remain unmutated.
 	if _, err := os.Stat(filepath.Join(outside, "soldier-harness")); !os.IsNotExist(err) {

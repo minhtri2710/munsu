@@ -484,7 +484,7 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 }
 
 // ensureParentTypedConfig creates minimal typed config documents in the parent
-// home if they do not already exist. This allows SeedCaptain and ConfigPush to
+// home if they do not already exist. This allows SeedCaptain and configPush to
 // work without requiring the operator to set up typed config first.
 func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 	// Check if fleet base already exists.
@@ -576,7 +576,13 @@ func SeedCaptain(opts CaptainSeedOptions) error {
 			return fmt.Errorf("writing parent-home config: %w", err)
 		}
 		// Inherit General config + project registry so soldiers need not re-add projects.
-		if err := ConfigPush(parentHome, homePath); err != nil {
+		// Uses PropagateConfig with a noop sender (no running session yet).
+		// The durable requirement is written; notification is deferred until converge.
+		if _, err := PropagateConfig(PropagateConfigRequest{
+			ParentHome:  parentHome,
+			CaptainHome: homePath,
+			Mailbox:     &noopBoundSender{},
+		}); err != nil {
 			return fmt.Errorf("seed inherit: %w", err)
 		}
 	}
@@ -983,7 +989,14 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	}
 
 	// Pre-launch bootstrap: push inherited config, then local FF.
-	if err := ConfigPush(parentHome, captainHome); err != nil {
+	// Uses PropagateConfig with a noop sender. During first launch
+	// there is no task meta (notification skipped); during relaunch
+	// the config push is redundant after converge's inheritance push.
+	if _, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parentHome,
+		CaptainHome: captainHome,
+		Mailbox:     &noopBoundSender{},
+	}); err != nil {
 		return fmt.Errorf("pre-launch config-push: %w", err)
 	}
 	if _, _, _, err := safeFF(captainHome, parentHome); err != nil {
@@ -1329,7 +1342,7 @@ func isGitTracked(dir, name string) bool {
 }
 
 // preflightConfigPushDestinations validates all destination paths before any
-// mutation or log write in ConfigPushWithResult. Returns an error if any
+// mutation or log write in configPushWithResult. Returns an error if any
 // destination escapes the captain container via symlink/.. or is git-tracked.
 func preflightConfigPushDestinations(parentHome, captainHome string) error {
 	// Check published resolved snapshot destination.
@@ -1350,12 +1363,13 @@ func preflightConfigPushDestinations(parentHome, captainHome string) error {
 	return nil
 }
 
-// ConfigPush copies inheritable config from the parent home to the captain,
+// configPush copies inheritable config from the parent home to the captain,
 // mirrors deletions, pushes data/general-shared.md and data/projects.md,
-// and logs actions. Legacy caller; use ConfigPushWithResult for generation
+// and logs actions. Legacy caller; use configPushWithResult for generation
 // tracking result.
-func ConfigPush(parentHome, captainHome string) error {
-	_, err := ConfigPushWithResult(parentHome, captainHome)
+// Deprecated: Use PropagateConfig for the full propagation transaction.
+func configPush(parentHome, captainHome string) error {
+	_, err := configPushWithResult(parentHome, captainHome)
 	return err
 }
 
@@ -1414,10 +1428,10 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 	return config.StorePublishedSnapshot(captainHome, resolved)
 }
 
-// ConfigPushWithResult copies inheritable config like ConfigPush and also
+// configPushWithResult copies inheritable config like configPush and also
 // returns the ConfigPushResult with generation tracking. Returns nil result
 // on early failure (before generation tracking runs).
-func ConfigPushWithResult(parentHome, captainHome string) (*ConfigPushResult, error) {
+func configPushWithResult(parentHome, captainHome string) (*ConfigPushResult, error) {
 	if _, err := ValidateProvenance(captainHome); err != nil {
 		return nil, fmt.Errorf("refusing config-push to unmarked home %s: %w", captainHome, err)
 	}
@@ -1694,10 +1708,15 @@ func Update(captainHome, parentHome string) UpdateResponse {
 	if _, err := os.Stat(filepath.Join(captainHome, ".git")); os.IsNotExist(err) {
 		// Config-push for state-only homes: write config/parent-home from the
 		// authoritative registered General home so watcher relay works.
-		if cpErr := ConfigPush(parentHome, captainHome); cpErr != nil {
+		// Uses PropagateConfig with a noop sender (no running session).
+		if _, pErr := PropagateConfig(PropagateConfigRequest{
+			ParentHome:  parentHome,
+			CaptainHome: captainHome,
+			Mailbox:     &noopBoundSender{},
+		}); pErr != nil {
 			return UpdateResponse{
 				Outcome: StateOnlySkipped,
-				Err:     fmt.Errorf("config-push after state-only update: %w", cpErr),
+				Err:     fmt.Errorf("config-push after state-only update: %w", pErr),
 			}
 		}
 		return UpdateResponse{

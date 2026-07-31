@@ -571,7 +571,7 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	}
 
 	// First push → advances (no existing gen file)
-	res, err := ConfigPushWithResult(parent, captainHome)
+	res, err := configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,7 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	}
 
 	// Push with same content → unchanged
-	res, err = ConfigPushWithResult(parent, captainHome)
+	res, err = configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +603,7 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	if err := config.StoreFleetBase(parent, base); err != nil {
 		t.Fatal(err)
 	}
-	res, err = ConfigPushWithResult(parent, captainHome)
+	res, err = configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,7 +615,7 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	}
 
 	// Push again with same content → unchanged
-	res, err = ConfigPushWithResult(parent, captainHome)
+	res, err = configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 // TestConfigPushWithResult_NoCaptainHomeError verifies error on unmarked home.
 func TestConfigPushWithResult_NoCaptainHomeError(t *testing.T) {
 	parent := t.TempDir()
-	_, err := ConfigPushWithResult(parent, "/nonexistent")
+	_, err := configPushWithResult(parent, "/nonexistent")
 	if err == nil {
 		t.Error("expected error for unmarked home")
 	}
@@ -655,7 +655,7 @@ func TestConfigPushWithResult_HealCrash(t *testing.T) {
 
 	// Simulate crash: gen file was written at gen=1 but no mailbox envelope.
 	// Push with same content → unchanged (generation stays at 1).
-	res, err := ConfigPushWithResult(parent, captainHome)
+	res, err := configPushWithResult(parent, captainHome)
 	if err != nil {
 		t.Fatal(err)
 	}

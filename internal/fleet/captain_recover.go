@@ -211,12 +211,18 @@ func (tx *RecoverTransaction) stepCharterRefresh(parentHome string, sm Info) Ste
 // captain, including config/parent-home. This ensures every recovery path
 // (including state-only alive captains) picks up the authoritative General
 // home reference for watcher relay and terminal receipt routing.
+// Uses PropagateConfig with a noop sender; notification is deferred for
+// converge to retry when the captain is alive.
 func (tx *RecoverTransaction) stepConfigPush(parentHome string, sm Info, configOk bool) StepResult {
 	if !configOk {
 		return StepResult{Name: "config-push", State: StepSkipped,
 			Detail: "skipped: config validation failed"}
 	}
-	if err := ConfigPush(parentHome, sm.Home); err != nil {
+	if _, err := PropagateConfig(PropagateConfigRequest{
+		ParentHome:  parentHome,
+		CaptainHome: sm.Home,
+		Mailbox:     &noopBoundSender{},
+	}); err != nil {
 		return StepResult{Name: "config-push", State: StepFailed,
 			Detail: fmt.Sprintf("config-push failed: %v", err)}
 	}

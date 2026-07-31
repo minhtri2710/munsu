@@ -930,7 +930,7 @@ func TestConfigPush_RefusesUnmarkedHome(t *testing.T) {
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 
-	err := ConfigPush(parent, smHome)
+	err := configPush(parent, smHome)
 	if err == nil {
 		t.Fatal("expected error for unmarked home")
 	}
@@ -952,7 +952,7 @@ func TestConfigPush_Basic(t *testing.T) {
 	os.WriteFile(filepath.Join(configDir, "soldier-dispatch.json"), []byte("{}\n"), 0644)
 	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet\n"), 0644)
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -976,7 +976,7 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 
 	os.WriteFile(filepath.Join(smHome, "config", "soldier-harness"), []byte("old\n"), 0644)
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -994,7 +994,7 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	os.WriteFile(filepath.Join(smHome, "config", "soldier-harness"), []byte("old\n"), 0644)
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1017,7 +1017,7 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 	sharedContent := "# Captain shared\n\nkey: value\n"
 	os.WriteFile(filepath.Join(parent, "data", "general-shared.md"), []byte(sharedContent), 0644)
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1049,7 +1049,7 @@ func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 
 	os.WriteFile(filepath.Join(smHome, "data", "general-shared.md"), []byte("old\n"), 0644)
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1078,7 +1078,7 @@ func TestConfigPush_RejectsSymlinkEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ConfigPush(parent, smHome)
+	err := configPush(parent, smHome)
 	if err == nil || !strings.Contains(err.Error(), "escapes captain container") {
 		t.Fatalf("ConfigPush error = %v, want symlink-escape refusal", err)
 	}
@@ -1102,7 +1102,7 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(smHome, "config", "soldier-harness")
@@ -1111,7 +1111,7 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond)
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 	captain, err := os.Stat(dst)
@@ -1137,7 +1137,7 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1176,7 +1176,7 @@ func TestConfigPush_ProjectsRegistryMirrorDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(RegistryPath(smHome)); !os.IsNotExist(err) {
@@ -1260,7 +1260,7 @@ func TestConfigPush_RefreshesParentHome(t *testing.T) {
 	}
 
 	// Run ConfigPush — should overwrite stale parent-home with current parent
-	if err := ConfigPush(parent, captainHome); err != nil {
+	if err := configPush(parent, captainHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2623,7 +2623,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 	}
 
 	// ConfigPush must re-ensure without error.
-	if err := ConfigPush(parent, sm); err != nil {
+	if err := configPush(parent, sm); err != nil {
 		t.Fatalf("ConfigPush: %v", err)
 	}
 
@@ -3025,7 +3025,7 @@ func TestSeedFromWorktree_ManagedWorktreeClean(t *testing.T) {
 	}
 
 	// Run ConfigPush — must not create .pi/ artifacts.
-	if err := ConfigPush(parent, homePath); err != nil {
+	if err := configPush(parent, homePath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3610,7 +3610,7 @@ func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644)  // NOT in env list
 	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet\n"), 0644) // NOT in env list
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3651,7 +3651,7 @@ func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
 	// Parent config dir exists but has NO files (custom-key absent → mirror delete).
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3684,7 +3684,7 @@ func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{}\n"), 0644)
 
-	if err := ConfigPush(parent, smHome); err != nil {
+	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3731,7 +3731,7 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	// The worktree now has a tracked config/soldier-harness and is on a different
 	// commit than origin/main. That's fine — safeFF will be skipped in the test.
 	// ConfigPush should refuse because soldier-harness is tracked.
-	err := ConfigPush(parent, homePath)
+	err := configPush(parent, homePath)
 	if err == nil {
 		t.Fatal("expected error for tracked destination in git worktree")
 	}
@@ -3772,7 +3772,7 @@ func TestManagedCleanState_PreservesHolds(t *testing.T) {
 	os.WriteFile(filepath.Join(holdsDir, "TASK-99.hold"), []byte("hold: awaiting-review\n"), 0644)
 
 	// Run ConfigPush — must not remove holds or dirty git.
-	if err := ConfigPush(parent, homePath); err != nil {
+	if err := configPush(parent, homePath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3912,7 +3912,7 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 		content := fmt.Sprintf("pi-%d\n", i)
 		os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte(content), 0644)
 
-		if err := ConfigPush(parent, homePath); err != nil {
+		if err := configPush(parent, homePath); err != nil {
 			t.Fatalf("ConfigPush cycle %d failed: %v", i, err)
 		}
 		if err := RefreshCharter(homePath, parent); err != nil {
@@ -3994,7 +3994,7 @@ func TestManagedCleanState_HoldsSurviveMultipleCycles(t *testing.T) {
 
 	// Run multiple cycles — holds must survive.
 	for i := 0; i < 3; i++ {
-		if err := ConfigPush(parent, homePath); err != nil {
+		if err := configPush(parent, homePath); err != nil {
 			t.Fatalf("ConfigPush cycle %d failed: %v", i, err)
 		}
 		if err := RefreshCharter(homePath, parent); err != nil {
@@ -4054,7 +4054,7 @@ func TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(homePath, "state", "run-token"), []byte("abc123\n"), 0644)
 
 	// Run ConfigPush.
-	if err := ConfigPush(parent, homePath); err != nil {
+	if err := configPush(parent, homePath); err != nil {
 		t.Fatal(err)
 	}
 

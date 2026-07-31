@@ -207,7 +207,7 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 	}
 
 	// Run ConfigPush — must refresh the charter.
-	if err := ConfigPush(parent, homePath); err != nil {
+	if err := configPush(parent, homePath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,8 +290,8 @@ func TestManagedWorktree_CharterUntracked(t *testing.T) {
 		t.Errorf("%s should contain charter version %q", CaptainCharterName, CaptainCharterVersion)
 	}
 
-	// 4. Run ConfigPush + RefreshCharter and re-assert cleanliness.
-	if err := ConfigPush(parent, homePath); err != nil {
+	// 4. Run configPush + RefreshCharter and re-assert cleanliness.
+	if err := configPush(parent, homePath); err != nil {
 		t.Fatal(err)
 	}
 
