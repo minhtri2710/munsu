@@ -361,6 +361,31 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		Scope:   scope,
 	}
 
+	if harnessName == harness.Pi {
+		extDir := ProjectExtensionsDir(cwd)
+		if scope == ScopeUser {
+			extDir = UserExtensionsDir()
+		}
+		for _, name := range harness.PiIntegrationAliasNames() {
+			aliasPath := filepath.Join(extDir, name)
+			if _, statErr := os.Stat(aliasPath); statErr == nil {
+				result.State = "drifted"
+				result.Drifted = true
+				if FileContainsOwnershipMarker(aliasPath) {
+					result.Message = fmt.Sprintf("owned compatibility alias present at %s; repair removes it", aliasPath)
+				} else {
+					result.Message = fmt.Sprintf("compatibility alias present at %s and is not owned by munsu; move or remove it manually", aliasPath)
+				}
+				return result, nil
+			} else if !os.IsNotExist(statErr) {
+				result.State = "drifted"
+				result.Drifted = true
+				result.Message = fmt.Sprintf("cannot inspect compatibility alias %s: %v", aliasPath, statErr)
+				return result, nil
+			}
+		}
+	}
+
 	// Read manifest from per-harness per-scope path.
 	manifestPath := ManifestPath(homeDir, harnessName, scope, cwd)
 	manifestData, err := os.ReadFile(manifestPath)
@@ -471,16 +496,8 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		}
 		targetFound := false
 		for _, tp := range manifest.TargetPaths {
-			canonicalTP, resolveErr := filepath.EvalSymlinks(tp)
-			if resolveErr != nil {
-				continue
-			}
-			canonicalTP = filepath.Clean(canonicalTP)
-			canonicalExpected, resolveErr := filepath.EvalSymlinks(expectedTarget)
-			if resolveErr != nil {
-				continue
-			}
-			canonicalExpected = filepath.Clean(canonicalExpected)
+			canonicalTP := canonicalizePossiblyMissingPath(tp)
+			canonicalExpected := canonicalizePossiblyMissingPath(expectedTarget)
 			if canonicalTP == canonicalExpected {
 				targetFound = true
 				break
@@ -488,7 +505,11 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 		}
 		if !targetFound {
 			result.State = "drifted"
-			result.Message = fmt.Sprintf("target path mismatch: expected %q not found in manifest target paths", expectedTarget)
+			if harnessName == harness.Pi && len(manifest.TargetPaths) == 1 && canonicalizePossiblyMissingPath(manifest.TargetPaths[0]) == canonicalizePossiblyMissingPath(expectedTarget) {
+				result.Message = fmt.Sprintf("canonical Pi integration is missing at %s; repair with: munsu integrate repair --harness pi --scope %s", expectedTarget, scope)
+			} else {
+				result.Message = fmt.Sprintf("target path mismatch: expected %q not found in manifest target paths", expectedTarget)
+			}
 			result.Drifted = true
 			return result, nil
 		}
@@ -609,10 +630,26 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 	} else {
 		result.State = "drifted"
 		result.Drifted = true
-		result.Message = "one or more integration artifacts are missing or modified"
+		if harnessName == harness.Pi && len(manifest.TargetPaths) == 1 {
+			if _, statErr := os.Stat(manifest.TargetPaths[0]); os.IsNotExist(statErr) {
+				result.Message = fmt.Sprintf("canonical Pi integration is missing at %s; repair with: munsu integrate repair --harness pi --scope %s", manifest.TargetPaths[0], scope)
+			} else {
+				result.Message = fmt.Sprintf("canonical Pi integration digest is invalid at %s; repair with: munsu integrate repair --harness pi --scope %s", manifest.TargetPaths[0], scope)
+			}
+		} else {
+			result.Message = "one or more integration artifacts are missing or modified"
+		}
 	}
 
 	return result, nil
+}
+
+func canonicalizePossiblyMissingPath(path string) string {
+	parent := filepath.Dir(path)
+	if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = resolved
+	}
+	return filepath.Join(filepath.Clean(parent), filepath.Base(path))
 }
 
 // bytesReader returns a reader for a byte slice.

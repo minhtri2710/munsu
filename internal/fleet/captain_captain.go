@@ -34,9 +34,6 @@ const ConvergeLockName = ".captain-converge.lock"
 // NudgePendingDir is the directory under parent state for pending nudge markers.
 const NudgePendingDir = ".captain-nudge-pending"
 
-// captainPiExtensionNames are project-local Pi extensions loaded with -e at captain launch.
-var captainPiExtensionNames = []string{"munsu-pi-integration.ts"}
-
 // UpdateOutcome is the typed result of a single captain update operation.
 type UpdateOutcome string
 
@@ -924,7 +921,16 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 	args = append(args, adapter.LaunchTemplate.ExtraArgs...)
 	// Pi captain homes load the canonical project-local integration via -e.
 	if adapter.Name == "pi" {
-		path := filepath.Join(captainHome, ".pi", "extensions", captainPiExtensionNames[0])
+		extDir := filepath.Join(captainHome, ".pi", "extensions")
+		for _, name := range harness.PiIntegrationAliasNames() {
+			aliasPath := filepath.Join(extDir, name)
+			if _, err := os.Stat(aliasPath); err == nil {
+				return "", nil, fmt.Errorf("captain launch: compatibility Pi integration alias is present at %s; repair with: munsu integrate repair --harness pi --scope project", aliasPath)
+			} else if !os.IsNotExist(err) {
+				return "", nil, fmt.Errorf("captain launch: checking compatibility Pi integration alias %s: %w", aliasPath, err)
+			}
+		}
+		path := filepath.Join(extDir, harness.CanonicalPiIntegrationName)
 		if _, err := os.Stat(path); err != nil {
 			if os.IsNotExist(err) {
 				return "", nil, fmt.Errorf("captain launch: canonical Pi integration is missing; repair with: munsu integrate repair --harness pi --scope project")

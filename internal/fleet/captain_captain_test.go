@@ -119,6 +119,38 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchArgs_PiLoadsCanonicalIntegrationExactlyOnce(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("# charter\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeCanonicalPiIntegration(t, home)
+
+	_, args, err := buildLaunchArgs(home, harness.Pi, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := filepath.Join(home, ".pi", "extensions", harness.CanonicalPiIntegrationName)
+	loads := 0
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-e" {
+			loads++
+			if i+1 >= len(args) || args[i+1] != canonical {
+				t.Fatalf("extension args = %v, want canonical path %s", args, canonical)
+			}
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("extension load count = %d, want 1; args=%v", loads, args)
+	}
+	joined := strings.Join(args, " ")
+	for _, alias := range harness.PiIntegrationAliasNames() {
+		if strings.Contains(joined, alias) {
+			t.Fatalf("args contain compatibility alias %q: %v", alias, args)
+		}
+	}
+}
+
 func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) {
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("# charter\n"), 0644); err != nil {
@@ -2403,21 +2435,9 @@ func TestBuildLaunchArgs_PiLoadsOnlyCanonicalIntegration(t *testing.T) {
 		os.WriteFile(filepath.Join(extDir, name), []byte("//x\n"), 0644)
 	}
 
-	name, args, err := buildLaunchArgs(sm, "pi", parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "pi" {
-		t.Fatalf("name=%q", name)
-	}
-	joined := strings.Join(args, " ")
-	if strings.Count(joined, "munsu-pi-integration.ts") != 1 {
-		t.Fatalf("canonical integration must load exactly once: %v", args)
-	}
-	for _, alias := range []string{"munsu-captain-turnend-guard.ts", "munsu-captain-pi-watch.ts", "fm-primary-turnend-guard.ts", "fm-primary-pi-watch.ts"} {
-		if strings.Contains(joined, alias) {
-			t.Fatalf("launch args load compatibility alias %q: %v", alias, args)
-		}
+	_, _, err := buildLaunchArgs(sm, "pi", parent)
+	if err == nil || !strings.Contains(err.Error(), "compatibility Pi integration alias") {
+		t.Fatalf("buildLaunchArgs() error = %v, want compatibility alias refusal", err)
 	}
 }
 
@@ -2571,7 +2591,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 	// Seed path must leave at least munsu-captain-* or munsu-pi-integration when pi/munsu available.
 	extDir := filepath.Join(sm, ".pi", "extensions")
 	var found []string
-	for _, name := range captainPiExtensionNames {
+	for _, name := range []string{harness.CanonicalPiIntegrationName} {
 		if _, err := os.Stat(filepath.Join(extDir, name)); err == nil {
 			found = append(found, name)
 		}

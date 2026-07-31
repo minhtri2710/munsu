@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 // PiAdapter implements harness adapter for Pi. It generates the Pi extension
@@ -479,7 +481,18 @@ func (a *PiAdapter) InstallPiExtension() (targetPath string, written bool, diges
 		return "", false, "", fmt.Errorf("cannot resolve munsu binary path: %w", err)
 	}
 
-	targetPath = filepath.Join(extDir, "munsu-pi-integration.ts")
+	targetPath = filepath.Join(extDir, harness.CanonicalPiIntegrationName)
+
+	for _, name := range harness.PiIntegrationAliasNames() {
+		aliasPath := filepath.Join(extDir, name)
+		if _, statErr := os.Stat(aliasPath); statErr == nil {
+			if !FileContainsOwnershipMarker(aliasPath) {
+				return "", false, "", fmt.Errorf("compatibility alias %s exists and is not owned by munsu; move or remove it before retrying", aliasPath)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return "", false, "", fmt.Errorf("checking compatibility alias %s: %w", aliasPath, statErr)
+		}
+	}
 
 	// Check existing file: if it exists and is not owned, return conflict.
 	if existing, statErr := os.Stat(targetPath); statErr == nil && existing.Size() > 0 {
@@ -497,6 +510,13 @@ func (a *PiAdapter) InstallPiExtension() (targetPath string, written bool, diges
 
 	if err := writeAtomic(targetPath, content, 0644); err != nil {
 		return "", false, "", fmt.Errorf("writing extension: %w", err)
+	}
+
+	for _, name := range harness.PiIntegrationAliasNames() {
+		aliasPath := filepath.Join(extDir, name)
+		if err := os.Remove(aliasPath); err != nil && !os.IsNotExist(err) {
+			return "", false, "", fmt.Errorf("removing owned compatibility alias %s: %w", aliasPath, err)
+		}
 	}
 
 	return targetPath, true, digest, nil
