@@ -554,8 +554,12 @@ func stageHandoff(journal *taskHandoffJournal, dir, tasksAxi string, keys []stri
 
 	sourcePost := filepath.Join(stageRoot, "source-backlog-post")
 	destinationPost := filepath.Join(stageRoot, "destination-backlog-post")
-	if err := copyHandoffFile(filepath.Join(journal.SourceHome, filepath.FromSlash(journal.SourceBacklogPre.Target)), sourcePost, 0644); err != nil {
-		return err
+	if journal.SourceBacklogPre.Exists {
+		if err := copyHandoffFile(filepath.Join(journal.SourceHome, filepath.FromSlash(journal.SourceBacklogPre.Target)), sourcePost, 0644); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("handoff source backlog does not exist")
 	}
 	if journal.DestBacklogPre.Exists {
 		if err := copyHandoffFile(filepath.Join(journal.DestinationHome, filepath.FromSlash(journal.DestBacklogPre.Target)), destinationPost, uint32(journal.DestBacklogPre.Mode)); err != nil {

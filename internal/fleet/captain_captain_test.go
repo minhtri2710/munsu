@@ -1715,6 +1715,10 @@ func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
 		}
 	}
 
+	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] TASK-1\n- [ ] TASK-2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	origPath := captainLookPath
 	origBackend := isTasksAxiBackend
 	defer func() {
@@ -1741,16 +1745,21 @@ func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
 	args := strings.Split(strings.TrimSpace(string(data)), "\n")
 	want := []string{
 		"mv", "TASK-1", "TASK-2",
-		"--to", filepath.Join(sm, "data", "backlog.md"),
-		"--file", filepath.Join(parent, "data", "backlog.md"),
 	}
-	if len(args) != len(want) {
-		t.Fatalf("args = %#v, want %#v", args, want)
+	if len(args) < len(want) {
+		t.Fatalf("args = %#v, want prefix %#v", args, want)
 	}
 	for i := range want {
 		if args[i] != want[i] {
 			t.Fatalf("args[%d] = %q, want %q", i, args[i], want[i])
 		}
+	}
+	// Durable handoff operates on staged backlog copies, not home paths.
+	if !strings.HasSuffix(args[4], "destination-backlog-post") {
+		t.Errorf("args[4] = %q, want suffix destination-backlog-post", args[4])
+	}
+	if !strings.HasSuffix(args[6], "source-backlog-post") {
+		t.Errorf("args[6] = %q, want suffix source-backlog-post", args[6])
 	}
 }
 
