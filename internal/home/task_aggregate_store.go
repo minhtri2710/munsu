@@ -65,6 +65,15 @@ func WriteTaskAggregate(homeDir string, agg TaskAggregate) error {
 	if err := validateTaskAggregate(agg); err != nil {
 		return err
 	}
+	_, unlock, err := acquireMetaLock(homeDir, agg.TaskID)
+	if err != nil {
+		return fmt.Errorf("write task aggregate: %w", err)
+	}
+	defer unlock()
+	return writeTaskAggregateFilesUnlocked(homeDir, agg)
+}
+
+func writeTaskAggregateFilesUnlocked(homeDir string, agg TaskAggregate) error {
 	if err := writeJSONFile(filepath.Join(homeDir, taskAggregateRelPath(agg.TaskID, agg.Generation)), agg); err != nil {
 		return err
 	}
@@ -75,17 +84,44 @@ func WriteTaskAggregate(homeDir string, agg TaskAggregate) error {
 }
 
 func CreateTaskAggregate(homeDir, taskID, owner, definition, kind, project string) (*TaskAggregate, error) {
+	if err := validateTaskID(taskID); err != nil {
+		return nil, err
+	}
+	_, unlock, err := acquireMetaLock(homeDir, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("create task aggregate: %w", err)
+	}
+	defer unlock()
+
+	currentPath := filepath.Join(homeDir, taskAggregateDir, taskID, taskCurrentFile)
+	generationPath := filepath.Join(homeDir, taskAggregateRelPath(taskID, "1"))
+	if _, err := os.Stat(currentPath); err == nil {
+		return nil, fmt.Errorf("task aggregate %q already exists", taskID)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if _, err := os.Stat(generationPath); err == nil {
+		return nil, fmt.Errorf("task aggregate %q already exists", taskID)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+
 	agg := &TaskAggregate{SchemaVersion: taskAggregateSchema, TaskID: taskID, Generation: "1", Current: true, Owner: owner, Definition: definition, Kind: kind, Project: project, State: "queued"}
 	if agg.Owner == "" {
 		agg.Owner = fallbackTaskOwner(homeDir, "state")
 	}
-	if err := WriteTaskAggregate(homeDir, *agg); err != nil {
+	if err := writeTaskAggregateFilesUnlocked(homeDir, *agg); err != nil {
 		return nil, err
 	}
 	return agg, nil
 }
 
 func UpdateCurrentTaskAggregateState(homeDir, taskID, state, detail string) (*TaskAggregate, bool, error) {
+	_, unlock, err := acquireMetaLock(homeDir, taskID)
+	if err != nil {
+		return nil, false, fmt.Errorf("update task aggregate state: %w", err)
+	}
+	defer unlock()
 	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
 	if err != nil || !ok {
 		return nil, ok, err
@@ -97,7 +133,7 @@ func UpdateCurrentTaskAggregateState(homeDir, taskID, state, detail string) (*Ta
 	updated.State = state
 	updated.StateDetail = detail
 	updated.AuditSources = append(updated.AuditSources, TaskAggregateEvidence{Kind: "status", Path: filepath.ToSlash(filepath.Join("state", taskID+".status")), Field: "state", Value: state})
-	if err := WriteTaskAggregate(homeDir, updated); err != nil {
+	if err := writeTaskAggregateFilesUnlocked(homeDir, updated); err != nil {
 		return nil, true, err
 	}
 	return &updated, true, nil
@@ -124,26 +160,36 @@ func DeleteTaskAggregate(homeDir, taskID, generation string) error {
 }
 
 func UpdateCurrentTaskAggregateOwner(homeDir, taskID, owner string) (*TaskAggregate, bool, error) {
+	_, unlock, err := acquireMetaLock(homeDir, taskID)
+	if err != nil {
+		return nil, false, fmt.Errorf("update task aggregate owner: %w", err)
+	}
+	defer unlock()
 	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
 	updated := *agg
 	updated.Owner = owner
-	if err := WriteTaskAggregate(homeDir, updated); err != nil {
+	if err := writeTaskAggregateFilesUnlocked(homeDir, updated); err != nil {
 		return nil, true, err
 	}
 	return &updated, true, nil
 }
 
 func UpdateCurrentTaskAggregateKind(homeDir, taskID, kind string) (*TaskAggregate, bool, error) {
+	_, unlock, err := acquireMetaLock(homeDir, taskID)
+	if err != nil {
+		return nil, false, fmt.Errorf("update task aggregate kind: %w", err)
+	}
+	defer unlock()
 	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
 	updated := *agg
 	updated.Kind = kind
-	if err := WriteTaskAggregate(homeDir, updated); err != nil {
+	if err := writeTaskAggregateFilesUnlocked(homeDir, updated); err != nil {
 		return nil, true, err
 	}
 	return &updated, true, nil

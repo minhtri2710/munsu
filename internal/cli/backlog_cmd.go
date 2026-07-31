@@ -16,7 +16,7 @@ func newBacklogCmd() *cobra.Command {
 		Short: "Manage the task backlog",
 		Long: `Manage the task backlog via the configured backlog backend.
 
-Subcommands: add, list, show, start, done, block, ready, unblock, paths.
+Subcommands: add, list, show, start, done, block, ready, unblock, reopen, paths.
 
 Uses tasks-axi CLI when available (>= 0.1.1), falling back to
 hand-editing $MUNSU_HOME/data/backlog.md.
@@ -33,6 +33,7 @@ When --home is a non-default path, the manual backend is forced to prevent data 
 	cmd.AddCommand(newBacklogBlockCmd())
 	cmd.AddCommand(newBacklogReadyCmd())
 	cmd.AddCommand(newBacklogUnblockCmd())
+	cmd.AddCommand(newBacklogReopenCmd())
 	cmd.AddCommand(newBacklogPathsCmd())
 
 	return cmd
@@ -57,32 +58,31 @@ Example:
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
+			if start {
+				command := fmt.Sprintf("munsu backlog add %s %s", shellQuote(args[0]), shellQuote(args[1]))
+				if kind != "" {
+					command += " --kind " + shellQuote(kind)
+				}
+				if repo != "" {
+					command += " --repo " + shellQuote(repo)
+				}
+				command += " && munsu backlog start " + shellQuote(args[0])
+				return exactCommandCorrection("unsupported_input", command, "backlog add always queues tasks; use the exact command in error.action to add, then start")
+			}
 			id := args[0]
 			desc := args[1]
 
-			var err error
-			if isDefaultHome(ctx.Home) {
-				err = fleet.AddItemDispatch(ctx.Home, id, desc, kind, repo, start)
-			} else {
-				err = fleet.AddItem(ctx.Home, id, desc, kind, repo, start)
-			}
-			if err != nil {
+			if _, err := home.CreateTaskAggregate(ctx.Home, id, "", desc, kind, repo); err != nil {
 				return err
 			}
-			// When --start is set, also register the task meta so it appears in fleet state.
-			if start {
-				meta := map[string]string{
-					"description": desc,
-					"kind":        kind,
-				}
-				if repo != "" {
-					meta["repo"] = repo
-					meta["project"] = repo
-				}
-				if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
-					// Non-fatal: log but don't fail the backlog add
-					fmt.Fprintf(os.Stderr, "warning: writing task meta for %s: %v\n", id, err)
-				}
+			var err error
+			if isDefaultHome(ctx.Home) {
+				err = fleet.AddItemDispatch(ctx.Home, id, desc, kind, repo, false)
+			} else {
+				err = fleet.AddItem(ctx.Home, id, desc, kind, repo, false)
+			}
+			if err != nil {
+				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
 			}
 			return nil
 		}),
@@ -90,7 +90,8 @@ Example:
 
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout|task)")
 	cmd.Flags().StringVar(&repo, "repo", "", "Project repository name")
-	cmd.Flags().BoolVar(&start, "start", false, "Start task immediately (set state to in-flight)")
+	cmd.Flags().BoolVar(&start, "start", false, "Deprecated: use `backlog start <id>` after adding")
+	_ = cmd.Flags().MarkHidden("start")
 
 	return cmd
 }
@@ -123,7 +124,14 @@ func newBacklogStartCmd() *cobra.Command {
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return runBacklogTransition(ctx.Home, "start", args, fleet.StateInFlight, "starting", "backlog: in-flight")
+			_, err := home.StartTask(ctx.Home, args[0])
+			if err != nil {
+				return err
+			}
+			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "start", args); err != nil {
+				return &LifecyclePartialError{TaskID: args[0], State: "working", Cause: err}
+			}
+			return nil
 		}),
 	}
 }
@@ -164,29 +172,75 @@ When --by is omitted, falls back to manual backend.`,
 }
 
 func newBacklogReadyCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "ready <id>",
-		Short: "Unblock a backlog item (mark ready)",
-		Args:  ExactArgs(1),
+	cmd := &cobra.Command{
+		Use:   "ready [id]",
+		Short: "Query backlog readiness without mutation",
+		Args:  MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if err := refuseCaptainBacklogMutation(); err != nil {
+			if len(args) == 1 {
+				return exactCommandCorrection("unsupported_input", "munsu backlog unblock "+shellQuote(args[0]), "backlog ready is query-only; use the exact command in error.action to clear a blocker")
+			}
+			aggs, err := home.ListCurrentTaskAggregates(ctx.Home)
+			if err != nil {
 				return err
 			}
-			return runBacklogTransition(ctx.Home, "ready", args, fleet.StateQueued, "queued", "backlog: ready")
+			rows := make([]BacklogReadinessRow, 0, len(aggs))
+			for _, agg := range aggs {
+				readiness, err := home.QueryTaskReadiness(ctx.Home, agg.TaskID)
+				if err != nil {
+					return err
+				}
+				rows = append(rows, backlogReadinessRow(readiness))
+			}
+			return writeContract(cmd, Response[[]BacklogReadinessRow]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "backlog.ready",
+				Status:        "success",
+				Data:          rows,
+			})
 		}),
 	}
+	configureContractCommand(cmd)
+	return cmd
 }
 
 func newBacklogUnblockCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "unblock <id>",
-		Short: "Alias for ready (unblock a backlog item)",
+		Short: "Unblock a blocked backlog item",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return runBacklogTransition(ctx.Home, "unblock", args, fleet.StateQueued, "queued", "backlog: ready")
+			if _, err := home.UnblockTask(ctx.Home, args[0]); err != nil {
+				return err
+			}
+			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "unblock", args); err != nil {
+				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
+			}
+			return nil
+		}),
+	}
+}
+
+func newBacklogReopenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reopen <id>",
+		Short: "Reopen a terminal task as a new generation",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseCaptainBacklogMutation(); err != nil {
+				return err
+			}
+			_, err := home.ReopenTask(ctx.Home, args[0])
+			if err != nil {
+				return err
+			}
+			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "reopen", args); err != nil {
+				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
+			}
+			return nil
 		}),
 	}
 }

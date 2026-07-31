@@ -37,7 +37,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 ### 4. Spawn / brief
 
-- `munsu backlog add <id> "<desc>" --kind ship|scout --repo <name> --start` — register the task.
+- `munsu backlog add <id> "<desc>" --kind ship|scout --repo <name>` — register the queued task; use `munsu backlog start <id>` only after readiness checks.
 - `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
 - Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
 - `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier.

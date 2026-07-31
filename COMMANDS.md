@@ -47,8 +47,8 @@ Full command map grouped by lifecycle phase.
 
 The recommended workflow for running a soldier task end-to-end:
 
-1. **`munsu backlog add <id> <desc> [--kind ship|scout] [--repo <name>] [--start]`**
-   Register the intent in the backlog. Use `--start` to move it to in-flight immediately.
+1. **`munsu backlog add <id> <desc> [--kind ship|scout] [--repo <name>]`**
+   Register the intent in the backlog; additions always start queued. Use `munsu backlog start <id>` as the separate validated start mutation.
 2. **`munsu brief <id> <repo> [--scout]`**
    Scaffold a task brief that the soldier reads on startup.
 3. **`munsu spawn <id> [<project>] [--arm]`**
@@ -60,7 +60,7 @@ The recommended workflow for running a soldier task end-to-end:
 6. **`munsu backlog done <id>`**
    Mark the item complete in the backlog (separate operator step after teardown).
 
-> **Note:** Prefer `backlog add --start` over bare `task add` for dogfood — the backlog links brief → spawn → teardown → closure.
+> **Note:** Add tasks queued, then use `backlog start <id>` after readiness checks; the backlog links brief → spawn → teardown → closure.
 > `task add` registers runtime meta only and bypasses the lifecycle chain.
 
 See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
@@ -116,14 +116,14 @@ Session-start `Recover()` (invoked via `munsu session-start` with captain livene
 
 | Command | Description |
 |---------|-------------|
-| `munsu backlog add <id> <description> [--kind ship\|scout\|task] [--repo <name>] [--start]` | Add a task to the backlog. |
+| `munsu backlog add <id> <description> [--kind ship\|scout\|task] [--repo <name>]` | Add a queued task to the backlog. |
 | `munsu backlog list [state-filter]` | List backlog items. |
 | `munsu backlog show <id>` | Show backlog item details. |
 | `munsu backlog start <id>` | Mark a backlog item as in-flight. |
 | `munsu backlog done <id>` | Mark a backlog item as done. |
 | `munsu backlog block <id>` | Block a backlog item. |
-| `munsu backlog ready <id>` | Unblock a backlog item (mark ready). |
-| `munsu backlog unblock <id>` | Alias for ready. |
+| `munsu backlog ready` | Query readiness and blocking reasons without mutation. |
+| `munsu backlog unblock <id>` | Unblock a blocked backlog item. |
 
 Uses `tasks-axi` CLI when available (>= 0.1.1), falling back to hand-editing `$MUNSU_HOME/data/backlog.md`. Custom home paths force the manual backend.
 

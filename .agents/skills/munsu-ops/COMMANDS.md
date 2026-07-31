@@ -76,11 +76,12 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 
 | Command | Description |
 |---------|-------------|
-| `munsu backlog add <id> "<desc>" [--kind ship\|scout\|task] [--repo <name>] [--start]` | Register a task. |
+| `munsu backlog add <id> "<desc>" [--kind ship\|scout\|task] [--repo <name>]` | Register a queued task. |
 | `munsu backlog list` | List all backlog entries. |
 | `munsu backlog show <id>` | Show a backlog entry. |
 | `munsu backlog block <id>` | Block a task on a dependency. |
-| `munsu backlog ready|unblock <id>` | Mark a blocked task as ready again (unblock). Use `tasks-axi ready --file <backlog>` to **list** ready dispatchable items. |
+| `munsu backlog ready` | Query readiness and blocking reasons without mutation. |
+| `munsu backlog unblock <id>` | Mark a blocked task queued again. |
 | `munsu backlog paths` | Show separate development and runtime backlog paths. |
 | `munsu backlog done <id>` | Mark a task as done in backlog. |
 | `munsu task observe <id> [--fields description,branch,pane_alive,no_mistakes_step]` | Observe one task using the orchestration contract. |

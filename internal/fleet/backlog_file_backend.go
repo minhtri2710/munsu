@@ -41,7 +41,7 @@ func NewFileBackend(path string) *FileBackend {
 }
 
 // Add implements Backend.Add.
-func (fb *FileBackend) Add(id, description, kind, repo string, start bool) error {
+func (fb *FileBackend) Add(id, description, kind, repo string, _ bool) error {
 	if err := fb.ensureBacklog(); err != nil {
 		return err
 	}
@@ -58,12 +58,7 @@ func (fb *FileBackend) Add(id, description, kind, repo string, start bool) error
 		}
 	}
 
-	initialState := StateQueued
-	if start {
-		initialState = StateInFlight
-	}
-
-	items = append(items, Item{ID: id, Description: description, State: initialState, Kind: kind, Repo: repo})
+	items = append(items, Item{ID: id, Description: description, State: StateQueued, Kind: kind, Repo: repo})
 	if err := fb.render(items); err != nil {
 		return err
 	}
@@ -131,6 +126,25 @@ func (fb *FileBackend) UpdateState(id string, state TaskState) error {
 	}
 
 	return fb.render(items)
+}
+
+// Reopen transitions a terminal backlog item back to queued.
+func (fb *FileBackend) Reopen(id string) error {
+	items, err := fb.parse()
+	if err != nil {
+		return err
+	}
+	for i, item := range items {
+		if item.ID != id {
+			continue
+		}
+		if item.State != StateDone {
+			return fmt.Errorf("backlog: reopen requires done item %q", id)
+		}
+		items[i].State = StateQueued
+		return fb.render(items)
+	}
+	return fmt.Errorf("backlog: item %q not found", id)
 }
 
 // --- internal helpers ---

@@ -1684,7 +1684,7 @@ func TestManualRun_Verbs(t *testing.T) {
 		}
 	})
 
-	t.Run("block and unblock", func(t *testing.T) {
+	t.Run("block, ready query, and unblock", func(t *testing.T) {
 		homeDir := t.TempDir()
 		manualRun(homeDir, "add", []string{"TASK-1", "My task"})
 
@@ -1695,10 +1695,24 @@ func TestManualRun_Verbs(t *testing.T) {
 			t.Errorf("expected blocked, got %v", items[0].State)
 		}
 
-		manualRun(homeDir, "ready", []string{"TASK-1"})
+		output := backlogCaptureStdout(func() {
+			if err := manualRun(homeDir, "ready", []string{}); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if !strings.Contains(output, "TASK-1") {
+			t.Errorf("expected ready query to report TASK-1, got %q", output)
+		}
+		items, _ = fb.parse()
+		if items[0].State != StateBlocked {
+			t.Errorf("ready query mutated state to %v", items[0].State)
+		}
+		if err := manualRun(homeDir, "unblock", []string{"TASK-1"}); err != nil {
+			t.Fatal(err)
+		}
 		items, _ = fb.parse()
 		if items[0].State != StateQueued {
-			t.Errorf("expected queued after ready, got %v", items[0].State)
+			t.Errorf("expected queued after unblock, got %v", items[0].State)
 		}
 	})
 }
@@ -1731,7 +1745,7 @@ func TestFileBackend_AddWithMetadata(t *testing.T) {
 		}
 	})
 
-	t.Run("add with start flag sets in-flight", func(t *testing.T) {
+	t.Run("add with start flag remains queued", func(t *testing.T) {
 		tmp := t.TempDir()
 		path := filepath.Join(tmp, "md")
 		fb := NewFileBackend(path)
@@ -1744,8 +1758,8 @@ func TestFileBackend_AddWithMetadata(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if items[0].State != StateInFlight {
-			t.Errorf("expected state InFlight, got %v", items[0].State)
+		if items[0].State != StateQueued {
+			t.Errorf("expected state Queued, got %v", items[0].State)
 		}
 	})
 
@@ -1768,8 +1782,8 @@ func TestFileBackend_AddWithMetadata(t *testing.T) {
 		if items[0].Repo != "munsu" {
 			t.Errorf("expected repo 'munsu', got %q", items[0].Repo)
 		}
-		if items[0].State != StateInFlight {
-			t.Errorf("expected state InFlight, got %v", items[0].State)
+		if items[0].State != StateQueued {
+			t.Errorf("expected state Queued, got %v", items[0].State)
 		}
 	})
 }
@@ -1876,7 +1890,7 @@ func TestAddItemPublic(t *testing.T) {
 		}
 	})
 
-	t.Run("AddItem with start flag", func(t *testing.T) {
+	t.Run("AddItem with start flag remains queued", func(t *testing.T) {
 		homeDir := t.TempDir()
 
 		if err := AddItem(homeDir, "TASK-1", "My task", "", "", true); err != nil {
@@ -1888,8 +1902,8 @@ func TestAddItemPublic(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if items[0].State != StateInFlight {
-			t.Errorf("expected state InFlight, got %v", items[0].State)
+		if items[0].State != StateQueued {
+			t.Errorf("expected state Queued, got %v", items[0].State)
 		}
 	})
 }

@@ -129,10 +129,24 @@ func manualRun(homeDir, verb string, args []string) error {
 		return transitionViaFileBackend(fb, args, StateDone)
 	case "block":
 		return transitionViaFileBackend(fb, args, StateBlocked)
-	case "ready", "unblock":
+	case "reopen":
+		if len(args) < 1 {
+			return fmt.Errorf("usage: backlog reopen <id>")
+		}
+		return fb.Reopen(args[0])
+	case "ready":
+		items, err := fb.List(StateQueued)
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			fmt.Println(formatItem(item))
+		}
+		return nil
+	case "unblock":
 		return transitionViaFileBackend(fb, args, StateQueued)
 	default:
-		return fmt.Errorf("backlog: unknown verb %q (supported: add, list, show, start, done, block, ready, unblock)", verb)
+		return fmt.Errorf("backlog: unknown verb %q (supported: add, list, show, start, done, block, ready, unblock, reopen)", verb)
 	}
 }
 
@@ -579,16 +593,13 @@ func runTasksAxiForHome(homeDir, verb string, args []string) error {
 }
 
 // buildTasksAxiAddArgs builds the argument list for tasks-axi add.
-func buildTasksAxiAddArgs(id, desc, kind, repo string, start bool) []string {
+func buildTasksAxiAddArgs(id, desc, kind, repo string, _ bool) []string {
 	args := []string{id, desc}
 	if kind != "" {
 		args = append(args, "--kind", kind)
 	}
 	if repo != "" {
 		args = append(args, "--repo", repo)
-	}
-	if start {
-		args = append(args, "--start")
 	}
 	return args
 }

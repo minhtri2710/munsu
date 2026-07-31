@@ -4,8 +4,8 @@ package fleet
 // Adding a new backend (e.g. SQLite, GitHub Issues) means implementing
 // this interface without changing any callers.
 type Backend interface {
-	// Add creates a new backlog item. If start is true, the item starts
-	// in StateInFlight instead of StateQueued.
+	// Add creates a new backlog item. The start argument is retained for
+	// compatibility but is ignored; additions always begin queued.
 	Add(id, description, kind, repo string, start bool) error
 
 	// List returns all items. When filter is StateQueued with empty marker
