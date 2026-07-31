@@ -229,6 +229,42 @@ func TestDocumentStoreRoundTripAndStrictDecode(t *testing.T) {
 	}
 }
 
+func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
+	home := t.TempDir()
+	base, captains, projects := validDocuments()
+	if err := StoreDocuments(home, base, captains, projects); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := LoadResolvedSnapshot(home, "alpha", BoundaryOverrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StorePublishedSnapshot(home, resolved.Config()); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadPublishedSnapshot(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded.Config(), resolved.Config()) {
+		t.Fatalf("published snapshot mismatch\nwant=%+v\ngot=%+v", resolved.Config(), loaded.Config())
+	}
+
+	path := filepath.Join(home, PublishedSnapshotPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), PublishedSnapshotSchemaVersion, "future", 1))
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPublishedSnapshot(home); err == nil || !strings.Contains(err.Error(), "schemaVersion") {
+		t.Fatalf("LoadPublishedSnapshot() error = %v, want schemaVersion refusal", err)
+	}
+}
+
 func validDocuments() (FleetBaseDocument, CaptainRegistryDocument, ProjectRegistryDocument) {
 	base := FleetBaseDocument{SchemaVersion: FleetBaseSchemaVersion, Config: ProjectOverlay{SoldierHarness: "pi", Model: "base-model", DefaultMode: "no-mistakes", DispatchProfiles: []DispatchProfile{{Name: "base", Harness: "pi"}}}, CaptainProfile: CaptainProfile{Harness: "pi", Model: "base-model"}}
 	captains := CaptainRegistryDocument{SchemaVersion: CaptainRegistrySchemaVersion, Captains: []CaptainRecord{{ID: "c1", Home: "/c1", Project: "alpha", CaptainProfile: CaptainProfile{Harness: "pi"}}}}

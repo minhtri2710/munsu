@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -37,10 +38,21 @@ type ConfigPushResult struct {
 // ComputeInheritedConfigDigest returns a deterministic SHA-256 digest of
 // the complete inherited config surface managed by ConfigPush. The digest
 // covers all inheritable config files plus general-shared.md,
-// projects.md, and typed registry documents. The result depends only on content, not on timestamps or
+// projects.md or the published resolved snapshot. The result depends only on content, not on timestamps or
 // filesystem metadata.
 func ComputeInheritedConfigDigest(captainHome string) (string, error) {
 	h := sha256.New()
+	snapshotPath := filepath.Join(captainHome, config.PublishedSnapshotPath)
+	if _, err := os.Stat(snapshotPath); err == nil {
+		data, readErr := os.ReadFile(snapshotPath)
+		if readErr != nil {
+			return "", fmt.Errorf("reading published config snapshot for digest: %w", readErr)
+		}
+		fmt.Fprintf(h, "%s:%s\n", config.PublishedSnapshotPath, string(data))
+		return fmt.Sprintf("%x", h.Sum(nil)), nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("checking published config snapshot for digest: %w", err)
+	}
 	configDir := filepath.Join(captainHome, "config")
 	inheritable := getInheritableList()
 
@@ -76,7 +88,7 @@ func ComputeInheritedConfigDigest(captainHome string) (string, error) {
 		fmt.Fprintf(h, "data/general-shared.md:%s\n", string(data))
 	}
 
-	for _, name := range []string{"projects.md", "captains.json", "projects.json"} {
+	for _, name := range []string{"projects.md"} {
 		path := filepath.Join(captainHome, "data", name)
 		data, err = os.ReadFile(path)
 		if os.IsNotExist(err) {

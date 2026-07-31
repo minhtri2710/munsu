@@ -20,6 +20,9 @@ func TestResolveSpawnProjectConfigCrossRankIdentical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := fleetconfig.StorePublishedSnapshot(home, general.Frozen.Config()); err != nil {
+		t.Fatal(err)
+	}
 	captain, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "captain")
 	if err != nil {
 		t.Fatal(err)
@@ -140,33 +143,49 @@ func TestRunnerWriteTaskMetaRecordsConfigSnapshotDigest(t *testing.T) {
 	}
 }
 
-func TestConfigPushPropagatesTypedConfigDocuments(t *testing.T) {
+func TestCaptainSpawnConsumesPublishedSnapshotWithoutLocalResolution(t *testing.T) {
 	parent := t.TempDir()
-	captain := filepath.Join(parent, "captains", "alpha")
-	if err := os.MkdirAll(filepath.Join(captain, "config"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(captain, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := SeedProvenance(captain, "alpha"); err != nil {
-		t.Fatal(err)
-	}
+	captain := seedCaptainForTest(t, parent, "alpha-captain")
 	writeSpawnSnapshotDocuments(t, parent)
 
-	if err := ConfigPush(parent, captain); err != nil {
-		t.Fatal(err)
-	}
-	general, err := ResolveSpawnProjectConfig(parent, Args{ProjectName: "alpha"}, "general")
+	base, captains, projects, err := fleetconfig.LoadDocuments(parent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	captainResolved, err := ResolveSpawnProjectConfig(captain, Args{ProjectName: "alpha"}, "captain")
+	resolved, err := fleetconfig.ResolveProject(base, captains, projects, "alpha", fleetconfig.BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(general.Soldier, captainResolved.Soldier) || general.SnapshotDigest != captainResolved.SnapshotDigest {
-		t.Fatalf("captain typed config diverged\ngeneral=%+v %s\ncaptain=%+v %s", general.Soldier, general.SnapshotDigest, captainResolved.Soldier, captainResolved.SnapshotDigest)
+	if err := fleetconfig.StorePublishedSnapshot(captain, resolved); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(captain, fleetconfig.BaseDocumentPath)); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("expected captain base document to be absent, got %v", err)
+	}
+	if err := os.Remove(filepath.Join(captain, fleetconfig.ProjectDocumentPath)); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("expected captain project document to be absent, got %v", err)
+	}
+
+	got, err := ResolveSpawnProjectConfig(captain, Args{ProjectName: "alpha"}, "captain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SnapshotDigest != resolved.Digest || got.ProjectName != "alpha" {
+		t.Fatalf("captain did not consume published snapshot: %+v", got)
+	}
+}
+
+func TestCaptainSpawnFailsClosedWithoutPublishedSnapshot(t *testing.T) {
+	home := t.TempDir()
+	writeSpawnSnapshotDocuments(t, home)
+	_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "captain")
+	if err == nil {
+		t.Fatal("captain resolution should require a published snapshot")
+	}
+	var remediation *fleetconfig.RemediationError
+	if !errors.As(err, &remediation) || remediation.Code != fleetconfig.RemediateIncompatibleSnapshot {
+		t.Fatalf("error = %T %v, want incompatible-snapshot remediation", err, err)
 	}
 }
 

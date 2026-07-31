@@ -26,11 +26,26 @@ type SpawnProjectConfig struct {
 }
 
 func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnProjectConfig, error) {
-	snapshot, err := fleetconfig.LoadResolvedSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+	var (
+		snapshot fleetconfig.ResolvedSnapshot
+		err      error
+	)
+	if rank == "captain" {
+		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
+	} else {
+		snapshot, err = fleetconfig.LoadResolvedSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+	}
 	if err != nil {
 		return SpawnProjectConfig{}, classifySnapshotError(args.ProjectName, err)
 	}
 	resolved := snapshot.Config()
+	if rank == "captain" && args.ProjectName != "" && resolved.Project != args.ProjectName {
+		return SpawnProjectConfig{}, fleetconfig.Remediate(
+			fleetconfig.RemediateIncompatibleSnapshot,
+			"publish a snapshot for the Captain's owning project",
+			fmt.Errorf("published snapshot project %q does not match requested project %q", resolved.Project, args.ProjectName),
+		)
+	}
 	if err := validateResolvedDispatchProfiles(resolved.DispatchProfiles); err != nil {
 		return SpawnProjectConfig{}, err
 	}
@@ -79,6 +94,9 @@ func normalizeSnapshotDeliveryMode(mode string) string {
 }
 
 func TypedConfigAvailable(homeDir string) bool {
+	if fleetconfig.PublishedSnapshotAvailable(homeDir) {
+		return true
+	}
 	for _, path := range []string{fleetconfig.BaseDocumentPath, fleetconfig.CaptainDocumentPath, fleetconfig.ProjectDocumentPath} {
 		if _, err := os.Stat(filepath.Join(homeDir, path)); err == nil {
 			return true

@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -36,6 +38,216 @@ func (f *fakeBoundSender) Send(homeDir string, meta map[string]string, payload s
 	return home.BoundSendResult{
 		Status:       "submitted",
 		Acknowledged: f.acknowledged,
+	}
+}
+
+func TestPropagateConfig_TypedSnapshotsTargetOwningCaptain(t *testing.T) {
+	parent := t.TempDir()
+	alphaHome := seedCaptainForTest(t, parent, "alpha-captain")
+	betaHome := seedCaptainForTest(t, parent, "beta-captain")
+	writeTypedPropagationDocuments(t, parent, alphaHome, betaHome)
+	writeCaptainMeta(t, parent, "alpha-captain", alphaHome, "alpha-window")
+	writeCaptainMeta(t, parent, "beta-captain", betaHome, "beta-window")
+
+	alphaSender := &fakeBoundSender{acknowledged: true}
+	betaSender := &fakeBoundSender{acknowledged: true}
+	if _, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: alphaHome, Mailbox: alphaSender}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: betaHome, Mailbox: betaSender}); err != nil {
+		t.Fatal(err)
+	}
+	ackConfigRequirement(t, parent, alphaHome)
+	ackConfigRequirement(t, parent, betaHome)
+
+	base, captains, projects, err := config.LoadDocuments(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects.Projects[0].Config.Model = "alpha-new"
+	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
+		t.Fatal(err)
+	}
+	alphaSender2 := &fakeBoundSender{acknowledged: true}
+	betaSender2 := &fakeBoundSender{acknowledged: true}
+	alphaResult2, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: alphaHome, Mailbox: alphaSender2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaResult2, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: betaHome, Mailbox: betaSender2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alphaResult2.Changed || betaResult2.Changed {
+		t.Fatalf("overlay change results alpha=%+v beta=%+v, want changed/unchanged", alphaResult2, betaResult2)
+	}
+	ackConfigRequirement(t, parent, alphaHome)
+	if len(alphaSender2.sent) != 1 {
+		t.Fatalf("alpha sends = %d, want 1", len(alphaSender2.sent))
+	}
+	if len(betaSender2.sent) != 0 {
+		t.Fatalf("beta sends = %d, want 0 for alpha-only overlay change", len(betaSender2.sent))
+	}
+
+	base.Config.DefaultMode = "local-only"
+	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
+		t.Fatal(err)
+	}
+	alphaSender3 := &fakeBoundSender{acknowledged: true}
+	betaSender3 := &fakeBoundSender{acknowledged: true}
+	alphaResult3, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: alphaHome, Mailbox: alphaSender3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaResult3, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: betaHome, Mailbox: betaSender3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alphaResult3.Changed || !betaResult3.Changed || len(alphaSender3.sent) != 1 || len(betaSender3.sent) != 1 {
+		t.Fatalf("fleet-base results alpha=%+v beta=%+v sends alpha=%d beta=%d, want changed/changed and 1/1", alphaResult3, betaResult3, len(alphaSender3.sent), len(betaSender3.sent))
+	}
+}
+
+func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempotent(t *testing.T) {
+	parent := t.TempDir()
+	alphaHome := seedCaptainForTest(t, parent, "alpha-captain")
+	betaHome := seedCaptainForTest(t, parent, "beta-captain")
+	writeTypedPropagationDocuments(t, parent, alphaHome, betaHome)
+	writeCaptainMeta(t, parent, "alpha-captain", alphaHome, "alpha-window")
+
+	base, captains, projects, err := config.LoadDocuments(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedSnapshot, err := config.ResolveProject(base, captains, projects, "alpha", config.BoundaryOverrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := &fakeBoundSender{acknowledged: false}
+	var firstMessageID string
+	first.onSend = func(_ string, _ map[string]string, payload string) {
+		ref, err := home.ParseNotificationRef(payload)
+		if err != nil {
+			t.Errorf("notification ref: %v", err)
+			return
+		}
+		firstMessageID = ref.MessageID
+		published, err := config.LoadPublishedSnapshot(alphaHome)
+		if err != nil {
+			t.Errorf("published snapshot missing before notification: %v", err)
+		} else if got := published.Config(); !reflect.DeepEqual(got, expectedSnapshot) {
+			t.Errorf("published snapshot = %+v, want General resolution %+v", got, expectedSnapshot)
+		}
+		gen, digest, found, err := ReadConfigRereadGen(alphaHome)
+		if err != nil || !found {
+			t.Errorf("generation missing before notification: found=%v err=%v", found, err)
+			return
+		}
+		captainID, _ := ValidateProvenance(alphaHome)
+		senderID := parentIdentity(t, parent)
+		expectedID := ConfigRereadEnvelopeID(senderID, captainID, gen, digest)
+		if ref.MessageID != expectedID {
+			t.Errorf("notification message ID = %q, want %q", ref.MessageID, expectedID)
+		}
+		captainStore := home.NewStore(alphaHome)
+		env, err := captainStore.ReadEnvelope(senderID, ref.MessageID)
+		if err != nil || env == nil {
+			t.Errorf("inbox envelope missing before notification: env=%v err=%v", env, err)
+		}
+		pending, err := home.NewStore(parent).ListPending(senderID)
+		if err != nil || len(pending) != 1 || pending[0].MessageID != ref.MessageID {
+			t.Errorf("pending records before notification = %+v, err=%v", pending, err)
+		}
+	}
+	result, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: alphaHome, Mailbox: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NotificationState != NotificationDeferred {
+		t.Fatalf("notification state = %q, want deferred", result.NotificationState)
+	}
+
+	second := &fakeBoundSender{acknowledged: true}
+	if _, err := PropagateConfig(PropagateConfigRequest{ParentHome: parent, CaptainHome: alphaHome, Mailbox: second}); err != nil {
+		t.Fatal(err)
+	}
+	if firstMessageID == "" || len(second.sent) != 1 {
+		t.Fatalf("retry notification count=%d message ID=%q", len(second.sent), firstMessageID)
+	}
+	ref, err := home.ParseNotificationRef(second.sent[0])
+	if err != nil || ref.MessageID != firstMessageID {
+		t.Fatalf("retry reference = %+v err=%v, want message ID %q", ref, err, firstMessageID)
+	}
+	captainID, _ := ValidateProvenance(alphaHome)
+	senderID, _, _ := home.ReadHomeIdentity(parent)
+	gen, digest, found, _ := ReadConfigRereadGen(alphaHome)
+	if !found {
+		t.Fatal("generation missing")
+	}
+	envID := ConfigRereadEnvelopeID(senderID, captainID, gen, digest)
+	inbox, err := home.NewStore(alphaHome).ListInbox(senderID)
+	if err != nil || len(inbox) != 1 || inbox[0].MessageID != envID {
+		t.Fatalf("config-reread inbox = %+v err=%v, want one envelope %q", inbox, err, envID)
+	}
+	allPending, err := home.NewStore(parent).ListPending(senderID)
+	if err != nil || len(allPending) != 1 || allPending[0].MessageID != envID {
+		t.Fatalf("config-reread pending = %+v err=%v, want one record %q", allPending, err, envID)
+	}
+	pending, err := home.NewStore(parent).ReadPending(senderID, envID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending == nil {
+		t.Fatal("pending requirement missing after retry")
+	}
+	if len(second.sent) != 1 {
+		t.Fatalf("retry sends = %d, want 1", len(second.sent))
+	}
+}
+
+func writeTypedPropagationDocuments(t *testing.T, parent, alphaHome, betaHome string) {
+	t.Helper()
+	base := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{SoldierHarness: "pi", Model: "base-model", DefaultMode: "direct-pr"}}
+	captains := config.CaptainRegistryDocument{SchemaVersion: config.CaptainRegistrySchemaVersion, Captains: []config.CaptainRecord{
+		{ID: "alpha-captain", Home: alphaHome, Project: "alpha"},
+		{ID: "beta-captain", Home: betaHome, Project: "beta"},
+	}}
+	projects := config.ProjectRegistryDocument{SchemaVersion: config.ProjectRegistrySchemaVersion, Projects: []config.ProjectRecord{
+		{Name: "alpha", Path: filepath.Join(parent, "projects", "alpha"), Config: config.ProjectOverlay{Model: "alpha-model"}},
+		{Name: "beta", Path: filepath.Join(parent, "projects", "beta"), Config: config.ProjectOverlay{Model: "beta-model"}},
+	}}
+	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func parentIdentity(t *testing.T, parent string) string {
+	t.Helper()
+	identity, _, err := home.ReadHomeIdentity(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}
+
+func ackConfigRequirement(t *testing.T, parent, captainHome string) {
+	t.Helper()
+	captainID, err := ValidateProvenance(captainHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderID, _, err := home.ReadHomeIdentity(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, digest, found, err := ReadConfigRereadGen(captainHome)
+	if err != nil || !found {
+		t.Fatalf("read generation: found=%v err=%v", found, err)
+	}
+	envID := ConfigRereadEnvelopeID(senderID, captainID, gen, digest)
+	if err := home.NewStore(captainHome).WriteAck(&home.ProcessingAck{MessageID: envID, SenderIdentity: senderID, ReceiverID: captainID, Outcome: "accepted", ProcessedAt: 1}); err != nil {
+		t.Fatal(err)
 	}
 }
 
