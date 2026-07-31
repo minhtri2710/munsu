@@ -54,6 +54,9 @@ func (r *Runner) Run() (string, error) {
 	if err := r.resolveHome(); err != nil {
 		return "", err
 	}
+	if err := r.checkDispatchHold(); err != nil {
+		return "", err
+	}
 	if err := r.checkSpawnAuthority(); err != nil {
 		return "", err
 	}
@@ -70,6 +73,9 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	if err := r.checkBacklogAuthority(); err != nil {
+		return "", err
+	}
+	if err := r.checkDispatchHold(); err != nil {
 		return "", err
 	}
 	if err := r.resolveProject(); err != nil {
@@ -94,6 +100,9 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	success := false
+	if err := r.checkDispatchHold(); err != nil {
+		return "", err
+	}
 	// Fail-closed: return worktree on any subsequent error (but NOT on success).
 	defer func() {
 		if !success && r.wtPath != "" {
@@ -455,6 +464,22 @@ func (r *Runner) ensureTaskAggregate(item Item) error {
 		}
 	}
 	return nil
+}
+
+func (r *Runner) checkDispatchHold() error {
+	generation := ""
+	project := r.args.ProjectName
+	parentID := ""
+	if aggregate, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID); err != nil {
+		return err
+	} else if ok {
+		generation = aggregate.Generation
+		parentID = aggregate.ParentTaskID
+		if project == "" {
+			project = aggregate.Project
+		}
+	}
+	return home.CheckDispatchHold(r.homeDir, home.DispatchActionSpawn, r.args.ID, project, generation, parentID)
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.

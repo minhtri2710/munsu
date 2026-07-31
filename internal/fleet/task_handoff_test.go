@@ -564,6 +564,15 @@ func TestHandoffTransfersCompleteTaskGenerationAndDestinationIsReady(t *testing.
 	}
 	wantAggregate := aggregate
 	wantAggregate.Owner = "captain:test-sm"
+	if got.DispatchInterpretationID == "" || got.DispatchInterpretationDigest == "" {
+		t.Fatalf("destination aggregate lost dispatch interpretation binding: %+v", got)
+	}
+	interpretation, err := mhome.LoadDispatchInterpretation(sm, got.DispatchInterpretationID)
+	if err != nil || interpretation.DependencySnapshotDigest != got.DispatchInterpretationDigest {
+		t.Fatalf("destination interpretation = %+v err=%v", interpretation, err)
+	}
+	got.DispatchInterpretationID = ""
+	got.DispatchInterpretationDigest = ""
 	if !reflect.DeepEqual(*got, wantAggregate) {
 		t.Fatalf("destination aggregate = %+v, want %+v", got, wantAggregate)
 	}

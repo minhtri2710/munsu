@@ -109,14 +109,16 @@ type taskHandoffJournal struct {
 }
 
 type handoffTask struct {
-	ID                     string              `json:"id"`
-	Generation             string              `json:"generation"`
-	SourceAggregate        mhome.TaskAggregate `json:"source_aggregate"`
-	DestinationAggregate   mhome.TaskAggregate `json:"destination_aggregate"`
-	SourceAuthority        []handoffFile       `json:"source_authority"`
-	SourceProjections      []handoffFile       `json:"source_projections"`
-	DestinationAuthority   []handoffFile       `json:"destination_authority"`
-	DestinationProjections []handoffFile       `json:"destination_projections"`
+	ID                        string              `json:"id"`
+	Generation                string              `json:"generation"`
+	SourceAggregate           mhome.TaskAggregate `json:"source_aggregate"`
+	DestinationAggregate      mhome.TaskAggregate `json:"destination_aggregate"`
+	SourceAuthority           []handoffFile       `json:"source_authority"`
+	SourceProjections         []handoffFile       `json:"source_projections"`
+	DestinationAuthority      []handoffFile       `json:"destination_authority"`
+	DestinationProjections    []handoffFile       `json:"destination_projections"`
+	SourceInterpretation      handoffFile         `json:"source_interpretation,omitempty"`
+	DestinationInterpretation handoffFile         `json:"destination_interpretation,omitempty"`
 }
 
 var handoffCrashHook = func(string) {}
@@ -149,6 +151,12 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	if err := recoverIncompleteTaskHandoffs(source); err != nil {
 		return err
 	}
+	if err := mhome.CheckDispatchHold(source, mhome.DispatchActionHandoff, "", "", "", ""); err != nil {
+		return err
+	}
+	if err := mhome.CheckDispatchHold(destination, mhome.DispatchActionHandoff, "", "", "", ""); err != nil {
+		return err
+	}
 
 	path, err := captainLookPath("tasks-axi")
 	if err != nil {
@@ -156,11 +164,51 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	}
 	sourceBacklog := filepath.Join(source, "data", "backlog.md")
 	destinationBacklog := filepath.Join(destination, "data", "backlog.md")
-	keys, err := resolveHandoffKeys(source, sourceBacklog, path, itemKeys)
+	keys, dependencies, err := resolveHandoffKeysAndDependencies(source, sourceBacklog, path, itemKeys)
 	if err != nil {
 		return err
 	}
-	journal, dir, err := prepareHandoff(source, destination, "captain:"+captainID, keys, sourceBacklog, destinationBacklog)
+	autonomy := mhome.DispatchAutonomyManual
+	if aggregate, ok, err := mhome.ReadCurrentTaskAggregate(source, keys[0]); err != nil {
+		return err
+	} else if ok && aggregate.Project != "" {
+		if snapshot, err := config.LoadResolvedSnapshot(source, aggregate.Project, config.BoundaryOverrides{}); err == nil {
+			autonomy = mhome.DispatchAutonomy(snapshot.Config().DispatchAutonomy)
+		}
+	}
+	interpretation, selected, interpretationErr := mhome.EvaluateDispatchWithDependencies(source, keys, dependencies, autonomy)
+	if interpretationErr != nil {
+		return fmt.Errorf("handoff dispatch interpretation %s: %w", interpretation.ID, interpretationErr)
+	}
+	keys = selected
+	for _, taskID := range keys {
+		generation := ""
+		if aggregate, ok, err := mhome.ReadCurrentTaskAggregate(source, taskID); err != nil {
+			return err
+		} else if ok {
+			generation = aggregate.Generation
+		}
+		parentID := ""
+		project := ""
+		if aggregate, ok, err := mhome.ReadCurrentTaskAggregate(source, taskID); err != nil {
+			return err
+		} else if ok {
+			parentID = aggregate.ParentTaskID
+			project = aggregate.Project
+		}
+		if err := mhome.CheckDispatchHold(source, mhome.DispatchActionHandoff, taskID, project, generation, parentID); err != nil {
+			return err
+		}
+		if err := mhome.CheckDispatchHold(destination, mhome.DispatchActionHandoff, taskID, project, generation, parentID); err != nil {
+			return err
+		}
+		if parentID != "" {
+			if err := mhome.CheckDispatchHold(source, mhome.DispatchActionHandoff, parentID, project, "", parentID); err != nil {
+				return err
+			}
+		}
+	}
+	journal, dir, err := prepareHandoff(source, destination, "captain:"+captainID, keys, sourceBacklog, destinationBacklog, interpretation)
 	if err != nil {
 		return err
 	}
@@ -283,35 +331,57 @@ func acquireHandoffHomeLocks(homes []string) (func(), error) {
 	}, nil
 }
 
-func resolveHandoffKeys(source, backlog, path string, requested []string) ([]string, error) {
+func resolveHandoffKeysAndDependencies(source, backlog, path string, requested []string) ([]string, []mhome.DispatchDependency, error) {
 	seen := make(map[string]bool, len(requested))
 	keys := make([]string, 0, len(requested))
+	dependencies := make([]mhome.DispatchDependency, 0, len(requested))
 	for _, key := range requested {
 		resolved, err := mhome.ResolveCurrentTaskID(source, key)
 		if err != nil {
-			return nil, fmt.Errorf("handoff: resolving task %s: %w", key, err)
+			return nil, nil, fmt.Errorf("handoff: resolving task %s: %w", key, err)
 		}
 		if seen[resolved] {
-			return nil, fmt.Errorf("handoff: duplicate task %s", resolved)
+			return nil, nil, fmt.Errorf("handoff: duplicate task %s", resolved)
 		}
 		seen[resolved] = true
 		out, err := execCommand(path, "show", resolved, "--file", backlog).CombinedOutput()
 		if err != nil {
-			return nil, fmt.Errorf("handoff: key %s not found in source backlog: %w: %s", resolved, err, strings.TrimSpace(string(out)))
+			return nil, nil, fmt.Errorf("handoff: key %s not found in source backlog: %w: %s", resolved, err, strings.TrimSpace(string(out)))
 		}
 		state := extractTaskStateFromShow(string(out))
 		if state == "" {
-			return nil, fmt.Errorf("handoff: key %s has no parseable state — only queued items may be handed off", resolved)
+			return nil, nil, fmt.Errorf("handoff: key %s has no parseable state — only queued items may be handed off", resolved)
 		}
 		if state != "queued" {
-			return nil, fmt.Errorf("handoff: key %s has state %q, only queued items may be handed off", resolved, state)
+			return nil, nil, fmt.Errorf("handoff: key %s has state %q, only queued items may be handed off", resolved, state)
 		}
 		keys = append(keys, resolved)
+		dependencies = append(dependencies, mhome.DispatchDependency{TaskID: resolved, DependsOn: parseHandoffDependencies(string(out)), State: state})
 	}
-	return keys, nil
+	return keys, dependencies, nil
 }
 
-func prepareHandoff(source, destination, owner string, keys []string, sourceBacklog, destinationBacklog string) (*taskHandoffJournal, string, error) {
+func resolveHandoffKeys(source, backlog, path string, requested []string) ([]string, error) {
+	keys, _, err := resolveHandoffKeysAndDependencies(source, backlog, path, requested)
+	return keys, err
+}
+
+func parseHandoffDependencies(output string) []string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "blocked-by:") {
+			value := strings.TrimSpace(strings.TrimPrefix(line, "blocked-by:"))
+			if value == "" {
+				return nil
+			}
+			parts := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' })
+			return parts
+		}
+	}
+	return nil
+}
+
+func prepareHandoff(source, destination, owner string, keys []string, sourceBacklog, destinationBacklog string, interpretation mhome.DispatchInterpretation) (*taskHandoffJournal, string, error) {
 	id, err := newTaskHandoffID()
 	if err != nil {
 		return nil, "", err
@@ -341,7 +411,16 @@ func prepareHandoff(source, destination, owner string, keys []string, sourceBack
 		}
 		destinationAgg := *agg
 		destinationAgg.Owner = owner
-		task := handoffTask{ID: taskID, Generation: agg.Generation, SourceAggregate: *agg, DestinationAggregate: destinationAgg}
+		destinationAgg.DispatchInterpretationID = interpretation.ID
+		destinationAgg.DispatchInterpretationDigest = interpretation.DependencySnapshotDigest
+		interpretationPath := filepath.Join(source, "state", ".dispatch", "interpretations", interpretation.ID+".json")
+		interpretationFile, err := inventoryHandoffFile(source, interpretationPath)
+		if err != nil {
+			return nil, "", err
+		}
+		destinationInterpretation := interpretationFile
+		destinationInterpretation.Target = filepath.ToSlash(filepath.Join("state", ".dispatch", "interpretations", interpretation.ID+".json"))
+		task := handoffTask{ID: taskID, Generation: agg.Generation, SourceAggregate: *agg, DestinationAggregate: destinationAgg, SourceInterpretation: interpretationFile, DestinationInterpretation: destinationInterpretation}
 		for _, rel := range taskAggregateAuthorityRelPaths(taskID, agg.Generation) {
 			file, err := inventoryHandoffFile(source, filepath.Join(source, rel))
 			if err != nil {
@@ -466,6 +545,11 @@ func stageHandoff(journal *taskHandoffJournal, dir, tasksAxi string, keys []stri
 				return err
 			}
 		}
+		if file := &journal.Tasks[i].SourceInterpretation; file.Exists {
+			if err := stageExistingHandoffFile(file, stageRoot, filepath.Join(journal.SourceHome, filepath.FromSlash(file.Target)), fmt.Sprintf("task-%d-source-interpretation", i)); err != nil {
+				return err
+			}
+		}
 	}
 
 	sourcePost := filepath.Join(stageRoot, "source-backlog-post")
@@ -499,6 +583,16 @@ func stageHandoff(journal *taskHandoffJournal, dir, tasksAxi string, keys []stri
 		task.DestinationAuthority[0] = stagedHandoffBytes(fmt.Sprintf("task-%d-destination-aggregate", i), aggregate, task.DestinationAuthority[0].Target, 0600)
 		if err := durableHandoffWrite(filepath.Join(dir, filepath.FromSlash(task.DestinationAuthority[0].Stage)), aggregate, 0600); err != nil {
 			return err
+		}
+		if task.SourceInterpretation.Exists {
+			data, err := os.ReadFile(filepath.Join(journal.SourceHome, filepath.FromSlash(task.SourceInterpretation.Target)))
+			if err != nil {
+				return err
+			}
+			task.DestinationInterpretation = stagedHandoffBytes(fmt.Sprintf("task-%d-destination-interpretation", i), data, task.DestinationInterpretation.Target, uint32(task.SourceInterpretation.Mode))
+			if err := durableHandoffWrite(filepath.Join(dir, filepath.FromSlash(task.DestinationInterpretation.Stage)), data, os.FileMode(task.DestinationInterpretation.Mode)); err != nil {
+				return err
+			}
 		}
 		current := []byte(task.Generation + "\n")
 		task.DestinationAuthority[1] = stagedHandoffBytes(fmt.Sprintf("task-%d-destination-current", i), current, task.DestinationAuthority[1].Target, 0600)
@@ -565,12 +659,14 @@ func revalidateHandoff(journal *taskHandoffJournal) error {
 		return err
 	}
 	for _, task := range journal.Tasks {
-		for _, file := range append(task.SourceAuthority, task.SourceProjections...) {
-			if err := verifyHandoffFile(journal.SourceHome, file); err != nil {
-				return fmt.Errorf("handoff source changed: %w", err)
+		for _, file := range append(append(task.SourceAuthority, task.SourceProjections...), task.SourceInterpretation) {
+			if file.Exists {
+				if err := verifyHandoffFile(journal.SourceHome, file); err != nil {
+					return fmt.Errorf("handoff source changed: %w", err)
+				}
 			}
 		}
-		for _, file := range append(task.DestinationAuthority, task.DestinationProjections...) {
+		for _, file := range append(append(task.DestinationAuthority, task.DestinationProjections...), task.DestinationInterpretation) {
 			if _, err := os.Stat(filepath.Join(journal.DestinationHome, filepath.FromSlash(file.Target))); err == nil {
 				return fmt.Errorf("handoff destination appeared: %s", file.Target)
 			} else if !os.IsNotExist(err) {
@@ -588,6 +684,11 @@ func rollForwardHandoff(journal *taskHandoffJournal, dir string) error {
 				return err
 			}
 		}
+		if task.SourceInterpretation.Exists {
+			if err := removeHandoffFile(journal.SourceHome, task.SourceInterpretation); err != nil {
+				return err
+			}
+		}
 	}
 	handoffCrashHook("source-authority")
 	if err := installHandoffPost(journal.SourceHome, journal.SourceBacklogPost, journal.SourceBacklogPre, dir); err != nil {
@@ -597,6 +698,11 @@ func rollForwardHandoff(journal *taskHandoffJournal, dir string) error {
 		return err
 	}
 	for _, task := range journal.Tasks {
+		if task.DestinationInterpretation.Exists {
+			if err := installHandoffFile(journal.DestinationHome, task.DestinationInterpretation, dir); err != nil {
+				return err
+			}
+		}
 		for _, file := range task.DestinationProjections {
 			if file.Exists {
 				if err := installHandoffFile(journal.DestinationHome, file, dir); err != nil {
@@ -612,6 +718,11 @@ func rollForwardHandoff(journal *taskHandoffJournal, dir string) error {
 	}
 	handoffCrashHook("artifacts")
 	for i, task := range journal.Tasks {
+		if task.DestinationInterpretation.Exists {
+			if err := installHandoffFile(journal.DestinationHome, task.DestinationInterpretation, dir); err != nil {
+				return err
+			}
+		}
 		for _, file := range task.DestinationAuthority {
 			if err := installHandoffFile(journal.DestinationHome, file, dir); err != nil {
 				return err
@@ -722,6 +833,11 @@ func verifyFinalHandoff(journal *taskHandoffJournal) error {
 				return err
 			}
 		}
+		if task.DestinationInterpretation.Exists {
+			if err := verifyHandoffFile(journal.DestinationHome, task.DestinationInterpretation); err != nil {
+				return err
+			}
+		}
 		for _, file := range task.DestinationProjections {
 			if file.Exists {
 				if err := verifyHandoffFile(journal.DestinationHome, file); err != nil {
@@ -734,7 +850,7 @@ func verifyFinalHandoff(journal *taskHandoffJournal) error {
 		} else if ok {
 			return fmt.Errorf("source still owns %s", task.ID)
 		}
-		for _, file := range append(task.SourceAuthority, task.SourceProjections...) {
+		for _, file := range append(append(task.SourceAuthority, task.SourceProjections...), task.SourceInterpretation) {
 			if _, err := os.Stat(filepath.Join(journal.SourceHome, filepath.FromSlash(file.Target))); err == nil {
 				return fmt.Errorf("source artifact remains: %s", file.Target)
 			} else if !os.IsNotExist(err) {
@@ -825,6 +941,7 @@ func handoffJournalFiles(journal *taskHandoffJournal) []handoffFile {
 		files = append(files, task.SourceProjections...)
 		files = append(files, task.DestinationAuthority...)
 		files = append(files, task.DestinationProjections...)
+		files = append(files, task.SourceInterpretation, task.DestinationInterpretation)
 	}
 	return files
 }

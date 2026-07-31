@@ -18,6 +18,7 @@ const (
 	ReadinessBlocked      ReadinessReason = "blocked"
 	ReadinessInFlight     ReadinessReason = "in-flight"
 	ReadinessTerminal     ReadinessReason = "terminal"
+	ReadinessDispatchHold ReadinessReason = "dispatch-hold"
 )
 
 type TaskReadiness struct {
@@ -39,6 +40,11 @@ func QueryTaskReadiness(homeDir, taskID string) (TaskReadiness, error) {
 		return TaskReadiness{TaskID: taskID, BlockingReasons: []ReadinessReason{"not-found"}}, nil
 	}
 	result := TaskReadiness{TaskID: taskID, Generation: agg.Generation}
+	if err := checkDispatchHoldUnlocked(homeDir, DispatchActionStart, taskID, agg.Project, agg.Generation, ""); err != nil {
+		if errors.Is(err, ErrDispatchHeld) {
+			result.BlockingReasons = append(result.BlockingReasons, ReadinessDispatchHold)
+		}
+	}
 	if agg.Owner == "" {
 		result.BlockingReasons = append(result.BlockingReasons, ReadinessMissingOwner)
 	}
@@ -79,6 +85,9 @@ func ListReadyTaskAggregates(homeDir string) ([]TaskAggregate, error) {
 
 func StartTask(homeDir, taskID string) (*TaskAggregate, error) {
 	return mutateCurrentTaskAggregate(homeDir, taskID, func(agg *TaskAggregate) (*TaskAggregate, error) {
+		if err := checkDispatchHoldUnlocked(homeDir, DispatchActionStart, taskID, agg.Project, agg.Generation, ""); err != nil {
+			return nil, err
+		}
 		if agg.State != "queued" && agg.State != "" {
 			return nil, lifecyclePrecondition("start requires queued task")
 		}
@@ -163,6 +172,19 @@ func ReopenTask(homeDir, taskID string) (*TaskAggregate, error) {
 }
 
 func mutateCurrentTaskAggregate(homeDir, taskID string, mutate func(*TaskAggregate) (*TaskAggregate, error)) (*TaskAggregate, error) {
+	var result *TaskAggregate
+	var mutateErr error
+	if err := withDispatchControlLock(homeDir, func() error {
+		var err error
+		result, mutateErr = mutateCurrentTaskAggregateLocked(homeDir, taskID, mutate)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return result, mutateErr
+}
+
+func mutateCurrentTaskAggregateLocked(homeDir, taskID string, mutate func(*TaskAggregate) (*TaskAggregate, error)) (*TaskAggregate, error) {
 	lock, unlock, err := acquireMetaLock(homeDir, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("mutate task: %w", err)

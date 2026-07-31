@@ -49,20 +49,23 @@ type TaskAggregateCandidate struct {
 }
 
 type TaskAggregate struct {
-	SchemaVersion string                  `json:"schema_version"`
-	TaskID        string                  `json:"task_id"`
-	Generation    string                  `json:"generation"`
-	Current       bool                    `json:"current"`
-	Owner         string                  `json:"owner"`
-	Definition    string                  `json:"definition,omitempty"`
-	State         string                  `json:"state,omitempty"`
-	StateDetail   string                  `json:"state_detail,omitempty"`
-	Endpoint      *TaskEndpointBinding    `json:"endpoint,omitempty"`
-	Worktree      *TaskWorktreeBinding    `json:"worktree,omitempty"`
-	Project       string                  `json:"project,omitempty"`
-	Kind          string                  `json:"kind,omitempty"`
-	Projections   []TaskAggregateEvidence `json:"projections,omitempty"`
-	AuditSources  []TaskAggregateEvidence `json:"audit_sources,omitempty"`
+	SchemaVersion                string                  `json:"schema_version"`
+	TaskID                       string                  `json:"task_id"`
+	Generation                   string                  `json:"generation"`
+	Current                      bool                    `json:"current"`
+	Owner                        string                  `json:"owner"`
+	Definition                   string                  `json:"definition,omitempty"`
+	State                       string                  `json:"state,omitempty"`
+	StateDetail                 string                  `json:"state_detail,omitempty"`
+	Endpoint                    *TaskEndpointBinding    `json:"endpoint,omitempty"`
+	Worktree                    *TaskWorktreeBinding    `json:"worktree,omitempty"`
+	Project                     string                  `json:"project,omitempty"`
+	ParentTaskID                string                  `json:"parent_task_id,omitempty"`
+	DispatchInterpretationID    string                  `json:"dispatch_interpretation_id,omitempty"`
+	DispatchInterpretationDigest string                 `json:"dispatch_interpretation_digest,omitempty"`
+	Kind                        string                  `json:"kind,omitempty"`
+	Projections                 []TaskAggregateEvidence `json:"projections,omitempty"`
+	AuditSources                []TaskAggregateEvidence `json:"audit_sources,omitempty"`
 }
 
 type TaskAggregateQuarantineRecord struct {

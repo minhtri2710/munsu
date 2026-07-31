@@ -49,6 +49,7 @@ type CaptainProfile struct {
 type ProjectOverlay struct {
 	SoldierHarness    string            `json:"soldierHarness,omitempty"`
 	Model             string            `json:"model,omitempty"`
+	DispatchAutonomy  string            `json:"dispatchAutonomy,omitempty"`
 	DefaultMode       string            `json:"defaultMode,omitempty"`
 	RequireNoMistakes *bool             `json:"requireNoMistakes,omitempty"`
 	BacklogBackend    string            `json:"backlogBackend,omitempty"`
@@ -88,6 +89,7 @@ type ProjectRegistryDocument struct {
 type BoundaryOverrides struct {
 	SoldierHarness    string
 	Model             string
+	DispatchAutonomy  string
 	DefaultMode       string
 	RequireNoMistakes *bool
 	BacklogBackend    string
@@ -98,6 +100,7 @@ type ResolvedProjectConfig struct {
 	Project           string            `json:"project"`
 	ProjectPath       string            `json:"projectPath"`
 	SoldierHarness    string            `json:"soldierHarness,omitempty"`
+	DispatchAutonomy  string            `json:"dispatchAutonomy,omitempty"`
 	Model             string            `json:"model,omitempty"`
 	DefaultMode       string            `json:"defaultMode,omitempty"`
 	RequireNoMistakes bool              `json:"requireNoMistakes"`
@@ -221,7 +224,8 @@ func ResolveProject(base FleetBaseDocument, captains CaptainRegistryDocument, pr
 	return ResolvedProjectConfig{
 		Project: project.Name, ProjectPath: project.Path,
 		SoldierHarness: effective.SoldierHarness, Model: effective.Model,
-		DefaultMode: effective.DefaultMode, RequireNoMistakes: require,
+		DispatchAutonomy: effective.DispatchAutonomy,
+		DefaultMode:      effective.DefaultMode, RequireNoMistakes: require,
 		BacklogBackend:   effective.BacklogBackend,
 		DispatchProfiles: cloneProfiles(effective.DispatchProfiles),
 		CaptainProfile:   captainProfile, Digest: digest,
@@ -234,6 +238,9 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 	}
 	if src.Model != "" {
 		dst.Model = src.Model
+	}
+	if src.DispatchAutonomy != "" {
+		dst.DispatchAutonomy = src.DispatchAutonomy
 	}
 	if src.DefaultMode != "" {
 		dst.DefaultMode = src.DefaultMode
@@ -251,7 +258,7 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 }
 
 func applyBoundaryOverrides(dst *ProjectOverlay, src BoundaryOverrides) {
-	applyOverlay(dst, ProjectOverlay{SoldierHarness: src.SoldierHarness, Model: src.Model, DefaultMode: src.DefaultMode, RequireNoMistakes: src.RequireNoMistakes, BacklogBackend: src.BacklogBackend, DispatchProfiles: src.DispatchProfiles})
+	applyOverlay(dst, ProjectOverlay{SoldierHarness: src.SoldierHarness, Model: src.Model, DispatchAutonomy: src.DispatchAutonomy, DefaultMode: src.DefaultMode, RequireNoMistakes: src.RequireNoMistakes, BacklogBackend: src.BacklogBackend, DispatchProfiles: src.DispatchProfiles})
 }
 
 func applyCaptainProfile(dst *CaptainProfile, src CaptainProfile) {
