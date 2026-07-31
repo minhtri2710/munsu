@@ -89,6 +89,35 @@ func setupGitRepo(t *testing.T, dir, remoteDir string) {
 	}
 }
 
+// setupRetirementTestManifest writes launch artifacts and manifest to the
+// worktree. Returns the manifest digest for use in meta.
+func setupRetirementTestManifest(t *testing.T, wt string) string {
+	t.Helper()
+	charter := DefaultCharter("retirement-test", "ship", "direct-PR")
+	brief := []byte("# Retirement test brief\n")
+	prompt := "prompt"
+	os.WriteFile(filepath.Join(wt, CharterName), []byte(charter), 0644)
+	os.WriteFile(filepath.Join(wt, BriefName), brief, 0644)
+	os.WriteFile(filepath.Join(wt, PromptName), []byte(prompt), 0644)
+	os.WriteFile(filepath.Join(wt, EnvelopeName), []byte("{}"), 0644)
+	os.WriteFile(filepath.Join(wt, LaunchScriptName), []byte("#!/bin/bash\n"), 0644)
+
+	entries := []ManifestEntry{}
+	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
+		if err != nil {
+			t.Fatalf("manifest entry for %s: %v", name, err)
+		}
+		entries = append(entries, entry)
+	}
+	manifest := BuildManifest(entries)
+	digest, err := WriteManifest(wt, manifest)
+	if err != nil {
+		t.Fatalf("writing manifest: %v", err)
+	}
+	return digest
+}
+
 func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 	tmp := t.TempDir()
 	wt := filepath.Join(tmp, "worktree")
@@ -116,10 +145,14 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 		t.Fatalf("git push: %s", out)
 	}
 
+	// Set up manifest.
+	md := setupRetirementTestManifest(t, wt)
+
 	// Clean state should pass
 	meta := map[string]string{
-		"worktree": wt,
-		"kind":     "ship",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err != nil {
@@ -152,14 +185,13 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 		t.Fatalf("git push: %s", out)
 	}
 
-	// Write known launch artifacts (untracked).
-	for _, name := range LaunchArtifactNames() {
-		os.WriteFile(filepath.Join(wt, name), []byte("test content\n"), 0644)
-	}
+	// Set up manifest (writes all launch artifacts).
+	md := setupRetirementTestManifest(t, wt)
 
 	meta := map[string]string{
-		"worktree": wt,
-		"kind":     "ship",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err != nil {
@@ -192,15 +224,16 @@ func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
 		t.Fatalf("git push: %s", out)
 	}
 
-	// Write a known launch artifact (should be fine alone).
-	os.WriteFile(filepath.Join(wt, ".soldier-charter.md"), []byte("test\n"), 0644)
+	// Set up manifest (writes all launch artifacts).
+	md := setupRetirementTestManifest(t, wt)
 
 	// Write an unknown untracked file (should cause failure).
 	os.WriteFile(filepath.Join(wt, "arbitrary.txt"), []byte("unknown\n"), 0644)
 
 	meta := map[string]string{
-		"worktree": wt,
-		"kind":     "ship",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err == nil {
@@ -236,16 +269,16 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 		t.Fatalf("git push: %s", out)
 	}
 
-	// Write all known launch artifacts.
-	for _, name := range LaunchArtifactNames() {
-		os.WriteFile(filepath.Join(wt, name), []byte("test\n"), 0644)
-	}
+	// Set up manifest (writes all launch artifacts).
+	md := setupRetirementTestManifest(t, wt)
+
 	// Write an unknown untracked file.
 	os.WriteFile(filepath.Join(wt, "rogue.txt"), []byte("rogue\n"), 0644)
 
 	meta := map[string]string{
-		"worktree": wt,
-		"kind":     "ship",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err == nil {
@@ -302,16 +335,17 @@ func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
 		t.Fatalf("git push: %s", out)
 	}
 
-	// Write only the launch script (a member of the known set).
-	os.WriteFile(filepath.Join(wt, ".soldier-launch.sh"), []byte("#!/bin/bash\nexec pi\n"), 0755)
+	// Set up manifest (writes all launch artifacts including launch script).
+	md := setupRetirementTestManifest(t, wt)
 
 	meta := map[string]string{
-		"worktree": wt,
-		"kind":     "ship",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
 	if err != nil {
-		t.Fatalf("shipSafetyCheck should pass when only .soldier-launch.sh is dirty: %v", err)
+		t.Fatalf("shipSafetyCheck should pass when only launch artifacts are dirty: %v", err)
 	}
 }
 

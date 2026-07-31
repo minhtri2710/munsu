@@ -113,6 +113,15 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	//    so the lease is not falsely claimed as released.
 	if wtPath != "" {
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
+			// Recheck launch artifacts immediately before destructive cleanup,
+			// closing the mutation window between the initial safety check
+			// and ReturnWorktree.
+			if !opts.Force {
+				expectedManifestSHA := meta["launch_manifest_sha256"]
+				if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
+					return nil, fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err)
+				}
+			}
 			if err := backend.ReturnWorktree(opts.HomeDir, wtPath); err != nil {
 				return nil, fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err)
 			}
@@ -247,6 +256,10 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 // It separates cleanliness checks (dirty worktree) from merge-proof checks
 // (topology-aware PR merge verification using delivery identity).
 // Returns proof strings emitted during merge-proof checks.
+// shipSafetyCheck verifies work is landed before
+// It separates cleanliness checks (dirty worktree) from merge-proof checks
+// (topology-aware PR merge verification using delivery identity).
+// Returns proof strings emitted during merge-proof checks.
 func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown) ([]string, error) {
 	wtPath, ok := meta["worktree"]
 	if !ok || wtPath == "" {
@@ -255,7 +268,7 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 
 	// --- Cleanliness checks (always run) ---
 
-	// Check worktree exists
+	// Check worktree exists.
 	if _, err := os.Stat(wtPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("worktree %s does not exist", wtPath)
@@ -263,106 +276,79 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 		return nil, fmt.Errorf("checking worktree %s: %w", wtPath, err)
 	}
 
-	// Check worktree is not dirty (known launch artifacts are always allowed)
-	cmd := exec.Command("git", "status", "--porcelain")
+	// Get expected manifest SHA-256 from task metadata (anchored outside worktree).
+	expectedManifestSHA := meta["launch_manifest_sha256"]
+	if expectedManifestSHA == "" || !sha256Regex.MatchString(expectedManifestSHA) {
+		// Fallback: compute the manifest digest from the worktree when meta
+		// does not provide it. This is a backward-compatibility path for
+		// callers that have not yet persisted the anchor. In production,
+		// the meta should always contain launch_manifest_sha256.
+		manifestPath := filepath.Join(wtPath, ManifestName)
+		if manifestBytes, readErr := os.ReadFile(manifestPath); readErr == nil {
+			expectedManifestSHA = sha256Content(manifestBytes)
+		}
+	}
+
+	// Verify launch artifacts using the manifest.
+	if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
+		return nil, fmt.Errorf("worktree %s: launch artifact verification failed: %w (use --force to override)", wtPath, err)
+	}
+
+	// Check for unlisted dirt: files not in the manifest that are dirty.
+	// Use --ignored=matching so ignored files (including manifest entries)
+	// are also listed; we'll skip declared artifacts and legacy after their
+	// verifier passes.
+	cmd := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "-z")
 	cmd.Dir = wtPath
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("checking git status: %w", err)
 	}
-	raw := strings.TrimSpace(string(out))
-	if raw != "" {
-		lines := strings.Split(raw, "\n")
 
-		// Try to read the manifest for digest-based verification.
-		manifest, manifestErr := ReadManifest(wtPath)
-		haveManifest := manifestErr == nil
+	// Build a set of manifest artifact paths for quick lookup.
+	manifest, manifestErr := ReadManifest(wtPath)
+	if manifestErr != nil {
+		return nil, fmt.Errorf("reading manifest for unlisted check: %w", manifestErr)
+	}
+	manifestPaths := manifest.ArtifactPaths()
 
-		// Build legacy name-based fallback allowlist.
-		nameAllowlist := make(map[string]bool)
-		for _, name := range LaunchArtifactNames() {
-			nameAllowlist[name] = true
-		}
-
-		var remaining []string
+	var remaining []string
+	if len(out) > 0 {
+		// Parse -z separated porcelain lines.
+		lines := strings.Split(string(out), "\x00")
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
-			// porcelain format: XY filename or XY "filename with spaces"
-			status := ""
-			if len(line) >= 2 {
-				status = line[:2]
-			}
 			name := parsePorcelainFilename(line)
 			if name == "" {
-				remaining = append(remaining, line)
 				continue
 			}
 
-			// Tracked or staged files block regardless of manifest.
-			isUntracked := status == "??"
-			if !isUntracked {
-				remaining = append(remaining, line)
-				continue
-			}
-
-			// The manifest file itself is always cleanable.
+			// Skip the manifest file itself (already verified by VerifyLaunchArtifacts).
 			if name == ManifestName {
 				continue
 			}
 
-			if haveManifest {
-				// Manifest-based verification.
-				entry := manifest.Lookup(name)
-				if entry != nil {
-					// Check if the file's digest matches the manifest.
-					data, err := os.ReadFile(filepath.Join(wtPath, name))
-					if err != nil {
-						remaining = append(remaining, line)
-						continue
-					}
-					if entry.Policy == DisposalPolicyCleanable && sha256Content(data) == entry.SHA256 {
-						continue
-					}
-					// Digest mismatch — modified artifact.
-					remaining = append(remaining, line)
+			// Skip declared manifest entries (already verified by VerifyLaunchArtifacts).
+			if manifestPaths[name] {
+				continue
+			}
+
+			// Check legacy .soldier-md migration.
+			if name == ".soldier-md" && manifest.LegacyBriefMigration != nil {
+				if err := CheckLegacyBriefMigration(wtPath, manifest); err == nil {
 					continue
 				}
-
-				// Not in manifest — check legacy migration.
-				// Strict: require canonical brief evidence to exist and match
-				// the manifest digest, then compare .soldier-md against it.
-				if name == ".soldier-md" && LegacyBriefMigrationEnabled {
-					briefData, briefErr := os.ReadFile(filepath.Join(wtPath, BriefName))
-					if briefErr == nil {
-						// Verify canonical brief matches manifest digest.
-						briefEntry := manifest.Lookup(BriefName)
-						if briefEntry != nil && briefEntry.Policy == DisposalPolicyCleanable &&
-							sha256Content(briefData) == briefEntry.SHA256 {
-							legacyData, legacyErr := os.ReadFile(filepath.Join(wtPath, name))
-							if legacyErr == nil && sha256Content(legacyData) == briefEntry.SHA256 {
-								continue
-							}
-						}
-					}
-				}
-
-				// Unlisted file — block.
-				remaining = append(remaining, line)
-				continue
 			}
 
-			// No manifest available — fall back to name-based allowlist.
-			if nameAllowlist[name] {
-				continue
-			}
 			remaining = append(remaining, line)
 		}
-		if len(remaining) > 0 {
-			return nil, fmt.Errorf("worktree %s has uncommitted changes (use --force to override)\n  %s", wtPath, strings.Join(remaining, "\n  "))
-		}
+	}
+
+	if len(remaining) > 0 {
+		return nil, fmt.Errorf("worktree %s has uncommitted changes (use --force to override)\n  %s", wtPath, strings.Join(remaining, "\n  "))
 	}
 
 	// --- Merge-proof checks (topology-aware) ---

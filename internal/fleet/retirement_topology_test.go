@@ -15,6 +15,35 @@ import (
 
 // --- test helpers ---
 
+// setupTopologyManifest writes canonical launch artifacts and the manifest
+// into the worktree. Returns the manifest digest for use in meta.
+func setupTopologyManifest(t *testing.T, wt string) string {
+	t.Helper()
+	charter := DefaultCharter("topology-test", "ship", "direct-PR")
+	brief := []byte("# Topology test brief\n")
+	prompt := "prompt"
+	os.WriteFile(filepath.Join(wt, CharterName), []byte(charter), 0644)
+	os.WriteFile(filepath.Join(wt, BriefName), brief, 0644)
+	os.WriteFile(filepath.Join(wt, PromptName), []byte(prompt), 0644)
+	os.WriteFile(filepath.Join(wt, EnvelopeName), []byte("{}"), 0644)
+	os.WriteFile(filepath.Join(wt, LaunchScriptName), []byte("#!/bin/bash\n"), 0644)
+
+	entries := []ManifestEntry{}
+	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
+		if err != nil {
+			t.Fatalf("manifest entry for %s: %v", name, err)
+		}
+		entries = append(entries, entry)
+	}
+	manifest := BuildManifest(entries)
+	digest, err := WriteManifest(wt, manifest)
+	if err != nil {
+		t.Fatalf("writing manifest: %v", err)
+	}
+	return digest
+}
+
 // topologyGitEnv returns the GIT_CEILING_DIRECTORIES environment for a worktree.
 func topologyGitEnv(wt string) []string {
 	return append(os.Environ(),
@@ -23,11 +52,14 @@ func topologyGitEnv(wt string) []string {
 }
 
 // fixtureMeta returns a minimal task meta map suitable for topology-aware tests.
-// Optionally includes delivery identity fields.
-func fixtureMeta(wtPath string, withIdentity bool) map[string]string {
+// Optionally includes delivery identity fields and manifest digest.
+func fixtureMeta(wtPath string, withIdentity bool, manifestDigest string) map[string]string {
 	meta := map[string]string{
 		"worktree": wtPath,
 		"kind":     "ship",
+	}
+	if manifestDigest != "" {
+		meta["launch_manifest_sha256"] = manifestDigest
 	}
 	if withIdentity {
 		meta["pr_url"] = "https://github.com/minhtri2710/munsu/pull/42"
@@ -43,11 +75,12 @@ func fixtureMeta(wtPath string, withIdentity bool) map[string]string {
 	return meta
 }
 
-// setupTopologyRepo creates a git repo with a remote and returns the worktree path.
+// setupTopologyRepo creates a git repo with a remote and returns the worktree path
+// and manifest digest.
 // Creates a branch with upstream so it's in a "clean with remote" state.
 // Sets up a real ordinary merge topology: a feature commit, merged into main,
 // and main pushed to origin so the feature head IS an ancestor of origin/main.
-func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath string) {
+func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath, manifestDigest string) {
 	t.Helper()
 	wtPath = filepath.Join(tmp, "worktree")
 	remotePath = filepath.Join(tmp, "remote.git")
@@ -125,7 +158,9 @@ func setupTopologyRepo(t *testing.T, tmp string) (wtPath, remotePath string) {
 		t.Fatalf("git checkout feature: %s", out)
 	}
 
-	return wtPath, remotePath
+	// Set up launch artifacts and manifest.
+	manifestDigest = setupTopologyManifest(t, wtPath)
+	return wtPath, remotePath, manifestDigest
 }
 
 // mockPRMergeStatus returns a function that replaces QueryDeliveryMergeStatus
@@ -150,9 +185,9 @@ func applyMockPRStatus(t *testing.T, status *domain.PRMergeStatus, err error) fu
 func TestShipSafetyCheck_Topology_CleanNoIdentity(t *testing.T) {
 	// A clean branch with remote should pass the remote branch check fallback
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, false)
+	meta := fixtureMeta(wt, false, md)
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("clean branch should pass: %v", err)
@@ -162,11 +197,11 @@ func TestShipSafetyCheck_Topology_CleanNoIdentity(t *testing.T) {
 func TestShipSafetyCheck_Topology_DirtyNoIdentity(t *testing.T) {
 	// A dirty branch should fail even with a remote
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("changes"), 0644)
 
-	meta := fixtureMeta(wt, false)
+	meta := fixtureMeta(wt, false, md)
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{})
 	if err == nil {
 		t.Fatal("dirty worktree should fail")
@@ -187,7 +222,7 @@ func TestShipSafetyCheck_Topology_NoWorktreeInMeta(t *testing.T) {
 func TestShipSafetyCheck_Topology_NonexistentWorktree(t *testing.T) {
 	// Nonexistent worktree should fail
 	tmp := t.TempDir()
-	meta := fixtureMeta(filepath.Join(tmp, "nonexistent"), false)
+	meta := fixtureMeta(filepath.Join(tmp, "nonexistent"), false, "")
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{})
 	if err == nil {
 		t.Fatal("should fail when worktree does not exist")
@@ -204,7 +239,8 @@ func TestShipSafetyCheck_Topology_NoRemoteBranchFallback(t *testing.T) {
 	os.MkdirAll(wt, 0755)
 	setupGitRepo(t, wt, "") // no remote
 
-	meta := fixtureMeta(wt, false)
+	md := setupTopologyManifest(t, wt)
+	meta := fixtureMeta(wt, false, md)
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{})
 	if err == nil {
 		t.Fatal("should fail without remote branch when no identity")
@@ -216,9 +252,9 @@ func TestShipSafetyCheck_Topology_NoRemoteBranchFallback(t *testing.T) {
 func TestShipSafetyCheck_Topology_MergedPRWithDeletedHead(t *testing.T) {
 	// Squash-merged/deleted remote head: provider confirms merged, accept teardown
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
@@ -243,7 +279,7 @@ func TestShipSafetyCheck_Topology_MergedPRWithDeletedHead(t *testing.T) {
 func TestShipSafetyCheck_Topology_MergedPRBranchExists(t *testing.T) {
 	// Merged PR where remote branch still exists: accept with head SHA match
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	// Get the actual head SHA
 	gitEnv := topologyGitEnv(wt)
@@ -256,7 +292,7 @@ func TestShipSafetyCheck_Topology_MergedPRBranchExists(t *testing.T) {
 	}
 	headSHA := strings.TrimSpace(string(shaOut))
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	meta["pr_head"] = headSHA // must match actual head
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
@@ -278,9 +314,9 @@ func TestShipSafetyCheck_Topology_MergedPRBranchExists(t *testing.T) {
 func TestShipSafetyCheck_Topology_ClosedUnmergedPR(t *testing.T) {
 	// Closed but not merged: refuse teardown
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  true,
@@ -301,9 +337,9 @@ func TestShipSafetyCheck_Topology_ClosedUnmergedPR(t *testing.T) {
 func TestShipSafetyCheck_Topology_OpenUnmergedPR(t *testing.T) {
 	// Still open and not merged: refuse teardown
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  false,
@@ -324,9 +360,9 @@ func TestShipSafetyCheck_Topology_OpenUnmergedPR(t *testing.T) {
 func TestShipSafetyCheck_Topology_ProviderUnavailable(t *testing.T) {
 	// Provider unreachable: fail closed
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, nil, fmt.Errorf("gh CLI not available"))
 	defer cleanup()
 
@@ -342,9 +378,9 @@ func TestShipSafetyCheck_Topology_ProviderUnavailable(t *testing.T) {
 func TestShipSafetyCheck_Topology_WrongPRHead(t *testing.T) {
 	// Mismatched head SHA when remote branch still exists: refuse
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	// Stored head doesn't match provider-reported head
 	meta["pr_head"] = "oldsha0000000000000000000000000000000000"
 
@@ -368,11 +404,11 @@ func TestShipSafetyCheck_Topology_WrongPRHead(t *testing.T) {
 func TestShipSafetyCheck_Topology_DirtyWithIdentity(t *testing.T) {
 	// Dirty worktree should fail even with valid merged PR
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("changes"), 0644)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
@@ -397,9 +433,9 @@ func TestShipSafetyCheck_Topology_EmitProof(t *testing.T) {
 	// We verify this by inspecting the proof string in the error messages
 	// when things fail, and by verifying success is returned when things pass.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
@@ -470,8 +506,8 @@ func TestShipSafetyCheck_Topology_ExistingTestsStillWork(t *testing.T) {
 
 	// Clean with remote (no identity) should pass
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
-	meta := fixtureMeta(wt, false)
+	wt, _, md := setupTopologyRepo(t, tmp)
+	meta := fixtureMeta(wt, false, md)
 	_, err = shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{})
 	if err != nil {
 		t.Fatalf("clean branch with remote should pass: %v", err)
@@ -479,7 +515,7 @@ func TestShipSafetyCheck_Topology_ExistingTestsStillWork(t *testing.T) {
 
 	// Dirty should fail
 	os.WriteFile(filepath.Join(wt, "another-dirty.txt"), []byte("changes"), 0644)
-	meta = fixtureMeta(wt, false)
+	meta = fixtureMeta(wt, false, md)
 	_, err = shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{})
 	if err == nil {
 		t.Fatal("dirty worktree should fail")
@@ -496,11 +532,12 @@ func TestShipSafetyCheck_Topology_PartialIdentityFailsClosed(t *testing.T) {
 	// Partial identity should fail closed, not degrade to legacy branch check.
 	// Has pr_url and pr_head but missing pr_provider, pr_owner, pr_repo, pr_number, pr_base, pr_head_ref.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	meta := map[string]string{
 		"worktree": wt,
 		"kind":     "ship",
+		"launch_manifest_sha256": md,
 		"pr_url":   "https://github.com/minhtri2710/munsu/pull/42",
 		"pr_head":  "abc123def456",
 	}
@@ -516,7 +553,7 @@ func TestShipSafetyCheck_Topology_PartialIdentityFailsClosed(t *testing.T) {
 func TestShipSafetyCheck_Topology_MissingProviderFailsClosed(t *testing.T) {
 	// All fields except pr_provider set — ValidateIdentity should reject.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	meta := map[string]string{
 		"worktree":     wt,
@@ -546,9 +583,9 @@ func TestShipSafetyCheck_Topology_ProofReturnedDeletedHead(t *testing.T) {
 	// When topologyAwareMergeCheck succeeds with deleted head,
 	// the proof string is returned and not dead code.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:    true,
 		MergedSHA: "abc123def456",
@@ -582,7 +619,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedDeletedHead(t *testing.T) {
 func TestShipSafetyCheck_Topology_ProofReturnedOrdinaryMerge(t *testing.T) {
 	// Ordinary merge (remote branch exists) returns proof with ancestry verification.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	// Get the actual head SHA
 	gitEnv := topologyGitEnv(wt)
@@ -595,7 +632,7 @@ func TestShipSafetyCheck_Topology_ProofReturnedOrdinaryMerge(t *testing.T) {
 	}
 	headSHA := strings.TrimSpace(string(shaOut))
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	meta["pr_head"] = headSHA // must match actual head
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
@@ -629,7 +666,7 @@ func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 	// the ancestry check is not a blocker — provider-confirmed MERGED is
 	// sufficient proof.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	// Create an unrelated commit on a separate branch that will never
 	// be an ancestor of origin/main.
@@ -672,7 +709,7 @@ func TestShipSafetyCheck_Topology_AncestryFails(t *testing.T) {
 		t.Fatalf("checkout feature branch: %s", out)
 	}
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	meta["pr_head"] = orphanSHA // orphan SHA is NOT an ancestor of origin/main
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
@@ -702,7 +739,7 @@ func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
 	// Remote branch still exists. HeadSHA is NOT an ancestor of main,
 	// but MergedSHA (the merge commit) IS an ancestor. Teardown should succeed.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	// Get the feature branch head SHA
 	gitEnv := topologyGitEnv(wt)
@@ -777,7 +814,7 @@ func TestShipSafetyCheck_Topology_SquashMerge(t *testing.T) {
 	// on main is unrelated to the feature branch head).
 	// squashSHA IS an ancestor of origin/main.
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	meta["pr_head"] = headSHA
 
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
@@ -810,9 +847,9 @@ func TestShipSafetyCheck_Topology_UnmergedDeletedBranch(t *testing.T) {
 	// Remote branch deleted but PR NOT merged: branch deletion alone
 	// never authorizes
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 
 	// Delete the remote branch but mock PR status as OPEN (not merged)
 	gitEnv := topologyGitEnv(wt)
@@ -843,9 +880,9 @@ func TestShipSafetyCheck_Topology_UnmergedDeletedBranch(t *testing.T) {
 func TestShipSafetyCheck_Topology_ProviderEmptyState(t *testing.T) {
 	// Provider returns an empty/invalid state — should fail closed.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	cleanup := applyMockPRStatus(t, &domain.PRMergeStatus{
 		Merged:  false,
 		Closed:  false,
@@ -869,9 +906,9 @@ func TestShipSafetyCheck_Topology_DeletedHeadWrongSHA(t *testing.T) {
 	// topology where the remote branch is gone but the live head SHA
 	// differs from the one captured at PR-check time.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	// Stored head SHA differs from provider-reported head SHA
 	meta["pr_head"] = "storedsha0000000000000000000000000000000000"
 
@@ -903,7 +940,7 @@ func TestShipSafetyCheck_Topology_PartialIdentityNoURL(t *testing.T) {
 	// Partial identity with multiple fields but no pr_url must fail closed
 	// and NOT fall through to the legacy remote branch check.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	meta := map[string]string{
 		"worktree":    wt,
@@ -937,7 +974,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 	//   - Provider confirms: MERGED
 	//   -> shipSafetyCheck MUST succeed without Force
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1010,7 +1047,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1071,7 +1108,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1132,7 +1169,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1191,7 +1228,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1250,7 +1287,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *test
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, _ := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1308,7 +1345,7 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 	// When delivery_state=merged and provider confirms merge,
 	// teardown should accept without --force.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 	shaCmd := exec.Command("git", "rev-parse", "HEAD")
@@ -1320,7 +1357,7 @@ func TestShipSafetyCheck_DeliveryStateMergedAcceptsWithoutForce(t *testing.T) {
 	}
 	headSHA := strings.TrimSpace(string(shaOut))
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	meta["pr_head"] = headSHA
 	meta["pr_head_sha"] = headSHA
 	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateMerged)
@@ -1343,7 +1380,7 @@ func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.
 	// When delivery_state=review-ready (not merged), teardown MUST reject
 	// without --force even when provider says merged.
 	tmp := t.TempDir()
-	wt, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 	shaCmd := exec.Command("git", "rev-parse", "HEAD")
@@ -1355,7 +1392,7 @@ func TestShipSafetyCheck_DeliveryStateReviewReadyRejectsWithoutForce(t *testing.
 	}
 	headSHA := strings.TrimSpace(string(shaOut))
 
-	meta := fixtureMeta(wt, true)
+	meta := fixtureMeta(wt, true, md)
 	meta["pr_head"] = headSHA
 	meta["pr_head_sha"] = headSHA
 	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateReviewReady)

@@ -42,6 +42,10 @@ type Runner struct {
 	promptEnv  *LaunchEnvelope
 	launchArgs []string
 	launchBin  string
+
+	// manifestSHA256 is the SHA-256 digest of the written launch manifest,
+	// persisted to task metadata for external anchoring.
+	manifestSHA256 string
 }
 
 // NewRunner creates a Runner for the given Args.
@@ -910,9 +914,17 @@ func (r *Runner) writeLaunchManifest() error {
 		entries = append(entries, entry)
 	}
 	manifest := BuildManifest(entries)
-	if err := WriteManifest(r.wtPath, manifest); err != nil {
+
+	// Include the legacy brief migration policy in the manifest so retirement
+	// can verify .soldier-md cleanup during the bounded migration window.
+	policy := LegacyBriefMatchCanonicalV1
+	manifest.LegacyBriefMigration = &policy
+
+	digest, err := WriteManifest(r.wtPath, manifest)
+	if err != nil {
 		return fmt.Errorf("writing launch manifest: %w", err)
 	}
+	r.manifestSHA256 = digest
 	return nil
 }
 
@@ -1130,6 +1142,9 @@ func (r *Runner) writeTaskMeta() error {
 	}
 	if r.projectConfigLoaded {
 		meta["config_snapshot_digest"] = r.projectConfig.SnapshotDigest
+	}
+	if r.manifestSHA256 != "" {
+		meta["launch_manifest_sha256"] = r.manifestSHA256
 	}
 
 	for k, v := range r.endpoint.Metadata {

@@ -31,12 +31,6 @@ const LaunchScriptName = ".soldier-launch.sh"
 // ManifestName is the versioned launch artifact manifest file name.
 const ManifestName = ".soldier-manifest.json"
 
-// LegacyBriefMigrationEnabled controls whether legacy .soldier-md is recognized
-// during retirement. When true, an untracked .soldier-md whose digest matches
-// the canonical brief evidence is accepted as cleanable. This flag should be
-// removed in a future release after the migration window closes.
-const LegacyBriefMigrationEnabled = true
-
 // LaunchArtifactNames returns the exact set of known munsu-owned runtime launch
 // artifact filenames. These are written by spawn/launch and are lifecycle-owned:
 // they may be cleaned during normal (non-force) teardown without being considered
