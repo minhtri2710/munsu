@@ -133,7 +133,9 @@ func TestRunnerWriteTaskMetaRecordsConfigSnapshotDigest(t *testing.T) {
 		projectConfigLoaded: true,
 	}
 
-	r.writeTaskMeta()
+	if err := r.writeTaskMeta(); err != nil {
+		t.Fatal(err)
+	}
 	meta, err := homepkg.ReadMeta(home, "task-1")
 	if err != nil {
 		t.Fatal(err)

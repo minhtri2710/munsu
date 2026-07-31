@@ -29,12 +29,6 @@ type SubmitPromptResult struct {
 	Status string
 }
 
-type EndpointStatus struct {
-	Alive           bool
-	RecognizedAgent bool
-	Busy            bool
-}
-
 type Service struct {
 	adapters AdapterRegistry
 }
@@ -42,7 +36,7 @@ type Service struct {
 type Adapter interface {
 	Create(container, name, workingDirectory string) (string, error)
 	Submit(handle, prompt string) (SubmitPromptResult, error)
-	Probe(handle string) (EndpointStatus, error)
+	Probe(handle string) (EndpointObservation, error)
 	Dispose(handle string) error
 }
 
@@ -89,12 +83,16 @@ func (s Service) SubmitPrompt(request SubmitPromptRequest) (SubmitPromptResult, 
 	return adapter.Submit(request.Endpoint.Handle, request.Prompt)
 }
 
-func (s Service) ProbeEndpoint(endpoint EndpointRef) (EndpointStatus, error) {
+func (s Service) ProbeEndpoint(endpoint EndpointRef) (EndpointObservation, error) {
 	adapter, err := s.adapters.Resolve(endpoint.Backend)
 	if err != nil {
-		return EndpointStatus{}, fmt.Errorf("resolving bound backend %q: %w", endpoint.Backend, err)
+		return EndpointObservation{State: EndpointUnresolved, Detail: fmt.Sprintf("resolving bound backend %q: %v", endpoint.Backend, err)}, nil
 	}
-	return adapter.Probe(endpoint.Handle)
+	observation, err := adapter.Probe(endpoint.Handle)
+	if err != nil {
+		return ObservationFromProbeError(endpoint, err), nil
+	}
+	return observation, nil
 }
 
 func (s Service) DisposeEndpoint(endpoint EndpointRef) error {

@@ -7,13 +7,22 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
-type probeBackend struct{ aliveHandle string }
+type probeBackend struct {
+	aliveHandle string
+	checkErr    error
+}
 
 func (p probeBackend) NewWindow(string, string) (string, error) { return "", nil }
 func (p probeBackend) SendKeys(string, string) error            { return nil }
 func (p probeBackend) Capture(string, int) (string, error)      { return "", nil }
 func (p probeBackend) Alive(handle string) bool                 { return handle == p.aliveHandle }
-func (p probeBackend) Teardown(string) error                    { return nil }
+func (p probeBackend) CheckAlive(handle string) (bool, error) {
+	if p.checkErr != nil {
+		return false, p.checkErr
+	}
+	return handle == p.aliveHandle, nil
+}
+func (p probeBackend) Teardown(string) error { return nil }
 
 func TestCLIEndpointProbeTaskProbeUsesCaptainHome(t *testing.T) {
 	var resolvedHome string
@@ -54,8 +63,8 @@ func TestCLIEndpointProbeRequiresLiveAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Alive {
-		t.Fatal("endpoint must be dead when the pane exists but the agent is not alive")
+	if status.Alive() || status.State != fleet.EndpointStarting {
+		t.Fatalf("endpoint must be starting when the pane exists but the agent is not alive: %+v", status)
 	}
 }
 
@@ -68,7 +77,7 @@ func TestCLIEndpointProbePreservesBoundMetadata(t *testing.T) {
 		return probeBackend{aliveHandle: "session-1:pane-1"}, "herdr", nil
 	}}
 	status, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: "session-1:pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", Home: "/home"})
-	if err != nil || !status.Alive {
+	if err != nil || !status.Alive() {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
 	if gotHome != "/home" || got["herdr_session"] != "session-1" || got["herdr_workspace_id"] != "workspace-1" || got["herdr_tab_id"] != "tab-1" || got["window"] != "session-1:pane-1" {
@@ -88,8 +97,11 @@ func TestCLIEndpointProbeRejectsIncompleteAndUnknownIdentity(t *testing.T) {
 
 func TestCLIEndpointProbeRejectsHerdrSessionMismatch(t *testing.T) {
 	probe := cliEndpointProbe{}
-	_, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: "session-a:pane-1", SessionOwner: "session-b", Home: "/home"})
-	if err == nil {
-		t.Fatal("expected session mismatch")
+	status, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: "session-a:pane-1", SessionOwner: "session-b", Home: "/home"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != fleet.EndpointStaleIdentity {
+		t.Fatalf("status=%+v, want stale-identity", status)
 	}
 }

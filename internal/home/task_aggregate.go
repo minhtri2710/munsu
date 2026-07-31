@@ -57,6 +57,7 @@ type TaskAggregate struct {
 	Definition    string                  `json:"definition,omitempty"`
 	State         string                  `json:"state,omitempty"`
 	StateDetail   string                  `json:"state_detail,omitempty"`
+	Endpoint      *TaskEndpointBinding    `json:"endpoint,omitempty"`
 	Project       string                  `json:"project,omitempty"`
 	Kind          string                  `json:"kind,omitempty"`
 	Projections   []TaskAggregateEvidence `json:"projections,omitempty"`
@@ -240,6 +241,14 @@ func validateTaskAggregate(agg TaskAggregate) error {
 	}
 	if strings.TrimSpace(agg.Owner) == "" {
 		return fmt.Errorf("aggregate %s/%s missing owner", agg.TaskID, agg.Generation)
+	}
+	if agg.Endpoint != nil {
+		if agg.Endpoint.TaskGeneration != agg.Generation {
+			return fmt.Errorf("aggregate %s/%s endpoint binding targets generation %s", agg.TaskID, agg.Generation, agg.Endpoint.TaskGeneration)
+		}
+		if err := validateTaskEndpointBinding(*agg.Endpoint); err != nil {
+			return err
+		}
 	}
 	return nil
 }

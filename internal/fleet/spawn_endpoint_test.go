@@ -9,8 +9,11 @@ func (f fakeEndpointCapabilities) Create(req CreateRequest) (CreatedEndpoint, er
 func (f fakeEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error {
 	return f.backend.SendKeys(ep.Handle, text)
 }
-func (f fakeEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointStatus, error) {
-	return SpawnEndpointStatus{Alive: f.backend.Alive(ep.Handle)}, nil
+func (f fakeEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointObservation, error) {
+	if f.backend.Alive(ep.Handle) {
+		return SpawnEndpointObservation{State: EndpointAlive}, nil
+	}
+	return SpawnEndpointObservation{State: EndpointDead}, nil
 }
 func (f fakeEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
 	return f.backend.Capture(ep.Handle, n)

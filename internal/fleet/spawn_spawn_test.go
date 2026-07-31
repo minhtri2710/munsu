@@ -1518,8 +1518,8 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	if err == nil {
 		t.Fatal("Run expected error when post-create verification fails, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed verification") {
-		t.Errorf("expected failed verification error, got: %v", err)
+	if !strings.Contains(err.Error(), "observation") {
+		t.Errorf("expected typed observation error, got: %v", err)
 	}
 
 	metaPath := filepath.Join(homeDir, "state", "reconcile-task.meta")

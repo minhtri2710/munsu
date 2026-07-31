@@ -9,12 +9,12 @@ type CreatedEndpoint struct {
 	Metadata                                          map[string]string
 }
 
-type SpawnEndpointStatus struct{ Alive bool }
+type SpawnEndpointObservation = EndpointStatus
 
 type EndpointCapabilities interface {
 	Create(CreateRequest) (CreatedEndpoint, error)
 	Submit(CreatedEndpoint, string) error
-	Probe(CreatedEndpoint) (SpawnEndpointStatus, error)
+	Probe(CreatedEndpoint) (SpawnEndpointObservation, error)
 	Capture(CreatedEndpoint, int) (string, error)
 	Dispose(CreatedEndpoint) error
 }

@@ -123,7 +123,7 @@ func newBacklogStartCmd() *cobra.Command {
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return runBacklogTransition(ctx.Home, "start", args, fleet.StateInFlight, "working", "backlog: in-flight")
+			return runBacklogTransition(ctx.Home, "start", args, fleet.StateInFlight, "starting", "backlog: in-flight")
 		}),
 	}
 }

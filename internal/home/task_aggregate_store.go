@@ -90,6 +90,9 @@ func UpdateCurrentTaskAggregateState(homeDir, taskID, state, detail string) (*Ta
 	if err != nil || !ok {
 		return nil, ok, err
 	}
+	if state == "working" && agg.Endpoint == nil {
+		return nil, true, fmt.Errorf("task aggregate %s/%s cannot become working before endpoint binding is persisted", taskID, agg.Generation)
+	}
 	updated := *agg
 	updated.State = state
 	updated.StateDetail = detail

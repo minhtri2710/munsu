@@ -279,8 +279,8 @@ func TestCaptainStatus_Dead(t *testing.T) {
 
 	// Live lock must not override dead pane.
 	status := CaptainStatus(parent, "test-sm", smHome)
-	if status != "dead" {
-		t.Errorf("CaptainStatus = %q, want %q", status, "dead")
+	if status != "unknown" {
+		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
 	}
 }
 
@@ -292,7 +292,7 @@ func TestCaptainStatus_Unknown(t *testing.T) {
 	}
 }
 
-func TestCaptainStatus_BackendErrorIsDead(t *testing.T) {
+func TestCaptainStatus_BackendErrorIsUnknown(t *testing.T) {
 	tmp := t.TempDir()
 	parent := filepath.Join(tmp, "parent")
 	smHome := filepath.Join(tmp, "captains", "test-sm")
@@ -312,8 +312,70 @@ func TestCaptainStatus_BackendErrorIsDead(t *testing.T) {
 	})
 
 	status := CaptainStatus(parent, "test-sm", smHome)
-	if status != "dead" {
-		t.Errorf("CaptainStatus = %q, want %q", status, "dead")
+	if status != "unknown" {
+		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
+	}
+}
+
+type snapshotProbe struct {
+	status EndpointStatus
+	err    error
+}
+
+func (p snapshotProbe) ProbeEndpoint(EndpointRef) (EndpointStatus, error) { return p.status, p.err }
+
+func withEndpointProbe(t *testing.T, probe EndpointProbe) {
+	t.Helper()
+	oldEndpoint := endpointProbe
+	oldPane := paneAliveForCaptain
+	endpointProbe = probe
+	paneAliveForCaptain = nil
+	t.Cleanup(func() { endpointProbe = oldEndpoint; paneAliveForCaptain = oldPane })
+}
+
+func TestCaptainStatusTypedObservations(t *testing.T) {
+	tests := []struct {
+		state EndpointObservationState
+		want  string
+	}{
+		{EndpointAlive, "alive"},
+		{EndpointStarting, "starting"},
+		{EndpointDead, "dead"},
+		{EndpointUnresponsive, "unresponsive"},
+		{EndpointUnresolved, "unresolved"},
+		{EndpointStaleIdentity, "stale-identity"},
+		{EndpointUnknown, "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			tmp := t.TempDir()
+			parent := filepath.Join(tmp, "parent")
+			smHome := filepath.Join(tmp, "captains", "test-sm")
+			os.MkdirAll(smHome, 0755)
+			os.MkdirAll(filepath.Join(parent, "state"), 0755)
+			if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{"kind": "captain", "sm_id": "test-sm", "home": smHome, "window": "@cap", "backend": "tmux"}); err != nil {
+				t.Fatal(err)
+			}
+			withEndpointProbe(t, snapshotProbe{status: EndpointStatus{State: tt.state}})
+			if got := CaptainStatus(parent, "test-sm", smHome); got != tt.want {
+				t.Fatalf("CaptainStatus=%q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCaptainStatusProbeErrorIsUnknownNotDead(t *testing.T) {
+	tmp := t.TempDir()
+	parent := filepath.Join(tmp, "parent")
+	smHome := filepath.Join(tmp, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
+	os.MkdirAll(filepath.Join(parent, "state"), 0755)
+	if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{"kind": "captain", "sm_id": "test-sm", "home": smHome, "window": "@cap", "backend": "tmux"}); err != nil {
+		t.Fatal(err)
+	}
+	withEndpointProbe(t, snapshotProbe{err: fmt.Errorf("backend unavailable")})
+	if got := CaptainStatus(parent, "test-sm", smHome); got != "unknown" {
+		t.Fatalf("CaptainStatus=%q want unknown", got)
 	}
 }
 

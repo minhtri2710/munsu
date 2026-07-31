@@ -200,8 +200,7 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 		bk, err := Select("orca")
 		return bk, "orca", err
 	default:
-		// Unknown backend in meta: fall through to Resolve.
-		return Resolve(homeDir, "")
+		return nil, "", fmt.Errorf("unknown bound session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", bkName)
 	}
 }
 func readConfigBackend(homeDir string) string {

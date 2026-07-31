@@ -112,12 +112,10 @@ func TestBackendForTask_EmptyMetaBackend(t *testing.T) {
 	}
 }
 
-// TestBackendForTask_UnknownMetaBackendFallsThrough verifies that an unknown
-// backend in meta causes a fallthrough to Resolve.
-func TestBackendForTask_UnknownMetaBackendFallsThrough(t *testing.T) {
+// TestBackendForTask_UnknownMetaBackendFailsClosed verifies that an unknown
+// bound backend in meta never falls through to config/default resolution.
+func TestBackendForTask_UnknownMetaBackendFailsClosed(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	// Set up a config pin so the fallthrough has something to find.
 	configDir := filepath.Join(tmpDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatal(err)
@@ -127,15 +125,8 @@ func TestBackendForTask_UnknownMetaBackendFallsThrough(t *testing.T) {
 	}
 
 	meta := map[string]string{"backend": "nonexistent", "window": "@test"}
-	bk, name, err := BackendForTask(tmpDir, meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "tmux" {
-		t.Errorf("name = %q, want tmux (from config fallthrough), got %s", name, name)
-	}
-	if _, ok := bk.(*TmuxBackend); !ok {
-		t.Errorf("expected TmuxBackend, got %T", bk)
+	if _, _, err := BackendForTask(tmpDir, meta); err == nil {
+		t.Fatal("expected unknown bound backend to fail closed")
 	}
 }
 

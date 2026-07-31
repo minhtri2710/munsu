@@ -316,3 +316,56 @@ func mustReadFile(t *testing.T, path string) []byte {
 	}
 	return data
 }
+
+func TestTaskAggregateRequiresPersistedEndpointBindingBeforeWorking(t *testing.T) {
+	homeDir := t.TempDir()
+	agg, err := CreateTaskAggregate(homeDir, "task-bind", "general", "bind endpoint", "ship", "munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := UpdateCurrentTaskAggregateState(homeDir, agg.TaskID, "working", "spawned"); err == nil {
+		t.Fatal("working state without endpoint binding should fail")
+	}
+	binding := TaskEndpointBinding{
+		Backend:     "herdr",
+		Handle:      "session:pane",
+		LeaseID:     "lease-1",
+		FenceToken:  "fence-1",
+		BoundAtUnix: 123,
+	}
+	if err := BindTaskEndpoint(homeDir, agg.TaskID, agg.Generation, binding); err != nil {
+		t.Fatalf("BindTaskEndpoint: %v", err)
+	}
+	updated, ok, err := UpdateCurrentTaskAggregateState(homeDir, agg.TaskID, "working", "spawned")
+	if err != nil || !ok {
+		t.Fatalf("UpdateCurrentTaskAggregateState: ok=%v err=%v", ok, err)
+	}
+	reloaded, err := ReadTaskAggregate(homeDir, agg.TaskID, agg.Generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Endpoint == nil || reloaded.Endpoint == nil {
+		t.Fatalf("endpoint binding not persisted: updated=%+v reloaded=%+v", updated.Endpoint, reloaded.Endpoint)
+	}
+	if reloaded.Endpoint.TaskGeneration != agg.Generation || reloaded.Endpoint.LeaseID != "lease-1" || reloaded.Endpoint.FenceToken != "fence-1" {
+		t.Fatalf("binding = %+v", reloaded.Endpoint)
+	}
+}
+
+func TestTaskEndpointBindingIsGenerationScopedAndImmutable(t *testing.T) {
+	homeDir := t.TempDir()
+	agg, err := CreateTaskAggregate(homeDir, "task-immut", "general", "bind endpoint", "ship", "munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := TaskEndpointBinding{Backend: "tmux", Handle: "munsu:@1", LeaseID: "lease-1", FenceToken: "fence-1", BoundAtUnix: 1}
+	if err := BindTaskEndpoint(homeDir, agg.TaskID, agg.Generation, binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := BindTaskEndpoint(homeDir, agg.TaskID, agg.Generation, TaskEndpointBinding{Backend: "tmux", Handle: "munsu:@2", LeaseID: "lease-2", FenceToken: "fence-2", BoundAtUnix: 2}); err == nil {
+		t.Fatal("rebinding same task generation should fail")
+	}
+	if err := BindTaskEndpoint(homeDir, agg.TaskID, "2", binding); err == nil {
+		t.Fatal("binding stale/non-current generation should fail")
+	}
+}

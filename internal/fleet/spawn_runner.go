@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -115,15 +116,21 @@ func (r *Runner) Run() (string, error) {
 	if err := r.waitAndInjectBrief(); err != nil {
 		return "", err
 	}
-	status, err := r.endpoints.Probe(r.endpoint)
-	if err != nil || !status.Alive {
-		_ = r.endpoints.Dispose(r.endpoint)
-		if err != nil {
-			return "", fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
-		}
-		return "", fmt.Errorf("created pane %q failed verification on backend %q before persisting state", r.windowID, r.endpoint.Backend)
+	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
+		return "", err
 	}
-	r.writeTaskMeta()
+	if err := r.bindEndpoint(); err != nil {
+		_ = r.endpoints.Dispose(r.endpoint)
+		return "", err
+	}
+	if err := r.writeTaskMeta(); err != nil {
+		_ = r.endpoints.Dispose(r.endpoint)
+		return "", err
+	}
+	if err := r.markWorkingAfterBinding(); err != nil {
+		_ = r.endpoints.Dispose(r.endpoint)
+		return "", err
+	}
 	r.appendSpawnedStatus()
 	r.printEndpointInfo()
 	r.armWatcher()
@@ -419,7 +426,7 @@ func (r *Runner) checkBacklogAuthority() error {
 		if metaExists && !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
 		}
-		return nil
+		return r.ensureTaskAggregate(item)
 	}
 
 	// Live session without matching state still refuses (stale meta after teardown failure).
@@ -427,6 +434,17 @@ func (r *Runner) checkBacklogAuthority() error {
 		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
 	}
 
+	return r.ensureTaskAggregate(item)
+}
+
+func (r *Runner) ensureTaskAggregate(item Item) error {
+	if _, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID); err != nil {
+		return fmt.Errorf("lifecycle guard: reading task aggregate: %w", err)
+	} else if !ok {
+		if _, err := home.CreateTaskAggregate(r.homeDir, r.args.ID, "", item.Description, item.Kind, item.Repo); err != nil {
+			return fmt.Errorf("lifecycle guard: creating task aggregate: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -647,12 +665,12 @@ func (r *Runner) createSession() error {
 		return err
 	}
 	status, err := r.endpoints.Probe(ep)
-	if err != nil || !status.Alive {
+	if err != nil || (status.State != EndpointAlive && status.State != EndpointStarting) {
 		_ = r.endpoints.Dispose(ep)
 		if err != nil {
 			return fmt.Errorf("verifying created pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
 		}
-		return fmt.Errorf("created pane %q failed verification on backend %q", ep.Handle, ep.Backend)
+		return fmt.Errorf("created pane %q observation %s on backend %q", ep.Handle, status.State, ep.Backend)
 	}
 	r.endpoint, r.windowID = ep, ep.Handle
 	return nil
@@ -903,8 +921,11 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if probeErr != nil {
 				return fmt.Errorf("probing bound endpoint: %w", probeErr)
 			}
-			if !status.Alive {
+			if status.State == EndpointDead {
 				return fmt.Errorf("window died while waiting for ready")
+			}
+			if status.State == EndpointUnresponsive || status.State == EndpointUnresolved || status.State == EndpointUnknown || status.State == EndpointStaleIdentity {
+				return fmt.Errorf("endpoint observation %s while waiting for ready", status.State)
 			}
 			capture, err := r.endpoints.Capture(r.endpoint, 60)
 			if err != nil {
@@ -929,8 +950,59 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 	}
 }
 
+func (r *Runner) verifyEndpointReadyBeforePersist() error {
+	status, err := r.endpoints.Probe(r.endpoint)
+	if err != nil || status.State != EndpointAlive {
+		_ = r.endpoints.Dispose(r.endpoint)
+		if err != nil {
+			return fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
+		}
+		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state", r.windowID, status.State, r.endpoint.Backend)
+	}
+	return nil
+}
+
+func (r *Runner) bindEndpoint() error {
+	agg, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("task aggregate %s has no current generation for endpoint binding", r.args.ID)
+	}
+	binding := home.TaskEndpointBinding{
+		Backend:      r.endpoint.Backend,
+		Handle:       r.endpoint.Handle,
+		LeaseID:      newEndpointToken(),
+		FenceToken:   newEndpointToken(),
+		SessionOwner: r.endpoint.SessionOwner,
+		WorkspaceID:  r.endpoint.WorkspaceID,
+		TabID:        r.endpoint.TabID,
+		BoundAtUnix:  time.Now().Unix(),
+	}
+	if err := home.BindTaskEndpoint(r.homeDir, r.args.ID, agg.Generation, binding); err != nil {
+		return fmt.Errorf("binding endpoint before working: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) markWorkingAfterBinding() error {
+	if _, _, err := home.UpdateCurrentTaskAggregateState(r.homeDir, r.args.ID, "working", "spawned"); err != nil {
+		return fmt.Errorf("marking task working after endpoint binding: %w", err)
+	}
+	return nil
+}
+
+func newEndpointToken() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("lease-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", buf)
+}
+
 // Phase 14: writeTaskMeta writes the task metadata file.
-func (r *Runner) writeTaskMeta() {
+func (r *Runner) writeTaskMeta() error {
 	yoloVal := "off"
 	if r.args.Yolo {
 		yoloVal = "on"
@@ -961,8 +1033,9 @@ func (r *Runner) writeTaskMeta() {
 	}
 
 	if err := home.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: writing task meta: %v\n", err)
+		return fmt.Errorf("writing task meta: %w", err)
 	}
+	return nil
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

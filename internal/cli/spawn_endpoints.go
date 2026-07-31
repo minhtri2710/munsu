@@ -59,12 +59,13 @@ func (s *spawnSessionEndpoints) Submit(ep fleet.CreatedEndpoint, text string) er
 	return bk.SendKeys(ep.Handle, text)
 }
 
-func (s *spawnSessionEndpoints) Probe(ep fleet.CreatedEndpoint) (fleet.SpawnEndpointStatus, error) {
+func (s *spawnSessionEndpoints) Probe(ep fleet.CreatedEndpoint) (fleet.SpawnEndpointObservation, error) {
 	bk, err := s.backend(ep)
 	if err != nil {
-		return fleet.SpawnEndpointStatus{}, err
+		return fleet.SpawnEndpointObservation{}, err
 	}
-	return fleet.SpawnEndpointStatus{Alive: bk.Alive(ep.Handle)}, nil
+	observation := backend.ObserveBackendEndpoint(bk, ep.Handle)
+	return fleet.SpawnEndpointObservation{State: observation.State, Detail: observation.Detail}, nil
 }
 
 func (s *spawnSessionEndpoints) Capture(ep fleet.CreatedEndpoint, lines int) (string, error) {

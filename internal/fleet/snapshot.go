@@ -218,12 +218,12 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 		}
 		if w := meta["window"]; w != "" {
 			if endpointProbe != nil || paneAliveForCaptain != nil {
-				alive, err := probeEndpoint(taskHome, meta)
-				if err != nil {
+				status, err := observeEndpoint(taskHome, meta)
+				if err != nil || status.State != EndpointAlive {
 					ts.PaneAlive = false
 					ts.PaneAliveUnknown = true
 				} else {
-					ts.PaneAlive = alive
+					ts.PaneAlive = true
 					ts.PaneAliveUnknown = false
 				}
 			} else {
@@ -392,14 +392,26 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 	if endpointProbe == nil && paneAliveForCaptain == nil {
 		return "unknown"
 	}
-	alive, aliveErr := probeEndpoint(parentHome, meta)
-	if aliveErr != nil {
-		return "dead"
+	status, err := observeEndpoint(parentHome, meta)
+	if err != nil {
+		return "unknown"
 	}
-	if alive {
+	switch status.State {
+	case EndpointAlive:
 		return "alive"
+	case EndpointStarting:
+		return "starting"
+	case EndpointDead:
+		return "dead"
+	case EndpointUnresponsive:
+		return "unresponsive"
+	case EndpointUnresolved:
+		return "unresolved"
+	case EndpointStaleIdentity:
+		return "stale-identity"
+	default:
+		return "unknown"
 	}
-	return "dead"
 }
 
 // EndpointProbe is the narrow backend port used by fleet projections.
@@ -411,8 +423,6 @@ type EndpointRef struct {
 	TabID        string
 	Home         string
 }
-
-type EndpointStatus struct{ Alive bool }
 
 type EndpointProbe interface {
 	ProbeEndpoint(EndpointRef) (EndpointStatus, error)
@@ -430,14 +440,20 @@ func SetPaneAliveProbe(fn func(parentHome string, meta map[string]string) (bool,
 	paneAliveForCaptain = fn
 }
 
-func probeEndpoint(parentHome string, meta map[string]string) (bool, error) {
+func observeEndpoint(parentHome string, meta map[string]string) (EndpointStatus, error) {
 	if endpointProbe != nil {
 		ownerHome := meta["home"]
 		if ownerHome == "" {
 			ownerHome = parentHome
 		}
-		status, err := endpointProbe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome})
-		return status.Alive, err
+		return endpointProbe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome})
 	}
-	return paneAliveForCaptain(parentHome, meta)
+	alive, err := paneAliveForCaptain(parentHome, meta)
+	if err != nil {
+		return EndpointStatus{State: EndpointUnknown, Detail: err.Error()}, err
+	}
+	if alive {
+		return EndpointStatus{State: EndpointAlive}, nil
+	}
+	return EndpointStatus{State: EndpointUnknown}, nil
 }
