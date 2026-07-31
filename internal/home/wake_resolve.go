@@ -27,6 +27,13 @@ func ResolveWake(homeDir, leaseID, eventID, summary string) error {
 	if leaseID == "" || eventID == "" || summary == "" {
 		return fmt.Errorf("claim-id, event-id, and summary are required")
 	}
+	legacy, err := hasLegacyWakeResolutionState(homeDir)
+	if err != nil {
+		return err
+	}
+	if legacy {
+		return legacyWakeResolutionError(homeDir)
+	}
 	record, _ := readWakeResolution(homeDir, leaseID, eventID)
 	if record != nil && record.State == "completed" {
 		return nil
@@ -89,8 +96,7 @@ func leaseContainsEvent(homeDir, leaseID, eventID string) (bool, error) {
 }
 
 func resolutionPath(homeDir, leaseID, eventID string) string {
-	name := strings.NewReplacer("/", "_", ":", "_").Replace(leaseID + "-" + eventID + ".json")
-	return filepath.Join(homeDir, wakeResolutionDir, name)
+	return filepath.Join(homeDir, wakeResolutionDir, resolutionFileName(leaseID, eventID))
 }
 
 func readWakeResolution(homeDir, leaseID, eventID string) (*wakeResolutionRecord, error) {
@@ -148,6 +154,10 @@ func wakeEventExists(homeDir, eventID string) (bool, error) {
 }
 
 func wakeResolutionCompleted(homeDir, eventID string) bool {
+	legacy, err := hasLegacyWakeResolutionState(homeDir)
+	if err != nil || legacy {
+		return false
+	}
 	entries, err := os.ReadDir(filepath.Join(homeDir, wakeResolutionDir))
 	if err != nil {
 		return false

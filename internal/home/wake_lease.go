@@ -46,6 +46,13 @@ type ClaimResult struct {
 // Unacked wakes that have expired leases are reclaimed (re-enqueued then claimed).
 // Returns the claim result or an error.
 func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResult, error) {
+	legacy, err := hasLegacyWakeResolutionState(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	if legacy {
+		return nil, legacyWakeResolutionError(homeDir)
+	}
 	stateDir := filepath.Join(homeDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating state directory: %w", err)
@@ -68,7 +75,10 @@ func ClaimWakes(homeDir, consumer string, leaseCaptains, limit int) (*ClaimResul
 	}
 
 	// Reclaim expired leases first — re-enqueue their wakes
-	reclaimed := ReclaimExpiredLeases(homeDir)
+	reclaimed, err := ReclaimExpiredLeases(homeDir)
+	if err != nil {
+		return nil, err
+	}
 
 	// Read the current wake queue
 	qPath := WakeQueuePath(homeDir)
@@ -229,11 +239,18 @@ func AckWakes(homeDir, leaseID string, eventIDs []string) error {
 
 // reclaimExpiredLeases finds expired lease files and re-enqueues their wakes.
 // Returns the count of re-enqueued wakes.
-func ReclaimExpiredLeases(homeDir string) int {
+func ReclaimExpiredLeases(homeDir string) (int, error) {
+	legacy, err := hasLegacyWakeResolutionState(homeDir)
+	if err != nil {
+		return 0, err
+	}
+	if legacy {
+		return 0, legacyWakeResolutionError(homeDir)
+	}
 	leaseDir := LeaseDir(homeDir)
 	entries, err := os.ReadDir(leaseDir)
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 
 	now := time.Now().Unix()
@@ -300,7 +317,7 @@ func ReclaimExpiredLeases(homeDir string) int {
 		reclaimed += enqueued
 	}
 
-	return reclaimed
+	return reclaimed, nil
 }
 
 // ClaimExpiryGrace returns the grace period before expired leases are reclaimed.

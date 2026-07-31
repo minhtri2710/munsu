@@ -45,7 +45,9 @@ func TestPreparedResolutionDoesNotSuppressLeaseReclaim(t *testing.T) {
 	if err := writeWakeResolution(home, wakeResolutionRecord{LeaseID: leaseID, EventID: "100:1", Summary: "pending", State: "prepared"}); err != nil {
 		t.Fatal(err)
 	}
-	ReclaimExpiredLeases(home)
+	if _, err := ReclaimExpiredLeases(home); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(WakeQueuePath(home))
 	if err != nil {
 		t.Fatal(err)

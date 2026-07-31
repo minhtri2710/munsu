@@ -740,7 +740,10 @@ func TestDispatchWake_DeferredLeaseNotReclaimedWhileValid(t *testing.T) {
 	}
 
 	// ReclaimExpiredLeases runs — lease is still valid (60s), nothing reclaimed
-	reclaimed := reclaimExpiredLeases(home)
+	reclaimed, err := reclaimExpiredLeases(home)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reclaimed != 0 {
 		t.Fatalf("expected 0 reclaimed for valid lease, got %d", reclaimed)
 	}
@@ -774,14 +777,17 @@ func TestDispatchWake_CompletedResolutionSuppressesReclaim(t *testing.T) {
 	if err := os.MkdirAll(resDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	resName := strings.NewReplacer("/", "_", ":", "_").Replace(leaseID + "-" + "100:1") + ".json"
+	resName := strings.NewReplacer("/", "_", ":", "_").Replace(leaseID+"-"+"100:1") + ".json"
 	resContent := `{"lease_id":"` + leaseID + `","event_id":"100:1","summary":"checked","state":"completed","updated_at":100}`
 	if err := os.WriteFile(filepath.Join(resDir, resName), []byte(resContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Reclaim should suppress the resolved event
-	reclaimed := reclaimExpiredLeases(home)
+	reclaimed, err := reclaimExpiredLeases(home)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reclaimed != 0 {
 		t.Fatalf("expected 0 reclaimed for resolved event, got %d", reclaimed)
 	}
@@ -813,7 +819,10 @@ func TestDispatchWake_UnresolvedEventGetsReclaimed(t *testing.T) {
 	}
 
 	// Reclaim should re-enqueue the wake
-	reclaimed := reclaimExpiredLeases(home)
+	reclaimed, err := reclaimExpiredLeases(home)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reclaimed != 1 {
 		t.Fatalf("expected 1 reclaimed, got %d", reclaimed)
 	}
@@ -901,4 +910,3 @@ func TestDispatchWake_DeferredDoesNotPreventSubsequentDispatch(t *testing.T) {
 		t.Fatalf("wake 2: expected Submitted, got outcome=%q err=%v", result2.Outcome, err2)
 	}
 }
-

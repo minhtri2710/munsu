@@ -203,6 +203,7 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newSoldierFlushCmd())
 	root.AddCommand(newDeliveryCmd())
 	root.AddCommand(newFleetCmd())
+	root.AddCommand(newMigrateCmd())
 	root.AddCommand(newHerdrCmd())
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newWatchArmCmd())

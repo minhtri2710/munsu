@@ -1,0 +1,149 @@
+package cli
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/spf13/cobra"
+)
+
+func newMigrateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "migrate",
+		Short: "Run explicit state migrations",
+	}
+	cmd.AddCommand(newMigrateWakeResolutionsCmd())
+	return cmd
+}
+
+func newMigrateWakeResolutionsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "wake-resolutions",
+		Short: "Migrate legacy wake resolution state",
+	}
+	planCmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Plan one-home wake resolution migration without source mutation",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan-out")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate wake-resolutions plan --plan-out <plan.json>`", "--plan-out is required")
+			}
+			plan, err := home.PlanWakeResolutionMigration(ctx.Home)
+			if err != nil {
+				return operationError("invalid_argument", home.WakeResolutionMigrationCommand(ctx.Home), err.Error())
+			}
+			if err := home.WriteWakeResolutionMigrationPlan(planPath, plan); err != nil {
+				return operationError("internal", home.WakeResolutionMigrationCommand(ctx.Home), err.Error())
+			}
+			message := fmt.Sprintf("Planned %d wake resolution record(s); digest=%s; plan=%s; apply=munsu migrate wake-resolutions apply --plan %s", plan.RecordCount, plan.SourceDigest, planPath, shellQuote(planPath))
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.wake_resolutions.plan",
+				Status:        "success",
+				Data:          MessageResult{Message: message},
+			})
+		}),
+	}
+	planCmd.Flags().String("plan-out", "", "Path to write reviewed wake resolution migration plan JSON")
+	configureContractCommand(planCmd)
+	apply := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply one reviewed wake resolution migration plan",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate wake-resolutions plan` first, then `munsu migrate wake-resolutions apply --plan <plan.json>`", "--plan is required")
+			}
+			plan, err := home.ReadWakeResolutionMigrationPlan(planPath)
+			if err != nil {
+				return operationError("invalid_argument", "Run `munsu migrate wake-resolutions plan` again", err.Error())
+			}
+			receipt, err := home.ApplyWakeResolutionMigration(plan)
+			if err != nil {
+				return operationError("internal", "Re-run the same `munsu migrate wake-resolutions apply --plan <plan.json>` after fixing the reported state", err.Error())
+			}
+			message := fmt.Sprintf("Migrated %d wake resolution record(s); digest=%s", receipt.RecordCount, receipt.SourceDigest)
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.wake_resolutions.apply",
+				Status:        "success",
+				Data:          MessageResult{Message: message},
+			})
+		}),
+	}
+	apply.Flags().String("plan", "", "Path to reviewed wake resolution migration plan JSON")
+	configureContractCommand(apply)
+	fleetPlan := &cobra.Command{
+		Use:   "fleet-plan",
+		Short: "Plan fleet wake resolution migration without target-home mutation",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan-out")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate wake-resolutions fleet-plan --plan-out <plan.json>`", "--plan-out is required")
+			}
+			plan := fleet.PlanFleetWakeResolutionMigration(ctx.Home)
+			if err := fleet.WriteWakeResolutionFleetPlan(planPath, plan); err != nil {
+				return operationError("internal", "Run the fleet plan command again", err.Error())
+			}
+			return writeContract(cmd, Response[fleet.WakeResolutionFleetPlan]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.wake_resolutions.fleet_plan",
+				Status:        "success",
+				Data:          plan,
+			})
+		}),
+	}
+	fleetPlan.Flags().String("plan-out", "", "Path to write reviewed fleet wake resolution migration plan JSON")
+	configureContractCommand(fleetPlan)
+	fleetApply := &cobra.Command{
+		Use:   "fleet-apply",
+		Short: "Apply one reviewed fleet wake resolution migration plan",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate wake-resolutions fleet-plan` first, then `munsu migrate wake-resolutions fleet-apply --plan <plan.json>`", "--plan is required")
+			}
+			plan, err := fleet.ReadWakeResolutionFleetPlan(planPath)
+			if err != nil {
+				return operationError("invalid_argument", "Run `munsu migrate wake-resolutions fleet-plan` again", err.Error())
+			}
+			result := fleet.ApplyFleetWakeResolutionMigration(plan)
+			return writeContract(cmd, Response[fleet.WakeResolutionFleetPlan]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.wake_resolutions.fleet_apply",
+				Status:        "success",
+				Data:          result,
+			})
+		}),
+	}
+	fleetApply.Flags().String("plan", "", "Path to reviewed fleet wake resolution migration plan JSON")
+	configureContractCommand(fleetApply)
+	cmd.AddCommand(planCmd)
+	cmd.AddCommand(apply)
+	cmd.AddCommand(fleetPlan)
+	cmd.AddCommand(fleetApply)
+	return cmd
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
