@@ -182,7 +182,7 @@ func ReadStatus(homeDir string, id string) ([]string, error) {
 // ValidStatusStates lists the recognized status states.
 var ValidStatusStates = []string{
 	"working", "review-ready", "amending", "needs-decision", "blocked", "paused",
-	"awaiting_approval", "resolved", "done", "failed",
+	"awaiting_approval", "resolved", "done", "failed", "delivered",
 }
 
 // IsValidStatusState checks whether the given state is recognized.
@@ -314,6 +314,13 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 			} else {
 				lastStatus = msg
 			}
+		}
+
+		// Lifecycle truth supersedes stale status projections.
+		// If the delivery_state is merged or delivered, that is the
+		// authoritative status regardless of what the status file says.
+		if ds := meta["delivery_state"]; ds == "merged" || ds == "delivered" {
+			lastStatus = ds
 		}
 
 		kind := meta["kind"]

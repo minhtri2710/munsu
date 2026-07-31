@@ -86,6 +86,15 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				targetHome = parentHome
 			}
 
+			// Ship tasks cannot use "resolved" as delivery completion.
+			// Only "done" is the valid terminal delivery state for ship tasks.
+			if state == "resolved" {
+				meta, metaErr := home.ReadMeta(targetHome, taskID)
+				if metaErr == nil && meta["kind"] == "ship" {
+					return fmt.Errorf("report: ship task %s cannot use 'resolved' as delivery completion; use 'done' instead", taskID)
+				}
+			}
+
 			// 0. For soldier material states with a PR URL in the message:
 			// capture and persist delivery identity before any terminal report
 			// success. Provider/identity failure fails closed: no status, receipt,

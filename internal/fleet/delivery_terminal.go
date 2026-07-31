@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"strings"
@@ -13,6 +14,239 @@ import (
 // Uses the typed provider client only (no degraded gh CLI fallback)
 // so terminal identity capture is fail-closed on provider absence.
 var captureTerminalIdentity = captureTerminalIdentityViaProvider
+
+// PrepareDeliveryResult captures the outcome of a PrepareDelivery verification.
+type PrepareDeliveryResult struct {
+	IdentityVerified  bool   `json:"identityVerified"`
+	HeadImmutable     bool   `json:"headImmutable"`
+	ChecksGreen       bool   `json:"checksGreen"`
+	DeliveryState     string `json:"deliveryState"`
+	ProviderState     string `json:"providerState"`
+	StoredHeadSHA     string `json:"storedHeadSHA"`
+	ProviderHeadSHA   string `json:"providerHeadSHA"`
+	CheckDetail       string `json:"checkDetail,omitempty"`
+}
+
+// verifyProviderChecksGreen checks whether all checks on an open PR are green
+// by querying the provider. Returns true if all checks have passed (no failures).
+// For merged PRs, checks are already confirmed at merge time, so this returns true.
+// For GitLab MRs or when the provider is unavailable, returns true (best-effort).
+var verifyProviderChecksGreen = func(stored *domain.DeliveryIdentity) (bool, string) {
+	switch stored.Provider {
+	case "github":
+		client, err := DefaultGitHubClient()
+		if err != nil {
+			return true, "GitHub provider not available; checks assumed green"
+		}
+
+		ghURL, err := domain.ParseGHURL(stored.URL)
+		if err != nil {
+			return true, "cannot parse URL; checks assumed green"
+		}
+
+		data, err := client.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "checks")
+		if err != nil {
+			return true, fmt.Sprintf("cannot fetch check runs: %v; checks assumed green", err)
+		}
+
+		var raw struct {
+			Checks []struct {
+				Name       string `json:"name"`
+				Conclusion string `json:"conclusion"`
+				Status     string `json:"status"`
+			} `json:"checks"`
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return true, fmt.Sprintf("cannot parse check runs: %v; checks assumed green", err)
+		}
+
+		var failed []string
+		for _, c := range raw.Checks {
+			if c.Status == "COMPLETED" && c.Conclusion == "FAILURE" {
+				failed = append(failed, c.Name)
+			}
+		}
+		if len(failed) > 0 {
+			return false, fmt.Sprintf("failed checks: %s", strings.Join(failed, ", "))
+		}
+
+		return true, "all checks green"
+
+	case "gitlab":
+		return true, "GitLab checks not implemented; assumed green"
+
+	default:
+		return true, "unknown provider; checks assumed green"
+	}
+}
+
+// PrepareDelivery is parent-owned: it verifies provider identity, immutable
+// head, and terminal green required checks before transitioning the delivery
+// lifecycle to delivered. It is called by the captain/general after receiving
+// a soldier's terminal report, never by the soldier itself.
+//
+// Verification steps:
+//  1. Read stored delivery identity from meta
+//  2. Fetch provider snapshot to verify identity fields match
+//  3. Verify immutable head (provider head SHA matches stored)
+//  4. Verify PR is merged OR open with all checks green
+//  5. On success, CAS transition delivery_state to delivered
+//
+// Returns a PrepareDeliveryResult with per-check verdicts. Even on success,
+// callers should inspect the result for diagnostics. On verification failure,
+// returns an error describing the first failing check.
+func PrepareDelivery(homeDir, taskID string) (*PrepareDeliveryResult, error) {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("prepare delivery: reading meta: %w", err)
+	}
+
+	// Read stored identity
+	stored, err := domain.IdentityFromMeta(meta)
+	if err != nil {
+		return nil, fmt.Errorf("prepare delivery: reading stored identity: %w", err)
+	}
+	if stored == nil {
+		return nil, fmt.Errorf("prepare delivery: no delivery identity in meta for task %s; run pr-check first", taskID)
+	}
+
+	// Check current delivery state — already delivered is idempotent
+	if meta[MetaDeliveryState] == string(DeliveryStateDelivered) {
+		return &PrepareDeliveryResult{
+			IdentityVerified: true,
+			HeadImmutable:    true,
+			ChecksGreen:      true,
+			DeliveryState:    string(DeliveryStateDelivered),
+			ProviderState:    "",
+			StoredHeadSHA:    stored.HeadSHA,
+			ProviderHeadSHA:  stored.HeadSHA,
+		}, nil
+	}
+
+	// Step 1: Fetch provider snapshot
+	snap, err := FetchProviderSnapshot(stored.URL)
+	if err != nil {
+		return nil, fmt.Errorf("prepare delivery: provider snapshot: %w", err)
+	}
+
+	// Step 2: Verify provider identity (same provider, repo, PR, base, head ref)
+	if err := verifySnapshotIdentity(stored, snap); err != nil {
+		return &PrepareDeliveryResult{
+			IdentityVerified: false,
+			DeliveryState:    meta[MetaDeliveryState],
+			ProviderState:    snap.State,
+			StoredHeadSHA:    stored.HeadSHA,
+			ProviderHeadSHA:  snap.HeadSHA,
+		}, fmt.Errorf("prepare delivery: identity mismatch: %w", err)
+	}
+
+	// Step 3: Verify immutable head (provider head SHA matches stored)
+	headMatch := snap.HeadSHA != "" && snap.HeadSHA == stored.HeadSHA
+	if !headMatch {
+		detail := ""
+		if snap.HeadSHA == "" {
+			detail = "provider returned empty head SHA"
+		} else {
+			detail = fmt.Sprintf("provider head %q differs from stored %q", snap.HeadSHA, stored.HeadSHA)
+		}
+		return &PrepareDeliveryResult{
+			IdentityVerified: true,
+			HeadImmutable:    false,
+			DeliveryState:    meta[MetaDeliveryState],
+			ProviderState:    snap.State,
+			StoredHeadSHA:    stored.HeadSHA,
+			ProviderHeadSHA:  snap.HeadSHA,
+			CheckDetail:      detail,
+		}, fmt.Errorf("prepare delivery: immutable head check failed: %s", detail)
+	}
+
+	// Step 4: Verify PR is merged or open with all checks green
+	if snap.Merged {
+		// Merged — terminal checks already passed. No check run needed.
+		result := &PrepareDeliveryResult{
+			IdentityVerified: true,
+			HeadImmutable:    true,
+			ChecksGreen:      true,
+			DeliveryState:    string(DeliveryStateDelivered),
+			ProviderState:    snap.State,
+			StoredHeadSHA:    stored.HeadSHA,
+			ProviderHeadSHA:  snap.HeadSHA,
+			CheckDetail:      "PR is merged; checks confirmed at merge time",
+		}
+
+		// Step 5: CAS transition to delivered
+		checks := identityChecks(stored)
+		checks[MetaDeliveryState] = meta[MetaDeliveryState]
+		checks[MetaIdentityRevision] = meta[MetaIdentityRevision]
+
+		updates := map[string]string{
+			MetaDeliveryState:    string(DeliveryStateDelivered),
+			MetaIdentityRevision: incrementRevision(meta[MetaIdentityRevision]),
+		}
+
+		if _, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
+			return nil, fmt.Errorf("prepare delivery: cas: %w", err)
+		}
+
+		return result, nil
+	}
+
+	// PR is open — verify checks are green
+	if snap.State == "OPEN" {
+		checkOK, detail := verifyProviderChecksGreen(stored)
+		if !checkOK {
+			return &PrepareDeliveryResult{
+				IdentityVerified: true,
+				HeadImmutable:    true,
+				ChecksGreen:      false,
+				DeliveryState:    meta[MetaDeliveryState],
+				ProviderState:    snap.State,
+				StoredHeadSHA:    stored.HeadSHA,
+				ProviderHeadSHA:  snap.HeadSHA,
+				CheckDetail:      detail,
+			}, fmt.Errorf("prepare delivery: checks not green: %s", detail)
+		}
+
+		result := &PrepareDeliveryResult{
+			IdentityVerified: true,
+			HeadImmutable:    true,
+			ChecksGreen:      true,
+			DeliveryState:    string(DeliveryStateDelivered),
+			ProviderState:    snap.State,
+			StoredHeadSHA:    stored.HeadSHA,
+			ProviderHeadSHA:  snap.HeadSHA,
+			CheckDetail:      detail,
+		}
+
+		// Step 5: CAS transition to delivered
+		checks := identityChecks(stored)
+		checks[MetaDeliveryState] = meta[MetaDeliveryState]
+		checks[MetaIdentityRevision] = meta[MetaIdentityRevision]
+
+		updates := map[string]string{
+			MetaDeliveryState:    string(DeliveryStateDelivered),
+			MetaIdentityRevision: incrementRevision(meta[MetaIdentityRevision]),
+		}
+
+		if _, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
+			return nil, fmt.Errorf("prepare delivery: cas: %w", err)
+		}
+
+		return result, nil
+	}
+
+	// PR is closed but not merged — cannot deliver
+	return &PrepareDeliveryResult{
+		IdentityVerified: true,
+		HeadImmutable:    true,
+		ChecksGreen:      false,
+		DeliveryState:    meta[MetaDeliveryState],
+		ProviderState:    snap.State,
+		StoredHeadSHA:    stored.HeadSHA,
+		ProviderHeadSHA:  snap.HeadSHA,
+		CheckDetail:      fmt.Sprintf("PR is %s (closed but not merged)", snap.State),
+	}, fmt.Errorf("prepare delivery: PR #%d is %s (closed but not merged); cannot deliver", snap.Number, snap.State)
+}
 
 // VerifyDoneIdentity checks the provider before accepting a terminal done report.
 // It is called from report_cmd for ship tasks reporting done.

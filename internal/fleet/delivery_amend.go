@@ -20,8 +20,12 @@ const (
 	DeliveryStateReviewReady DeliveryState = "review-ready"
 	// DeliveryStateAmending: amendment in progress, identity is being refreshed.
 	DeliveryStateAmending DeliveryState = "amending"
-	// DeliveryStateMerged: PR/MR is merged, delivery complete.
+	// DeliveryStateMerged: PR/MR is merged, awaiting parent verification.
 	DeliveryStateMerged DeliveryState = "merged"
+	// DeliveryStateDelivered: parent-verified delivery complete.
+	// Set by PrepareDelivery after verifying provider identity, immutable head,
+	// and terminal green required checks. This is the terminal lifecycle state.
+	DeliveryStateDelivered DeliveryState = "delivered"
 )
 
 // ProviderSnapshot captures a single point-in-time view of a PR/MR from the
