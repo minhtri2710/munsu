@@ -244,6 +244,25 @@ type WakeAck struct {
 	State   string `json:"state"`
 }
 
+// WakeDrain reports a safe lease-backed drain of the wake queue.
+type WakeDrain struct {
+	Consumer  string            `json:"consumer"`
+	State     string            `json:"state"` // drained | empty
+	Drained   int               `json:"drained"`
+	Reclaimed int               `json:"reclaimed,omitempty"`
+	Remaining int               `json:"remaining"`
+	Records   []WakeDrainRecord `json:"records,omitempty"`
+}
+
+// WakeDrainRecord is one drained wake, surfaced in the response so claimed
+// material evidence is never swallowed by a drain.
+type WakeDrainRecord struct {
+	WakeID  string `json:"wake_id"`
+	Kind    string `json:"kind"`
+	Key     string `json:"key,omitempty"`
+	Payload string `json:"payload,omitempty"`
+}
+
 // DrainCycle records one General drain cycle: actionable wakes claimed,
 // routine count, fleet peek, and guidance.
 type DrainCycle struct {

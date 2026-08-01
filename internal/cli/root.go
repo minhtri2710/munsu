@@ -208,6 +208,7 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newWatchArmCmd())
 	root.AddCommand(newWakeCmd())
+	root.AddCommand(newWakeDrainAliasCmd())
 	root.AddCommand(newEventCmd())
 	root.AddCommand(newContractGuardCmd())
 	root.AddCommand(newDoctorCmd())
