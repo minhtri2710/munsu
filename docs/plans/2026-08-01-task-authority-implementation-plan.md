@@ -8,7 +8,7 @@
 
 ## Implementation progress
 
-Checkpoint 1 is complete through commit `4b327fbc` plus the follow-up lifecycle/idempotency corrections in the current change. Phase 2 has not started.
+Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`; Task 2.2 is next.
 
 Verified on 2026-08-01:
 
@@ -307,10 +307,10 @@ go test -race ./internal/taskauthority -run 'Test.*(DispatchHold|StartCannotRace
 
 **Acceptance criteria:**
 
-- [ ] Schema validation fails closed for unknown versions and corrupt required fields.
-- [ ] Existing v1 records are detectable but not silently mutated.
-- [ ] Paths remain private to `taskauthorityfs`; `taskauthority` has no filesystem imports.
-- [ ] File permissions and path validation match or strengthen current behavior.
+- [x] Schema validation fails closed for unknown versions and corrupt required fields.
+- [x] Existing v1 records are detectable but not silently mutated.
+- [x] Paths remain private to `taskauthorityfs`; `taskauthority` has no filesystem imports.
+- [x] File permissions and path validation match or strengthen current behavior.
 
 **Verification:**
 
