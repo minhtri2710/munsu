@@ -186,6 +186,7 @@ func PlanConfigMigration(homeDir string) (*ConfigMigrationPlan, error) {
 	// Parse captains.md if present.
 	captainRegistry := config.CaptainRegistryDocument{
 		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains:      []config.CaptainRecord{},
 	}
 	if hasLegacyFile(plan.LegacyFiles, "captains.md") {
 		cp := captainRegistryPath(homeDir)
@@ -206,6 +207,7 @@ func PlanConfigMigration(homeDir string) (*ConfigMigrationPlan, error) {
 	// Parse projects.md if present.
 	projectRegistry := config.ProjectRegistryDocument{
 		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects:      []config.ProjectRecord{},
 	}
 	if hasLegacyFile(plan.LegacyFiles, "projects.md") {
 		rp := registryPath(homeDir)
@@ -314,12 +316,12 @@ func ApplyConfigMigration(plan *ConfigMigrationPlan) (*ConfigMigrationReceipt, e
 			return nil, fmt.Errorf("writing fleet base document: %w", err)
 		}
 	}
-	if plan.CaptainRegistry != nil && len(plan.CaptainRegistry.Captains) > 0 {
+	if plan.CaptainRegistry != nil {
 		if err := config.StoreCaptainRegistry(plan.HomeDir, *plan.CaptainRegistry); err != nil {
 			return nil, fmt.Errorf("writing captain registry document: %w", err)
 		}
 	}
-	if plan.ProjectRegistry != nil && len(plan.ProjectRegistry.Projects) > 0 {
+	if plan.ProjectRegistry != nil {
 		if err := config.StoreProjectRegistry(plan.HomeDir, *plan.ProjectRegistry); err != nil {
 			return nil, fmt.Errorf("writing project registry document: %w", err)
 		}

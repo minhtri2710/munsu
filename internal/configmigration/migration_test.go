@@ -287,6 +287,88 @@ func TestApplyConfigMigration_Idempotent(t *testing.T) {
 	}
 }
 
+func TestApplyConfigMigration_EmptyCaptainRegistry(t *testing.T) {
+	homeDir := t.TempDir()
+	os.MkdirAll(filepath.Join(homeDir, "data"), 0755)
+
+	// Legacy captains.md with only a header line: valid but empty registry.
+	os.WriteFile(filepath.Join(homeDir, "data", "captains.md"), []byte("# Captains\n"), 0644)
+
+	plan, err := PlanConfigMigration(homeDir)
+	if err != nil {
+		t.Fatalf("PlanConfigMigration: %v", err)
+	}
+
+	receipt, err := ApplyConfigMigration(plan)
+	if err != nil {
+		t.Fatalf("ApplyConfigMigration: %v", err)
+	}
+
+	// Legacy file must be archived and removed.
+	if _, err := os.Stat(filepath.Join(homeDir, "data", "captains.md")); !os.IsNotExist(err) {
+		t.Error("captains.md should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(receipt.ArchivePath, "captains.md")); os.IsNotExist(err) {
+		t.Error("legacy captains.md should be archived")
+	}
+	if _, err := os.Stat(filepath.Join(receipt.ArchivePath, "receipt.json")); os.IsNotExist(err) {
+		t.Error("receipt should exist in archive")
+	}
+
+	// Canonical document must be materialized even for an empty registry.
+	path := filepath.Join(homeDir, config.CaptainDocumentPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("canonical captain registry not materialized: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("mode = %o, want 0600", info.Mode().Perm())
+	}
+
+	captains, err := config.LoadCaptainRegistry(homeDir)
+	if err != nil {
+		t.Fatalf("loading captain registry: %v", err)
+	}
+	if captains.SchemaVersion != config.CaptainRegistrySchemaVersion {
+		t.Errorf("schema = %q, want %q", captains.SchemaVersion, config.CaptainRegistrySchemaVersion)
+	}
+	if len(captains.Captains) != 0 {
+		t.Fatalf("expected 0 captains, got %d", len(captains.Captains))
+	}
+	if !strings.Contains(string(data), `"captains": []`) {
+		t.Errorf("expected literal `captains: []` in canonical document, got:\n%s", data)
+	}
+
+	// Receipt records the digest of the written document.
+	if receipt.CaptainDigest == "" {
+		t.Error("expected captain digest in receipt")
+	}
+
+	// Session-start paths must load cleanly after apply.
+	if needed, _ := NeedsConfigMigration(homeDir); needed {
+		t.Error("expected no migration needed after apply")
+	}
+	if _, _, _, err := config.LoadDocuments(homeDir); err != nil {
+		t.Fatalf("LoadDocuments after apply: %v", err)
+	}
+
+	// Reapply is idempotent: a second plan fails and documents are unchanged.
+	if _, err := PlanConfigMigration(homeDir); err == nil {
+		t.Fatal("expected second plan to fail (no legacy files)")
+	}
+	reload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(reload) != string(data) {
+		t.Error("canonical document changed between reads")
+	}
+}
+
 func TestApplyConfigMigration_StalePlan(t *testing.T) {
 	homeDir := t.TempDir()
 	os.MkdirAll(filepath.Join(homeDir, "data"), 0755)
