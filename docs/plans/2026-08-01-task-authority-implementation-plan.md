@@ -1,14 +1,14 @@
 # Task Authority Deep-Module Implementation Plan
 
 * **Date:** 2026-08-01
-* **Status:** Implementation in progress; Checkpoint 1 complete
+* **Status:** Implementation in progress; Checkpoint 2 complete
 * **Source:** [ADR-0007](../adr/0007-task-authority-deep-module-and-transactional-store.md)
 * **Related:** [ADR-0002](../adr/0002-deep-module-clean-break-and-durable-lifecycle.md), [ADR-0004](../adr/0004-authoritative-task-lifecycle-delivery-and-projections.md), [ADR-0005](../adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md), [ADR-0006](../adr/0006-state-migration-build-provenance-and-compatibility-gates.md), [incident remediation master plan](2026-07-30-incident-remediation-master-plan.md)
 * **Delivery mode:** no-mistakes; test-first; vertical slices; no dual mutation authority
 
 ## Implementation progress
 
-Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`; Task 2.5 is next.
+Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`. Task 2.5 is complete through commits `47eaf25a` and `75355dcb`; Checkpoint 2 is complete through `8d07b12`.
 
 Verified on 2026-08-01:
 
@@ -415,11 +415,11 @@ go test ./internal/taskauthority ./internal/taskauthorityfs -run 'TestStoreContr
 
 **Acceptance criteria:**
 
-- [ ] Plan records exact home identity, source digest, source schema, target schema, records, and quarantine outcomes.
-- [ ] Apply revalidates source digest, stages all target records, verifies them, installs, and writes a durable receipt.
-- [ ] Corrupt or conflicting sources remain untouched and fail with exact evidence.
-- [ ] Re-running a completed migration verifies the receipt and returns `already_migrated`.
-- [ ] Normal `View`/`Update` returns an exact migration-required error for v1 state and never invokes migration.
+- [x] Plan records exact home identity, source digest, source schema, target schema, records, and quarantine outcomes.
+- [x] Apply revalidates source digest, stages all target records, verifies them, installs, and writes a durable receipt.
+- [x] Corrupt or conflicting sources remain untouched and fail with exact evidence.
+- [x] Re-running a completed migration verifies the receipt and returns `already_migrated`.
+- [x] Normal `View`/`Update` returns an exact migration-required error for v1 state and never invokes migration.
 
 **Verification:**
 
@@ -441,11 +441,11 @@ go test ./internal/cli -run 'TestMigrateTaskAuthority'
 
 ### Checkpoint 2 — Durable adapter
 
-- [ ] In-memory and filesystem adapters pass one Store contract suite.
-- [ ] Crash injection passes at every journal stage.
-- [ ] v1 state requires explicit migration; no lazy migration path exists.
-- [ ] `go build ./...` and `go vet ./...` pass.
-- [ ] No existing production mutation has switched yet.
+- [x] In-memory and filesystem adapters pass one Store contract suite.
+- [x] Crash injection passes at every journal stage.
+- [x] v1 state requires explicit migration; no lazy migration path exists.
+- [x] `go build ./...` and `go vet ./...` pass.
+- [x] No existing production mutation has switched yet.
 
 ## Phase 3 — CLI composition and first vertical cutover
 
