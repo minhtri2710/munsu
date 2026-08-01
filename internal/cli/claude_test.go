@@ -199,6 +199,7 @@ func TestClaudeSafetyCheckGateRefused(t *testing.T) {
 func TestClaudeGuardStopHookActive(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	var exitCode int
 	oldExit := exitWithCode
@@ -230,6 +231,7 @@ func TestClaudeGuardStopHookActive(t *testing.T) {
 func TestClaudeGuardBlindTurn(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Make tmpDir a git repo so scope classifies it as Primary
 	runGit(t, tmpDir, "init")
@@ -285,6 +287,7 @@ func TestClaudeGuardBlindTurn(t *testing.T) {
 func TestClaudeGuardHealthyExit(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Create in-flight task meta
 	metaDir := filepath.Join(tmpDir, "state")
@@ -497,6 +500,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 func TestClaudeGuardPendingRelayBlocks(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Create minimal state/.terminal-receipts with a pending receipt
 	receiptsDir := filepath.Join(tmpDir, "state", ".terminal-receipts")
@@ -545,6 +549,7 @@ func TestClaudeGuardPendingRelayBlocks(t *testing.T) {
 func TestClaudeGuardNoPendingRelayAllows(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// No receipts directory at all — should allow
 	var exitCode int

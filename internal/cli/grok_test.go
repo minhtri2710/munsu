@@ -205,6 +205,7 @@ func TestGrokSafetyCheckGateRefused(t *testing.T) {
 func TestGrokGuardStopHookActive(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	var exitCode int
 	oldExit := exitWithCode
@@ -236,6 +237,7 @@ func TestGrokGuardStopHookActive(t *testing.T) {
 func TestGrokGuardBlindTurn(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Make tmpDir a git repo so scope classifies it as Primary
 	runGit(t, tmpDir, "init")
@@ -282,6 +284,7 @@ func TestGrokGuardBlindTurn(t *testing.T) {
 func TestGrokGuardHealthyExit(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Create in-flight task meta
 	metaDir := filepath.Join(tmpDir, "state")
@@ -366,6 +369,7 @@ func TestGrokReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 func TestGrokGuardPendingRelayBlocks(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	receiptsDir := filepath.Join(tmpDir, "state", ".terminal-receipts")
 	os.MkdirAll(receiptsDir, 0755)
@@ -410,6 +414,7 @@ func TestGrokGuardPendingRelayBlocks(t *testing.T) {
 func TestGrokGuardNoPendingRelayAllows(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	var exitCode int
 	oldExit := exitWithCode

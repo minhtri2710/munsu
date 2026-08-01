@@ -260,6 +260,9 @@ func TestAgyReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 func TestAgyGuardStopHookFullyIdle(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	// Guard reads ambient MUNSU_PARENT_STATUS; pin it so tests stay hermetic
+	// (ambient captain homes fail the obligation gate closed).
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	var exitCode int
 	oldExit := exitWithCode
@@ -306,6 +309,7 @@ func TestAgyGuardStopHookFullyIdle(t *testing.T) {
 func TestAgyGuardBlindTurn(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	// Make tmpDir a git repo so scope classifies it as Primary
 	runGit(t, tmpDir, "init")
@@ -373,6 +377,7 @@ func TestAgyGuardBlindTurn(t *testing.T) {
 func TestAgyGuardPendingRelayContinues(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	receiptsDir := filepath.Join(tmpDir, "state", ".terminal-receipts")
 	os.MkdirAll(receiptsDir, 0755)
@@ -431,6 +436,7 @@ func TestAgyGuardPendingRelayContinues(t *testing.T) {
 func TestAgyGuardNoPendingRelayAllows(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", "")
 
 	var exitCode int
 	oldExit := exitWithCode
@@ -467,6 +473,55 @@ func TestAgyGuardNoPendingRelayAllows(t *testing.T) {
 	}
 	if payload["decision"] != "allow" {
 		t.Errorf("expected decision 'allow' when no pending obligations, got %v", payload["decision"])
+	}
+}
+
+// TestAgyGuardParentHomeCleanAllows verifies guard --harness agy returns
+// {"decision":"allow"} when MUNSU_PARENT_STATUS points at a clean parent home
+// with no pending terminal receipts. This pins the allow path's independence
+// from any ambient parent state: guard tests must pin MUNSU_PARENT_STATUS
+// explicitly (see the "" pins above) instead of inheriting the environment.
+func TestAgyGuardParentHomeCleanAllows(t *testing.T) {
+	tmpDir := t.TempDir()
+	parentHome := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
+
+	var exitCode int
+	oldExit := exitWithCode
+	exitWithCode = func(code int) { exitCode = code }
+	defer func() { exitWithCode = oldExit }()
+
+	var stdout string
+	captureBoth(func() {
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		w.Write([]byte(`{"executionNum":1,"terminationReason":"model_stop","fullyIdle":true}`))
+		w.Close()
+		os.Stdin = r
+
+		sout, _ := captureBoth(func() {
+			runGuardAgy(tmpDir)
+		})
+		stdout = sout
+
+		os.Stdin = oldStdin
+	})
+
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 for agy allow, got %d", exitCode)
+	}
+
+	stdoutStr := strings.TrimSpace(stdout)
+	if stdoutStr == "" {
+		t.Fatal("expected non-empty stdout for clean parent home")
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(stdoutStr), &payload); err != nil {
+		t.Fatalf("stdout must be valid JSON: %v\nGot: %s", err, stdoutStr)
+	}
+	if payload["decision"] != "allow" {
+		t.Errorf("expected decision 'allow' with clean parent home, got %v", payload["decision"])
 	}
 }
 
