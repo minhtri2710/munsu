@@ -25,6 +25,9 @@ var migrationCrashAfter string
 // missing sources.
 const (
 	journalStageCommitted = "committed"
+	// journalStageArchiving marks the archive intent durable: the archive
+	// path is persisted before the first legacy source moves.
+	journalStageArchiving = "archiving"
 	journalStageArchived  = "archived"
 )
 
@@ -48,22 +51,6 @@ type migrationJournal struct {
 // the installed targets without rewriting.
 type migrationManifest struct {
 	Files []SourceFile `json:"files"`
-}
-
-func migrationDirPath(homeDir string) string {
-	return filepath.Join(homeDir, filepath.FromSlash(migrationDir))
-}
-func migrationReceiptPath(homeDir string) string {
-	return filepath.Join(migrationDirPath(homeDir), "receipt.json")
-}
-func migrationJournalPath(homeDir string) string {
-	return filepath.Join(migrationDirPath(homeDir), "journal.json")
-}
-func migrationManifestPath(homeDir string) string {
-	return filepath.Join(migrationDirPath(homeDir), "manifest.json")
-}
-func migrationStagePath(homeDir, digest string) string {
-	return filepath.Join(migrationDirPath(homeDir), "stage", digest)
 }
 
 // migrationCrash fails at the injected crash point.
@@ -120,7 +107,7 @@ func ApplyMigration(plan *MigrationPlan) (*MigrationReceipt, error) {
 			return nil, fmt.Errorf("task-authority migration journal does not match plan (identity or digest changed)")
 		}
 		switch journal.Stage {
-		case journalStageCommitted, journalStageArchived:
+		case journalStageCommitted, journalStageArchiving, journalStageArchived:
 			return resumeMigration(plan, canon, journal)
 		default:
 			return nil, fmt.Errorf("task-authority migration journal has unknown stage %q", journal.Stage)
@@ -135,12 +122,12 @@ func ApplyMigration(plan *MigrationPlan) (*MigrationReceipt, error) {
 // when the receipt or installed state contradicts the plan. Nothing is
 // rewritten on any path.
 func verifyCompletedMigration(plan *MigrationPlan, canon string) (*MigrationReceipt, bool, error) {
-	data, err := os.ReadFile(migrationReceiptPath(canon))
+	data, ok, err := readMigrationDoc(canon, migrationReceiptRel)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
 		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
 	}
 	var receipt MigrationReceipt
 	if err := json.Unmarshal(data, &receipt); err != nil {
@@ -220,10 +207,16 @@ func applyMigrationLocked(plan *MigrationPlan, canon string) (string, error) {
 		return "", err
 	}
 
-	// Stage every v2 document plus the durable manifest.
+	// Stage every v2 document plus the durable manifest. The stage root is
+	// removed and recreated through component-wise Lstat checks so a linked
+	// or non-directory component can never redirect staging outside the home.
 	now := time.Now().UnixNano()
-	stageRoot := migrationStagePath(canon, plan.SourceDigest)
-	if err := os.RemoveAll(stageRoot); err != nil {
+	stageRel := migrationStageRelPath(plan.SourceDigest)
+	if err := removeMigrationRel(canon, stageRel); err != nil {
+		return "", err
+	}
+	stageRoot, err := ensureRelPathSafe(canon, stageRel)
+	if err != nil {
 		return "", err
 	}
 	files, manifest, err := buildStagedTargets(plan, canon, now)
@@ -235,10 +228,10 @@ func applyMigrationLocked(plan *MigrationPlan, canon string) (string, error) {
 		return "", err
 	}
 	manifestData = append(manifestData, '\n')
-	if err := writeMigrationFile(migrationManifestPath(canon), manifestData); err != nil {
+	if err := writeMigrationDoc(canon, migrationManifestRel, manifestData); err != nil {
 		return "", err
 	}
-	if err := writeStagedTargets(stageRoot, files); err != nil {
+	if err := writeStagedTargets(canon, stageRoot, files); err != nil {
 		return "", err
 	}
 	if err := verifyStagedTargets(plan, stageRoot, manifest); err != nil {
@@ -271,8 +264,20 @@ func applyMigrationLocked(plan *MigrationPlan, canon string) (string, error) {
 		return "", err
 	}
 
-	// Archive the legacy v1 sources only after the target is committed.
-	archivePath, err := verifyAndArchiveV1Sources(plan, canon, "")
+	// Archive the legacy v1 sources only after the target is committed. The
+	// archive path is deterministic from the plan digest and persisted as
+	// durable progress before the first rename, so a crash after any
+	// individual move resumes from the journal instead of guessing.
+	archivePath := ""
+	if len(plan.Sources) > 0 {
+		archivePath = migrationArchiveRelPath(plan.SourceDigest)
+		journal.ArchivePath = archivePath
+		journal.Stage = journalStageArchiving
+		if err := writeMigrationJournal(canon, journal); err != nil {
+			return "", err
+		}
+	}
+	archivePath, err = verifyAndArchiveV1Sources(plan, canon, archivePath)
 	if err != nil {
 		return "", err
 	}
@@ -346,7 +351,11 @@ func completeMigrationReceipt(plan *MigrationPlan, canon, manifestDigest string)
 		ArchivePath:          journal.ArchivePath,
 		CompletedAt:          time.Now().Unix(),
 	}
-	if err := writeMigrationJSON(migrationReceiptPath(canon), receipt); err != nil {
+	receiptData, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := writeMigrationDoc(canon, migrationReceiptRel, append(receiptData, '\n')); err != nil {
 		return nil, err
 	}
 	if err := migrationCrash("receipt"); err != nil {
@@ -555,15 +564,22 @@ func buildStagedTargets(plan *MigrationPlan, canon string, now int64) ([]stagedF
 // mirrors the home layout (state/.task-authority/v2/...). The v2 root is
 // created even for an empty target set so a zero-record migration installs a
 // valid empty namespace.
-func writeStagedTargets(stageRoot string, files []stagedFile) error {
-	if err := os.MkdirAll(filepath.Join(stageRoot, filepath.FromSlash(authorityRoot)), DirPerm); err != nil {
+func writeStagedTargets(canon, stageRoot string, files []stagedFile) error {
+	stageRel, err := filepath.Rel(canon, stageRoot)
+	if err != nil {
 		return err
 	}
 	for _, f := range files {
-		abs := filepath.Join(stageRoot, filepath.FromSlash(f.rel))
-		if err := writeMigrationFile(abs, f.data); err != nil {
+		rel := filepath.Join(stageRel, filepath.FromSlash(f.rel))
+		if err := writeMigrationDoc(canon, rel, f.data); err != nil {
 			return err
 		}
+	}
+	// The v2 root is created even for an empty target set so a zero-record
+	// migration installs a valid empty namespace.
+	rel := filepath.Join(stageRel, filepath.FromSlash(authorityRoot))
+	if _, err := ensureRelPathSafe(canon, rel); err != nil {
+		return err
 	}
 	return nil
 }
@@ -600,46 +616,68 @@ func verifyStagedTargets(plan *MigrationPlan, stageRoot string, manifest *migrat
 // installStagedV2 swaps the staged v2 namespace into the home with a
 // same-filesystem rename dance, removing stale markers first.
 func installStagedV2(canon, stageRoot string) error {
+	// The target parent is created (or verified) one component at a time
+	// below the canonical home; cleanup paths are Lstat-checked so RemoveAll
+	// never reaches an outside directory through a link. Every rename is
+	// followed by explicit source and destination parent syncs.
+	parentRel := filepath.Dir(filepath.FromSlash(authorityRoot))
+	parent, err := ensureRelPathSafe(canon, parentRel)
+	if err != nil {
+		return err
+	}
 	staged := filepath.Join(stageRoot, filepath.FromSlash(authorityRoot))
-	target := filepath.Join(canon, filepath.FromSlash(authorityRoot))
+	target := filepath.Join(parent, filepath.Base(authorityRoot))
 	oldDir := target + ".old"
 	installing := target + ".installing"
-	if err := os.RemoveAll(installing); err != nil {
+	if err := removeCleanupPath(installing); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(oldDir); err != nil {
+	if err := removeCleanupPath(oldDir); err != nil {
 		return err
 	}
-	// The rename target's parent may not exist on a fresh home.
-	if err := os.MkdirAll(filepath.Dir(target), DirPerm); err != nil {
+	if err := os.Chmod(parent, DirPerm); err != nil {
 		return err
 	}
-	if err := os.Chmod(filepath.Dir(target), DirPerm); err != nil {
+	exists, err := pathIsRealDir(target)
+	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(target); err == nil {
+	if exists {
 		if err := os.Rename(target, oldDir); err != nil {
 			return err
 		}
-	} else if !os.IsNotExist(err) {
-		return err
+		if err := migrationSyncDir(parent); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(staged, target); err != nil {
-		if _, statErr := os.Stat(oldDir); statErr == nil {
+		if old, statErr := pathIsRealDir(oldDir); statErr == nil && old {
 			_ = os.Rename(oldDir, target)
 		}
 		return err
 	}
-	return os.RemoveAll(oldDir)
+	if err := migrationSyncDir(parent); err != nil {
+		return err
+	}
+	if err := migrationSyncDir(filepath.Dir(staged)); err != nil {
+		return err
+	}
+	if err := removeCleanupPath(oldDir); err != nil {
+		return err
+	}
+	return migrationSyncDir(parent)
 }
 
 // verifyInstalledFilesByManifest verifies the manifest digest and every
 // installed file content digest. It is safe under the dispatch lock and with
 // legacy v1 sources still present.
 func verifyInstalledFilesByManifest(canon, wantManifestDigest string) error {
-	manifestData, err := os.ReadFile(migrationManifestPath(canon))
+	manifestData, ok, err := readMigrationDoc(canon, migrationManifestRel)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		return fmt.Errorf("migration manifest is missing")
 	}
 	if DigestHex(manifestData) != wantManifestDigest {
 		return fmt.Errorf("migration manifest digest mismatch: installed manifest %s does not match pinned %s", DigestHex(manifestData), wantManifestDigest)
@@ -815,35 +853,44 @@ func verifyAndArchiveV1Sources(plan *MigrationPlan, canon, journalArchivePath st
 	if len(plan.Sources) == 0 {
 		return "", nil
 	}
-	entries, err := collectSourceFiles(canon)
+	// The archive path is deterministic from the plan digest and was
+	// persisted before the first rename; a retry that finds no journal path
+	// still derives the same location.
+	archivePath := journalArchivePath
+	if archivePath == "" {
+		archivePath = migrationArchiveRelPath(plan.SourceDigest)
+	}
+	remaining, err := collectSourceFiles(canon)
 	if err != nil {
 		return "", err
 	}
-	if len(entries) > 0 {
-		if migrationSourceDigest(entries) != plan.SourceDigest {
-			return "", fmt.Errorf("task-authority v1 source digest changed during apply: plan %s current %s", plan.SourceDigest, migrationSourceDigest(entries))
+	switch {
+	case len(remaining) == 0:
+		// Every source already moved: the archive must cover the plan.
+		if err := verifyArchive(plan, canon, archivePath); err != nil {
+			return "", err
 		}
-		return archiveV1Sources(plan, canon, journalArchivePath, entries)
+		return archivePath, nil
+	case migrationSourceDigest(remaining) == plan.SourceDigest:
+		// Nothing moved yet: full archive.
+		return archiveV1Sources(plan, canon, archivePath)
+	default:
+		// Partial archive: the union of remaining sources and already-archived
+		// files must equal the plan inventory, each with the plan digest.
+		if err := verifyPartialArchive(plan, canon, archivePath, remaining); err != nil {
+			return "", err
+		}
+		return archiveV1Sources(plan, canon, archivePath)
 	}
-	if journalArchivePath == "" {
-		return "", fmt.Errorf("legacy v1 task-authority sources absent but no migration archive recorded")
-	}
-	if err := verifyArchive(plan, canon, journalArchivePath); err != nil {
-		return "", err
-	}
-	return journalArchivePath, nil
 }
 
 // archiveV1Sources moves each remaining legacy location into the migration
 // archive (idempotent: a location already moved on a prior attempt is
-// skipped) and verifies the archive covers every planned source.
-func archiveV1Sources(plan *MigrationPlan, canon, journalArchivePath string, entries []SourceFile) (string, error) {
-	archivePath := journalArchivePath
-	if archivePath == "" {
-		archivePath = filepath.ToSlash(filepath.Join(migrationDir, fmt.Sprintf("archive-%d-%s", time.Now().Unix(), plan.SourceDigest)))
-	}
-	archiveRoot := filepath.Join(canon, filepath.FromSlash(archivePath))
-	if err := os.MkdirAll(archiveRoot, DirPerm); err != nil {
+// skipped), syncing both parent directories after every rename, and verifies
+// the archive covers every planned source.
+func archiveV1Sources(plan *MigrationPlan, canon, archivePath string) (string, error) {
+	archiveRoot, err := ensureRelPathSafe(canon, archivePath)
+	if err != nil {
 		return "", err
 	}
 	moves := []struct{ srcRel, archiveRel string }{
@@ -853,17 +900,34 @@ func archiveV1Sources(plan *MigrationPlan, canon, journalArchivePath string, ent
 	}
 	for _, m := range moves {
 		src := filepath.Join(canon, filepath.FromSlash(m.srcRel))
-		if _, err := os.Stat(src); err != nil {
+		if _, err := os.Lstat(src); err != nil {
 			if os.IsNotExist(err) {
-				continue
+				continue // already moved on a prior attempt (or never existed)
 			}
 			return "", err
 		}
+		// The entire source chain below the home must be real directories:
+		// archiving never moves a location reachable through a symlink.
+		if _, err := checkRelPathSafe(canon, m.srcRel); err != nil {
+			return "", err
+		}
 		dst := filepath.Join(archiveRoot, m.archiveRel)
+		if _, err := os.Lstat(dst); err == nil {
+			return "", fmt.Errorf("archive destination %s already exists while source %s is present", m.archiveRel, m.srcRel)
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
 		if err := os.Rename(src, dst); err != nil {
-			if _, statErr := os.Stat(dst); statErr == nil {
-				continue
-			}
+			return "", err
+		}
+		// The move is durable only once both parent directories are synced.
+		if err := migrationSyncDir(filepath.Dir(src)); err != nil {
+			return "", err
+		}
+		if err := migrationSyncDir(archiveRoot); err != nil {
+			return "", err
+		}
+		if err := migrationCrash("archive-move-" + m.archiveRel); err != nil {
 			return "", err
 		}
 	}
@@ -874,6 +938,66 @@ func archiveV1Sources(plan *MigrationPlan, canon, journalArchivePath string, ent
 		return "", fmt.Errorf("legacy v1 task-authority source remains visible after archive")
 	}
 	return archivePath, nil
+}
+
+// verifyPartialArchive proves an interrupted archive is recoverable: every
+// remaining source is a plan source with the plan digest, every already
+// archived file maps to a plan source with the plan digest, nothing
+// unexpected hides in the archive, and the union of remaining and archived
+// files accounts for exactly the plan inventory.
+func verifyPartialArchive(plan *MigrationPlan, canon, archivePath string, remaining []SourceFile) error {
+	expected := map[string]string{}
+	for _, f := range plan.Sources {
+		expected[f.Path] = f.SHA256
+	}
+	for _, f := range remaining {
+		want, ok := expected[f.Path]
+		if !ok || f.SHA256 != want {
+			return fmt.Errorf("remaining v1 source %s does not match plan after interrupted archive", f.Path)
+		}
+	}
+	archiveRoot := filepath.Join(canon, filepath.FromSlash(archivePath))
+	matched := 0
+	err := filepath.WalkDir(archiveRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if strings.HasPrefix(entry.Name(), ".") {
+			return nil
+		}
+		rel, err := filepath.Rel(archiveRoot, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		homeRel, ok := archiveHomeRel(rel)
+		if !ok {
+			return fmt.Errorf("unexpected archived file %s after interrupted archive", rel)
+		}
+		want, ok := expected[homeRel]
+		if !ok {
+			return fmt.Errorf("archived file %s is not a planned v1 source", homeRel)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if DigestHex(data) != want {
+			return fmt.Errorf("archived source %s digest mismatch after interrupted archive", homeRel)
+		}
+		matched++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(remaining)+matched != len(plan.Sources) {
+		return fmt.Errorf("interrupted archive leaves %d of %d planned sources unaccounted for", len(plan.Sources)-len(remaining)-matched, len(plan.Sources))
+	}
+	return nil
 }
 
 // verifyArchive checks every planned source file is archived with an
@@ -1022,19 +1146,11 @@ func anyV1SourceVisible(homeDir string) (bool, error) {
 	return false, nil
 }
 
-// writeMigrationJSON renders one migration-owned document deterministically.
-func writeMigrationJSON(path string, v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeMigrationFile(path, append(data, '\n'))
-}
-
-// writeMigrationFile writes migration-owned files (plans, journal, receipt,
-// manifest, staged documents) atomically with private permissions. These
-// live outside the authority root, so the store's ensureDirSafe cannot be
-// used for them.
+// writeMigrationFile writes migration-owned files (plans, staged documents)
+// atomically with private permissions. The journal, receipt, and manifest
+// are written through writeMigrationDoc, which verifies every parent
+// component below the home before calling this; operator-chosen plan paths
+// may live anywhere.
 func writeMigrationFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, DirPerm); err != nil {
@@ -1067,20 +1183,28 @@ func writeMigrationFile(path string, data []byte) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("renaming migration file into place: %w", err)
 	}
+	// The rename is durable only once its parent directory is synced.
+	if err := migrationSyncDir(dir); err != nil {
+		return fmt.Errorf("syncing migration directory %s: %w", dir, err)
+	}
 	return nil
 }
 
 func writeMigrationJournal(homeDir string, journal *migrationJournal) error {
-	return writeMigrationJSON(migrationJournalPath(homeDir), journal)
+	data, err := json.MarshalIndent(journal, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeMigrationDoc(homeDir, migrationJournalRel, append(data, '\n'))
 }
 
 func readMigrationJournal(homeDir string) (*migrationJournal, bool, error) {
-	data, err := os.ReadFile(migrationJournalPath(homeDir))
+	data, ok, err := readMigrationDoc(homeDir, migrationJournalRel)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
 		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
 	}
 	var journal migrationJournal
 	if err := json.Unmarshal(data, &journal); err != nil {

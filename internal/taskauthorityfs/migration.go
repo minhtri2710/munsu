@@ -212,10 +212,10 @@ func PlanMigration(homeDir string) (*MigrationPlan, error) {
 // task-authority state with no v1 sources: a completion receipt, or v2
 // documents without any legacy v1 source.
 func migrationAlreadyApplied(canon string) (bool, error) {
-	if _, err := os.Stat(migrationReceiptPath(canon)); err == nil {
-		return true, nil
-	} else if !os.IsNotExist(err) {
+	if _, ok, err := readMigrationDoc(canon, migrationReceiptRel); err != nil {
 		return false, err
+	} else if ok {
+		return true, nil
 	}
 	hasV1, err := anyV1SourceVisible(canon)
 	if err != nil {
@@ -234,12 +234,12 @@ func migrationAlreadyApplied(canon string) (bool, error) {
 // receiptSourceDigest reads the completed migration receipt's source digest,
 // returning "" when no receipt exists.
 func receiptSourceDigest(canon string) (string, error) {
-	data, err := os.ReadFile(migrationReceiptPath(canon))
+	data, ok, err := readMigrationDoc(canon, migrationReceiptRel)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
 		return "", err
+	}
+	if !ok {
+		return "", nil
 	}
 	var receipt MigrationReceipt
 	if err := json.Unmarshal(data, &receipt); err != nil {
