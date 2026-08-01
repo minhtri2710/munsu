@@ -1,6 +1,6 @@
 # AFK away-mode supervision — munsu-native contract
 
-> munsu ships a Go-native AFK sub-supervisor daemon (`internal/afk/`). This doc covers
+> munsu ships a Go-native AFK sub-supervisor daemon (`internal/orchestrator/`). This doc covers
 > the contract, CLI, lifecycle, and safety invariants.
 
 ## CLI

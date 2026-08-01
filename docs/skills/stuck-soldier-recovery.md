@@ -1,27 +1,18 @@
-# Stuck-soldier recovery — agent-only reference
-
-Playbook for unresponsive or stuck soldiers.
+# Stuck Soldier recovery reference
 
 ## Escalation ladder
 
-1. **Peek** — `munsu peek <id>` to read the last N lines of pane output.
-2. **Steer** — `munsu send <id> "<one-line instruction>"` to nudge the soldier.
-3. **Interrupt** — if the soldier is spinning without making progress, use harness-specific interrupt:
-   - Pi: `Ctrl+C` via herdr pane send-keys or tmux send-keys
-   - Claude: `Ctrl+C` same mechanism
-4. **Relaunch** — if interrupt+re-steer fails, teardown and re-spawn:
-   - `munsu teardown <id> --force` then `munsu spawn <id> <project>`
-   - Include a progress note: "relaunched after stale/lost state"
-5. **Fail** — only after the above is exhausted:
-   - Append `failed: {evidence of what happened}` to the status file
-
-## When to use each level
+1. Peek with `munsu peek <id>`.
+2. Steer with one bounded `munsu send <id> "<instruction>"` command.
+3. Interrupt a spinning harness with Ctrl+C through its session backend.
+4. Relaunch with `munsu teardown <id> --force`, then spawn again with a progress note.
+5. Report failure only after the preceding steps are exhausted.
 
 | Condition | Action |
 |---|---|
-| Soldier not writing status | Peek + steer |
-| Repeated same question | Steer with answer |
-| Rate limit / 429 | Paused — recheck on long cadence |
-| No output for >5 min | Peek → if idle, steer → if no response, interrupt+steer |
-| Pipeline stuck on CI with no checks | Steer to skip CI step |
-| Model unreachable | Try re-arming or wait for provider recovery |
+| No status writes | Peek, then steer. |
+| Repeated question | Steer with the missing answer. |
+| Provider rate limit | Pause and retry on a longer cadence. |
+| No output for more than five minutes | Peek, steer, then interrupt if needed. |
+| CI pipeline stalled without checks | Steer toward the documented fallback. |
+| Model unreachable | Wait or relaunch through a verified adapter. |

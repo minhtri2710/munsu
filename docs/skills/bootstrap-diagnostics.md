@@ -1,23 +1,17 @@
-# Bootstrap diagnostics — agent-only reference
-
-Handling playbook for session-start bootstrap diagnostics. The session-start digest now includes four sections: Bootstrap Diagnostics (this doc), Context (data/*.md files), Fleet State (in-flight tasks), and Supervision (wake-handling reminder).
+# Bootstrap diagnostics reference
 
 ## Diagnostic lines
 
-When the bootstrap diagnostics section of the session-start digest prints any of these lines, handle as follows:
-
 | Line pattern | Handling |
 |---|---|
-| `MISSING: <tool>` | Tool is missing from PATH. Suggest install command if known. |
-| `NEEDS_GH_AUTH` | `gh auth login` is needed. |
-| `TANGLE:` | Primary checkout has a non-default branch checked out. Restore with `git checkout <default>`. |
-| `SOLDIER_HARNESS: <name>` | Soldier harness is set to a non-default adapter. Note for spawn decisions. |
-| `SOLDIER_DISPATCH: active` | Dispatch profile rules are active. Consult before spawning. |
-| `FLEET_SYNC:` | Fleet clones were synced or STUCK. Review STUCK entries. |
+| `MISSING: <tool>` | Tool is missing from PATH. Suggest an install command if known. |
+| `NEEDS_GH_AUTH` | Run `gh auth login`. |
+| `TANGLE:` | Restore the primary checkout to its default branch. |
+| `SOLDIER_HARNESS: <name>` | Note the selected Soldier harness before spawning. |
+| `SOLDIER_DISPATCH: active` | Dispatch profiles are active; inspect them before spawning. |
+| `FLEET_SYNC:` | Review any stuck fleet sync entries. |
 | `SECOND_SYNC:` | Captain homes were fast-forwarded. |
-| `SECOND_LIVENESS:` | Captain liveness section (after Fleet Sync) probed endpoints and found launched-but-dead ones. Session-start reports only — relaunch with `munsu captain recover` or re-run `munsu session-start --recover`. |
-| `TASKS_AXI: available` | Tasks-axi is ready. Use it for backlog ops. |
+| `SECOND_LIVENESS:` | Relaunch dead Captain endpoints with `munsu captain recover` or `munsu session-start --recover`. |
+| `TASKS_AXI: available` | Use tasks-axi-backed backlog operations. |
 
-## Silent bootstrap
-
-If no diagnostic lines are printed, everything is good — proceed normally.
+If no diagnostic lines appear, proceed normally.

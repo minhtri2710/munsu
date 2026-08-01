@@ -172,10 +172,119 @@ func TestEmbeddedSkillReferencesResolve(t *testing.T) {
 	}
 }
 
-func TestMunsuOpsAgentMirrorMatchesCanonical(t *testing.T) {
-	canonical := filepath.Join("internal", "cli", "skills", "munsu-ops")
-	mirror := filepath.Join(".agents", "skills", "munsu-ops")
-	compareSkillDirectories(t, os.DirFS(filepath.Join("..", "..")), canonical, mirror)
+// agentMirrorSkills have .agents/skills/<name> machine-compared to the embedded
+// canonical by TestAgentSkillMirrorsMatchCanonical.
+var agentMirrorSkills = []string{"captain-provisioning", "munsu-ops", "munsu-update"}
+
+// referenceDocSkills have docs/skills/<name>.md machine-compared to the embedded
+// REFERENCE.md by TestAgentSkillReferencesMatchEmbeddedCanonical.
+var referenceDocSkills = []string{"bootstrap-diagnostics", "harness-adapters", "stuck-soldier-recovery"}
+
+// embeddedOnlySkills are explicitly embedded-only: no .agents/skills mirror and
+// at most the declared active secondary doc under docs/skills/. Any other external
+// copy must move the skill to a machine-compared set.
+var embeddedOnlySkills = []struct {
+	name string
+	doc  string // optional active secondary doc (basename under docs/skills/); "" = none
+}{
+	{name: "afk", doc: "afk.md"},
+	{name: "ask-user-authority"},
+	{name: "decision-hold-lifecycle", doc: "decision-hold-lifecycle.md"},
+	{name: "diagnostic-reasoning"},
+}
+
+// TestEmbeddedSkillParityCoverage is the parity gate over every embedded skill
+// name: each name must carry exactly one disposition — a machine-compared
+// canonical mirror/reference (agentMirrorSkills, referenceDocSkills) or an
+// explicit embedded-only disposition (embeddedOnlySkills).
+func TestEmbeddedSkillParityCoverage(t *testing.T) {
+	names, err := embeddedSkillNames()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	classified := map[string]string{}
+	for _, n := range agentMirrorSkills {
+		classified[n] = "agent-mirror"
+	}
+	for _, n := range referenceDocSkills {
+		classified[n] = "reference-doc"
+	}
+	for _, s := range embeddedOnlySkills {
+		classified[s.name] = "embedded-only"
+	}
+
+	embedded := make(map[string]bool, len(names))
+	for _, n := range names {
+		embedded[n] = true
+		if _, ok := classified[n]; !ok {
+			t.Errorf("embedded skill %q has no parity disposition; add it to agentMirrorSkills, referenceDocSkills, or embeddedOnlySkills", n)
+		}
+	}
+	for n := range classified {
+		if !embedded[n] {
+			t.Errorf("parity disposition names %q, but no such embedded skill exists", n)
+		}
+	}
+
+	repo := os.DirFS(filepath.Join("..", ".."))
+	for _, s := range embeddedOnlySkills {
+		t.Run(s.name, func(t *testing.T) {
+			if _, err := fs.Stat(repo, filepath.Join(".agents", "skills", s.name)); err == nil {
+				t.Errorf("embedded-only skill %q has an .agents/skills mirror; move it to agentMirrorSkills or remove the mirror", s.name)
+			}
+			docPath := filepath.Join("docs", "skills", s.name+".md")
+			_, docErr := fs.Stat(repo, docPath)
+			if s.doc == "" {
+				if docErr == nil {
+					t.Errorf("undeclared secondary doc %s exists; declare it in embeddedOnlySkills or move %q to referenceDocSkills", docPath, s.name)
+				}
+				return
+			}
+			if docErr != nil {
+				t.Errorf("declared secondary doc %s is missing: %v", docPath, docErr)
+				return
+			}
+			refPath := filepath.Join("internal", "cli", "skills", s.name, "REFERENCE.md")
+			doc, docReadErr := fs.ReadFile(repo, docPath)
+			ref, refReadErr := fs.ReadFile(repo, refPath)
+			if docReadErr == nil && refReadErr == nil && string(doc) == string(ref) {
+				t.Errorf("%s is byte-identical to %s; move %q to referenceDocSkills instead of embedded-only", docPath, refPath, s.name)
+			}
+		})
+	}
+}
+
+func TestAgentSkillMirrorsMatchCanonical(t *testing.T) {
+	repo := os.DirFS(filepath.Join("..", ".."))
+	for _, name := range agentMirrorSkills {
+		t.Run(name, func(t *testing.T) {
+			canonical := filepath.Join("internal", "cli", "skills", name)
+			mirror := filepath.Join(".agents", "skills", name)
+			compareSkillDirectories(t, repo, canonical, mirror)
+		})
+	}
+}
+
+func TestAgentSkillReferencesMatchEmbeddedCanonical(t *testing.T) {
+	repo := os.DirFS(filepath.Join("..", ".."))
+	for _, name := range referenceDocSkills {
+		t.Run(name, func(t *testing.T) {
+			docPath := filepath.Join("docs", "skills", name+".md")
+			referencePath := filepath.Join("internal", "cli", "skills", name, "REFERENCE.md")
+			doc, err := fs.ReadFile(repo, docPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reference, err := fs.ReadFile(repo, referencePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(doc) != string(reference) {
+				t.Errorf("agent reference %s differs from embedded canonical %s", docPath, referencePath)
+			}
+		})
+	}
 }
 
 func TestInstalledMunsuOpsReferencesResolve(t *testing.T) {
