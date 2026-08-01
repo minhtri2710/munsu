@@ -54,6 +54,18 @@ The durable verdict that authorizes a migrated fleet to resume mutation. It bind
 
 A monotonically increasing identity for one incarnation of a task lifecycle. Delivery evidence, reports, and resources must bind the exact generation they affect.
 
+## Task Revision
+
+The monotonic ordering of authoritative mutations within one Task Generation. It advances when that generation's definition, lifecycle, bindings, dispatch evidence, or durable decisions change. It does not identify a new lifecycle incarnation.
+
+## Task Operation
+
+One idempotent authoritative mutation identified by a stable Operation ID and request digest. Repeating the same identity and intent returns the original outcome; reusing the identity for different intent is a conflict.
+
+## Task Authority
+
+The single authority that evaluates task lifecycle, readiness, and durable dispatch-control intent against the latest Authoritative Task Aggregate. It owns semantic transitions and audit outcomes; persistence and projections do not independently decide task state. See [ADR-0007](docs/adr/0007-task-authority-deep-module-and-transactional-store.md).
+
 ## Resource Lease
 
 An exclusive claim on a task-owned endpoint or worktree. The lease carries an identity and fencing token so stale task generations cannot mutate or release the resource.

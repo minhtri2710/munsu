@@ -6,25 +6,25 @@
 
 This contract gives agent callers a small, versioned view of orchestration state and mutation receipts. It is grounded in the Agent eXperience Interface (AXI): token-efficient TOON on stdout by default, minimal result schemas, definitive empties, cheap aggregates, contextual next actions, structured errors, no prompts, and idempotent mutations.
 
-The canonical internal model is JSON-compatible Go structs in [`internal/contract/model.go`](../internal/contract/model.go). Phase 1 must construct those values first and encode the same ordered data as either JSON or TOON only at the output boundary. The golden representations live in [`internal/contract/fixtures`](../internal/contract/fixtures).
+Phase 1 proposes a JSON-compatible Go model under `internal/contract/model.go` and golden representations under `internal/contract/fixtures`. Those paths do not exist in the current tree and are not current runtime owners. A separately approved implementation must create them or revise this planned boundary before constructing values and encoding the same ordered data as JSON or TOON.
 
 `schema_version` is required in every response and is presently `munsu.orchestration/v2`. `kind` identifies the response schema. Both encodings have identical field names, values, and semantics.
 
 ## Scope and single-owner boundaries
 
-A command family has one runtime owner. A package may call another package's public interface, but must not independently emit or redefine that family's contract result. This is an intended Phase 1 ownership map, not a runtime takeover.
+A command family has one runtime owner: the package that emits its contract result. A package may call another package's public interface, but must not independently emit or redefine that family's contract result. **Current owner** is where the command and its contract emission live today; **Phase 1 owner** is the proposed single owner after the output boundary lands. Earlier packages that owned these domains (`internal/soldierstate`, `internal/task`, `internal/supervision`, `internal/waker`, `internal/session`, `internal/spawn`, `internal/integrate`) have been absorbed into the packages named below; the table names only packages that exist today.
 
-| Contract family | Exact planned command | Runtime owner | Existing authority reused | Phase 0 status |
-|---|---|---|---|---|
-| Discovery | `munsu capabilities` | `internal/cli` | root command registration | specified only |
-| Task observation | `munsu task observe <task-id>` | `internal/cli` | `internal/soldierstate` and `internal/task` | specified only |
-| Fleet state | `munsu fleet snapshot --version 2` | `internal/fleet` | fleet snapshot state | specified only |
-| Guard | `munsu guard` | `internal/cli` | guard evaluation | specified only |
-| Watch | `munsu watch ensure`, `munsu watch run` | `internal/supervision` | watcher lifecycle | specified only |
-| Wake | `munsu wake claim <wake-id> --owner <owner>`, `munsu wake ack <wake-id> --claim <claim-id>` | `internal/waker` | wake records and drain state | specified only |
-| Backend discovery | `munsu backend capabilities [--backend <name>]` | `internal/session` | backend selection | specified only |
-| Spawn receipt | `munsu spawn <task-id> ...` | `internal/spawn` | spawn lifecycle | specified only |
-| Integration | `munsu integrate install`, `munsu integrate repair` | `internal/integrate` | `internal/integrate` (post embed-ops) | implemented |
+| Contract family | Exact planned command | Current owner | Phase 1 owner | Existing authority reused | Phase 0 status |
+|---|---|---|---|---|---|
+| Discovery | `munsu capabilities` | `internal/cli` | `internal/cli` | root command registration | specified only |
+| Task observation | `munsu task observe <task-id>` | `internal/cli` | `internal/cli` | `internal/home` (task meta) and `internal/fleet` (soldier state) | specified only |
+| Fleet state | `munsu fleet snapshot --version 2` | `internal/cli` | `internal/fleet` | `internal/fleet` snapshot state | specified only |
+| Guard | `munsu guard` | `internal/cli` | `internal/cli` | `internal/orchestrator` guard evaluation | specified only |
+| Watch | `munsu watch ensure`, `munsu watch run` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` watcher lifecycle | specified only |
+| Wake | `munsu wake claim <wake-id> --owner <owner>`, `munsu wake ack <wake-id> --claim <claim-id>` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` wake records and drain state | specified only |
+| Backend discovery | `munsu backend capabilities [--backend <name>]` | `internal/cli` | `internal/backend` | `internal/backend` backend selection | specified only |
+| Spawn receipt | `munsu spawn <task-id> ...` | `internal/cli` | `internal/fleet` | `internal/fleet` spawn lifecycle | specified only |
+| Integration | `munsu integrate install`, `munsu integrate repair` | `internal/cli` | `internal/cli` | `internal/bootstrap` hook installation (post embed-ops) | implemented |
 
 A later implementation may add an output-boundary package, but it must not move domain ownership or alter the above commands' domain authority. Existing commands retain their behavior until a separately approved implementation phase.
 

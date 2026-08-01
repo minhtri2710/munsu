@@ -23,13 +23,13 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Capability | munsu command | munsu Go package | Status |
 |---|---|---|---|
 | Home directory | `munsu home` | `internal/home` | **implemented** |
-| Task meta + status protocol (append-only event log; keyed open/close) | `munsu task add/show/status`; current via `soldier-state` | `internal/home`, `internal/orchestrator`, `internal/soldierstate` | **implemented** (list: delegated to tasks-axi) |
+| Task meta + status protocol (append-only event log; keyed open/close) | `munsu task add/show/status`; current via `soldier-state` | `internal/home`, `internal/orchestrator`, `internal/fleet` | **implemented** (list: delegated to tasks-axi) |
 | Send message to soldier | `munsu send` | `internal/cli`, `internal/fleet`, `internal/home` (durable mailbox) | **implemented** (typed mailbox envelope/pending/ack; reconciliation through CLI-composed lifecycle ports) |
-| Spawn soldier | `munsu spawn` | `internal/cli` | **implemented** |
-| Brief soldier | `munsu brief` | `internal/brief` | **implemented** |
+| Spawn soldier | `munsu spawn` | `internal/cli`, `internal/fleet` | **implemented** |
+| Brief soldier | `munsu brief` | `internal/fleet` | **implemented** |
 | Teardown soldier context | `munsu teardown` | `internal/orchestrator` | **implemented** |
 | Peek at soldier output | `munsu peek` | `internal/cli` | **implemented** |
-| Soldier state query | `munsu soldier-state` | `internal/soldierstate` | **implemented** |
+| Soldier state query | `munsu soldier-state` | `internal/fleet` | **implemented** |
 | Promote soldier task | `munsu promote` | `internal/home` | **implemented** |
 | Harness detection/verification | `munsu harness detect/soldier/captain` | `internal/harness` | **implemented** |
 | Project mode | `munsu project mode` | `internal/fleet` | **implemented** |
@@ -38,22 +38,22 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Fleet view | `munsu fleet view` | `internal/fleet` | **implemented** |
 | Fleet bearings | `munsu fleet bearings` | `internal/fleet` | **implemented** |
 | Bootstrap diagnostics | `munsu bootstrap` | `internal/bootstrap` | **implemented** |
-| Self-update | `munsu update` | `internal/selfupdate` | **implemented** |
-| Session start | `munsu session-start` | `internal/session` | **implemented** |
+| Self-update | `munsu update` | `internal/cli` | **implemented** |
+| Session start | `munsu session-start` | `internal/cli`, `internal/orchestrator` | **implemented** |
 | Watch soldier | `munsu watch` | `internal/orchestrator` | **implemented** |
 | Arm watcher | `munsu watch-arm` | `internal/cli` | **implemented** |
 | Wake claim / drain | `munsu wake claim` / `munsu wake-drain` | `internal/orchestrator` | **implemented** (prefer claim; drain is legacy) |
 | Guard supervision | `munsu guard` | `internal/cli` | **implemented** |
-| Stow skill | `munsu stow` | `internal/stow` | **implemented** |
-| Ensure AGENTS.md | `munsu ensure-agents-md` | `internal/agentsmd` | **implemented** |
+| Stow skill | `munsu stow` | `internal/cli` | **implemented** |
+| Ensure AGENTS.md | `munsu ensure-agents-md` | `internal/cli` | **implemented** |
 | Project registry | `munsu project add/list/show/rm` | `internal/fleet` | **implemented** |
 | Backlog (tasks-axi + manual fallback) | `munsu backlog` | `internal/fleet` | **implemented** |
 | Review diff | `munsu delivery review-diff` | `internal/fleet` | **implemented** |
 | PR check/merge | `munsu delivery pr-check` / `munsu delivery pr-merge` | `internal/fleet` | **implemented** |
 | Local merge | `munsu delivery merge-local` | `internal/fleet` | **implemented** |
-| Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/worktree` | **implemented** |
+| Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/backend`, `internal/cli` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
-| Session backend (tmux + herdr + zellij) | `--backend` flag | `internal/session` | **implemented** (zellij experimental) |
+| Session backend (tmux + herdr + zellij) | `--backend` flag | `internal/backend` | **implemented** (zellij experimental) |
 | Dispatch profiles | `config/soldier-dispatch.json` | `internal/harness` | **implemented** |
 | Home init | `munsu init` | `internal/cli` | **implemented** |
 | AFK away-mode supervision | munsu afk | internal/orchestrator | **implemented** (Go-native, full lifecycle -- see `docs/skills/afk.md`) |

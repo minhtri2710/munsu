@@ -1,305 +1,141 @@
 # munsu architecture
 
-munsu is a standalone Go CLI for soldier orchestration
-capabilities, usable from any project directory without requiring a specific checkout.
+munsu is a standalone Go CLI for soldier orchestration capabilities, usable from
+any project directory without requiring a specific checkout.
 
 ## Module layout
 
-```
-cmd/munsu/main.go          Entrypoint — cobra command execution
+```text
+cmd/munsu/main.go       Entrypoint — Cobra command execution
 internal/
-  cli/                     Cobra command tree (root.go, init.go)
-  home/                    Home directory resolution
-  config/                  Flat key-file configuration
-  project/                 Project registry (data/projects.md)
-  worktree/                Treehouse worktree pool CLI wrapper
-  harness/                 Agent harness detection + soldier/captain resolution
-  session/                 Session backend interface (tmux, herdr)
-  task/                    Task meta read/write (state/<id>.meta + status)
-  backlog/                 Task backlog via tasks-axi or manual fallback
-  brief/                   Task brief scaffolding (ship/scout templates)
-  soldierstate/               Soldier state reading (meta + pane liveness)
-  teardown/                Soldier teardown with safety checks
-  delivery/                Review-diff, pr-check, pr-merge, merge-local
-  fleet/                   Fleet sync, snapshot, view, bearings
-  captain/              Captain lifecycle (seed, launch, retire, handoff)
-  selfupdate/              Fast-forward self-update
-  supervision/             Event-driven watcher loop (watch)
-  waker/                   Wake queue (enqueue, drain, guard)
-  lifecycle/               Timing/lock invariants (wake queue, watcher beat, lock)
-  bootstrap/               Toolchain diagnostics and setup sweeps
-  agentsmd/                AGENTS.md creation and update
-  stow/                    Knowledge sweep (learnings, general preferences)
-  afk/                     Away-mode supervision daemon
-  hometag/                 Home-tag namespace isolation helpers
-  ghurl/                   GitHub URL parsing utility
+  cli/                  Composition root, Cobra commands, self-update, stow, AGENTS.md helpers
+  fleet/                Captain, spawn, backlog, delivery, soldier state, project registry
+  orchestrator/         Watcher, AFK, wake delivery, lifecycle and turn-end coordination
+  home/                 Home resolution plus durable task/meta/status storage mechanics
+  backend/              Session adapters, endpoint observation, worktree and home-tag mechanics
+  domain/               Pure business rules and value types, including delivery acceptance
+  harness/              Harness detection, verified adapters and dispatch profiles
+  bootstrap/            Toolchain diagnostics and native harness integration
+  config/               Flat key-file configuration
+  configmigration/      Configuration migration mechanics
+  testutil/             Shared test helpers
 ```
 
-Each package follows a deep-module pattern: small public surface area,
-implementation detail behind. Cobra command wiring stays in `internal/cli/`;
-business logic lives in the domain packages (`internal/backlog/`,
-`internal/session/`, `internal/delivery/`, etc.).
+Each module follows a deep-module pattern: a small interface hides implementation
+detail. `internal/cli` is the composition root; business lifecycle rules remain
+in their authoritative module rather than in command wiring.
 
-## Package responsibilities
+## Module responsibilities
 
-| Package | Responsibility |
-|---------|---------------|
-| `home` | Resolve `MUNSU_HOME` / `--home` / `~/.munsu` default; create directory tree |
-| `config` | Read/write flat key files under `config/`; env override fallback |
-| `project` | Parse `data/projects.md` registry; ad-hoc cwd detection |
-| `worktree` | CLI wrapper around treehouse: get, return, status, isolation assertion |
-| `harness` | Detect agent harness (env markers + process ancestry); resolve soldier/captain adapters |
-| `session` | `Backend` interface with tmux and herdr adapters |
-| `task` | Meta read/write (`state/<id>.meta`), status append (`state/<id>.status`) |
-| `backlog` | Task backlog via tasks-axi CLI or manual `data/backlog.md` fallback |
-| `brief` | Scaffold ship/scout brief templates at `data/<id>/brief.md` |
-| `soldierstate` | Read soldier state: meta + no-mistakes run-step + pane liveness + status log |
-| `teardown` | Soldier teardown with dirty/remote/report safety gates |
-| `delivery` | Review-diff, pr-check, pr-merge, merge-local (no-mistakes axi helpers) |
-| `fleet` | Sync, snapshot, view, bearings for project fleet |
-| `captain` | Full persistent-domain-supervisor lifecycle |
-| `selfupdate` | Fast-forward-only self-update binary |
-| `supervision` | Event-driven watcher loop with singleton lock |
-| `waker` | Durable wake queue (enqueue, drain, guard) |
-| `lifecycle` | Wake queue parse/append/drain, watcher beat I/O, session lock |
-| `bootstrap` | Toolchain diagnostics: MISSING, NEEDS_GH_AUTH, TANGLE, etc. |
-| `agentsmd` | AGENTS.md creation, CLAUDE.md symlink, self-governance section |
-| `stow` | Knowledge sweep with inspect-then-update dedup |
-| `afk` | Away-mode sub-supervisor daemon |
-| `hometag` | Namespace isolation for session backends |
-| `ghurl` | GitHub URL parsing (owner, repo, PR number) |
+| Module | Responsibility |
+|---|---|
+| `cli` | Wire Cobra commands to modules; own CLI-local self-update, stow, AGENTS.md and output helpers |
+| `fleet` | Orchestrate Captain lifecycle, Soldier spawn/state, backlog, project registry and delivery operations |
+| `orchestrator` | Coordinate supervision, AFK, wakes, turn-end obligations and cross-process lifecycle |
+| `home` | Resolve the munsu home and implement durable task aggregate, meta, status and binding storage |
+| `backend` | Provide tmux/herdr/zellij/cmux/orca adapters, endpoint observation, worktree and home-tag mechanics |
+| `domain` | Own pure business rules and value types such as `PR.CanMerge` and `Review.IsApproving` |
+| `harness` | Detect and verify harnesses; resolve launch templates and dispatch profiles |
+| `bootstrap` | Diagnose toolchain readiness and install, repair or inspect native harness integration |
+| `config` | Read and write flat config files with environment override fallback |
+| `configmigration` | Plan and apply configuration schema migration |
+
+The command-to-module mapping is maintained in
+[`docs/port-mapping.md`](port-mapping.md).
 
 ## Home directory data model
 
-Default home: `~/.munsu` (overridable via `MUNSU_HOME` env or `--home` flag).
+Default home: `~/.munsu` (overridable via `MUNSU_HOME` or `--home`).
 
-```
+```text
 ~/.munsu/
-  state/                   Task state + lock files
-    <id>.meta              Task metadata (JSON key-value pairs)
-    <id>.status            Status log (one line per append, "state: message")
-    .lock                  Flock-based singleton lock (watcher)
-    .last-watcher-beat     Liveness timestamp + PID
-    .wake-queue            Durable wake event queue
+  state/                   Task state, projections, locks, wakes and receipts
+    <id>.meta              Task metadata projection
+    <id>.status            Append-only status/event projection
   data/
-    backlog.md             Manual backlog file (markdown format)
-    projects.md            Project registry (one entry per line)
-    <id>/                  Per-task briefs
-      brief.md
-  config/                  Flat key files
-    backend                Default session backend (tmux|herdr)
-    soldier-harness           Override for soldier harness
-    captain-harness     Override for captain harness
-    backlog-backend        Override for backlog backend (manual)
-    soldier-dispatch.json     Dispatch profile (harness/model/effort; managed via munsu config dispatch)
-  projects/                Cloned project repositories
+    backlog.md             Manual backlog fallback
+    projects.md            Project registry
+    captains.md            Captain registry
+    <id>/brief.md          Per-task brief
+  config/                  Harness, backend, dispatch and project settings
+  projects/                Project worktrees
+  captains/                Captain homes
 ```
 
-### State files
+### Task state
 
-Task meta (`state/<id>.meta`): newline-delimited `key: value` pairs written
-by `task.WriteMeta` and read by `task.ReadMeta`. Metadata keys include
-`window`, `worktree`, `project`, `harness`, `model`, `effort`, `kind`, `mode`,
-`yolo`, `pr`, `head_sha`, `created`, `updated`.
-
-Task status (`state/<id>.status`): **append-only wake/event log**, one
-`verb [key=<slug>]: message` line per append. It is **not** sole current-state
-authority — prefer `soldierstate.Read` / structured fleet home summary /
-no-mistakes run-step. Last line alone can mask still-open keyed decisions or
-phases.
-
-Semantics (status model):
-
-- **Append-only events** — never rewrite; consumers fold the whole stream.
-- **Keyed open/close** — optional `[key=<slug>]` between verb and colon:
-  - Decisions: `needs-decision`/`blocked` open; `resolved`/`captain-held` close
-    (`classify.OpenDecisions`).
-  - Work phases: `working`/`paused` open; `done`/`failed`/`needs-decision`/
-    `blocked`/`resolved`/`captain-held` close (`classify.OpenActivities`).
-  - Bare lines use key `default` (legacy one-open-per-task).
-- **Current state** — `soldierstate` orders no-mistakes run-step > pane liveness >
-  last **state-bearing** log verb (`resolved` closes keys only, never becomes
-  Status). Parent captain status is historical/untrusted vs structured home
-  (`fleet.ReconcileParentStatus`).
+Task meta and status files are durable projections implemented by
+`internal/home`. Status is append-only and is not the sole current-state
+authority: consumers fold the stream and combine it with structured task,
+run-step and endpoint evidence. Task lifecycle authority is being separated from
+filesystem mechanics under ADR-0007; until that cutover, callers must use the
+existing semantic helpers rather than invent another projection writer.
 
 ### Configuration
 
-Flat key files under `config/`. Read via `config.Get(homeDir, key)`, write
-via `config.Set(homeDir, key, value)`. Environment overrides use the pattern
-`MUNSU_<KEY>_OVERRIDE` (e.g. `MUNSU_BACKEND_OVERRIDE`). Resolution order is
-flag > env override > config file > default.
+Flat key files live under `config/`. `internal/config` resolves values in this
+order: explicit flag, environment override, config file, default. Dispatch
+profiles live in `config/soldier-dispatch.json` and are interpreted by
+`internal/harness` and the spawn orchestration in `internal/fleet`.
 
-## Key interfaces
+## Key interfaces and seams
 
-### Session backend (`internal/session`)
+### Session backend (`internal/backend`)
 
-```go
-type Backend interface {
-    NewWindow(session, name string) (windowID string, err error)
-    SendKeys(windowID, text string) error
-    Capture(windowID string, lines int) (string, error)
-    Alive(windowID string) bool
-    Teardown(windowID string) error
-}
-```
+`internal/backend` hides terminal-specific behavior behind session and endpoint
+operations. Verified implementations include tmux and herdr; zellij, cmux and
+orca are explicit experimental adapters. Resolution rejects unknown backends
+rather than silently selecting an unverified implementation.
 
-Five implementations: `tmux` (default), `herdr` (enabled via `HERDR_ENV=1`),
-`zellij` (experimental), `cmux` (experimental, macOS-only), and `orca` (experimental).
-The backend is selected through a resolution chain: `--backend` flag >
-`config/backend` file > `HERDR_ENV` env var > `tmux` default. Unknown
-backend names are rejected at `session.Resolve` time with a clear error.
+### Delivery acceptance (`internal/domain`)
 
-Backend resolution: `session.Resolve(homeDir, backendOverride)` returns a
-`(Backend, name, error)` tuple. The caller receives the resolved adapter
-and its display name, then uses the adapter for all session operations.
+`internal/domain/domain.go` is the single owner of `PR`, `Review`, `CheckRun`,
+`PR.CanMerge`, and `Review.IsApproving`. `internal/fleet/delivery_*.go` owns
+provider interaction, identity capture, authorization and delivery orchestration.
 
-Experimental backends:
-- **orca** — experimental terminal app with terminal + worktree ownership. Opt-in only via `config/backend=orca` or `--backend orca`; never auto-detected.
+### Captain lifecycle (`internal/fleet`)
 
-### Task lifecycle
+`internal/fleet/captain_captain.go` owns seed, launch, retire, handoff,
+config-push, update and migration. `captain_recover.go` owns the recovery
+transaction. CLI adapters in `internal/cli` compose verified harness, backend and
+integration capabilities into those operations.
 
-| Phase | Command | Domain package |
-|-------|---------|---------------|
-| Create | `munsu backlog add` / `munsu task add` | `backlog` / `task` |
-| Brief | `munsu brief` | `brief` |
-| Spawn | `munsu spawn` | `cli` (wires worktree + harness + session) |
-| Supervise | `munsu watch` (bg: `munsu watch-arm`) | `supervision` |
-| Interact | `munsu send`, `munsu peek`, `munsu soldier-state` | `cli`, `soldierstate` |
-| Promote | `munsu promote` | `task` |
-| Deliver | `munsu review-diff`, `munsu pr-check`, `munsu pr-merge`, `munsu merge-local` | `delivery` |
-| Teardown | `munsu teardown` | `teardown` |
+### Supervision and wake delivery (`internal/orchestrator`)
 
-### Spawn flow
+`internal/orchestrator` owns watcher and AFK coordination plus the wake-delivery
+module. `DeliverWake` handles Soldier-side status, receipt, event and wake
+coordination; `ReconcilePending` handles Captain-side relay, acknowledgement and
+obligation closure. Durable filesystem primitives remain behind `internal/home`
+and adjacent orchestrator lifecycle files.
 
-`munsu spawn <id> <project>` orchestrates six steps in sequence:
+## Task lifecycle
 
-1. **Tangle check** — verifies the project checkout is not on a non-default
-   branch in the primary checkout (skipped with `--yolo`)
-2. **Worktree acquisition** — calls `worktree.Get` to obtain an isolated
-   treehouse pool worktree
-3. **Harness detection** — determines the calling agent harness (pi,
-   claude-code, codex, etc.) via env markers and process ancestry
-4. **Launch template resolution** — resolves harness/model/effort from
-   `config/soldier-dispatch.json` (profile match + defaults), then adapter template defaults;
-   CLI `--model`/`--effort` override
-5. **Session creation** — resolves the backend (tmux/herdr) and opens a new
-   terminal window for the soldier
-6. **Meta write** — persists task metadata (window, worktree, harness, model,
-   project, kind, mode) to `state/<id>.meta`
-
-### Supervision / watcher
-
-`munsu watch` runs an event-driven poll loop every 5 captains:
-- Touches a liveness beat at `state/.last-watcher-beat`
-- Scans all task meta files for pane liveness (via session backend) and status
-  log staleness (>5 min idle)
-- Detects stale streaks (3 consecutive stale polls triggers deep inspection)
-- Emits wake reasons (stale, signal, done) into the wake queue
-- Singleton-safe via flock at `state/.lock`
-
-`munsu watch-arm` launches the watcher as a background child process.
-`munsu wake-drain` consumes all queued wake records.
-`munsu guard` checks watcher liveness and reports project tangles.
-
-Stale absorption: tasks running in the no-mistakes pipeline (run-step
-`running`, `fixing`, `ci`, `fix_review`, `awaiting_approval`) suppress stale
-wakes even if the session pane appears idle.
-
-### Backlog
-
-`munsu backlog` subcommands (add, list, show, start, done, block, ready,
-unblock) use a two-tier dispatch:
-1. **tasks-axi CLI** (when available and compatible, >= 0.1.1)
-2. **Manual fallback** — markdown file at `data/backlog.md` with markers
-   `[ ]` (queued), `[-]` (in-flight), `[!]` (blocked), `[x]` (done)
-
-Non-default home paths force the manual backend to prevent data leaks
-between home scopes.
-
-### Delivery pipeline
-
-Three modes controlled by `--mode` on `munsu spawn`:
-- **no-mistakes** (default) — automated code review, lint, test, PR via
-  the no-mistakes daemon pipeline
-- **direct-PR** — push and open PR directly, skip automated review
-- **local-only** — merge to local default branch without a remote
-
-Delivery subcommands: `munsu review-diff` (diff summary), `munsu pr-check`
-(record PR + write merge-poll script), `munsu pr-merge` (merge via gh-axi),
-`munsu merge-local` (fast-forward for local-only mode).
-
-## Harness resolution
-
-`harness.Detect()` checks environment markers first (`PI_AGENT_ACTIVE`,
-`CLAUDE_CODE`, `CODEBOX_AGENT_SESSION`, `GEMINI_AGENT`, `OPENAI_AGENT`,
-`ANTIGRAVITY_AGENT`, `ANTHROPIC_API_KEY`, etc.), then falls back to
-process ancestry inspection.
-
-`harness.Soldier(homeDir)` — fallback chain: `soldier-dispatch.json` default >
-`config/soldier-harness` > detected harness.
-`harness.Captain(homeDir)` — fallback: `config/captain-harness` >
-`config/soldier-harness` > detected harness.
-
-## Key design decisions
-
-- **Deep modules, shallow interfaces** — each `internal/` package exposes a
-  small public API (often 1-3 functions) with implementation detail behind.
-- **Cobra-only dependency** — no framework, no DI container. Cobra is the sole
-  Go dependency. This keeps the binary small and upgrades trivial.
-- **No bash runtime** — the compiled binary has zero runtime dependencies
-  on scripts or external tools beyond the agent harness.
-- **Standalone CLI, not a fork** — munsu implements the soldier orchestration, watcher, backlog, and delivery
-  model as a standalone Go CLI with an explicit `--home` / `MUNSU_HOME` relocation
-  model.
-
-## Architecture comparison
-
-See `docs/port-mapping.md` for the full command reference.
-
-Key architectural characteristics:
-
-| Aspect | Munsu |
-|--------|-----------|-------|
-| Entrypoint | `munsu` CLI binary on `PATH` |
-| Home | `~/.munsu` or `MUNSU_HOME` / `--home` |
-| Language | Go (cobra) |
-| Dispatcher | Single entrypoint with subcommands |
-| Runtime dependencies | None (standalone binary) |
+| Phase | Command | Authoritative module |
+|---|---|---|
+| Create / backlog | `munsu task add`, `munsu backlog` | `internal/home`, `internal/fleet` |
+| Brief | `munsu brief` | `internal/fleet` |
+| Spawn | `munsu spawn` | `internal/fleet`, composed by `internal/cli` |
+| Supervise | `munsu watch`, `munsu watch-arm`, `munsu afk` | `internal/orchestrator` |
+| Interact | `munsu send`, `munsu peek`, `munsu soldier-state` | `internal/cli`, `internal/fleet`, `internal/home` |
+| Deliver | `munsu delivery ...` | `internal/fleet`, with acceptance rules in `internal/domain` |
+| Teardown | `munsu teardown` | `internal/cli`, `internal/fleet`, `internal/orchestrator` |
 
 ## Rank hierarchy and identity
 
-Munsu uses a battlefield rank vocabulary:
+General orchestrates the fleet. A Captain is a persistent domain supervisor
+implemented by `internal/fleet`; a Soldier executes one bounded task. Runtime
+identity is declared through `MUNSU_ROLE=general|captain|soldier`. Captain labels
+use `captain-<id>-<hometag>`, windows use `mu-captain-<id>`, provenance is stored
+in `.munsu-captain-home`, and registration lives in `data/captains.md`.
 
-| Rank | Role | CLI / identity |
-|------|------|----------------|
-| **General** | Fleet orchestrator / primary home | `MUNSU_ROLE=general` (default for primary callers); AFK inject target `config/general-pane` |
-| **Captain** | Persistent domain supervisor | CLI `munsu captain …`; `MUNSU_ROLE=captain`; meta `kind=captain`; task id `captain:<id>` |
-| **Soldier** | Task worker | `MUNSU_ROLE=soldier`; spawn/task workers (kinds remain `ship`/`scout`) |
+## Architectural enforcement
 
-### Labels and markers (rank-consistent scheme)
-
-| Surface | Scheme |
-|---------|--------|
-| Captain home provenance marker | `.munsu-captain-home` (munsu-v2: version, id, canonical-home) |
-| Herdr workspace / container label | `captain-<id>-<hometag>` |
-| Session window name | `mu-captain-<id>` |
-| Registry file (parent home) | `data/captains.md` |
-| Converge lock / nudge pending | `state/.captain-converge.lock`, `state/.captain-nudge-pending/` |
-| Launch script (captain home) | `.captain-launch.sh` |
-| Config keys | `config/captain-harness`, `config/soldier-harness`, `config/soldier-dispatch.json` |
-| Skills | `captain-provisioning`, `stuck-soldier-recovery` |
-
-Intermediate `marshal`/`second`/`crew` names from earlier development are a clean break: reseed or migrate with `munsu captain migrate <home> <id>`, rewrite meta/env/registry, and relaunch. Fail-closed spawn authority rejects unknown `MUNSU_ROLE` values.
-
-
-## Build and test
+`internal/testutil/architecture_policy_test.go` enforces the allowed package topology
+and forbidden import directions. When adding or moving a module, update that gate
+in the same change and run:
 
 ```sh
 go build ./...
 go vet ./...
-go test ./...        # 345+ tests across 26 packages
+go test ./...
 ```
-
-Cobra is the only Go dependency. Zero runtime dependencies beyond the compiled
-binary — no bash scripts, no external toolchain beyond what the agent harness
-provides.
