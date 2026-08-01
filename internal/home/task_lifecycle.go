@@ -113,10 +113,15 @@ func UnblockTask(homeDir, taskID string) (*TaskAggregate, error) {
 	})
 }
 
-func ReopenTask(homeDir, taskID string) (*TaskAggregate, error) {
+// supersedeGenerations is the shared safe generation transition used by both
+// ReopenTask (terminal only) and SupersedeTask (failed or terminal). It bumps
+// the current generation to the next queued generation WITHOUT carrying stale
+// endpoint (pane) or worktree bindings, and preserves the prior generation as
+// historical. The caller decides which source states are eligible.
+func supersedeGenerations(homeDir, taskID, verb string, eligible func(string) bool) (*TaskAggregate, error) {
 	lock, unlock, err := acquireMetaLock(homeDir, taskID)
 	if err != nil {
-		return nil, fmt.Errorf("reopen task: %w", err)
+		return nil, fmt.Errorf("%s task: %w", verb, err)
 	}
 	_ = lock
 	defer unlock()
@@ -126,20 +131,30 @@ func ReopenTask(homeDir, taskID string) (*TaskAggregate, error) {
 		return nil, err
 	}
 	if !ok {
-		return nil, lifecyclePrecondition("reopen requires existing task")
+		return nil, lifecyclePrecondition(verb + " requires existing task")
 	}
-	if current.State != "done" && current.State != "resolved" && current.State != "retired" {
-		return nil, lifecyclePrecondition("reopen requires terminal task")
+	if !eligible(current.State) {
+		return nil, lifecyclePrecondition(fmt.Sprintf("%s requires eligible generation, not %q", verb, current.State))
 	}
 	generation, err := strconv.ParseUint(current.Generation, 10, 64)
 	if err != nil || generation == ^uint64(0) {
-		return nil, fmt.Errorf("reopen task: invalid current generation %q", current.Generation)
+		return nil, fmt.Errorf("%s task: invalid current generation %q", verb, current.Generation)
 	}
 	updated := *current
 	updated.Generation = strconv.FormatUint(generation+1, 10)
 	updated.Current = true
 	updated.State = "queued"
 	updated.StateDetail = ""
+	// Prevent stale pane/worktree ownership: the new generation starts with no
+	// endpoint or worktree binding. The prior generation's bindings stay on
+	// the historical record only.
+	updated.Endpoint = nil
+	updated.Worktree = nil
+	// Reset status ownership: the old generation's status log must not be
+	// attributed to the new generation.
+	if p, statusErr := statusPath(homeDir, taskID); statusErr == nil {
+		_ = os.Remove(p)
+	}
 	oldPath := filepath.Join(homeDir, taskAggregateRelPath(taskID, current.Generation))
 	currentPath := filepath.Join(homeDir, taskAggregateDir, taskID, taskCurrentFile)
 	oldBytes, err := os.ReadFile(oldPath)
@@ -169,6 +184,31 @@ func ReopenTask(homeDir, taskID string) (*TaskAggregate, error) {
 		return nil, err
 	}
 	return &updated, nil
+}
+
+// ReopenTask reopens a terminal task (done/resolved/retired) as a new queued
+// generation. The new generation carries no stale pane/worktree bindings and
+// status ownership is reset, matching the safe generation transition contract.
+func ReopenTask(homeDir, taskID string) (*TaskAggregate, error) {
+	return supersedeGenerations(homeDir, taskID, "reopen", func(state string) bool {
+		return state == "done" || state == "resolved" || state == "retired"
+	})
+}
+
+// SupersedeTask is the explicit safe retry/supersede transition for failed or
+// terminal worktree generations. It refuses live generations (queued, working,
+// blocked) so a retry never claims work that is still executing, creates the
+// next queued generation without stale pane/worktree bindings, resets status
+// ownership, and preserves the prior generation as historical.
+func SupersedeTask(homeDir, taskID string) (*TaskAggregate, error) {
+	return supersedeGenerations(homeDir, taskID, "supersede", func(state string) bool {
+		switch state {
+		case "failed", "done", "resolved", "retired":
+			return true
+		default:
+			return false
+		}
+	})
 }
 
 func mutateCurrentTaskAggregate(homeDir, taskID string, mutate func(*TaskAggregate) (*TaskAggregate, error)) (*TaskAggregate, error) {

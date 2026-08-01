@@ -134,6 +134,11 @@ func manualRun(homeDir, verb string, args []string) error {
 			return fmt.Errorf("usage: backlog reopen <id>")
 		}
 		return fb.Reopen(args[0])
+	case "retry":
+		if len(args) < 1 {
+			return fmt.Errorf("usage: backlog retry <id>")
+		}
+		return fb.Retry(args[0])
 	case "ready":
 		items, err := fb.List(StateQueued)
 		if err != nil {
@@ -146,7 +151,7 @@ func manualRun(homeDir, verb string, args []string) error {
 	case "unblock":
 		return transitionViaFileBackend(fb, args, StateQueued)
 	default:
-		return fmt.Errorf("backlog: unknown verb %q (supported: add, list, show, start, done, block, ready, unblock, reopen)", verb)
+		return fmt.Errorf("backlog: unknown verb %q (supported: add, list, show, start, done, block, ready, unblock, reopen, retry)", verb)
 	}
 }
 

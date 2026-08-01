@@ -34,6 +34,7 @@ When --home is a non-default path, the manual backend is forced to prevent data 
 	cmd.AddCommand(newBacklogReadyCmd())
 	cmd.AddCommand(newBacklogUnblockCmd())
 	cmd.AddCommand(newBacklogReopenCmd())
+	cmd.AddCommand(newBacklogRetryCmd())
 	cmd.AddCommand(newBacklogPathsCmd())
 
 	return cmd
@@ -238,6 +239,26 @@ func newBacklogReopenCmd() *cobra.Command {
 				return err
 			}
 			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "reopen", args); err != nil {
+				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
+			}
+			return nil
+		}),
+	}
+}
+
+func newBacklogRetryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "retry <id>",
+		Short: "Supersede a failed/terminal generation as a new queued generation",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if err := refuseCaptainBacklogMutation(); err != nil {
+				return err
+			}
+			if _, err := home.SupersedeTask(ctx.Home, args[0]); err != nil {
+				return err
+			}
+			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "retry", args); err != nil {
 				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
 			}
 			return nil

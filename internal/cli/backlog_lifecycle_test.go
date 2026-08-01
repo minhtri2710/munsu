@@ -177,3 +177,44 @@ func runBacklogLifecycleCommand(t *testing.T, args []string) (string, error) {
 	}
 	return out.String(), err
 }
+
+func TestBacklogRetrySupersedesFailedGeneration(t *testing.T) {
+	homeDir := t.TempDir()
+	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, "task", "failed", "soldier failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "data", "md"), []byte("# Backlog\n\n## In flight\n- [-] task: work\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err != nil {
+		t.Fatalf("retry: %v\n%s", err, out)
+	}
+	current, ok, err := home.ReadCurrentTaskAggregate(homeDir, "task")
+	if err != nil || !ok || current.Generation != "2" || current.State != "queued" {
+		t.Fatalf("current aggregate after retry = %+v ok=%v err=%v", current, ok, err)
+	}
+	old, err := home.ReadTaskAggregate(homeDir, "task", "1")
+	if err != nil || old.State != "failed" || old.Current {
+		t.Fatalf("historical aggregate = %+v err=%v", old, err)
+	}
+	backlog, err := os.ReadFile(filepath.Join(homeDir, "data", "md"))
+	if err != nil || !strings.Contains(string(backlog), "[ ] task") {
+		t.Fatalf("backlog after retry = %q err=%v", backlog, err)
+	}
+}
+
+func TestBacklogRetryRefusesLiveGeneration(t *testing.T) {
+	homeDir := t.TempDir()
+	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, "task", "blocked", "dependency"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err == nil {
+		t.Fatalf("retry of blocked generation succeeded: %s", out)
+	}
+}

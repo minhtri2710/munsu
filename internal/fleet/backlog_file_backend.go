@@ -147,6 +147,31 @@ func (fb *FileBackend) Reopen(id string) error {
 	return fmt.Errorf("backlog: item %q not found", id)
 }
 
+// Retry transitions a failed, blocked, or done backlog item back to queued so
+// a superseded generation can be re-dispatched. Live queued/in-flight items are
+// not touched by this verb (they have no failed generation to retry).
+func (fb *FileBackend) Retry(id string) error {
+	items, err := fb.parse()
+	if err != nil {
+		return err
+	}
+	for i, item := range items {
+		if item.ID != id {
+			continue
+		}
+		switch item.State {
+		case StateInFlight, StateBlocked, StateDone:
+			items[i].State = StateQueued
+			return fb.render(items)
+		case StateQueued:
+			return fmt.Errorf("backlog: retry requires a failed/blocked/done item %q, item is queued", id)
+		default:
+			return fmt.Errorf("backlog: retry requires a failed/blocked/done item %q", id)
+		}
+	}
+	return fmt.Errorf("backlog: item %q not found", id)
+}
+
 // --- internal helpers ---
 
 // parse reads backlog items from the file.
