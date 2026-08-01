@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,6 +70,95 @@ func setupFakeBins() (string, func()) {
 	}
 
 	return dir, func() { os.RemoveAll(dir) }
+}
+
+// --- Legacy registry / config-inheritance helpers ---
+//
+// ParseRegistry, RegistryPath, and getInheritableList were removed from the
+// fleet package during the legacy-config hard cut. Their current production
+// owners live unexported in internal/configmigration; these test-local ports
+// mirror those owners so legacy-format registry tests keep compiling.
+
+// ParseRegistry parses a legacy captains.md registry file and returns Info
+// entries. Mirrors configmigration.parseRegistry (semantics preserved from the
+// former fleet ParseRegistry).
+func ParseRegistry(registryPath string) ([]Info, error) {
+	f, err := os.Open(registryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening registry %s: %w", registryPath, err)
+	}
+	defer f.Close()
+
+	var mates []Info
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		rest := strings.TrimPrefix(line, "- ")
+		parts := strings.SplitN(rest, " - ", 2)
+		if len(parts) < 1 {
+			continue
+		}
+		id := strings.TrimSpace(parts[0])
+		if id == "" {
+			continue
+		}
+		entry := Info{ID: id}
+
+		if len(parts) >= 2 {
+			metaPart := parts[1]
+			if idx := strings.LastIndex(metaPart, "("); idx >= 0 {
+				meta := metaPart[idx+1:]
+				if endIdx := strings.LastIndex(meta, ")"); endIdx >= 0 {
+					meta = meta[:endIdx]
+				}
+				entry.Home = extractMetaValue(meta, "home:")
+				entry.Scope = extractMetaValue(meta, "scope:")
+				entry.Project = extractMetaValue(meta, "projects:")
+				entry.Added = extractMetaValue(meta, "added:")
+			}
+		}
+
+		mates = append(mates, entry)
+	}
+	return mates, scanner.Err()
+}
+
+func extractMetaValue(meta, key string) string {
+	parts := strings.Split(meta, ";")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, key) {
+			v := strings.TrimSpace(strings.TrimPrefix(p, key))
+			return v
+		}
+	}
+	return ""
+}
+
+// RegistryPath returns the path to the legacy projects.md registry file.
+// Mirrors configmigration.registryPath.
+func RegistryPath(homeDir string) string {
+	return filepath.Join(homeDir, "data", "projects.md")
+}
+
+// getInheritableList returns the list of inheritable config file names.
+// Mirrors configmigration.getInheritableList (current behavior).
+func getInheritableList() []string {
+	env := os.Getenv("MUNSU_INHERITABLE_CONFIG")
+	if env != "" {
+		return strings.Split(env, ":")
+	}
+	return []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
 }
 
 // --- BuildLaunchArgs tests (preserved from PR1) ---
@@ -1130,10 +1220,22 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
+	// Typed project registry on the General home: configPush resolves and
+	// publishes the captain's project as the inherited config snapshot.
 	repo := t.TempDir()
-	os.MkdirAll(filepath.Join(parent, "data"), 0755)
-	reg := fmt.Sprintf("- munsu - %s (added 2026-07-16)\n- toy - /tmp/toy (added 2026-07-17)\n", repo)
-	if err := os.WriteFile(filepath.Join(parent, "data", "projects.md"), []byte(reg), 0644); err != nil {
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "munsu", Path: repo, Mode: "no-mistakes"},
+			{Name: "toy", Path: "/tmp/toy", Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "captain", "munsu"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1141,22 +1243,28 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := os.ReadFile(RegistryPath(smHome))
+	// The captain's published snapshot resolves its project from the parent
+	// project registry.
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
 	if err != nil {
-		t.Fatalf("projects.md was not pushed: %v", err)
+		t.Fatalf("resolved snapshot was not published: %v", err)
 	}
-	if string(got) != reg {
-		t.Errorf("projects.md = %q, want %q", string(got), reg)
+	if snapshot.Config().Project != "munsu" {
+		t.Errorf("snapshot project = %q, want %q", snapshot.Config().Project, "munsu")
+	}
+	if snapshot.Config().ProjectPath != repo {
+		t.Errorf("snapshot project path = %q, want %q", snapshot.Config().ProjectPath, repo)
 	}
 
-	projects, err := List(smHome)
+	// Project registry reading still works on the General home.
+	projects, err := List(parent)
 	if err != nil {
-		t.Fatalf("ListCaptains: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if len(projects) != 2 {
 		t.Fatalf("got %d projects, want 2", len(projects))
 	}
-	path, err := ResolveRepoPath(smHome, "munsu")
+	path, err := ResolveRepoPath(parent, "munsu")
 	if err != nil {
 		t.Fatalf("ResolveRepoPath: %v", err)
 	}
@@ -1165,51 +1273,56 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	}
 }
 
-func TestConfigPush_ProjectsRegistryMirrorDeletion(t *testing.T) {
+// TestConfigPush_RemovedProjectFailsClosed is the migrated mirror-deletion
+// test: when the parent's project registry no longer carries the captain's
+// project (parent "has no projects"), configPush must fail closed instead of
+// silently publishing a stale resolution.
+func TestConfigPush_RemovedProjectFailsClosed(t *testing.T) {
 	parent := t.TempDir()
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := os.WriteFile(RegistryPath(smHome), []byte("- stale - /tmp/stale (added 2026-01-01)\n"), 0644); err != nil {
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{SchemaVersion: config.ProjectRegistrySchemaVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "captain", "stale"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := configPush(parent, smHome); err != nil {
-		t.Fatal(err)
+	err := configPush(parent, smHome)
+	if err == nil || !strings.Contains(err.Error(), "unknown project") {
+		t.Fatalf("configPush error = %v, want fail-closed on removed project", err)
 	}
-	if _, err := os.Stat(RegistryPath(smHome)); !os.IsNotExist(err) {
-		t.Error("projects.md should have been deleted when parent has none")
+	if _, statErr := os.Stat(filepath.Join(smHome, config.PublishedSnapshotPath)); !os.IsNotExist(statErr) {
+		t.Error("no published snapshot should exist when the parent project registry has no matching project")
 	}
 }
 
 func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	parent := t.TempDir()
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.MkdirAll(filepath.Join(parent, "data"), 0755)
-	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	reg := "- munsu - /Users/beowulf/Work/munsu (added 2026-07-16)\n"
-	if err := os.WriteFile(RegistryPath(parent), []byte(reg), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	sm := filepath.Join(parent, "captains", "ops")
 	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(sm, "config", "soldier-harness")); err != nil {
-		t.Fatalf("seed did not inherit soldier-harness: %v", err)
-	}
-	got, err := os.ReadFile(RegistryPath(sm))
+	// Seed installs typed documents on the parent and propagates the
+	// resolved project config (inherited harness + project binding) into
+	// the captain's published snapshot.
+	snapshot, err := config.LoadPublishedSnapshot(sm)
 	if err != nil {
-		t.Fatalf("seed did not inherit projects.md: %v", err)
+		t.Fatalf("seed did not publish inherited snapshot: %v", err)
 	}
-	if string(got) != reg {
-		t.Errorf("projects.md = %q, want %q", string(got), reg)
+	if snapshot.Config().Project != "ops" {
+		t.Errorf("snapshot project = %q, want %q", snapshot.Config().Project, "ops")
+	}
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("snapshot did not inherit soldier-harness: got %q, want %q", snapshot.Config().SoldierHarness, "pi")
 	}
 }
 

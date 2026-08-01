@@ -3,12 +3,62 @@
 package fleet
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// --- Legacy project registry helpers ---
+//
+// ParseEntry/FormatEntry were removed from the fleet package during the
+// legacy-config hard cut. Their current production owners live unexported in
+// internal/configmigration (parseEntry/formatEntry); these test-local ports
+// mirror those owners so legacy-format project registry tests keep compiling.
+
+// ParseEntry parses a single legacy projects.md registry line into a Project.
+func ParseEntry(line string) (*Project, error) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "- ") {
+		return nil, fmt.Errorf("invalid project entry format: %q", line)
+	}
+	rest := line[2:]
+	sepIdx := strings.Index(rest, " - ")
+	if sepIdx < 0 {
+		return nil, fmt.Errorf("missing ' - ' separator in: %q", line)
+	}
+	lhs, rhs := rest[:sepIdx], strings.TrimSpace(rest[sepIdx+3:])
+	addedIdx := strings.LastIndex(rhs, "(added ")
+	if addedIdx < 0 {
+		return nil, fmt.Errorf("missing '(added ...)' in: %q", line)
+	}
+	date := strings.TrimSuffix(strings.TrimSpace(rhs[addedIdx+7:]), ")")
+	p := &Project{Name: strings.Fields(lhs)[0], Description: strings.TrimSpace(rhs[:addedIdx]), Added: date}
+	for _, tok := range strings.Fields(lhs)[1:] {
+		if tok == "+yolo" {
+			p.Yolo = true
+		} else {
+			p.Mode = tok
+		}
+	}
+	return p, nil
+}
+
+// FormatEntry formats a Project as a legacy projects.md registry line.
+func FormatEntry(p *Project) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "- %s", p.Name)
+	if p.Mode != "" {
+		fmt.Fprintf(&b, " %s", p.Mode)
+	}
+	if p.Yolo {
+		b.WriteString(" +yolo")
+	}
+	fmt.Fprintf(&b, " - %s (added %s)", p.Description, p.Added)
+	return b.String()
+}
 
 func TestParseEntrySimple(t *testing.T) {
 	p, err := ParseEntry("- my-project - A simple project (added 2026-01-15)")

@@ -767,9 +767,11 @@ func TestCapabilityCommandRunner_Reset(t *testing.T) {
 	if prev == nil {
 		t.Fatal("expected non-nil previous runner")
 	}
+	defer SetCapabilityCommandRunner(prev)
 
 	// Call via CheckPiCapability.
-	SetProbeTimeout(1 * time.Second)
+	prevTimeout := SetProbeTimeout(1 * time.Second)
+	defer SetProbeTimeout(prevTimeout)
 	CheckPiCapability("/fake/pi")
 
 	if !called {
