@@ -23,12 +23,18 @@ type Operation struct {
 	Actor  Actor  `json:"actor,omitempty"`
 }
 
-// Validate rejects empty or unsafe operation identities and malformed digests.
+// Validate rejects empty or unsafe operation identities and malformed
+// digests. Digest shape is the full 64-hex rule, not length alone: a
+// 64-character non-hex digest must fail exactly like a short one so every
+// adapter rejects it with the same typed error.
 func (op Operation) Validate() error {
 	if op.ID == "" || strings.ContainsAny(op.ID, `/\\`) {
 		return validationError("operation ID must be a safe non-empty value")
 	}
 	if len(op.Digest) != 64 {
+		return validationError("operation digest must be a 64-hex sha256 digest")
+	}
+	if _, err := hex.DecodeString(op.Digest); err != nil {
 		return validationError("operation digest must be a 64-hex sha256 digest")
 	}
 	return nil

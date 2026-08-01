@@ -193,7 +193,7 @@ func (a *Authority) Reopen(req ReopenRequest) (Result, error) {
 			return err
 		}
 		newGen := Aggregate{
-			SchemaVersion: taskAuthoritySchema,
+			SchemaVersion: TaskAuthoritySchema,
 			TaskID:        cur.TaskID,
 			Generation:    next,
 			Revision:      FirstRevision,

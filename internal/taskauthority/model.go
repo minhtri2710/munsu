@@ -131,15 +131,15 @@ type Aggregate struct {
 	DispatchInterpretationDigest string           `json:"dispatch_interpretation_digest,omitempty"`
 }
 
-// taskAuthoritySchema is the deterministic schema identity for the canonical
+// TaskAuthoritySchema is the deterministic schema identity for the canonical
 // JSON representation of authoritative records.
-const taskAuthoritySchema = "munsu.task-authority/v2"
+const TaskAuthoritySchema = "munsu.task-authority/v2"
 
 // NewAggregate builds the first Generation of a task with Revision one and
 // phase queued, validating the request fields.
 func NewAggregate(taskID, owner, description, kind, project, parentTaskID string) (Aggregate, error) {
 	agg := Aggregate{
-		SchemaVersion: taskAuthoritySchema,
+		SchemaVersion: TaskAuthoritySchema,
 		TaskID:        taskID,
 		Generation:    1,
 		Revision:      FirstRevision,
@@ -162,7 +162,7 @@ func NewAggregate(taskID, owner, description, kind, project, parentTaskID string
 // validateAggregate checks record-level invariants: identity, phase, owner,
 // and generation-bound bindings. It does not evaluate lifecycle transitions.
 func validateAggregate(agg Aggregate) error {
-	if agg.SchemaVersion != taskAuthoritySchema {
+	if agg.SchemaVersion != TaskAuthoritySchema {
 		return validationError("invalid task authority schema %q", agg.SchemaVersion)
 	}
 	if err := validateTaskID(agg.TaskID); err != nil {

@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// TestMemStoreContractSuite runs the shared Store contract suite against the
-// in-memory adapter.
-func TestMemStoreContractSuite(t *testing.T) {
-	RunStoreContractSuite(t, func() Store { return newMemStore() })
-}
-
 // TestMemStoreConcurrentUpdatesSerialize proves concurrent updates serialize
 // without partial visibility: each transaction observes committed state and
 // every staged change lands exactly once.

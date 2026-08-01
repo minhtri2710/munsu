@@ -44,7 +44,7 @@ func (a *Authority) CreateHold(req CreateHoldRequest) (HoldResult, error) {
 		existing, ok := tx.Hold(req.ID)
 		if !ok {
 			hold := DispatchHold{
-				SchemaVersion: taskAuthoritySchema,
+				SchemaVersion: TaskAuthoritySchema,
 				ID:            req.ID,
 				Scope:         normalizeScope(req.Scope),
 				Actions:       uniqueActions(req.Actions),

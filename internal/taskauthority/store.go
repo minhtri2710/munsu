@@ -3,6 +3,7 @@ package taskauthority
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Store is the transactional implementation seam below the Authority. It
@@ -98,9 +99,10 @@ type stagedChange struct {
 // Tx stages one authoritative transaction against a committed snapshot.
 // Reads see only committed state; staged changes apply atomically at commit.
 type Tx struct {
-	view    View
-	changes []stagedChange
-	keys    map[string]bool
+	view          View
+	changes       []stagedChange
+	keys          map[string]bool
+	auditAppended bool
 }
 
 // NewTx opens a transaction over the given committed view.
@@ -170,11 +172,17 @@ func (tx *Tx) PutDecision(dec DispatchDecision) error {
 	return nil
 }
 
-// AppendAudit stages a typed audit event for the transaction.
+// AppendAudit stages a typed audit event for the transaction. At most one
+// typed audit event may commit per operation: the audit identity is the
+// operation id, so a second event would collide on the same record.
 func (tx *Tx) AppendAudit(ev AuditEvent) error {
 	if err := ev.Validate(); err != nil {
 		return err
 	}
+	if tx.auditAppended {
+		return validationError("transaction stages multiple audit events; one typed audit event per operation is supported")
+	}
+	tx.auditAppended = true
 	tx.changes = append(tx.changes, stagedChange{kind: "audit", audit: ev})
 	return nil
 }
@@ -213,10 +221,26 @@ func (tx *Tx) Apply(applier ChangeApplier) error {
 }
 
 // validateStaged enforces cross-record invariants of the staged set combined
-// with the committed view: at most one current generation staged per task, and
-// any staged current must replace the committed current in the same
-// transaction rather than leaving two currents.
+// with the committed view: at most one task's aggregates staged per
+// transaction (multi-task staging is rejected rather than inventing lock
+// semantics), at most one current generation staged per task, and any staged
+// current must replace the committed current in the same transaction rather
+// than leaving two currents.
 func (tx *Tx) validateStaged() error {
+	stagedTaskIDs := map[string]bool{}
+	for _, change := range tx.changes {
+		if change.kind == "aggregate" {
+			stagedTaskIDs[change.agg.TaskID] = true
+		}
+	}
+	if len(stagedTaskIDs) > 1 {
+		ids := make([]string, 0, len(stagedTaskIDs))
+		for id := range stagedTaskIDs {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		return validationError("transaction stages aggregates for multiple tasks (%s); multi-task transactions are not supported", strings.Join(ids, ", "))
+	}
 	stagedCurrent := map[string]bool{}
 	for _, change := range tx.changes {
 		if change.kind != "aggregate" {

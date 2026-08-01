@@ -107,6 +107,13 @@ func newMemStore() *memStore {
 	return &memStore{state: newMemState(), now: time.Now}
 }
 
+// NewMemStoreForTest constructs an empty in-memory Store for the external
+// contract-suite test package. Test-only: the in-memory adapter has no
+// production consumer yet.
+func NewMemStoreForTest() Store {
+	return newMemStore()
+}
+
 func (s *memStore) View() (View, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

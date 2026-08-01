@@ -72,8 +72,8 @@ func TestNewAggregateStartsAtFirstRevision(t *testing.T) {
 	if agg.Generation != 1 || agg.Revision != FirstRevision || agg.Phase != PhaseQueued || !agg.Current {
 		t.Fatalf("new aggregate = %+v", agg)
 	}
-	if agg.SchemaVersion != taskAuthoritySchema {
-		t.Fatalf("schema = %q, want %q", agg.SchemaVersion, taskAuthoritySchema)
+	if agg.SchemaVersion != TaskAuthoritySchema {
+		t.Fatalf("schema = %q, want %q", agg.SchemaVersion, TaskAuthoritySchema)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestDispatchHoldValidationRejectsMalformedScope(t *testing.T) {
 
 func TestDispatchHoldScopeMatches(t *testing.T) {
 	hold := DispatchHold{
-		SchemaVersion: taskAuthoritySchema,
+		SchemaVersion: TaskAuthoritySchema,
 		ID:            "h1",
 		Scope:         DispatchHoldScope{ProjectIDs: []string{"proj"}, TaskIDs: []string{"t1"}},
 		Actions:       []DispatchAction{DispatchActionStart},
@@ -182,7 +182,7 @@ func TestAggregateJSONIsDeterministic(t *testing.T) {
 	if string(first) != string(second) {
 		t.Fatalf("nondeterministic JSON: %s vs %s", first, second)
 	}
-	if !strings.Contains(string(first), taskAuthoritySchema) {
+	if !strings.Contains(string(first), TaskAuthoritySchema) {
 		t.Fatalf("JSON does not carry schema identity: %s", first)
 	}
 }

@@ -63,7 +63,7 @@ func (h DispatchHold) clone() DispatchHold {
 
 // validate checks the record shape of a dispatch hold.
 func validateHold(h DispatchHold) error {
-	if h.SchemaVersion != taskAuthoritySchema {
+	if h.SchemaVersion != TaskAuthoritySchema {
 		return validationError("invalid dispatch hold schema %q", h.SchemaVersion)
 	}
 	if h.ID == "" || strings.ContainsAny(h.ID, `/\\`) {
@@ -161,7 +161,7 @@ type DispatchDecision struct {
 
 // validate checks the record shape of a dispatch decision.
 func validateDecision(d DispatchDecision) error {
-	if d.SchemaVersion != taskAuthoritySchema {
+	if d.SchemaVersion != TaskAuthoritySchema {
 		return validationError("invalid dispatch decision schema %q", d.SchemaVersion)
 	}
 	if d.Key == "" {
