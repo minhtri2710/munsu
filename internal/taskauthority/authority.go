@@ -57,18 +57,18 @@ func (a *Authority) List() ([]Aggregate, error) {
 	return out, nil
 }
 
-// resultFromView reads back the current aggregate of a task after an
-// operation; it also serves replayed operations whose callback did not run.
-func (a *Authority) resultFromView(taskID string) (Result, error) {
-	agg, err := a.Get(taskID)
-	if err != nil {
-		return Result{}, err
+// resultFromReceipt returns the original lifecycle outcome persisted with the
+// operation, including when the operation is replayed after later mutations.
+func resultFromReceipt(receipt Receipt) (Result, error) {
+	if receipt.TaskID == "" || receipt.Generation == 0 || receipt.Revision == 0 || !receipt.Phase.Valid() {
+		return Result{}, internalError("operation %s has no lifecycle outcome", receipt.OperationID)
 	}
 	return Result{
-		TaskID:     agg.TaskID,
-		Generation: agg.Generation,
-		Revision:   agg.Revision,
-		Phase:      agg.Phase,
+		TaskID:     receipt.TaskID,
+		Generation: receipt.Generation,
+		Revision:   receipt.Revision,
+		Phase:      receipt.Phase,
+		Reopened:   receipt.Reopened,
 	}, nil
 }
 

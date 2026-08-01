@@ -219,7 +219,18 @@ func (tx *Tx) Apply(applier ChangeApplier) error {
 func (tx *Tx) validateStaged() error {
 	stagedCurrent := map[string]bool{}
 	for _, change := range tx.changes {
-		if change.kind != "aggregate" || !change.agg.Current {
+		if change.kind != "aggregate" {
+			continue
+		}
+		committed, exists := tx.view.Aggregate(change.agg.TaskID, change.agg.Generation)
+		if exists {
+			if change.agg.Revision != committed.Revision+1 {
+				return conflictError(ErrConflict, "task %s generation %s revision must advance from %d to %d", change.agg.TaskID, change.agg.Generation, committed.Revision, committed.Revision+1)
+			}
+		} else if change.agg.Revision != FirstRevision {
+			return conflictError(ErrConflict, "new task %s generation %s must start at revision %d", change.agg.TaskID, change.agg.Generation, FirstRevision)
+		}
+		if !change.agg.Current {
 			continue
 		}
 		if stagedCurrent[change.agg.TaskID] {
@@ -237,6 +248,27 @@ func (tx *Tx) validateStaged() error {
 		}
 	}
 	return nil
+}
+
+// Outcome returns the lifecycle result staged by the transaction, if any.
+// The Store persists it in the operation receipt so replay returns the
+// original committed outcome rather than reconstructing it from newer state.
+func (tx *Tx) Outcome() (Result, bool) {
+	var result Result
+	found := false
+	for _, change := range tx.changes {
+		if change.kind != "aggregate" || !change.agg.Current {
+			continue
+		}
+		result = Result{
+			TaskID:     change.agg.TaskID,
+			Generation: change.agg.Generation,
+			Revision:   change.agg.Revision,
+			Phase:      change.agg.Phase,
+		}
+		found = true
+	}
+	return result, found
 }
 
 // stagesGeneration reports whether the transaction stages any change for the

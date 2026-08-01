@@ -141,6 +141,15 @@ func (s *memStore) Update(op Operation, fn func(tx *Tx) error) (Receipt, error) 
 	}
 	s.state = candidate
 	receipt := Receipt{OperationID: op.ID, Digest: op.Digest, CommittedAt: s.now().UnixNano()}
+	if outcome, ok := tx.Outcome(); ok {
+		receipt.TaskID = outcome.TaskID
+		receipt.Generation = outcome.Generation
+		receipt.Revision = outcome.Revision
+		receipt.Phase = outcome.Phase
+		if prior, exists := tx.view.Current(outcome.TaskID); exists && prior.Generation != outcome.Generation {
+			receipt.Reopened = true
+		}
+	}
 	s.state.receipts[op.ID] = receipt
 	return receipt, nil
 }

@@ -40,10 +40,15 @@ func (op Operation) Validate() error {
 // metadata (never persisted): true when the update returned a pre-existing
 // receipt for the same Operation ID and digest.
 type Receipt struct {
-	OperationID string `json:"operation_id"`
-	Digest      string `json:"digest"`
-	CommittedAt int64  `json:"committed_at"`
-	Replayed    bool   `json:"-"`
+	OperationID string     `json:"operation_id"`
+	Digest      string     `json:"digest"`
+	CommittedAt int64      `json:"committed_at"`
+	TaskID      string     `json:"task_id,omitempty"`
+	Generation  Generation `json:"generation,omitempty"`
+	Revision    Revision   `json:"revision,omitempty"`
+	Phase       Phase      `json:"phase,omitempty"`
+	Reopened    bool       `json:"reopened,omitempty"`
+	Replayed    bool       `json:"-"`
 }
 
 // AuditEvent kinds.

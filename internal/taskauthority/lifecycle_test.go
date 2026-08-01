@@ -196,22 +196,139 @@ func TestAuthorityCreateIsIdempotentAndConflictsOnExisting(t *testing.T) {
 	}
 }
 
-func TestAuthorityOperationIDReusedWithDifferentIntentConflicts(t *testing.T) {
+func TestAuthorityBlockPersistsDetail(t *testing.T) {
 	a := newTestAuthority(t)
 	createTask(t, a, "t1")
 
 	if _, err := a.Block(BlockRequest{
-		OperationID: "op-reused", Actor: Actor{ID: "test", Rank: "general"},
-		TaskID: "t1", ExpectedGeneration: 1, Detail: "d", Reason: "d",
+		OperationID: "op-block", Actor: Actor{ID: "test", Rank: "general"},
+		TaskID: "t1", ExpectedGeneration: 1, Detail: "waiting for dependency", Reason: "dependency blocked",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Same operation ID, different intent (start instead of block): conflict.
-	if _, err := a.Start(StartRequest{
-		OperationID: "op-reused", Actor: Actor{ID: "test", Rank: "general"},
-		TaskID: "t1", ExpectedGeneration: 1, Reason: "go",
-	}); !errors.Is(err, ErrOperationConflict) {
-		t.Fatalf("reused op id = %v, want ErrOperationConflict", err)
+	agg, err := a.Get("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.PhaseDetail != "waiting for dependency" {
+		t.Fatalf("phase detail = %q, want waiting for dependency", agg.PhaseDetail)
+	}
+}
+
+func TestAuthorityOperationIDReusedWithDifferentIntentConflicts(t *testing.T) {
+	t.Run("different operation", func(t *testing.T) {
+		a := newTestAuthority(t)
+		createTask(t, a, "t1")
+		if _, err := a.Block(BlockRequest{
+			OperationID: "op-reused", Actor: Actor{ID: "test", Rank: "general"},
+			TaskID: "t1", ExpectedGeneration: 1, Detail: "d", Reason: "d",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.Start(StartRequest{
+			OperationID: "op-reused", Actor: Actor{ID: "test", Rank: "general"},
+			TaskID: "t1", ExpectedGeneration: 1, Reason: "go",
+		}); !errors.Is(err, ErrOperationConflict) {
+			t.Fatalf("reused op id = %v, want ErrOperationConflict", err)
+		}
+	})
+
+	t.Run("different reason", func(t *testing.T) {
+		a := newTestAuthority(t)
+		createTask(t, a, "t1")
+		req := StartRequest{
+			OperationID: "op-start", Actor: Actor{ID: "test", Rank: "general"},
+			TaskID: "t1", ExpectedGeneration: 1, Reason: "first reason",
+		}
+		if _, err := a.Start(req); err != nil {
+			t.Fatal(err)
+		}
+		req.Reason = "changed reason"
+		if _, err := a.Start(req); !errors.Is(err, ErrOperationConflict) {
+			t.Fatalf("changed reason = %v, want ErrOperationConflict", err)
+		}
+	})
+
+	t.Run("different block detail", func(t *testing.T) {
+		a := newTestAuthority(t)
+		createTask(t, a, "t1")
+		req := BlockRequest{
+			OperationID: "op-block", Actor: Actor{ID: "test", Rank: "general"},
+			TaskID: "t1", ExpectedGeneration: 1, Detail: "first detail", Reason: "blocked",
+		}
+		if _, err := a.Block(req); err != nil {
+			t.Fatal(err)
+		}
+		req.Detail = "changed detail"
+		if _, err := a.Block(req); !errors.Is(err, ErrOperationConflict) {
+			t.Fatalf("changed detail = %v, want ErrOperationConflict", err)
+		}
+	})
+}
+
+func TestAuthorityCreateAndReopenReasonAffectOperationIntent(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		a := newTestAuthority(t)
+		req := CreateRequest{
+			OperationID: "op-create", Actor: Actor{ID: "test", Rank: "general"},
+			TaskID: "t1", Owner: "owner", Description: "work", Reason: "first reason",
+		}
+		if _, err := a.Create(req); err != nil {
+			t.Fatal(err)
+		}
+		req.Reason = "changed reason"
+		if _, err := a.Create(req); !errors.Is(err, ErrOperationConflict) {
+			t.Fatalf("changed create reason = %v, want ErrOperationConflict", err)
+		}
+	})
+
+	t.Run("reopen", func(t *testing.T) {
+		a := newTestAuthority(t)
+		createTask(t, a, "t1")
+		if _, err := a.Complete(CompleteRequest{
+			OperationID: "op-done", Actor: Actor{ID: "test", Rank: "general"},
+			TaskID: "t1", ExpectedGeneration: 1, To: PhaseDone, Reason: "done",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		req := ReopenRequest{
+			OperationID: "op-reopen", Actor: Actor{ID: "test", Rank: "general"},
+			TaskID: "t1", ExpectedGeneration: 1, Reason: "first reason",
+		}
+		if _, err := a.Reopen(req); err != nil {
+			t.Fatal(err)
+		}
+		req.Reason = "changed reason"
+		if _, err := a.Reopen(req); !errors.Is(err, ErrOperationConflict) {
+			t.Fatalf("changed reopen reason = %v, want ErrOperationConflict", err)
+		}
+	})
+}
+
+func TestAuthorityReplayReturnsOriginalCommittedOutcome(t *testing.T) {
+	a := newTestAuthority(t)
+	createTask(t, a, "t1")
+	startReq := StartRequest{
+		OperationID: "op-start", Actor: Actor{ID: "test", Rank: "general"},
+		TaskID: "t1", ExpectedGeneration: 1, Reason: "start",
+	}
+	first, err := a.Start(startReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Block(BlockRequest{
+		OperationID: "op-block", Actor: Actor{ID: "test", Rank: "general"},
+		TaskID: "t1", ExpectedGeneration: 1, Detail: "wait", Reason: "blocked",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	replayed, err := a.Start(startReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed != first {
+		t.Fatalf("replayed result = %+v, want original %+v", replayed, first)
 	}
 }
 

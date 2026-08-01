@@ -69,9 +69,13 @@ func RunStoreContractSuite(t *testing.T, newStore func() Store) {
 		if len(v.Receipts) != 1 {
 			t.Fatalf("receipts = %d, want 1", len(v.Receipts))
 		}
+		receipt := v.Receipts[0]
+		if receipt.TaskID != "t1" || receipt.Generation != 1 || receipt.Revision != 1 || receipt.Phase != PhaseQueued {
+			t.Fatalf("receipt outcome = %+v", receipt)
+		}
 	})
 
-	t.Run("revision advancement preserved", func(t *testing.T) {
+	t.Run("revision advances exactly once", func(t *testing.T) {
 		s := newStore()
 		if _, err := s.Update(op("op-1", "t1"), func(tx *Tx) error {
 			return tx.PutAggregate(mustAggregate(t, "t1", 1, "queued"))
@@ -89,6 +93,30 @@ func RunStoreContractSuite(t *testing.T, newStore func() Store) {
 		agg, _ := v.Current("t1")
 		if agg.Revision != 2 {
 			t.Fatalf("revision = %d, want 2", agg.Revision)
+		}
+	})
+
+	t.Run("revision cannot stay unchanged or skip", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			revision Revision
+		}{{"unchanged", 1}, {"skipped", 3}} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := newStore()
+				if _, err := s.Update(op("op-1", "t1"), func(tx *Tx) error {
+					return tx.PutAggregate(mustAggregate(t, "t1", 1, "queued"))
+				}); err != nil {
+					t.Fatal(err)
+				}
+				_, err := s.Update(op("op-2", "t1"), func(tx *Tx) error {
+					agg := mustAggregate(t, "t1", 1, "working")
+					agg.Revision = tc.revision
+					return tx.PutAggregate(agg)
+				})
+				if !errors.Is(err, ErrConflict) {
+					t.Fatalf("revision %d update = %v, want ErrConflict", tc.revision, err)
+				}
+			})
 		}
 	})
 
@@ -146,15 +174,20 @@ func RunStoreContractSuite(t *testing.T, newStore func() Store) {
 		}
 		old := mustAggregate(t, "t1", 1, "done")
 		old.Current = false
+		old.Revision = 2
 		newGen := mustAggregate(t, "t1", 2, "queued")
 		newGen.Current = true
-		if _, err := s.Update(op("op-reopen", "t1"), func(tx *Tx) error {
+		receipt, err := s.Update(op("op-reopen", "t1"), func(tx *Tx) error {
 			if err := tx.PutAggregate(old); err != nil {
 				return err
 			}
 			return tx.PutAggregate(newGen)
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatal(err)
+		}
+		if receipt.TaskID != "t1" || receipt.Generation != 2 || receipt.Revision != FirstRevision || receipt.Phase != PhaseQueued || !receipt.Reopened {
+			t.Fatalf("reopen receipt = %+v", receipt)
 		}
 		v, _ := s.View()
 		cur, ok := v.Current("t1")

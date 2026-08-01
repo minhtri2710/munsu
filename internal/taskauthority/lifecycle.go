@@ -35,11 +35,12 @@ func (a *Authority) Create(req CreateRequest) (Result, error) {
 		Kind         string `json:"kind"`
 		Project      string `json:"project"`
 		ParentTaskID string `json:"parent_task_id"`
-	}{req.TaskID, req.Owner, req.Description, req.Kind, req.Project, req.ParentTaskID})
+		Reason       string `json:"reason"`
+	}{req.TaskID, req.Owner, req.Description, req.Kind, req.Project, req.ParentTaskID, req.Reason})
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := a.store.Update(op, func(tx *Tx) error {
+	receipt, err := a.store.Update(op, func(tx *Tx) error {
 		if _, ok := tx.Current(req.TaskID); ok {
 			return conflictError(ErrConflict, "task %s already exists", req.TaskID)
 		}
@@ -51,10 +52,11 @@ func (a *Authority) Create(req CreateRequest) (Result, error) {
 			return err
 		}
 		return tx.AppendAudit(a.audit(op, agg.TaskID, agg.Generation, req.Reason, "", agg.Phase))
-	}); err != nil {
+	})
+	if err != nil {
 		return Result{}, err
 	}
-	return a.resultFromView(req.TaskID)
+	return resultFromReceipt(receipt)
 }
 
 // StartRequest starts a queued task into working.
@@ -70,7 +72,7 @@ type StartRequest struct {
 // working, checking applicable Dispatch Holds inside the same Store
 // transaction so a concurrent hold creation cannot interleave.
 func (a *Authority) Start(req StartRequest) (Result, error) {
-	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, PhaseWorking, req.Reason, func(tx *Tx, cur Aggregate) error {
+	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, PhaseWorking, "", req.Reason, func(tx *Tx, cur Aggregate) error {
 		if cur.Phase != PhaseQueued {
 			return preconditionError("start requires queued task")
 		}
@@ -91,7 +93,7 @@ type BlockRequest struct {
 // Block is the named semantic operation that transitions a queued or working
 // task into blocked.
 func (a *Authority) Block(req BlockRequest) (Result, error) {
-	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, PhaseBlocked, req.Reason, func(tx *Tx, cur Aggregate) error {
+	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, PhaseBlocked, req.Detail, req.Reason, func(tx *Tx, cur Aggregate) error {
 		if cur.Phase != PhaseQueued && cur.Phase != PhaseWorking {
 			return preconditionError("block requires queued or working task")
 		}
@@ -111,7 +113,7 @@ type UnblockRequest struct {
 // Unblock is the named semantic operation that returns a blocked task to
 // queued.
 func (a *Authority) Unblock(req UnblockRequest) (Result, error) {
-	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, PhaseQueued, req.Reason, func(tx *Tx, cur Aggregate) error {
+	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, PhaseQueued, "", req.Reason, func(tx *Tx, cur Aggregate) error {
 		if cur.Phase != PhaseBlocked {
 			return preconditionError("unblock requires blocked task")
 		}
@@ -137,7 +139,7 @@ func (a *Authority) Complete(req CompleteRequest) (Result, error) {
 	if req.To != PhaseDone && req.To != PhaseResolved {
 		return Result{}, validationError("complete target %q is not a terminal phase", req.To)
 	}
-	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, req.To, req.Reason, func(tx *Tx, cur Aggregate) error {
+	return a.phaseTransition(req.OperationID, req.Actor, req.TaskID, req.ExpectedGeneration, req.To, "", req.Reason, func(tx *Tx, cur Aggregate) error {
 		if cur.Phase.terminal() {
 			return preconditionError("complete requires a non-terminal task")
 		}
@@ -164,11 +166,12 @@ func (a *Authority) Reopen(req ReopenRequest) (Result, error) {
 	op, err := a.operation(req.OperationID, req.Actor, struct {
 		TaskID             string `json:"task_id"`
 		ExpectedGeneration uint64 `json:"expected_generation"`
-	}{req.TaskID, uint64(req.ExpectedGeneration)})
+		Reason             string `json:"reason"`
+	}{req.TaskID, uint64(req.ExpectedGeneration), req.Reason})
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := a.store.Update(op, func(tx *Tx) error {
+	receipt, err := a.store.Update(op, func(tx *Tx) error {
 		cur, ok := tx.Current(req.TaskID)
 		if !ok {
 			return conflictError(ErrNotFound, "task %s not found", req.TaskID)
@@ -185,6 +188,7 @@ func (a *Authority) Reopen(req ReopenRequest) (Result, error) {
 		}
 		historical := cur.clone()
 		historical.Current = false
+		historical.Revision++
 		if err := tx.PutAggregate(historical); err != nil {
 			return err
 		}
@@ -201,21 +205,17 @@ func (a *Authority) Reopen(req ReopenRequest) (Result, error) {
 			return err
 		}
 		return tx.AppendAudit(a.audit(op, cur.TaskID, next, req.Reason, cur.Phase, PhaseQueued))
-	}); err != nil {
-		return Result{}, err
-	}
-	result, err := a.resultFromView(req.TaskID)
+	})
 	if err != nil {
 		return Result{}, err
 	}
-	result.Reopened = true
-	return result, nil
+	return resultFromReceipt(receipt)
 }
 
 // phaseTransition is the shared envelope for single-phase lifecycle
 // operations: generation fence, precondition evaluation, Revision advance,
 // and typed audit commit inside one Store transaction.
-func (a *Authority) phaseTransition(operationID string, actor Actor, taskID string, expected Generation, after Phase, reason string, precondition func(tx *Tx, cur Aggregate) error) (Result, error) {
+func (a *Authority) phaseTransition(operationID string, actor Actor, taskID string, expected Generation, after Phase, detail, reason string, precondition func(tx *Tx, cur Aggregate) error) (Result, error) {
 	if err := expected.Validate(); err != nil {
 		return Result{}, err
 	}
@@ -223,11 +223,13 @@ func (a *Authority) phaseTransition(operationID string, actor Actor, taskID stri
 		TaskID:   taskID,
 		Expected: uint64(expected),
 		After:    after,
+		Detail:   detail,
+		Reason:   reason,
 	})
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := a.store.Update(op, func(tx *Tx) error {
+	receipt, err := a.store.Update(op, func(tx *Tx) error {
 		cur, ok := tx.Current(taskID)
 		if !ok {
 			return conflictError(ErrNotFound, "task %s not found", taskID)
@@ -240,16 +242,17 @@ func (a *Authority) phaseTransition(operationID string, actor Actor, taskID stri
 		}
 		updated := cur.clone()
 		updated.Phase = after
-		updated.PhaseDetail = ""
+		updated.PhaseDetail = detail
 		updated.Revision++
 		if err := tx.PutAggregate(updated); err != nil {
 			return err
 		}
 		return tx.AppendAudit(a.audit(op, cur.TaskID, cur.Generation, reason, cur.Phase, after))
-	}); err != nil {
+	})
+	if err != nil {
 		return Result{}, err
 	}
-	return a.resultFromView(taskID)
+	return resultFromReceipt(receipt)
 }
 
 // phaseRequest is the digest carrier for single-phase transitions.
@@ -257,11 +260,16 @@ type phaseRequest struct {
 	TaskID   string `json:"task_id"`
 	Expected uint64 `json:"expected_generation"`
 	After    Phase  `json:"after"`
+	Detail   string `json:"detail,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // operation builds a validated Operation with the computed intent digest.
 func (a *Authority) operation(id string, actor Actor, payload any) (Operation, error) {
-	digest, err := requestDigest(payload)
+	digest, err := requestDigest(struct {
+		Actor   Actor `json:"actor"`
+		Payload any   `json:"payload"`
+	}{actor, payload})
 	if err != nil {
 		return Operation{}, err
 	}

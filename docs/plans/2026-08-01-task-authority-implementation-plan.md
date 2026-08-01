@@ -1,10 +1,26 @@
 # Task Authority Deep-Module Implementation Plan
 
 * **Date:** 2026-08-01
-* **Status:** Approved design; implementation not started
+* **Status:** Implementation in progress; Checkpoint 1 complete
 * **Source:** [ADR-0007](../adr/0007-task-authority-deep-module-and-transactional-store.md)
 * **Related:** [ADR-0002](../adr/0002-deep-module-clean-break-and-durable-lifecycle.md), [ADR-0004](../adr/0004-authoritative-task-lifecycle-delivery-and-projections.md), [ADR-0005](../adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md), [ADR-0006](../adr/0006-state-migration-build-provenance-and-compatibility-gates.md), [incident remediation master plan](2026-07-30-incident-remediation-master-plan.md)
 * **Delivery mode:** no-mistakes; test-first; vertical slices; no dual mutation authority
+
+## Implementation progress
+
+Checkpoint 1 is complete through commit `4b327fbc` plus the follow-up lifecycle/idempotency corrections in the current change. Phase 2 has not started.
+
+Verified on 2026-08-01:
+
+```sh
+go build ./...
+go vet ./...
+go test -race ./internal/taskauthority
+go test ./internal/home ./internal/fleet ./internal/cli
+go test ./...
+```
+
+All commands passed. The previously recorded `internal/bootstrap` timeout did not reproduce, and the full untagged suite is green. `go test -tags=integration ./...` compiles the previously failing tagged paths but remains red in pre-existing CLI/fleet config-migration and Captain config-push fixtures; `internal/taskauthority` passes within that run.
 
 ## Goal
 
@@ -67,9 +83,9 @@ Task domain rules and Store contract
 
 **Acceptance criteria:**
 
-- [ ] `go build ./...` and `go vet ./...` results are recorded.
-- [ ] Focused task/fleet/CLI tests are recorded separately from the full suite.
-- [ ] Known `internal/bootstrap` Pi version timeout and integration-tag compile failures are reproduced or explicitly shown resolved before implementation begins.
+- [x] `go build ./...` and `go vet ./...` results are recorded.
+- [x] Focused task/fleet/CLI tests are recorded separately from the full suite.
+- [x] Known `internal/bootstrap` Pi version timeout and integration-tag compile failures are reproduced or explicitly shown resolved before implementation begins.
 
 **Verification:**
 
@@ -92,9 +108,9 @@ go test ./...
 
 **Acceptance criteria:**
 
-- [ ] A repository test enumerates the temporary allowlist of production files permitted to call old `home` task aggregate/lifecycle/dispatch mutations.
-- [ ] The test fails if a new production caller is added.
-- [ ] The allowlist only shrinks in later slices and reaches zero before cleanup.
+- [x] A repository test enumerates the temporary allowlist of production files permitted to call old `home` task aggregate/lifecycle/dispatch mutations.
+- [x] The test fails if a new production caller is added.
+- [x] The allowlist only shrinks in later slices and reaches zero before cleanup.
 
 **Verification:**
 
@@ -119,10 +135,10 @@ go test ./internal/fleet ./internal/cli
 
 **Acceptance criteria:**
 
-- [ ] Task Generation validation preserves existing positive monotonic identity semantics.
-- [ ] Task Revision starts at one, advances within a Generation, and resets for a new Generation.
-- [ ] Aggregate validation rejects mismatched generation-bound bindings, invalid current identities, and malformed dispatch scope.
-- [ ] JSON representations are deterministic and versioned.
+- [x] Task Generation validation preserves existing positive monotonic identity semantics.
+- [x] Task Revision starts at one, advances within a Generation, and resets for a new Generation.
+- [x] Aggregate validation rejects mismatched generation-bound bindings, invalid current identities, and malformed dispatch scope.
+- [x] JSON representations are deterministic and versioned.
 
 **Verification:**
 
@@ -147,10 +163,10 @@ go test ./internal/taskauthority -run 'Test.*(Generation|Revision|Aggregate|Bind
 
 **Acceptance criteria:**
 
-- [ ] `Store.View` exposes one consistent committed view.
-- [ ] `Store.Update` serializes a typed Task Operation and returns a durable receipt.
-- [ ] Transaction records cover aggregate, dispatch records, audit event, and idempotency receipt.
-- [ ] The contract suite specifies rollback-on-callback-error, duplicate Operation ID behavior, Revision advancement, and Generation replacement.
+- [x] `Store.View` exposes one consistent committed view.
+- [x] `Store.Update` serializes a typed Task Operation and returns a durable receipt.
+- [x] Transaction records cover aggregate, dispatch records, audit event, and idempotency receipt.
+- [x] The contract suite specifies rollback-on-callback-error, duplicate Operation ID behavior, Revision advancement, and Generation replacement.
 
 **Verification:**
 
@@ -174,10 +190,10 @@ go test ./internal/taskauthority -run 'TestStoreContract'
 
 **Acceptance criteria:**
 
-- [ ] The adapter passes the full Store contract suite.
-- [ ] Failed callbacks leave all records and Revision unchanged.
-- [ ] Concurrent updates serialize without partial visibility.
-- [ ] Same Operation ID and digest returns the original receipt; a changed digest conflicts.
+- [x] The adapter passes the full Store contract suite.
+- [x] Failed callbacks leave all records and Revision unchanged.
+- [x] Concurrent updates serialize without partial visibility.
+- [x] Same Operation ID and digest returns the original receipt; a changed digest conflicts.
 
 **Verification:**
 
@@ -200,10 +216,10 @@ go test -race ./internal/taskauthority -run 'Test.*(MemoryStore|StoreContract|Id
 
 **Acceptance criteria:**
 
-- [ ] `Get` and `List` return only canonical authoritative records.
-- [ ] `Readiness` returns typed reasons for missing owner, blocked phase, in-flight phase, terminal phase, and applicable Dispatch Hold.
-- [ ] Watcher health is absent from Authority readiness.
-- [ ] Tests run the real Authority over the in-memory adapter.
+- [x] `Get` and `List` return only canonical authoritative records.
+- [x] `Readiness` returns typed reasons for missing owner, blocked phase, in-flight phase, terminal phase, and applicable Dispatch Hold.
+- [x] Watcher health is absent from Authority readiness.
+- [x] Tests run the real Authority over the in-memory adapter.
 
 **Verification:**
 
@@ -227,10 +243,10 @@ go test ./internal/taskauthority -run 'TestAuthority.*(Get|List|Readiness)'
 
 **Acceptance criteria:**
 
-- [ ] Every mutation requires a stable Task Operation ID and Expected Generation where an existing Generation is targeted.
-- [ ] Invalid phase transitions return typed non-retryable conflict without mutation.
-- [ ] Every committed mutation advances Revision and emits a typed audit event.
-- [ ] `Reopen` creates the next Generation at Revision one and preserves prior history.
+- [x] Every mutation requires a stable Task Operation ID and Expected Generation where an existing Generation is targeted.
+- [x] Invalid phase transitions return typed non-retryable conflict without mutation.
+- [x] Every committed mutation advances Revision and emits a typed audit event.
+- [x] `Reopen` creates the next Generation at Revision one and preserves prior history.
 
 **Verification:**
 
@@ -254,10 +270,10 @@ go test ./internal/taskauthority -run 'TestAuthority.*(Create|Start|Block|Unbloc
 
 **Acceptance criteria:**
 
-- [ ] `CreateHold` and `ReleaseHold` are idempotent named operations.
-- [ ] `Start` checks holds and commits lifecycle state inside one Store update envelope.
-- [ ] A deterministic barrier test proves the hold writer cannot commit inside the Start check-commit span.
-- [ ] The only valid race outcomes are Start first then hold, or hold first then blocked Start.
+- [x] `CreateHold` and `ReleaseHold` are idempotent named operations.
+- [x] `Start` checks holds and commits lifecycle state inside one Store update envelope.
+- [x] A deterministic barrier test proves the hold writer cannot commit inside the Start check-commit span.
+- [x] The only valid race outcomes are Start first then hold, or hold first then blocked Start.
 
 **Verification:**
 
@@ -277,11 +293,11 @@ go test -race ./internal/taskauthority -run 'Test.*(DispatchHold|StartCannotRace
 
 ### Checkpoint 1 — Domain depth
 
-- [ ] `internal/taskauthority` tests are green under `-race`.
-- [ ] No test fakes the whole Authority.
-- [ ] The public interface contains only named semantic operations and queries.
-- [ ] The Store interface has at least two intended implementations: in-memory and filesystem.
-- [ ] No production caller has switched yet; repository behavior is unchanged.
+- [x] `internal/taskauthority` tests are green under `-race`.
+- [x] No test fakes the whole Authority.
+- [x] The public interface contains only named semantic operations and queries.
+- [x] The Store interface has at least two intended implementations: in-memory and filesystem.
+- [x] No production caller has switched yet; repository behavior is unchanged.
 
 ## Phase 2 — Filesystem adapter, journal, and explicit migration
 
