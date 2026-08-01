@@ -79,51 +79,57 @@ func NewStore(homeDir string) (*Store, error) {
 // home (migration is explicit and never automatic), any transaction manifest
 // exists (an interrupted update requires recovery), or any committed document
 // is corrupt, identity-mismatched, duplicated, or contradicts the current
-// pointer. View takes no locks: interrupted transactions are detected by the
-// pending-manifest check, and cross-process serialization lands with Update.
+// pointer. The entire read — v1 check, manifest check, and every record load
+// — runs under state/.dispatch.lock, the same lock Update composes, so an
+// update can never interleave and expose a torn snapshot.
 func (s *Store) View() (taskauthority.View, error) {
-	rel, hasV1, err := v1RecordLocation(s.homeDir)
-	if err != nil {
-		return taskauthority.View{}, err
-	}
-	if hasV1 {
-		return taskauthority.View{}, &MigrationRequiredError{V1Location: rel}
-	}
-	if err := s.checkPendingManifests(); err != nil {
-		return taskauthority.View{}, err
-	}
-	aggregates, err := s.loadAggregates()
-	if err != nil {
-		return taskauthority.View{}, err
-	}
-	holds, err := s.loadHolds()
-	if err != nil {
-		return taskauthority.View{}, err
-	}
-	interpretations, err := s.loadInterpretations()
-	if err != nil {
-		return taskauthority.View{}, err
-	}
-	decisions, err := s.loadDecisions()
-	if err != nil {
-		return taskauthority.View{}, err
-	}
-	receipts, err := s.loadReceipts()
-	if err != nil {
-		return taskauthority.View{}, err
-	}
-	audit, err := s.loadAudit()
-	if err != nil {
-		return taskauthority.View{}, err
-	}
-	return taskauthority.View{
-		Aggregates:      aggregates,
-		Holds:           holds,
-		Interpretations: interpretations,
-		Decisions:       decisions,
-		Receipts:        receipts,
-		Audit:           audit,
-	}, nil
+	var view taskauthority.View
+	err := withDispatchLock(s.homeDir, func() error {
+		rel, hasV1, err := v1RecordLocation(s.homeDir)
+		if err != nil {
+			return err
+		}
+		if hasV1 {
+			return &MigrationRequiredError{V1Location: rel}
+		}
+		if err := s.checkPendingManifests(); err != nil {
+			return err
+		}
+		aggregates, err := s.loadAggregates()
+		if err != nil {
+			return err
+		}
+		holds, err := s.loadHolds()
+		if err != nil {
+			return err
+		}
+		interpretations, err := s.loadInterpretations()
+		if err != nil {
+			return err
+		}
+		decisions, err := s.loadDecisions()
+		if err != nil {
+			return err
+		}
+		receipts, err := s.loadReceipts()
+		if err != nil {
+			return err
+		}
+		audit, err := s.loadAudit()
+		if err != nil {
+			return err
+		}
+		view = taskauthority.View{
+			Aggregates:      aggregates,
+			Holds:           holds,
+			Interpretations: interpretations,
+			Decisions:       decisions,
+			Receipts:        receipts,
+			Audit:           audit,
+		}
+		return nil
+	})
+	return view, err
 }
 
 // checkPendingManifests fails closed when any transaction manifest exists:
@@ -162,9 +168,32 @@ func (s *Store) checkPendingManifests() error {
 	return nil
 }
 
+// rejectSymlinkEntry fails closed when entry is a symbolic link. The
+// authority root never follows links — even one that would resolve back
+// inside the root — so any link is corruption, never a document.
+func rejectSymlinkEntry(document, field string, entry os.DirEntry) error {
+	if entry.Type()&os.ModeSymlink != 0 {
+		return corruptDocument(document, field, "symlink entry %q is not allowed in the authority root", entry.Name())
+	}
+	return nil
+}
+
+// requireRegularFile fails closed when path is not a regular file, so a
+// current pointer or document is never read through a symlink.
+func requireRegularFile(document, field, path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return corruptDocument(document, field, "entry %q is not a regular file", path)
+	}
+	return nil
+}
+
 // recordFiles returns the visible canonical *.json filenames in dir, sorted.
-// Directories and unexpected visible entries fail closed; hidden entries and
-// a missing dir are ignored.
+// Directories, symlinks, and unexpected visible entries fail closed; hidden
+// entries and a missing dir are ignored.
 func recordFiles(family, dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -178,6 +207,9 @@ func recordFiles(family, dir string) ([]string, error) {
 		name := entry.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
+		}
+		if err := rejectSymlinkEntry(family, "", entry); err != nil {
+			return nil, err
 		}
 		if entry.IsDir() || !strings.HasSuffix(name, documentExt) {
 			return nil, corruptDocument(family, "", "unexpected entry %q", name)
@@ -204,6 +236,9 @@ func (s *Store) loadAggregates() ([]taskauthority.Aggregate, error) {
 		name := entry.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
+		}
+		if err := rejectSymlinkEntry("aggregate", "", entry); err != nil {
+			return nil, err
 		}
 		if !entry.IsDir() {
 			return nil, corruptDocument("aggregate", "", "unexpected entry %q in aggregates root", name)
@@ -247,6 +282,9 @@ func (s *Store) loadTaskAggregates(taskID string) ([]taskauthority.Aggregate, er
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		if err := rejectSymlinkEntry("aggregate", "", entry); err != nil {
+			return nil, err
+		}
 		switch {
 		case name == currentFileName:
 			pointerFound = true
@@ -258,6 +296,9 @@ func (s *Store) loadTaskAggregates(taskID string) ([]taskauthority.Aggregate, er
 	}
 	if !pointerFound {
 		return nil, corruptDocument("aggregate", "current", "task %s has no current pointer", taskID)
+	}
+	if err := requireRegularFile("aggregate", "current", filepath.Join(taskDir, currentFileName)); err != nil {
+		return nil, err
 	}
 	pointerData, err := os.ReadFile(filepath.Join(taskDir, currentFileName))
 	if err != nil {

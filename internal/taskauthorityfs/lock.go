@@ -26,9 +26,11 @@ func taskLockPath(homeDir, taskID string) (string, error) {
 	return filepath.Join(homeDir, "state", taskID+".meta.lock"), nil
 }
 
-// lockFile opens (creating if needed) path and acquires an exclusive advisory
-// lock on it. The lock is released by releaseLock and automatically by the OS
-// on process exit.
+// lockFile opens (creating if needed) path, re-secures it to FilePerm, and
+// acquires an exclusive advisory lock on it. The lock is released by
+// releaseLock and automatically by the OS on process exit. Re-securing every
+// acquisition closes the window where a pre-existing lock file (or a new one
+// narrowed by a umask) stays wider than 0600.
 func lockFile(path string) (*os.File, error) {
 	if err := EnsureDir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("creating lock directory: %w", err)
@@ -36,6 +38,10 @@ func lockFile(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, FilePerm)
 	if err != nil {
 		return nil, fmt.Errorf("opening lock file %s: %w", path, err)
+	}
+	if err := os.Chmod(path, FilePerm); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("securing lock file %s: %w", path, err)
 	}
 	if err := lockExclusive(f); err != nil {
 		f.Close()
