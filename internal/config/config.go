@@ -16,6 +16,7 @@ var KnownKeys = []string{
 	"soldier-harness",
 	"captain-harness",
 	"model",
+	"model-allowlist",
 	"backlog-backend",
 	"default-mode",
 	"wake-delivery-mode",

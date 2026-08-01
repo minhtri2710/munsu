@@ -89,6 +89,11 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 						return fmt.Errorf("config set %s: %w", key, err)
 					}
 				}
+			case "model-allowlist":
+				// One <harness>:<model> identity per line; empty (deny-all) is allowed.
+				if err := harness.ValidateModelAllowlist(value); err != nil {
+					return fmt.Errorf("config set %s: %w", key, err)
+				}
 			}
 			return config.Set(ctx.Home, key, value)
 		}),

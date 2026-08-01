@@ -41,6 +41,12 @@ type Runner struct {
 	projectConfig       SpawnProjectConfig
 	projectConfigLoaded bool
 
+	// dispatchSel caches the single dispatch-selection resolution so the quota
+	// selector is invoked at most once per spawn and the selection used for
+	// allowlist validation is the same one used for preflight and launch.
+	dispatchSel      *harness.DispatchSelection
+	dispatchResolved bool
+
 	// soldier launch prompt state
 	prompt     string
 	promptEnv  *LaunchEnvelope
@@ -79,6 +85,12 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	if err := r.validateHarnessFlag(); err != nil {
+		return "", err
+	}
+	if err := r.resolveEffectiveIdentity(); err != nil {
+		return "", err
+	}
+	if err := r.checkModelAllowlist(); err != nil {
 		return "", err
 	}
 	if err := r.preflightBrief(); err != nil {
@@ -426,6 +438,83 @@ func (r *Runner) validateHarnessFlag() error {
 	return harness.ValidateHarness(r.args.HarnessFlag)
 }
 
+// Phase 3a: resolveEffectiveIdentity resolves the exact harness/model/effort
+// once, caching the dispatch selection, and stores the identity on the Runner
+// so allowlist validation, preflight, and launch all use the same selection.
+// Runs before any backlog/worktree/pane/meta/status side effects; it only
+// reads project config, dispatch config, and harness metadata.
+func (r *Runner) resolveEffectiveIdentity() error {
+	if r.harness == "" {
+		h := r.args.HarnessFlag
+		if h == "" && r.projectConfigLoaded {
+			h = r.projectConfig.Soldier.Harness
+		}
+		if h == "" {
+			if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
+				h = sel.Harness
+			} else {
+				var err error
+				h, err = harness.Soldier(r.homeDir)
+				if err != nil {
+					return fmt.Errorf("resolving harness: %w", err)
+				}
+			}
+		}
+		r.harness = h
+	}
+	r.resolveModelAndEffort()
+	return nil
+}
+
+// resolveModelAndEffort resolves the effective model/effort with the same
+// precedence as the launch: adapter template defaults, then project config or
+// the cached dispatch selection, then explicit CLI flags.
+func (r *Runner) resolveModelAndEffort() {
+	adapter, ok := harness.GetAdapter(r.harness)
+	if !ok {
+		return
+	}
+	tmpl := adapter.LaunchTemplate
+	r.model = tmpl.DefaultModel
+	r.effort = tmpl.DefaultEffort
+	if r.projectConfigLoaded {
+		if r.projectConfig.Soldier.Model != "" {
+			r.model = r.projectConfig.Soldier.Model
+		}
+		if r.projectConfig.Soldier.Effort != "" {
+			r.effort = r.projectConfig.Soldier.Effort
+		}
+	} else if sel, ok := r.dispatchSelection(); ok {
+		if sel.Model != "" {
+			r.model = sel.Model
+		}
+		if sel.Effort != "" {
+			r.effort = sel.Effort
+		}
+	}
+	if r.args.ModelFlag != "" {
+		r.model = r.args.ModelFlag
+	}
+	if r.args.EffortFlag != "" {
+		r.effort = r.args.EffortFlag
+	}
+}
+
+// Phase 3b: checkModelAllowlist enforces the optional munsu model allowlist on
+// the already-resolved effective identity (resolveEffectiveIdentity) before any
+// backlog/worktree/pane/meta/status side effects. An absent policy preserves
+// compatibility; an unresolved identity under an active policy fails closed.
+func (r *Runner) checkModelAllowlist() error {
+	present, err := harness.ModelAllowlistPresent(r.homeDir)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	return harness.CheckModelAllowed(r.homeDir, r.harness, r.model)
+}
+
 // Phase 4: preflightBrief checks that a brief exists before spawning.
 func (r *Runner) preflightBrief() error {
 	if err := RecoverTaskHandoffs(r.homeDir); err != nil {
@@ -569,40 +658,30 @@ func (r *Runner) acquireWorktree() error {
 	return nil
 }
 
-// preflightHarness resolves the harness name early and runs readiness preflight.
-// This happens before worktree acquisition so known errors fail before allocating
-// any resources. Unknown-level preflight results pass through without error.
+// preflightHarness runs harness readiness preflight on the already-resolved
+// harness (see resolveEffectiveIdentity) before worktree acquisition so known
+// errors fail before allocating any resources. Unknown-level preflight results
+// pass through without error.
 func (r *Runner) preflightHarness() error {
-	harnessName := r.args.HarnessFlag
-	if harnessName == "" && r.projectConfigLoaded {
-		harnessName = r.projectConfig.Soldier.Harness
-	}
-	if harnessName == "" {
-		if sel, ok := r.dispatchSelection(); ok && sel.Harness != "" {
-			harnessName = sel.Harness
-		} else {
-			h, err := harness.Soldier(r.homeDir)
-			if err != nil {
-				return fmt.Errorf("resolving harness for preflight: %w", err)
-			}
-			harnessName = h
+	if r.harness == "" {
+		if err := r.resolveEffectiveIdentity(); err != nil {
+			return err
 		}
 	}
 
-	result, err := harness.Preflight(harnessName)
+	result, err := harness.Preflight(r.harness)
 	if err != nil {
 		return err
 	}
 	if result.AdapterKnown == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: harnessName, Reason: "adapter-unknown"}
+		return &harness.PreflightError{Harness: r.harness, Reason: "adapter-unknown"}
 	}
 	if result.BinaryOnPath == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: harnessName, Reason: "binary-absent"}
+		return &harness.PreflightError{Harness: r.harness, Reason: "binary-absent"}
 	}
 	if result.AuthConfigured == harness.PreflightAbsent {
-		return &harness.PreflightError{Harness: harnessName, Reason: "auth-absent"}
+		return &harness.PreflightError{Harness: r.harness, Reason: "auth-absent"}
 	}
-	r.harness = harnessName
 	return nil
 }
 
@@ -641,9 +720,18 @@ func (r *Runner) resolveHarness() error {
 }
 
 // dispatchSelection loads the typed config dispatch profiles and matches
-// against the brief body. Checks the published snapshot first (captain
-// context), then the fleet base document (general context).
+// against the brief body. The first resolution is cached so the selection is
+// computed exactly once per spawn (the quota selector must not run twice).
+// Checks the published snapshot first (captain context), then the fleet base
+// document (general context).
 func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
+	if r.dispatchResolved {
+		if r.dispatchSel == nil {
+			return harness.DispatchSelection{}, false
+		}
+		return *r.dispatchSel, true
+	}
+	defer func() { r.dispatchResolved = true }()
 	// 1. Try published snapshot (captain context).
 	snapshot, err := config.LoadPublishedSnapshot(r.homeDir)
 	if err == nil {
@@ -655,7 +743,9 @@ func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
 				Profiles:       append([]harness.DispatchProfile(nil), cfg.DispatchProfiles...),
 			}
 			desc := r.taskDescription()
-			return harness.ResolveDispatchSelection(dispatch, desc), true
+			sel := harness.ResolveDispatchSelection(dispatch, desc)
+			r.dispatchSel = &sel
+			return sel, true
 		}
 	}
 
@@ -668,7 +758,9 @@ func (r *Runner) dispatchSelection() (harness.DispatchSelection, bool) {
 			Profiles:       append([]harness.DispatchProfile(nil), base.Config.DispatchProfiles...),
 		}
 		desc := r.taskDescription()
-		return harness.ResolveDispatchSelection(dispatch, desc), true
+		sel := harness.ResolveDispatchSelection(dispatch, desc)
+		r.dispatchSel = &sel
+		return sel, true
 	}
 
 	return harness.DispatchSelection{}, false
@@ -686,45 +778,15 @@ func (r *Runner) taskDescription() string {
 	return r.args.ID
 }
 
-// Phase 10: resolveLaunchConfig resolves model, effort, and launch command.
-// Precedence: CLI --model/--effort > dispatch profile > adapter template defaults.
+// Phase 10: resolveLaunchConfig finalizes the launch command from the identity
+// already resolved by resolveEffectiveIdentity (harness, model, effort). The
+// selection is resolved once so validation, preflight, and launch all share it.
 func (r *Runner) resolveLaunchConfig() {
 	adapter, ok := harness.GetAdapter(r.harness)
 	if !ok {
 		return
 	}
-	tmpl := adapter.LaunchTemplate
-
-	// Template defaults first.
-	r.model = tmpl.DefaultModel
-	r.effort = tmpl.DefaultEffort
-
-	// Dispatch profile overrides template defaults (when present).
-	if r.projectConfigLoaded {
-		if r.projectConfig.Soldier.Model != "" {
-			r.model = r.projectConfig.Soldier.Model
-		}
-		if r.projectConfig.Soldier.Effort != "" {
-			r.effort = r.projectConfig.Soldier.Effort
-		}
-	} else if sel, ok := r.dispatchSelection(); ok {
-		if sel.Model != "" {
-			r.model = sel.Model
-		}
-		if sel.Effort != "" {
-			r.effort = sel.Effort
-		}
-	}
-
-	// Explicit CLI flags win.
-	if r.args.ModelFlag != "" {
-		r.model = r.args.ModelFlag
-	}
-	if r.args.EffortFlag != "" {
-		r.effort = r.args.EffortFlag
-	}
-
-	r.launchCmd = harness.LaunchStringWith(r.harness, tmpl, r.model, r.effort)
+	r.launchCmd = harness.LaunchStringWith(r.harness, adapter.LaunchTemplate, r.model, r.effort)
 }
 
 // createAttestation creates a capability attestation snapshot after the harness

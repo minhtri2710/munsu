@@ -254,6 +254,13 @@ func (tx *RecoverTransaction) stepLaunchReadiness(parentHome string, sm Info) St
 		return StepResult{Name: "launch-readiness", State: StepFailed,
 			Detail: fmt.Sprintf("harness binary %q not found on PATH: %v", a.Name, err)}
 	}
+	// Share the soldier/captain launch validation seam: a denied model — or an
+	// unresolved identity under an active policy — makes the captain not
+	// launchable (a runtime default cannot bypass the policy).
+	if err := harness.CheckModelAllowed(parentHome, h, profile.Model); err != nil {
+		return StepResult{Name: "launch-readiness", State: StepFailed,
+			Detail: fmt.Sprintf("harness %q ready at %s but model allowlist denies %s:%s: %v", h, binPath, h, profile.Model, err)}
+	}
 	if profile.Model == "" {
 		return StepResult{Name: "launch-readiness", State: StepOk,
 			Detail: fmt.Sprintf("harness %q ready at %s (no model override)", h, binPath)}

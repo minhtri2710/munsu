@@ -920,6 +920,12 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 
 	// Model/effort: config/captain-harness multi-token line, then config/model.
 	prof, _ := harness.CaptainProfileFromHome(parentHome)
+	// Enforce the optional munsu model allowlist before any launch side effects.
+	// CheckModelAllowed fails closed when a policy is present but the identity
+	// is unresolved (empty model), so a runtime default cannot bypass the policy.
+	if err := harness.CheckModelAllowed(parentHome, h, prof.Model); err != nil {
+		return "", nil, fmt.Errorf("captain launch: %w", err)
+	}
 	args := []string{}
 	if prof.Model != "" && adapter.LaunchTemplate.ModelFlag != "" {
 		args = append(args, adapter.LaunchTemplate.ModelFlag, prof.Model)
@@ -1220,8 +1226,6 @@ func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
 
 // --- Config inheritance ---
 
-
-
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if existing, err := os.ReadFile(path); err == nil {
 		if info, statErr := os.Stat(path); statErr == nil && string(existing) == string(data) && info.Mode().Perm() == mode.Perm() {
@@ -1333,8 +1337,6 @@ func isSafeConfigPath(dst, parentHome, captainHome string) bool {
 
 	return true
 }
-
-
 
 func isGitTracked(dir, name string) bool {
 	out, err := exec.Command("git", "-C", dir, "ls-files", "--error-unmatch", name).CombinedOutput()

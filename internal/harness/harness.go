@@ -37,6 +37,22 @@ func IsKnownHarness(name string) bool {
 	return false
 }
 
+// CanonicalHarness returns the canonical registry identifier for name,
+// normalizing whitespace and case. "default" is treated as unset, matching
+// ValidateHarness. Returns ok=false for unknown names, including aliases or
+// prefixes that are not exact registry identifiers, so they can never match an
+// allowlist entry.
+func CanonicalHarness(name string) (string, bool) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" || n == "default" {
+		return "", false
+	}
+	if IsKnownHarness(n) {
+		return n, true
+	}
+	return "", false
+}
+
 // ValidateHarness returns an error if name is not empty and not "default"
 // but is not in KnownHarnesses. Empty or "default" are treated as unset.
 func ValidateHarness(name string) error {
