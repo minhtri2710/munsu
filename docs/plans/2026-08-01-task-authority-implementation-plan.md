@@ -8,7 +8,7 @@
 
 ## Implementation progress
 
-Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`; Task 2.3 is next.
+Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`; Task 2.4 is next.
 
 Verified on 2026-08-01:
 
@@ -361,10 +361,10 @@ go test ./internal/taskauthorityfs -run 'Test.*(View|LockOrder|Corrupt|Current)'
 
 **Acceptance criteria:**
 
-- [ ] `Store.Update` writes a pending manifest before authoritative file replacement.
-- [ ] Recovery is idempotent after failure before manifest, after manifest, after each data write, and before/after commit marker.
-- [ ] Canonical `View` never returns a partially applied transaction.
-- [ ] Callback errors produce no pending manifest and no mutation.
+- [x] `Store.Update` writes a pending manifest before authoritative file replacement.
+- [x] Recovery is idempotent after failure before manifest, after manifest, after each data write, and before/after commit marker.
+- [x] Canonical `View` never returns a partially applied transaction.
+- [x] Callback errors produce no pending manifest and no mutation.
 
 **Verification:**
 
