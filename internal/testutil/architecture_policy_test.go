@@ -35,7 +35,7 @@ func TestPackageTopology(t *testing.T) {
 		packages[p.ImportPath] = p
 	}
 	const root = "github.com/minhtri2710/munsu/internal/"
-	allowed := map[string]bool{"domain": true, "backend": true, "orchestrator": true, "fleet": true, "config": true, "configmigration": true, "home": true, "harness": true, "bootstrap": true, "testutil": true, "cli": true}
+	allowed := map[string]bool{"domain": true, "backend": true, "orchestrator": true, "fleet": true, "config": true, "configmigration": true, "home": true, "harness": true, "bootstrap": true, "testutil": true, "cli": true, "taskauthority": true}
 	for path, p := range packages {
 		if strings.HasPrefix(path, root) && !allowed[strings.TrimPrefix(path, root)] {
 			t.Errorf("unexpected internal package %s", path)
@@ -52,6 +52,9 @@ func TestPackageTopology(t *testing.T) {
 			}
 			if path == root+"domain" && strings.HasPrefix(imp, root) {
 				t.Errorf("domain imports core package %s", imp)
+			}
+			if path == root+"taskauthority" && imp != root+"domain" && strings.HasPrefix(imp, root) {
+				t.Errorf("taskauthority imports core package %s; it must stay pure (domain only)", imp)
 			}
 		}
 	}
