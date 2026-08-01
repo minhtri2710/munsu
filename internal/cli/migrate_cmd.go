@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/configmigration"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +21,7 @@ func newMigrateCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newMigrateWakeResolutionsCmd())
 	cmd.AddCommand(newMigrateTaskAggregatesCmd())
+	cmd.AddCommand(newMigrateTaskAuthorityCmd())
 	cmd.AddCommand(newMigrateConfigCmd())
 	return cmd
 }
@@ -214,6 +217,94 @@ func newMigrateTaskAggregatesCmd() *cobra.Command {
 		}),
 	}
 	apply.Flags().String("plan", "", "Path to reviewed task aggregate migration plan JSON")
+	configureContractCommand(apply)
+	cmd.AddCommand(planCmd)
+	cmd.AddCommand(apply)
+	return cmd
+}
+
+func newMigrateTaskAuthorityCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "task-authority",
+		Short: "Migrate legacy v1 task authority state to the v2 authority schema",
+	}
+	planCmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Plan one-home v1-to-v2 task authority migration without source mutation",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan-out")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate task-authority plan --plan-out <plan.json>`", "--plan-out is required")
+			}
+			plan, err := taskauthorityfs.PlanMigration(ctx.Home)
+			if err != nil {
+				if errors.Is(err, taskauthorityfs.ErrAlreadyMigrated) {
+					return writeContract(cmd, Response[MessageResult]{
+						SchemaVersion: SchemaVersion,
+						Kind:          "migrate.task_authority.plan.already_migrated",
+						Status:        "success",
+						Data:          MessageResult{Message: "Task authority is already migrated to v2; nothing to plan"},
+					})
+				}
+				return operationError("invalid_argument", "Run `munsu migrate task-authority plan --plan-out <plan.json>`", err.Error())
+			}
+			if err := taskauthorityfs.WriteMigrationPlan(planPath, plan); err != nil {
+				return operationError("internal", "Run the task-authority plan command again", err.Error())
+			}
+			targets := len(plan.Aggregates) + len(plan.Holds) + len(plan.Interpretations) + len(plan.Decisions)
+			message := fmt.Sprintf("Planned %d v1 record(s) into %d v2 target(s), quarantined=%d; digest=%s; plan=%s; apply=munsu migrate task-authority apply --plan %s", plan.RecordCount, targets, len(plan.Quarantined), plan.SourceDigest, planPath, shellQuote(planPath))
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.task_authority.plan",
+				Status:        "success",
+				Data:          MessageResult{Message: message},
+			})
+		}),
+	}
+	planCmd.Flags().String("plan-out", "", "Path to write reviewed task-authority migration plan JSON")
+	configureContractCommand(planCmd)
+	apply := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply one reviewed v1-to-v2 task authority migration plan",
+		Args:  contractNoArgs,
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			if _, err := contractOutput(cmd); err != nil {
+				return err
+			}
+			planPath, _ := cmd.Flags().GetString("plan")
+			if planPath == "" {
+				return usageError("invalid_argument", "Run `munsu migrate task-authority plan` first, then `munsu migrate task-authority apply --plan <plan.json>`", "--plan is required")
+			}
+			plan, err := taskauthorityfs.ReadMigrationPlan(planPath)
+			if err != nil {
+				return operationError("invalid_argument", "Run `munsu migrate task-authority plan` again", err.Error())
+			}
+			receipt, err := taskauthorityfs.ApplyMigration(plan)
+			if err != nil {
+				if errors.Is(err, taskauthorityfs.ErrAlreadyMigrated) {
+					return writeContract(cmd, Response[MessageResult]{
+						SchemaVersion: SchemaVersion,
+						Kind:          "migrate.task_authority.apply.already_migrated",
+						Status:        "success",
+						Data:          MessageResult{Message: "Task authority is already migrated to v2; receipt verified, nothing rewritten"},
+					})
+				}
+				return operationError("internal", "Re-run the same `munsu migrate task-authority apply --plan <plan.json>` after fixing the reported state", err.Error())
+			}
+			message := fmt.Sprintf("Migrated %d v1 record(s) to v2; digest=%s; archive=%s", receipt.RecordCount, receipt.SourceDigest, receipt.ArchivePath)
+			return writeContract(cmd, Response[MessageResult]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "migrate.task_authority.apply",
+				Status:        "success",
+				Data:          MessageResult{Message: message},
+			})
+		}),
+	}
+	apply.Flags().String("plan", "", "Path to reviewed task-authority migration plan JSON")
 	configureContractCommand(apply)
 	cmd.AddCommand(planCmd)
 	cmd.AddCommand(apply)
