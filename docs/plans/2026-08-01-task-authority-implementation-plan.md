@@ -8,7 +8,7 @@
 
 ## Implementation progress
 
-Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`; Task 2.2 is next.
+Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`; Task 2.3 is next.
 
 Verified on 2026-08-01:
 
@@ -334,10 +334,10 @@ go test ./internal/taskauthorityfs -run 'Test.*(Schema|Path|Permissions|Unsuppor
 
 **Acceptance criteria:**
 
-- [ ] Canonical reads load one current Generation and its Revision, dispatch records, and receipts.
-- [ ] Corrupt or contradictory current records quarantine/fail closed instead of choosing the first record.
-- [ ] Lock acquisition order is `.dispatch.lock → per-task lock`.
-- [ ] Focused tests prove no reverse lock order is introduced.
+- [x] Canonical reads load one current Generation and its Revision, dispatch records, and receipts.
+- [x] Corrupt or contradictory current records quarantine/fail closed instead of choosing the first record.
+- [x] Lock acquisition order is `.dispatch.lock → per-task lock`.
+- [x] Focused tests prove no reverse lock order is introduced.
 
 **Verification:**
 
