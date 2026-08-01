@@ -104,6 +104,7 @@ func TestTransactionManifestPathValidation(t *testing.T) {
 			entry := m.After[0]
 			entry.Path = p
 			m.After = []ManifestEntry{entry}
+			m.Before = []ManifestEntry{{Path: p, Digest: testDigest()}}
 			if _, err := EncodeTransactionManifest(m); err != nil {
 				t.Errorf("EncodeTransactionManifest(path %q) error = %v, want nil", p, err)
 			}
@@ -153,8 +154,7 @@ func TestTransactionManifestPathValidation(t *testing.T) {
 	t.Run("same path in before and after is an update, not a duplicate", func(t *testing.T) {
 		m := base
 		entry := m.After[0]
-		before := ManifestEntry{Path: entry.Path, Digest: testDigest()}
-		m.Before = append(m.Before, before)
+		m.Before = []ManifestEntry{{Path: entry.Path, Digest: testDigest()}}
 		m.After = []ManifestEntry{entry}
 		if _, err := EncodeTransactionManifest(m); err != nil {
 			t.Errorf("update-shaped manifest error = %v, want nil", err)

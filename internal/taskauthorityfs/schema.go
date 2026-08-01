@@ -504,7 +504,9 @@ func validateTransactionManifest(manifest TransactionManifest) error {
 	if err := validateManifestEntryPaths("after", manifest.After); err != nil {
 		return err
 	}
+	afterPaths := make(map[string]bool, len(manifest.After))
 	for _, entry := range manifest.After {
+		afterPaths[entry.Path] = true
 		if !validDigest(entry.Digest) {
 			return corruptDocument("transaction_manifest", "after", "after entry %q digest must be a 64-hex sha256 digest", entry.Path)
 		}
@@ -519,10 +521,16 @@ func validateTransactionManifest(manifest TransactionManifest) error {
 		if !validDigest(entry.Digest) {
 			return corruptDocument("transaction_manifest", "before", "before entry %q digest must be a 64-hex sha256 digest", entry.Path)
 		}
+		if !afterPaths[entry.Path] {
+			return corruptDocument("transaction_manifest", "before", "before entry %q has no matching after entry; v2 transactions do not represent deletion", entry.Path)
+		}
 	}
 	if manifest.Audit != nil {
 		if err := manifest.Audit.Validate(); err != nil {
 			return corruptDocument("transaction_manifest", "audit", "%v", err)
+		}
+		if manifest.Audit.OperationID != manifest.OperationID {
+			return corruptDocument("transaction_manifest", "audit", "audit operation id %q does not match manifest operation id %q", manifest.Audit.OperationID, manifest.OperationID)
 		}
 	}
 	switch manifest.State {

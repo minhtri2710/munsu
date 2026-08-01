@@ -17,8 +17,11 @@ var (
 	// reads refuse to serve until explicit migration runs. Migration is never
 	// automatic.
 	ErrMigrationRequired = errors.New("task-authority v1 state requires explicit migration")
-	// ErrRecoveryRequired reports an interrupted transaction: a transaction
-	// manifest exists, so canonical reads are unsafe until recovery runs.
+	// ErrRecoveryRequired reports an interrupted transaction that automatic
+	// recovery could not complete safely: the manifest or its data files
+	// diverged from the pinned pre-state. Canonical reads fail closed until a
+	// human repairs the home. Every recoverable interrupted transaction is
+	// completed automatically before any canonical read or write.
 	ErrRecoveryRequired = errors.New("task-authority transaction recovery required")
 )
 
@@ -36,32 +39,43 @@ func (e *MigrationRequiredError) Error() string {
 func (e *MigrationRequiredError) Unwrap() error { return ErrMigrationRequired }
 
 // RecoveryRequiredError is a typed, inspectable error for interrupted
-// transactions. ManifestPath names the first transaction manifest that blocks
-// canonical reads until recovery runs.
+// transactions that automatic recovery could not complete safely.
+// ManifestPath names the transaction manifest that blocked recovery;
+// Reason, when set, describes the divergence or corruption that made
+// recovery impossible.
 type RecoveryRequiredError struct {
 	ManifestPath string
+	Reason       string
 }
 
 func (e *RecoveryRequiredError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("task-authority transaction at %s cannot be recovered safely: %s", e.ManifestPath, e.Reason)
+	}
 	return fmt.Sprintf("task-authority transaction at %s requires recovery before canonical reads", e.ManifestPath)
 }
 
 func (e *RecoveryRequiredError) Unwrap() error { return ErrRecoveryRequired }
 
-// Store is the read-only filesystem adapter below taskauthority.Store. It
-// loads one consistent canonical View from committed v2 documents and fails
-// closed on legacy v1 state, interrupted transactions, and corrupt or
-// contradictory records. It contains no lifecycle rules. Journaled Update,
-// recovery, and idempotency land in the transaction slice; this file only
-// implements the read path and the lock primitives Update will compose.
+// Store is the filesystem adapter below taskauthority.Store. It loads one
+// consistent canonical View from committed v2 documents, runs automatic
+// recovery of interrupted transactions before any canonical read or write,
+// and fails closed on legacy v1 state, diverged or corrupt transactions, and
+// corrupt or contradictory records. It contains no lifecycle rules. The
+// journaled Update and recovery live in the transaction and recovery slices;
+// this file implements the read path and the lock primitives Update composes.
 type Store struct {
 	homeDir string
+	// fault injects deterministic crash points inside Update. Package-private
+	// and nil in production; tests use it to prove recovery converges at every
+	// journal stage.
+	fault *faultInjector
 }
 
-// NewStore constructs a read-only filesystem Store for the authority state
-// under homeDir. Construction is side-effect free: it creates nothing,
-// migrates nothing, and fails only when homeDir is empty or resolves to a
-// non-directory. Canonical state is loaded by View.
+// NewStore constructs a filesystem Store for the authority state under
+// homeDir. Construction is side-effect free: it creates nothing, migrates
+// nothing, and fails only when homeDir is empty or resolves to a
+// non-directory. Canonical state is loaded by View and mutated by Update.
 func NewStore(homeDir string) (*Store, error) {
 	if strings.TrimSpace(homeDir) == "" {
 		return nil, fmt.Errorf("taskauthorityfs: empty home directory")
@@ -75,97 +89,79 @@ func NewStore(homeDir string) (*Store, error) {
 }
 
 // View returns one canonical committed snapshot of the authority state. It
-// fails closed in three cases: legacy v1 records exist anywhere under the
-// home (migration is explicit and never automatic), any transaction manifest
-// exists (an interrupted update requires recovery), or any committed document
-// is corrupt, identity-mismatched, duplicated, or contradicts the current
-// pointer. The entire read — v1 check, manifest check, and every record load
-// — runs under state/.dispatch.lock, the same lock Update composes, so an
-// update can never interleave and expose a torn snapshot.
+// fails closed when legacy v1 records exist anywhere under the home
+// (migration is explicit and never automatic), when automatic recovery
+// cannot complete an interrupted transaction safely (divergence or
+// corruption), or when any committed document is corrupt, identity-
+// mismatched, duplicated, or contradicts the current pointer. The entire
+// read — v1 check, automatic recovery, and every record load — runs under
+// state/.dispatch.lock, the same lock Update composes, so an update can
+// never interleave and expose a torn snapshot.
 func (s *Store) View() (taskauthority.View, error) {
 	var view taskauthority.View
 	err := withDispatchLock(s.homeDir, func() error {
-		rel, hasV1, err := v1RecordLocation(s.homeDir)
-		if err != nil {
-			return err
-		}
-		if hasV1 {
-			return &MigrationRequiredError{V1Location: rel}
-		}
-		if err := s.checkPendingManifests(); err != nil {
-			return err
-		}
-		aggregates, err := s.loadAggregates()
-		if err != nil {
-			return err
-		}
-		holds, err := s.loadHolds()
-		if err != nil {
-			return err
-		}
-		interpretations, err := s.loadInterpretations()
-		if err != nil {
-			return err
-		}
-		decisions, err := s.loadDecisions()
-		if err != nil {
-			return err
-		}
-		receipts, err := s.loadReceipts()
-		if err != nil {
-			return err
-		}
-		audit, err := s.loadAudit()
-		if err != nil {
-			return err
-		}
-		view = taskauthority.View{
-			Aggregates:      aggregates,
-			Holds:           holds,
-			Interpretations: interpretations,
-			Decisions:       decisions,
-			Receipts:        receipts,
-			Audit:           audit,
-		}
-		return nil
+		var err error
+		view, err = s.canonicalView()
+		return err
 	})
 	return view, err
 }
 
-// checkPendingManifests fails closed when any transaction manifest exists:
-// an interrupted update must recover before canonical reads. Corrupt or
-// identity-mismatched manifests are corruption, not recoverable state.
-func (s *Store) checkPendingManifests() error {
-	dir := filepath.Join(s.homeDir, filepath.FromSlash(transactionsDir))
-	files, err := recordFiles("transaction_manifest", dir)
+// canonicalView loads one consistent view under the held dispatch lock: it
+// checks for legacy v1 state first (which always wins), then completes every
+// interrupted transaction automatically, then loads every canonical record.
+// Callers that already hold the dispatch lock (View and Update) use this
+// instead of re-entering the lock, which would deadlock.
+func (s *Store) canonicalView() (taskauthority.View, error) {
+	rel, hasV1, err := v1RecordLocation(s.homeDir)
 	if err != nil {
-		return err
+		return taskauthority.View{}, err
 	}
-	var first string
-	for _, name := range files {
-		rawID, err := fileIDDecode(strings.TrimSuffix(name, documentExt))
-		if err != nil {
-			return corruptDocument("transaction_manifest", "operation_id", "invalid manifest filename %q: %v", name, err)
-		}
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return err
-		}
-		manifest, err := DecodeTransactionManifest(data)
-		if err != nil {
-			return err
-		}
-		if manifest.OperationID != rawID {
-			return corruptDocument("transaction_manifest", "operation_id", "manifest operation id %q does not match filename %q", manifest.OperationID, name)
-		}
-		if first == "" {
-			first = filepath.ToSlash(filepath.Join(transactionsDir, name))
-		}
+	if hasV1 {
+		return taskauthority.View{}, &MigrationRequiredError{V1Location: rel}
 	}
-	if first != "" {
-		return &RecoveryRequiredError{ManifestPath: first}
+	if err := s.recoverLocked(); err != nil {
+		return taskauthority.View{}, err
 	}
-	return nil
+	return s.loadViewLocked()
+}
+
+// loadViewLocked loads every canonical record under the held dispatch lock.
+// It assumes the caller already completed recovery, so it never observes a
+// partially applied transaction.
+func (s *Store) loadViewLocked() (taskauthority.View, error) {
+	aggregates, err := s.loadAggregates()
+	if err != nil {
+		return taskauthority.View{}, err
+	}
+	holds, err := s.loadHolds()
+	if err != nil {
+		return taskauthority.View{}, err
+	}
+	interpretations, err := s.loadInterpretations()
+	if err != nil {
+		return taskauthority.View{}, err
+	}
+	decisions, err := s.loadDecisions()
+	if err != nil {
+		return taskauthority.View{}, err
+	}
+	receipts, err := s.loadReceipts()
+	if err != nil {
+		return taskauthority.View{}, err
+	}
+	audit, err := s.loadAudit()
+	if err != nil {
+		return taskauthority.View{}, err
+	}
+	return taskauthority.View{
+		Aggregates:      aggregates,
+		Holds:           holds,
+		Interpretations: interpretations,
+		Decisions:       decisions,
+		Receipts:        receipts,
+		Audit:           audit,
+	}, nil
 }
 
 // rejectSymlinkEntry fails closed when entry is a symbolic link. The

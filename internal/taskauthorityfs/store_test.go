@@ -380,41 +380,10 @@ func TestViewMigrationRequired(t *testing.T) {
 }
 
 func TestViewRecoveryRequired(t *testing.T) {
-	t.Run("pending manifest", func(t *testing.T) {
-		home := t.TempDir()
-		writeManifestDoc(t, home, fixtureManifest(t))
-		_, err := openStore(t, home).View()
-		if !errors.Is(err, ErrRecoveryRequired) {
-			t.Fatalf("View error = %v, want ErrRecoveryRequired", err)
-		}
-		var re *RecoveryRequiredError
-		if !errors.As(err, &re) {
-			t.Fatalf("View error %v is not a *RecoveryRequiredError", err)
-		}
-		want := filepath.ToSlash(relPath(t, func() (string, error) { return TransactionManifestRelPath("op-1") }))
-		if re.ManifestPath != want {
-			t.Fatalf("RecoveryRequiredError.ManifestPath = %q, want %q", re.ManifestPath, want)
-		}
-	})
-
-	t.Run("committed manifest also blocks", func(t *testing.T) {
-		home := t.TempDir()
-		m := fixtureManifest(t)
-		m.State = ManifestCommitted
-		writeManifestDoc(t, home, m)
-		if _, err := openStore(t, home).View(); !errors.Is(err, ErrRecoveryRequired) {
-			t.Fatalf("View error = %v, want ErrRecoveryRequired", err)
-		}
-	})
-
-	t.Run("manifest alongside canonical state", func(t *testing.T) {
-		home := t.TempDir()
-		buildCanonicalHome(t, home)
-		writeManifestDoc(t, home, fixtureManifest(t))
-		if _, err := openStore(t, home).View(); !errors.Is(err, ErrRecoveryRequired) {
-			t.Fatalf("View error = %v, want ErrRecoveryRequired", err)
-		}
-	})
+	// Automatic recovery completes interrupted transactions before canonical
+	// reads; recovery_test.go proves convergence at every journal stage.
+	// Recovery itself still fails closed on corruption and identity mismatch:
+	// those are not recoverable states.
 
 	t.Run("corrupt manifest fails closed as corruption", func(t *testing.T) {
 		home := t.TempDir()
@@ -426,6 +395,9 @@ func TestViewRecoveryRequired(t *testing.T) {
 		home := t.TempDir()
 		m := fixtureManifest(t)
 		m.OperationID = "op-2"
+		audit := *m.Audit
+		audit.OperationID = "op-2"
+		m.Audit = &audit
 		data, err := EncodeTransactionManifest(m)
 		if err != nil {
 			t.Fatal(err)

@@ -121,7 +121,7 @@ func fixtureManifest(t *testing.T) TransactionManifest {
 		OperationID:        "op-1",
 		Digest:             testDigest(),
 		ExpectedGeneration: 1,
-		Before:             []ManifestEntry{{Path: "state/.task-authority/v2/aggregates/t1/current", Digest: testDigest()}},
+		Before:             []ManifestEntry{{Path: "state/.task-authority/v2/aggregates/t1/1.json", Digest: testDigest()}},
 		After: []ManifestEntry{{
 			Path:    "state/.task-authority/v2/aggregates/t1/1.json",
 			Digest:  DigestHex(payload),
