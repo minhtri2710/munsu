@@ -196,21 +196,29 @@ const (
 	v1DispatchControlRelPath = "state/.dispatch"
 )
 
+// v1RecordLocation returns the first legacy v1 task-authority record location
+// under the home, or false when no v1 records exist. Detection is strictly
+// read-only: v1 state is never silently migrated or mutated by this package.
+func v1RecordLocation(homeDir string) (string, bool, error) {
+	for _, rel := range []string{v1AggregatesRelPath, v1WorktreeLeasesRelPath, v1DispatchControlRelPath} {
+		has, err := hasVisibleEntries(filepath.Join(homeDir, rel))
+		if err != nil {
+			return "", false, err
+		}
+		if has {
+			return rel, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // HasV1Records reports whether legacy v1 task-authority records exist under
 // the home: legacy task aggregates, worktree leases, or dispatch-control
 // records. Detection is strictly read-only: v1 state is never silently
 // migrated or mutated by this package.
 func HasV1Records(homeDir string) (bool, error) {
-	for _, rel := range []string{v1AggregatesRelPath, v1WorktreeLeasesRelPath, v1DispatchControlRelPath} {
-		has, err := hasVisibleEntries(filepath.Join(homeDir, rel))
-		if err != nil {
-			return false, err
-		}
-		if has {
-			return true, nil
-		}
-	}
-	return false, nil
+	_, has, err := v1RecordLocation(homeDir)
+	return has, err
 }
 
 // hasVisibleEntries reports whether dir contains at least one non-hidden
