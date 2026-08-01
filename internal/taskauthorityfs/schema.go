@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -156,6 +157,17 @@ func versionedEncode(document string, record any, validate func() error) ([]byte
 func DigestHex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// validDigest reports whether s is exactly one 64-character hexadecimal
+// SHA-256 digest. Length alone is not sufficient: non-hex content of the
+// right length must also fail closed.
+func validDigest(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 // validateRecordVersion rejects a canonical record whose own schema identity
@@ -378,15 +390,42 @@ func DecodeReceipt(data []byte) (taskauthority.Receipt, error) {
 }
 
 // validateReceiptDocument checks the identity and required fields of a Task
-// Operation receipt document.
+// Operation receipt document: a safe operation id, an exactly-64-hex intent
+// digest, a committed timestamp, and, when a lifecycle outcome is present, a
+// coherent all-or-none task id/generation/revision/valid phase set. Receipts
+// without a lifecycle outcome (e.g. hold-only operations) remain valid.
 func validateReceiptDocument(receipt taskauthority.Receipt) error {
 	if receipt.OperationID == "" || strings.ContainsAny(receipt.OperationID, `/\\`) {
 		return corruptDocument("receipt", "operation_id", "receipt requires a safe operation id")
 	}
-	if len(receipt.Digest) != 64 {
+	if !validDigest(receipt.Digest) {
 		return corruptDocument("receipt", "digest", "receipt digest must be a 64-hex sha256 digest")
 	}
+	if receipt.CommittedAt <= 0 {
+		return corruptDocument("receipt", "committed_at", "receipt requires a committed timestamp")
+	}
+	if hasLifecycleOutcome(receipt) {
+		if err := validateTaskID(receipt.TaskID); err != nil {
+			return corruptDocument("receipt", "task_id", "receipt lifecycle outcome requires a valid task id")
+		}
+		if err := receipt.Generation.Validate(); err != nil {
+			return corruptDocument("receipt", "generation", "receipt lifecycle outcome requires a valid generation")
+		}
+		if receipt.Revision == 0 {
+			return corruptDocument("receipt", "revision", "receipt lifecycle outcome requires a positive revision")
+		}
+		if !receipt.Phase.Valid() {
+			return corruptDocument("receipt", "phase", "receipt lifecycle outcome requires a valid phase, got %q", receipt.Phase)
+		}
+	}
 	return nil
+}
+
+// hasLifecycleOutcome reports whether a receipt carries any lifecycle outcome
+// field: task identity, generation, revision, phase, or the reopened flag.
+// Presence of any of them requires the full coherent set.
+func hasLifecycleOutcome(receipt taskauthority.Receipt) bool {
+	return receipt.TaskID != "" || receipt.Generation != 0 || receipt.Revision != 0 || receipt.Phase != "" || receipt.Reopened
 }
 
 // ManifestState is the commit state of one transaction manifest.
@@ -445,12 +484,13 @@ func DecodeTransactionManifest(data []byte) (TransactionManifest, error) {
 }
 
 // validateTransactionManifest checks the identity, required fields, digest
-// consistency, and commit state of a transaction manifest.
+// consistency, manifest entry paths, and commit state of a transaction
+// manifest.
 func validateTransactionManifest(manifest TransactionManifest) error {
 	if manifest.OperationID == "" || strings.ContainsAny(manifest.OperationID, `/\\`) {
 		return corruptDocument("transaction_manifest", "operation_id", "manifest requires a safe operation id")
 	}
-	if len(manifest.Digest) != 64 {
+	if !validDigest(manifest.Digest) {
 		return corruptDocument("transaction_manifest", "digest", "manifest digest must be a 64-hex sha256 digest")
 	}
 	if manifest.ExpectedGeneration != 0 {
@@ -461,22 +501,22 @@ func validateTransactionManifest(manifest TransactionManifest) error {
 	if len(manifest.After) == 0 {
 		return corruptDocument("transaction_manifest", "after", "manifest requires at least one after entry")
 	}
+	if err := validateManifestEntryPaths("after", manifest.After); err != nil {
+		return err
+	}
 	for _, entry := range manifest.After {
-		if entry.Path == "" {
-			return corruptDocument("transaction_manifest", "after", "after entry requires a path")
-		}
-		if len(entry.Digest) != 64 {
+		if !validDigest(entry.Digest) {
 			return corruptDocument("transaction_manifest", "after", "after entry %q digest must be a 64-hex sha256 digest", entry.Path)
 		}
 		if DigestHex([]byte(entry.Payload)) != entry.Digest {
 			return corruptDocument("transaction_manifest", "after", "after entry %q payload does not match its digest", entry.Path)
 		}
 	}
+	if err := validateManifestEntryPaths("before", manifest.Before); err != nil {
+		return err
+	}
 	for _, entry := range manifest.Before {
-		if entry.Path == "" {
-			return corruptDocument("transaction_manifest", "before", "before entry requires a path")
-		}
-		if len(entry.Digest) != 64 {
+		if !validDigest(entry.Digest) {
 			return corruptDocument("transaction_manifest", "before", "before entry %q digest must be a 64-hex sha256 digest", entry.Path)
 		}
 	}
@@ -494,4 +534,40 @@ func validateTransactionManifest(manifest TransactionManifest) error {
 		return corruptDocument("transaction_manifest", "created_at", "manifest requires a created timestamp")
 	}
 	return nil
+}
+
+// validateManifestEntryPaths checks every entry path of one manifest list:
+// each path must be relative, clean, traversal-free, and constrained under the
+// v2 authority namespace, and no path may repeat within the list. The same
+// path may appear once in each of before and after, which is the update shape.
+func validateManifestEntryPaths(kind string, entries []ManifestEntry) error {
+	seen := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if !manifestPathValid(entry.Path) {
+			return corruptDocument("transaction_manifest", kind, "%s entry path %q must be a clean relative path under %s", kind, entry.Path, authorityRoot)
+		}
+		if seen[entry.Path] {
+			return corruptDocument("transaction_manifest", kind, "%s entry path %q appears more than once", kind, entry.Path)
+		}
+		seen[entry.Path] = true
+	}
+	return nil
+}
+
+// manifestPathValid reports whether p is a relative, clean, traversal-free
+// path constrained strictly under the v2 authority namespace. Both separator
+// styles are treated as separators so manifests written on any platform
+// validate identically.
+func manifestPathValid(p string) bool {
+	if p == "" || filepath.IsAbs(p) {
+		return false
+	}
+	if filepath.Clean(p) != p {
+		return false
+	}
+	slash := strings.ReplaceAll(p, "\\", "/")
+	if slash == "." || slash == ".." || strings.HasPrefix(slash, "../") || strings.HasSuffix(slash, "/..") || strings.Contains(slash, "/../") {
+		return false
+	}
+	return strings.HasPrefix(slash, authorityRoot+"/")
 }

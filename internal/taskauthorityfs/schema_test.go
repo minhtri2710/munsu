@@ -614,9 +614,9 @@ func TestPathRelPaths(t *testing.T) {
 			got  string
 			want string
 		}{
-			{"hold", relPath(t, func() (string, error) { return HoldRelPath("hold-1") }), join("state", ".task-authority", "v2", "holds", "hold-1.json")},
-			{"interpretation", relPath(t, func() (string, error) { return InterpretationRelPath("interp-1") }), join("state", ".task-authority", "v2", "interpretations", "interp-1.json")},
-			{"decision", relPath(t, func() (string, error) { return DecisionRelPath("decision-1") }), join("state", ".task-authority", "v2", "decisions", "decision-1.json")},
+			{"hold", relPath(t, func() (string, error) { return HoldRelPath("hold-1") }), join("state", ".task-authority", "v2", "holds", "686f6c642d31.json")},
+			{"interpretation", relPath(t, func() (string, error) { return InterpretationRelPath("interp-1") }), join("state", ".task-authority", "v2", "interpretations", "696e746572702d31.json")},
+			{"decision", relPath(t, func() (string, error) { return DecisionRelPath("decision-1") }), join("state", ".task-authority", "v2", "decisions", "6465636973696f6e2d31.json")},
 		}
 		for _, tc := range cases {
 			if tc.got != tc.want {
@@ -631,9 +631,9 @@ func TestPathRelPaths(t *testing.T) {
 			got  string
 			want string
 		}{
-			{"audit", relPath(t, func() (string, error) { return AuditRelPath("op:1") }), join("state", ".task-authority", "v2", "audit", "op_1.json")},
-			{"receipt", relPath(t, func() (string, error) { return ReceiptRelPath("op:1") }), join("state", ".task-authority", "v2", "receipts", "op_1.json")},
-			{"manifest", relPath(t, func() (string, error) { return TransactionManifestRelPath("op:1") }), join("state", ".task-authority", "v2", "transactions", "op_1.json")},
+			{"audit", relPath(t, func() (string, error) { return AuditRelPath("op:1") }), join("state", ".task-authority", "v2", "audit", "6f703a31.json")},
+			{"receipt", relPath(t, func() (string, error) { return ReceiptRelPath("op:1") }), join("state", ".task-authority", "v2", "receipts", "6f703a31.json")},
+			{"manifest", relPath(t, func() (string, error) { return TransactionManifestRelPath("op:1") }), join("state", ".task-authority", "v2", "transactions", "6f703a31.json")},
 		}
 		for _, tc := range cases {
 			if tc.got != tc.want {
@@ -700,11 +700,11 @@ func TestPathValidation(t *testing.T) {
 				t.Errorf("safeFileID(%q) error = %v, want ErrInvalidPath", id, err)
 			}
 		}
-		if got, err := safeFileID("op:1"); err != nil || got != "op_1" {
-			t.Errorf("safeFileID(op:1) = %q, %v, want op_1, nil", got, err)
+		if got, err := safeFileID("op:1"); err != nil || got != "6f703a31" {
+			t.Errorf("safeFileID(op:1) = %q, %v, want 6f703a31, nil", got, err)
 		}
-		if got, err := safeFileID("op 1"); err != nil || got != "op_1" {
-			t.Errorf("safeFileID(op 1) = %q, %v, want op_1, nil", got, err)
+		if got, err := safeFileID("op 1"); err != nil || got != "6f702031" {
+			t.Errorf("safeFileID(op 1) = %q, %v, want 6f702031, nil", got, err)
 		}
 	})
 }

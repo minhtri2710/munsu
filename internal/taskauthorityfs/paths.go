@@ -1,6 +1,7 @@
 package taskauthorityfs
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,17 +14,16 @@ import (
 // the legacy v1 aggregate layout in "state/.task-authority/aggregates" is a
 // sibling that this package detects but never writes or migrates.
 const (
-	authorityRoot       = "state/.task-authority/v2"
-	aggregatesDir       = authorityRoot + "/aggregates"
-	holdsDir            = authorityRoot + "/holds"
-	interpretationsDir  = authorityRoot + "/interpretations"
-	decisionsDir        = authorityRoot + "/decisions"
-	auditDir            = authorityRoot + "/audit"
-	receiptsDir         = authorityRoot + "/receipts"
-	transactionsDir     = authorityRoot + "/transactions"
-	currentFileName     = "current"
-	documentExt         = ".json"
-	v1AggregatesRelPath = "state/.task-authority/aggregates"
+	authorityRoot      = "state/.task-authority/v2"
+	aggregatesDir      = authorityRoot + "/aggregates"
+	holdsDir           = authorityRoot + "/holds"
+	interpretationsDir = authorityRoot + "/interpretations"
+	decisionsDir       = authorityRoot + "/decisions"
+	auditDir           = authorityRoot + "/audit"
+	receiptsDir        = authorityRoot + "/receipts"
+	transactionsDir    = authorityRoot + "/transactions"
+	currentFileName    = "current"
+	documentExt        = ".json"
 )
 
 // DirPerm is the private mode for all authority directories, matching
@@ -51,14 +51,32 @@ func validateTaskID(id string) error {
 // safeFileID validates a free-form record identity (operation ID, hold ID,
 // interpretation ID, decision key) and renders a filesystem-safe filename.
 // It strengthens the home rules by rejecting hidden leading-dot identities.
+// The filename is the full raw ID hex-encoded, so the mapping from identities
+// to filenames is injective (no collisions) and reversible.
 func safeFileID(id string) (string, error) {
 	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/\\\x00") || strings.HasPrefix(id, ".") {
 		return "", pathError("invalid record id %q", id)
 	}
-	return fileIDReplacer.Replace(id), nil
+	return fileIDEncode(id), nil
 }
 
-var fileIDReplacer = strings.NewReplacer("/", "_", "\\", "_", ":", "_", " ", "_")
+// fileIDEncode renders a raw record identity as an injective, reversible
+// filesystem-safe filename: the complete raw ID is hex-encoded byte-for-byte,
+// so distinct identities can never collide and the raw ID is recoverable.
+func fileIDEncode(id string) string {
+	return hex.EncodeToString([]byte(id))
+}
+
+// fileIDDecode recovers the raw record identity from a fileIDEncode filename,
+// failing closed on malformed or non-canonical filenames: the re-encoding of
+// the decoded raw ID must reproduce the filename byte-for-byte.
+func fileIDDecode(name string) (string, error) {
+	raw, err := hex.DecodeString(name)
+	if err != nil || hex.EncodeToString(raw) != name {
+		return "", pathError("malformed record id filename %q", name)
+	}
+	return string(raw), nil
+}
 
 // AggregateRelPath returns the versioned rel path of one aggregate document.
 func AggregateRelPath(taskID string, generation taskauthority.Generation) (string, error) {
@@ -170,12 +188,35 @@ func EnsureDir(dir string) error {
 	return nil
 }
 
+// v1 record locations under a legacy home. Detection is strictly read-only:
+// v1 state is never silently migrated or mutated by this package.
+const (
+	v1AggregatesRelPath      = "state/.task-authority/aggregates"
+	v1WorktreeLeasesRelPath  = "state/.task-authority/worktree-leases"
+	v1DispatchControlRelPath = "state/.dispatch"
+)
+
 // HasV1Records reports whether legacy v1 task-authority records exist under
-// the home. Detection is strictly read-only: v1 state is never silently
+// the home: legacy task aggregates, worktree leases, or dispatch-control
+// records. Detection is strictly read-only: v1 state is never silently
 // migrated or mutated by this package.
 func HasV1Records(homeDir string) (bool, error) {
-	root := filepath.Join(homeDir, v1AggregatesRelPath)
-	entries, err := os.ReadDir(root)
+	for _, rel := range []string{v1AggregatesRelPath, v1WorktreeLeasesRelPath, v1DispatchControlRelPath} {
+		has, err := hasVisibleEntries(filepath.Join(homeDir, rel))
+		if err != nil {
+			return false, err
+		}
+		if has {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// hasVisibleEntries reports whether dir contains at least one non-hidden
+// entry, treating a missing dir as no records.
+func hasVisibleEntries(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
