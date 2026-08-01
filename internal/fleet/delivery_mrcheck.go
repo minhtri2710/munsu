@@ -9,6 +9,26 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
+// RoutePRCheck is the provider-aware entry point for `munsu delivery pr-check`.
+// It routes by URL provider: GitHub PRs keep the existing gh-based PRCheck,
+// GitLab MRs use MRLiveCheck with the provider-neutral merge-status poll.
+// The provider is decided by a pure URL parse, so identity is captured at most
+// once (by whichever branch runs); unrecognized URLs fail closed.
+func RoutePRCheck(homeDir, id, url string) error {
+	provider, _, _, _, _, err := ParseProviderURL(url)
+	if err != nil {
+		return fmt.Errorf("pr-check: unsupported PR/MR URL: %w", err)
+	}
+
+	switch provider {
+	case "github":
+		return PRCheck(homeDir, id, url)
+	case "gitlab":
+		return MRLiveCheck(homeDir, id, url)
+	}
+	return fmt.Errorf("pr-check: unsupported provider %q for URL %s", provider, url)
+}
+
 // MRLiveCheck runs the GitLab MR equivalent of PRCheck.
 // It captures the full delivery identity (MR URL, head SHA, source/target branch,
 // owner, repo, provider, and timestamp) in task meta and writes a .check
@@ -60,7 +80,7 @@ if munsu --home "$HOME_DIR" delivery merge-status "${TASK_ID}" 2>/dev/null; then
 else
 	RESULT=$?
 	echo "merged: false (exit code ${RESULT})"
-	exit 1
+	exit "${RESULT}"
 fi
 `, id, id, homeDir)
 
@@ -80,18 +100,27 @@ fi
 	return nil
 }
 
+// MergeStatusError classifies a non-merged delivery status.
+type MergeStatusError struct {
+	Unverifiable bool
+	Err          error
+}
+
+func (e *MergeStatusError) Error() string { return e.Err.Error() }
+func (e *MergeStatusError) Unwrap() error { return e.Err }
+
 // MergeStatus reports the merge status for a task with a delivery identity.
 // Exit status: 0 = merged, 1 = not merged, 2 = error/unverifiable.
 // Used as the provider-neutral watcher seam invoked by .check scripts.
 func MergeStatus(homeDir, id string) error {
 	ident, err := RequireIdentity(homeDir, id)
 	if err != nil {
-		return fmt.Errorf("cannot read delivery identity: %w", err)
+		return &MergeStatusError{Unverifiable: true, Err: fmt.Errorf("cannot read delivery identity: %w", err)}
 	}
 
 	status, err := QueryDeliveryMergeStatus(ident)
 	if err != nil {
-		return fmt.Errorf("merge status query: %w", err)
+		return &MergeStatusError{Unverifiable: true, Err: fmt.Errorf("merge status query: %w", err)}
 	}
 
 	if status.Merged {
@@ -103,10 +132,10 @@ func MergeStatus(homeDir, id string) error {
 	if status.Closed {
 		fmt.Printf("%s/%s#%d closed (not merged, state=%s)\n",
 			ident.Owner, ident.Repo, ident.Number, status.State)
-		return fmt.Errorf("MR %d is closed but not merged (state=%s)", ident.Number, status.State)
+		return &MergeStatusError{Err: fmt.Errorf("MR %d is closed but not merged (state=%s)", ident.Number, status.State)}
 	}
 
 	fmt.Printf("%s/%s#%d open (not merged, state=%s)\n",
 		ident.Owner, ident.Repo, ident.Number, status.State)
-	return fmt.Errorf("MR %d is open and not merged (state=%s)", ident.Number, status.State)
+	return &MergeStatusError{Err: fmt.Errorf("MR %d is open and not merged (state=%s)", ident.Number, status.State)}
 }

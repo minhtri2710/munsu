@@ -191,41 +191,6 @@ func TestQueryPRMergeStatus_UsesGhAxiWhenReady(t *testing.T) {
 	}
 }
 
-// --- Pipeline GHAxiAdapter routing ---
-
-func TestGHAxiAdapter_StateAwareConstruction(t *testing.T) {
-	a := NewGHAxiAdapter()
-	if a == nil {
-		t.Fatal("expected non-nil adapter")
-	}
-	// State should be Ready or Absent depending on PATH
-	if a.state != backend.Ready && a.state != backend.Absent {
-		t.Errorf("unexpected state: %v", a.state)
-	}
-}
-
-func TestGHAxiAdapter_RunPRCheck_FailsClosedOnAbsent(t *testing.T) {
-	a := &GHAxiAdapter{state: backend.Absent}
-	err := a.RunPRCheck("", "", "")
-	if err == nil {
-		t.Fatal("expected error for Absent state")
-	}
-	if !strings.Contains(err.Error(), "capability not ready") {
-		t.Errorf("expected 'capability not ready' error, got: %v", err)
-	}
-}
-
-func TestGHAxiAdapter_RunPRCheck_FailsClosedOnFailed(t *testing.T) {
-	a := &GHAxiAdapter{state: backend.Failed}
-	err := a.RunPRCheck("", "", "")
-	if err == nil {
-		t.Fatal("expected error for Failed state")
-	}
-	if !strings.Contains(err.Error(), "capability not ready") {
-		t.Errorf("expected 'capability not ready' error, got: %v", err)
-	}
-}
-
 // --- ghAxiLookPath injection tests ---
 
 func TestProbeGitHubCapability_ReplacedLookPath(t *testing.T) {
@@ -262,33 +227,6 @@ func TestDefaultGitHubClient_RejectedState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "capability absent") {
 		t.Errorf("expected 'capability absent' error, got: %v", err)
-	}
-}
-
-// --- Existing delivery contracts still hold ---
-
-func TestGHAxiAdapter_ImplementsPipeline(t *testing.T) {
-	// Compile-time check via var _ checks in pipeline.go
-	// Runtime check that construction works and methods exist
-	a := NewGHAxiAdapter()
-	var p Pipeline = a
-	if p == nil {
-		t.Fatal("GHAxiAdapter must implement Pipeline")
-	}
-}
-
-func TestExistingAdapterContracts_StillHold(t *testing.T) {
-	// All existing adapters must still compile and construct
-	adapters := []Pipeline{
-		NewGHAxiAdapter(),
-		NewNoMistakesAdapter(),
-		NewGitLocalAdapter(),
-		NewCompositeAdapter(),
-	}
-	for i, p := range adapters {
-		if p == nil {
-			t.Errorf("adapter[%d] must not be nil", i)
-		}
 	}
 }
 

@@ -197,15 +197,6 @@ func TestNoMistakesStatus_NoBinary(t *testing.T) {
 	}
 }
 
-func TestNoMistakesRun_NoBinary(t *testing.T) {
-	err := NoMistakesRun("test", nil)
-	if err != nil {
-		if !strings.Contains(err.Error(), "no-mistakes") {
-			t.Errorf("expected no-mistakes error, got: %v", err)
-		}
-	}
-}
-
 func TestNoMistakesRespond_Empty(t *testing.T) {
 	err := NoMistakesRespond(nil)
 	if err == nil {

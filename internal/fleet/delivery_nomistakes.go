@@ -160,24 +160,6 @@ func NoMistakesStatus(branch string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-// NoMistakesRun runs `no-mistakes axi run --intent "..."` with optional --skip flags.
-func NoMistakesRun(intent string, skip []string) error {
-	args := []string{"axi", "run", "--intent", intent}
-	for _, s := range skip {
-		args = append(args, "--skip", s)
-	}
-
-	cmd := exec.Command("no-mistakes", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("no-mistakes axi run: %w", err)
-	}
-
-	return nil
-}
-
 // NoMistakesRespond runs `no-mistakes axi respond` with the given findings.
 func NoMistakesRespond(findings []string) error {
 	if len(findings) == 0 {

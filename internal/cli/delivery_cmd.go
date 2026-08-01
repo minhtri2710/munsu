@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -36,7 +37,12 @@ Exit: 0 = merged, 1 = not merged/open/closed, 2+ = error.
 Used by watcher .check scripts.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.MergeStatus(ctx.Home, args[0])
+			err := fleet.MergeStatus(ctx.Home, args[0])
+			var statusErr *fleet.MergeStatusError
+			if errors.As(err, &statusErr) && statusErr.Unverifiable {
+				return usageError("unverifiable", "Retry after restoring provider access", statusErr.Error())
+			}
+			return err
 		}),
 	}
 }
@@ -61,11 +67,15 @@ Warns if local default branch is stale vs origin.`,
 func newPRCheckCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pr-check <id> <pr-url>",
-		Short: "Record PR URL and arm merge poll",
-		Long: `Parse a full GitHub PR URL, record the PR and head SHA in task meta,
-and write a check.sh script to poll the PR merge status via gh CLI.
+		Short: "Record PR/MR URL and arm merge poll",
+		Long: `Parse a full GitHub PR URL or GitLab MR URL, record the PR/MR and
+head SHA in task meta, and write a check.sh script to poll the merge status.
+
+Routing: GitHub PRs poll via gh CLI (existing behavior); GitLab MRs poll via
+the provider-neutral 'delivery merge-status' seam. Unsupported URLs fail closed.
 
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>
+MR URL format: https://gitlab.com/<owner>/<repo>/-/merge_requests/<n>
 
 Task meta is resolved from the current home first, then each registered
 captain home (so general can arm checks after captain handoff + spawn).`,
@@ -82,7 +92,7 @@ captain home (so general can arm checks after captain handoff + spawn).`,
 				return fmt.Errorf("pr-check %s: %w", id, err)
 			}
 
-			return fleet.PRCheck(taskHome, id, prURL)
+			return fleet.RoutePRCheck(taskHome, id, prURL)
 		}),
 	}
 }
