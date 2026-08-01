@@ -8,7 +8,7 @@
 
 ## Implementation progress
 
-Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`; Task 2.4 is next.
+Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`; Task 2.5 is next.
 
 Verified on 2026-08-01:
 
@@ -390,9 +390,9 @@ go test -race ./internal/taskauthorityfs
 
 **Acceptance criteria:**
 
-- [ ] Both adapters have identical receipts, Revision behavior, idempotency, and rollback semantics.
-- [ ] Filesystem tests assert durable results after closing and reopening the Store.
-- [ ] Adapter-specific behavior remains behind the Store seam.
+- [x] Both adapters have identical receipts, Revision behavior, idempotency, and rollback semantics.
+- [x] Filesystem tests assert durable results after closing and reopening the Store.
+- [x] Adapter-specific behavior remains behind the Store seam.
 
 **Verification:**
 
