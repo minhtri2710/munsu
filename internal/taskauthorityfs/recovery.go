@@ -15,6 +15,19 @@ import (
 // hooks never fire here: recovery itself must be deterministic.
 func (s *Store) recoverLocked() error {
 	dir := filepath.Join(s.homeDir, filepath.FromSlash(transactionsDir))
+	// The transactions directory is part of every manifest path: recovery
+	// must never read manifests through a symlinked or non-directory
+	// component, or an outside manifest could be applied as this home's own.
+	info, err := os.Lstat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return corruptDocument("transaction_manifest", "", "transactions path %s is a symlink or not a directory", dir)
+	}
 	files, err := recordFiles("transaction_manifest", dir)
 	if err != nil {
 		return err

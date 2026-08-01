@@ -51,22 +51,45 @@ func writeFileAtomic(homeDir, path string, data []byte) error {
 // ensureDirSafe creates dir and every missing parent beneath the authority
 // root one component at a time with DirPerm, verifying each existing
 // component is a real directory and never a symlink. The trusted prefix
-// (home/state/.task-authority/v2) is created with MkdirAll like every other
-// authority path; components beneath the root are link-checked so a hostile
-// or corrupt link can never redirect an authority write outside the home.
-// The final component is re-secured to DirPerm.
+// (home/state/.task-authority/v2) is itself walked component-wise from the
+// trust boundary — homeDir — with Lstat before every traversal, so a hostile
+// or corrupt link at state, .task-authority, or v2 can never redirect an
+// authority write outside the home. The final component is re-secured to
+// DirPerm.
 func ensureDirSafe(homeDir, dir string) error {
-	root, err := filepath.Abs(filepath.Join(homeDir, filepath.FromSlash(authorityRoot)))
-	if err != nil {
-		return fmt.Errorf("resolving authority root: %w", err)
+	// homeDir is the trust boundary: it may itself be (or pass through) an
+	// OS-resolved symlink, exactly as NewStore resolves it. Everything below
+	// it is untrusted and every component is created with a single-component
+	// Mkdir after an Lstat that rejects links and non-directories.
+	if err := os.MkdirAll(homeDir, DirPerm); err != nil {
+		return fmt.Errorf("creating authority home %s: %w", homeDir, err)
 	}
-	root = filepath.Clean(root)
-	if err := os.MkdirAll(root, DirPerm); err != nil {
-		return fmt.Errorf("creating authority root %s: %w", root, err)
+	root := homeDir
+	for _, part := range strings.Split(filepath.FromSlash(authorityRoot), string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		root = filepath.Join(root, part)
+		info, err := os.Lstat(root)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("inspecting authority root %s: %w", root, err)
+			}
+			// The parent already exists (homeDir or the previous iteration),
+			// so a single-component Mkdir never traverses a missing parent.
+			if err := os.Mkdir(root, DirPerm); err != nil {
+				return fmt.Errorf("creating authority root %s: %w", root, err)
+			}
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("authority root component %s is a symlink or not a directory", root)
+		}
 	}
 	if err := os.Chmod(root, DirPerm); err != nil {
 		return fmt.Errorf("securing authority root %s: %w", root, err)
 	}
+
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolving authority directory %s: %w", dir, err)

@@ -56,10 +56,40 @@ func releaseLock(f *os.File) {
 	_ = f.Close()
 }
 
+// stateDirSafe ensures homeDir/state exists and is a real directory, never
+// a symlink. Lock files live under state/; acquiring a lock through a
+// symlinked state would place the lock file outside the home, so lock
+// acquisition fails closed on a linked or non-directory state. homeDir is
+// the trust boundary and is created (or OS-resolved) exactly as the caller
+// named it.
+func stateDirSafe(homeDir string) error {
+	state := filepath.Join(homeDir, "state")
+	info, err := os.Lstat(state)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("inspecting lock directory %s: %w", state, err)
+		}
+		if err := os.MkdirAll(homeDir, DirPerm); err != nil {
+			return fmt.Errorf("creating lock home %s: %w", homeDir, err)
+		}
+		if err := os.Mkdir(state, DirPerm); err != nil {
+			return fmt.Errorf("creating lock directory %s: %w", state, err)
+		}
+		return nil
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("lock directory %s is a symlink or not a directory", state)
+	}
+	return nil
+}
+
 // withDispatchLock runs fn while holding the shared dispatch-control lock.
 // It is the base of every authority mutation: the dispatch lock serializes
 // all authority transactions and dispatch-control writes across processes.
 func withDispatchLock(homeDir string, fn func() error) error {
+	if err := stateDirSafe(homeDir); err != nil {
+		return err
+	}
 	f, err := lockFile(dispatchLockPath(homeDir))
 	if err != nil {
 		return err

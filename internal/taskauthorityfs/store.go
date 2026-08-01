@@ -75,7 +75,12 @@ type Store struct {
 // NewStore constructs a filesystem Store for the authority state under
 // homeDir. Construction is side-effect free: it creates nothing, migrates
 // nothing, and fails only when homeDir is empty or resolves to a
-// non-directory. Canonical state is loaded by View and mutated by Update.
+// non-directory. homeDir is the trust boundary: it may itself be a symlink
+// or pass through symlinked parents (macOS /tmp and /var resolve this way),
+// exactly as any caller-named path does, but every component below it —
+// state, .task-authority, v2, and the record directories — must be a real
+// directory, never a link, or the store fails closed. Canonical state is
+// loaded by View and mutated by Update.
 func NewStore(homeDir string) (*Store, error) {
 	if strings.TrimSpace(homeDir) == "" {
 		return nil, fmt.Errorf("taskauthorityfs: empty home directory")
