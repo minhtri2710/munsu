@@ -265,7 +265,7 @@ func newSoldierStateCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			state, err := fleet.ReadSoldierState(ctx.Home, id)
+			state, err := fleet.ReadWithProbe(ctx.Home, id, runtimeTaskEndpointProbe())
 			if err != nil {
 				return operationError("internal", "Run `munsu soldier-state "+id+"` again", "Unable to read soldier state")
 			}

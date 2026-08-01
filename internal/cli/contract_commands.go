@@ -107,7 +107,7 @@ func newTaskObserveCmd() *cobra.Command {
 			if _, err := home.ReadMeta(ctx.Home, args[0]); err != nil {
 				return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
 			}
-			state, err := fleet.ReadSoldierState(ctx.Home, args[0])
+			state, err := fleet.ReadWithProbe(ctx.Home, args[0], runtimeTaskEndpointProbe())
 			if err != nil {
 				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to observe task state")
 			}

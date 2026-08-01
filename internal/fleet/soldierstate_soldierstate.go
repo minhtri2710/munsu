@@ -52,6 +52,24 @@ type StateEndpointProbe interface {
 	Probe(homeDir string, meta map[string]string) (bool, error)
 }
 
+// coerceCoherentState guarantees the observation invariant: never report
+// working with pane_alive=false plus status_log_superseded=true. A dead or
+// unverifiable pane cannot be working; when a higher-precedence source
+// (aggregate/backlog) supersedes the status log, the live claim must be
+// downgraded to a coherent state.
+func coerceCoherentState(s *State, probeConsulted bool) {
+	if s.Status != "working" || s.PaneAlive || !s.StatusLogSuperseded {
+		return
+	}
+	if probeConsulted {
+		s.Status = "dead"
+		s.Description = "pane dead (status log superseded)"
+		return
+	}
+	s.Status = "unknown"
+	s.Description = "pane liveness unknown (status log superseded)"
+}
+
 // Read reads state without probing endpoint liveness.
 func ReadSoldierState(homeDir string, id string) (*State, error) {
 	return ReadWithProbe(homeDir, id, nil)
@@ -77,6 +95,9 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 				s.Description = agg.Definition
 			}
 			s.StatusLogSuperseded = true
+			// No meta means no window to probe; a superseded live claim cannot
+			// be verified as working.
+			coerceCoherentState(s, false)
 			return s, nil
 		}
 		// Missing meta means the task was never spawned or has been torn down.
@@ -107,10 +128,13 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 			s.BacklogState = backlogState.String()
 			s.StatusLogSuperseded = true
 		}
+		probeConsulted := false
 		if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {
 			alive, err := probe.Probe(homeDir, meta)
 			s.PaneAlive = err == nil && alive
+			probeConsulted = err == nil
 		}
+		coerceCoherentState(s, probeConsulted)
 		return s, nil
 	}
 
