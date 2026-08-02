@@ -1,12 +1,14 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // RoutePRCheck is the provider-aware entry point for `munsu delivery pr-check`.
@@ -14,7 +16,7 @@ import (
 // GitLab MRs use MRLiveCheck with the provider-neutral merge-status poll.
 // The provider is decided by a pure URL parse, so identity is captured at most
 // once (by whichever branch runs); unrecognized URLs fail closed.
-func RoutePRCheck(homeDir, id, url string) error {
+func RoutePRCheck(homeDir, id, url string, auth *taskauthority.Authority) error {
 	provider, _, _, _, _, err := ParseProviderURL(url)
 	if err != nil {
 		return fmt.Errorf("pr-check: unsupported PR/MR URL: %w", err)
@@ -22,46 +24,47 @@ func RoutePRCheck(homeDir, id, url string) error {
 
 	switch provider {
 	case "github":
-		return PRCheck(homeDir, id, url)
+		return PRCheck(homeDir, id, url, auth)
 	case "gitlab":
-		return MRLiveCheck(homeDir, id, url)
+		return MRLiveCheck(homeDir, id, url, auth)
 	}
 	return fmt.Errorf("pr-check: unsupported provider %q for URL %s", provider, url)
 }
 
 // MRLiveCheck runs the GitLab MR equivalent of PRCheck.
 // It captures the full delivery identity (MR URL, head SHA, source/target branch,
-// owner, repo, provider, and timestamp) in task meta and writes a .check
-// script that invokes the provider-neutral `munsu delivery merge-status` command.
-// Never embeds raw glab in the script.
-func MRLiveCheck(homeDir string, id, mrURL string) error {
+// owner, repo, provider, and timestamp) and routes it through the composed Task
+// Authority as the generation-bound delivery preparation (Task 7.5), then
+// writes a .check script that invokes the provider-neutral `munsu delivery
+// merge-status` command. Never embeds raw glab in the script.
+func MRLiveCheck(homeDir string, id, mrURL string, auth *taskauthority.Authority) error {
+	if auth == nil {
+		return fmt.Errorf("mr-check: requires a composed task authority")
+	}
+
 	// Capture the full delivery identity atomically via typed GitLabClient
 	ident, err := CaptureIdentity(mrURL)
 	if err != nil {
 		return fmt.Errorf("capturing delivery identity: %w", err)
 	}
 
-	// Validate identity before persisting
+	// Validate identity before routing
 	if err := domain.ValidateIdentity(ident); err != nil {
 		return fmt.Errorf("captured identity is incomplete: %w", err)
 	}
 
-	// Read existing meta (ignore error if it doesn't exist)
-	meta, err := home.ReadMeta(homeDir, id)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-
-	// Write full delivery identity to meta
-	for k, v := range ident.ToMeta() {
-		meta[k] = v
-	}
-	meta["pr"] = mrURL                                         // legacy key for compatibility
-	meta["pr_head"] = ident.HeadSHA                            // legacy key for compatibility
-	meta[MetaDeliveryState] = string(DeliveryStateReviewReady) // initialize lifecycle
-
-	if err := home.WriteMeta(homeDir, id, meta); err != nil {
-		return fmt.Errorf("writing task meta: %w", err)
+	// Route the delivery preparation through the composed Authority (Task
+	// 7.5): the generation-bound prepare record commits with the identity
+	// and review-ready state, and the identity meta keys are reconciled as a
+	// post-commit projection. A projection failure returns a typed partial
+	// error and never rolls back the authoritative commit.
+	if _, err := StoreDeliveryPrepare(homeDir, auth, id, ident); err != nil {
+		var projErr *DeliveryProjectionError
+		if errors.As(err, &projErr) {
+			fmt.Fprintf(os.Stderr, "Warning: delivery projection failed: %v\n", projErr)
+		} else {
+			return fmt.Errorf("mr-check: delivery preparation: %w", err)
+		}
 	}
 
 	// Write provider-neutral .check script that uses the munsu CLI seam

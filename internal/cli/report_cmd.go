@@ -10,6 +10,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -107,11 +109,21 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 					if err := fleet.VerifyDoneIdentity(targetHome, taskID, msg); err != nil {
 						return fmt.Errorf("report: %w", err)
 					}
-					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+					// The done terminal transition routes through the composed
+					// Task Authority over the exact resolved task home (Task
+					// 7.5): the generation-bound terminal evidence record
+					// (identity + immutable head SHA + PR metadata) commits
+					// with the delivered/done transition; the identity meta
+					// keys are a post-commit projection.
+					store, err := taskauthorityfs.NewStore(targetHome)
+					if err != nil {
+						return fmt.Errorf("report: composing task authority: %w", err)
+					}
+					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg, taskauthority.New(store)); err != nil {
 						return fmt.Errorf("report: %w", err)
 					}
 				} else if state != "blocked" && state != "failed" && state != "needs-decision" {
-					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg); err != nil {
+					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg, nil); err != nil {
 						return fmt.Errorf("report: %w", err)
 					}
 				}

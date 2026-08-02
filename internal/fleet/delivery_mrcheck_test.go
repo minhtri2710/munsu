@@ -9,6 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // routeCheckSampleSHA is a valid 40-hex SHA used by canned identities.
@@ -83,7 +84,7 @@ func TestRoutePRCheck_GitLabWritesProviderNeutralCheck(t *testing.T) {
 	}
 
 	mrURL := "https://gitlab.com/owner/project/-/merge_requests/42"
-	if err := RoutePRCheck(homeDir, id, mrURL); err != nil {
+	if err := RoutePRCheck(homeDir, id, mrURL, preparedCheckAuth(t, id)); err != nil {
 		t.Fatalf("RoutePRCheck: %v", err)
 	}
 
@@ -132,7 +133,7 @@ func TestRoutePRCheck_GitHubKeepsPRCheckScript(t *testing.T) {
 	}
 
 	prURL := "https://github.com/owner/repo/pull/42"
-	if err := RoutePRCheck(homeDir, id, prURL); err != nil {
+	if err := RoutePRCheck(homeDir, id, prURL, preparedCheckAuth(t, id)); err != nil {
 		t.Fatalf("RoutePRCheck: %v", err)
 	}
 
@@ -156,7 +157,7 @@ func TestRoutePRCheck_UnsupportedURLFailsClosed(t *testing.T) {
 	homeDir := t.TempDir()
 	id := "unsupported-route-task"
 
-	err := RoutePRCheck(homeDir, id, "https://example.com/owner/repo/thing/1")
+	err := RoutePRCheck(homeDir, id, "https://example.com/owner/repo/thing/1", nil)
 	if err == nil {
 		t.Fatal("expected error for unsupported URL")
 	}
@@ -167,4 +168,23 @@ func TestRoutePRCheck_UnsupportedURLFailsClosed(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(home.StateDir(homeDir), id+".check")); !os.IsNotExist(statErr) {
 		t.Errorf("no check script should be written for unsupported URLs")
 	}
+}
+
+// preparedCheckAuth builds an in-memory Authority with one ship task seeded
+// for a pr-check routing test (the task must exist in the Authority before
+// the delivery preparation commits).
+func preparedCheckAuth(t *testing.T, taskID string) *taskauthority.Authority {
+	t.Helper()
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "ship",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return auth
 }

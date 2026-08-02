@@ -92,7 +92,17 @@ captain home (so general can arm checks after captain handoff + spawn).`,
 				return fmt.Errorf("pr-check %s: %w", id, err)
 			}
 
-			return fleet.RoutePRCheck(taskHome, id, prURL)
+			// The delivery preparation routes through the composed Task
+			// Authority over the exact resolved task home (Task 7.5): the
+			// generation-bound prepare record (provider identity, head,
+			// review-ready state) is authoritative; the identity meta keys
+			// are a post-commit projection.
+			auth, err := ctx.TaskAuthorityFor(taskHome)
+			if err != nil {
+				return fmt.Errorf("pr-check %s: composing task authority: %w", id, err)
+			}
+
+			return fleet.RoutePRCheck(taskHome, id, prURL, auth)
 		}),
 	}
 }

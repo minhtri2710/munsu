@@ -162,6 +162,16 @@ type Aggregate struct {
 	GitCapabilityTier        string                    `json:"git_capability_tier,omitempty"`
 	GitAuthContext           string                    `json:"git_auth_context,omitempty"`
 	GitMutationAuthorization *GitMutationAuthorization `json:"git_mutation_authorization,omitempty"`
+	// DeliveryPrepare is the generation-bound delivery preparation record
+	// committed by the PrepareDelivery operation (Task 7.5): the provider
+	// identity snapshot, the immutable head SHA the delivery is prepared
+	// against, and the review-ready delivery state. DeliveryTerminal is the
+	// generation-bound terminal evidence record committed by the
+	// CompleteDelivery operation: the delivered/done terminal transition,
+	// the exact head, and the terminal provider evidence. resolved is never
+	// a delivery terminal state.
+	DeliveryPrepare  *DeliveryPrepare  `json:"delivery_prepare,omitempty"`
+	DeliveryTerminal *DeliveryTerminal `json:"delivery_terminal,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -230,6 +240,9 @@ func validateAggregate(agg Aggregate) error {
 		return err
 	}
 	if err := validateAuthorizationDefinition(agg); err != nil {
+		return err
+	}
+	if err := validateDeliveryRecord(agg); err != nil {
 		return err
 	}
 	return nil
@@ -327,6 +340,14 @@ func (a Aggregate) clone() Aggregate {
 	if a.GitMutationAuthorization != nil {
 		g := *a.GitMutationAuthorization
 		out.GitMutationAuthorization = &g
+	}
+	if a.DeliveryPrepare != nil {
+		p := *a.DeliveryPrepare
+		out.DeliveryPrepare = &p
+	}
+	if a.DeliveryTerminal != nil {
+		tr := *a.DeliveryTerminal
+		out.DeliveryTerminal = &tr
 	}
 	return out
 }

@@ -76,7 +76,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 
 	// Use a real PR URL (PR #24 from the munsu repo)
 	prURL := "https://github.com/minhtri2710/munsu/pull/24"
-	if err := PRCheck(homeDir, "pattern-task", prURL); err != nil {
+	if err := PRCheck(homeDir, "pattern-task", prURL, preparedCheckAuth(t, "pattern-task")); err != nil {
 		t.Fatalf("PRCheck: %v", err)
 	}
 

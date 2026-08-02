@@ -460,7 +460,7 @@ func TestPRCheck_WritesIdentityKeys(t *testing.T) {
 	}
 
 	prURL := "https://github.com/minhtri2710/munsu/pull/24"
-	if err := PRCheck(homeDir, id, prURL); err != nil {
+	if err := PRCheck(homeDir, id, prURL, preparedCheckAuth(t, id)); err != nil {
 		t.Fatalf("PRCheck: %v", err)
 	}
 

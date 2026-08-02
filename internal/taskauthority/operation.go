@@ -96,6 +96,14 @@ const (
 	// change: the capability tier, the amendment/retirement context, or the
 	// elevated git mutation authorization (task-bound, Task 7.4).
 	AuditGitAuthorization = "git-authorization"
+	// AuditDeliveryPrepare records a generation-bound delivery preparation:
+	// the provider identity, head SHA, and review-ready state committed by
+	// pr-check (task-bound, Task 7.5).
+	AuditDeliveryPrepare = "delivery-prepare"
+	// AuditDeliveryTerminal records a generation-bound delivery completion:
+	// the delivered/done terminal transition and terminal provider evidence
+	// (task-bound, Task 7.5).
+	AuditDeliveryTerminal = "delivery-terminal"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -168,6 +176,20 @@ func (ev AuditEvent) Validate() error {
 			return err
 		}
 	case AuditGitAuthorization:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditDeliveryPrepare:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditDeliveryTerminal:
 		if err := validateTaskID(ev.TaskID); err != nil {
 			return err
 		}

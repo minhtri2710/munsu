@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // --- ExtractPRURL tests ---
@@ -158,7 +159,7 @@ func TestExtractPRURL_Trimmed(t *testing.T) {
 
 func TestCaptureTerminalIdentity_SkipsNonPRMessage(t *testing.T) {
 	homeDir := t.TempDir()
-	err := CaptureTerminalIdentity(homeDir, "test-task", "task complete, no PR")
+	err := CaptureTerminalIdentity(homeDir, "test-task", "task complete, no PR", nil)
 	if err != nil {
 		t.Fatalf("expected nil for non-PR message: %v", err)
 	}
@@ -167,6 +168,46 @@ func TestCaptureTerminalIdentity_SkipsNonPRMessage(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error reading meta — no meta should have been written")
 	}
+}
+
+// terminalAuth builds an in-memory Authority with one task that has been
+// delivery-prepared at the given head, mirroring the pr-check flow (Task
+// 7.5). The done terminal transition requires the preparation record.
+func terminalAuth(t *testing.T, taskID, headSHA string) *taskauthority.Authority {
+	t.Helper()
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "ship",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := auth.PrepareDelivery(taskauthority.PrepareDeliveryRequest{
+		OperationID:        "op-prepare-" + taskID,
+		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:             taskID,
+		ExpectedGeneration: 1,
+		State:              taskauthority.DeliveryPrepareStateReviewReady,
+		HeadSHA:            headSHA,
+		Identity: taskauthority.ProviderIdentitySnapshot{
+			Provider: "github",
+			Owner:    "minhtri2710",
+			Repo:     "munsu",
+			Number:   42,
+			URL:      "https://github.com/minhtri2710/munsu/pull/42",
+			BaseRef:  "main",
+			HeadRef:  "feature/test",
+			HeadSHA:  headSHA,
+		},
+		Reason: "pr-check",
+	}); err != nil {
+		t.Fatalf("PrepareDelivery: %v", err)
+	}
+	return auth
 }
 
 func TestCaptureTerminalIdentity_IdempotentCompleteIdentity(t *testing.T) {
@@ -179,6 +220,7 @@ func TestCaptureTerminalIdentity_IdempotentCompleteIdentity(t *testing.T) {
 	if err := home.WriteMeta(homeDir, taskID, existingIdent.ToMeta()); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := terminalAuth(t, taskID, existingIdent.HeadSHA)
 
 	// Capture again — should be idempotent
 	savedCapture := captureTerminalIdentity
@@ -188,7 +230,7 @@ func TestCaptureTerminalIdentity_IdempotentCompleteIdentity(t *testing.T) {
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err != nil {
 		t.Fatalf("expected nil for idempotent capture: %v", err)
 	}
@@ -200,6 +242,15 @@ func TestCaptureTerminalIdentity_IdempotentCompleteIdentity(t *testing.T) {
 	}
 	if meta["pr_timestamp"] != existingIdent.CapturedAt {
 		t.Errorf("timestamp changed on idempotent capture: got %q, want %q", meta["pr_timestamp"], existingIdent.CapturedAt)
+	}
+
+	// The authoritative terminal record committed once.
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.DeliveryTerminal == nil || agg.DeliveryTerminal.Terminal != taskauthority.DeliveryTerminalDone {
+		t.Fatalf("terminal record = %+v, want done", agg.DeliveryTerminal)
 	}
 }
 
@@ -223,6 +274,7 @@ func TestCaptureTerminalIdentity_IdempotentWithLegacyKeys(t *testing.T) {
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := terminalAuth(t, taskID, "abc123def456abc123def456abc123def456abc1")
 
 	// Capture again — should be idempotent (IdentityFromMeta resolves legacy keys)
 	savedCapture := captureTerminalIdentity
@@ -232,7 +284,7 @@ func TestCaptureTerminalIdentity_IdempotentWithLegacyKeys(t *testing.T) {
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err != nil {
 		t.Fatalf("expected nil for idempotent capture: %v", err)
 	}
@@ -251,8 +303,9 @@ func TestCaptureTerminalIdentity_URLConflictFailsClosed(t *testing.T) {
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := terminalAuth(t, taskID, validIdentity().HeadSHA)
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err == nil {
 		t.Fatal("expected error for URL conflict")
 	}
@@ -276,6 +329,7 @@ func TestCaptureTerminalIdentity_IncompleteIdentityReplaced(t *testing.T) {
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := terminalAuth(t, taskID, "abc123def456abc123def456abc123def456abc1")
 
 	// Capture with injected provider
 	savedCapture := captureTerminalIdentity
@@ -294,7 +348,7 @@ func TestCaptureTerminalIdentity_IncompleteIdentityReplaced(t *testing.T) {
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err != nil {
 		t.Fatalf("expected nil for replacement: %v", err)
 	}
@@ -319,6 +373,7 @@ func TestCaptureTerminalIdentity_ProviderFailureFailsClosed(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-provider-fail"
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
+	auth := terminalAuth(t, taskID, validIdentity().HeadSHA)
 
 	savedCapture := captureTerminalIdentity
 	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
@@ -326,7 +381,7 @@ func TestCaptureTerminalIdentity_ProviderFailureFailsClosed(t *testing.T) {
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err == nil {
 		t.Fatal("expected error for provider failure")
 	}
@@ -345,6 +400,7 @@ func TestCaptureTerminalIdentity_ProviderEmptyHeadSHA(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-empty-sha"
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
+	auth := terminalAuth(t, taskID, "abc123def456abc123def456abc123def456abc1")
 
 	savedCapture := captureTerminalIdentity
 	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
@@ -363,7 +419,7 @@ func TestCaptureTerminalIdentity_ProviderEmptyHeadSHA(t *testing.T) {
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err == nil {
 		t.Fatal("expected error for empty HeadSHA")
 	}
@@ -376,7 +432,7 @@ func TestCaptureTerminalIdentity_MetaWriteFailureFailsClosed(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-meta-fail"
 
-	// Make state dir a file so WriteMeta fails
+	// Make state dir a file so the projection WriteMeta fails
 	stateDir := filepath.Join(homeDir, "state")
 	if err := os.MkdirAll(filepath.Dir(stateDir), 0755); err != nil {
 		t.Fatal(err)
@@ -386,6 +442,7 @@ func TestCaptureTerminalIdentity_MetaWriteFailureFailsClosed(t *testing.T) {
 	}
 
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
+	auth := terminalAuth(t, taskID, validIdentity().HeadSHA)
 
 	savedCapture := captureTerminalIdentity
 	captureTerminalIdentity = func(url string) (*domain.DeliveryIdentity, error) {
@@ -393,12 +450,21 @@ func TestCaptureTerminalIdentity_MetaWriteFailureFailsClosed(t *testing.T) {
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err == nil {
-		t.Fatal("expected error for meta write failure")
+		t.Fatal("expected error for projection failure")
 	}
-	if !strings.Contains(err.Error(), "persisting") {
-		t.Errorf("expected 'persisting' error, got: %v", err)
+	if !strings.Contains(err.Error(), "projection") {
+		t.Errorf("expected 'projection' error, got: %v", err)
+	}
+
+	// The authoritative terminal record still committed (non-rollback).
+	agg, aggErr := auth.Get(taskID)
+	if aggErr != nil {
+		t.Fatal(aggErr)
+	}
+	if agg.DeliveryTerminal == nil {
+		t.Fatal("authoritative terminal record must commit even when the projection fails")
 	}
 }
 
@@ -406,6 +472,7 @@ func TestCaptureTerminalIdentity_SuccessfulCapture(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-successful"
 	prURL := "https://github.com/minhtri2710/munsu/pull/42"
+	auth := terminalAuth(t, taskID, "abc123def456abc123def456abc123def456abc1")
 
 	savedCapture := captureTerminalIdentity
 	ident := &domain.DeliveryIdentity{
@@ -424,7 +491,7 @@ func TestCaptureTerminalIdentity_SuccessfulCapture(t *testing.T) {
 	}
 	defer func() { captureTerminalIdentity = savedCapture }()
 
-	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL)
+	err := CaptureTerminalIdentity(homeDir, taskID, "PR "+prURL, auth)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
