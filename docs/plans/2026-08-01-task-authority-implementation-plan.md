@@ -54,6 +54,8 @@ Task 4.1 is complete through commit `bc731f8e`. Independent Reviewer acceptance 
 
 Task 4.2 is complete through commit `b2c2cbeb`. Independent Reviewer acceptance verified all four criteria: `Authority.ConfirmSpawn` commits Endpoint Binding + queued→working (reason `spawned`) + exactly-one Revision advance + typed audit event + durable idempotency receipt in one Store update envelope, revalidating Expected Generation, owner presence, worktree binding, and applicable durable Dispatch Holds inside the transaction (Start/Hold atomicity pattern, no check-commit race); failed persistence leaves the task non-working (crash matrix: before-manifest → queued/unbound, later stages converge to working/bound); `home.BindTaskEndpoint` and `home.UpdateCurrentTaskAggregateState(..., "working", ...)` are deleted with zero production callers and the allowlist/gate symbol list shrunk in the same slice. Fleet cutover: `bindEndpoint` + `markWorkingAfterBinding` collapsed into one `confirmSpawn` call (stable Operation ID `spawn-confirm-<id>-<gen>`, `spawnActor`, fail-closed without a composed Authority); the `.meta` projection remains a non-authoritative side file written before the authoritative transition. The `chore(paseo)` optimization commit `b23388c4` (peer handoffs and verification tiers) is cherry-picked onto the branch above this slice.
 
+Task 4.3 is complete through commit `062a154f`. Independent Reviewer acceptance verified all four criteria: `internal/taskauthority`/`internal/taskauthorityfs` have zero watcher references (deliberately absent and documented in `readiness.go`); start, spawn, and handoff fail closed on degraded supervision via explicit fleet/CLI gates (`fleet.CheckSupervisionForDispatch` wrapping `home.CheckWatcherHealthForDispatch`, run before any Authority/Store call — start at `backlog_cmd.go` before `auth.Start`, spawn pre-flight sites in `spawn_runner.go`, handoff gating both homes before the saga); watcher failure returns typed `ErrUnhealthyWatcher` and never creates/mutates a Dispatch Hold or task phase (asserted by fresh tests); `home.CheckDispatchHold` is holds-only and no longer calls watcher health. The spawn durable-hold pre-flight is gone — durable holds are evaluated atomically inside `ConfirmSpawn`; the start path gained the plan-required watcher gate (pre-cutover `home.StartTask` never had one); handoff keeps holds-only `home.CheckDispatchHold` through Phase 6. Lock order preserved and the architecture allowlist verified (spawn_runner caller entry removed; handoff keeps `CheckDispatchHold`); no docs/plan changes in the slice.
+
 ## Goal
 
 Move Authoritative Task Aggregate lifecycle, readiness, and durable dispatch control from `internal/home`, direct CLI mutations, and fleet reach-through into one deep `internal/taskauthority` module. Persist it through a crash-recoverable `internal/taskauthorityfs` adapter composed at the CLI, while preserving current on-disk identities and removing each old mutation path as soon as its final caller migrates.
@@ -707,10 +709,10 @@ go test ./internal/fleet -run 'TestEndpointBindingOrdering|TestEndpointBinding.*
 
 **Acceptance criteria:**
 
-- [ ] Authority tests have no watcher dependency.
-- [ ] Start/spawn commands still fail closed when supervision is degraded.
-- [ ] No watcher failure creates or mutates a Dispatch Hold or task phase.
-- [ ] Existing home dispatch check no longer calls watcher health.
+- [x] Authority tests have no watcher dependency.
+- [x] Start/spawn commands still fail closed when supervision is degraded.
+- [x] No watcher failure creates or mutates a Dispatch Hold or task phase.
+- [x] Existing home dispatch check no longer calls watcher health.
 
 **Verification:**
 
