@@ -279,19 +279,6 @@ func RemoveStatusKey(line string) string {
 	return msg
 }
 
-// PromoteMeta flips a task's kind from scout to ship in the meta file.
-func PromoteMeta(homeDir string, id string) error {
-	meta, err := ReadMeta(homeDir, id)
-	if err != nil {
-		return fmt.Errorf("reading meta for promote: %w", err)
-	}
-	if meta["kind"] != "scout" {
-		return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, meta["kind"])
-	}
-	meta["kind"] = "ship"
-	return WriteMeta(homeDir, id, meta)
-}
-
 // ValidMetaFields lists the recognized fields in a task meta file.
 var ValidMetaFields = []string{
 	"window", "worktree", "project", "harness",
