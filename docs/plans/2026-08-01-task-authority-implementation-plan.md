@@ -77,6 +77,20 @@ Task 5.2 is complete through commits `2f7a74cb` (initial) and `63d7ec84` (repair
 
 Task 5.3 is complete through commit `4e50da6f`. Independent Reviewer acceptance verified all four criteria: `internal/home` exports no lifecycle/readiness/dispatch mutation operation — deleted `SupersedeTask`, `ListReadyTaskAggregates`, `mutateCurrentTaskAggregate(ed/Locked)`, `supersedeGenerations`, `lifecyclePrecondition`/`ErrTaskLifecyclePrecondition`, unlocked read/write helpers, and the zero-caller `EvaluateDispatch` wrapper, with remaining exports being reads or the Lead-adjudicated Phase 6 handoff adapter (`QueryTaskReadiness` read, `CheckDispatchHold` holds-only read, `EvaluateDispatchWithDependencies`/`PersistDispatchInterpretation`/`LoadDispatchInterpretation`/`LoadDispatchDecision` v1 serialization, sole caller `task_handoff_transaction.go`); authoritative-v2 dispatch serialization lives only in `taskauthorityfs` (the v1 `state/.dispatch` adapter path is the documented Phase 6 exception — fs Store fails closed on v1 homes and `taskauthorityfs`→`home` imports forbid the cycle); zero production callers of removed symbols (grep gates + `TestNoNewTaskAuthorityReachThrough` green); behavior tests re-expressed through the Authority (`home/retry_supersede_test.go` deleted; its four contracts moved to `internal/taskauthority/supersede_test.go` plus typed audit; CLI retry/ready tests seed canonical records). `Authority.Supersede` (new named operation, generation fence, stable Operation ID, terminal-only eligibility, fresh queued Generation at Revision one with prior Generation immutable and no stale bindings, typed audit, durable idempotent receipt) backs `backlog retry`; `backlog ready` uses `auth.List`+`auth.Readiness`. The gate allowlist shrank to its defensible minimum. Adjudicated caveats: the Checkpoint 5 "empty allowlist for old local mutations" expectation still has the two documented Phase 4 spawn transition entries (`spawn_runner.go`→`CreateTaskAggregate`, `spawn_cmd.go`→`UpdateCurrentTaskAggregateKind`), whose removal the plan itself schedules at Task 7.8, and the Phase 6 handoff read (`CheckDispatchHold`); v2 `Supersede`/`Reopen` do not reset the `.status` projection generation attribution (consistent with the Task 3.3 v2 model; tracked for Phase 7 projection work); CLI retry preserves the run-after behavior.
 
+Checkpoint 5 is complete. Independent Reviewer acceptance (full verification tier, after one reopen + repair) verified all four criteria at `862d8719`: Task Authority owns all local lifecycle (`Create`/`Start`/`Block`/`Unblock`/`Complete`/`Reopen`/`Supersede`), readiness, and durable dispatch rules (`CreateHold`/`ReleaseHold`/`ResolveDecision`/`InterpretDispatch`/`ConfirmSpawn`/`BindWorktree`); home owns none (serialization-only adapter, holds-only `CheckDispatchHold` read with sole Phase 6 handoff caller); Start/Hold barrier race, interpretation atomicity (13 tests), and the crash-stage matrix pass; the architecture allowlist holds only documented plan-scheduled transition shims (`CreateTaskAggregate`/`UpdateCurrentTaskAggregateKind` → Task 7.8; `CheckDispatchHold` → Phase 6) — adjudicated as transition shims, not competing rule ownership, with the plan's own Task 7.8 grep naming the spawn symbols. The gate REOPENed once on a bisect-proven regression from Task 5.2: the `fleet snapshot` read (`auth.ListHolds()` → `Store.View()` → `withDispatchLock` → `stateDirSafe`) created `state/` + `state/.dispatch.lock` on a fresh home, violating the read-only contract (`TestContractCLIReadsOnlyFreshTempHome`). The bounded repair (`862d8719`) added `withDispatchLockRead`/`stateDirExists` — homes with no authority state (every authority record lives under `state/`) return the empty committed view without creating `state/`, while existing homes keep the canonical `.dispatch.lock → per-task lock` order and all fail-closed behavior; verified by fresh reproduction, a real-binary scratch run, and the full integration suite (13/13 green). Full unit (13/13), full integration (13/13), race, crash/lock matrices, grep gates, build, vet, gofmt, and diff-check are green with only the worktree-sanctioned skip. Note: two Checkpoint 5 gate review attempts died on DeepSeek transport failures before verdicts (no code ruling); the third completed the gate.
+
+Verified on 2026-08-02 (Checkpoint 5):
+
+```sh
+go build ./...
+go vet ./...
+go test -race ./internal/taskauthority ./internal/taskauthorityfs
+go test ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonical
+go test -tags=integration ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonical
+```
+
+All commands passed; the only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` (worktree-sanctioned skip).
+
 ## Goal
 
 Move Authoritative Task Aggregate lifecycle, readiness, and durable dispatch control from `internal/home`, direct CLI mutations, and fleet reach-through into one deep `internal/taskauthority` module. Persist it through a crash-recoverable `internal/taskauthorityfs` adapter composed at the CLI, while preserving current on-disk identities and removing each old mutation path as soon as its final caller migrates.
@@ -853,10 +867,10 @@ go vet ./...
 
 ### Checkpoint 5 — Single lifecycle/dispatch authority
 
-- [ ] Task Authority owns all local lifecycle, readiness, and durable dispatch rules.
-- [ ] Home owns none of those rules.
-- [ ] Start/Hold race, interpretation atomicity, and crash recovery tests pass.
-- [ ] Architecture allowlist for old local mutations is empty.
+- [x] Task Authority owns all local lifecycle, readiness, and durable dispatch rules.
+- [x] Home owns none of those rules.
+- [x] Start/Hold race, interpretation atomicity, and crash recovery tests pass.
+- [x] Architecture allowlist for old local mutations is empty.
 
 ## Phase 6 — Cross-home handoff saga
 
