@@ -388,7 +388,22 @@ With --force:
 				Force:   force,
 			}
 
-			result, err := fleet.RetireTask(opts, newSessionBoundTeardown(), orchestratorRetirementJournals{})
+			// Resolve the task home (cross-home retirement: a handed-off task
+			// lives in a captain home) and compose the Task Authority over it
+			// (Task 7.7). The authoritative retirement transition commits
+			// through the Authority; the fleet teardown performs the saga-side
+			// cleanup after the durable receipt.
+			taskHome, _, err := fleet.ResolveTaskHome(ctx.Home, id)
+			if err != nil {
+				return fmt.Errorf("teardown %s: %w", id, err)
+			}
+			auth, err := ctx.TaskAuthorityFor(taskHome)
+			if err != nil {
+				return fmt.Errorf("teardown %s: composing task authority: %w", id, err)
+			}
+			opts.HomeDir = taskHome
+
+			result, err := fleet.RetireTask(opts, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			if err != nil {
 				return err
 			}

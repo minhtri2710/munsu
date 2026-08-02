@@ -108,6 +108,10 @@ const (
 	// provider-verified remote outcome (merged, already-merged, open, failed,
 	// or remote-unknown; task-bound, Task 7.6).
 	AuditMergeOutcome = "merge-outcome"
+	// AuditRetirement records the generation-bound retired phase transition
+	// committed by the Retire operation after verified merged/delivered
+	// evidence (task-bound, Task 7.7).
+	AuditRetirement = "retirement"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -206,6 +210,19 @@ func (ev AuditEvent) Validate() error {
 		}
 		if err := ev.Generation.Validate(); err != nil {
 			return err
+		}
+	case AuditRetirement:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+		if ev.Before != "" && !ev.Before.Valid() {
+			return validationError("audit event has invalid before phase %q", ev.Before)
+		}
+		if ev.After != PhaseRetired {
+			return validationError("audit event has invalid after phase %q", ev.After)
 		}
 	case AuditDispatch:
 		// Task identity and phases are not applicable.

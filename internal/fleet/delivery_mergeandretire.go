@@ -47,18 +47,23 @@ func (r *MergeAndRetireResult) IsError() bool {
 // merge phase is skipped entirely (idempotent resume). Otherwise, PRMerge is
 // called to perform the full merge and reconciliation.
 //
-// Phase 2 - Retirement: RetireTask is called with Force=true when the merge
-// was already done (retry after partial cleanup), so that worktree-based
-// safety checks are skipped — the merged state is sufficient proof. When the
-// merge was performed by this call, Force=false so the normal safety checks
-// still run.
+// Phase 2 - Retirement: the authoritative retired phase transition commits via
+// the composed Task Authority FIRST (durable receipt); RetireTask then performs
+// the saga-side cleanup (meta/state removal, journal finalization) strictly
+// after the receipt. RetireTask is called with Force=true when the merge was
+// already done (retry after partial cleanup), so that worktree-based safety
+// checks are skipped — the merged state is sufficient proof. When the merge was
+// performed by this call, Force=false so the normal safety checks still run.
+// A cleanup failure returns a typed partial result (retired committed, cleanup
+// pending): retry resumes retirement only and never reruns merge/reconciliation.
 //
 // Returns a typed composite result. Callers check IsError() to determine the
 // overall outcome. A merged-but-not-retired result is non-zero; retry resumes
 // retirement only.
 // authority is the composed Task Authority targeting the exact resolved task
 // home (cross-home delivery); it is threaded into PRMerge for the post-merge
-// issue link reconciliation and is unused when the merge phase is skipped.
+// issue link reconciliation, unused when the merge phase is skipped, and
+// required by the retirement transition (nil fails closed).
 func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Authority) *MergeAndRetireResult {
 	// Phase 1: Check if already merged (idempotent resume).
 	meta, err := home.ReadMeta(homeDir, id)
@@ -93,7 +98,7 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend Bound
 		ID:      id,
 		Force:   alreadyMerged,
 	}
-	teardownResult, retireErr := RetireTask(retireOpts, backend, journals)
+	teardownResult, retireErr := RetireTask(retireOpts, backend, journals, authority)
 
 	return &MergeAndRetireResult{
 		MergeOutcome:   mergeOutcome,

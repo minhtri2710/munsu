@@ -11,6 +11,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type e2eTeardown struct{}
@@ -42,7 +43,21 @@ func TestRetirementTerminalUplinkContinuity(t *testing.T) {
 	if err := orchestrator.WriteReceipt(homeDir, taskID, key, "done", "complete"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fleet.RetireTask(fleet.Options{HomeDir: homeDir, ID: taskID}, e2eTeardown{}, orchestratorRetirementJournals{}); err == nil {
+	// The composed Task Authority (Task 7.7) records the task and carries the
+	// durable retirement receipt; the teardown flow commits the Retire op
+	// before saga-side cleanup.
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "scout",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fleet.RetireTask(fleet.Options{HomeDir: homeDir, ID: taskID}, e2eTeardown{}, orchestratorRetirementJournals{}, auth); err == nil {
 		t.Fatal("open report obligation must block retirement")
 	}
 	if err := orchestrator.WriteAck(homeDir, taskID, key); err != nil {
@@ -51,7 +66,7 @@ func TestRetirementTerminalUplinkContinuity(t *testing.T) {
 	if _, err := orchestrator.CompleteTaskObligation(homeDir, taskID, orchestrator.ReportRelay); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fleet.RetireTask(fleet.Options{HomeDir: homeDir, ID: taskID, Force: true}, e2eTeardown{}, orchestratorRetirementJournals{}); err != nil {
+	if _, err := fleet.RetireTask(fleet.Options{HomeDir: homeDir, ID: taskID, Force: true}, e2eTeardown{}, orchestratorRetirementJournals{}, auth); err != nil {
 		t.Fatal(err)
 	}
 	backup := filepath.Join(homeDir, "state", ".backup", taskID, taskID+".status")

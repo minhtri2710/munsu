@@ -11,6 +11,8 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
@@ -423,6 +425,30 @@ func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
 	}
 }
 
+// seedRetireAuthority seeds the task in the filesystem-backed Task Authority
+// over homeDir, mirroring production spawn (tasks are created via the
+// Authority at launch). The teardown command composes the Authority over the
+// resolved task home (Task 7.7), and the retirement transition fails closed
+// without the authoritative record.
+func seedRetireAuthority(t *testing.T, homeDir, taskID string) {
+	t.Helper()
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := taskauthority.New(store)
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "scout",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestTeardownCmd_UplinkAckInTempHome proves the CLI `munsu teardown` command
 // enforces the exact uplink ack in a non-default temp home. It:
 //  1. Creates a scout task with material status + report.md (passes scoutSafetyCheck)
@@ -432,6 +458,11 @@ func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
 func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 	tmpDir := t.TempDir()
 	soldierID := "teardown-homer-test"
+
+	// Seed the authoritative task record the teardown retirement transition
+	// requires (Task 7.7): production tasks are created via the Authority at
+	// spawn.
+	seedRetireAuthority(t, tmpDir, soldierID)
 
 	// Set up state dir
 	stateDir := filepath.Join(tmpDir, "state")
@@ -504,6 +535,11 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	tmpDir := t.TempDir()
 	soldierID := "teardown-force-test"
 
+	// Seed the authoritative task record the teardown retirement transition
+	// requires (Task 7.7): production tasks are created via the Authority at
+	// spawn.
+	seedRetireAuthority(t, tmpDir, soldierID)
+
 	stateDir := filepath.Join(tmpDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
@@ -556,6 +592,11 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	tmpDir := t.TempDir()
 	soldierID := "teardown-wrong-key-test"
+
+	// Seed the authoritative task record the teardown retirement transition
+	// requires (Task 7.7): production tasks are created via the Authority at
+	// spawn.
+	seedRetireAuthority(t, tmpDir, soldierID)
 	termKey := "uplink"
 
 	stateDir := filepath.Join(tmpDir, "state")

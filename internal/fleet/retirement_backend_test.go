@@ -44,7 +44,7 @@ func teardownFixture(t *testing.T) (Options, string) {
 }
 func TestRunWithBackendPreservesMetaOnProbeError(t *testing.T) {
 	opts, meta := teardownFixture(t)
-	if _, err := RetireTask(opts, fakeTeardown{probeErr: errors.New("probe failed")}, fakeRetirementJournals{}); err == nil {
+	if _, err := RetireTask(opts, fakeTeardown{probeErr: errors.New("probe failed")}, fakeRetirementJournals{}, mergeTestAuth(t, "task")); err == nil {
 		t.Fatal("expected error")
 	}
 	if _, err := os.Stat(meta); err != nil {
@@ -53,7 +53,7 @@ func TestRunWithBackendPreservesMetaOnProbeError(t *testing.T) {
 }
 func TestRunWithBackendPreservesMetaOnDisposeError(t *testing.T) {
 	opts, meta := teardownFixture(t)
-	if _, err := RetireTask(opts, fakeTeardown{alive: true, disposeErr: errors.New("dispose failed")}, fakeRetirementJournals{}); err == nil {
+	if _, err := RetireTask(opts, fakeTeardown{alive: true, disposeErr: errors.New("dispose failed")}, fakeRetirementJournals{}, mergeTestAuth(t, "task")); err == nil {
 		t.Fatal("expected error")
 	}
 	if _, err := os.Stat(meta); err != nil {
@@ -73,7 +73,7 @@ func TestRunWithBackendReturnsWorktreeViaCapability(t *testing.T) {
 	var calls int
 	var gotPath string
 	fake := fakeTeardown{returnWorktreeFn: func(p string) error { calls++; gotPath = p; return nil }}
-	res, err := RetireTask(opts2, fake, fakeRetirementJournals{})
+	res, err := RetireTask(opts2, fake, fakeRetirementJournals{}, mergeTestAuth(t, "task"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRunWithBackendWorktreeFailurePreventsCleanup(t *testing.T) {
 
 	var calls int
 	fake := fakeTeardown{returnWorktreeFn: func(string) error { calls++; return errors.New("pool full") }}
-	_, err := RetireTask(opts, fake, fakeRetirementJournals{})
+	_, err := RetireTask(opts, fake, fakeRetirementJournals{}, mergeTestAuth(t, "task"))
 	if err == nil || !strings.Contains(err.Error(), "worktree return failed") || !strings.Contains(err.Error(), "lease still held") {
 		t.Fatalf("error=%v, want worktree return failure with lease held", err)
 	}
