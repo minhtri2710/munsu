@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -124,18 +125,31 @@ func TestFleetSyncEndToEnd(t *testing.T) {
 
 	homeDir := t.TempDir()
 	projectsDir := filepath.Join(homeDir, "projects")
-	dataDir := filepath.Join(homeDir, "data")
 	if err := os.MkdirAll(projectsDir, 0755); err != nil {
 		t.Fatalf("creating projects dir: %v", err)
 	}
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		t.Fatalf("creating data dir: %v", err)
-	}
 
-	// Create project registry
-	projectsContent := "- test-project [ship] +yolo - test project (added 2026-07-01)\n"
-	if err := os.WriteFile(filepath.Join(dataDir, "projects.md"), []byte(projectsContent), 0644); err != nil {
-		t.Fatalf("writing projects.md: %v", err)
+	// Typed fleet config replaces the legacy projects.md: fleet sync reads
+	// the project registry from data/projects.json. The legacy +yolo flag is
+	// expressed as requireNoMistakes=false in the project overlay.
+	falseVal := false
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+	}); err != nil {
+		t.Fatalf("writing fleet base: %v", err)
+	}
+	if err := config.StoreCaptainRegistry(homeDir, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+	}); err != nil {
+		t.Fatalf("writing captain registry: %v", err)
+	}
+	if err := config.StoreProjectRegistry(homeDir, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-project", Path: "test project", Mode: "ship", Config: config.ProjectOverlay{RequireNoMistakes: &falseVal}},
+		},
+	}); err != nil {
+		t.Fatalf("writing projects registry: %v", err)
 	}
 
 	// Create a bare repo as upstream
@@ -315,12 +329,12 @@ func TestPRMerge_WiresReconcileMergeDelivery(t *testing.T) {
 		calledID = taskID
 		calledURL = prURL
 		return &MergeDeliveryResult{
-			Outcome:     MergeOutcomeMerged,
-			RemoteKnown: true,
+			Outcome:       MergeOutcomeMerged,
+			RemoteKnown:   true,
 			ProviderState: "MERGED",
-			MergedSHA:   "abc123def456abc123def456abc123def456abc1",
-			PRNumber:    42,
-			Detail:      "provider confirms PR #42 is merged",
+			MergedSHA:     "abc123def456abc123def456abc123def456abc1",
+			PRNumber:      42,
+			Detail:        "provider confirms PR #42 is merged",
 		}, nil
 	}
 

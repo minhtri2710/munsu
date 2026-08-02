@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -1480,11 +1481,25 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	if err := cmdCommit.Run(); err != nil {
 		t.Fatal(err)
 	}
-	projectsPath := filepath.Join(homeDir, "data", "projects.md")
-	if err := os.MkdirAll(filepath.Dir(projectsPath), 0755); err != nil {
+	// Typed project registry replaces the legacy projects.md: spawn resolves
+	// the project through data/projects.json with a local-only mode.
+	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(projectsPath, []byte("# Projects\n\n- test-proj [local-only] - Test project (added 2025-01-01)\n"), 0644); err != nil {
+	if err := config.StoreCaptainRegistry(homeDir, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(homeDir, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-proj", Path: projectDir, Mode: "local-only"},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 

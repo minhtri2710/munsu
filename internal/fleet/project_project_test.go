@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // --- Legacy project registry helpers ---
@@ -345,21 +347,27 @@ func TestIsURL(t *testing.T) {
 	}
 }
 
+// boolPtr returns a pointer to v for typed config pointer fields.
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+// TestRegistryFileFormat proves that List round-trips every registry field from
+// the typed project registry (data/projects.json), including the +yolo flag
+// expressed as requireNoMistakes=false. Legacy projects.md parsing is covered
+// by the ParseEntry/FormatEntry round-trip tests above.
 func TestRegistryFileFormat(t *testing.T) {
 	tmp := t.TempDir()
-	regPath := RegistryPath(tmp)
 
-	// Write entries directly to simulate real file format
-	entries := []string{
-		"- alpha feat - First project (added 2026-01-01)",
-		"- beta fix +yolo - Captain project (added 2026-03-15)",
-		"- gamma +yolo - Yolo without mode (added 2026-06-01)",
-		"- delta - No mode project (added 2026-07-01)",
-	}
-	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(regPath, []byte(strings.Join(entries, "\n")+"\n"), 0644); err != nil {
+	if err := config.StoreProjectRegistry(tmp, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "alpha", Path: "First project", Mode: "feat"},
+			{Name: "beta", Path: "Captain project", Mode: "fix", Config: config.ProjectOverlay{RequireNoMistakes: boolPtr(false)}},
+			{Name: "gamma", Path: "Yolo without mode", Config: config.ProjectOverlay{RequireNoMistakes: boolPtr(false)}},
+			{Name: "delta", Path: "No mode project"},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -421,13 +429,13 @@ func TestResolveRepoPath_ClonedProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write registry entry directly (avoid actual clone)
-	regPath := RegistryPath(homeDir)
-	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	entry := "- cloned-proj - https://github.com/user/repo.git (added 2026-07-01)\n"
-	if err := os.WriteFile(regPath, []byte(entry), 0644); err != nil {
+	// Register a URL-backed project directly in the typed registry (no clone).
+	if err := config.StoreProjectRegistry(homeDir, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "cloned-proj", Path: "https://github.com/user/repo.git"},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 

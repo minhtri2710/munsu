@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -476,9 +477,29 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 	// Idle captain home (no active children).
 	os.WriteFile(filepath.Join(captainHome, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] hold: external\n"), 0644)
-	// Registry entry for the captain.
-	line := fmt.Sprintf("- domain-alpha - (home: %s; scope: domain; projects: sample; added: 2026-07-19)\n", captainHome)
-	os.WriteFile(filepath.Join(home, "data", "captains.md"), []byte("# Captains\n\n"+line), 0644)
+	// Typed fleet documents replace the legacy captains.md registry: the
+	// captain is registered with a project binding in data/captains.json.
+	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(home, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "sample", Path: captainHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreCaptainRegistry(home, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains: []config.CaptainRecord{
+			{ID: "domain-alpha", Home: captainHome, Project: "sample"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// Launched captain meta makes the supervisor visible in the raw task snapshot.
 	if err := mhome.WriteMeta(home, "captain:domain-alpha", map[string]string{
 		"kind":    "captain",

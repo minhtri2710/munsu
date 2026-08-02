@@ -96,6 +96,13 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 		Path: pathOrURL,
 		Mode: mode,
 	}
+	// Yolo (skip pre-flight gates) is preserved through the typed schema as
+	// requireNoMistakes=false. When yolo is false the overlay is left unset so
+	// an in-place update clears a previously stored +yolo flag.
+	if yolo {
+		falseVal := false
+		record.Config.RequireNoMistakes = &falseVal
+	}
 
 	// Check if name already exists — update in-place to avoid duplicates.
 	for i, p := range registry.Projects {
@@ -135,9 +142,13 @@ func List(homeDir string) ([]*Project, error) {
 
 	var projects []*Project
 	for _, p := range registry.Projects {
+		// The typed schema expresses the legacy +yolo flag as
+		// requireNoMistakes=false; map it back so CLI list/mode surface it.
+		yolo := p.Config.RequireNoMistakes != nil && !*p.Config.RequireNoMistakes
 		projects = append(projects, &Project{
 			Name:        p.Name,
 			Mode:        p.Mode,
+			Yolo:        yolo,
 			Description: p.Path,
 			Added:       today(),
 		})

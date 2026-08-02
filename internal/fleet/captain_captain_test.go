@@ -133,6 +133,8 @@ func ParseRegistry(registryPath string) ([]Info, error) {
 	return mates, scanner.Err()
 }
 
+// extractMetaValue pulls the value for key out of a legacy captains.md
+// meta block (key: value; ...). Mirrors configmigration.extractMetaValue.
 func extractMetaValue(meta, key string) string {
 	parts := strings.Split(meta, ";")
 	for _, p := range parts {
@@ -906,13 +908,18 @@ func TestListCaptains_Empty(t *testing.T) {
 
 func TestListCaptains_WithRegistryFile(t *testing.T) {
 	parent := t.TempDir()
-	registryDir := filepath.Join(parent, "data")
-	os.MkdirAll(registryDir, 0755)
-	registryContent := `# Captains
-- sm-alpha - Some charter (home: /home/sm-alpha; scope: domain dispatch; projects: project-a; added: 2026-07-18)
-- sm-beta - Another charter (home: /home/sm-beta; scope: other domain; projects: project-b; added: 2026-07-17)
-`
-	os.WriteFile(filepath.Join(registryDir, "captains.md"), []byte(registryContent), 0644)
+	// Typed captain registry: ListCaptains reads data/captains.json. Legacy
+	// captains.md parsing (meta blocks, comment skipping) now lives in
+	// configmigration and is covered by the ParseRegistry tests below.
+	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains: []config.CaptainRecord{
+			{ID: "sm-alpha", Home: "/home/sm-alpha", Project: "project-a"},
+			{ID: "sm-beta", Home: "/home/sm-beta", Project: "project-b"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	mates, err := ListCaptains(parent)
 	if err != nil {
@@ -929,17 +936,12 @@ func TestListCaptains_WithRegistryFile(t *testing.T) {
 			if m.Home != "/home/sm-alpha" {
 				t.Errorf("sm-alpha home = %q, want %q", m.Home, "/home/sm-alpha")
 			}
-			if m.Scope != "domain dispatch" {
-				t.Errorf("sm-alpha scope = %q", m.Scope)
-			}
 			if m.Project != "project-a" {
-				t.Errorf("sm-alpha project = %q", m.Project)
-			}
-			if m.Added != "2026-07-18" {
-				t.Errorf("sm-alpha added = %q", m.Added)
+				t.Errorf("sm-alpha project = %q, want %q", m.Project, "project-a")
 			}
 		}
 	}
+	// Scope and Added are legacy captains.md fields with no typed equivalent.
 	if !found["sm-alpha"] {
 		t.Error("sm-alpha not found in list")
 	}
@@ -950,13 +952,17 @@ func TestListCaptains_WithRegistryFile(t *testing.T) {
 
 func TestListCaptains_SkipsCommentLines(t *testing.T) {
 	parent := t.TempDir()
-	registryDir := filepath.Join(parent, "data")
-	os.MkdirAll(registryDir, 0755)
-	registryContent := `# Captains
-# This is a comment
-- valid-sm - Some charter (home: /home/valid-sm; scope: test; projects: test; added: 2026-07-18)
-`
-	os.WriteFile(filepath.Join(registryDir, "captains.md"), []byte(registryContent), 0644)
+	// JSON registries have no comment lines; comment skipping lives in the
+	// legacy captains.md parser (configmigration.parseRegistry, mirrored by
+	// ParseRegistry). ListCaptains returns exactly the registered captains.
+	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains: []config.CaptainRecord{
+			{ID: "valid-sm", Home: "/home/valid-sm", Project: "test"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	mates, err := ListCaptains(parent)
 	if err != nil {
@@ -1036,66 +1042,162 @@ func TestConfigPush_Basic(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	configDir := filepath.Join(parent, "config")
-	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644)
-	os.WriteFile(filepath.Join(configDir, "soldier-dispatch.json"), []byte("{}\n"), 0644)
-	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet\n"), 0644)
+	// Typed parent config: the inheritable surface is the resolved project
+	// config (soldier harness + dispatch profiles) published as a snapshot.
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "pi",
+			DispatchProfiles: []config.DispatchProfile{
+				{Name: "default", Harness: "pi", Model: "claude-sonnet"},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"soldier-harness", "soldier-dispatch.json"} {
-		_, err := os.Stat(filepath.Join(smHome, "config", name))
-		if err != nil {
-			t.Errorf("inheritable config %q was not copied: %v", name, err)
-		}
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatalf("resolved snapshot was not published: %v", err)
 	}
-
-	if _, err := os.Stat(filepath.Join(smHome, "config", "model")); !os.IsNotExist(err) {
-		t.Error("non-inheritable config 'model' should not have been copied")
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("snapshot soldierHarness = %q, want %q", snapshot.Config().SoldierHarness, "pi")
+	}
+	profiles := snapshot.Config().DispatchProfiles
+	if len(profiles) != 1 || profiles[0].Harness != "pi" || profiles[0].Model != "claude-sonnet" {
+		t.Errorf("snapshot dispatchProfiles = %+v, want the inherited profile", profiles)
 	}
 }
 
+// TestConfigPush_MirrorDeletions proves that when the parent removes an
+// inherited setting, the captain's next push no longer carries it. The typed
+// snapshot is regenerated from current parent state, so a removed harness is
+// not retained across pushes (the typed mirror-deletion equivalent).
 func TestConfigPush_MirrorDeletions(t *testing.T) {
 	parent := t.TempDir()
 	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	os.WriteFile(filepath.Join(smHome, "config", "soldier-harness"), []byte("old\n"), 0644)
-
-	if err := configPush(parent, smHome); err != nil {
+	storeBase := func(harness string) error {
+		overlay := config.ProjectOverlay{}
+		if harness != "" {
+			overlay.SoldierHarness = harness
+		}
+		return config.StoreFleetBase(parent, config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+			Config:        overlay,
+		})
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeBase("pi"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(smHome, "config", "soldier-harness")); !os.IsNotExist(err) {
-		t.Error("soldier-harness should have been deleted (mirror deletion)")
+	// First push inherits the harness.
+	if err := configPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("snapshot soldierHarness = %q, want %q", snapshot.Config().SoldierHarness, "pi")
+	}
+
+	// Parent removes the harness — the next push must drop it.
+	if err := storeBase(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := configPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config().SoldierHarness != "" {
+		t.Errorf("snapshot soldierHarness = %q after removal, want empty (mirror deletion)", snapshot.Config().SoldierHarness)
 	}
 }
 
 func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	parent := t.TempDir()
 	smHome := filepath.Join(parent, "captains", "test-sm")
+	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	os.WriteFile(filepath.Join(smHome, "config", "soldier-harness"), []byte("old\n"), 0644)
+	// Captain-local (non-inherited) config must survive config push.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
+
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(smHome, "config", "soldier-harness")); !os.IsNotExist(err) {
-		t.Error("inheritable soldier-harness should have been deleted")
+	// The inherited harness is published; the captain-local model file is
+	// owned by the captain and must not be deleted.
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("snapshot soldierHarness = %q, want %q", snapshot.Config().SoldierHarness, "pi")
 	}
 	if _, err := os.Stat(filepath.Join(smHome, "config", "model")); os.IsNotExist(err) {
 		t.Error("non-inheritable model should NOT have been deleted")
 	}
 }
 
+// TestConfigPush_CaptainShared proves that captain-level shared settings from
+// the parent (the captain profile) reach the captain's resolved snapshot.
+// The legacy general-shared.md file copy was removed with the typed-config
+// hard cut; the typed equivalent is the fleet base captainProfile.
 func TestConfigPush_CaptainShared(t *testing.T) {
 	parent := t.TempDir()
 	smHome := filepath.Join(parent, "captains", "test-sm")
@@ -1103,48 +1205,97 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	os.MkdirAll(filepath.Join(parent, "data"), 0755)
-	sharedContent := "# Captain shared\n\nkey: value\n"
-	os.WriteFile(filepath.Join(parent, "data", "general-shared.md"), []byte(sharedContent), 0644)
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		CaptainProfile: config.CaptainProfile{
+			Harness: "pi",
+			Model:   "claude-sonnet",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	dstShared := filepath.Join(smHome, "data", "general-shared.md")
-	data, err := os.ReadFile(dstShared)
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
 	if err != nil {
-		t.Fatalf("general-shared.md was not pushed: %v", err)
+		t.Fatalf("resolved snapshot was not published: %v", err)
 	}
-	if string(data) != sharedContent {
-		t.Errorf("general-shared.md content = %q, want %q", string(data), sharedContent)
-	}
-
-	info, err := os.Stat(dstShared)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0444 {
-		t.Errorf("general-shared.md mode = %v, want 0444", info.Mode().Perm())
+	prof := snapshot.Config().CaptainProfile
+	if prof.Harness != "pi" || prof.Model != "claude-sonnet" {
+		t.Errorf("snapshot captainProfile = %+v, want the shared profile", prof)
 	}
 }
 
+// TestConfigPush_CaptainSharedMirrorDeletion proves that when the parent
+// removes the shared captain profile, the next push no longer carries it.
 func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 	parent := t.TempDir()
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	os.WriteFile(filepath.Join(smHome, "data", "general-shared.md"), []byte("old\n"), 0644)
+	storeBase := func(profile config.CaptainProfile) error {
+		return config.StoreFleetBase(parent, config.FleetBaseDocument{
+			SchemaVersion:  config.FleetBaseSchemaVersion,
+			Config:         config.ProjectOverlay{SoldierHarness: "pi"},
+			CaptainProfile: profile,
+		})
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeBase(config.CaptainProfile{Harness: "pi", Model: "claude-sonnet"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config().CaptainProfile.Harness == "" {
+		t.Error("snapshot should carry the shared captain profile")
+	}
 
-	if _, err := os.Stat(filepath.Join(smHome, "data", "general-shared.md")); !os.IsNotExist(err) {
-		t.Error("general-shared.md should have been deleted (mirror deletion)")
+	// Parent removes the shared profile — the next push drops it.
+	if err := storeBase(config.CaptainProfile{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := configPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config().CaptainProfile.Harness != "" || snapshot.Config().CaptainProfile.Model != "" {
+		t.Errorf("snapshot captainProfile = %+v after removal, want empty (mirror deletion)", snapshot.Config().CaptainProfile)
 	}
 }
 
@@ -1177,6 +1328,10 @@ func TestConfigPush_RejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+// TestConfigPush_IdempotentPreservesMtime proves that pushing unchanged
+// config does not re-propagate: the generation tracking stays put when the
+// resolved config digest is unchanged (the typed idempotency equivalent of
+// not rewriting an unchanged inherited file).
 func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	parent := t.TempDir()
 	smHome := filepath.Join(parent, "captains", "test-sm")
@@ -1186,30 +1341,41 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := SeedProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644); err != nil {
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := configPush(parent, smHome); err != nil {
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join(smHome, "config", "soldier-harness")
-	first, err := os.Stat(dst)
+
+	first, err := configPushWithResult(parent, smHome)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !first.Changed {
+		t.Fatal("first push should be a change (generation 0 → 1)")
 	}
 	time.Sleep(20 * time.Millisecond)
-	if err := configPush(parent, smHome); err != nil {
-		t.Fatal(err)
-	}
-	captain, err := os.Stat(dst)
+	second, err := configPushWithResult(parent, smHome)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.ModTime().Equal(captain.ModTime()) {
-		t.Fatalf("idempotent push rewrote unchanged file: %s -> %s", first.ModTime(), captain.ModTime())
+	if second.Changed {
+		t.Errorf("unchanged push advanced generation: %d -> %d", first.Generation, second.Generation)
+	}
+	if second.Generation != first.Generation {
+		t.Errorf("generation = %d, want %d (unchanged config must not re-propagate)", second.Generation, first.Generation)
 	}
 }
 
@@ -2430,9 +2596,16 @@ func TestConverge_RefusesUnmarkedHome(t *testing.T) {
 
 func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	parent := t.TempDir()
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 	os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("# Parent charter\n"), 0644)
+
+	// Typed parent config binds both captains to projects so converge's
+	// inheritance push publishes a resolved snapshot per captain.
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create two captains with provenance markers.
 	sm1 := filepath.Join(parent, "captains", "sm-alpha")
@@ -2449,6 +2622,25 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	os.WriteFile(filepath.Join(sm2, "AGENTS.md"), []byte("# Beta\n"), 0644)
 	SeedProvenance(sm2, "sm-beta")
 
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "sm-alpha", Path: sm1, Mode: "no-mistakes"},
+			{Name: "sm-beta", Path: sm2, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains: []config.CaptainRecord{
+			{ID: "sm-alpha", Home: sm1, Project: "sm-alpha"},
+			{ID: "sm-beta", Home: sm2, Project: "sm-beta"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	// Run converge.
 	_, err := Converge(parent, []Info{
 		{ID: "sm-alpha", Home: sm1},
@@ -2460,20 +2652,19 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 		t.Fatalf("converge should succeed for state-only homes: %v", err)
 	}
 
-	// But config push should have succeeded for both.
-	// Check that soldier-harness was pushed.
-	data1, err := os.ReadFile(filepath.Join(sm1, "config", "soldier-harness"))
+	// Config push should have published a resolved snapshot for both.
+	snap1, err := config.LoadPublishedSnapshot(sm1)
 	if err != nil {
-		t.Errorf("sm-alpha soldier-harness not pushed: %v", err)
-	} else if string(data1) != "pi\n" {
-		t.Errorf("sm-alpha soldier-harness content = %q", string(data1))
+		t.Errorf("sm-alpha resolved snapshot not published: %v", err)
+	} else if snap1.Config().SoldierHarness != "pi" {
+		t.Errorf("sm-alpha snapshot soldierHarness = %q, want %q", snap1.Config().SoldierHarness, "pi")
 	}
 
-	data2, err := os.ReadFile(filepath.Join(sm2, "config", "soldier-harness"))
+	snap2, err := config.LoadPublishedSnapshot(sm2)
 	if err != nil {
-		t.Errorf("sm-beta soldier-harness not pushed: %v", err)
-	} else if string(data2) != "pi\n" {
-		t.Errorf("sm-beta soldier-harness content = %q", string(data2))
+		t.Errorf("sm-beta resolved snapshot not published: %v", err)
+	} else if snap2.Config().SoldierHarness != "pi" {
+		t.Errorf("sm-beta snapshot soldierHarness = %q, want %q", snap2.Config().SoldierHarness, "pi")
 	}
 }
 
@@ -3703,8 +3894,10 @@ func TestMigrateRollbackSafety(t *testing.T) {
 // =============================================================================
 
 // TestConfigPush_InheritsEnvOverriddenKeys proves that MUNSU_INHERITABLE_CONFIG
-// env var controls which config keys are inheritable. Only keys in the env list
-// should be pushed; keys outside it must be skipped even when present in parent.
+// no longer filters config push: after the typed-config hard cut the resolved
+// config is authoritative and the full inherited surface is always propagated.
+// The env list helper itself (configmigration.getInheritableList) is covered by
+// the TestGetInheritableListCaptains_* tests below.
 func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key:another-key:extra-key")
 
@@ -3714,39 +3907,42 @@ func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	// Parent config: inheritable (custom-key, another-key, extra-key) + non-inheritable.
-	configDir := filepath.Join(parent, "config")
-	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "custom-key"), []byte("val1\n"), 0644)
-	os.WriteFile(filepath.Join(configDir, "another-key"), []byte("val2\n"), 0644)
-	os.WriteFile(filepath.Join(configDir, "extra-key"), []byte("val3\n"), 0644)
-	os.WriteFile(filepath.Join(configDir, "soldier-harness"), []byte("pi\n"), 0644)  // NOT in env list
-	os.WriteFile(filepath.Join(configDir, "model"), []byte("claude-sonnet\n"), 0644) // NOT in env list
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify env-overridden inheritable keys were pushed.
-	for _, name := range []string{"custom-key", "another-key", "extra-key"} {
-		_, err := os.Stat(filepath.Join(smHome, "config", name))
-		if err != nil {
-			t.Errorf("env-overridden inheritable key %q was NOT pushed: %v", name, err)
-		}
+	// The full inherited surface is propagated even though the env list
+	// names unrelated keys — nothing is filtered out.
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatalf("resolved snapshot was not published: %v", err)
 	}
-
-	// Verify keys NOT in env list were NOT pushed.
-	for _, name := range []string{"soldier-harness", "model"} {
-		_, err := os.Stat(filepath.Join(smHome, "config", name))
-		if !os.IsNotExist(err) {
-			t.Errorf("key %q outside env override list was pushed (should not be): %v", name, err)
-		}
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("snapshot soldierHarness = %q, want %q (env override must not filter)", snapshot.Config().SoldierHarness, "pi")
 	}
 }
 
-// TestConfigPush_InheritsEnvMirrorDeletions proves that when MUNSU_INHERITABLE_CONFIG
-// is set, mirror deletion only removes keys in the env-overridden inheritable list,
-// not all default inheritable keys.
+// TestConfigPush_InheritsEnvMirrorDeletions proves that mirror deletion still
+// applies with MUNSU_INHERITABLE_CONFIG set, and that captain-local config is
+// never touched.
 func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key")
 
@@ -3756,33 +3952,70 @@ func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	// Captain has an inheritable key (custom-key) that parent does NOT have.
-	os.WriteFile(filepath.Join(smHome, "config", "custom-key"), []byte("old\n"), 0644)
-	// Captain also has a non-inheritable key.
+	// Captain-local (non-inherited) key must survive regardless of env.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
 
-	// Parent config dir exists but has NO files (custom-key absent → mirror delete).
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
+	storeBase := func(harness string) error {
+		overlay := config.ProjectOverlay{}
+		if harness != "" {
+			overlay.SoldierHarness = harness
+		}
+		return config.StoreFleetBase(parent, config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+			Config:        overlay,
+		})
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeBase("pi"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
-
-	// Mirror deletion should remove inheritable custom-key.
-	_, err := os.Stat(filepath.Join(smHome, "config", "custom-key"))
-	if !os.IsNotExist(err) {
-		t.Error("inheritable custom-key should have been mirror-deleted")
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("snapshot soldierHarness = %q, want %q", snapshot.Config().SoldierHarness, "pi")
+	}
+	if _, err := os.Stat(filepath.Join(smHome, "config", "model")); os.IsNotExist(err) {
+		t.Error("non-inheritable model should NOT have been deleted")
 	}
 
-	// Non-inheritable model must NOT be deleted.
-	_, err = os.Stat(filepath.Join(smHome, "config", "model"))
-	if os.IsNotExist(err) {
+	// Parent removes the inherited harness — mirror deletion applies with env set.
+	if err := storeBase(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := configPush(parent, smHome); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Config().SoldierHarness != "" {
+		t.Errorf("snapshot soldierHarness = %q after removal, want empty (mirror deletion)", snapshot.Config().SoldierHarness)
+	}
+	if _, err := os.Stat(filepath.Join(smHome, "config", "model")); os.IsNotExist(err) {
 		t.Error("non-inheritable model should NOT have been deleted")
 	}
 }
 
-// TestConfigPush_InheritsAllowsEmptyEnvListCaptains proves that setting
-// MUNSU_INHERITABLE_CONFIG to empty string falls back to default inheritable list.
+// TestConfigPush_InheritsAllowsEmptyEnvListCaptains proves that an empty
+// MUNSU_INHERITABLE_CONFIG does not change propagation: the typed resolved
+// config is still fully inherited.
 func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "")
 
@@ -3792,58 +4025,94 @@ func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	// Parent has default inheritable config.
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{}\n"), 0644)
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := configPush(parent, smHome); err != nil {
 		t.Fatal(err)
 	}
 
-	// With empty env string, getInheritableList returns the default list,
-	// so soldier-harness and soldier-dispatch.json should be pushed.
-	for _, name := range []string{"soldier-harness", "soldier-dispatch.json"} {
-		_, err := os.Stat(filepath.Join(smHome, "config", name))
-		if err != nil {
-			t.Errorf("default inheritable key %q should be pushed with empty env: %v", name, err)
-		}
+	// Empty env falls back to default behavior — the resolved config is
+	// propagated as usual.
+	snapshot, err := config.LoadPublishedSnapshot(smHome)
+	if err != nil {
+		t.Fatalf("resolved snapshot was not published: %v", err)
+	}
+	if snapshot.Config().SoldierHarness != "pi" {
+		t.Errorf("snapshot soldierHarness = %q, want %q", snapshot.Config().SoldierHarness, "pi")
 	}
 }
 
 // TestConfigPush_RefusesTrackedDestination proves that ConfigPush refuses when
-// the destination file is tracked in captain git, even if the path is safe.
-// A custom inheritable key is committed to the captain repo AFTER seeding to
-// simulate a user-tracked file that ConfigPush should not overwrite.
+// a destination file is tracked in captain git, even if the path is safe.
+// The published resolved snapshot (config/resolved-project.json) is committed
+// to the captain repo AFTER seeding to simulate a user-tracked file that
+// ConfigPush must not overwrite.
 func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
 
-	// Track AGENTS.md so seed succeeds.
+	// Track AGENTS.md so the worktree seed carries a user-owned file.
 	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("# Agents\n"), 0644)
 	gitTestRun(t, project, "add", "AGENTS.md")
 	gitTestRun(t, project, "commit", "-m", "add AGENTS.md")
 	gitTestRun(t, project, "push", "-u", "origin", "main")
 
 	homePath := filepath.Join(parent, "captains", "test-captain")
+	// Typed parent config binds the captain to a project so the seed's
+	// PropagateConfig publishes a resolved snapshot into the worktree.
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "claude"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains: []config.CaptainRecord{
+			{ID: "test-captain", Home: homePath, Project: "test-captain"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	// Write parent config for an inheritable key.
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("claude\n"), 0644)
+	// Commit the published snapshot in the captain worktree so the next
+	// configPush must refuse to overwrite a tracked destination.
+	// config/ is git-ignored via worktree exclude, so force-add is required.
+	if _, err := os.Stat(filepath.Join(homePath, config.PublishedSnapshotPath)); err != nil {
+		t.Fatalf("seed did not publish a resolved snapshot: %v", err)
+	}
+	gitTestRun(t, homePath, "add", "-f", config.PublishedSnapshotPath)
+	gitTestRun(t, homePath, "commit", "-m", "track resolved snapshot")
 
-	// Now commit a tracked file in the captain worktree at the same path (config/soldier-harness).
-	// config/ is git-ignored via worktree exclude, so we must force-add.
-	os.MkdirAll(filepath.Join(homePath, "config"), 0755)
-	os.WriteFile(filepath.Join(homePath, "config", "soldier-harness"), []byte("tracked-content\n"), 0644)
-	gitTestRun(t, homePath, "add", "-f", "config/soldier-harness")
-	gitTestRun(t, homePath, "commit", "-m", "track soldier-harness")
-
-	// The worktree now has a tracked config/soldier-harness and is on a different
-	// commit than origin/main. That's fine — safeFF will be skipped in the test.
-	// ConfigPush should refuse because soldier-harness is tracked.
+	// ConfigPush should refuse because the snapshot destination is tracked.
 	err := configPush(parent, homePath)
 	if err == nil {
 		t.Fatal("expected error for tracked destination in git worktree")
@@ -4009,21 +4278,46 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 	gitTestRun(t, project, "push", "-u", "origin", "main")
 	gitTestRun(t, project, "remote", "set-head", "origin", "main")
 
-	// Create parent config so ConfigPush has work to do.
-	os.MkdirAll(filepath.Join(parent, "config"), 0755)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
-	os.WriteFile(filepath.Join(parent, "config", "soldier-dispatch.json"), []byte("{}\n"), 0644)
-
 	homePath := filepath.Join(parent, "captains", "test-captain")
+	// Typed parent config binds the captain to a project so each configPush
+	// publishes a resolved snapshot into the worktree.
+	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
+		SchemaVersion: config.ProjectRegistrySchemaVersion,
+		Projects: []config.ProjectRecord{
+			{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
+		SchemaVersion: config.CaptainRegistrySchemaVersion,
+		Captains: []config.CaptainRecord{
+			{ID: "test-captain", Home: homePath, Project: "test-captain"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Run multiple ConfigPush + RefreshCharter cycles.
 	for i := 0; i < 5; i++ {
-		// Vary parent config content each cycle to verify inheritance pushes.
-		content := fmt.Sprintf("pi-%d\n", i)
-		os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte(content), 0644)
+		// Vary the inherited harness each cycle to verify inheritance pushes.
+		content := fmt.Sprintf("pi-%d", i)
+		if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+			Config:        config.ProjectOverlay{SoldierHarness: content},
+		}); err != nil {
+			t.Fatalf("StoreFleetBase cycle %d: %v", i, err)
+		}
 
 		if err := configPush(parent, homePath); err != nil {
 			t.Fatalf("ConfigPush cycle %d failed: %v", i, err)
@@ -4051,12 +4345,12 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 		}
 
 		// Inherited config must reflect latest push.
-		destContent, err := os.ReadFile(filepath.Join(homePath, "config", "soldier-harness"))
+		snapshot, err := config.LoadPublishedSnapshot(homePath)
 		if err != nil {
-			t.Fatalf("soldier-harness missing after cycle %d: %v", i, err)
+			t.Fatalf("resolved snapshot missing after cycle %d: %v", i, err)
 		}
-		if string(destContent) != content {
-			t.Errorf("soldier-harness content cycle %d = %q, want %q", i, string(destContent), content)
+		if snapshot.Config().SoldierHarness != content {
+			t.Errorf("snapshot soldierHarness cycle %d = %q, want %q", i, snapshot.Config().SoldierHarness, content)
 		}
 	}
 
