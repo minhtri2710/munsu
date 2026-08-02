@@ -1,0 +1,274 @@
+package cli
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+)
+
+// decisionHoldAuthority composes the command-context Authority over the given
+// home, mirroring what the decision-hold commands do.
+func decisionHoldAuthority(t *testing.T, homeDir string) *taskauthority.Authority {
+	t.Helper()
+	ctx := Ctx{Home: homeDir}
+	auth, err := ctx.TaskAuthority()
+	if err != nil {
+		t.Fatalf("composing task authority: %v", err)
+	}
+	return auth
+}
+
+func containsAction(actions []taskauthority.DispatchAction, action taskauthority.DispatchAction) bool {
+	for _, candidate := range actions {
+		if candidate == action {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDecisionHoldHoldAndListRouteThroughAuthority proves `decision-hold
+// hold` creates a durable Authority DispatchHold (never a legacy holds/ file)
+// and appends the needs-decision status projection, and that `decision-hold
+// list` reads unresolved holds back from the Authority (Task 5.2 criterion 3).
+func TestDecisionHoldHoldAndListRouteThroughAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+
+	out, err := runRoot(t, "decision-hold", "hold", "approach",
+		"--reason", "Pick the UI framework", "--from", "scout-r2",
+		"--home", homeDir, "--output", "json")
+	if err != nil {
+		t.Fatalf("hold: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"kind": "decision-hold.hold"`) || !strings.Contains(out, "created") {
+		t.Fatalf("hold output = %s", out)
+	}
+
+	// The authoritative hold lives in the v2 Authority store, not in the
+	// legacy <home>/holds directory.
+	auth := decisionHoldAuthority(t, homeDir)
+	holds, err := auth.ListHolds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 || holds[0].ID != "scout-r2-decision-approach" {
+		t.Fatalf("authority holds = %+v, want scout-r2-decision-approach", holds)
+	}
+	hold := holds[0]
+	if hold.ReleasedAt != 0 || hold.Reason != "Pick the UI framework" {
+		t.Fatalf("hold = %+v", hold)
+	}
+	if len(hold.Scope.TaskIDs) != 1 || hold.Scope.TaskIDs[0] != "scout-r2" {
+		t.Fatalf("hold scope = %+v, want task-scoped to scout-r2", hold.Scope)
+	}
+	for _, action := range []taskauthority.DispatchAction{
+		taskauthority.DispatchActionStart, taskauthority.DispatchActionSpawn, taskauthority.DispatchActionHandoff,
+	} {
+		if !containsAction(hold.Actions, action) {
+			t.Fatalf("hold actions = %v, missing %s", hold.Actions, action)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "holds")); !os.IsNotExist(err) {
+		t.Fatalf("legacy holds directory written: %v", err)
+	}
+
+	// Status projection line appended to the origin task.
+	statuses, err := os.ReadFile(filepath.Join(homeDir, "state", "scout-r2.status"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(statuses), "needs-decision: Pick the UI framework [key=approach]") {
+		t.Fatalf("status = %q", statuses)
+	}
+
+	// List reads unresolved holds from the Authority.
+	out, err = runRoot(t, "decision-hold", "list", "scout-r2", "--home", homeDir, "--output", "json")
+	if err != nil {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"kind": "decision-hold.list"`) || !strings.Contains(out, `"decision_key": "approach"`) {
+		t.Fatalf("list output = %s", out)
+	}
+}
+
+// TestDecisionHoldHoldIsIdempotent proves repeating `decision-hold hold` with
+// the same key and origin is a no-op reported as already existing, keeping
+// the typed contract stable.
+func TestDecisionHoldHoldIsIdempotent(t *testing.T) {
+	homeDir := t.TempDir()
+	args := []string{"decision-hold", "hold", "approach",
+		"--reason", "Pick the UI framework", "--from", "scout-r2",
+		"--home", homeDir, "--output", "json"}
+
+	if out, err := runRoot(t, args...); err != nil {
+		t.Fatalf("first hold: %v\n%s", err, out)
+	}
+	out, err := runRoot(t, args...)
+	if err != nil {
+		t.Fatalf("second hold: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "already exists") || !strings.Contains(out, `"noop": true`) {
+		t.Fatalf("idempotent hold output = %s", out)
+	}
+	auth := decisionHoldAuthority(t, homeDir)
+	holds, err := auth.ListHolds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 {
+		t.Fatalf("authority holds = %d, want exactly one", len(holds))
+	}
+}
+
+// TestDecisionHoldResolveRoutesThroughAuthority proves `decision-hold
+// resolve` releases the Authority hold, records the answer in the status
+// projection, and unblocks dependents — without touching the legacy hold
+// path.
+func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	if out, err := runRoot(t, "decision-hold", "hold", "approach",
+		"--reason", "Pick the UI framework", "--from", "scout-r2",
+		"--home", homeDir, "--output", "json"); err != nil {
+		t.Fatalf("hold: %v\n%s", err, out)
+	}
+
+	out, err := runRoot(t, "decision-hold", "resolve", "approach",
+		"--answer", "Choose React", "--from", "scout-r2",
+		"--unblock", "dep-task-1", "--home", homeDir, "--output", "json")
+	if err != nil {
+		t.Fatalf("resolve: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"kind": "decision-hold.resolve"`) || !strings.Contains(out, "Choose React") {
+		t.Fatalf("resolve output = %s", out)
+	}
+
+	auth := decisionHoldAuthority(t, homeDir)
+	holds, err := auth.ListHolds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 || holds[0].ReleasedAt == 0 {
+		t.Fatalf("authority holds after resolve = %+v, want one released hold", holds)
+	}
+
+	statuses, err := os.ReadFile(filepath.Join(homeDir, "state", "scout-r2.status"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(statuses), "resolved: Choose React [key=approach]") {
+		t.Fatalf("origin status = %q", statuses)
+	}
+	depStatuses, err := os.ReadFile(filepath.Join(homeDir, "state", "dep-task-1.status"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(depStatuses), "unblocked: decision resolved [key=approach]") {
+		t.Fatalf("dependent status = %q", depStatuses)
+	}
+
+	// List now reports no unresolved holds.
+	out, err = runRoot(t, "decision-hold", "list", "scout-r2", "--home", homeDir, "--output", "json")
+	if err != nil {
+		t.Fatalf("list after resolve: %v\n%s", err, out)
+	}
+	var envelope struct {
+		Data struct {
+			Count int `json:"count"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("list output not JSON: %v\n%s", err, out)
+	}
+	if envelope.Data.Count != 0 {
+		t.Fatalf("unresolved count = %d, want 0", envelope.Data.Count)
+	}
+}
+
+// TestDecisionHoldCompleteRoutesThroughAuthority proves `decision-hold
+// complete` releases each named hold through the Authority and keeps the
+// typed contract output stable.
+func TestDecisionHoldCompleteRoutesThroughAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	for _, key := range []string{"approach", "db-schema"} {
+		if out, err := runRoot(t, "decision-hold", "hold", key,
+			"--reason", "pick "+key, "--from", "scout-r2",
+			"--home", homeDir, "--output", "json"); err != nil {
+			t.Fatalf("hold %s: %v\n%s", key, err, out)
+		}
+	}
+
+	out, err := runRoot(t, "decision-hold", "complete", "scout-r2", "approach", "db-schema",
+		"--home", homeDir, "--output", "json")
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"kind": "decision-hold.complete"`) || !strings.Contains(out, "Completed 2 decision hold(s)") {
+		t.Fatalf("complete output = %s", out)
+	}
+
+	auth := decisionHoldAuthority(t, homeDir)
+	holds, err := auth.ListHolds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 2 {
+		t.Fatalf("authority holds = %d, want 2", len(holds))
+	}
+	for _, hold := range holds {
+		if hold.ReleasedAt == 0 {
+			t.Fatalf("hold %s not released by complete: %+v", hold.ID, hold)
+		}
+	}
+}
+
+// TestDecisionHoldVerifyClean proves `decision-hold verify` reports no
+// unresolved decisions once every Authority hold is released.
+func TestDecisionHoldVerifyClean(t *testing.T) {
+	homeDir := t.TempDir()
+	if out, err := runRoot(t, "decision-hold", "hold", "approach",
+		"--reason", "Pick the UI framework", "--from", "scout-r2",
+		"--home", homeDir, "--output", "json"); err != nil {
+		t.Fatalf("hold: %v\n%s", err, out)
+	}
+	if out, err := runRoot(t, "decision-hold", "resolve", "approach",
+		"--answer", "Choose React", "--from", "scout-r2",
+		"--home", homeDir, "--output", "json"); err != nil {
+		t.Fatalf("resolve: %v\n%s", err, out)
+	}
+
+	out, err := runRoot(t, "decision-hold", "verify", "scout-r2", "--home", homeDir)
+	if err != nil {
+		t.Fatalf("verify clean: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "No unresolved decisions") {
+		t.Fatalf("verify output = %s", out)
+	}
+}
+
+// TestDecisionHoldFailsClosedOnLegacyV1Home proves decision-hold commands on
+// a legacy v1 home fail closed with the typed migration-required error
+// surfaced to the operator instead of bypassing the Authority.
+func TestDecisionHoldFailsClosedOnLegacyV1Home(t *testing.T) {
+	homeDir := t.TempDir()
+	v1Hold := filepath.Join(homeDir, "state", ".dispatch", "holds")
+	if err := os.MkdirAll(v1Hold, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v1Hold, "pause.json"), []byte(`{"schema_version":"munsu.dispatch-control/v1"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runRoot(t, "decision-hold", "list", "scout-r2", "--home", homeDir, "--output", "json")
+	if err == nil || !strings.Contains(err.Error(), "migration") {
+		t.Fatalf("list on v1 home err = %v, want migration-required surfaced", err)
+	}
+	_, err = runRoot(t, "decision-hold", "hold", "approach",
+		"--reason", "pick", "--from", "scout-r2", "--home", homeDir, "--output", "json")
+	if err == nil || !strings.Contains(err.Error(), "migration") {
+		t.Fatalf("hold on v1 home err = %v, want migration-required surfaced", err)
+	}
+}

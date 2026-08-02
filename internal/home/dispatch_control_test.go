@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDispatchInterpretationPersistsCanonicalReadinessAndDependencyDigest(t *testing.T) {
@@ -58,12 +59,10 @@ func TestDispatchInterpretationMaterialAmbiguityPersistsDecision(t *testing.T) {
 	if err := CheckDispatchHold(homeDir, DispatchActionSpawn, "b", "", "", ""); !errors.Is(err, ErrDispatchHeld) {
 		t.Fatalf("ambiguity hold err = %v, want held", err)
 	}
-	if err := ResolveDispatchDecision(homeDir, record.DecisionKey, "run child first"); err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckDispatchHold(homeDir, DispatchActionSpawn, "b", "", "", ""); !errors.Is(err, ErrDispatchHeld) {
-		t.Fatalf("resolved decision released hold: %v", err)
-	}
+	// Resolution of the decision and release of the matching hold are one
+	// atomic Authority operation now (Task 5.2 ResolveDecision); the legacy
+	// home mutation ResolveDispatchDecision is deleted with zero production
+	// callers.
 }
 
 func TestDispatchInterpretationRejectsDependencyUnsafeReinterpretation(t *testing.T) {
@@ -77,36 +76,22 @@ func TestDispatchInterpretationRejectsDependencyUnsafeReinterpretation(t *testin
 	}
 }
 
-func TestDispatchHoldBlocksScopedActionsAndReleaseDoesNotStart(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := CreateTaskAggregate(homeDir, "task", "owner", "work", "ship", "project"); err != nil {
+// seedHold writes one legacy v1 dispatch hold document directly. The home
+// mutation CreateDispatchHold is deleted (Task 5.2: authoritative hold
+// mutation flows through the Authority), so remaining home hold-evaluation
+// tests seed the v1 read path the home adapter still serves.
+func seedHold(t *testing.T, homeDir string, id string, scope DispatchHoldScope, actions []DispatchAction, reason string) {
+	t.Helper()
+	hold := DispatchHold{
+		SchemaVersion: dispatchControlSchema,
+		ID:            id,
+		Scope:         scope,
+		Actions:       append([]DispatchAction(nil), actions...),
+		Reason:        reason,
+		CreatedAt:     time.Now().UnixNano(),
+	}
+	if err := writeDispatchJSON(dispatchHoldPath(homeDir, id), hold); err != nil {
 		t.Fatal(err)
-	}
-	before, _, err := ReadCurrentTaskAggregate(homeDir, "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	hold, err := CreateDispatchHold(homeDir, DispatchHoldInput{ID: "pause-task", Scope: DispatchHoldScope{TaskIDs: []string{"task"}}, Actions: []DispatchAction{DispatchActionStart, DispatchActionSpawn}, Reason: "wait for operator"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, action := range []DispatchAction{DispatchActionStart, DispatchActionSpawn} {
-		if err := CheckDispatchHold(homeDir, action, "task", "project", "1", ""); !errors.Is(err, ErrDispatchHeld) {
-			t.Fatalf("action %s err = %v, want held", action, err)
-		}
-	}
-	if err := ReleaseDispatchHold(homeDir, hold.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckDispatchHold(homeDir, DispatchActionStart, "task", "project", "1", ""); err != nil {
-		t.Fatalf("released hold still blocks: %v", err)
-	}
-	after, _, err := ReadCurrentTaskAggregate(homeDir, "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.State != before.State || after.Generation != before.Generation {
-		t.Fatalf("hold changed queued aggregate: before=%+v after=%+v", before, after)
 	}
 }
 
@@ -115,9 +100,7 @@ func TestQueryTaskReadinessWithHoldIsPure(t *testing.T) {
 	if _, err := CreateTaskAggregate(homeDir, "task", "owner", "work", "ship", "project"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateDispatchHold(homeDir, DispatchHoldInput{ID: "pause-ready", Scope: DispatchHoldScope{TaskIDs: []string{"task"}}, Actions: []DispatchAction{DispatchActionStart}, Reason: "pause"}); err != nil {
-		t.Fatal(err)
-	}
+	seedHold(t, homeDir, "pause-ready", DispatchHoldScope{TaskIDs: []string{"task"}}, []DispatchAction{DispatchActionStart}, "pause")
 	before, err := os.ReadDir(filepath.Join(homeDir, "state"))
 	if err != nil {
 		t.Fatal(err)
@@ -137,9 +120,7 @@ func TestQueryTaskReadinessWithHoldIsPure(t *testing.T) {
 
 func TestDispatchHoldSurvivesReload(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := CreateDispatchHold(homeDir, DispatchHoldInput{ID: "pause-home", Actions: []DispatchAction{DispatchActionHandoff}, Reason: "pause"}); err != nil {
-		t.Fatal(err)
-	}
+	seedHold(t, homeDir, "pause-home", DispatchHoldScope{}, []DispatchAction{DispatchActionHandoff}, "pause")
 	if err := CheckDispatchHold(homeDir, DispatchActionHandoff, "other", "", "", ""); !errors.Is(err, ErrDispatchHeld) {
 		t.Fatalf("reloaded hold err = %v", err)
 	}
@@ -147,9 +128,7 @@ func TestDispatchHoldSurvivesReload(t *testing.T) {
 
 func TestGenerationScopedHoldDoesNotBlockReopenedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := CreateDispatchHold(homeDir, DispatchHoldInput{ID: "pause-generation", Scope: DispatchHoldScope{TaskIDs: []string{"task"}, Generations: []string{"1"}}, Actions: []DispatchAction{DispatchActionStart}, Reason: "pause generation 1"}); err != nil {
-		t.Fatal(err)
-	}
+	seedHold(t, homeDir, "pause-generation", DispatchHoldScope{TaskIDs: []string{"task"}, Generations: []string{"1"}}, []DispatchAction{DispatchActionStart}, "pause generation 1")
 	if err := CheckDispatchHold(homeDir, DispatchActionStart, "task", "", "1", ""); !errors.Is(err, ErrDispatchHeld) {
 		t.Fatalf("generation 1 err = %v, want held", err)
 	}
@@ -177,9 +156,7 @@ func TestCheckDispatchHoldIgnoresWatcherHealth(t *testing.T) {
 	}
 
 	// A matching hold is still enforced even with an unhealthy watcher.
-	if _, err := CreateDispatchHold(homeDir, DispatchHoldInput{ID: "pause-start", Actions: []DispatchAction{DispatchActionStart}, Reason: "pause all starts"}); err != nil {
-		t.Fatal(err)
-	}
+	seedHold(t, homeDir, "pause-start", DispatchHoldScope{}, []DispatchAction{DispatchActionStart}, "pause all starts")
 	if err := CheckDispatchHold(homeDir, DispatchActionStart, "", "", "", ""); !errors.Is(err, ErrDispatchHeld) {
 		t.Errorf("held action with unhealthy watcher: err = %v, want ErrDispatchHeld", err)
 	}

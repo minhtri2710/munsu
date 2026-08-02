@@ -21,9 +21,6 @@ var LegacyTaskAuthoritySymbols = []string{
 	"UnblockTask",
 	"ReopenTask",
 	"CheckDispatchHold",
-	"CreateDispatchHold",
-	"ReleaseDispatchHold",
-	"ResolveDispatchDecision",
 	"PersistDispatchInterpretation",
 }
 

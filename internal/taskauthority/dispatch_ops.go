@@ -122,6 +122,81 @@ type HoldResult struct {
 	Replayed bool
 }
 
+// ResolveDecisionRequest resolves one durable dispatch decision.
+type ResolveDecisionRequest struct {
+	OperationID string
+	Actor       Actor
+	Key         string
+	Answer      string
+}
+
+func (r ResolveDecisionRequest) digestPayload() any {
+	return struct {
+		Key    string
+		Answer string
+	}{r.Key, r.Answer}
+}
+
+// DecisionResult is the outcome of one dispatch-decision resolution.
+type DecisionResult struct {
+	Key      string
+	Replayed bool
+}
+
+// ResolveDecision is the named semantic operation that resolves a durable
+// Dispatch Decision and releases its matching Hold in one Store transaction
+// (ADR-0007 §2). The matching hold is the decision's task-scoped hold staged
+// by InterpretDispatch (ID = Key + "-hold"); a decision without that hold
+// still resolves. Resolving never transitions a task phase: queued work does
+// not auto-start (ADR-0004 §7). Repeating the same Operation ID with the
+// same intent digest replays; a changed digest conflicts non-retryably; an
+// already-resolved decision with a different answer under a new Operation ID
+// conflicts.
+func (a *Authority) ResolveDecision(req ResolveDecisionRequest) (DecisionResult, error) {
+	if strings.TrimSpace(req.Key) == "" {
+		return DecisionResult{}, validationError("dispatch decision key must not be empty")
+	}
+	if strings.TrimSpace(req.Answer) == "" {
+		return DecisionResult{}, validationError("dispatch decision answer must not be empty")
+	}
+	op, err := a.operation(req.OperationID, req.Actor, req.digestPayload())
+	if err != nil {
+		return DecisionResult{}, err
+	}
+	receipt, err := a.store.Update(op, func(tx *Tx) error {
+		decision, ok := tx.Decision(req.Key)
+		if !ok {
+			return conflictError(ErrDecisionNotFound, "dispatch decision %s not found", req.Key)
+		}
+		if decision.ResolvedAt != 0 {
+			if decision.Answer == req.Answer {
+				return nil // idempotent: already resolved with the same answer
+			}
+			return conflictError(ErrConflict, "dispatch decision %s already resolved with a different answer", req.Key)
+		}
+		updated := decision
+		updated.ResolvedAt = a.now().UnixNano()
+		updated.Answer = req.Answer
+		if err := tx.PutDecision(updated); err != nil {
+			return err
+		}
+		// Release the decision's matching hold in the same transaction; a
+		// missing hold is not an error (a decision may resolve alone).
+		if hold, ok := tx.Hold(req.Key + "-hold"); ok && hold.ReleasedAt == 0 {
+			released := hold.clone()
+			released.ReleasedAt = a.now().UnixNano()
+			if err := tx.PutHold(released); err != nil {
+				return err
+			}
+		}
+		return tx.AppendAudit(a.dispatchAudit(op, "decision resolved: "+req.Key))
+	})
+	if err != nil {
+		return DecisionResult{}, err
+	}
+	return DecisionResult{Key: req.Key, Replayed: receipt.Replayed}, nil
+}
+
 func normalizeScope(scope DispatchHoldScope) DispatchHoldScope {
 	return DispatchHoldScope{
 		ProjectIDs:  uniqueSortedStrings(scope.ProjectIDs),

@@ -23,6 +23,8 @@ var (
 	ErrDispatchHeld = errors.New("dispatch is held")
 	// ErrHoldNotFound means the named dispatch hold does not exist.
 	ErrHoldNotFound = errors.New("dispatch hold not found")
+	// ErrDecisionNotFound means the named dispatch decision does not exist.
+	ErrDecisionNotFound = errors.New("dispatch decision not found")
 	// ErrOperationConflict means an operation ID was reused with a different
 	// request digest (non-retryable identity conflict).
 	ErrOperationConflict = errors.New("operation identity reused with different intent")

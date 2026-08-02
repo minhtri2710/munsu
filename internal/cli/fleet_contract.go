@@ -225,12 +225,21 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		}
 	}
 
-	// Count unresolved holds across all tasks
+	// Count unresolved holds across all tasks. The durable hold truth lives in
+	// the Authority Store (Task 5.2); on a legacy v1 home the Authority fails
+	// closed with migration-required, which the snapshot reports as no holds
+	// rather than failing the whole read.
 	unresolvedHolds := 0
-	for _, entry := range snapshot.Tasks {
-		holds, err := fleet.ListUnresolved(ctx.Home, entry.ID)
+	if auth, err := ctx.TaskAuthority(); err == nil {
+		holds, err := auth.ListHolds()
 		if err == nil {
-			unresolvedHolds += len(holds)
+			for _, entry := range snapshot.Tasks {
+				for _, hold := range holds {
+					if hold.ReleasedAt == 0 && holdsScopedToTask(hold, entry.ID) {
+						unresolvedHolds++
+					}
+				}
+			}
 		}
 	}
 

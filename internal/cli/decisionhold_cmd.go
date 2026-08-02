@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +34,108 @@ general's answer is recorded and any dependent work is unblocked.`,
 	return cmd
 }
 
+// decisionHoldID returns the stable Authority hold identity for a general
+// decision: <origin-id>-decision-<decision-key>.
+func decisionHoldID(originID, decisionKey string) string {
+	return originID + "-decision-" + decisionKey
+}
+
+// holdActionSet is the conservative action set a general decision hold gates:
+// a paused task must not be handed off, started, or spawned until the
+// decision resolves.
+var holdActionSet = []taskauthority.DispatchAction{
+	taskauthority.DispatchActionStart,
+	taskauthority.DispatchActionSpawn,
+	taskauthority.DispatchActionHandoff,
+}
+
+// authorityHold returns the committed hold with the given ID, if any.
+func authorityHold(auth *taskauthority.Authority, id string) (taskauthority.DispatchHold, bool, error) {
+	holds, err := auth.ListHolds()
+	if err != nil {
+		return taskauthority.DispatchHold{}, false, err
+	}
+	for _, hold := range holds {
+		if hold.ID == id {
+			return hold, true, nil
+		}
+	}
+	return taskauthority.DispatchHold{}, false, nil
+}
+
+// holdsScopedToTask reports whether a hold gates the given task: a hold
+// applies when its task scope contains the task or when the task scope is
+// empty (empty scope fields match all tasks, ADR-0004 §7).
+func holdsScopedToTask(hold taskauthority.DispatchHold, taskID string) bool {
+	if len(hold.Scope.TaskIDs) == 0 {
+		return true
+	}
+	for _, candidate := range hold.Scope.TaskIDs {
+		if candidate == taskID {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionKeyFromHold recovers the CLI decision key from a hold identity:
+// <origin>-decision-<key> for CLI-created holds, otherwise the decision key
+// behind an interpretation hold (ID = Key + "-hold").
+func decisionKeyFromHold(originID string, hold taskauthority.DispatchHold) string {
+	prefix := originID + "-decision-"
+	if strings.HasPrefix(hold.ID, prefix) {
+		return strings.TrimPrefix(hold.ID, prefix)
+	}
+	if strings.HasSuffix(hold.ID, "-hold") {
+		return strings.TrimSuffix(hold.ID, "-hold")
+	}
+	return hold.ID
+}
+
+// unresolvedDecisionHolds returns the active (unreleased) Authority holds
+// scoped to the origin task, sorted by ID.
+func unresolvedDecisionHolds(auth *taskauthority.Authority, originID string) ([]taskauthority.DispatchHold, error) {
+	holds, err := auth.ListHolds()
+	if err != nil {
+		return nil, err
+	}
+	var unresolved []taskauthority.DispatchHold
+	for _, hold := range holds {
+		if hold.ReleasedAt != 0 {
+			continue
+		}
+		if holdsScopedToTask(hold, originID) {
+			unresolved = append(unresolved, hold)
+		}
+	}
+	sort.Slice(unresolved, func(i, j int) bool { return unresolved[i].ID < unresolved[j].ID })
+	return unresolved, nil
+}
+
+// resolveDecisionHold resolves one decision hold through the Authority:
+// ResolveDecision for a decision-backed hold (resolving the Dispatch Decision
+// and releasing its matching hold atomically), falling back to ReleaseHold
+// for the plain pause holds this command creates. Both paths are idempotent.
+func resolveDecisionHold(ctx Ctx, auth *taskauthority.Authority, originID, decisionKey, answer string) error {
+	hid := decisionHoldID(originID, decisionKey)
+	_, actor := resolveTaskActor(ctx.Home)
+	_, err := auth.ResolveDecision(taskauthority.ResolveDecisionRequest{
+		OperationID: newTaskAuthorityOperationID("decision-hold-resolve"),
+		Actor:       actor,
+		Key:         hid,
+		Answer:      answer,
+	})
+	if errors.Is(err, taskauthority.ErrDecisionNotFound) {
+		_, err = auth.ReleaseHold(taskauthority.ReleaseHoldRequest{
+			OperationID: newTaskAuthorityOperationID("decision-hold-release"),
+			Actor:       actor,
+			ID:          hid,
+			Reason:      "decision resolved",
+		})
+	}
+	return err
+}
+
 func newDecisionHoldHoldCmd() *cobra.Command {
 	var reason string
 	var from string
@@ -40,9 +145,9 @@ func newDecisionHoldHoldCmd() *cobra.Command {
 		Short: "Record a new general decision hold",
 		Long: `Record a new general decision hold.
 
-Creates a durable hold that blocks dependent work until the general
-resolves the decision. Idempotent: running with the same key and
-origin task is a no-op.
+Creates a durable Authority hold that blocks dispatch of the originating
+task until the general resolves the decision. Idempotent: running with
+the same key and origin task is a no-op.
 
 Example:
   munsu decision-hold hold approach --reason "Pick the UI framework" --from scout-r2`,
@@ -56,24 +161,53 @@ Example:
 				return fmt.Errorf("--from is required")
 			}
 
-			result, err := fleet.Create(ctx.Home, from, key, reason)
+			auth, err := ctx.TaskAuthority()
 			if err != nil {
-				return fmt.Errorf("creating hold: %w", err)
+				return fmt.Errorf("decision holds require task authority: %w", err)
+			}
+			hid := decisionHoldID(from, key)
+
+			// The typed contract distinguishes a fresh hold from an idempotent
+			// repeat. An existing hold (any definition) is reported as already
+			// present without a second Authority mutation.
+			created := true
+			if _, exists, err := authorityHold(auth, hid); err != nil {
+				return fmt.Errorf("reading holds: %w", err)
+			} else if exists {
+				created = false
+			} else {
+				_, actor := resolveTaskActor(ctx.Home)
+				if _, err := auth.CreateHold(taskauthority.CreateHoldRequest{
+					OperationID: newTaskAuthorityOperationID("decision-hold"),
+					Actor:       actor,
+					ID:          hid,
+					Scope:       taskauthority.DispatchHoldScope{TaskIDs: []string{from}},
+					Actions:     holdActionSet,
+					Reason:      reason,
+				}); err != nil {
+					return fmt.Errorf("creating hold: %w", err)
+				}
 			}
 
-			if result.Created {
+			// The status line is a post-commit projection (ADR-0007 §7): a
+			// projection failure must not roll back the authoritative hold.
+			if err := home.AppendStatus(ctx.Home, from, fmt.Sprintf("needs-decision: %s [key=%s]", reason, key)); err != nil {
+				return fmt.Errorf("appending needs-decision status: %w", err)
+			}
+
+			if created {
 				return writeContract(cmd, Response[MessageResult]{
 					SchemaVersion: SchemaVersion,
 					Kind:          "decision-hold.hold",
 					Status:        "success",
-					Data:          MessageResult{Message: fmt.Sprintf("Hold %s created on %s", result.HoldID, from)},
+					Data:          MessageResult{Message: fmt.Sprintf("Hold %s created on %s", hid, from)},
 				})
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
 				Kind:          "decision-hold.hold",
 				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("Hold %s already exists on %s (idempotent)", result.HoldID, from), Noop: true},
+				Data:          MessageResult{Message: fmt.Sprintf("Hold %s already exists on %s (idempotent)", hid, from), Noop: true},
 			})
 		}),
 	}
@@ -115,17 +249,25 @@ Examples:
 				return fmt.Errorf("specify at least one key or --none")
 			}
 
-			if err := fleet.Complete(ctx.Home, originID, keys); err != nil {
-				return fmt.Errorf("completing decision holds: %w", err)
-			}
-
 			if len(keys) == 1 && keys[0] == "--none" {
+				// Attestation is an ephemeral command outcome: nothing durable
+				// is written when the reviewed surface has no decisions.
 				return writeContract(cmd, Response[MessageResult]{
 					SchemaVersion: SchemaVersion,
 					Kind:          "decision-hold.complete",
 					Status:        "success",
 					Data:          MessageResult{Message: fmt.Sprintf("Attested no pending decisions for %s", originID)},
 				})
+			}
+
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return fmt.Errorf("decision holds require task authority: %w", err)
+			}
+			for _, key := range keys {
+				if err := resolveDecisionHold(ctx, auth, originID, key, "recorded (decision noted)"); err != nil {
+					return fmt.Errorf("completing decision hold %s: %w", key, err)
+				}
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
@@ -142,11 +284,83 @@ Examples:
 	return cmd
 }
 
+// verifyDecisionHolds computes the unresolved decision keys for an origin
+// task: active Authority holds scoped to the task, plus stale
+// needs-decision status lines whose key has no resolved counterpart.
+func verifyDecisionHolds(ctx Ctx, auth *taskauthority.Authority, originID string, keys []string) ([]string, error) {
+	unresolved := map[string]bool{}
+	check := map[string]bool{}
+	for _, key := range keys {
+		check[key] = true
+	}
+
+	holds, err := auth.ListHolds()
+	if err != nil {
+		return nil, err
+	}
+	active := map[string]bool{}
+	allKeys := map[string]bool{}
+	for _, hold := range holds {
+		if !holdsScopedToTask(hold, originID) {
+			continue
+		}
+		allKeys[decisionKeyFromHold(originID, hold)] = true
+		if hold.ReleasedAt == 0 {
+			key := decisionKeyFromHold(originID, hold)
+			active[key] = true
+			unresolved[key] = true
+		}
+	}
+	if len(check) == 0 {
+		for key := range allKeys {
+			check[key] = true
+		}
+	}
+
+	// Status-line staleness: a needs-decision line without a resolved line
+	// is unresolved unless the key is already resolved by an active-hold
+	// absence. Active Authority holds dominate; released holds are resolved.
+	statusLines, err := home.ReadStatus(ctx.Home, originID)
+	if err != nil {
+		return nil, fmt.Errorf("reading status for %s: %w", originID, err)
+	}
+	resolved := map[string]bool{}
+	needs := map[string]bool{}
+	for _, line := range statusLines {
+		_, key := home.ParseStatusKey(line)
+		if key == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "resolved:") {
+			resolved[key] = true
+		}
+		if strings.HasPrefix(line, "needs-decision:") {
+			needs[key] = true
+		}
+	}
+	for key := range check {
+		if active[key] || resolved[key] {
+			continue
+		}
+		if needs[key] {
+			unresolved[key] = true
+		}
+	}
+
+	out := make([]string, 0, len(unresolved))
+	for key := range unresolved {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func newDecisionHoldVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify <origin-id> [<key>...]",
 		Short: "Verify no stale needs-decision holds remain",
-		Long: `Verify that the originating task has no stale needs-decision status lines.
+		Long: `Verify that the originating task has no stale needs-decision status lines
+and no active Authority decision holds.
 
 When keys are provided, only those keys are checked. Without keys, all
 holds for the origin task are checked.
@@ -160,28 +374,26 @@ Example:
 			originID := args[0]
 			keys := args[1:]
 
-			var unresolvedKeys []string
-			var err error
-
-			if len(keys) > 0 {
-				unresolvedKeys, err = fleet.Verify(ctx.Home, originID, keys)
-			} else {
-				unresolvedKeys, err = fleet.Verify(ctx.Home, originID, nil)
-			}
-
+			auth, err := ctx.TaskAuthority()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: verifying holds: %v\n", err)
+				fmt.Fprintf(cmd.ErrOrStderr(), "error: verifying holds: %v\n", err)
+				os.Exit(2)
+				return nil
+			}
+			unresolvedKeys, err := verifyDecisionHolds(ctx, auth, originID, keys)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "error: verifying holds: %v\n", err)
 				os.Exit(2)
 				return nil
 			}
 
 			if len(unresolvedKeys) > 0 {
-				fmt.Fprintf(os.Stderr, "unresolved decisions remain: %s\n", strings.Join(unresolvedKeys, ", "))
+				fmt.Fprintf(cmd.ErrOrStderr(), "unresolved decisions remain: %s\n", strings.Join(unresolvedKeys, ", "))
 				os.Exit(1)
 				return nil
 			}
 
-			fmt.Printf("No unresolved decisions for %s\n", originID)
+			fmt.Fprintf(cmd.OutOrStdout(), "No unresolved decisions for %s\n", originID)
 			return nil
 		}),
 	}
@@ -214,8 +426,25 @@ Examples:
 				return fmt.Errorf("--from is required")
 			}
 
-			if err := fleet.Resolve(ctx.Home, from, key, answer, unblock); err != nil {
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return fmt.Errorf("decision holds require task authority: %w", err)
+			}
+			if err := resolveDecisionHold(ctx, auth, from, key, answer); err != nil {
 				return fmt.Errorf("resolving hold: %w", err)
+			}
+
+			// Status lines are post-commit projections (ADR-0007 §7).
+			if err := home.AppendStatus(ctx.Home, from, fmt.Sprintf("resolved: %s [key=%s]", answer, key)); err != nil {
+				return fmt.Errorf("appending resolved status: %w", err)
+			}
+			for _, depID := range unblock {
+				if depID == "" {
+					continue
+				}
+				if err := home.AppendStatus(ctx.Home, depID, fmt.Sprintf("unblocked: decision resolved [key=%s]", key)); err != nil {
+					return fmt.Errorf("unblocking %s: %w", depID, err)
+				}
 			}
 
 			msg := fmt.Sprintf("Hold %s resolved: %s", key, answer)
@@ -246,7 +475,11 @@ func newDecisionHoldListCmd() *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			originID := args[0]
 
-			holds, err := fleet.ListUnresolved(ctx.Home, originID)
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return fmt.Errorf("decision holds require task authority: %w", err)
+			}
+			holds, err := unresolvedDecisionHolds(auth, originID)
 			if err != nil {
 				return fmt.Errorf("listing holds: %w", err)
 			}
@@ -261,10 +494,10 @@ func newDecisionHoldListCmd() *cobra.Command {
 			}
 
 			var holdEntries []DecisionHoldInfo
-			for _, h := range holds {
+			for _, hold := range holds {
 				holdEntries = append(holdEntries, DecisionHoldInfo{
-					DecisionKey: h.DecisionKey,
-					Reason:      h.Reason,
+					DecisionKey: decisionKeyFromHold(originID, hold),
+					Reason:      hold.Reason,
 				})
 			}
 

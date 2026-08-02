@@ -3,14 +3,15 @@ package fleet
 
 import (
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 )
@@ -240,8 +241,13 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 		return fmt.Errorf("checking report.md: %w", err)
 	}
 
-	// After report exists, check for unresolved decision holds.
-	unresolvedKeys, err := Verify(opts.HomeDir, opts.ID, nil)
+	// After report exists, check for unresolved decision holds. The decision
+	// hold lifecycle mirrors into the task status projection (a needs-decision
+	// line until a resolved line is recorded), and teardown is not a held
+	// dispatch action (holds gate handoff/start/spawn, ADR-0004 §7), so the
+	// safety check reads the status projection — projection compatibility
+	// remains permitted while the authoritative dispatch cutover proceeds.
+	unresolvedKeys, err := unresolvedDecisionKeysFromStatus(opts.HomeDir, opts.ID)
 	if err != nil {
 		return fmt.Errorf("checking decision holds: %w", err)
 	}
@@ -250,6 +256,38 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 	}
 
 	return nil
+}
+
+// unresolvedDecisionKeysFromStatus derives unresolved decision keys from the
+// task status projection: a needs-decision line whose key has no resolved
+// counterpart is still open.
+func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) {
+	statusLines, err := home.ReadStatus(homeDir, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("reading status for %s: %w", taskID, err)
+	}
+	resolved := map[string]bool{}
+	needs := map[string]bool{}
+	for _, line := range statusLines {
+		_, key := home.ParseStatusKey(line)
+		if key == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "resolved:") {
+			resolved[key] = true
+		}
+		if strings.HasPrefix(line, "needs-decision:") {
+			needs[key] = true
+		}
+	}
+	var unresolved []string
+	for key := range needs {
+		if !resolved[key] {
+			unresolved = append(unresolved, key)
+		}
+	}
+	sort.Strings(unresolved)
+	return unresolved, nil
 }
 
 // shipSafetyCheck verifies work is landed before

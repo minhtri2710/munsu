@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -112,13 +111,6 @@ type DispatchDecision struct {
 	CreatedAt        int64  `json:"created_at"`
 	ResolvedAt       int64  `json:"resolved_at,omitempty"`
 	Answer           string `json:"answer,omitempty"`
-}
-
-type DispatchHoldInput struct {
-	ID      string
-	Scope   DispatchHoldScope
-	Actions []DispatchAction
-	Reason  string
 }
 
 func dispatchControlDir(homeDir string) string { return filepath.Join(homeDir, "state", ".dispatch") }
@@ -284,57 +276,12 @@ func loadDispatchInterpretation(homeDir, id string, seen map[string]bool) (Dispa
 	return loadDispatchInterpretation(parent, id, seen)
 }
 
-func CreateDispatchHold(homeDir string, input DispatchHoldInput) (DispatchHold, error) {
-	if input.ID == "" || strings.ContainsAny(input.ID, `/\\`) {
-		return DispatchHold{}, fmt.Errorf("dispatch hold ID must be a safe non-empty value")
-	}
-	if len(input.Actions) == 0 || input.Reason == "" {
-		return DispatchHold{}, fmt.Errorf("dispatch hold requires actions and reason")
-	}
-	hold := DispatchHold{SchemaVersion: dispatchControlSchema, ID: input.ID, Scope: normalizeDispatchHoldScope(input.Scope), Actions: append([]DispatchAction(nil), input.Actions...), Reason: input.Reason, CreatedAt: time.Now().UnixNano()}
-	if err := withDispatchControlLock(homeDir, func() error { return writeDispatchJSON(dispatchHoldPath(homeDir, input.ID), hold) }); err != nil {
-		return DispatchHold{}, err
-	}
-	return hold, nil
-}
-
 func LoadDispatchDecision(homeDir, key string) (DispatchDecision, error) {
 	var decision DispatchDecision
 	if err := readDispatchJSON(dispatchDecisionPath(homeDir, key), &decision); err != nil {
 		return decision, err
 	}
 	return decision, nil
-}
-
-func ResolveDispatchDecision(homeDir, key, answer string) error {
-	if answer == "" {
-		return fmt.Errorf("dispatch decision answer must not be empty")
-	}
-	return withDispatchControlLock(homeDir, func() error {
-		var decision DispatchDecision
-		if err := readDispatchJSON(dispatchDecisionPath(homeDir, key), &decision); err != nil {
-			return err
-		}
-		if decision.ResolvedAt == 0 {
-			decision.ResolvedAt = time.Now().UnixNano()
-			decision.Answer = answer
-		}
-		return writeDispatchJSON(dispatchDecisionPath(homeDir, key), decision)
-	})
-}
-
-func ReleaseDispatchHold(homeDir, id string) error {
-	return withDispatchControlLock(homeDir, func() error {
-		var hold DispatchHold
-		path := dispatchHoldPath(homeDir, id)
-		if err := readDispatchJSON(path, &hold); err != nil {
-			return err
-		}
-		if hold.ReleasedAt == 0 {
-			hold.ReleasedAt = time.Now().UnixNano()
-		}
-		return writeDispatchJSON(path, hold)
-	})
 }
 
 // CheckDispatchHold evaluates only durable Dispatch Holds. Degraded
@@ -387,13 +334,6 @@ func withDispatchControlLock(homeDir string, fn func() error) error {
 	return fn()
 }
 
-func normalizeDispatchHoldScope(scope DispatchHoldScope) DispatchHoldScope {
-	scope.ProjectIDs = uniqueSorted(scope.ProjectIDs)
-	scope.TaskIDs = uniqueSorted(scope.TaskIDs)
-	scope.Generations = uniqueSorted(scope.Generations)
-	scope.ParentIDs = uniqueSorted(scope.ParentIDs)
-	return scope
-}
 func holdScopeMatches(scope DispatchHoldScope, taskID, projectID, generation, parentID string) bool {
 	return (len(scope.TaskIDs) == 0 || containsString(scope.TaskIDs, taskID)) && (len(scope.ProjectIDs) == 0 || containsString(scope.ProjectIDs, projectID)) && (len(scope.Generations) == 0 || containsString(scope.Generations, generation)) && (len(scope.ParentIDs) == 0 || containsString(scope.ParentIDs, parentID))
 }

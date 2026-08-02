@@ -60,6 +60,16 @@ func (v View) Hold(id string) (DispatchHold, bool) {
 	return DispatchHold{}, false
 }
 
+// Decision returns the named dispatch decision, if any.
+func (v View) Decision(key string) (DispatchDecision, bool) {
+	for _, decision := range v.Decisions {
+		if decision.Key == key {
+			return decision, true
+		}
+	}
+	return DispatchDecision{}, false
+}
+
 // sortedTaskIDs returns the distinct task IDs in the view.
 func (v View) sortedTaskIDs() []string {
 	seen := map[string]bool{}
@@ -120,6 +130,11 @@ func (tx *Tx) Current(taskID string) (Aggregate, bool) {
 // Hold returns the committed named hold, if any.
 func (tx *Tx) Hold(id string) (DispatchHold, bool) {
 	return tx.view.Hold(id)
+}
+
+// Decision returns the committed named dispatch decision, if any.
+func (tx *Tx) Decision(key string) (DispatchDecision, bool) {
+	return tx.view.Decision(key)
 }
 
 // Holds returns the committed dispatch holds.
