@@ -145,8 +145,20 @@
     "directReport": {
       "required": true,
       "recipient": "lead",
-      "transport": "paseo-send-no-wait",
+      "leadAgentIdMustBeInAssignment": true,
+      "transport": "paseo send <lead-agent-id> --no-wait --prompt-file <report> --json",
       "beforePeerFinishes": true,
+      "mustBeFinalPeerAction": true,
+      "successAcknowledgement": {
+        "required": true,
+        "jsonField": "status",
+        "expectedValue": "sent"
+      },
+      "failurePolicy": {
+        "retryOnce": true,
+        "thenEmit": "BLOCKED",
+        "mustNotExitSilently": true
+      },
       "requiredFields": [
         "planItem",
         "result",
@@ -156,11 +168,22 @@
         "recommendedNextAction"
       ]
     },
+    "agentCreation": {
+      "background": true,
+      "notifyOnFinish": true,
+      "notifyOnFinishMustRemainEnabled": true,
+      "assignmentMustInclude": [
+        "lead agent ID",
+        "direct-report command",
+        "required report fields",
+        "acknowledgement and retry policy"
+      ]
+    },
     "zeroIdle": {
       "enabled": true,
       "rule": "Lead may be idle only while an authorized Peer is running or the full plan is complete",
-      "onEngineerComplete": "launch the prepared independent Reviewer immediately",
-      "onReviewerComplete": "rule, report, archive, and launch the prepared next task immediately"
+      "onEngineerComplete": "direct report wakes Lead; launch the prepared independent Reviewer immediately",
+      "onReviewerComplete": "direct verdict wakes Lead; rule, report, archive, and launch the prepared next task immediately"},{
     },
     "preparation": {
       "whileEngineerRuns": [
