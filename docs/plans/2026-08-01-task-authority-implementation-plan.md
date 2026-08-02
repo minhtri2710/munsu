@@ -91,6 +91,8 @@ go test -tags=integration ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonic
 
 All commands passed; the only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` (worktree-sanctioned skip).
 
+Task 6.1 is complete through commit `1ad4e347`. Independent Reviewer acceptance verified all four criteria: `TransferRequest`/`TransferIntent` (pure model in `internal/taskauthority/transfer.go`, zero filesystem imports) bind source/destination home identity, Task ID, exact Generation, a deterministic request digest, and both stable Task Operation IDs, with `Validate()` rejecting empty/mismatched/same-home identities, unsafe Task IDs, invalid Generation, malformed digests, and unsafe Operation IDs; the v1 saga writes a journal v2 with validated per-task intents (durable before staging) and commits fleet-durable destination receipts (`state/.task-handoff-receipts/<op-id>.json`, atomic+fsync) with semantics identical to the Store receipt (same Operation ID + digest → idempotent no-op returning the original; changed digest → non-retryable typed conflict, never overwriting the original); ordering invariant proven by crash tests — all destination receipts commit before any source authority mutation, and failure before the destination receipt leaves source ownership current (recovery re-commits the receipt idempotently and converges to a single destination owner; the 8-boundary crash matrix now includes the `destination-receipt` boundary); a conflicting destination owner (same or newer Generation) fails closed with a typed `domain.ErrorConflict` before preflight, source untouched and destination truth never overwritten. Seam adjudication (Lead ruling, confirmed by the Reviewer): the fleet-durable receipt for the v1 saga path mirrors Store receipt semantics exactly (the fs Store fails closed on v1 homes; same pattern as Task 5.1); Task 6.2 reuses `TransferIntent` for the destination receive operation and retires the v1 file receipt in-slice. Journal v1→v2 bump fails closed on recovery of old journals; no distributed filesystem transaction; lock order preserved.
+
 ## Goal
 
 Move Authoritative Task Aggregate lifecycle, readiness, and durable dispatch control from `internal/home`, direct CLI mutations, and fleet reach-through into one deep `internal/taskauthority` module. Persist it through a crash-recoverable `internal/taskauthorityfs` adapter composed at the CLI, while preserving current on-disk identities and removing each old mutation path as soon as its final caller migrates.
@@ -880,10 +882,10 @@ go vet ./...
 
 **Acceptance criteria:**
 
-- [ ] Transfer intent binds source/destination home identity, Task ID, exact Generation, request digest, and Operation IDs.
-- [ ] Destination receipt is durable and idempotent.
-- [ ] Failure before destination receipt leaves source ownership current.
-- [ ] A conflicting destination owner quarantines/fails closed.
+- [x] Transfer intent binds source/destination home identity, Task ID, exact Generation, request digest, and Operation IDs.
+- [x] Destination receipt is durable and idempotent.
+- [x] Failure before destination receipt leaves source ownership current.
+- [x] A conflicting destination owner quarantines/fails closed.
 
 **Verification:**
 
