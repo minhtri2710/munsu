@@ -20,7 +20,6 @@ func newMigrateCmd() *cobra.Command {
 		Short: "Run explicit state migrations",
 	}
 	cmd.AddCommand(newMigrateWakeResolutionsCmd())
-	cmd.AddCommand(newMigrateTaskAggregatesCmd())
 	cmd.AddCommand(newMigrateTaskAuthorityCmd())
 	cmd.AddCommand(newMigrateConfigCmd())
 	return cmd
@@ -149,77 +148,6 @@ func newMigrateWakeResolutionsCmd() *cobra.Command {
 	cmd.AddCommand(apply)
 	cmd.AddCommand(fleetPlan)
 	cmd.AddCommand(fleetApply)
-	return cmd
-}
-
-func newMigrateTaskAggregatesCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "task-aggregates",
-		Short: "Migrate task state into authoritative task aggregates",
-	}
-	planCmd := &cobra.Command{
-		Use:   "plan",
-		Short: "Plan one-home task aggregate migration without source mutation",
-		Args:  contractNoArgs,
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if _, err := contractOutput(cmd); err != nil {
-				return err
-			}
-			planPath, _ := cmd.Flags().GetString("plan-out")
-			if planPath == "" {
-				return usageError("invalid_argument", "Run `munsu migrate task-aggregates plan --plan-out <plan.json>`", "--plan-out is required")
-			}
-			plan, err := home.PlanTaskAggregateMigration(ctx.Home)
-			if err != nil {
-				return operationError("invalid_argument", "Run `munsu migrate task-aggregates plan --plan-out <plan.json>`", err.Error())
-			}
-			if err := home.WriteMigrationPlan(planPath, plan); err != nil {
-				return operationError("internal", "Run the task aggregate plan command again", err.Error())
-			}
-			message := fmt.Sprintf("Planned %d task aggregate(s), quarantined=%d; digest=%s; plan=%s; apply=munsu migrate task-aggregates apply --plan %s", plan.RecordCount, len(plan.Quarantined), plan.SourceDigest, planPath, shellQuote(planPath))
-			return writeContract(cmd, Response[MessageResult]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "migrate.task_aggregates.plan",
-				Status:        "success",
-				Data:          MessageResult{Message: message},
-			})
-		}),
-	}
-	planCmd.Flags().String("plan-out", "", "Path to write reviewed task aggregate migration plan JSON")
-	configureContractCommand(planCmd)
-	apply := &cobra.Command{
-		Use:   "apply",
-		Short: "Apply one reviewed task aggregate migration plan",
-		Args:  contractNoArgs,
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if _, err := contractOutput(cmd); err != nil {
-				return err
-			}
-			planPath, _ := cmd.Flags().GetString("plan")
-			if planPath == "" {
-				return usageError("invalid_argument", "Run `munsu migrate task-aggregates plan` first, then `munsu migrate task-aggregates apply --plan <plan.json>`", "--plan is required")
-			}
-			plan, err := home.ReadTaskAggregateMigrationPlan(planPath)
-			if err != nil {
-				return operationError("invalid_argument", "Run `munsu migrate task-aggregates plan` again", err.Error())
-			}
-			receipt, err := home.ApplyTaskAggregateMigration(plan)
-			if err != nil {
-				return operationError("internal", "Re-run the same `munsu migrate task-aggregates apply --plan <plan.json>` after fixing the reported state", err.Error())
-			}
-			message := fmt.Sprintf("Migrated %d task aggregate(s); digest=%s", receipt.RecordCount, receipt.SourceDigest)
-			return writeContract(cmd, Response[MessageResult]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "migrate.task_aggregates.apply",
-				Status:        "success",
-				Data:          MessageResult{Message: message},
-			})
-		}),
-	}
-	apply.Flags().String("plan", "", "Path to reviewed task aggregate migration plan JSON")
-	configureContractCommand(apply)
-	cmd.AddCommand(planCmd)
-	cmd.AddCommand(apply)
 	return cmd
 }
 

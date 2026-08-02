@@ -42,9 +42,9 @@ func newBriefCmd() *cobra.Command {
 				return err
 			}
 
-			// Require existing task aggregate or legacy task meta unless --force.
+			// Require existing canonical task or legacy task meta unless --force.
 			if !force {
-				if _, ok, err := mhome.ReadCurrentTaskAggregate(ctx.Home, id); err != nil {
+				if ok, err := currentTaskExists(ctx.Home, id); err != nil {
 					return err
 				} else if !ok {
 					if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {

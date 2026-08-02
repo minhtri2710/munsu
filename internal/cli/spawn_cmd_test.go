@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -763,5 +764,28 @@ func TestPromoteRefusesNonTerminalScout(t *testing.T) {
 	}
 	if agg.Definition.Kind != "scout" || agg.Phase != taskauthority.PhaseQueued {
 		t.Fatalf("aggregate mutated on refused promote = %+v", agg)
+	}
+}
+
+// TestPromoteRefusesAbsentTask proves `promote` fails closed on a task with
+// no canonical record: the CLI preflight reads the Authority and the typed
+// ErrNotFound invariant is surfaced without creating or mutating anything
+// (Task 8.2 sweep closing the 8.1 coverage gap).
+func TestPromoteRefusesAbsentTask(t *testing.T) {
+	homeDir := t.TempDir()
+	out, err := runTaskCommand(t, []string{"promote", "scout-absent", "--home", homeDir})
+	if err == nil {
+		t.Fatalf("promote absent task succeeded:\n%s", out)
+	}
+	if !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("promote absent task err = %v, want typed ErrNotFound", err)
+	}
+	// Nothing was created: the canonical view stays empty and no projections
+	// were written.
+	if _, err := testAuthorityFor(t, homeDir).Get("scout-absent"); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("absent task appears after failed promote: %v", err)
+	}
+	if _, err := home.ReadMeta(homeDir, "scout-absent"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("meta written for absent task: %v", err)
 	}
 }

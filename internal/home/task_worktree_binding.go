@@ -2,12 +2,20 @@ package home
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
+// taskAuthorityDir is the home-relative v2 task-authority namespace root.
+// The v1 aggregate store under state/.task-authority/aggregates was deleted
+// in Task 8.2; this constant now only locates the v2 worktree-lease markers.
+const taskAuthorityDir = "state/.task-authority"
+
+// TaskWorktreeBinding is the v1 worktree binding shape decoded by the
+// task-authority migration (internal/taskauthorityfs convertV1Aggregate).
+// It is decode-only: the v1 aggregate store that produced it was deleted in
+// Task 8.2, and v2 bindings live on taskauthority.Aggregate.Worktree. The
+// lease read below converts a v2 binding into this shape.
 type TaskWorktreeBinding struct {
 	TaskGeneration     string `json:"task_generation"`
 	RepositoryIdentity string `json:"repository_identity"`
@@ -18,37 +26,6 @@ type TaskWorktreeBinding struct {
 	LeaseID            string `json:"lease_id"`
 	FenceToken         string `json:"fence_token"`
 	BoundAtUnix        int64  `json:"bound_at_unix"`
-}
-
-func validateTaskWorktreeBinding(binding TaskWorktreeBinding) error {
-	if err := validateTaskGeneration(binding.TaskGeneration); err != nil {
-		return err
-	}
-	if strings.TrimSpace(binding.RepositoryIdentity) == "" {
-		return fmt.Errorf("worktree binding missing repository identity")
-	}
-	if strings.TrimSpace(binding.Path) == "" {
-		return fmt.Errorf("worktree binding missing path")
-	}
-	if strings.TrimSpace(binding.GitDir) == "" {
-		return fmt.Errorf("worktree binding missing git dir")
-	}
-	if strings.TrimSpace(binding.CommonDir) == "" {
-		return fmt.Errorf("worktree binding missing common dir")
-	}
-	if strings.TrimSpace(binding.Head) == "" {
-		return fmt.Errorf("worktree binding missing head")
-	}
-	if strings.TrimSpace(binding.LeaseID) == "" {
-		return fmt.Errorf("worktree binding missing lease id")
-	}
-	if strings.TrimSpace(binding.FenceToken) == "" {
-		return fmt.Errorf("worktree binding missing fence token")
-	}
-	if binding.BoundAtUnix <= 0 {
-		return fmt.Errorf("worktree binding missing bound timestamp")
-	}
-	return nil
 }
 
 type taskWorktreeLeaseMarker struct {

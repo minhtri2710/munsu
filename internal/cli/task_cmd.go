@@ -148,7 +148,7 @@ func newTaskCmd() *cobra.Command {
 			id := args[0]
 			full, _ := cmd.Flags().GetBool("full")
 
-			resolvedID, err := home.ResolveCurrentTaskID(ctx.Home, id)
+			resolvedID, err := resolveCurrentTaskID(ctx.Home, id)
 			if err != nil {
 				if ambiguous, ok := err.(*home.AmbiguousTaskIDError); ok {
 					return operationError("ambiguous_task_id", strings.Join(ambiguous.CorrectionCommands("munsu task show"), "; "), fmt.Sprintf("Task ID %q is ambiguous", id))

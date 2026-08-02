@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+// writeTaskAggregateCLIFile writes one file with private permissions for CLI
+// migration fixtures.
+func writeTaskAggregateCLIFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMigrateTaskAuthorityPlanAndApplyCommands(t *testing.T) {
 	home := t.TempDir()
 	writeTaskAggregateCLIFile(t, filepath.Join(home, "state", ".task-authority", "aggregates", "ship-1", "1.json"), `{

@@ -15,23 +15,44 @@ import (
 // audit-only: appending a status line must never change the authoritative
 // Task Aggregate phase, even when a legacy v1 aggregate is still on disk
 // (Task 3.4 criterion 1). Authoritative transitions belong to named
-// operations owned by the parent rank, not to arbitrary status text.
+// operations owned by the parent rank, not to arbitrary status text. The
+// v1 aggregate store writer is deleted (Task 8.2), so the fixture writes
+// the v1 document shape directly and asserts it stays byte-identical.
 func TestTaskStatusCannotMutateAuthoritativePhase(t *testing.T) {
 	homeDir := t.TempDir()
 	// Seed a legacy v1 aggregate exactly as pre-migration state exists so the
 	// old generic state-setter would have a target to mutate.
-	if _, err := home.CreateTaskAggregate(homeDir, "legacy", "", "work", "ship", ""); err != nil {
+	v1Path := filepath.Join(homeDir, "state", ".task-authority", "aggregates", "legacy", "1.json")
+	v1Doc := `{
+  "schema_version": "munsu.task-aggregate/v1",
+  "task_id": "legacy",
+  "generation": "1",
+  "current": true,
+  "owner": "general",
+  "definition": "work",
+  "state": "queued",
+  "kind": "ship"
+}
+`
+	if err := os.MkdirAll(filepath.Dir(v1Path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(v1Path, []byte(v1Doc), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runTaskCommand(t, []string{"task", "status", "legacy", "done", "completed", "--home", homeDir}); err != nil {
 		t.Fatalf("task status: %v", err)
 	}
-	agg, ok, err := home.ReadCurrentTaskAggregate(homeDir, "legacy")
-	if err != nil || !ok {
-		t.Fatalf("reading aggregate: ok=%v err=%v", ok, err)
+	data, err := os.ReadFile(v1Path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if agg.State != "queued" {
-		t.Fatalf("task status mutated authoritative phase to %q; want %q", agg.State, "queued")
+	if string(data) != v1Doc {
+		t.Fatalf("task status mutated the v1 aggregate document:\n%s", data)
+	}
+	statusLines, err := home.ReadStatus(homeDir, "legacy")
+	if err != nil || len(statusLines) != 1 || statusLines[0] != "done: completed" {
+		t.Fatalf("status projection = %v err=%v", statusLines, err)
 	}
 }
 

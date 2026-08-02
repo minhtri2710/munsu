@@ -180,7 +180,7 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				if meta, metaErr := home.ReadMeta(homeDir, taskID); metaErr == nil {
 					fallbackGeneration = meta["generation"]
 				}
-				metaGeneration, genErr := home.CurrentTaskGeneration(homeDir, taskID, fallbackGeneration)
+				metaGeneration, genErr := currentTaskGeneration(homeDir, taskID, fallbackGeneration)
 				if genErr != nil {
 					return fmt.Errorf("report: reading task aggregate: %w", genErr)
 				}

@@ -46,7 +46,7 @@ Flags:
 			if meta, err := home.ReadMeta(ctx.Home, taskID); err == nil {
 				fallbackGeneration = meta["generation"]
 			}
-			metaGeneration, err := home.CurrentTaskGeneration(ctx.Home, taskID, fallbackGeneration)
+			metaGeneration, err := currentTaskGeneration(ctx.Home, taskID, fallbackGeneration)
 			if err != nil {
 				return fmt.Errorf("consume-ready: reading aggregate for %s: %w", taskID, err)
 			}

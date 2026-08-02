@@ -88,6 +88,39 @@ func seedHandoffTaskV2(t *testing.T, homeDir, taskID string, meta map[string]str
 	}
 }
 
+// writeV1AggregateDoc writes one legacy v1 aggregate document and its current
+// pointer exactly as the deleted v1 aggregate store left them, so the
+// task-authority v2 migration detects the home as a v1 home and every
+// canonical read fails closed with ErrMigrationRequired (Task 8.2: the v1
+// store writer is gone; the fixture writes the document shape directly).
+func writeV1AggregateDoc(t *testing.T, homeDir, taskID, owner, definition string) {
+	t.Helper()
+	dir := filepath.Join(homeDir, "state", ".task-authority", "aggregates", taskID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{
+		"schema_version": "munsu.task-aggregate/v1",
+		"task_id":        taskID,
+		"generation":     "1",
+		"current":        true,
+		"owner":          owner,
+		"definition":     definition,
+		"state":          "queued",
+		"kind":           "ship",
+	}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "1.json"), append(data, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "current"), []byte("1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func seedHandoffTaskV2Default(t *testing.T, homeDir, taskID string) {
 	t.Helper()
 	seedHandoffTaskV2(t, homeDir, taskID, nil)
@@ -1257,14 +1290,10 @@ func TestHandoffFailsClosedOnV1Homes(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.seedSource {
-				if err := mhome.WriteTaskAggregate(parent, mhome.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: "1", Current: true, Owner: "general", Definition: "legacy", State: "queued", Kind: "ship"}); err != nil {
-					t.Fatal(err)
-				}
+				writeV1AggregateDoc(t, parent, "TASK-1", "general", "legacy")
 			}
 			if tc.seedDest {
-				if err := mhome.WriteTaskAggregate(sm, mhome.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: "1", Current: true, Owner: "captain:test-sm", Definition: "legacy", State: "queued", Kind: "ship"}); err != nil {
-					t.Fatal(err)
-				}
+				writeV1AggregateDoc(t, sm, "TASK-1", "captain:test-sm", "legacy")
 			}
 			origPath := captainLookPath
 			origBackend := isTasksAxiBackend
