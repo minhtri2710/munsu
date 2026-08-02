@@ -12,12 +12,6 @@ import (
 // shrink as migration slices land; new reach-through fails.
 func TestNoNewTaskAuthorityReachThrough(t *testing.T) {
 	testutil.AssertNoNewTaskAuthorityCallers(t, ".", map[string][]string{
-		"backlog_cmd.go": {
-			"UpdateCurrentTaskAggregateState",
-			"StartTask",
-			"UnblockTask",
-			"ReopenTask",
-		},
 		"spawn_cmd.go": {"UpdateCurrentTaskAggregateKind"},
 		"task_cmd.go":  {"UpdateCurrentTaskAggregateState"},
 	})

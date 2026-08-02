@@ -6,14 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestLifecyclePartialErrorPreservesAuthoritativeState(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := home.CreateTaskAggregate(homeDir, "task", "owner", "work", "ship", ""); err != nil {
-		t.Fatal(err)
-	}
+	auth := testAuthorityFor(t, homeDir)
+	seedAuthorityTask(t, auth, "task")
 	root := NewRootCommand()
 	root.SetArgs([]string{"backlog", "start", "task", "--home", homeDir})
 	err := root.Execute()
@@ -21,9 +20,9 @@ func TestLifecyclePartialErrorPreservesAuthoritativeState(t *testing.T) {
 	if !errors.As(err, &partial) || partial.TaskID != "task" || partial.State != "working" {
 		t.Fatalf("partial = %T %v", err, err)
 	}
-	current, ok, readErr := home.ReadCurrentTaskAggregate(homeDir, "task")
-	if readErr != nil || !ok || current.State != "working" {
-		t.Fatalf("authoritative aggregate = %+v ok=%v err=%v", current, ok, readErr)
+	current, getErr := auth.Get("task")
+	if getErr != nil || current.Phase != taskauthority.PhaseWorking {
+		t.Fatalf("authoritative aggregate = %+v err=%v", current, getErr)
 	}
 	var out bytes.Buffer
 	if code := WriteContractError(&out, err, []string{"backlog", "start", "task", "--output", "json"}); code != 1 || !strings.Contains(out.String(), `"error_code": "conflict"`) {

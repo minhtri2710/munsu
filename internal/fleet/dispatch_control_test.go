@@ -4,22 +4,54 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
+// TestStartTaskRespectsDispatchHoldWithoutChangingQueuedState proves the
+// Authority Start operation evaluates durable Dispatch Holds inside the same
+// Store transaction: a matching hold leaves the queued phase unchanged.
 func TestStartTaskRespectsDispatchHoldWithoutChangingQueuedState(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := home.CreateTaskAggregate(homeDir, "task", "owner", "work", "ship", "project"); err != nil {
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := home.CreateDispatchHold(homeDir, home.DispatchHoldInput{ID: "start-pause", Scope: home.DispatchHoldScope{TaskIDs: []string{"task"}}, Actions: []home.DispatchAction{home.DispatchActionStart}, Reason: "pause"}); err != nil {
+	auth := taskauthority.New(store)
+	actor := taskauthority.Actor{ID: "owner", Rank: "general"}
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "seed",
+		Actor:       actor,
+		TaskID:      "task",
+		Owner:       "owner",
+		Description: "work",
+		Kind:        "ship",
+		Project:     "project",
+		Reason:      "seed",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := home.StartTask(homeDir, "task"); !errors.Is(err, home.ErrDispatchHeld) {
+	if _, err := auth.CreateHold(taskauthority.CreateHoldRequest{
+		OperationID: "hold-seed",
+		Actor:       actor,
+		ID:          "start-pause",
+		Scope:       taskauthority.DispatchHoldScope{TaskIDs: []string{"task"}},
+		Actions:     []taskauthority.DispatchAction{taskauthority.DispatchActionStart},
+		Reason:      "pause",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Start(taskauthority.StartRequest{
+		OperationID:        "start-1",
+		Actor:              actor,
+		TaskID:             "task",
+		ExpectedGeneration: 1,
+		Reason:             "start",
+	}); !errors.Is(err, taskauthority.ErrDispatchHeld) {
 		t.Fatalf("start err = %v, want dispatch hold", err)
 	}
-	current, ok, err := home.ReadCurrentTaskAggregate(homeDir, "task")
-	if err != nil || !ok || current.State != "queued" {
-		t.Fatalf("current = %+v ok=%v err=%v, want queued", current, ok, err)
+	agg, err := auth.Get("task")
+	if err != nil || agg.Phase != taskauthority.PhaseQueued {
+		t.Fatalf("current = %+v err=%v, want queued", agg, err)
 	}
 }

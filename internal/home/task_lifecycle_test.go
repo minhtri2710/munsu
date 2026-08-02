@@ -1,7 +1,6 @@
 package home
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,95 +78,6 @@ func TestQueryTaskReadinessReportsEachBlockingReason(t *testing.T) {
 	missing, err := QueryTaskReadiness(homeDir, "missing")
 	if err != nil || len(missing.BlockingReasons) != 1 || missing.BlockingReasons[0] != ReadinessReason("not-found") {
 		t.Fatalf("missing readiness = %+v err=%v", missing, err)
-	}
-}
-
-func TestTaskLifecycleOperationsHaveDistinctAtomicPreconditions(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := CreateTaskAggregate(homeDir, "task", "owner", "work", "ship", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	started, err := StartTask(homeDir, "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if started.State != "working" {
-		t.Fatalf("started aggregate = %+v", started)
-	}
-	if _, err := StartTask(homeDir, "task"); !errors.Is(err, ErrTaskLifecyclePrecondition) {
-		t.Fatalf("second start error = %v, want lifecycle precondition", err)
-	}
-
-	if _, _, err := UpdateCurrentTaskAggregateState(homeDir, "task", "blocked", "dependency"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UnblockTask(homeDir, "task"); err != nil {
-		t.Fatal(err)
-	}
-	if got, _, err := ReadCurrentTaskAggregate(homeDir, "task"); err != nil || got.State != "queued" {
-		t.Fatalf("unblocked aggregate = %+v err=%v", got, err)
-	}
-	if _, err := UnblockTask(homeDir, "task"); !errors.Is(err, ErrTaskLifecyclePrecondition) {
-		t.Fatalf("unblock queued error = %v, want lifecycle precondition", err)
-	}
-}
-
-func TestReopenCreatesNewGenerationAndPreservesTerminalHistory(t *testing.T) {
-	homeDir := t.TempDir()
-	original := TaskAggregate{
-		SchemaVersion: taskAggregateSchema,
-		TaskID:        "task",
-		Generation:    "1",
-		Current:       true,
-		Owner:         "owner",
-		Definition:    "completed work",
-		State:         "done",
-		StateDetail:   "merged",
-		Kind:          "ship",
-		Project:       "munsu",
-	}
-	if err := WriteTaskAggregate(homeDir, original); err != nil {
-		t.Fatal(err)
-	}
-
-	reopened, err := ReopenTask(homeDir, "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reopened.Generation != "2" || !reopened.Current || reopened.State != "queued" {
-		t.Fatalf("reopened aggregate = %+v", reopened)
-	}
-	old, err := ReadTaskAggregate(homeDir, "task", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if old.Generation != original.Generation || old.State != "done" || old.StateDetail != "merged" || old.Definition != original.Definition || old.Current {
-		t.Fatalf("historical aggregate = %+v", old)
-	}
-	if current, ok, err := ReadCurrentTaskAggregate(homeDir, "task"); err != nil || !ok || current.Generation != "2" {
-		t.Fatalf("current aggregate = %+v ok=%v err=%v", current, ok, err)
-	}
-}
-
-func TestConcurrentAggregateMutationsRemainValid(t *testing.T) {
-	homeDir := t.TempDir()
-	if _, err := CreateTaskAggregate(homeDir, "task", "owner", "work", "ship", ""); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{}, 3)
-	go func() { _, _ = StartTask(homeDir, "task"); done <- struct{}{} }()
-	go func() {
-		_, _, _ = UpdateCurrentTaskAggregateState(homeDir, "task", "blocked", "dependency")
-		done <- struct{}{}
-	}()
-	go func() { _, _ = UnblockTask(homeDir, "task"); done <- struct{}{} }()
-	for range 3 {
-		<-done
-	}
-	current, ok, err := ReadCurrentTaskAggregate(homeDir, "task")
-	if err != nil || !ok || (current.State != "working" && current.State != "blocked" && current.State != "queued") {
-		t.Fatalf("concurrent result = %+v ok=%v err=%v", current, ok, err)
 	}
 }
 
