@@ -6,21 +6,49 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
+// bindWorktreeForSpawnFixture binds a generation-scoped worktree through the
+// Authority so ConfirmSpawn can evaluate its worktree-binding precondition.
+func bindWorktreeForSpawnFixture(t *testing.T, auth *taskauthority.Authority, taskID string) {
+	t.Helper()
+	if _, err := auth.BindWorktree(taskauthority.BindWorktreeRequest{
+		OperationID: "op-bind-wt-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID: taskID, ExpectedGeneration: 1,
+		Binding: taskauthority.WorktreeBinding{
+			RepositoryIdentity: "repo-identity",
+			Path:               "/tmp/wt",
+			GitDir:             "/repo/.git/worktrees/wt",
+			CommonDir:          "/repo/.git",
+			Head:               strings.Repeat("a", 40),
+			LeaseID:            "wt-lease-" + taskID,
+			FenceToken:         "wt-fence-" + taskID,
+			BoundAtUnix:        time.Now().Unix(),
+		},
+		Reason: "spawn",
+	}); err != nil {
+		t.Fatalf("BindWorktree(%s): %v", taskID, err)
+	}
+}
+
 func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T) {
 	homeDir := t.TempDir()
-	agg, err := home.CreateTaskAggregate(homeDir, "bind-task", "general", "Ready", "ship", "test-proj")
-	if err != nil {
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-bind", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID: "bind-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
+	}); err != nil {
 		t.Fatal(err)
 	}
+	bindWorktreeForSpawnFixture(t, auth, "bind-task")
 	r := &Runner{
 		homeDir:       homeDir,
-		args:          Args{ID: "bind-task", ProjectName: "test-proj", Kind: "ship"},
+		args:          Args{ID: "bind-task", ProjectName: "test-proj", Kind: "ship", Authority: auth},
 		windowID:      "session:pane-1",
 		wtPath:        filepath.Join(homeDir, "worktree"),
 		projPath:      filepath.Join(homeDir, "project"),
@@ -39,21 +67,39 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 			},
 		},
 	}
-	if err := r.bindEndpoint(); err != nil {
-		t.Fatalf("bindEndpoint: %v", err)
-	}
-	bound, ok, err := home.ReadCurrentTaskAggregate(homeDir, "bind-task")
-	if err != nil || !ok {
-		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
-	}
-	if bound.State == "working" {
-		t.Fatal("binding alone must not mark task working")
-	}
-	if bound.Endpoint == nil || bound.Endpoint.TaskGeneration != agg.Generation || bound.Endpoint.Backend != "herdr" || bound.Endpoint.Handle != "session:pane-1" || bound.Endpoint.LeaseID == "" || bound.Endpoint.FenceToken == "" {
-		t.Fatalf("binding=%+v generation=%s", bound.Endpoint, agg.Generation)
-	}
+	// The task meta projection is written before the authoritative working
+	// transition: a metadata failure must leave the task non-working, so the
+	// projection write must not commit the transition.
 	if err := r.writeTaskMeta(); err != nil {
 		t.Fatalf("writeTaskMeta: %v", err)
+	}
+	before, err := auth.Get("bind-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Phase == taskauthority.PhaseWorking || before.Endpoint != nil {
+		t.Fatalf("meta write alone must not bind the endpoint or mark the task working: %+v", before)
+	}
+	// ConfirmSpawn commits the endpoint binding and the working transition
+	// together in one Store transaction.
+	if err := r.confirmSpawn(); err != nil {
+		t.Fatalf("confirmSpawn: %v", err)
+	}
+	bound, err := auth.Get("bind-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Endpoint == nil || bound.Endpoint.Backend != "herdr" || bound.Endpoint.Handle != "session:pane-1" || bound.Endpoint.LeaseID == "" || bound.Endpoint.FenceToken == "" {
+		t.Fatalf("endpoint binding=%+v", bound.Endpoint)
+	}
+	if bound.Endpoint.SessionOwner != "session" || bound.Endpoint.WorkspaceID != "workspace-1" || bound.Endpoint.TabID != "tab-1" || bound.Endpoint.BoundAtUnix <= 0 {
+		t.Fatalf("endpoint binding=%+v", bound.Endpoint)
+	}
+	if bound.Phase != taskauthority.PhaseWorking {
+		t.Fatalf("phase=%q want working after confirm spawn", bound.Phase)
+	}
+	if bound.Revision != 3 {
+		t.Fatalf("revision=%d want 3 (create, bind worktree, confirm spawn)", bound.Revision)
 	}
 	reloadedMeta, err := home.ReadMeta(homeDir, "bind-task")
 	if err != nil {
@@ -62,15 +108,13 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	if reloadedMeta["backend"] != "herdr" || reloadedMeta["window"] != "session:pane-1" || reloadedMeta["herdr_session"] != "session" {
 		t.Fatalf("meta=%v", reloadedMeta)
 	}
-	if err := r.markWorkingAfterBinding(); err != nil {
-		t.Fatalf("markWorkingAfterBinding: %v", err)
-	}
-	working, _, err := home.ReadCurrentTaskAggregate(homeDir, "bind-task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if working.State != "working" {
-		t.Fatalf("state=%q want working", working.State)
+}
+
+func TestConfirmSpawnFailsClosedWithoutAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task"}, endpoint: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"}}
+	if err := r.confirmSpawn(); err == nil || !strings.Contains(err.Error(), "not composed") {
+		t.Fatalf("confirmSpawn without Authority error = %v, want composition failure", err)
 	}
 }
 
@@ -151,13 +195,15 @@ func runGitForSpawnBinding(t *testing.T, dir string, args ...string) {
 
 func TestEndpointBindingMetadataFailureLeavesTaskNonWorking(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := home.CreateTaskAggregate(homeDir, "bind-task", "general", "Ready", "ship", "test-proj"); err != nil {
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-meta", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID: "bind-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task"}, endpoint: CreatedEndpoint{Backend: "tmux", Handle: "munsu:@1"}}
-	if err := r.bindEndpoint(); err != nil {
-		t.Fatal(err)
-	}
+	bindWorktreeForSpawnFixture(t, auth, "bind-task")
+	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task", Authority: auth}, endpoint: CreatedEndpoint{Backend: "tmux", Handle: "munsu:@1"}}
 	stateDir := home.StateDir(homeDir)
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		t.Fatal(err)
@@ -169,30 +215,37 @@ func TestEndpointBindingMetadataFailureLeavesTaskNonWorking(t *testing.T) {
 	if err := r.writeTaskMeta(); err == nil || !strings.Contains(err.Error(), "writing task meta") {
 		t.Fatalf("writeTaskMeta error=%v, want hard metadata error", err)
 	}
-	reloaded, _, err := home.ReadCurrentTaskAggregate(homeDir, "bind-task")
+	// ConfirmSpawn runs after the meta projection in Run(); a metadata
+	// failure leaves the task queued with no endpoint binding.
+	agg, err := auth.Get("bind-task")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.State == "working" {
-		t.Fatal("metadata write failure must leave task non-working")
+	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
+		t.Fatalf("metadata write failure must leave task non-working: %+v", agg)
 	}
 }
 
 func TestEndpointBindingFailureLeavesTaskNonWorking(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := home.CreateTaskAggregate(homeDir, "bind-task", "general", "Ready", "ship", "test-proj"); err != nil {
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-fail", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID: "bind-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task"}, endpoint: CreatedEndpoint{Backend: "tmux"}}
-	if err := r.bindEndpoint(); err == nil {
+	bindWorktreeForSpawnFixture(t, auth, "bind-task")
+	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task", Authority: auth}, endpoint: CreatedEndpoint{Backend: "tmux"}}
+	if err := r.confirmSpawn(); err == nil {
 		t.Fatal("expected binding failure for incomplete endpoint")
 	}
-	reloaded, _, err := home.ReadCurrentTaskAggregate(homeDir, "bind-task")
+	agg, err := auth.Get("bind-task")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.State == "working" || reloaded.Endpoint != nil {
-		t.Fatalf("aggregate after failed bind=%+v", reloaded)
+	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
+		t.Fatalf("aggregate after failed confirm=%+v", agg)
 	}
 }
 

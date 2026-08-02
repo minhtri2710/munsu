@@ -176,29 +176,6 @@ func CreateTaskAggregate(homeDir, taskID, owner, definition, kind, project strin
 	return agg, nil
 }
 
-func UpdateCurrentTaskAggregateState(homeDir, taskID, state, detail string) (*TaskAggregate, bool, error) {
-	_, unlock, err := acquireMetaLock(homeDir, taskID)
-	if err != nil {
-		return nil, false, fmt.Errorf("update task aggregate state: %w", err)
-	}
-	defer unlock()
-	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
-	if err != nil || !ok {
-		return nil, ok, err
-	}
-	if state == "working" && agg.Endpoint == nil {
-		return nil, true, fmt.Errorf("task aggregate %s/%s cannot become working before endpoint binding is persisted", taskID, agg.Generation)
-	}
-	updated := *agg
-	updated.State = state
-	updated.StateDetail = detail
-	updated.AuditSources = append(updated.AuditSources, TaskAggregateEvidence{Kind: "status", Path: filepath.ToSlash(filepath.Join("state", taskID+".status")), Field: "state", Value: state})
-	if err := writeTaskAggregateFilesUnlocked(homeDir, updated); err != nil {
-		return nil, true, err
-	}
-	return &updated, true, nil
-}
-
 func DeleteTaskAggregate(homeDir, taskID, generation string) error {
 	if err := validateTaskID(taskID); err != nil {
 		return err

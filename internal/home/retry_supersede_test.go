@@ -19,23 +19,14 @@ func TestSupersedeTaskRefusesLiveGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, state := range []string{"queued", "blocked"} {
-		if _, _, err := UpdateCurrentTaskAggregateState(homeDir, "task", state, state); err != nil {
-			t.Fatal(err)
-		}
+		setAggState(t, homeDir, "task", state, state)
 		if _, err := SupersedeTask(homeDir, "task"); err == nil {
 			t.Fatalf("supersede must refuse live state %q", state)
 		}
 	}
 	// "working" requires an endpoint binding to be persisted.
-	if err := BindTaskEndpoint(homeDir, "task", "1", TaskEndpointBinding{
-		TaskGeneration: "1", Backend: "herdr", Handle: "w1:p1",
-		LeaseID: "l1", FenceToken: "f1", BoundAtUnix: 1000,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := UpdateCurrentTaskAggregateState(homeDir, "task", "working", "spawned"); err != nil {
-		t.Fatal(err)
-	}
+	bindEndpointFixture(t, homeDir, "task")
+	setAggState(t, homeDir, "task", "working", "spawned")
 	if _, err := SupersedeTask(homeDir, "task"); err == nil {
 		t.Fatal("supersede must refuse a live working generation")
 	}
@@ -110,9 +101,7 @@ func TestSupersedeTaskResetsStatusOwnership(t *testing.T) {
 	if err := AppendStatus(homeDir, "task", "working: spawned"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := UpdateCurrentTaskAggregateState(homeDir, "task", "failed", "tests failed"); err != nil {
-		t.Fatal(err)
-	}
+	setAggState(t, homeDir, "task", "failed", "tests failed")
 	if err := AppendStatus(homeDir, "task", "failed: tests not passing"); err != nil {
 		t.Fatal(err)
 	}

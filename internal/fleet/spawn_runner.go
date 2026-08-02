@@ -165,15 +165,11 @@ func (r *Runner) Run() (string, error) {
 	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
 		return "", err
 	}
-	if err := r.bindEndpoint(); err != nil {
-		_ = r.endpoints.Dispose(r.endpoint)
-		return "", err
-	}
 	if err := r.writeTaskMeta(); err != nil {
 		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
 	}
-	if err := r.markWorkingAfterBinding(); err != nil {
+	if err := r.confirmSpawn(); err != nil {
 		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
 	}
@@ -1274,15 +1270,23 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (r *Runner) bindEndpoint() error {
-	agg, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID)
+// confirmSpawn persists the endpoint binding and the queued → working
+// transition as one atomic Task Authority operation after the endpoint is
+// verified ready and the task meta projection is written. The endpoint
+// binding is an aggregate field, so it commits through the existing journal
+// with the transition, the Revision advance, the typed audit event, and the
+// durable idempotency receipt. A failed persistence leaves the task queued
+// with no endpoint binding. The Runner fails closed when no Authority is
+// composed, exactly like bindWorktree.
+func (r *Runner) confirmSpawn() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("confirming spawn: task authority is not composed for spawn")
+	}
+	agg, err := r.args.Authority.Get(r.args.ID)
 	if err != nil {
-		return err
+		return fmt.Errorf("confirming spawn: %w", err)
 	}
-	if !ok {
-		return fmt.Errorf("task aggregate %s has no current generation for endpoint binding", r.args.ID)
-	}
-	binding := home.TaskEndpointBinding{
+	binding := taskauthority.EndpointBinding{
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
 		LeaseID:      newEndpointToken(),
@@ -1292,15 +1296,15 @@ func (r *Runner) bindEndpoint() error {
 		TabID:        r.endpoint.TabID,
 		BoundAtUnix:  time.Now().Unix(),
 	}
-	if err := home.BindTaskEndpoint(r.homeDir, r.args.ID, agg.Generation, binding); err != nil {
-		return fmt.Errorf("binding endpoint before working: %w", err)
-	}
-	return nil
-}
-
-func (r *Runner) markWorkingAfterBinding() error {
-	if _, _, err := home.UpdateCurrentTaskAggregateState(r.homeDir, r.args.ID, "working", "spawned"); err != nil {
-		return fmt.Errorf("marking task working after endpoint binding: %w", err)
+	if _, err := r.args.Authority.ConfirmSpawn(taskauthority.ConfirmSpawnRequest{
+		OperationID:        fmt.Sprintf("spawn-confirm-%s-%d", r.args.ID, agg.Generation),
+		Actor:              r.spawnActor(),
+		TaskID:             r.args.ID,
+		ExpectedGeneration: agg.Generation,
+		Binding:            binding,
+		Reason:             "spawned",
+	}); err != nil {
+		return fmt.Errorf("confirming spawn: %w", err)
 	}
 	return nil
 }

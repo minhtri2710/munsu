@@ -38,26 +38,3 @@ func validateTaskEndpointBinding(binding TaskEndpointBinding) error {
 	}
 	return nil
 }
-
-func BindTaskEndpoint(homeDir, taskID, generation string, binding TaskEndpointBinding) error {
-	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("task aggregate %s has no current generation", taskID)
-	}
-	if agg.Generation != generation {
-		return fmt.Errorf("task aggregate %s current generation is %s, not %s", taskID, agg.Generation, generation)
-	}
-	if agg.Endpoint != nil {
-		return fmt.Errorf("task aggregate %s/%s already has endpoint binding", taskID, generation)
-	}
-	binding.TaskGeneration = generation
-	if err := validateTaskEndpointBinding(binding); err != nil {
-		return err
-	}
-	updated := *agg
-	updated.Endpoint = &binding
-	return WriteTaskAggregate(homeDir, updated)
-}

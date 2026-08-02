@@ -25,16 +25,10 @@ func TestBacklogReadyReportsDistinctReasonsAndIsPure(t *testing.T) {
 			t.Fatal(err)
 		}
 		if tc.state == "working" {
-			if err := home.BindTaskEndpoint(homeDir, tc.id, "1", home.TaskEndpointBinding{
-				Backend: "tmux", Handle: "pane", LeaseID: "lease", FenceToken: "fence", BoundAtUnix: 1,
-			}); err != nil {
-				t.Fatal(err)
-			}
+			bindEndpointFixture(t, homeDir, tc.id)
 		}
 		if tc.state != "queued" {
-			if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, tc.id, tc.state, "reason"); err != nil {
-				t.Fatal(err)
-			}
+			setAggState(t, homeDir, tc.id, tc.state, "reason")
 		}
 	}
 	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0700); err != nil {

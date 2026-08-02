@@ -6,6 +6,41 @@ import (
 	"testing"
 )
 
+// setAggState seeds a legacy v1 aggregate state directly. The generic home
+// state setter was deleted with the spawn cutover (Task 4.2); fixtures that
+// need a specific v1 state read-mutate-write through WriteTaskAggregate.
+func setAggState(t *testing.T, homeDir, taskID, state, detail string) {
+	t.Helper()
+	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
+	if err != nil || !ok {
+		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
+	}
+	agg.State = state
+	agg.StateDetail = detail
+	if err := WriteTaskAggregate(homeDir, *agg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bindEndpointFixture attaches a valid endpoint binding to the current v1
+// aggregate directly. The endpoint binding mutation moved into the Task
+// Authority ConfirmSpawn operation; fixtures that need a bound v1 aggregate
+// mutate it through WriteTaskAggregate.
+func bindEndpointFixture(t *testing.T, homeDir, taskID string) {
+	t.Helper()
+	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
+	if err != nil || !ok {
+		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
+	}
+	agg.Endpoint = &TaskEndpointBinding{
+		TaskGeneration: agg.Generation, Backend: "herdr", Handle: "w1:p1",
+		LeaseID: "l1", FenceToken: "f1", BoundAtUnix: 1000,
+	}
+	if err := WriteTaskAggregate(homeDir, *agg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestQueryTaskReadinessIsPureAndReportsDistinctReasons(t *testing.T) {
 	homeDir := t.TempDir()
 	queued, err := CreateTaskAggregate(homeDir, "queued", "owner", "queued work", "ship", "")
@@ -15,9 +50,7 @@ func TestQueryTaskReadinessIsPureAndReportsDistinctReasons(t *testing.T) {
 	if _, err := CreateTaskAggregate(homeDir, "blocked", "owner", "blocked work", "ship", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := UpdateCurrentTaskAggregateState(homeDir, "blocked", "blocked", "dependency"); err != nil {
-		t.Fatal(err)
-	}
+	setAggState(t, homeDir, "blocked", "blocked", "dependency")
 
 	beforeAggregate := readLifecycleFile(t, filepath.Join(homeDir, taskAggregateRelPath(queued.TaskID, queued.Generation)))
 	beforeCurrent := readLifecycleFile(t, filepath.Join(homeDir, taskAggregateDir, queued.TaskID, taskCurrentFile))
@@ -61,15 +94,9 @@ func TestQueryTaskReadinessReportsEachBlockingReason(t *testing.T) {
 			t.Fatal(err)
 		}
 		if tc.state == "working" {
-			if err := BindTaskEndpoint(homeDir, tc.id, "1", TaskEndpointBinding{
-				Backend: "tmux", Handle: "pane", LeaseID: "lease", FenceToken: "fence", BoundAtUnix: 1,
-			}); err != nil {
-				t.Fatal(err)
-			}
+			bindEndpointFixture(t, homeDir, tc.id)
 		}
-		if _, _, err := UpdateCurrentTaskAggregateState(homeDir, tc.id, tc.state, "reason"); err != nil {
-			t.Fatal(err)
-		}
+		setAggState(t, homeDir, tc.id, tc.state, "reason")
 		readiness, err := QueryTaskReadiness(homeDir, tc.id)
 		if err != nil || len(readiness.BlockingReasons) != 1 || readiness.BlockingReasons[0] != tc.want {
 			t.Fatalf("%s readiness = %+v err=%v", tc.id, readiness, err)

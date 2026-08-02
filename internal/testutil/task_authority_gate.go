@@ -16,12 +16,10 @@ import (
 // gate; the per-package allowlist only shrinks as slices land.
 var LegacyTaskAuthoritySymbols = []string{
 	"CreateTaskAggregate",
-	"UpdateCurrentTaskAggregateState",
 	"UpdateCurrentTaskAggregateKind",
 	"StartTask",
 	"UnblockTask",
 	"ReopenTask",
-	"BindTaskEndpoint",
 	"CheckDispatchHold",
 	"CreateDispatchHold",
 	"ReleaseDispatchHold",
