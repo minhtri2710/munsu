@@ -9,6 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type gitCommandSafety struct {
@@ -135,7 +136,7 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		}
 		// Branch deletion requires cleanup tier and retirement context.
 		if isBranchDelete(g.args) {
-			if ctx == "retirement" && fleet.TierEnough(tier, fleet.GitTierCleanup) {
+			if ctx == "retirement" && fleet.TierEnough(tier, taskauthority.GitTierCleanup) {
 				return ""
 			}
 			return "branch deletion requires cleanup authority (retirement context)"
@@ -153,14 +154,14 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		}
 		// Force-with-lease requires authorization with expected-state comparison.
 		if fleet.ForceWithLeaseRequested(g.args) {
-			if _, err := fleet.CheckGitMutationAuthorization(homeDir, taskID, fleet.GitOpForceWithLease, ""); err != nil {
+			if _, err := fleet.CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, ""); err != nil {
 				return "force-with-lease is not authorized: " + err.Error()
 			}
 			return ""
 		}
 		// Push --delete requires cleanup tier and retirement context.
 		if fleet.PushDeleteRequested(g.args, g.pushRefspec) {
-			if ctx == "retirement" && fleet.TierEnough(tier, fleet.GitTierCleanup) {
+			if ctx == "retirement" && fleet.TierEnough(tier, taskauthority.GitTierCleanup) {
 				return ""
 			}
 			return "push --delete requires cleanup authority (retirement context)"
@@ -174,7 +175,7 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "rebase", "reset", "merge", "cherry-pick", "revert":
 		// Rewrite operations require amendment context and rewrite tier.
-		if ctx == "amendment" && fleet.TierEnough(tier, fleet.GitTierRewrite) {
+		if ctx == "amendment" && fleet.TierEnough(tier, taskauthority.GitTierRewrite) {
 			return ""
 		}
 		return "rewrite operations require amendment context and rewrite authority"

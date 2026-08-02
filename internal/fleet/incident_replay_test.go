@@ -275,10 +275,9 @@ func IncidentReplay_MergeTruthReconciliation(t *testing.T) {
 	}
 
 	// Phase 6.3: Merge authorization
-	auth := &MergeAuthorization{
-		TaskGeneration: "1",
-		HeadSHA:        "abc123def456",
-		ProviderSnapshot: ProviderIdentitySnapshot{
+	auth := &taskauthority.MergeAuthorization{
+		HeadSHA: "abc123def456",
+		ProviderSnapshot: taskauthority.ProviderIdentitySnapshot{
 			Provider: "github",
 			Owner:    "owner",
 			Repo:     "repo",
@@ -288,11 +287,8 @@ func IncidentReplay_MergeTruthReconciliation(t *testing.T) {
 			HeadRef:  "feature/test",
 			HeadSHA:  "abc123def456",
 		},
-		AuthorizedAt: "2026-07-31T00:00:00Z",
+		AuthorizedAt: time.Now().UnixNano(),
 		Authorizer:   "replay-test",
-	}
-	if auth.TaskGeneration != "1" {
-		t.Errorf("auth generation = %q, want 1", auth.TaskGeneration)
 	}
 	if auth.HeadSHA != ident.HeadSHA {
 		t.Errorf("auth HeadSHA mismatch: %q vs %q", auth.HeadSHA, ident.HeadSHA)

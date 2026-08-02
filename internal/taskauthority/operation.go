@@ -89,6 +89,13 @@ const (
 	// AuditAttestation records the acceptance of a generation-bound delivery
 	// plan and capability attestation (task-bound).
 	AuditAttestation = "attestation"
+	// AuditMergeAuthorization records a generation-bound merge authorization
+	// or external merge evidence commit (task-bound, Task 7.4).
+	AuditMergeAuthorization = "merge-authorization"
+	// AuditGitAuthorization records a generation-bound git authorization
+	// change: the capability tier, the amendment/retirement context, or the
+	// elevated git mutation authorization (task-bound, Task 7.4).
+	AuditGitAuthorization = "git-authorization"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -147,6 +154,20 @@ func (ev AuditEvent) Validate() error {
 			return err
 		}
 	case AuditAttestation:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditMergeAuthorization:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditGitAuthorization:
 		if err := validateTaskID(ev.TaskID); err != nil {
 			return err
 		}

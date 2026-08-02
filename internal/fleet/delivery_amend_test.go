@@ -9,11 +9,53 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // --- Test helpers ---
+
+// amendAuth builds an Authority over an in-memory store with one
+// worktree-bound task, mirroring the spawn flow (BindWorktree) so the git
+// authorization context op can bind the worktree (Task 7.4). The delivery
+// amendment functions route the git_auth_context write through this
+// Authority and reconcile the .meta projection.
+func amendAuth(t *testing.T, taskID string) *taskauthority.Authority {
+	t.Helper()
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "ship",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := auth.BindWorktree(taskauthority.BindWorktreeRequest{
+		OperationID:        "op-bind-" + taskID,
+		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:             taskID,
+		ExpectedGeneration: 1,
+		Binding: taskauthority.WorktreeBinding{
+			RepositoryIdentity: "repo-identity",
+			Path:               "/tmp/wt",
+			GitDir:             "/repo/.git/worktrees/wt",
+			CommonDir:          "/repo/.git",
+			Head:               strings.Repeat("a", 40),
+			LeaseID:            "lease-1",
+			FenceToken:         "fence-1",
+			BoundAtUnix:        time.Now().Unix(),
+		},
+		Reason: "spawn",
+	}); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	return auth
+}
 
 func testIdentity() *domain.DeliveryIdentity {
 	return &domain.DeliveryIdentity{
@@ -140,7 +182,7 @@ func TestBeginAmendment_Success(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	result, err := BeginAmendment(homeDir, id)
+	result, err := BeginAmendment(homeDir, id, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("BeginAmendment: %v", err)
 	}
@@ -150,6 +192,60 @@ func TestBeginAmendment_Success(t *testing.T) {
 	}
 	if result[MetaAmendExpectedHead] != testIdentity().HeadSHA {
 		t.Errorf("expected amend_expected_head %q, got %q", testIdentity().HeadSHA, result[MetaAmendExpectedHead])
+	}
+}
+
+// TestBeginAmendment_RoutesGitAuthContextThroughAuthority proves the
+// git_auth_context write converges onto the composed Task Authority (Task
+// 7.4): BeginAmendment commits the generation-bound context record and
+// reconciles the .meta projection, and fails closed without an Authority.
+func TestBeginAmendment_RoutesGitAuthContextThroughAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	id := "test-begin-context"
+
+	meta := testIdentity().ToMeta()
+	meta[MetaDeliveryState] = string(DeliveryStateReviewReady)
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	auth := amendAuth(t, id)
+	if _, err := BeginAmendment(homeDir, id, auth); err != nil {
+		t.Fatalf("BeginAmendment: %v", err)
+	}
+
+	// The authoritative Aggregate holds the generation-bound context.
+	agg, err := auth.Get(id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if agg.GitAuthContext != "amendment" {
+		t.Errorf("authoritative git auth context = %q, want amendment", agg.GitAuthContext)
+	}
+
+	// The .meta projection is reconciled for the safety read path.
+	readMeta, err := home.ReadMeta(homeDir, id)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if readMeta[MetaGitAuthContext] != "amendment" {
+		t.Errorf("projected git auth context = %q, want amendment", readMeta[MetaGitAuthContext])
+	}
+
+	// Fails closed without a composed Authority: nothing is mutated.
+	meta[MetaDeliveryState] = string(DeliveryStateReviewReady)
+	if err := home.WriteMeta(homeDir, id, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	if _, err := BeginAmendment(homeDir, id, nil); err == nil {
+		t.Fatal("expected error when no authority is composed")
+	}
+	readMeta, err = home.ReadMeta(homeDir, id)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if readMeta[MetaDeliveryState] != string(DeliveryStateReviewReady) {
+		t.Errorf("failed begin must not transition delivery_state: %q", readMeta[MetaDeliveryState])
 	}
 }
 
@@ -166,7 +262,7 @@ func TestBeginAmendment_DefaultsToReviewReady(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	result, err := BeginAmendment(homeDir, id)
+	result, err := BeginAmendment(homeDir, id, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("BeginAmendment with unset state: %v", err)
 	}
@@ -186,7 +282,7 @@ func TestBeginAmendment_RejectsWrongState(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, err := BeginAmendment(homeDir, id)
+	_, err := BeginAmendment(homeDir, id, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for amending->amending transition")
 	}
@@ -205,7 +301,7 @@ func TestBeginAmendment_RejectsMergedState(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, err := BeginAmendment(homeDir, id)
+	_, err := BeginAmendment(homeDir, id, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for merged->amending transition")
 	}
@@ -220,7 +316,7 @@ func TestBeginAmendment_NoIdentity(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, err := BeginAmendment(homeDir, id)
+	_, err := BeginAmendment(homeDir, id, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for no identity")
 	}
@@ -317,7 +413,7 @@ func TestAcceptAmendment_Success(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	newIdent, record, err := AcceptAmendment(homeDir, id, repo)
+	newIdent, record, err := AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("AcceptAmendment: %v", err)
 	}
@@ -432,7 +528,7 @@ func TestAcceptAmendment_ForcePushRejected(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err = AcceptAmendment(homeDir, id, repo)
+	_, _, err = AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for force-push (non-ancestor)")
 	}
@@ -454,7 +550,7 @@ func TestAcceptAmendment_WrongState(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, _, err := AcceptAmendment(homeDir, id, repo)
+	_, _, err := AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for wrong state")
 	}
@@ -494,7 +590,7 @@ func TestAcceptAmendment_CASConflict(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, _, err := AcceptAmendment(homeDir, id, repo)
+	_, _, err := AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for CAS conflict")
 	}
@@ -526,7 +622,7 @@ func TestAcceptAmendment_HeadRefChanged(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err := AcceptAmendment(homeDir, id, repo)
+	_, _, err := AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for head ref change")
 	}
@@ -561,7 +657,7 @@ func TestReconcileIdentity_AlreadyUpToDate(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	newIdent, record, err := ReconcileIdentity(homeDir, id, repo)
+	newIdent, record, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("ReconcileIdentity: %v", err)
 	}
@@ -596,7 +692,7 @@ func TestReconcileIdentity_AdvancedHead(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	newIdent, record, err := ReconcileIdentity(homeDir, id, repo)
+	newIdent, record, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("ReconcileIdentity: %v", err)
 	}
@@ -648,7 +744,7 @@ func TestReconcileIdentity_MergedPR(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, record, err := ReconcileIdentity(homeDir, id, repo)
+	_, record, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("ReconcileIdentity: %v", err)
 	}
@@ -722,7 +818,7 @@ func TestReconcileIdentity_ForcePushRejected(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err := ReconcileIdentity(homeDir, id, repo)
+	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for force-push (non-ancestor)")
 	}
@@ -752,7 +848,7 @@ func TestReconcileIdentity_WrongRef(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err := ReconcileIdentity(homeDir, id, repo)
+	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for head ref mismatch")
 	}
@@ -785,7 +881,7 @@ func TestReconcileIdentity_DuplicateIdempotent(t *testing.T) {
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
 	// First reconciliation
-	_, record1, err := ReconcileIdentity(homeDir, id, repo)
+	_, record1, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
@@ -794,7 +890,7 @@ func TestReconcileIdentity_DuplicateIdempotent(t *testing.T) {
 	}
 
 	// Second reconciliation — should be idempotent (already up to date)
-	_, record2, err := ReconcileIdentity(homeDir, id, repo)
+	_, record2, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
@@ -832,7 +928,7 @@ func TestReconcileIdentity_CASConflict(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, _, err := ReconcileIdentity(homeDir, id, repo)
+	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
 	if err == nil {
 		t.Fatal("expected error for CAS conflict")
 	}

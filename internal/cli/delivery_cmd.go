@@ -200,6 +200,13 @@ Use 'delivery reconcile' to recover from already-stale metadata.`,
 				return fmt.Errorf("pr-amend: %w", err)
 			}
 
+			// The git authorization context routes through the composed Task
+			// Authority over the same home that owns the task meta (Task 7.4).
+			auth, err := ctx.TaskAuthorityFor(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("pr-amend: composing task authority: %w", err)
+			}
+
 			// Begin amendment (CAS review-ready -> amending) — idempotent: if already
 			// in amending state (e.g. retry after partial failure), skip begin.
 			currentMeta, err := home.ReadMeta(ctx.Home, id)
@@ -208,13 +215,13 @@ Use 'delivery reconcile' to recover from already-stale metadata.`,
 			}
 
 			if currentMeta[fleet.MetaDeliveryState] != string(fleet.DeliveryStateAmending) {
-				if _, err := fleet.BeginAmendment(ctx.Home, id); err != nil {
+				if _, err := fleet.BeginAmendment(ctx.Home, id, auth); err != nil {
 					return fmt.Errorf("pr-amend: begin: %w", err)
 				}
 			}
 
 			// Accept amendment (verify provider, CAS update identity)
-			newIdent, record, err := fleet.AcceptAmendment(ctx.Home, id, wtPath)
+			newIdent, record, err := fleet.AcceptAmendment(ctx.Home, id, wtPath, auth)
 			if err != nil {
 				return fmt.Errorf("pr-amend: accept: %w", err)
 			}
@@ -254,7 +261,14 @@ state. Use 'pr-check' to recapture from scratch after such events.`,
 				return fmt.Errorf("reconcile: %w", err)
 			}
 
-			newIdent, record, err := fleet.ReconcileIdentity(ctx.Home, id, wtPath)
+			// The git authorization context routes through the composed Task
+			// Authority over the same home that owns the task meta (Task 7.4).
+			auth, err := ctx.TaskAuthorityFor(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("reconcile: composing task authority: %w", err)
+			}
+
+			newIdent, record, err := fleet.ReconcileIdentity(ctx.Home, id, wtPath, auth)
 			if err != nil {
 				return fmt.Errorf("reconcile: %w", err)
 			}

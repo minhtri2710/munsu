@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
@@ -317,25 +316,19 @@ func TestSafetyCheckForceWithLeaseAuthorizedWithContext(t *testing.T) {
 
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fwl-auth")
 
-	// Set git capability tier to rewrite (force-with-lease requires rewrite tier)
-	if err := fleet.SetGitCapabilityTier(homeDir, "ship-fwl-auth", fleet.GitTierRewrite); err != nil {
-		t.Fatalf("SetGitCapabilityTier: %v", err)
-	}
-
-	// Set up git auth context and authorization
-	if err := fleet.SetGitAuthContext(homeDir, "ship-fwl-auth", "amendment"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
-	}
-
-	// Authorize force-with-lease
-	_, err := fleet.AuthorizeForceWithLease(homeDir, "ship-fwl-auth", "1",
-		"refs/heads/mu/ship-fwl-auth",
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"amendment", "amendment")
-	if err != nil {
-		t.Fatalf("AuthorizeForceWithLease: %v", err)
-	}
+	// Seed the .meta projections of the authoritative git authorization
+	// records (Task 7.4): the safety read path reads these projections, which
+	// production reconciles after each Authority commit.
+	seedGitAuthMeta(t, homeDir, "ship-fwl-auth", "rewrite", "amendment", map[string]any{
+		"operation": "force-with-lease",
+		"expected_state": map[string]string{
+			"ref":     "refs/heads/mu/ship-fwl-auth",
+			"old_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"new_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+		"authorizer": "amendment",
+		"context":    "amendment",
+	})
 
 	// Force-with-lease should be allowed
 	block, reason := runPiSafetyForGit(t, worktree, "git push --force-with-lease origin HEAD:refs/heads/mu/ship-fwl-auth")
@@ -356,15 +349,9 @@ func TestSafetyCheckBranchDeletionAllowedWithRetirementContext(t *testing.T) {
 
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-bdel-ok")
 
-	// Set git capability tier to cleanup
-	if err := fleet.SetGitCapabilityTier(homeDir, "ship-bdel-ok", fleet.GitTierCleanup); err != nil {
-		t.Fatalf("SetGitCapabilityTier: %v", err)
-	}
-
-	// Set retirement context
-	if err := fleet.SetGitAuthContext(homeDir, "ship-bdel-ok", "retirement"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
-	}
+	// Seed the .meta projections of the authoritative git authorization
+	// records (Task 7.4).
+	seedGitAuthMeta(t, homeDir, "ship-bdel-ok", "cleanup", "retirement", nil)
 
 	// Branch deletion should be allowed in retirement context
 	block, reason := runPiSafetyForGit(t, worktree, "git branch -d mu/ship-bdel-ok")
@@ -385,15 +372,9 @@ func TestSafetyCheckRewriteAllowedWithAmendmentContext(t *testing.T) {
 
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-rewrite-ok")
 
-	// Set git capability tier to rewrite
-	if err := fleet.SetGitCapabilityTier(homeDir, "ship-rewrite-ok", fleet.GitTierRewrite); err != nil {
-		t.Fatalf("SetGitCapabilityTier: %v", err)
-	}
-
-	// Set amendment context
-	if err := fleet.SetGitAuthContext(homeDir, "ship-rewrite-ok", "amendment"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
-	}
+	// Seed the .meta projections of the authoritative git authorization
+	// records (Task 7.4).
+	seedGitAuthMeta(t, homeDir, "ship-rewrite-ok", "rewrite", "amendment", nil)
 
 	// Rebase should be allowed in amendment context
 	block, reason := runPiSafetyForGit(t, worktree, "git rebase main")
@@ -414,20 +395,39 @@ func TestSafetyCheckPushDeleteAllowedWithRetirementContext(t *testing.T) {
 
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-pdel-ok")
 
-	// Set git capability tier to cleanup
-	if err := fleet.SetGitCapabilityTier(homeDir, "ship-pdel-ok", fleet.GitTierCleanup); err != nil {
-		t.Fatalf("SetGitCapabilityTier: %v", err)
-	}
-
-	// Set retirement context
-	if err := fleet.SetGitAuthContext(homeDir, "ship-pdel-ok", "retirement"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
-	}
+	// Seed the .meta projections of the authoritative git authorization
+	// records (Task 7.4).
+	seedGitAuthMeta(t, homeDir, "ship-pdel-ok", "cleanup", "retirement", nil)
 
 	// Push --delete should be allowed in retirement context
 	block, reason := runPiSafetyForGit(t, worktree, "git push --delete origin mu/ship-pdel-ok")
 	if block {
 		t.Fatalf("push --delete in retirement blocked=%v reason=%q, want allow", block, reason)
+	}
+}
+
+// seedGitAuthMeta seeds the .meta projections of the authoritative git
+// authorization records that production reconciles after each Authority
+// commit (Task 7.4). The git mutation safety read path consumes these
+// projections; mutationAuth, when non-nil, is the JSON of the
+// git_mutation_authorization record.
+func seedGitAuthMeta(t *testing.T, homeDir, taskID, tier, context string, mutationAuth map[string]any) {
+	t.Helper()
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		meta = make(map[string]string)
+	}
+	meta["git_capability_tier"] = tier
+	meta["git_auth_context"] = context
+	if mutationAuth != nil {
+		data, err := json.Marshal(mutationAuth)
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta["git_mutation_authorization"] = string(data)
+	}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		t.Fatal(err)
 	}
 }
 

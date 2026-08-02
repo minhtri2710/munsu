@@ -4,67 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// GitCapabilityTier defines the level of git mutation authority a task has.
-// The tier is set at launch time and is immutable for the duration of the launch.
-// Each tier is a superset of the tiers below it.
-type GitCapabilityTier string
-
-const (
-	// GitTierRead permits only read-only operations (status, log, diff, fetch).
-	GitTierRead GitCapabilityTier = "read"
-	// GitTierWrite permits add, commit, normal push, and branch creation.
-	GitTierWrite GitCapabilityTier = "write"
-	// GitTierRewrite permits force-with-lease, rebase, reset, and amend.
-	GitTierRewrite GitCapabilityTier = "rewrite"
-	// GitTierCleanup permits branch deletion and remote ref deletion.
-	GitTierCleanup GitCapabilityTier = "cleanup"
-	// GitTierAdmin permits unrestricted force (never auto-granted).
-	GitTierAdmin GitCapabilityTier = "admin"
-)
-
-// GitOperation identifies the specific elevated git operation being authorized.
-type GitOperation string
-
-const (
-	GitOpForceWithLease GitOperation = "force-with-lease"
-	GitOpBranchDelete   GitOperation = "branch-delete"
-	GitOpPushDelete     GitOperation = "push-delete"
-	GitOpRebase         GitOperation = "rebase"
-	GitOpReset          GitOperation = "reset"
-	GitOpAmendCommit    GitOperation = "amend-commit"
-	GitOpCherryPick     GitOperation = "cherry-pick"
-	GitOpRevert         GitOperation = "revert"
-	GitOpClean          GitOperation = "clean"
-)
-
-// GitExpectedState captures the expected state of a ref before mutation.
-// This is used for force-with-lease expected-state comparison — the old SHA
-// must match the current state of the ref before the mutation is authorized.
-type GitExpectedState struct {
-	Ref    string `json:"ref"`     // e.g., "refs/heads/mu/task-123"
-	OldSHA string `json:"old_sha"` // expected current SHA of the ref
-	NewSHA string `json:"new_sha"` // expected new SHA of the ref
-}
-
-// GitMutationAuthorization is a durable authorization record for a specific
-// elevated git mutation. It binds the operation to an exact expected state
-// and context (amendment, retirement, or standalone), providing an auditable
-// trail for every elevated git mutation.
-type GitMutationAuthorization struct {
-	TaskGeneration string            `json:"task_generation"`
-	Operation      GitOperation      `json:"operation"`
-	ExpectedState  GitExpectedState  `json:"expected_state"`
-	AuthorizedAt   string            `json:"authorized_at"`
-	Authorizer     string            `json:"authorizer"`
-	Context        string            `json:"context"` // "amendment", "retirement", "standalone"
-}
-
-// Meta field keys for git authorization.
+// Git authorization writes route through the composed Task Authority (Task
+// 7.4): the authoritative capability tier, authorization context, and
+// elevated git mutation authorization records live inside the Authority
+// Aggregate. This file retains only the read helpers and pure policy over
+// the .meta projections; no authorization record is written here.
+//
+// Meta field keys for git authorization (post-commit .meta projections of
+// the authoritative records).
 const (
 	MetaGitCapabilityTier = "git_capability_tier"
 	MetaGitMutationAuth   = "git_mutation_authorization"
@@ -75,7 +27,7 @@ const (
 // exists for the requested operation.
 type ErrNoGitMutationAuthorization struct {
 	TaskID    string
-	Operation GitOperation
+	Operation taskauthority.GitOperation
 	Reason    string
 }
 
@@ -87,8 +39,8 @@ func (e *ErrNoGitMutationAuthorization) Error() string {
 // not match the current state, indicating the ref has moved since authorization.
 type ErrStaleGitMutationAuthorization struct {
 	TaskID    string
-	Operation GitOperation
-	Expected  GitExpectedState
+	Operation taskauthority.GitOperation
+	Expected  taskauthority.GitExpectedState
 	ActualSHA string
 	Reason    string
 }
@@ -110,148 +62,39 @@ func (e *ErrForcePushDenied) Error() string {
 }
 
 // ResolveGitCapabilityTier determines the applicable git capability tier for a
-// task. The tier is read from meta (set at launch time). If not set, defaults
-// to GitTierWrite, which is backward compatible with the existing allowlist
-// (add, commit, normal push, task-local branch creation).
-func ResolveGitCapabilityTier(homeDir, taskID string) (GitCapabilityTier, error) {
+// task. The tier is read from the .meta projection (set at launch time through
+// the Authority). If not set, defaults to GitTierWrite, which is backward
+// compatible with the existing allowlist (add, commit, normal push, task-local
+// branch creation).
+func ResolveGitCapabilityTier(homeDir, taskID string) (taskauthority.GitCapabilityTier, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		// No meta file is equivalent to default tier (write).
-		return GitTierWrite, nil
+		return taskauthority.GitTierWrite, nil
 	}
 	raw := meta[MetaGitCapabilityTier]
 	if raw == "" {
-		return GitTierWrite, nil // default, backward compatible
+		return taskauthority.GitTierWrite, nil // default, backward compatible
 	}
-	tier := GitCapabilityTier(raw)
+	tier := taskauthority.GitCapabilityTier(raw)
 	switch tier {
-	case GitTierRead, GitTierWrite, GitTierRewrite, GitTierCleanup, GitTierAdmin:
+	case taskauthority.GitTierRead, taskauthority.GitTierWrite, taskauthority.GitTierRewrite, taskauthority.GitTierCleanup, taskauthority.GitTierAdmin:
 		return tier, nil
 	default:
-		return GitTierWrite, fmt.Errorf("resolve git tier: unknown tier %q, defaulting to write", raw)
-	}
-}
-
-// SetGitCapabilityTier persists the git capability tier to task meta.
-// This is called at launch time to set the immutable tier.
-func SetGitCapabilityTier(homeDir, taskID string, tier GitCapabilityTier) error {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	meta[MetaGitCapabilityTier] = string(tier)
-	return home.WriteMeta(homeDir, taskID, meta)
-}
-
-// OperationRequiresTier returns the minimum tier required for a git operation.
-// Operations not listed require at most GitTierWrite.
-func OperationRequiresTier(op GitOperation) GitCapabilityTier {
-	switch op {
-	case GitOpForceWithLease, GitOpRebase, GitOpReset, GitOpAmendCommit, GitOpCherryPick, GitOpRevert, GitOpClean:
-		return GitTierRewrite
-	case GitOpBranchDelete, GitOpPushDelete:
-		return GitTierCleanup
-	default:
-		return GitTierWrite
+		return taskauthority.GitTierWrite, fmt.Errorf("resolve git tier: unknown tier %q, defaulting to write", raw)
 	}
 }
 
 // TierEnough returns true when the task's tier is at least the required tier.
-func TierEnough(taskTier, requiredTier GitCapabilityTier) bool {
-	order := map[GitCapabilityTier]int{
-		GitTierRead:    0,
-		GitTierWrite:   1,
-		GitTierRewrite: 2,
-		GitTierCleanup: 3,
-		GitTierAdmin:   4,
+func TierEnough(taskTier, requiredTier taskauthority.GitCapabilityTier) bool {
+	order := map[taskauthority.GitCapabilityTier]int{
+		taskauthority.GitTierRead:    0,
+		taskauthority.GitTierWrite:   1,
+		taskauthority.GitTierRewrite: 2,
+		taskauthority.GitTierCleanup: 3,
+		taskauthority.GitTierAdmin:   4,
 	}
 	return order[taskTier] >= order[requiredTier]
-}
-
-// AuthorizeGitMutation creates a durable authorization for a specific git
-// mutation. It validates the expected state and stores the authorization in
-// meta using CAS to prevent concurrent overwrites.
-//
-// Parameters:
-//   - homeDir: munsu home directory
-//   - taskID: task identifier
-//   - generation: task generation (must match meta if set)
-//   - op: the git operation being authorized
-//   - expected: the expected state before mutation (ref, old SHA, new SHA)
-//   - authorizer: who authorized this (e.g., "general", "amendment", "retirement")
-//   - context: the context ("amendment", "retirement", "standalone")
-//
-// Returns the created GitMutationAuthorization on success, or an error if
-// validation fails or CAS conflicts.
-func AuthorizeGitMutation(homeDir, taskID, generation string, op GitOperation, expected GitExpectedState, authorizer, context string) (*GitMutationAuthorization, error) {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return nil, fmt.Errorf("authorize git mutation: reading meta: %w", err)
-	}
-
-	// Validate generation
-	metaGeneration := meta["generation"]
-	if metaGeneration != "" && metaGeneration != generation {
-		return nil, fmt.Errorf("authorize git mutation: generation mismatch: meta=%q provided=%q", metaGeneration, generation)
-	}
-
-	// Validate expected state
-	if expected.Ref == "" {
-		return nil, fmt.Errorf("authorize git mutation: expected ref is required")
-	}
-	if expected.OldSHA == "" {
-		return nil, fmt.Errorf("authorize git mutation: expected old SHA is required")
-	}
-	if expected.NewSHA == "" && op != GitOpBranchDelete && op != GitOpPushDelete {
-		return nil, fmt.Errorf("authorize git mutation: expected new SHA is required for operation %q", op)
-	}
-
-	// Validate context
-	switch context {
-	case "amendment", "retirement", "standalone":
-		// valid
-	default:
-		return nil, fmt.Errorf("authorize git mutation: invalid context %q", context)
-	}
-
-	// Validate operation
-	requiredTier := OperationRequiresTier(op)
-	if requiredTier == GitTierWrite {
-		// Write-tier operations don't need authorization
-		return nil, fmt.Errorf("authorize git mutation: operation %q does not require authorization (tier %s)", op, requiredTier)
-	}
-
-	auth := &GitMutationAuthorization{
-		TaskGeneration: generation,
-		Operation:      op,
-		ExpectedState:  expected,
-		AuthorizedAt:   time.Now().UTC().Format(time.RFC3339),
-		Authorizer:     authorizer,
-		Context:        context,
-	}
-
-	authJSON, err := json.Marshal(auth)
-	if err != nil {
-		return nil, fmt.Errorf("authorize git mutation: serializing: %w", err)
-	}
-
-	// CAS: check generation and context haven't changed
-	checks := map[string]string{
-		"generation": metaGeneration,
-	}
-	if currentContext := meta[MetaGitAuthContext]; currentContext != "" {
-		checks[MetaGitAuthContext] = currentContext
-	}
-
-	updates := map[string]string{
-		MetaGitMutationAuth: string(authJSON),
-	}
-
-	if _, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
-		return nil, fmt.Errorf("authorize git mutation: cas: %w", err)
-	}
-
-	return auth, nil
 }
 
 // CheckGitMutationAuthorization validates a git mutation authorization against
@@ -259,6 +102,9 @@ func AuthorizeGitMutation(homeDir, taskID, generation string, op GitOperation, e
 //   - An authorization record exists for the operation
 //   - The expected old SHA matches the current SHA (force-with-lease semantics)
 //   - The context is appropriate
+//
+// The record is read from the .meta projection reconciled after the
+// authoritative commit (Task 7.4).
 //
 // Parameters:
 //   - homeDir: munsu home directory
@@ -270,7 +116,7 @@ func AuthorizeGitMutation(homeDir, taskID, generation string, op GitOperation, e
 //   - ErrNoGitMutationAuthorization: no authorization exists
 //   - ErrStaleGitMutationAuthorization: expected SHA does not match current
 //   - error: other errors
-func CheckGitMutationAuthorization(homeDir, taskID string, op GitOperation, currentSHA string) (*GitMutationAuthorization, error) {
+func CheckGitMutationAuthorization(homeDir, taskID string, op taskauthority.GitOperation, currentSHA string) (*taskauthority.GitMutationAuthorization, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("check git mutation auth: reading meta: %w", err)
@@ -285,7 +131,7 @@ func CheckGitMutationAuthorization(homeDir, taskID string, op GitOperation, curr
 		}
 	}
 
-	var auth GitMutationAuthorization
+	var auth taskauthority.GitMutationAuthorization
 	if err := json.Unmarshal([]byte(raw), &auth); err != nil {
 		return nil, fmt.Errorf("check git mutation auth: deserializing: %w", err)
 	}
@@ -315,44 +161,8 @@ func CheckGitMutationAuthorization(homeDir, taskID string, op GitOperation, curr
 	return &auth, nil
 }
 
-// ClearGitMutationAuthorization removes the git mutation authorization from
-// meta using CAS. This is called after the authorized mutation completes or
-// when the authorization is no longer needed.
-func ClearGitMutationAuthorization(homeDir, taskID string) error {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return fmt.Errorf("clear git mutation auth: reading meta: %w", err)
-	}
-
-	checks := map[string]string{}
-	if raw := meta[MetaGitMutationAuth]; raw != "" {
-		checks[MetaGitMutationAuth] = raw
-	}
-
-	updates := map[string]string{
-		MetaGitMutationAuth: "",
-	}
-
-	if _, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
-		return fmt.Errorf("clear git mutation auth: cas: %w", err)
-	}
-	return nil
-}
-
-// SetGitAuthContext persists the git authorization context to task meta.
-// This is set when entering amendment or retirement context.
-// Valid contexts: "amendment", "retirement", "" (clear).
-func SetGitAuthContext(homeDir, taskID, context string) error {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	meta[MetaGitAuthContext] = context
-	return home.WriteMeta(homeDir, taskID, meta)
-}
-
-// ReadGitAuthContext reads the current git authorization context from task meta.
-// Returns empty string if no context is set.
+// ReadGitAuthContext reads the current git authorization context from the
+// .meta projection. Returns empty string if no context is set.
 func ReadGitAuthContext(homeDir, taskID string) (string, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
@@ -360,19 +170,6 @@ func ReadGitAuthContext(homeDir, taskID string) (string, error) {
 		return "", nil
 	}
 	return meta[MetaGitAuthContext], nil
-}
-
-// AuthorizeForceWithLease is a convenience function that creates a git mutation
-// authorization for a force-with-lease operation. It validates the expected
-// state and stores the authorization.
-//
-// This is the narrow authorization path for force-with-lease: the caller must
-// provide the expected old SHA of the ref, which is checked against the current
-// state before the push is allowed.
-func AuthorizeForceWithLease(homeDir, taskID, generation, ref, oldSHA, newSHA, authorizer, context string) (*GitMutationAuthorization, error) {
-	return AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease,
-		GitExpectedState{Ref: ref, OldSHA: oldSHA, NewSHA: newSHA},
-		authorizer, context)
 }
 
 // UnrestrictedForceDenied returns true if the operation is an unrestricted force
@@ -411,9 +208,9 @@ func PushDeleteRequested(args []string, refspec string) bool {
 }
 
 // ReadGitMutationAuthorization reads the stored git mutation authorization
-// from meta without performing any checks. Returns nil if no authorization
-// is stored.
-func ReadGitMutationAuthorization(homeDir, taskID string) (*GitMutationAuthorization, error) {
+// from the .meta projection without performing any checks. Returns nil if no
+// authorization is stored.
+func ReadGitMutationAuthorization(homeDir, taskID string) (*taskauthority.GitMutationAuthorization, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("read git mutation auth: reading meta: %w", err)
@@ -424,7 +221,7 @@ func ReadGitMutationAuthorization(homeDir, taskID string) (*GitMutationAuthoriza
 		return nil, nil
 	}
 
-	var auth GitMutationAuthorization
+	var auth taskauthority.GitMutationAuthorization
 	if err := json.Unmarshal([]byte(raw), &auth); err != nil {
 		return nil, fmt.Errorf("read git mutation auth: deserializing: %w", err)
 	}

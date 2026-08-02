@@ -3,6 +3,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // DeliveryState represents the lifecycle state of a
@@ -249,9 +251,15 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 // and delivery_state == review-ready, then sets delivery_state = amending and
 // records the amendment intent (expected head, started timestamp, revision).
 //
+// The git authorization context ("amendment") is an authoritative
+// generation-bound record (Task 7.4): it routes through the composed Task
+// Authority and the .meta key is a post-commit projection. A projection
+// failure warns and never rolls back the authoritative commit; an authority
+// error fails closed.
+//
 // Returns the updated meta on success. Fail-closed if state is not review-ready
 // or if stored identity doesn't match the expected values.
-func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
+func BeginAmendment(homeDir, taskID string, auth *taskauthority.Authority) (map[string]string, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("begin amendment: reading meta: %w", err)
@@ -274,6 +282,18 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 		return nil, fmt.Errorf("begin amendment: incomplete identity: %w", err)
 	}
 
+	// Route the git authorization context through the composed Authority
+	// (Task 7.4) before the delivery_state transition so a failure leaves the
+	// amendment unstarted.
+	if _, err := StoreGitAuthContext(homeDir, auth, taskID, "amendment"); err != nil {
+		var projErr *AuthorizationProjectionError
+		if errors.As(err, &projErr) {
+			fmt.Fprintf(os.Stderr, "Warning: git authorization context projection failed: %v\n", projErr)
+		} else {
+			return nil, fmt.Errorf("begin amendment: git authorization context: %w", err)
+		}
+	}
+
 	currentRev := meta[MetaIdentityRevision]
 	nextRev := incrementRevision(currentRev)
 
@@ -290,7 +310,6 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 		MetaAmendExpectedHead: ident.HeadSHA,
 		MetaAmendStartedAt:    time.Now().UTC().Format(time.RFC3339),
 		MetaIdentityRevision:  nextRev,
-		MetaGitAuthContext:    "amendment",
 	}
 
 	result, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates)
@@ -309,9 +328,13 @@ func BeginAmendment(homeDir, taskID string) (map[string]string, error) {
 //   - The old head is an ancestor of the new head in the retained worktree
 //   - No force-push, rewritten ancestry, or branch replacement
 //
+// The git authorization context clear is an authoritative generation-bound
+// record (Task 7.4): it routes through the composed Task Authority and the
+// .meta key is a post-commit projection.
+//
 // On success, atomically updates the identity and appends an audit record.
 // Returns the updated identity and audit record.
-func AcceptAmendment(homeDir, taskID, worktreePath string) (*domain.DeliveryIdentity, *AmendRecord, error) {
+func AcceptAmendment(homeDir, taskID, worktreePath string, auth *taskauthority.Authority) (*domain.DeliveryIdentity, *AmendRecord, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("accept amendment: reading meta: %w", err)
@@ -387,6 +410,18 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*domain.DeliveryIden
 		Reason:           "amendment",
 	}
 
+	// Route the git authorization context clear through the composed Authority
+	// (Task 7.4) before the delivery_state CAS so a failure leaves the
+	// amendment state untouched.
+	if _, err := StoreGitAuthContext(homeDir, auth, taskID, ""); err != nil {
+		var projErr *AuthorizationProjectionError
+		if errors.As(err, &projErr) {
+			fmt.Fprintf(os.Stderr, "Warning: git authorization context projection failed: %v\n", projErr)
+		} else {
+			return nil, nil, fmt.Errorf("accept amendment: git authorization context: %w", err)
+		}
+	}
+
 	// CAS: check identity + amending state + revision
 	checks := map[string]string{
 		"pr_provider":         stored.Provider,
@@ -406,8 +441,6 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*domain.DeliveryIden
 	updates[MetaAmendExpectedHead] = ""
 	updates[MetaAmendStartedAt] = ""
 	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
-	// Clear git auth context
-	updates[MetaGitAuthContext] = ""
 	// Append audit record
 	updates[MetaAmendHistory] = appendAmendHistory(meta[MetaAmendHistory], record)
 
@@ -432,7 +465,7 @@ func AcceptAmendment(homeDir, taskID, worktreePath string) (*domain.DeliveryIden
 //
 // This is the recovery route for PR #339 and similar cases. It requires only
 // the stored identity and provider access — no manual meta edits or --force.
-func ReconcileIdentity(homeDir, taskID, worktreePath string) (*domain.DeliveryIdentity, *AmendRecord, error) {
+func ReconcileIdentity(homeDir, taskID, worktreePath string, auth *taskauthority.Authority) (*domain.DeliveryIdentity, *AmendRecord, error) {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reconcile: reading meta: %w", err)
@@ -496,6 +529,18 @@ func ReconcileIdentity(homeDir, taskID, worktreePath string) (*domain.DeliveryId
 		Reason:           "reconciliation",
 	}
 
+	// Route the git authorization context clear through the composed Authority
+	// (Task 7.4) before the delivery_state CAS so a failure leaves the
+	// reconciliation state untouched.
+	if _, err := StoreGitAuthContext(homeDir, auth, taskID, ""); err != nil {
+		var projErr *AuthorizationProjectionError
+		if errors.As(err, &projErr) {
+			fmt.Fprintf(os.Stderr, "Warning: git authorization context projection failed: %v\n", projErr)
+		} else {
+			return nil, nil, fmt.Errorf("reconcile: git authorization context: %w", err)
+		}
+	}
+
 	// CAS: verify stored identity still matches
 	checks := identityChecks(stored)
 	checks[MetaIdentityRevision] = meta[MetaIdentityRevision]
@@ -506,8 +551,6 @@ func ReconcileIdentity(homeDir, taskID, worktreePath string) (*domain.DeliveryId
 	updates[MetaAmendExpectedHead] = ""
 	updates[MetaAmendStartedAt] = ""
 	updates[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
-	// Clear git auth context (reconciliation ends any amendment context)
-	updates[MetaGitAuthContext] = ""
 	updates[MetaAmendHistory] = appendAmendHistory(meta[MetaAmendHistory], record)
 
 	_, err = home.CompareAndSwapMeta(homeDir, taskID, checks, updates)

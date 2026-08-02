@@ -145,6 +145,23 @@ type Aggregate struct {
 	// outside the Aggregate.
 	DeliveryPlan          *DeliveryPlan          `json:"delivery_plan,omitempty"`
 	CapabilityAttestation *CapabilityAttestation `json:"capability_attestation,omitempty"`
+	// MergeAuthorization is the generation-bound merge authorization record
+	// committed by the AuthorizeMerge operation: it binds the provider
+	// identity snapshot and the immutable head SHA the merge was authorized
+	// against (Task 7.4). A changed head makes the prior authorization stale
+	// and is never silently reused. ExternalMerge is the generation-bound
+	// evidence record of an external merge committed by RecordExternalMerge.
+	MergeAuthorization *MergeAuthorization  `json:"merge_authorization,omitempty"`
+	ExternalMerge      *ExternalMergeRecord `json:"external_merge,omitempty"`
+	// GitCapabilityTier, GitAuthContext, and GitMutationAuthorization are the
+	// generation-bound git authorization records committed by the
+	// SetGitCapabilityTier, SetGitAuthContext, and
+	// AuthorizeGitMutation/ClearGitMutationAuthorization operations (Task
+	// 7.4): the launch capability tier, the amendment/retirement context, and
+	// the elevated git mutation authorization with its exact expected state.
+	GitCapabilityTier        string                    `json:"git_capability_tier,omitempty"`
+	GitAuthContext           string                    `json:"git_auth_context,omitempty"`
+	GitMutationAuthorization *GitMutationAuthorization `json:"git_mutation_authorization,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -210,6 +227,9 @@ func validateAggregate(agg Aggregate) error {
 		return err
 	}
 	if err := validateDeliveryDefinition(agg); err != nil {
+		return err
+	}
+	if err := validateAuthorizationDefinition(agg); err != nil {
 		return err
 	}
 	return nil
@@ -295,6 +315,18 @@ func (a Aggregate) clone() Aggregate {
 	if a.CapabilityAttestation != nil {
 		c := *a.CapabilityAttestation
 		out.CapabilityAttestation = &c
+	}
+	if a.MergeAuthorization != nil {
+		m := *a.MergeAuthorization
+		out.MergeAuthorization = &m
+	}
+	if a.ExternalMerge != nil {
+		e := *a.ExternalMerge
+		out.ExternalMerge = &e
+	}
+	if a.GitMutationAuthorization != nil {
+		g := *a.GitMutationAuthorization
+		out.GitMutationAuthorization = &g
 	}
 	return out
 }
