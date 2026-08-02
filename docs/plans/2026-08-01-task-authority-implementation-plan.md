@@ -56,6 +56,21 @@ Task 4.2 is complete through commit `b2c2cbeb`. Independent Reviewer acceptance 
 
 Task 4.3 is complete through commit `062a154f`. Independent Reviewer acceptance verified all four criteria: `internal/taskauthority`/`internal/taskauthorityfs` have zero watcher references (deliberately absent and documented in `readiness.go`); start, spawn, and handoff fail closed on degraded supervision via explicit fleet/CLI gates (`fleet.CheckSupervisionForDispatch` wrapping `home.CheckWatcherHealthForDispatch`, run before any Authority/Store call — start at `backlog_cmd.go` before `auth.Start`, spawn pre-flight sites in `spawn_runner.go`, handoff gating both homes before the saga); watcher failure returns typed `ErrUnhealthyWatcher` and never creates/mutates a Dispatch Hold or task phase (asserted by fresh tests); `home.CheckDispatchHold` is holds-only and no longer calls watcher health. The spawn durable-hold pre-flight is gone — durable holds are evaluated atomically inside `ConfirmSpawn`; the start path gained the plan-required watcher gate (pre-cutover `home.StartTask` never had one); handoff keeps holds-only `home.CheckDispatchHold` through Phase 6. Lock order preserved and the architecture allowlist verified (spawn_runner caller entry removed; handoff keeps `CheckDispatchHold`); no docs/plan changes in the slice.
 
+Checkpoint 4 is complete. Independent Reviewer acceptance (full verification tier) verified all four criteria at `fabdf8e8`: Worktree and Endpoint Bindings are authoritative generation-bound aggregate records inside the `taskauthorityfs` Store (lease marker committed atomically with the binding; `home.BindTaskWorktree`/`BindTaskEndpoint`/`UpdateCurrentTaskAggregateState` zero production hits); `ConfirmSpawn` is a single-envelope named semantic operation (fence + owner + worktree + queued + unbound + applicable holds revalidated inside the transaction, one Revision advance, typed audit, durable receipt, replay/conflict semantics, crash recovery leaves task queued or working); watcher health is deliberately absent from Authority (sole `readiness.go` comment; gates live in fleet/CLI orchestration and never touch holds or phases); full unit suite (13/13 packages), full integration suite, `-race` taskauthority/taskauthorityfs, spawn-focused tests (12), and the crash/migration/transaction matrix are all green with only the worktree-sanctioned skip `TestAgentSkillMirrorsMatchCanonical`. Architecture grep gates: only the documented allowlisted callers remain (`spawn_runner.go` CreateTaskAggregate for Phase 4 transition, handoff `CheckDispatchHold` through Phase 6); `TestNoNewTaskAuthorityReachThrough` passes in fleet and cli.
+
+Verified on 2026-08-02 (Checkpoint 4):
+
+```sh
+go build ./...
+go vet ./...
+go test -race ./internal/taskauthority ./internal/taskauthorityfs
+go test ./internal/fleet -run 'Test.*Spawn'
+go test ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonical
+go test -tags=integration ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonical
+```
+
+All commands passed; the only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` (worktree-sanctioned skip). Orchestration policy was centralized globally during this phase: the three primary commits `7f3bf7a` (acknowledged direct Peer reports), `79a968b` (JSON validity), and `3e0e44a` (delete repo-local workflow policy) are cherry-picked onto the branch (`6e755322`, `58e1cccc`, `eae89601`); policy now lives only in `~/.paseo/orchestration-preferences.json`.
+
 ## Goal
 
 Move Authoritative Task Aggregate lifecycle, readiness, and durable dispatch control from `internal/home`, direct CLI mutations, and fleet reach-through into one deep `internal/taskauthority` module. Persist it through a crash-recoverable `internal/taskauthorityfs` adapter composed at the CLI, while preserving current on-disk identities and removing each old mutation path as soon as its final caller migrates.
@@ -735,10 +750,10 @@ go test ./internal/fleet ./internal/cli -run 'Test.*(Watcher|Degraded|Dispatch|S
 
 ### Checkpoint 4 — Spawn invariant cluster
 
-- [ ] Worktree and Endpoint Bindings are authoritative generation-bound records.
-- [ ] `ConfirmSpawn` is atomic and semantic.
-- [ ] Watcher health remains outside Authority.
-- [ ] Spawn-focused tests and race tests pass.
+- [x] Worktree and Endpoint Bindings are authoritative generation-bound records.
+- [x] `ConfirmSpawn` is atomic and semantic.
+- [x] Watcher health remains outside Authority.
+- [x] Spawn-focused tests and race tests pass.
 
 ## Phase 5 — Durable dispatch-control cutover
 
