@@ -52,6 +52,8 @@ All commands passed; the only skipped test is the documented pre-existing `TestA
 
 Task 4.1 is complete through commit `bc731f8e`. Independent Reviewer acceptance verified all four criteria: `Authority.BindWorktree` is a named generation-bound operation validating the full payload (repository identity, path, Git/Common dirs, head, lease, fence token, bound timestamp) with a stable Task Operation ID; the lease marker and aggregate binding commit/recover atomically through the `taskauthorityfs` journal (crash matrix at all 10 journal stages, canonical `View` never exposes a partial binding); same-op replay is idempotent, a duplicate Operation ID with changed intent conflicts non-retryably, and any rebind of an already-bound generation fails closed; `home.BindTaskWorktree` is deleted with zero production callers and the allowlist shrunk in the same slice (`TestNoNewTaskAuthorityReachThrough` green in fleet and cli). Spawn wiring injects the composed Authority via `fleet.Args.Authority` from the CLI composition root with `HomeDir: ctx.Home`; `home.TaskWorktreeLeaseActive` read path preserved against the v2 marker namespace; `internal/taskauthority` retains zero filesystem imports. Confirmed transitions: v1 lease path remains a v1-detection location, migration does not yet emit v2 markers (pre-existing), and spawn on v1-state homes fails closed at bind with `ErrMigrationRequired` until Task 4.2 completes the spawn cutover.
 
+Task 4.2 is complete through commit `b2c2cbeb`. Independent Reviewer acceptance verified all four criteria: `Authority.ConfirmSpawn` commits Endpoint Binding + queued→working (reason `spawned`) + exactly-one Revision advance + typed audit event + durable idempotency receipt in one Store update envelope, revalidating Expected Generation, owner presence, worktree binding, and applicable durable Dispatch Holds inside the transaction (Start/Hold atomicity pattern, no check-commit race); failed persistence leaves the task non-working (crash matrix: before-manifest → queued/unbound, later stages converge to working/bound); `home.BindTaskEndpoint` and `home.UpdateCurrentTaskAggregateState(..., "working", ...)` are deleted with zero production callers and the allowlist/gate symbol list shrunk in the same slice. Fleet cutover: `bindEndpoint` + `markWorkingAfterBinding` collapsed into one `confirmSpawn` call (stable Operation ID `spawn-confirm-<id>-<gen>`, `spawnActor`, fail-closed without a composed Authority); the `.meta` projection remains a non-authoritative side file written before the authoritative transition. The `chore(paseo)` optimization commit `b23388c4` (peer handoffs and verification tiers) is cherry-picked onto the branch above this slice.
+
 ## Goal
 
 Move Authoritative Task Aggregate lifecycle, readiness, and durable dispatch control from `internal/home`, direct CLI mutations, and fleet reach-through into one deep `internal/taskauthority` module. Persist it through a crash-recoverable `internal/taskauthorityfs` adapter composed at the CLI, while preserving current on-disk identities and removing each old mutation path as soon as its final caller migrates.
@@ -675,10 +677,10 @@ go test ./internal/fleet -run 'Test.*Spawn.*Worktree'
 
 **Acceptance criteria:**
 
-- [ ] Endpoint Binding and working transition commit together.
-- [ ] Failed endpoint persistence leaves the task non-working.
-- [ ] Expected Generation, owner, worktree binding, and applicable Dispatch Hold are revalidated inside the transaction.
-- [ ] `home.BindTaskEndpoint` and `home.UpdateCurrentTaskAggregateState(..., "working", ...)` have no production caller.
+- [x] Endpoint Binding and working transition commit together.
+- [x] Failed endpoint persistence leaves the task non-working.
+- [x] Expected Generation, owner, worktree binding, and applicable Dispatch Hold are revalidated inside the transaction.
+- [x] `home.BindTaskEndpoint` and `home.UpdateCurrentTaskAggregateState(..., "working", ...)` have no production caller.
 
 **Verification:**
 
