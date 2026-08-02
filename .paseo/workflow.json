@@ -3,10 +3,12 @@
   "schemaVersion": "paseo.workflow/v1",
   "workflow": {
     "name": "supervisor-lead-peer",
-    "visibility": "top-level-agents",
+    "visibility": "paseo-subagents-track",
     "humanPosition": "outside-agent-hierarchy",
     "defaultWorkspaceIsolation": "worktree",
-    "execution": "sequential-visible-agents"
+    "execution": "sequential-visible-subagents",
+    "parentage": "Supervisor creates Lead; Lead creates Peers",
+    "detachPolicy": "human-only"
   },
   "roles": {
     "supervisor": {
@@ -48,7 +50,7 @@
       "mustNot": [
         "delegate acceptance authority",
         "merge or accept from reports alone",
-        "create invisible loop workers"
+        "create native-provider or loop workers that bypass the Paseo Subagents track"
       ]
     },
     "peers": {
@@ -151,8 +153,12 @@
       "Supervisor archives completed visible agents and enforces resource hygiene"
     ],
     "agentVisibilityRequired": true,
+    "visibilitySurface": "Paseo Subagents track and workspace",
+    "completionSignal": "notify-on-finish",
+    "pollingPolicy": "do-not-poll-running-agents",
     "archiveAfterLeadRuling": true,
     "noInternalLoops": true,
+    "noNativeProviderSubagents": true,
     "noMunsuWorkflow": true
   },
   "repository": {
