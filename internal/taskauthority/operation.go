@@ -28,16 +28,31 @@ type Operation struct {
 // 64-character non-hex digest must fail exactly like a short one so every
 // adapter rejects it with the same typed error.
 func (op Operation) Validate() error {
-	if op.ID == "" || strings.ContainsAny(op.ID, `/\\`) {
-		return validationError("operation ID must be a safe non-empty value")
+	if err := validateOperationID(op.ID); err != nil {
+		return err
 	}
-	if len(op.Digest) != 64 {
-		return validationError("operation digest must be a 64-hex sha256 digest")
-	}
-	if _, err := hex.DecodeString(op.Digest); err != nil {
+	if !isSHA256Hex(op.Digest) {
 		return validationError("operation digest must be a 64-hex sha256 digest")
 	}
 	return nil
+}
+
+// validateOperationID rejects empty or unsafe operation identities shared by
+// operations and transfer intents.
+func validateOperationID(id string) error {
+	if id == "" || strings.ContainsAny(id, `/\\`) {
+		return validationError("operation ID must be a safe non-empty value")
+	}
+	return nil
+}
+
+// isSHA256Hex reports whether the value is a full 64-hex sha256 digest.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 // Receipt is the durable record of one committed operation. Task identity is

@@ -2,15 +2,20 @@ package fleet
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
-
-	"github.com/minhtri2710/munsu/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
@@ -147,7 +152,7 @@ func TestHandoffRecoveryRejectsCorruptStageAndRetainsJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	journal := &taskHandoffJournal{
-		Version: 1, ID: "tx", Phase: "commit-decided", SourceHome: parent, DestinationHome: captain,
+		Version: 2, ID: "tx", Phase: "commit-decided", SourceHome: parent, DestinationHome: captain,
 		SourceBacklogPost: handoffFile{Target: "data/backlog.md", Stage: "stage/post", Exists: true, Mode: 0644, Size: 5, SHA256: digestHandoff([]byte("valid"))},
 		DestBacklogPost:   handoffFile{Target: "data/backlog.md", Stage: "stage/post", Exists: true, Mode: 0644, Size: 5, SHA256: digestHandoff([]byte("valid"))},
 	}
@@ -182,7 +187,7 @@ func TestHandoffRecoveryRejectsStaleSourceBeforeCommit(t *testing.T) {
 	if err := os.WriteFile(backlog, []byte("changed"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	journal := &taskHandoffJournal{Version: 1, ID: "stale", Phase: "prepared", SourceHome: parent, DestinationHome: captain, SourceBacklogPre: pre}
+	journal := &taskHandoffJournal{Version: 2, ID: "stale", Phase: "prepared", SourceHome: parent, DestinationHome: captain, SourceBacklogPre: pre}
 	if err := os.MkdirAll(filepath.Join(parent, "state", taskHandoffDirName, "stale", "stage"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +429,7 @@ func TestHandoffCrashBoundariesResumeToSingleDestinationAuthority(t *testing.T) 
 		}
 		os.Exit(91)
 	}
-	for _, boundary := range []string{"staging", "prepared", "commit-decided", "source-authority", "artifacts", "between-authority", "completed"} {
+	for _, boundary := range []string{"staging", "prepared", "commit-decided", "destination-receipt", "source-authority", "artifacts", "between-authority", "completed"} {
 		t.Run(boundary, func(t *testing.T) {
 			parent := t.TempDir()
 			sm := filepath.Join(parent, "captains", "test-sm")
@@ -774,4 +779,410 @@ func mustReadFleetTestFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// TestHandoffIntentBindsTaskIdentityDurably crashes immediately after the
+// durable journal (now carrying one validated transfer intent per task) is
+// written and proves the intent binds source/destination home identity, Task
+// ID, exact Generation, request digest, and both stable Operation IDs
+// (ADR-0007 §10, Task 6.1 acceptance 1).
+func TestHandoffIntentBindsTaskIdentityDurably(t *testing.T) {
+	if os.Getenv("MUNSU_HANDOFF_CRASH_HELPER") == "1" {
+		captainLookPath = func(string) (string, error) { return os.Getenv("MUNSU_HANDOFF_TASKS_AXI"), nil }
+		handoffCrashHook = func(got string) {
+			if got == "journal" {
+				os.Exit(92)
+			}
+		}
+		if err := Handoff(os.Getenv("MUNSU_HANDOFF_SOURCE"), os.Getenv("MUNSU_HANDOFF_DEST"), []string{"TASK-1", "TASK-2"}); err == nil {
+			os.Exit(0)
+		}
+		os.Exit(91)
+	}
+
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "captains", "test-sm")
+	if err := os.MkdirAll(sm, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(sm, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	writeHandoffTaskFixture(t, parent, "TASK-1")
+	writeHandoffTaskFixture(t, parent, "TASK-2")
+	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sm, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n- [ ] TASK-1 - TASK-1\n- [ ] TASK-2 - TASK-2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sm, "data", "backlog.md"), []byte("# Backlog\n\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origPath := captainLookPath
+	origBackend := isTasksAxiBackend
+	defer func() {
+		captainLookPath = origPath
+		isTasksAxiBackend = origBackend
+	}()
+	isTasksAxiBackend = func(string) bool { return true }
+	fake := fakeMovingTasksAxi(t, parent)
+	captainLookPath = func(name string) (string, error) { return fake, nil }
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestHandoffIntentBindsTaskIdentityDurably$", "--")
+	cmd.Env = append(os.Environ(),
+		"MUNSU_HANDOFF_CRASH_HELPER=1",
+		"MUNSU_HANDOFF_CRASH_AFTER=journal",
+		"MUNSU_HANDOFF_SOURCE="+parent,
+		"MUNSU_HANDOFF_DEST="+sm,
+		"MUNSU_HANDOFF_TASKS_AXI="+fake,
+	)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatal("expected helper subprocess to crash")
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
+		t.Fatalf("helper exit = %v\n%s", err, output)
+	}
+
+	journalRoot := filepath.Join(parent, "state", ".task-handoff")
+	entries, err := os.ReadDir(journalRoot)
+	if err != nil {
+		t.Fatalf("reading durable handoff journal: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("journal entries = %d, want one crash-resumable journal", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(journalRoot, entries[0].Name(), "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal taskHandoffJournal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		t.Fatal(err)
+	}
+	if journal.Version != 2 {
+		t.Fatalf("journal version = %d, want 2", journal.Version)
+	}
+	if len(journal.Tasks) != 2 {
+		t.Fatalf("journal tasks = %d, want 2", len(journal.Tasks))
+	}
+	canonicalSource, err := canonicalHandoffHome(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalDest, err := canonicalHandoffHome(sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range journal.Tasks {
+		intent := task.Intent
+		if err := intent.Validate(); err != nil {
+			t.Fatalf("intent for %s invalid: %v", task.ID, err)
+		}
+		if intent.SourceHome != canonicalSource || intent.DestinationHome != canonicalDest {
+			t.Fatalf("intent homes = %s -> %s, want %s -> %s", intent.SourceHome, intent.DestinationHome, canonicalSource, canonicalDest)
+		}
+		if intent.TaskID != task.ID {
+			t.Fatalf("intent task = %s, want %s", intent.TaskID, task.ID)
+		}
+		if intent.Generation.String() != "7" || intent.Generation.String() != task.Generation {
+			t.Fatalf("intent generation = %s, want 7", intent.Generation)
+		}
+		wantDigest, err := taskauthority.TransferRequest{SourceHome: canonicalSource, DestinationHome: canonicalDest, TaskID: task.ID, Generation: 7}.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if intent.RequestDigest != wantDigest {
+			t.Fatalf("intent digest = %s, want %s", intent.RequestDigest, wantDigest)
+		}
+		if !strings.HasPrefix(intent.SourceOperationID, "handoff-source-") || !strings.HasPrefix(intent.DestinationOperationID, "handoff-dest-") {
+			t.Fatalf("intent operation ids = %s / %s, want handoff-source-/handoff-dest- prefixes", intent.SourceOperationID, intent.DestinationOperationID)
+		}
+		if intent.SourceOperationID == intent.DestinationOperationID {
+			t.Fatal("source and destination operation ids must differ")
+		}
+	}
+
+	// The crash happened before any source mutation: source ownership stays
+	// current and the destination owns nothing.
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, "TASK-1"); err != nil || !ok {
+		t.Fatalf("source TASK-1 after intent crash ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, "TASK-1"); err != nil || ok {
+		t.Fatalf("destination TASK-1 after intent crash ok=%v err=%v, want none", ok, err)
+	}
+
+	if err := Handoff(parent, sm, []string{"TASK-1", "TASK-2"}); err != nil {
+		t.Fatalf("resume handoff: %v", err)
+	}
+	for _, taskID := range []string{"TASK-1", "TASK-2"} {
+		if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, taskID); err != nil || ok {
+			t.Fatalf("source %s remains ok=%v err=%v", taskID, ok, err)
+		}
+		if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, taskID); err != nil || !ok {
+			t.Fatalf("destination %s missing ok=%v err=%v", taskID, ok, err)
+		}
+	}
+}
+
+// TestHandoffSourcePreservedUntilDestinationReceipt crashes after the
+// destination receipt is durably committed and before any source mutation,
+// and proves source ownership remains current until the destination receipt
+// is durable (ADR-0007 §10, Task 6.1 acceptance 3).
+func TestHandoffSourcePreservedUntilDestinationReceipt(t *testing.T) {
+	if os.Getenv("MUNSU_HANDOFF_CRASH_HELPER") == "1" {
+		captainLookPath = func(string) (string, error) { return os.Getenv("MUNSU_HANDOFF_TASKS_AXI"), nil }
+		handoffCrashHook = func(got string) {
+			if got == "destination-receipt" {
+				os.Exit(92)
+			}
+		}
+		if err := Handoff(os.Getenv("MUNSU_HANDOFF_SOURCE"), os.Getenv("MUNSU_HANDOFF_DEST"), []string{"TASK-1"}); err == nil {
+			os.Exit(0)
+		}
+		os.Exit(91)
+	}
+
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "captains", "test-sm")
+	if err := os.MkdirAll(sm, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(sm, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	writeHandoffTaskFixture(t, parent, "TASK-1")
+	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sm, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n- [ ] TASK-1 - TASK-1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sm, "data", "backlog.md"), []byte("# Backlog\n\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origPath := captainLookPath
+	origBackend := isTasksAxiBackend
+	defer func() {
+		captainLookPath = origPath
+		isTasksAxiBackend = origBackend
+	}()
+	isTasksAxiBackend = func(string) bool { return true }
+	fake := fakeMovingTasksAxi(t, parent)
+	captainLookPath = func(name string) (string, error) { return fake, nil }
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestHandoffSourcePreservedUntilDestinationReceipt$", "--")
+	cmd.Env = append(os.Environ(),
+		"MUNSU_HANDOFF_CRASH_HELPER=1",
+		"MUNSU_HANDOFF_CRASH_AFTER=destination-receipt",
+		"MUNSU_HANDOFF_SOURCE="+parent,
+		"MUNSU_HANDOFF_DEST="+sm,
+		"MUNSU_HANDOFF_TASKS_AXI="+fake,
+	)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatal("expected helper subprocess to crash")
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
+		t.Fatalf("helper exit = %v\n%s", err, output)
+	}
+
+	// Source ownership is still current: the destination receipt is durable
+	// but the source aggregate has not been mutated.
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, "TASK-1"); err != nil || !ok {
+		t.Fatalf("source ownership lost before destination receipt: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, "TASK-1"); err != nil || ok {
+		t.Fatalf("destination authority published before its receipt: ok=%v err=%v", ok, err)
+	}
+	journalRoot := filepath.Join(parent, "state", ".task-handoff")
+	entries, err := os.ReadDir(journalRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("journal entries = %d, want one", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(journalRoot, entries[0].Name(), "journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal taskHandoffJournal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		t.Fatal(err)
+	}
+	if journal.Phase != "commit-decided" {
+		t.Fatalf("journal phase = %q, want commit-decided", journal.Phase)
+	}
+	if len(journal.Tasks) != 1 {
+		t.Fatalf("journal tasks = %d, want 1", len(journal.Tasks))
+	}
+	intent := journal.Tasks[0].Intent
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := taskTransferReceiptPath(sm, intent.DestinationOperationID)
+	receiptData, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatalf("destination receipt not durable: %v", err)
+	}
+	var receipt taskTransferReceipt
+	if err := json.Unmarshal(receiptData, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.OperationID != intent.DestinationOperationID || receipt.Digest != intent.RequestDigest ||
+		receipt.TaskID != "TASK-1" || receipt.Generation != "7" {
+		t.Fatalf("receipt = %+v, want binding to destination operation and request digest", receipt)
+	}
+
+	// Recovery re-commits the same receipt idempotently and completes the
+	// transfer to a single destination owner.
+	if err := RecoverTaskHandoffs(parent); err != nil {
+		t.Fatalf("recover after destination receipt: %v", err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, "TASK-1"); err != nil || ok {
+		t.Fatalf("source TASK-1 remains after recovery ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, "TASK-1"); err != nil || !ok {
+		t.Fatalf("destination TASK-1 missing after recovery ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Stat(receiptPath); err != nil {
+		t.Fatalf("destination receipt lost after recovery: %v", err)
+	}
+}
+
+// TestHandoffReceiptIdempotentReplayAndTypedConflict proves the fleet-durable
+// destination receipt mirrors the Authority Store receipt semantics: the
+// same Operation ID with the same digest is an idempotent no-op returning the
+// original receipt, and a changed digest is a non-retryable typed conflict
+// (Task 6.1 acceptance 2).
+func TestHandoffReceiptIdempotentReplayAndTypedConflict(t *testing.T) {
+	dest := t.TempDir()
+	intent := taskauthority.TransferIntent{
+		SourceHome:             "/homes/source",
+		DestinationHome:        dest,
+		TaskID:                 "TASK-1",
+		Generation:             7,
+		RequestDigest:          strings.Repeat("a", 64),
+		SourceOperationID:      "handoff-source-TASK-1-7",
+		DestinationOperationID: "handoff-dest-TASK-1-7",
+	}
+	if err := intent.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	receipt := taskTransferReceiptFromIntent(intent)
+
+	replayed, err := commitHandoffReceipt(dest, receipt)
+	if err != nil || replayed {
+		t.Fatalf("first commit = %v err=%v, want fresh receipt", replayed, err)
+	}
+	path := taskTransferReceiptPath(dest, intent.DestinationOperationID)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("receipt not durable: %v", err)
+	}
+
+	replayed, err = commitHandoffReceipt(dest, receipt)
+	if err != nil || !replayed {
+		t.Fatalf("repeat = %v err=%v, want idempotent no-op", replayed, err)
+	}
+
+	conflict := receipt
+	conflict.Digest = strings.Repeat("b", 64)
+	if _, err := commitHandoffReceipt(dest, conflict); !errors.Is(err, taskauthority.ErrOperationConflict) {
+		t.Fatalf("changed digest = %v, want ErrOperationConflict", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored taskTransferReceipt
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Digest != intent.RequestDigest {
+		t.Fatalf("conflict overwrote the original receipt: digest = %s", stored.Digest)
+	}
+
+	other := receipt
+	other.OperationID = "handoff-dest-TASK-2-7"
+	other.TaskID = "TASK-2"
+	replayed, err = commitHandoffReceipt(dest, other)
+	if err != nil || replayed {
+		t.Fatalf("different operation = %v err=%v, want fresh receipt", replayed, err)
+	}
+	if _, err := os.Stat(taskTransferReceiptPath(dest, other.OperationID)); err != nil {
+		t.Fatalf("second receipt not durable: %v", err)
+	}
+}
+
+// TestHandoffConflictDestinationOwnerFailsClosed proves a destination that
+// already owns the same Task ID/Generation (or a newer generation) quarantines
+// the transfer with a typed conflict and never overwrites destination truth
+// (Task 6.1 acceptance 4).
+func TestHandoffConflictDestinationOwnerFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		destGeneration string
+	}{
+		{"same generation", "7"},
+		{"newer generation", "8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			// The destination must sit outside the source's captains/ tree:
+			// ResolveCurrentTaskID scans captains/ and would report the two
+			// TASK-1 owners as ambiguous before the conflict check runs.
+			sm := filepath.Join(parent, "test-sm")
+			if err := os.MkdirAll(sm, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := SeedProvenance(sm, "test-sm"); err != nil {
+				t.Fatal(err)
+			}
+			if err := mhome.WriteTaskAggregate(parent, mhome.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: "7", Current: true, Owner: "general", Definition: "source truth", State: "queued", Kind: "ship", Project: "munsu"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := mhome.WriteMeta(parent, "TASK-1", map[string]string{"description": "source truth", "generation": "7"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := mhome.WriteTaskAggregate(sm, mhome.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: tc.destGeneration, Current: true, Owner: "captain:test-sm", Definition: "destination truth", State: "queued", Kind: "ship", Project: "munsu"}); err != nil {
+				t.Fatal(err)
+			}
+			dstAggPath := filepath.Join(sm, "state", ".task-authority", "aggregates", "TASK-1", tc.destGeneration+".json")
+			beforeDestAgg := mustReadFleetTestFile(t, dstAggPath)
+
+			origPath := captainLookPath
+			origBackend := isTasksAxiBackend
+			defer func() {
+				captainLookPath = origPath
+				isTasksAxiBackend = origBackend
+			}()
+			isTasksAxiBackend = func(string) bool { return true }
+			captainLookPath = func(name string) (string, error) { return fakeQueuedTasksAxi(t, parent), nil }
+
+			err := Handoff(parent, sm, []string{"TASK-1"})
+			if err == nil {
+				t.Fatal("expected typed destination conflict")
+			}
+			if de, ok := err.(*domain.Error); !ok || de.Category != domain.ErrorConflict {
+				t.Fatalf("error = %v, want typed conflict", err)
+			}
+			srcAgg, ok, err := mhome.ReadCurrentTaskAggregate(parent, "TASK-1")
+			if err != nil || !ok || srcAgg.Generation != "7" || srcAgg.Owner != "general" {
+				t.Fatalf("source aggregate = %+v ok=%v err=%v, want untouched", srcAgg, ok, err)
+			}
+			dstAgg, ok, err := mhome.ReadCurrentTaskAggregate(sm, "TASK-1")
+			if err != nil || !ok || dstAgg.Generation != tc.destGeneration || dstAgg.Owner != "captain:test-sm" {
+				t.Fatalf("destination aggregate = %+v ok=%v err=%v, want untouched", dstAgg, ok, err)
+			}
+			if got := mustReadFleetTestFile(t, dstAggPath); !bytes.Equal(got, beforeDestAgg) {
+				t.Fatal("destination truth overwritten by conflicting transfer")
+			}
+		})
+	}
 }

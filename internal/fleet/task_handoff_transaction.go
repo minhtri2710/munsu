@@ -13,10 +13,15 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 const taskHandoffDirName = ".task-handoff"
+
+const taskHandoffReceiptsDirName = ".task-handoff-receipts"
 
 // Handoff transfers queued tasks through a durable, resumable transaction.
 func Handoff(parentHome, captainHome string, itemKeys []string) error {
@@ -109,16 +114,17 @@ type taskHandoffJournal struct {
 }
 
 type handoffTask struct {
-	ID                        string              `json:"id"`
-	Generation                string              `json:"generation"`
-	SourceAggregate           mhome.TaskAggregate `json:"source_aggregate"`
-	DestinationAggregate      mhome.TaskAggregate `json:"destination_aggregate"`
-	SourceAuthority           []handoffFile       `json:"source_authority"`
-	SourceProjections         []handoffFile       `json:"source_projections"`
-	DestinationAuthority      []handoffFile       `json:"destination_authority"`
-	DestinationProjections    []handoffFile       `json:"destination_projections"`
-	SourceInterpretation      handoffFile         `json:"source_interpretation,omitempty"`
-	DestinationInterpretation handoffFile         `json:"destination_interpretation,omitempty"`
+	ID                        string                       `json:"id"`
+	Generation                string                       `json:"generation"`
+	Intent                    taskauthority.TransferIntent `json:"intent"`
+	SourceAggregate           mhome.TaskAggregate          `json:"source_aggregate"`
+	DestinationAggregate      mhome.TaskAggregate          `json:"destination_aggregate"`
+	SourceAuthority           []handoffFile                `json:"source_authority"`
+	SourceProjections         []handoffFile                `json:"source_projections"`
+	DestinationAuthority      []handoffFile                `json:"destination_authority"`
+	DestinationProjections    []handoffFile                `json:"destination_projections"`
+	SourceInterpretation      handoffFile                  `json:"source_interpretation,omitempty"`
+	DestinationInterpretation handoffFile                  `json:"destination_interpretation,omitempty"`
 }
 
 var handoffCrashHook = func(string) {}
@@ -396,7 +402,7 @@ func prepareHandoff(source, destination, owner string, keys []string, sourceBack
 		return nil, "", err
 	}
 	journal := &taskHandoffJournal{
-		Version:         1,
+		Version:         2,
 		ID:              id,
 		Phase:           "preparing",
 		SourceHome:      source,
@@ -414,9 +420,43 @@ func prepareHandoff(source, destination, owner string, keys []string, sourceBack
 		journal.DestBacklogPre = handoffFile{Target: "data/backlog.md", Mode: 0644}
 	}
 	for _, taskID := range keys {
+		// A destination that already owns the task (same or newer Generation)
+		// quarantines the transfer: the saga fails closed with a typed conflict
+		// and never overwrites destination truth (ADR-0007 §10).
+		if existing, ok, err := mhome.ReadCurrentTaskAggregate(destination, taskID); err != nil {
+			return nil, "", err
+		} else if ok {
+			return nil, "", handoffDestinationConflict(taskID, existing.Generation)
+		}
 		agg, err := mhome.PreflightTaskTransfer(source, destination, taskID)
 		if err != nil {
 			return nil, "", fmt.Errorf("handoff: preflight task transfer %s: %w", taskID, err)
+		}
+		generation, err := taskauthority.ParseGeneration(agg.Generation)
+		if err != nil {
+			return nil, "", fmt.Errorf("handoff: invalid source generation for %s: %w", taskID, err)
+		}
+		request := taskauthority.TransferRequest{
+			SourceHome:      source,
+			DestinationHome: destination,
+			TaskID:          taskID,
+			Generation:      generation,
+		}
+		digest, err := request.Digest()
+		if err != nil {
+			return nil, "", fmt.Errorf("handoff: computing transfer intent for %s: %w", taskID, err)
+		}
+		intent := taskauthority.TransferIntent{
+			SourceHome:             source,
+			DestinationHome:        destination,
+			TaskID:                 taskID,
+			Generation:             generation,
+			RequestDigest:          digest,
+			SourceOperationID:      fmt.Sprintf("handoff-source-%s-%s", taskID, generation),
+			DestinationOperationID: fmt.Sprintf("handoff-dest-%s-%s", taskID, generation),
+		}
+		if err := intent.Validate(); err != nil {
+			return nil, "", fmt.Errorf("handoff: invalid transfer intent for %s: %w", taskID, err)
 		}
 		destinationAgg := *agg
 		destinationAgg.Owner = owner
@@ -429,7 +469,7 @@ func prepareHandoff(source, destination, owner string, keys []string, sourceBack
 		}
 		destinationInterpretation := interpretationFile
 		destinationInterpretation.Target = filepath.ToSlash(filepath.Join("state", ".dispatch", "interpretations", interpretation.ID+".json"))
-		task := handoffTask{ID: taskID, Generation: agg.Generation, SourceAggregate: *agg, DestinationAggregate: destinationAgg, SourceInterpretation: interpretationFile, DestinationInterpretation: destinationInterpretation}
+		task := handoffTask{ID: taskID, Generation: agg.Generation, Intent: intent, SourceAggregate: *agg, DestinationAggregate: destinationAgg, SourceInterpretation: interpretationFile, DestinationInterpretation: destinationInterpretation}
 		for _, rel := range taskAggregateAuthorityRelPaths(taskID, agg.Generation) {
 			file, err := inventoryHandoffFile(source, filepath.Join(source, rel))
 			if err != nil {
@@ -450,11 +490,6 @@ func prepareHandoff(source, destination, owner string, keys []string, sourceBack
 					return nil, "", err
 				}
 			}
-		}
-		if existing, ok, err := mhome.ReadCurrentTaskAggregate(destination, taskID); err != nil {
-			return nil, "", err
-		} else if ok {
-			return nil, "", fmt.Errorf("handoff: destination already has current authority for %s generation %s", taskID, existing.Generation)
 		}
 		for _, rel := range taskAggregateAuthorityRelPaths(taskID, agg.Generation) {
 			if _, err := os.Stat(filepath.Join(destination, rel)); err == nil {
@@ -691,6 +726,18 @@ func revalidateHandoff(journal *taskHandoffJournal) error {
 }
 
 func rollForwardHandoff(journal *taskHandoffJournal, dir string) error {
+	// The destination receipt commits durably before any source mutation: a
+	// crash before it leaves source ownership current, and recovery re-commits
+	// the same receipt idempotently (ADR-0007 §10).
+	for _, task := range journal.Tasks {
+		if err := task.Intent.Validate(); err != nil {
+			return fmt.Errorf("invalid handoff intent for %s: %w", task.ID, err)
+		}
+		if _, err := commitHandoffReceipt(journal.DestinationHome, taskTransferReceiptFromIntent(task.Intent)); err != nil {
+			return err
+		}
+	}
+	handoffCrashHook("destination-receipt")
 	for _, task := range journal.Tasks {
 		for _, file := range task.SourceAuthority {
 			if err := removeHandoffFile(journal.SourceHome, file); err != nil {
@@ -899,7 +946,7 @@ func recoverIncompleteTaskHandoffs(home string) error {
 		if err := json.Unmarshal(data, &journal); err != nil {
 			return fmt.Errorf("corrupt handoff journal: %w", err)
 		}
-		if journal.Version != 1 || journal.ID != entry.Name() || journal.SourceHome != home || journal.DestinationHome == home {
+		if journal.Version != 2 || journal.ID != entry.Name() || journal.SourceHome != home || journal.DestinationHome == home {
 			return fmt.Errorf("invalid handoff journal")
 		}
 		canonicalDestination, err := canonicalHandoffHome(journal.DestinationHome)
@@ -993,4 +1040,85 @@ func durableHandoffWrite(path string, data []byte, mode os.FileMode) error {
 	}
 	defer dir.Close()
 	return dir.Sync()
+}
+
+// taskTransferReceipt is the fleet-durable destination receipt for one task
+// transfer on the v1 saga path (ADR-0007 §10). It mirrors the Authority Store
+// receipt semantics: the destination Operation ID and request digest pin the
+// committed intent, replay is an idempotent no-op, and a changed digest is a
+// non-retryable typed conflict.
+type taskTransferReceipt struct {
+	Version     int    `json:"version"`
+	OperationID string `json:"operation_id"`
+	Digest      string `json:"digest"`
+	TaskID      string `json:"task_id"`
+	Generation  string `json:"generation"`
+	SourceHome  string `json:"source_home"`
+	CommittedAt int64  `json:"committed_at"`
+}
+
+// taskTransferReceiptFromIntent derives the destination receipt for one task
+// from its durable transfer intent.
+func taskTransferReceiptFromIntent(intent taskauthority.TransferIntent) taskTransferReceipt {
+	return taskTransferReceipt{
+		Version:     1,
+		OperationID: intent.DestinationOperationID,
+		Digest:      intent.RequestDigest,
+		TaskID:      intent.TaskID,
+		Generation:  intent.Generation.String(),
+		SourceHome:  intent.SourceHome,
+	}
+}
+
+// taskTransferReceiptPath returns the durable receipt path for one
+// destination transfer operation under the destination home.
+func taskTransferReceiptPath(destinationHome, operationID string) string {
+	return filepath.Join(destinationHome, "state", taskHandoffReceiptsDirName, operationID+".json")
+}
+
+// commitHandoffReceipt durably commits the destination receipt for one task
+// transfer. Repeating the same Operation ID with the same digest is an
+// idempotent no-op returning the original receipt; a changed digest is a
+// non-retryable typed conflict. It returns replayed=true when the receipt
+// already existed.
+func commitHandoffReceipt(destinationHome string, receipt taskTransferReceipt) (bool, error) {
+	if receipt.OperationID == "" || strings.ContainsAny(receipt.OperationID, `/\\`) {
+		return false, fmt.Errorf("invalid transfer receipt operation id %q", receipt.OperationID)
+	}
+	path := taskTransferReceiptPath(destinationHome, receipt.OperationID)
+	data, err := os.ReadFile(path)
+	if err == nil {
+		var existing taskTransferReceipt
+		if err := json.Unmarshal(data, &existing); err != nil {
+			return false, fmt.Errorf("corrupt transfer receipt %s: %w", receipt.OperationID, err)
+		}
+		if existing.Digest != receipt.Digest {
+			return false, domain.NewError(domain.ErrorConflict,
+				fmt.Sprintf("transfer receipt %s reused with different intent", receipt.OperationID),
+				domain.RetryNever, taskauthority.ErrOperationConflict)
+		}
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if receipt.CommittedAt == 0 {
+		receipt.CommittedAt = time.Now().UnixNano()
+	}
+	data, err = json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err := durableHandoffWrite(path, append(data, '\n'), 0600); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// handoffDestinationConflict is the typed conflict returned when the
+// destination already owns the task: the transfer quarantines and never
+// overwrites destination truth (ADR-0007 §10).
+func handoffDestinationConflict(taskID, generation string) error {
+	return domain.NewError(domain.ErrorConflict,
+		fmt.Sprintf("handoff: destination already has current authority for %s generation %s", taskID, generation),
+		domain.RetryNever, nil)
 }
