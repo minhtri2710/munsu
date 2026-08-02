@@ -8,7 +8,7 @@
 
 ## Implementation progress
 
-Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`. Task 2.5 is complete through commits `47eaf25a` and `75355dcb`; Checkpoint 2 is complete through `8d07b12`. Task 3.1 is complete through commit `db5c1445`. Task 3.2 is complete through commit `345338b5`: `task add`, `task show`, `task list`, and `backlog add` create and query canonical Task Authority records through the composed Authority; `.meta` and the backlog file are post-commit projections (a projection failure returns a typed `LifecyclePartialError` and never rolls back the authoritative Task Generation); duplicate creation returns a typed conflict with no projection duplicate; the CLI migration allowlist drops `CreateTaskAggregate` for `task_cmd.go`/`backlog_cmd.go`. Fleet `spawn_runner.go` keeps the allowlisted `home.CreateTaskAggregate` call until the Phase 4 spawn cutover, so that function remains exported. The pre-existing `TestAgentSkillMirrorsMatchCanonical` failure reproduces on the clean base and is unrelated to this slice.
+Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`. Task 2.5 is complete through commits `47eaf25a` and `75355dcb`; Checkpoint 2 is complete through `8d07b12`. Task 3.1 is complete through commit `db5c1445`. Task 3.2 is complete through commit `345338b5`: `task add`, `task show`, `task list`, and `backlog add` create and query canonical Task Authority records through the composed Authority; `.meta` and the backlog file are post-commit projections (a projection failure returns a typed `LifecyclePartialError` and never rolls back the authoritative Task Generation); duplicate creation returns a typed conflict with no projection duplicate; the CLI migration allowlist drops `CreateTaskAggregate` for `task_cmd.go`/`backlog_cmd.go`. Fleet `spawn_runner.go` keeps the allowlisted `home.CreateTaskAggregate` call until the Phase 4 spawn cutover, so that function remains exported. Task 3.3 is complete through commit `1c262402`: `backlog start|done|block|unblock|reopen` drive the named Authority `Start`/`Complete`/`Block`/`Unblock`/`Reopen` operations with Expected Generation and a stable invocation Operation ID; invalid transitions fail inside the Authority before the backlog projection is touched; a projection failure returns a typed `LifecyclePartialError` that is retryable without replaying the authoritative operation; `Reopen` creates the next queued Generation at Revision one and leaves the prior Generation immutable historical state; `home.StartTask`, `home.UnblockTask`, and `home.ReopenTask` are deleted in the same slice (their last callers moved), and no production caller of a generic backlog state update remains. `home.SupersedeTask` stays for `backlog retry`, which is outside Task 3.3's named scope. The pre-existing `TestAgentSkillMirrorsMatchCanonical` failure reproduces on the clean base and is unrelated to this slice.
 
 Verified on 2026-08-01:
 
@@ -514,11 +514,11 @@ go test ./internal/fleet -run 'Test.*TaskAggregateAuthority'
 
 **Acceptance criteria:**
 
-- [ ] Backlog commands call semantic Authority methods with Expected Generation and stable Operation ID.
-- [ ] Invalid transitions fail before backlog projection mutation.
-- [ ] Projection failure is retryable without replaying the authoritative operation.
-- [ ] `Reopen` creates a new Generation and leaves prior Generation immutable.
-- [ ] `home.StartTask`, `home.UnblockTask`, `home.ReopenTask`, and generic backlog state updates have no production callers.
+- [x] Backlog commands call semantic Authority methods with Expected Generation and stable Operation ID.
+- [x] Invalid transitions fail before backlog projection mutation.
+- [x] Projection failure is retryable without replaying the authoritative operation.
+- [x] `Reopen` creates a new Generation and leaves prior Generation immutable.
+- [x] `home.StartTask`, `home.UnblockTask`, `home.ReopenTask`, and generic backlog state updates have no production callers.
 
 **Verification:**
 
