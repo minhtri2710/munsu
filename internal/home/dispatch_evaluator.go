@@ -22,17 +22,12 @@ func EvaluateDispatchWithDependencies(homeDir string, requested []string, depend
 	if len(requested) == 0 {
 		return DispatchInterpretation{}, nil, fmt.Errorf("dispatch evaluation requires requested tasks")
 	}
-	aggregates := make(map[string]taskauthority.Aggregate, len(requested))
+	aggregates, err := gatherInterpretationSnapshot(homeDir, requested, dependencies)
+	if err != nil {
+		return DispatchInterpretation{}, nil, err
+	}
 	readiness := make([]DispatchReadiness, 0, len(requested))
 	for _, taskID := range requested {
-		agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
-		if err != nil {
-			return DispatchInterpretation{}, nil, err
-		}
-		if !ok {
-			return DispatchInterpretation{}, nil, fmt.Errorf("dispatch evaluation: task %s has no authoritative aggregate", taskID)
-		}
-		aggregates[taskID] = taskAuthorityAggregate(*agg)
 		ready, err := QueryTaskReadiness(homeDir, taskID)
 		if err != nil {
 			return DispatchInterpretation{}, nil, err
@@ -58,6 +53,64 @@ func EvaluateDispatchWithDependencies(homeDir string, requested []string, depend
 		return record, result.SelectedTasks, ErrDispatchDecisionRequired
 	}
 	return record, result.SelectedTasks, nil
+}
+
+// gatherInterpretationSnapshot loads the canonical aggregate of every task
+// the interpretation rules may reference: the requested tasks plus every task
+// named by the dependency snapshot — each dependency's task, each supplied
+// prerequisite, or the parents of requested tasks when dependencies are
+// derived. Existence-based ambiguity therefore evaluates against canonical
+// state, not requested-set membership: a referenced task that exists is not
+// missing; only truly absent tasks are material ambiguity.
+func gatherInterpretationSnapshot(homeDir string, requested []string, dependencies []DispatchDependency) (map[string]taskauthority.Aggregate, error) {
+	aggregates := make(map[string]taskauthority.Aggregate, len(requested))
+	add := func(taskID string) error {
+		if _, ok := aggregates[taskID]; ok {
+			return nil
+		}
+		agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			aggregates[taskID] = taskAuthorityAggregate(*agg)
+		}
+		return nil
+	}
+	for _, taskID := range requested {
+		agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("dispatch evaluation: task %s has no authoritative aggregate", taskID)
+		}
+		aggregates[taskID] = taskAuthorityAggregate(*agg)
+	}
+	if dependencies == nil {
+		// Deriving: the snapshot edges are the parents of the requested tasks.
+		for _, taskID := range requested {
+			if parent := aggregates[taskID].Definition.ParentTaskID; parent != "" {
+				if err := add(parent); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return aggregates, nil
+	}
+	// Supplied edges: mirror the canonical reads the pre-move ambiguity check
+	// performed — each dependency's task and every prerequisite.
+	for _, dependency := range dependencies {
+		if err := add(dependency.TaskID); err != nil {
+			return nil, err
+		}
+		for _, prerequisite := range dependency.DependsOn {
+			if err := add(prerequisite); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return aggregates, nil
 }
 
 // taskAuthorityAggregate translates one legacy home aggregate into the

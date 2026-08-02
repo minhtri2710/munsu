@@ -440,3 +440,79 @@ func TestAuthorityInterpretDispatchStagesAtomically(t *testing.T) {
 		t.Fatalf("op-1 audit events = %d, want exactly 1", dispatchAudits)
 	}
 }
+
+// TestAuthorityInterpretDispatchPrerequisiteOutsideRequestedIsAccepted pins
+// the canonical-existence ambiguity semantics (reviewer probe A, Authority
+// parity): a dependency edge whose prerequisite exists in the Store but is
+// outside the requested set is NOT material ambiguity.
+func TestAuthorityInterpretDispatchPrerequisiteOutsideRequestedIsAccepted(t *testing.T) {
+	a := newTestAuthority(t)
+	createTask(t, a, "parent")
+	createTask(t, a, "child")
+
+	res, err := a.InterpretDispatch(interpretRequest("op-1", []string{"child"}, []DispatchDependency{{TaskID: "child", DependsOn: []string{"parent"}, State: "queued"}}, DispatchAutonomyManual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Record.Outcome != DispatchInterpretationAccepted || res.Record.DecisionKey != "" {
+		t.Fatalf("record = %+v, want accepted without decision", res.Record)
+	}
+	if len(res.SelectedTasks) != 1 || res.SelectedTasks[0] != "child" {
+		t.Fatalf("selected = %v, want [child]", res.SelectedTasks)
+	}
+	v, err := a.store.View()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Holds) != 0 {
+		t.Fatalf("accepted interpretation staged holds: %+v", v.Holds)
+	}
+}
+
+// TestAuthorityInterpretDispatchDerivedParentOutsideRequestedIsAccepted pins
+// the same semantics for the derived-dependency path (reviewer probe B,
+// Authority parity): the parent exists in the Store but is outside the
+// requested set.
+func TestAuthorityInterpretDispatchDerivedParentOutsideRequestedIsAccepted(t *testing.T) {
+	a := newTestAuthority(t)
+	if _, err := a.Create(CreateRequest{
+		OperationID: "op-create-parent", Actor: Actor{ID: "test", Rank: "general"},
+		TaskID: "parent", Owner: "owner", Description: "p", Kind: "ship", Project: "proj",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Create(CreateRequest{
+		OperationID: "op-create-child", Actor: Actor{ID: "test", Rank: "general"},
+		TaskID: "child", Owner: "owner", Description: "c", Kind: "ship", Project: "proj", ParentTaskID: "parent",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := a.InterpretDispatch(interpretRequest("op-1", []string{"child"}, nil, DispatchAutonomyManual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Record.Outcome != DispatchInterpretationAccepted || res.Record.DecisionKey != "" {
+		t.Fatalf("record = %+v, want accepted without decision", res.Record)
+	}
+	if len(res.SelectedTasks) != 1 || res.SelectedTasks[0] != "child" {
+		t.Fatalf("selected = %v, want [child]", res.SelectedTasks)
+	}
+}
+
+// TestAuthorityInterpretDispatchTrulyMissingPrerequisiteStillRequiresDecision
+// is the control for the canonical-existence semantics (reviewer probe D,
+// Authority parity): a prerequisite absent from the Store stays material
+// ambiguity.
+func TestAuthorityInterpretDispatchTrulyMissingPrerequisiteStillRequiresDecision(t *testing.T) {
+	a := newTestAuthority(t)
+	createTask(t, a, "child")
+
+	res, err := a.InterpretDispatch(interpretRequest("op-1", []string{"child"}, []DispatchDependency{{TaskID: "child", DependsOn: []string{"ghost"}, State: "queued"}}, DispatchAutonomyManual))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Record.Outcome != DispatchInterpretationDecisionRequired || res.Record.DecisionKey == "" {
+		t.Fatalf("record = %+v, want decision-required", res.Record)
+	}
+}

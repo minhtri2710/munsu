@@ -264,6 +264,32 @@ func (a *Authority) interpretInTx(tx *Tx, req InterpretDispatchRequest) (Interpr
 			BlockingReasons: readinessReasonStrings(ready.BlockingReasons),
 		})
 	}
+	// Expand the read set to every task referenced by the dependency snapshot
+	// so existence-based ambiguity evaluates against canonical state, not
+	// requested-set membership: supplied dependency edges and prerequisites,
+	// or the parents of requested tasks when dependencies are derived.
+	if req.Dependencies == nil {
+		for _, taskID := range req.RequestedOrder {
+			if parent := aggregates[taskID].Definition.ParentTaskID; parent != "" {
+				if _, ok := aggregates[parent]; !ok {
+					if agg, ok := tx.Current(parent); ok {
+						aggregates[parent] = agg
+					}
+				}
+			}
+		}
+	} else {
+		for _, dependency := range req.Dependencies {
+			for _, taskID := range append([]string{dependency.TaskID}, dependency.DependsOn...) {
+				if _, ok := aggregates[taskID]; ok {
+					continue
+				}
+				if agg, ok := tx.Current(taskID); ok {
+					aggregates[taskID] = agg
+				}
+			}
+		}
+	}
 	return EvaluateInterpretation(InterpretationInput{
 		RequestedOrder:         req.RequestedOrder,
 		Dependencies:           req.Dependencies,

@@ -137,3 +137,71 @@ func TestEvaluateDispatchMatchesAuthorityInterpretation(t *testing.T) {
 		t.Fatalf("readiness differs: %+v vs %+v", record.ComputedReadiness, result.Record.ComputedReadiness)
 	}
 }
+
+// TestEvaluateDispatchPrerequisiteOutsideRequestedIsAccepted pins the
+// canonical-existence ambiguity semantics (reviewer probe A): a dependency
+// edge whose prerequisite exists on disk but is outside the requested set is
+// NOT material ambiguity. Pre-move this evaluated to accepted; the regression
+// wrongly classified it decision-required because the read set contained only
+// requested tasks.
+func TestEvaluateDispatchPrerequisiteOutsideRequestedIsAccepted(t *testing.T) {
+	homeDir := t.TempDir()
+	for _, taskID := range []string{"parent", "child"} {
+		if _, err := CreateTaskAggregate(homeDir, taskID, "owner", taskID, "ship", "project"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record, selected, err := EvaluateDispatchWithDependencies(homeDir, []string{"child"}, []DispatchDependency{{TaskID: "child", DependsOn: []string{"parent"}, State: "queued"}}, DispatchAutonomyManual)
+	if err != nil {
+		t.Fatalf("err = %v, want accepted (no decision)", err)
+	}
+	if record.Outcome != DispatchInterpretationAccepted || record.DecisionKey != "" {
+		t.Fatalf("record = %+v, want accepted without decision", record)
+	}
+	if len(selected) != 1 || selected[0] != "child" {
+		t.Fatalf("selected = %v, want [child]", selected)
+	}
+	if err := CheckDispatchHold(homeDir, DispatchActionStart, "child", "project", "1", ""); err != nil {
+		t.Fatalf("accepted interpretation staged a blocking hold: %v", err)
+	}
+}
+
+// TestEvaluateDispatchDerivedParentOutsideRequestedIsAccepted pins the same
+// canonical-existence semantics for the derived-dependency path (reviewer
+// probe B): the prerequisite is the parent of a requested task and exists on
+// disk but is outside the requested set.
+func TestEvaluateDispatchDerivedParentOutsideRequestedIsAccepted(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := CreateTaskAggregate(homeDir, "parent", "owner", "parent", "ship", "project"); err != nil {
+		t.Fatal(err)
+	}
+	agg := TaskAggregate{SchemaVersion: taskAggregateSchema, TaskID: "child", Generation: "1", Current: true, Owner: "owner", Definition: "child", Kind: "ship", Project: "project", State: "queued", ParentTaskID: "parent"}
+	if err := WriteTaskAggregate(homeDir, agg); err != nil {
+		t.Fatal(err)
+	}
+	record, selected, err := EvaluateDispatchWithDependencies(homeDir, []string{"child"}, nil, DispatchAutonomyManual)
+	if err != nil {
+		t.Fatalf("err = %v, want accepted (no decision)", err)
+	}
+	if record.Outcome != DispatchInterpretationAccepted || record.DecisionKey != "" {
+		t.Fatalf("record = %+v, want accepted without decision", record)
+	}
+	if len(selected) != 1 || selected[0] != "child" {
+		t.Fatalf("selected = %v, want [child]", selected)
+	}
+}
+
+// TestEvaluateDispatchTrulyMissingPrerequisiteStillRequiresDecision is the
+// control for the canonical-existence semantics (reviewer probe D): a
+// prerequisite absent from canonical state stays material ambiguity and
+// requires a decision.
+func TestEvaluateDispatchTrulyMissingPrerequisiteStillRequiresDecision(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := CreateTaskAggregate(homeDir, "child", "owner", "child", "ship", "project"); err != nil {
+		t.Fatal(err)
+	}
+	record, _, err := EvaluateDispatchWithDependencies(homeDir, []string{"child"}, []DispatchDependency{{TaskID: "child", DependsOn: []string{"ghost"}, State: "queued"}}, DispatchAutonomyManual)
+	if !errors.Is(err, ErrDispatchDecisionRequired) || record.DecisionKey == "" {
+		t.Fatalf("record = %+v err=%v, want decision-required", record, err)
+	}
+}

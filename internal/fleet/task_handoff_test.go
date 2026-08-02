@@ -616,6 +616,93 @@ func TestHandoffTransfersCompleteTaskGenerationAndDestinationIsReady(t *testing.
 	}
 }
 
+// TestHandoffChildWithExistingParentDependencySucceeds pins reviewer probe E:
+// handing off a child alone whose backlog blocked-by references an
+// in-source parent must succeed. The parent exists in canonical source state
+// but is outside the requested set, so the dependency edge is not material
+// ambiguity.
+func TestHandoffChildWithExistingParentDependencySucceeds(t *testing.T) {
+	parent := t.TempDir()
+	sm := filepath.Join(parent, "captains", "test-sm")
+	if err := os.MkdirAll(sm, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(sm, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	writeHandoffTaskFixture(t, parent, "TASK-1")
+	writeHandoffTaskFixture(t, parent, "TASK-PARENT")
+	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sm, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n- [ ] TASK-1 - TASK-1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sm, "data", "backlog.md"), []byte("# Backlog\n\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origPath := captainLookPath
+	origBackend := isTasksAxiBackend
+	defer func() {
+		captainLookPath = origPath
+		isTasksAxiBackend = origBackend
+	}()
+	isTasksAxiBackend = func(string) bool { return true }
+	captainLookPath = func(name string) (string, error) { return fakeBlockedTasksAxi(t, parent), nil }
+
+	if err := Handoff(parent, sm, []string{"TASK-1"}); err != nil {
+		t.Fatalf("handoff of child with in-source parent dependency failed: %v", err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(sm, "TASK-1"); err != nil || !ok {
+		t.Fatalf("destination child ok=%v err=%v, want moved", ok, err)
+	}
+	if _, ok, err := mhome.ReadCurrentTaskAggregate(parent, "TASK-PARENT"); err != nil || !ok {
+		t.Fatalf("source parent ok=%v err=%v, want retained", ok, err)
+	}
+}
+
+// fakeBlockedTasksAxi reports a queued child whose backlog entry is blocked by
+// TASK-PARENT, and moves like fakeMovingTasksAxi.
+func fakeBlockedTasksAxi(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-blocked-tasks-axi")
+	script := `#!/bin/sh
+if [ "$1" = show ]; then
+  echo 'state: queued'
+  echo 'blocked-by: TASK-PARENT'
+  exit 0
+fi
+if [ "$1" = mv ]; then
+  to=""
+  file=""
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --to) to="$2"; shift 2 ;;
+      --file) file="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  cp "$file" "$file.tmp"
+  cp "$to" "$to.tmp"
+  printf '# Backlog\n\n' > "$file"
+  cat "$file.tmp" >> "$to"
+  rm -f "$file.tmp" "$to.tmp"
+  exit 0
+fi
+echo unexpected >&2
+exit 2
+`
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func writeHandoffTaskFixture(t *testing.T, homeDir, taskID string) {
 	t.Helper()
 	if err := mhome.WriteTaskAggregate(homeDir, mhome.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: taskID, Generation: "7", Current: true, Owner: "general", Definition: taskID, State: "queued", Kind: "ship", Project: "munsu"}); err != nil {
