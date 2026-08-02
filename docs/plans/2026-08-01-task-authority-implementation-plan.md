@@ -1,7 +1,7 @@
 # Task Authority Deep-Module Implementation Plan
 
 * **Date:** 2026-08-01
-* **Status:** Implementation in progress; Checkpoint 2 complete
+* **Status:** Implementation in progress; Checkpoint 3 complete
 * **Source:** [ADR-0007](../adr/0007-task-authority-deep-module-and-transactional-store.md)
 * **Related:** [ADR-0002](../adr/0002-deep-module-clean-break-and-durable-lifecycle.md), [ADR-0004](../adr/0004-authoritative-task-lifecycle-delivery-and-projections.md), [ADR-0005](../adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md), [ADR-0006](../adr/0006-state-migration-build-provenance-and-compatibility-gates.md), [incident remediation master plan](2026-07-30-incident-remediation-master-plan.md)
 * **Delivery mode:** no-mistakes; test-first; vertical slices; no dual mutation authority
@@ -28,6 +28,27 @@ go test -tags=integration ./... -skip TestAgentSkillMirrorsMatchCanonical
 ```
 
 All commands passed; the integration-tagged run is green across all 13 packages (the previously recorded pre-existing CLI/fleet config-migration and Captain config-push fixture failures did not reproduce). The only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` failure, reproduced on the clean base and unrelated to this slice.
+
+Checkpoint 3 is complete. Independent Reviewer acceptance (read-only audit role) verified all five checkpoint criteria at commit `83214861`: task create/show/list and backlog lifecycle route through the composed Authority (`Ctx.TaskAuthority()`); `task status` is audit-only and cannot mutate authoritative phase; `.meta` and `.status` rebuild from canonical state/audit (idempotent, fail-closed `ErrMigrationRequired` on legacy v1, typed partial outcomes); the only remaining old-mutation production callers are the documented Phase 4/6 allowlist entries (`spawn_runner.go` create/working-update/dispatch-check and handoff dispatch-check, plus `migrate_cmd.go` migration tooling); allowlist gate tests (`TestNoNewTaskAuthorityReachThrough`) pass in CLI and fleet; `home.StartTask`, `home.UnblockTask`, and `home.ReopenTask` are deleted. The worktree-sanctioned skip `TestAgentSkillMirrorsMatchCanonical` is the only failing test and is confirmed branch-untouched.
+
+Verified on 2026-08-02 (Checkpoint 3):
+
+```sh
+go build ./...
+go vet ./...
+go test ./internal/taskauthority ./internal/taskauthorityfs
+go test -race ./internal/taskauthority ./internal/taskauthorityfs
+go test ./internal/taskauthorityfs -run 'Test.*Projection'
+go test ./internal/cli -run 'Test.*(Projection|TaskShow|TaskList|TaskStatus)'
+go test ./internal/cli -run 'Test.*(TaskAdd|TaskShow|TaskList|BacklogAdd|Authoritative)'
+go test ./internal/cli -run 'Test.*Backlog.*(Start|Block|Unblock|Done|Reopen|Partial)'
+go test ./internal/fleet ./internal/orchestrator -run 'Test.*(Status|Report|Reconcile)'
+go test ./internal/home ./internal/fleet ./internal/cli ./internal/orchestrator -skip TestAgentSkillMirrorsMatchCanonical
+go test ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonical
+go test -tags=integration ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonical
+```
+
+All commands passed; the only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` (branch-untouched, contract-sanctioned worktree skip).
 
 ## Goal
 
@@ -607,11 +628,11 @@ go test ./internal/cli -run 'Test.*(Projection|TaskShow|TaskList)'
 
 ### Checkpoint 3 — First working vertical slice
 
-- [ ] Task create/show/list and backlog lifecycle work end-to-end through Authority.
-- [ ] `task status` cannot mutate authoritative phase.
-- [ ] `.meta` and `.status` rebuild from canonical state/audit.
-- [ ] Old create/start/unblock/reopen/generic-state production callers are gone.
-- [ ] Focused CLI, taskauthority, taskauthorityfs, fleet, and orchestrator tests pass.
+- [x] Task create/show/list and backlog lifecycle work end-to-end through Authority.
+- [x] `task status` cannot mutate authoritative phase.
+- [x] `.meta` and `.status` rebuild from canonical state/audit.
+- [x] Old create/start/unblock/reopen/generic-state production callers are gone.
+- [x] Focused CLI, taskauthority, taskauthorityfs, fleet, and orchestrator tests pass.
 
 ## Phase 4 — Spawn and generation-bound bindings
 
