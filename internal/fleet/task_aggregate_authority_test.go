@@ -15,6 +15,5 @@ func TestNoNewTaskAuthorityReachThrough(t *testing.T) {
 		"spawn_runner.go": {
 			"CreateTaskAggregate",
 		},
-		"task_handoff_transaction.go": {"CheckDispatchHold"},
 	})
 }

@@ -326,6 +326,25 @@ func (b *manifestBuilder) ApplyAudit(ev taskauthority.AuditEvent) error {
 	return nil
 }
 
+// ApplyAuditRecord stages a historical audit event transferred from another
+// authority: the document is written keyed by the event's own operation ID,
+// but it is not the transaction's typed audit event (the manifest pins the
+// receive operation's own audit in its Audit field). The destination receive
+// operation uses this to carry the source generation's audit history
+// verbatim.
+func (b *manifestBuilder) ApplyAuditRecord(ev taskauthority.AuditEvent) error {
+	rel, err := AuditRelPath(ev.OperationID)
+	if err != nil {
+		return err
+	}
+	data, err := EncodeAudit(ev)
+	if err != nil {
+		return err
+	}
+	b.entries[rel] = string(data)
+	return nil
+}
+
 func (b *manifestBuilder) ApplyLeaseMarker(marker taskauthority.LeaseMarker) error {
 	rel, err := WorktreeLeaseRelPath(marker.TaskID, marker.TaskGeneration, marker.LeaseID)
 	if err != nil {

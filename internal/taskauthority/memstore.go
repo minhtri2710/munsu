@@ -200,6 +200,11 @@ func (a *memApplier) ApplyAudit(ev AuditEvent) error {
 	return nil
 }
 
+func (a *memApplier) ApplyAuditRecord(ev AuditEvent) error {
+	a.state.audit = append(a.state.audit, ev)
+	return nil
+}
+
 func (a *memApplier) ApplyLeaseMarker(marker LeaseMarker) error {
 	// The in-memory adapter carries no lease files; the marker is validated
 	// and discarded, matching the filesystem adapter's durable write.

@@ -16,15 +16,12 @@ import (
 // gate; the per-package allowlist only shrinks as slices land. The remaining
 // entries are the documented exceptions: CreateTaskAggregate and
 // UpdateCurrentTaskAggregateKind are Phase 4 spawn cutover leftovers
-// (allowlisted in fleet/spawn_runner.go and cli/spawn_cmd.go), and
-// CheckDispatchHold plus the PersistDispatchInterpretation v1 serialization
-// adapter are Phase 6 handoff compatibility reads (allowlisted in
-// fleet/task_handoff_transaction.go where used).
+// (allowlisted in fleet/spawn_runner.go and cli/spawn_cmd.go). The Phase 6
+// handoff compatibility entries (CheckDispatchHold, PersistDispatchInterpretation)
+// emptied when the handoff saga cut over to two Authorities (Task 6.2).
 var LegacyTaskAuthoritySymbols = []string{
 	"CreateTaskAggregate",
 	"UpdateCurrentTaskAggregateKind",
-	"CheckDispatchHold",
-	"PersistDispatchInterpretation",
 }
 
 // AssertNoNewTaskAuthorityCallers fails when any production file under pkgDir

@@ -95,6 +95,11 @@ type ChangeApplier interface {
 	ApplyInterpretation(rec DispatchInterpretation) error
 	ApplyDecision(dec DispatchDecision) error
 	ApplyAudit(ev AuditEvent) error
+	// ApplyAuditRecord stages a historical audit event transferred from
+	// another authority, keyed by its own operation ID (the destination
+	// receive path). It is distinct from ApplyAudit so adapters keep the
+	// one-typed-audit-event-per-operation rule for their own operations.
+	ApplyAuditRecord(ev AuditEvent) error
 	ApplyLeaseMarker(marker LeaseMarker) error
 }
 
@@ -216,6 +221,19 @@ func (tx *Tx) AppendAudit(ev AuditEvent) error {
 	return nil
 }
 
+// PutAuditRecord stages a historical typed audit event whose operation
+// identity belongs to another (source) authority. The destination receive
+// operation uses it to carry the transferred Task Generation's audit history
+// verbatim; the document commits keyed by the event's own operation ID and is
+// never confused with the transaction's single typed audit event.
+func (tx *Tx) PutAuditRecord(ev AuditEvent) error {
+	if err := ev.Validate(); err != nil {
+		return err
+	}
+	tx.changes = append(tx.changes, stagedChange{kind: "auditRecord", audit: ev})
+	return nil
+}
+
 // Apply validates the full staged set, then replays every change through the
 // applier. A staged set must keep at most one current generation per task.
 func (tx *Tx) Apply(applier ChangeApplier) error {
@@ -243,6 +261,10 @@ func (tx *Tx) Apply(applier ChangeApplier) error {
 		case "audit":
 			if err := applier.ApplyAudit(change.audit); err != nil {
 				return fmt.Errorf("applying audit event: %w", err)
+			}
+		case "auditRecord":
+			if err := applier.ApplyAuditRecord(change.audit); err != nil {
+				return fmt.Errorf("applying audit record: %w", err)
 			}
 		case "lease":
 			if err := applier.ApplyLeaseMarker(change.leaseMarker); err != nil {

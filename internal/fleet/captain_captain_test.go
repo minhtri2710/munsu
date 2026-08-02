@@ -1989,9 +1989,7 @@ func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"TASK-1", "TASK-2"} {
-		if err := home.WriteTaskAggregate(parent, home.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: id, Generation: "1", Current: true, Owner: "general", Definition: id, State: "queued", Kind: "ship"}); err != nil {
-			t.Fatal(err)
-		}
+		seedHandoffTaskV2Default(t, parent, id)
 	}
 
 	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] TASK-1\n- [ ] TASK-2\n"), 0644); err != nil {
