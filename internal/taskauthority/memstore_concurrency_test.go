@@ -79,6 +79,18 @@ func TestTxApplyFailureRollsBack(t *testing.T) {
 	}
 }
 
+// failApplier returns a static error from every apply method; tests use it
+// to prove partial application is rejected by the adapter.
+type failApplier struct{ err error }
+
+func (f *failApplier) ApplyAggregate(Aggregate) error { return f.err }
+func (f *failApplier) ApplyHold(DispatchHold) error   { return f.err }
+func (f *failApplier) ApplyInterpretation(DispatchInterpretation) error {
+	return f.err
+}
+func (f *failApplier) ApplyDecision(DispatchDecision) error { return f.err }
+func (f *failApplier) ApplyAudit(AuditEvent) error          { return f.err }
+
 // viewUnlocked exposes the committed view for direct transaction tests.
 func (s *memStore) viewUnlocked() View {
 	return s.state.view()

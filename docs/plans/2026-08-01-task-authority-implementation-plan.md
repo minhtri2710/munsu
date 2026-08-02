@@ -455,10 +455,10 @@ go test ./internal/cli -run 'TestMigrateTaskAuthority'
 
 **Acceptance criteria:**
 
-- [ ] Command context exposes the concrete Authority without package globals.
-- [ ] Commands that do not need Task Authority do not receive pass-through parameters.
-- [ ] Store construction performs no migration or mutation.
-- [ ] Tests can inject an Authority backed by an in-memory Store.
+- [x] Command context exposes the concrete Authority without package globals.
+- [x] Commands that do not need Task Authority do not receive pass-through parameters.
+- [x] Store construction performs no migration or mutation.
+- [x] Tests can inject an Authority backed by an in-memory Store.
 
 **Verification:**
 
