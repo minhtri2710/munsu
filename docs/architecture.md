@@ -11,7 +11,9 @@ internal/
   cli/                  Composition root, Cobra commands, self-update, stow, AGENTS.md helpers
   fleet/                Captain, spawn, backlog, delivery, soldier state, project registry
   orchestrator/         Watcher, AFK, wake delivery, lifecycle and turn-end coordination
-  home/                 Home resolution plus durable task/meta/status storage mechanics
+  home/                 Home resolution plus durable filesystem and storage mechanics
+  taskauthority/        Authoritative task lifecycle, dispatch, binding and delivery-invariant rules
+  taskauthorityfs/      Filesystem Store adapter: transactional records, projections, migration
   backend/              Session adapters, endpoint observation, worktree and home-tag mechanics
   domain/               Pure business rules and value types, including delivery acceptance
   harness/              Harness detection, verified adapters and dispatch profiles
@@ -32,7 +34,9 @@ in their authoritative module rather than in command wiring.
 | `cli` | Wire Cobra commands to modules; own CLI-local self-update, stow, AGENTS.md and output helpers |
 | `fleet` | Orchestrate Captain lifecycle, Soldier spawn/state, backlog, project registry and delivery operations |
 | `orchestrator` | Coordinate supervision, AFK, wakes, turn-end obligations and cross-process lifecycle |
-| `home` | Resolve the munsu home and implement durable task aggregate, meta, status and binding storage |
+| `home` | Resolve the munsu home and retain generic filesystem/storage mechanics (mailbox, wake and watcher leases, activation/generation, `.meta`/`.status` primitives) |
+| `taskauthority` | Own the authoritative Task Aggregate and lifecycle, dispatch, binding, delivery-invariant and handoff-receipt rules as named operations (ADR-0007) |
+| `taskauthorityfs` | Implement the transactional `taskauthority.Store` on disk: locking, recoverable transactions, `.meta`/`.status` projection reconcile and v1 migration |
 | `backend` | Provide tmux/herdr/zellij/cmux/orca adapters, endpoint observation, worktree and home-tag mechanics |
 | `domain` | Own pure business rules and value types such as `PR.CanMerge` and `Review.IsApproving` |
 | `harness` | Detect and verify harnesses; resolve launch templates and dispatch profiles |
@@ -64,12 +68,21 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` or `--home`).
 
 ### Task state
 
-Task meta and status files are durable projections implemented by
-`internal/home`. Status is append-only and is not the sole current-state
-authority: consumers fold the stream and combine it with structured task,
-run-step and endpoint evidence. Task lifecycle authority is being separated from
-filesystem mechanics under ADR-0007; until that cutover, callers must use the
-existing semantic helpers rather than invent another projection writer.
+Authoritative task state — the Task Aggregate, its Generation/Revision, dispatch
+holds and decisions, typed audit events and idempotency receipts — is owned by
+`internal/taskauthority` and persisted through the transactional Store adapter
+`internal/taskauthorityfs`. `.meta` and `.status` are durable projections
+reconciled by that adapter after every authoritative commit (ADR-0007 §7);
+`.status` is append-only and is not the sole current-state authority: consumers
+fold the stream and combine it with canonical task, run-step and endpoint
+evidence.
+
+Unmigrated v1 homes fail closed: soldier-facing commands (ready, consume-ready,
+report, brief, task show, git-safety, snapshot/observe) return
+`ErrMigrationRequired`. The heal path is `munsu migrate task-authority`
+(plan/apply). Raw `.meta`/backlog-only tasks that never produced v1 aggregates
+are not migrated and present an empty authority view; recreate them through the
+Authority.
 
 ### Configuration
 
@@ -91,7 +104,23 @@ rather than silently selecting an unverified implementation.
 
 `internal/domain/domain.go` is the single owner of `PR`, `Review`, `CheckRun`,
 `PR.CanMerge`, and `Review.IsApproving`. `internal/fleet/delivery_*.go` owns
-provider interaction, identity capture, authorization and delivery orchestration.
+provider interaction, identity capture and delivery orchestration;
+delivery-invariant and git-authorization operations execute as
+`internal/taskauthority` named operations.
+
+### Task Authority (`internal/taskauthority` / `internal/taskauthorityfs`)
+
+`internal/taskauthority` is the deep module owning the Authoritative Task
+Aggregate and every lifecycle, dispatch, binding, delivery-invariant and
+handoff-receipt rule as named semantic operations (ADR-0007), each fenced by the
+expected Task Generation inside one `Store.Update` transaction. The package has
+no filesystem imports: `internal/taskauthorityfs` implements the transactional
+`Store` seam — locking (`.dispatch.lock` then per-task), recoverable write-ahead
+transactions, the projection layer that reconciles `.meta`/`.status` after
+authoritative commits, and v1 migration (`munsu migrate task-authority`).
+`internal/fleet` and `internal/cli` consume the Authority and retain
+orchestration; `internal/home` no longer owns task lifecycle, dispatch or
+binding authority.
 
 ### Captain lifecycle (`internal/fleet`)
 
@@ -112,12 +141,12 @@ and adjacent orchestrator lifecycle files.
 
 | Phase | Command | Authoritative module |
 |---|---|---|
-| Create / backlog | `munsu task add`, `munsu backlog` | `internal/home`, `internal/fleet` |
+| Create / backlog | `munsu task add`, `munsu backlog` | `internal/taskauthority`, `internal/taskauthorityfs`, `internal/fleet` |
 | Brief | `munsu brief` | `internal/fleet` |
 | Spawn | `munsu spawn` | `internal/fleet`, composed by `internal/cli` |
 | Supervise | `munsu watch`, `munsu watch-arm`, `munsu afk` | `internal/orchestrator` |
 | Interact | `munsu send`, `munsu peek`, `munsu soldier-state` | `internal/cli`, `internal/fleet`, `internal/home` |
-| Deliver | `munsu delivery ...` | `internal/fleet`, with acceptance rules in `internal/domain` |
+| Deliver | `munsu delivery ...` | `internal/fleet` (orchestration), `internal/taskauthority` (invariant ops), acceptance rules in `internal/domain` |
 | Teardown | `munsu teardown` | `internal/cli`, `internal/fleet`, `internal/orchestrator` |
 
 ## Rank hierarchy and identity

@@ -1,6 +1,6 @@
 # 0007. Task Authority Deep Module and Transactional Store
 
-* **Status:** Accepted; implementation in progress (Checkpoint 1 complete)
+* **Status:** Accepted; implementation complete
 * **Date:** 2026-08-01
 * **Extends:** ADR-0002 §5 and §10, ADR-0004 §1–3 and §7–8, ADR-0005 supervision separation
 * **Triggered by:** Architecture review and design-it-twice analysis of task lifecycle and dispatch authority
