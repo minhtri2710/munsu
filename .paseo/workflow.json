@@ -44,8 +44,12 @@
       "must": [
         "inspect repository and governing plan before staffing",
         "issue one bounded assignment per Peer",
+        "prepare the next Reviewer brief while the Engineer runs",
+        "prepare the next task brief while the current Reviewer runs",
+        "launch prepared work immediately after the preceding acceptance gate",
         "respond explicitly to every formal Peer protocol",
-        "run final acceptance gates before declaring a task complete"
+        "run the applicable verification tier before declaring a task complete",
+        "send Supervisor a completion report after every task or checkpoint ruling"
       ],
       "mustNot": [
         "delegate acceptance authority",
@@ -62,7 +66,8 @@
           "RED tests",
           "bounded implementation",
           "focused verification",
-          "one coherent commit"
+          "one coherent commit",
+          "direct completion report to Lead before finishing"
         ]
       },
       "architect": {
@@ -84,7 +89,8 @@
           "spec and acceptance review",
           "independent test evidence",
           "regression and architecture gates",
-          "PASS or formal REOPEN_REQUEST"
+          "PASS or formal REOPEN_REQUEST",
+          "direct verdict report to Lead before finishing"
         ]
       },
       "shadow": {
@@ -132,6 +138,79 @@
     "minimumPeers": ["architect", "reviewer"],
     "leadOwnsRuling": true
   },
+  "handoff": {
+    "primarySignal": "direct-peer-report-to-lead",
+    "secondarySignal": "notify-on-finish",
+    "fallbackSignal": "supervisor-monitor-heartbeat",
+    "directReport": {
+      "required": true,
+      "recipient": "lead",
+      "transport": "paseo-send-no-wait",
+      "beforePeerFinishes": true,
+      "requiredFields": [
+        "planItem",
+        "result",
+        "commitOrReviewedHead",
+        "verification",
+        "risks",
+        "recommendedNextAction"
+      ]
+    },
+    "zeroIdle": {
+      "enabled": true,
+      "rule": "Lead may be idle only while an authorized Peer is running or the full plan is complete",
+      "onEngineerComplete": "launch the prepared independent Reviewer immediately",
+      "onReviewerComplete": "rule, report, archive, and launch the prepared next task immediately"
+    },
+    "preparation": {
+      "whileEngineerRuns": [
+        "prepare but do not launch the independent Reviewer brief",
+        "identify the acceptance commands and architecture gates"
+      ],
+      "whileReviewerRuns": [
+        "prepare but do not launch the next task brief",
+        "triage whether Advisor or Council is warranted"
+      ],
+      "implementationMayStartBeforePass": false
+    }
+  },
+  "verification": {
+    "task": {
+      "engineer": [
+        "RED-first behavior tests",
+        "focused package tests",
+        "relevant race, crash, migration, or integration tests",
+        "gofmt on touched Go files",
+        "git diff --check",
+        "go build ./...",
+        "go vet ./..."
+      ],
+      "reviewer": [
+        "independent focused acceptance tests",
+        "task-specific architecture grep gates",
+        "review of the committed diff and scope"
+      ],
+      "fullSuiteRequiredWhen": [
+        "the governing task explicitly requires it",
+        "the change has broad cross-package blast radius",
+        "focused evidence cannot rule out a regression"
+      ]
+    },
+    "checkpoint": [
+      "full unit suite",
+      "full integration suite",
+      "relevant race, crash, and migration suites",
+      "architecture grep gates",
+      "git diff --check",
+      "go build ./...",
+      "go vet ./..."
+    ],
+    "finalPrimary": [
+      "all checkpoint gates",
+      "full suites without skips",
+      "clean primary checkout"
+    ]
+  },
   "memory": {
     "supervisorNotebook": {
       "purpose": "process-memory",
@@ -154,8 +233,10 @@
     ],
     "agentVisibilityRequired": true,
     "visibilitySurface": "Paseo Subagents track and workspace",
-    "completionSignal": "notify-on-finish",
+    "completionSignal": "direct report plus notify-on-finish",
     "pollingPolicy": "do-not-poll-running-agents",
+    "monitorHeartbeatRole": "fallback exception detection only",
+    "zeroIdle": true,
     "archiveAfterLeadRuling": true,
     "noInternalLoops": true,
     "noNativeProviderSubagents": true,
