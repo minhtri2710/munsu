@@ -71,6 +71,8 @@ go test -tags=integration ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonic
 
 All commands passed; the only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` (worktree-sanctioned skip). Orchestration policy was centralized globally during this phase: the three primary commits `7f3bf7a` (acknowledged direct Peer reports), `79a968b` (JSON validity), and `3e0e44a` (delete repo-local workflow policy) are cherry-picked onto the branch (`6e755322`, `58e1cccc`, `eae89601`); policy now lives only in `~/.paseo/orchestration-preferences.json`.
 
+Task 5.1 is complete through commits `930c4410` (initial) and `8c72f55b` (repair after REOPEN). Independent Reviewer acceptance verified all four criteria after one reopen cycle: the first review REOPENed on criterion 2 — a dependency edge whose prerequisite exists in canonical state but outside the requested set was wrongly classified decision-required (both adapters populated the canonical read set with requested tasks only, whereas pre-move home re-read prerequisites from disk, so existence in canonical state — not requested-set membership — was the ambiguity criterion). The bounded repair (`8c72f55b`) expanded the canonical read set in both the home adapter (`gatherInterpretationSnapshot`) and `Authority.interpretInTx` (parity) to load every snapshot-referenced task, restoring existence-based ambiguity semantics byte-for-byte; six regression tests (home A/B/D, Authority parity A/B/D, fleet probe E handoff of a child alone with an in-source parent) failed before the fix and pass after. Re-review confirmed probes A/B/E match pre-move outcomes with C/D controls unchanged and interpretation IDs/digests byte-identical (handoff journal compatibility holds). Final state: `Authority.InterpretDispatch` is a named semantic operation reading fresh canonical state in one Store transaction, deriving the dependency snapshot when not supplied, computing the deterministic interpretation identity and dependency-snapshot digest, classifying safe reinterpretation vs material ambiguity per ADR-0004, persisting the interpretation record, and atomically staging Decision + Hold + typed dispatch audit when decision-required (barrier race test plus the `taskauthorityfs` five-document journal test); interpretation rules live only in `internal/taskauthority/interpretation.go` (grep-proven) with `internal/home` reduced to a serialization-only adapter; the sole handoff caller (`task_handoff_transaction.go:188`) stays byte-compatible. Seam adjudication: the Lead's mechanism ruling (home adapter composing `taskauthorityfs.Store`) was amended to pure-engine delegation — `taskauthorityfs` imports `internal/home` (migration/projection), so home→taskauthorityfs would cycle, and the handoff path operates on legacy v1 homes where the fs Store fails closed with `ErrMigrationRequired`; accepted as a local patch with the fs→home import cycle tracked for the Phase 6/8 resolution.
+
 ## Goal
 
 Move Authoritative Task Aggregate lifecycle, readiness, and durable dispatch control from `internal/home`, direct CLI mutations, and fleet reach-through into one deep `internal/taskauthority` module. Persist it through a crash-recoverable `internal/taskauthorityfs` adapter composed at the CLI, while preserving current on-disk identities and removing each old mutation path as soon as its final caller migrates.
@@ -763,10 +765,10 @@ go test ./internal/fleet ./internal/cli -run 'Test.*(Watcher|Degraded|Dispatch|S
 
 **Acceptance criteria:**
 
-- [ ] Interpretation identity/digest is deterministic.
-- [ ] Safe reinterpretation and material ambiguity follow ADR-0004.
-- [ ] Decision-required interpretation atomically stages its Decision, Hold, and audit event.
-- [ ] Home adapter contains serialization only, not interpretation rules.
+- [x] Interpretation identity/digest is deterministic.
+- [x] Safe reinterpretation and material ambiguity follow ADR-0004.
+- [x] Decision-required interpretation atomically stages its Decision, Hold, and audit event.
+- [x] Home adapter contains serialization only, not interpretation rules.
 
 **Verification:**
 
