@@ -324,6 +324,19 @@ func (b *manifestBuilder) ApplyAudit(ev taskauthority.AuditEvent) error {
 	return nil
 }
 
+func (b *manifestBuilder) ApplyLeaseMarker(marker taskauthority.LeaseMarker) error {
+	rel, err := WorktreeLeaseRelPath(marker.TaskID, marker.TaskGeneration, marker.LeaseID)
+	if err != nil {
+		return err
+	}
+	data, err := EncodeLeaseMarker(marker)
+	if err != nil {
+		return err
+	}
+	b.entries[rel] = string(data)
+	return nil
+}
+
 // stagedTaskIDs returns the distinct staged task IDs in deterministic order.
 func (b *manifestBuilder) stagedTaskIDs() []string {
 	out := make([]string, 0, len(b.stagedTasks))

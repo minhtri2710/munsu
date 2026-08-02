@@ -59,46 +59,7 @@ type taskWorktreeLeaseMarker struct {
 }
 
 func taskWorktreeLeasePath(homeDir, taskID, generation, leaseID string) string {
-	return filepath.Join(homeDir, taskAuthorityDir, "worktree-leases", taskID, generation, leaseID+".json")
-}
-
-func BindTaskWorktree(homeDir, taskID, generation string, binding TaskWorktreeBinding) error {
-	agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("task aggregate %s has no current generation", taskID)
-	}
-	if agg.Generation != generation {
-		return fmt.Errorf("task aggregate %s current generation is %s, not %s", taskID, agg.Generation, generation)
-	}
-	if agg.Worktree != nil {
-		return fmt.Errorf("task aggregate %s/%s already has worktree binding", taskID, generation)
-	}
-	binding.TaskGeneration = generation
-	if err := validateTaskWorktreeBinding(binding); err != nil {
-		return err
-	}
-	marker := taskWorktreeLeaseMarker{TaskID: taskID, TaskGeneration: generation, LeaseID: binding.LeaseID, FenceToken: binding.FenceToken}
-	data, err := json.MarshalIndent(marker, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := taskWorktreeLeasePath(homeDir, taskID, generation, binding.LeaseID)
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	if err := atomicWrite(path, append(data, '\n')); err != nil {
-		return err
-	}
-	updated := *agg
-	updated.Worktree = &binding
-	if err := WriteTaskAggregate(homeDir, updated); err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-	return nil
+	return filepath.Join(homeDir, taskAuthorityDir, "v2", "worktree-leases", taskID, generation, leaseID+".json")
 }
 
 func TaskWorktreeLeaseActive(homeDir, taskID string, binding TaskWorktreeBinding) bool {

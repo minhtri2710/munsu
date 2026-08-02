@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T) {
@@ -72,29 +74,52 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	}
 }
 
-func TestBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) {
+func TestSpawnBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) {
 	primary := initRepoForSpawnBinding(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
 	runGitForSpawnBinding(t, primary, "worktree", "add", "--detach", worktree)
 	homeDir := t.TempDir()
-	agg, err := home.CreateTaskAggregate(homeDir, "bind-wt", "general", "Ready", "ship", "test-proj")
-	if err != nil {
+	auth := taskauthority.New(mustNewFSAuthorityStore(t, homeDir))
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-bind-wt", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID: "bind-wt", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-wt", ProjectName: "test-proj"}, projPath: primary, wtPath: worktree}
+	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-wt", ProjectName: "test-proj", Authority: auth}, projPath: primary, wtPath: worktree}
 	if err := r.bindWorktree(); err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
-	bound, ok, err := home.ReadCurrentTaskAggregate(homeDir, "bind-wt")
-	if err != nil || !ok {
-		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
+	agg, err := auth.Get("bind-wt")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if bound.Worktree == nil || bound.Worktree.TaskGeneration != agg.Generation || bound.Worktree.RepositoryIdentity == "" || bound.Worktree.Path == "" || bound.Worktree.GitDir == "" || bound.Worktree.CommonDir == "" || bound.Worktree.GitDir == bound.Worktree.CommonDir || bound.Worktree.Head == "" || bound.Worktree.LeaseID == "" || bound.Worktree.FenceToken == "" {
-		t.Fatalf("worktree binding=%+v", bound.Worktree)
+	if agg.Worktree == nil || agg.Worktree.RepositoryIdentity == "" || agg.Worktree.Path == "" || agg.Worktree.GitDir == "" || agg.Worktree.CommonDir == "" || agg.Worktree.GitDir == agg.Worktree.CommonDir || agg.Worktree.Head == "" || agg.Worktree.LeaseID == "" || agg.Worktree.FenceToken == "" {
+		t.Fatalf("worktree binding=%+v", agg.Worktree)
 	}
-	if bound.State == "working" {
+	if agg.Phase == taskauthority.PhaseWorking {
 		t.Fatal("worktree binding alone must not mark task working")
 	}
+	// The lease marker committed atomically with the binding and remains
+	// readable by the legacy lease check on the exact home.
+	if !home.TaskWorktreeLeaseActive(homeDir, "bind-wt", home.TaskWorktreeBinding{
+		TaskGeneration: agg.Generation.String(),
+		LeaseID:        agg.Worktree.LeaseID,
+		FenceToken:     agg.Worktree.FenceToken,
+	}) {
+		t.Fatalf("lease marker not active for binding %+v", agg.Worktree)
+	}
+}
+
+// mustNewFSAuthorityStore builds a filesystem Store over a temp home for
+// spawn binding tests that must observe durable lease markers.
+func mustNewFSAuthorityStore(t *testing.T, homeDir string) *taskauthorityfs.Store {
+	t.Helper()
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 func initRepoForSpawnBinding(t *testing.T, dir string) string {

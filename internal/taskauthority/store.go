@@ -85,15 +85,17 @@ type ChangeApplier interface {
 	ApplyInterpretation(rec DispatchInterpretation) error
 	ApplyDecision(dec DispatchDecision) error
 	ApplyAudit(ev AuditEvent) error
+	ApplyLeaseMarker(marker LeaseMarker) error
 }
 
 type stagedChange struct {
-	kind  string
-	agg   Aggregate
-	hold  DispatchHold
-	rec   DispatchInterpretation
-	dec   DispatchDecision
-	audit AuditEvent
+	kind        string
+	agg         Aggregate
+	hold        DispatchHold
+	rec         DispatchInterpretation
+	dec         DispatchDecision
+	audit       AuditEvent
+	leaseMarker LeaseMarker
 }
 
 // Tx stages one authoritative transaction against a committed snapshot.
@@ -172,6 +174,18 @@ func (tx *Tx) PutDecision(dec DispatchDecision) error {
 	return nil
 }
 
+// PutLeaseMarker stages a worktree lease marker for the transaction. The
+// marker commits atomically with the binding that leases the worktree; the
+// adapter persists it as a compatibility document read by the legacy lease
+// check.
+func (tx *Tx) PutLeaseMarker(marker LeaseMarker) error {
+	if err := marker.Validate(); err != nil {
+		return err
+	}
+	tx.changes = append(tx.changes, stagedChange{kind: "lease", leaseMarker: marker})
+	return nil
+}
+
 // AppendAudit stages a typed audit event for the transaction. At most one
 // typed audit event may commit per operation: the audit identity is the
 // operation id, so a second event would collide on the same record.
@@ -214,6 +228,10 @@ func (tx *Tx) Apply(applier ChangeApplier) error {
 		case "audit":
 			if err := applier.ApplyAudit(change.audit); err != nil {
 				return fmt.Errorf("applying audit event: %w", err)
+			}
+		case "lease":
+			if err := applier.ApplyLeaseMarker(change.leaseMarker); err != nil {
+				return fmt.Errorf("applying lease marker: %w", err)
 			}
 		}
 	}

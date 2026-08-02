@@ -369,37 +369,3 @@ func TestTaskEndpointBindingIsGenerationScopedAndImmutable(t *testing.T) {
 		t.Fatal("binding stale/non-current generation should fail")
 	}
 }
-
-func TestTaskWorktreeBindingRecordsExactIdentityAndIsGenerationScoped(t *testing.T) {
-	homeDir := t.TempDir()
-	agg, err := CreateTaskAggregate(homeDir, "task-wt", "general", "bind worktree", "ship", "munsu")
-	if err != nil {
-		t.Fatal(err)
-	}
-	binding := TaskWorktreeBinding{
-		RepositoryIdentity: "repo-identity",
-		Path:               "/tmp/wt",
-		GitDir:             "/repo/.git/worktrees/wt",
-		CommonDir:          "/repo/.git",
-		Head:               "0123456789abcdef0123456789abcdef01234567",
-		LeaseID:            "lease-1",
-		FenceToken:         "fence-1",
-		BoundAtUnix:        123,
-	}
-	if err := BindTaskWorktree(homeDir, agg.TaskID, agg.Generation, binding); err != nil {
-		t.Fatal(err)
-	}
-	reloaded, err := ReadTaskAggregate(homeDir, agg.TaskID, agg.Generation)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reloaded.Worktree == nil || reloaded.Worktree.TaskGeneration != agg.Generation || reloaded.Worktree.RepositoryIdentity != "repo-identity" || reloaded.Worktree.Path != "/tmp/wt" || reloaded.Worktree.GitDir == reloaded.Worktree.CommonDir || reloaded.Worktree.Head == "" || reloaded.Worktree.LeaseID != "lease-1" || reloaded.Worktree.FenceToken != "fence-1" {
-		t.Fatalf("worktree binding = %+v", reloaded.Worktree)
-	}
-	if err := BindTaskWorktree(homeDir, agg.TaskID, agg.Generation, TaskWorktreeBinding{RepositoryIdentity: "repo-identity", Path: "/tmp/other", GitDir: "/repo/.git/worktrees/other", CommonDir: "/repo/.git", Head: binding.Head, LeaseID: "lease-2", FenceToken: "fence-2", BoundAtUnix: 124}); err == nil {
-		t.Fatal("rebinding same task generation should fail")
-	}
-	if err := BindTaskWorktree(homeDir, agg.TaskID, "2", binding); err == nil {
-		t.Fatal("binding stale/non-current generation should fail")
-	}
-}

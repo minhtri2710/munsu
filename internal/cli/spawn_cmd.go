@@ -64,7 +64,15 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				projectMode = "" // registry not set or not found — will use other fallbacks
 			}
 
-			_, err := fleet.Spawn(fleet.Args{
+			// Compose the Task Authority over the exact home the Runner will
+			// use: construction is side-effect free and the Authority is passed
+			// into fleet.Args for the worktree binding cutover (Task 4.1).
+			taskAuthority, err := ctx.TaskAuthority()
+			if err != nil {
+				return fmt.Errorf("composing task authority for spawn: %w", err)
+			}
+
+			_, err = fleet.Spawn(fleet.Args{
 				ID:          id,
 				ProjectName: projectName,
 				Kind:        kind,
@@ -77,9 +85,10 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 				HarnessFlag: harnessFlag,
 				ModelFlag:   modelFlag,
 				EffortFlag:  effortFlag,
-				HomeDir:     homeOverride,
+				HomeDir:     ctx.Home,
 				Endpoints:   newSpawnSessionEndpoints(),
 				Arm:         arm,
+				Authority:   taskAuthority,
 			})
 			if err != nil {
 				return err

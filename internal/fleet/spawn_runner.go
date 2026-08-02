@@ -14,6 +14,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // Runner orchestrates the full spawn sequence through private phase methods.
@@ -1187,49 +1188,71 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 }
 
 func (r *Runner) bindWorktree() error {
-	agg, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID)
-	if err != nil {
-		return err
+	if r.args.Authority == nil {
+		return fmt.Errorf("binding worktree before endpoint launch: task authority is not composed for spawn")
 	}
-	if !ok {
-		return fmt.Errorf("task aggregate %s has no current generation for worktree binding", r.args.ID)
-	}
-	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, agg.Generation)
+	agg, err := r.args.Authority.Get(r.args.ID)
 	if err != nil {
 		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
-	if err := home.BindTaskWorktree(r.homeDir, r.args.ID, agg.Generation, binding); err != nil {
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath)
+	if err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	if _, err := r.args.Authority.BindWorktree(taskauthority.BindWorktreeRequest{
+		OperationID:        fmt.Sprintf("spawn-bind-wt-%s-%d", r.args.ID, agg.Generation),
+		Actor:              r.spawnActor(),
+		TaskID:             r.args.ID,
+		ExpectedGeneration: agg.Generation,
+		Binding:            binding,
+		Reason:             "spawn",
+	}); err != nil {
 		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
 	return nil
 }
 
-func buildTaskWorktreeBinding(primaryPath, worktreePath, generation string) (home.TaskWorktreeBinding, error) {
+// spawnActor resolves the authoritative actor identity of the rank running
+// the spawn from the exact home, matching the legacy home fallback: captain
+// identity for captain homes, otherwise the home identity.
+func (r *Runner) spawnActor() taskauthority.Actor {
+	identity, rank, err := home.ReadHomeIdentity(r.homeDir)
+	if err != nil {
+		identity = filepath.Base(r.homeDir)
+		rank = home.RankGeneral
+	}
+	owner := identity
+	if rank == home.RankCaptain {
+		owner = "captain:" + identity
+	}
+	return taskauthority.Actor{ID: owner, Rank: string(rank)}
+}
+
+func buildTaskWorktreeBinding(primaryPath, worktreePath string) (taskauthority.WorktreeBinding, error) {
 	canonicalWorktree, err := canonicalExistingPath(worktreePath)
 	if err != nil {
-		return home.TaskWorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
 	}
 	identity, gitDir, commonDir, err := ClassifyIdentity(canonicalWorktree)
 	if err != nil {
-		return home.TaskWorktreeBinding{}, err
+		return taskauthority.WorktreeBinding{}, err
 	}
 	if identity != Worktree {
-		return home.TaskWorktreeBinding{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
 	}
 	repoIdentity := commonDir
 	if primaryPath != "" {
 		_, _, primaryCommonDir, err := ClassifyIdentity(primaryPath)
 		if err != nil {
-			return home.TaskWorktreeBinding{}, fmt.Errorf("classifying repository identity: %w", err)
+			return taskauthority.WorktreeBinding{}, fmt.Errorf("classifying repository identity: %w", err)
 		}
 		repoIdentity = primaryCommonDir
 	}
 	head, err := gitRevParseForBinding(canonicalWorktree, "HEAD")
 	if err != nil {
-		return home.TaskWorktreeBinding{}, fmt.Errorf("reading worktree head: %w", err)
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("reading worktree head: %w", err)
 	}
-	return home.TaskWorktreeBinding{
-		TaskGeneration:     generation,
+	return taskauthority.WorktreeBinding{
 		RepositoryIdentity: repoIdentity,
 		Path:               canonicalWorktree,
 		GitDir:             gitDir,

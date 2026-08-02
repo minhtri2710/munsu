@@ -15,7 +15,6 @@ func TestNoNewTaskAuthorityReachThrough(t *testing.T) {
 		"spawn_runner.go": {
 			"CreateTaskAggregate",
 			"UpdateCurrentTaskAggregateState",
-			"BindTaskWorktree",
 			"BindTaskEndpoint",
 			"CheckDispatchHold",
 		},

@@ -63,6 +63,8 @@ const (
 	AuditLifecycle = "lifecycle"
 	// AuditDispatch records a dispatch-control mutation (not task-bound).
 	AuditDispatch = "dispatch"
+	// AuditBinding records a generation-bound worktree binding (task-bound).
+	AuditBinding = "binding"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -105,6 +107,13 @@ func (ev AuditEvent) Validate() error {
 		}
 		if !ev.After.Valid() {
 			return validationError("audit event has invalid after phase %q", ev.After)
+		}
+	case AuditBinding:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
 		}
 	case AuditDispatch:
 		// Task identity and phases are not applicable.

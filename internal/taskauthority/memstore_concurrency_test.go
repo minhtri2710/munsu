@@ -90,6 +90,7 @@ func (f *failApplier) ApplyInterpretation(DispatchInterpretation) error {
 }
 func (f *failApplier) ApplyDecision(DispatchDecision) error { return f.err }
 func (f *failApplier) ApplyAudit(AuditEvent) error          { return f.err }
+func (f *failApplier) ApplyLeaseMarker(LeaseMarker) error   { return f.err }
 
 // viewUnlocked exposes the committed view for direct transaction tests.
 func (s *memStore) viewUnlocked() View {

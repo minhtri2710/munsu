@@ -21,7 +21,6 @@ var LegacyTaskAuthoritySymbols = []string{
 	"StartTask",
 	"UnblockTask",
 	"ReopenTask",
-	"BindTaskWorktree",
 	"BindTaskEndpoint",
 	"CheckDispatchHold",
 	"CreateDispatchHold",

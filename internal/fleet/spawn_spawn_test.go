@@ -13,6 +13,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestCheckScopeGate_YoloDoesNotBypassGate(t *testing.T) {
@@ -1520,6 +1521,17 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		},
 	}
 
+	// The spawn cutover (Task 4.1) routes the worktree binding through the
+	// composed Task Authority: inject an in-memory-backed Authority that
+	// already owns the task so bindWorktree runs against canonical state.
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-reconcile", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID: "reconcile-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	args := Args{
 		ID:          "reconcile-task",
 		ProjectName: "test-proj",
@@ -1527,6 +1539,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		HomeDir:     homeDir,
 		Endpoints:   fakeEndpointCapabilities{backend: fakeBk},
 		Mode:        "local-only",
+		Authority:   auth,
 	}
 
 	_, err := Spawn(args)

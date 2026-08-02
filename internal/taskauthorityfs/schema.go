@@ -345,6 +345,22 @@ func validateDecisionDocument(dec taskauthority.DispatchDecision) error {
 	return nil
 }
 
+// EncodeLeaseMarker renders the worktree lease marker document in the
+// home-compatible bare format read by internal/home.TaskWorktreeLeaseActive.
+// The marker is a compatibility artifact committed atomically with the
+// worktree binding it accompanies; it carries no versioned envelope so the
+// legacy read path parses it unchanged.
+func EncodeLeaseMarker(marker taskauthority.LeaseMarker) ([]byte, error) {
+	if err := marker.Validate(); err != nil {
+		return nil, err
+	}
+	data, err := json.MarshalIndent(marker, "", "  ")
+	if err != nil {
+		return nil, corruptDocument("lease_marker", "", "encoding: %v", err)
+	}
+	return append(data, '\n'), nil
+}
+
 // EncodeAudit renders the deterministic v2 JSON document for one typed audit
 // event.
 func EncodeAudit(ev taskauthority.AuditEvent) ([]byte, error) {

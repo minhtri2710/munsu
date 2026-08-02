@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -452,6 +453,7 @@ func bindSafetyWorktree(t *testing.T, taskID, mode, primary, worktree string) st
 		t.Fatal(err)
 	}
 	binding := home.TaskWorktreeBinding{
+		TaskGeneration:     agg.Generation,
 		RepositoryIdentity: canonicalSafetyPath(t, resolveGitPathForSafety(primary, repoID)),
 		Path:               absWorktree,
 		GitDir:             canonicalSafetyPath(t, resolveGitPathForSafety(worktree, gitDir)),
@@ -461,9 +463,14 @@ func bindSafetyWorktree(t *testing.T, taskID, mode, primary, worktree string) st
 		FenceToken:         "worktree-fence",
 		BoundAtUnix:        time.Now().Unix(),
 	}
-	if err := home.BindTaskWorktree(homeDir, agg.TaskID, agg.Generation, binding); err != nil {
+	agg.Worktree = &binding
+	if err := home.WriteTaskAggregate(homeDir, *agg); err != nil {
 		t.Fatal(err)
 	}
+	// The lease marker lives in the versioned v2 authority namespace in the
+	// home-compatible bare format read by home.TaskWorktreeLeaseActive; the
+	// git safety read path keeps checking it on every mutation.
+	writeSafetyLeaseMarker(t, homeDir, agg.TaskID, agg.Generation, binding)
 	agg, _, err = home.ReadCurrentTaskAggregate(homeDir, agg.TaskID)
 	if err != nil {
 		t.Fatal(err)
@@ -477,6 +484,35 @@ func bindSafetyWorktree(t *testing.T, taskID, mode, primary, worktree string) st
 		t.Fatal(err)
 	}
 	return homeDir
+}
+
+// writeSafetyLeaseMarker writes one worktree lease marker in the versioned
+// v2 namespace using the home-compatible bare format, mirroring what the
+// task-authority BindWorktree transaction commits.
+func writeSafetyLeaseMarker(t *testing.T, homeDir, taskID, generation string, binding home.TaskWorktreeBinding) {
+	t.Helper()
+	rel := filepath.Join(homeDir, "state", ".task-authority", "v2", "worktree-leases", taskID, generation, binding.LeaseID+".json")
+	if err := os.MkdirAll(filepath.Dir(rel), 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := struct {
+		TaskID         string `json:"task_id"`
+		TaskGeneration string `json:"task_generation"`
+		LeaseID        string `json:"lease_id"`
+		FenceToken     string `json:"fence_token"`
+	}{
+		TaskID:         taskID,
+		TaskGeneration: generation,
+		LeaseID:        binding.LeaseID,
+		FenceToken:     binding.FenceToken,
+	}
+	data, err := json.MarshalIndent(marker, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rel, append(data, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func runPiSafetyForGit(t *testing.T, checkPath, command string) (bool, string) {
