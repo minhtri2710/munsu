@@ -10,6 +10,8 @@
 
 Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`. Task 2.5 is complete through commits `47eaf25a` and `75355dcb`; Checkpoint 2 is complete through `8d07b12`. Task 3.1 is complete through commit `db5c1445`. Task 3.2 is complete through commit `345338b5`: `task add`, `task show`, `task list`, and `backlog add` create and query canonical Task Authority records through the composed Authority; `.meta` and the backlog file are post-commit projections (a projection failure returns a typed `LifecyclePartialError` and never rolls back the authoritative Task Generation); duplicate creation returns a typed conflict with no projection duplicate; the CLI migration allowlist drops `CreateTaskAggregate` for `task_cmd.go`/`backlog_cmd.go`. Fleet `spawn_runner.go` keeps the allowlisted `home.CreateTaskAggregate` call until the Phase 4 spawn cutover, so that function remains exported. Task 3.3 is complete through commit `1c262402`: `backlog start|done|block|unblock|reopen` drive the named Authority `Start`/`Complete`/`Block`/`Unblock`/`Reopen` operations with Expected Generation and a stable invocation Operation ID; invalid transitions fail inside the Authority before the backlog projection is touched; a projection failure returns a typed `LifecyclePartialError` that is retryable without replaying the authoritative operation; `Reopen` creates the next queued Generation at Revision one and leaves the prior Generation immutable historical state; `home.StartTask`, `home.UnblockTask`, and `home.ReopenTask` are deleted in the same slice (their last callers moved), and no production caller of a generic backlog state update remains. `home.SupersedeTask` stays for `backlog retry`, which is outside Task 3.3's named scope. The pre-existing `TestAgentSkillMirrorsMatchCanonical` failure reproduces on the clean base and is unrelated to this slice.
 
+Task 3.4 is complete: `task status` is audit-only. Appending a status line never mutates the Authoritative Task Aggregate phase (proven against a seeded legacy v1 aggregate and against a canonical Authority record, whose Phase and Revision stay untouched); the existing typed event translation is preserved and pinned by an event-log assertion; help and typed output state the audit-only contract; `home.UpdateCurrentTaskAggregateState` has no CLI caller and its entry left the CLI allowlist (only `spawn_cmd.go` -> `UpdateCurrentTaskAggregateKind` remains for Phase 4). The CLI allowlist gate, `Test.*TaskStatus`, and the fleet/orchestrator `Test.*(Status|Report|Reconcile)` suites are green, confirming material Soldier reports still flow through the existing parent reconciliation path.
+
 Verified on 2026-08-01:
 
 ```sh
@@ -545,11 +547,11 @@ go test ./internal/taskauthority -run 'TestAuthority.*(Start|Block|Unblock|Compl
 
 **Acceptance criteria:**
 
-- [ ] Appending a status line cannot change the Authoritative Task Aggregate phase.
-- [ ] Existing typed event translation remains idempotent.
-- [ ] Material Soldier reports continue through the existing parent reconciliation path.
-- [ ] CLI help and typed output no longer imply that arbitrary status text mutates authoritative lifecycle.
-- [ ] `home.UpdateCurrentTaskAggregateState` has no CLI caller.
+- [x] Appending a status line cannot change the Authoritative Task Aggregate phase.
+- [x] Existing typed event translation remains idempotent.
+- [x] Material Soldier reports continue through the existing parent reconciliation path.
+- [x] CLI help and typed output no longer imply that arbitrary status text mutates authoritative lifecycle.
+- [x] `home.UpdateCurrentTaskAggregateState` has no CLI caller.
 
 **Verification:**
 

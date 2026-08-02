@@ -13,6 +13,5 @@ import (
 func TestNoNewTaskAuthorityReachThrough(t *testing.T) {
 	testutil.AssertNoNewTaskAuthorityCallers(t, ".", map[string][]string{
 		"spawn_cmd.go": {"UpdateCurrentTaskAggregateKind"},
-		"task_cmd.go":  {"UpdateCurrentTaskAggregateState"},
 	})
 }

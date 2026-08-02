@@ -211,8 +211,12 @@ func newTaskCmd() *cobra.Command {
 
 	statusCmd := &cobra.Command{
 		Use:   "status <id> <state> <message>",
-		Short: "Append a status line to a task",
-		Args:  ExactArgs(3),
+		Short: "Append an audit-only status line to a task",
+		Long: `Append a status line to the task .status projection and typed event
+log. This is audit input only: it never changes the authoritative task
+phase. Authoritative transitions are named operations owned by the parent
+rank (munsu backlog start|done|block|unblock|reopen).`,
+		Args: ExactArgs(3),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
 				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
@@ -222,11 +226,10 @@ func newTaskCmd() *cobra.Command {
 			msg := args[2]
 			line := fmt.Sprintf("%s: %s", state, msg)
 
-			if _, _, err := home.UpdateCurrentTaskAggregateState(ctx.Home, id, state, msg); err != nil {
-				return err
-			}
+			// Audit-only: appending a status line never mutates the authoritative
+			// Task Aggregate phase (Task 3.4). Transitions are named operations.
 			if err := home.AppendStatus(ctx.Home, id, line); err != nil {
-				return fmt.Errorf("authoritative task state committed; status projection failed: %w", err)
+				return fmt.Errorf("appending status line: %w", err)
 			}
 
 			// Compatibility translator: also write as typed event
@@ -237,7 +240,7 @@ func newTaskCmd() *cobra.Command {
 				SchemaVersion: SchemaVersion,
 				Kind:          "task.status",
 				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("status appended: %s", line)},
+				Data:          MessageResult{Message: fmt.Sprintf("status appended (audit-only; phase unchanged): %s", line)},
 			})
 		}),
 	}
