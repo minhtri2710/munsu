@@ -136,6 +136,15 @@ type Aggregate struct {
 	// post-merge reconciliation committed with the same operation (Task 7.2).
 	IssueLinks              []domain.IssueLink                     `json:"issue_links,omitempty"`
 	IssueLinkReconciliation []domain.IssueLinkReconciliationResult `json:"issue_link_reconciliation,omitempty"`
+	// DeliveryPlan and CapabilityAttestation are the generation-bound
+	// delivery-plan and capability-attestation definition records committed
+	// together by the AttachAttestation operation (Task 7.3, ADR-0004 §6).
+	// The plan records the bounded requested → effective mode transition with
+	// its fallback reason; the attestation reference binds project, home, and
+	// config snapshot digest. Runtime capability observation data stays
+	// outside the Aggregate.
+	DeliveryPlan          *DeliveryPlan          `json:"delivery_plan,omitempty"`
+	CapabilityAttestation *CapabilityAttestation `json:"capability_attestation,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -198,6 +207,9 @@ func validateAggregate(agg Aggregate) error {
 		}
 	}
 	if err := validateIssueLinkDefinition(agg); err != nil {
+		return err
+	}
+	if err := validateDeliveryDefinition(agg); err != nil {
 		return err
 	}
 	return nil
@@ -275,6 +287,14 @@ func (a Aggregate) clone() Aggregate {
 	}
 	if a.IssueLinkReconciliation != nil {
 		out.IssueLinkReconciliation = append([]domain.IssueLinkReconciliationResult(nil), a.IssueLinkReconciliation...)
+	}
+	if a.DeliveryPlan != nil {
+		p := *a.DeliveryPlan
+		out.DeliveryPlan = &p
+	}
+	if a.CapabilityAttestation != nil {
+		c := *a.CapabilityAttestation
+		out.CapabilityAttestation = &c
 	}
 	return out
 }

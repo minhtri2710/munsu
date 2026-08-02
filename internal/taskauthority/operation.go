@@ -86,6 +86,9 @@ const (
 	// AuditIssueLinks records a generation-bound issue link definition and
 	// reconciliation commit (task-bound).
 	AuditIssueLinks = "issue-links"
+	// AuditAttestation records the acceptance of a generation-bound delivery
+	// plan and capability attestation (task-bound).
+	AuditAttestation = "attestation"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -137,6 +140,13 @@ func (ev AuditEvent) Validate() error {
 			return err
 		}
 	case AuditIssueLinks:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditAttestation:
 		if err := validateTaskID(ev.TaskID); err != nil {
 			return err
 		}

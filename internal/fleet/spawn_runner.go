@@ -169,9 +169,18 @@ func (r *Runner) Run() (string, error) {
 		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
 	}
-	if err := r.confirmSpawn(); err != nil {
+	spawned, err := r.confirmSpawn()
+	if err != nil {
 		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
+	}
+	// The accepted capability attestation becomes authoritative evidence
+	// after ConfirmSpawn: the authoritative Generation comes from the
+	// ConfirmSpawn receipt. A failure keeps the observation runtime-only and
+	// is reported as a warning — the task is already working and the window
+	// is live, so the spawn itself never rolls back.
+	if err := r.attachAttestation(spawned.Generation); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	r.appendSpawnedStatus()
 	r.printEndpointInfo()
@@ -1268,14 +1277,17 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 // with the transition, the Revision advance, the typed audit event, and the
 // durable idempotency receipt. A failed persistence leaves the task queued
 // with no endpoint binding. The Runner fails closed when no Authority is
-// composed, exactly like bindWorktree.
-func (r *Runner) confirmSpawn() error {
+// composed, exactly like bindWorktree. The returned Result is the
+// authoritative outcome of the spawn (the ConfirmSpawn receipt): its
+// Generation is the exact generation the attestation evidence binds to
+// (Task 7.3).
+func (r *Runner) confirmSpawn() (taskauthority.Result, error) {
 	if r.args.Authority == nil {
-		return fmt.Errorf("confirming spawn: task authority is not composed for spawn")
+		return taskauthority.Result{}, fmt.Errorf("confirming spawn: task authority is not composed for spawn")
 	}
 	agg, err := r.args.Authority.Get(r.args.ID)
 	if err != nil {
-		return fmt.Errorf("confirming spawn: %w", err)
+		return taskauthority.Result{}, fmt.Errorf("confirming spawn: %w", err)
 	}
 	binding := taskauthority.EndpointBinding{
 		Backend:      r.endpoint.Backend,
@@ -1287,17 +1299,18 @@ func (r *Runner) confirmSpawn() error {
 		TabID:        r.endpoint.TabID,
 		BoundAtUnix:  time.Now().Unix(),
 	}
-	if _, err := r.args.Authority.ConfirmSpawn(taskauthority.ConfirmSpawnRequest{
+	res, err := r.args.Authority.ConfirmSpawn(taskauthority.ConfirmSpawnRequest{
 		OperationID:        fmt.Sprintf("spawn-confirm-%s-%d", r.args.ID, agg.Generation),
 		Actor:              r.spawnActor(),
 		TaskID:             r.args.ID,
 		ExpectedGeneration: agg.Generation,
 		Binding:            binding,
 		Reason:             "spawned",
-	}); err != nil {
-		return fmt.Errorf("confirming spawn: %w", err)
+	})
+	if err != nil {
+		return taskauthority.Result{}, fmt.Errorf("confirming spawn: %w", err)
 	}
-	return nil
+	return res, nil
 }
 
 func newEndpointToken() string {
@@ -1342,15 +1355,14 @@ func (r *Runner) writeTaskMeta() error {
 		meta[k] = v
 	}
 
-	// Persist capability attestation for lifecycle visibility.
-	if r.attestation != nil {
-		meta[MetaCapabilityAttestation] = r.attestationJSON()
-		meta[MetaRequestedMode] = r.attestation.RequestedMode
-		meta[MetaEffectiveMode] = r.attestation.EffectiveMode
-		if r.attestation.FallbackReason != "" {
-			meta[MetaFallbackReason] = r.attestation.FallbackReason
-		}
-	}
+	// The capability attestation fields (capability_attestation,
+	// attestation_requested_mode, attestation_effective_mode,
+	// attestation_fallback_reason) are NOT written here: this pre-transition
+	// side file is runtime observations only (Task 4.2). The accepted
+	// attestation becomes authoritative evidence through the Task Authority
+	// after ConfirmSpawn (Task 7.3); the .meta fields are a post-confirm
+	// runtime projection of that authoritative acceptance written by
+	// projectAttestationEvidence, never a writer of record.
 
 	if err := home.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
@@ -1358,16 +1370,76 @@ func (r *Runner) writeTaskMeta() error {
 	return nil
 }
 
-// attestationJSON returns the JSON serialization of the attestation.
-func (r *Runner) attestationJSON() string {
+// attachAttestation commits the accepted capability attestation as
+// authoritative evidence through the composed Task Authority after
+// ConfirmSpawn, then projects the acceptance into .meta. The expected
+// generation comes from the ConfirmSpawn receipt, so the evidence binds the
+// exact generation the spawn committed. The task is already working when
+// this runs: a failure keeps the observation runtime-only and is surfaced by
+// the caller as a warning, never rolling back the authoritative spawn.
+func (r *Runner) attachAttestation(generation taskauthority.Generation) error {
 	if r.attestation == nil {
-		return ""
+		return nil
 	}
-	data, err := json.Marshal(r.attestation)
+	if r.args.Authority == nil {
+		return fmt.Errorf("attaching attestation evidence: task authority is not composed for spawn")
+	}
+	configDigest := ""
+	if r.projectConfigLoaded {
+		configDigest = r.projectConfig.SnapshotDigest
+	}
+	res, err := StoreAttestationEvidence(r.homeDir, r.args.Authority, r.args.ID, generation, r.attestation, configDigest)
 	if err != nil {
-		return ""
+		return fmt.Errorf("attaching attestation evidence: %w", err)
 	}
-	return string(data)
+	if projErr := projectAttestationEvidence(r.homeDir, r.args.ID, r.attestation, res); projErr != nil {
+		return projErr
+	}
+	return nil
+}
+
+// AttestationProjectionError is the typed partial outcome of an attestation
+// acceptance whose authoritative commit succeeded but whose .meta projection
+// could not be written (ADR-0007 §7). The authoritative state is never
+// rolled back; the projection can be retried independently and replays
+// idempotently.
+type AttestationProjectionError struct {
+	TaskID        string
+	ProjectionErr error
+}
+
+func (e *AttestationProjectionError) Error() string {
+	return fmt.Sprintf("attestation evidence committed for %s but projection failed: %v", e.TaskID, e.ProjectionErr)
+}
+
+func (e *AttestationProjectionError) Unwrap() error { return e.ProjectionErr }
+
+// projectAttestationEvidence writes the .meta attestation fields as a
+// runtime projection of the authoritative acceptance committed by
+// AttachAttestation (Task 7.3). The projection is one-directional: it
+// mirrors the accepted evidence and never writes into the Authority. A
+// projection failure returns a typed partial error and never rolls back the
+// authoritative commit; the projection is retryable without replaying the
+// authoritative operation.
+func projectAttestationEvidence(homeDir, taskID string, att *CapabilityAttestation, res taskauthority.AttachAttestationResult) error {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		meta = make(map[string]string)
+	}
+	data, err := json.Marshal(att)
+	if err != nil {
+		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
+	}
+	meta[MetaCapabilityAttestation] = string(data)
+	meta[MetaRequestedMode] = att.RequestedMode
+	meta[MetaEffectiveMode] = att.EffectiveMode
+	if att.FallbackReason != "" {
+		meta[MetaFallbackReason] = att.FallbackReason
+	}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
+	}
+	return nil
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

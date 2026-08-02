@@ -82,7 +82,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	}
 	// ConfirmSpawn commits the endpoint binding and the working transition
 	// together in one Store transaction.
-	if err := r.confirmSpawn(); err != nil {
+	if _, err := r.confirmSpawn(); err != nil {
 		t.Fatalf("confirmSpawn: %v", err)
 	}
 	bound, err := auth.Get("bind-task")
@@ -113,7 +113,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 func TestConfirmSpawnFailsClosedWithoutAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task"}, endpoint: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"}}
-	if err := r.confirmSpawn(); err == nil || !strings.Contains(err.Error(), "not composed") {
+	if _, err := r.confirmSpawn(); err == nil || !strings.Contains(err.Error(), "not composed") {
 		t.Fatalf("confirmSpawn without Authority error = %v, want composition failure", err)
 	}
 }
@@ -237,7 +237,7 @@ func TestEndpointBindingFailureLeavesTaskNonWorking(t *testing.T) {
 	}
 	bindWorktreeForSpawnFixture(t, auth, "bind-task")
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task", Authority: auth}, endpoint: CreatedEndpoint{Backend: "tmux"}}
-	if err := r.confirmSpawn(); err == nil {
+	if _, err := r.confirmSpawn(); err == nil {
 		t.Fatal("expected binding failure for incomplete endpoint")
 	}
 	agg, err := auth.Get("bind-task")

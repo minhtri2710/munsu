@@ -9,15 +9,15 @@
 // "activation evidence" that authorizes removal of temporary compatibility paths.
 //
 // The suite exercises:
-//   1. General -> Captain handoff with dependency interpretation
-//   2. Watcher readiness verification
-//   3. Project-scoped dispatch
-//   4. Authorized delivery fallback
-//   5. Delivered wake
-//   6. Merge truth reconciliation
-//   7. Issue closure
-//   8. Retirement
-//   9. Pause
+//  1. General -> Captain handoff with dependency interpretation
+//  2. Watcher readiness verification
+//  3. Project-scoped dispatch
+//  4. Authorized delivery fallback
+//  5. Delivered wake
+//  6. Merge truth reconciliation
+//  7. Issue closure
+//  8. Retirement
+//  9. Pause
 //  10. Deterministic recovery circuit
 package fleet
 
@@ -30,6 +30,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // IncidentReplay_GeneralToCaptainHandoff proves that a General can seed and
@@ -46,9 +47,9 @@ func IncidentReplay_GeneralToCaptainHandoff(t *testing.T) {
 	// Phase 1.1: Seed captain home
 	smHome := filepath.Join(parent, "captains", "handoff-sm")
 	if err := SeedCaptain(CaptainSeedOptions{
-		ID:      "handoff-sm",
-		Home:    smHome,
-		Charter: "# Handoff captain charter",
+		ID:          "handoff-sm",
+		Home:        smHome,
+		Charter:     "# Handoff captain charter",
 		Integration: fakeIntegrationPort{},
 	}); err != nil {
 		t.Fatalf("SeedCaptain: %v", err)
@@ -180,10 +181,34 @@ func IncidentReplay_AuthorizedDeliveryFallback(t *testing.T) {
 		t.Errorf("authorized mode = %q, want direct-PR", attestation.FallbackPolicy.AuthorizedMode)
 	}
 
-	// Phase 4.2: Store attestation in task meta and verify it round-trips
+	// Phase 4.2: Accept the attestation as authoritative evidence through the
+	// Task Authority, then project the acceptance into task meta and verify
+	// it round-trips. The attestation fields in meta are a runtime projection
+	// of the authoritative acceptance, never a writer of record (Task 7.3).
 	taskID := "test-delivery-task"
-	if err := PersistAttestationToMeta(homeDir, taskID, attestation); err != nil {
-		t.Fatalf("PersistAttestationToMeta: %v", err)
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID: taskID, Owner: "general", Kind: "ship", Project: "test-project",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, attestation, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if agg.DeliveryPlan == nil || agg.DeliveryPlan.EffectiveMode != "direct-PR" || agg.DeliveryPlan.RequestedMode != "no-mistakes" {
+		t.Fatalf("authoritative delivery plan = %+v", agg.DeliveryPlan)
+	}
+	if agg.CapabilityAttestation == nil || agg.CapabilityAttestation.Project != "test-project" {
+		t.Fatalf("authoritative attestation reference = %+v", agg.CapabilityAttestation)
+	}
+	if projErr := projectAttestationEvidence(homeDir, taskID, attestation, res); projErr != nil {
+		t.Fatalf("projectAttestationEvidence: %v", projErr)
 	}
 
 	restored, err := ReadAttestationFromMeta(homeDir, taskID)
