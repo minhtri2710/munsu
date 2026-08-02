@@ -173,7 +173,7 @@ func newMigrateTaskAggregatesCmd() *cobra.Command {
 			if err != nil {
 				return operationError("invalid_argument", "Run `munsu migrate task-aggregates plan --plan-out <plan.json>`", err.Error())
 			}
-			if err := home.WriteTaskAggregateMigrationPlan(planPath, plan); err != nil {
+			if err := home.WriteMigrationPlan(planPath, plan); err != nil {
 				return operationError("internal", "Run the task aggregate plan command again", err.Error())
 			}
 			message := fmt.Sprintf("Planned %d task aggregate(s), quarantined=%d; digest=%s; plan=%s; apply=munsu migrate task-aggregates apply --plan %s", plan.RecordCount, len(plan.Quarantined), plan.SourceDigest, planPath, shellQuote(planPath))

@@ -107,6 +107,12 @@ func TestTaskReconcileSingleTask(t *testing.T) {
 	if err := home.WriteMeta(homeDir, "beta", map[string]string{"kind": "scout"}); err != nil {
 		t.Fatal(err)
 	}
+	// Tamper alpha so an accidental whole-home reconcile would visibly repair
+	// it: task add now fully derives the projection, so a single-task
+	// reconcile must leave the tampered alpha projection untouched.
+	if err := home.WriteMeta(homeDir, "alpha", map[string]string{"kind": "scout", "generation": "99"}); err != nil {
+		t.Fatal(err)
+	}
 	out, err := runTaskCommand(t, []string{"task", "reconcile", "beta", "--output", "json", "--home", homeDir})
 	if err != nil {
 		t.Fatalf("task reconcile beta: %v\n%s", err, out)
@@ -119,7 +125,7 @@ func TestTaskReconcileSingleTask(t *testing.T) {
 		t.Fatalf("response = %+v\n%s", resp, out)
 	}
 	alphaMeta := readCLIMeta(t, homeDir, "alpha")
-	if alphaMeta["generation"] != "" || alphaMeta["state"] != "" {
+	if alphaMeta["generation"] != "99" || alphaMeta["kind"] != "scout" {
 		t.Fatalf("single-task reconcile touched alpha: %v", alphaMeta)
 	}
 }

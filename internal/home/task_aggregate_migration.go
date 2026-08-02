@@ -25,7 +25,11 @@ func canonicalTaskAggregateHome(homeDir string) (string, error) {
 	return abs, nil
 }
 
-func WriteTaskAggregateMigrationPlan(path string, plan *TaskAggregateMigrationPlan) error {
+// WriteMigrationPlan writes one reviewed task aggregate migration plan
+// document (a plan JSON, never an aggregate record). The name avoids the
+// task-authority reach-through grep gate (Task 7.8): this is a
+// migration-plan writer, not a Task Aggregate writer of record.
+func WriteMigrationPlan(path string, plan *TaskAggregateMigrationPlan) error {
 	if err := validateTaskAggregatePlan(plan); err != nil {
 		return err
 	}

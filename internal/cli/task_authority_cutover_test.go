@@ -223,3 +223,26 @@ func TestBacklogAddProjectionFailureReturnsTypedPartial(t *testing.T) {
 		t.Fatalf("aggregate = %+v", agg)
 	}
 }
+
+// TestTaskObserveCanonicalTaskWithoutMeta proves `task observe` resolves a
+// task from its canonical Authority record even when no .meta projection
+// exists yet (Task 7.8 canonical-read preference): the projection is display
+// fallback, never the existence gate.
+func TestTaskObserveCanonicalTaskWithoutMeta(t *testing.T) {
+	homeDir := t.TempDir()
+	auth := testAuthorityFor(t, homeDir)
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-obs", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID: "obs", Owner: "owner", Description: "observe me", Kind: "ship",
+		Reason: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runTaskCommand(t, []string{"task", "observe", "obs", "--home", homeDir})
+	if err != nil {
+		t.Fatalf("task observe: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "task_id: obs") {
+		t.Fatalf("task observe did not resolve the canonical task:\n%s", out)
+	}
+}

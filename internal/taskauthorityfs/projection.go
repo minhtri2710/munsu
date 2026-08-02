@@ -89,6 +89,47 @@ func (s *Store) ReconcileProjections() ([]TaskProjection, error) {
 	return out, nil
 }
 
+// ProjectTaskAdd derives one freshly created task's .meta projection from its
+// canonical aggregate (Task 7.8): the runtime-only projection fields supplied
+// by the caller are preserved, and the authoritative fields (owner,
+// description, kind, project, generation, state) are derived from the current
+// Task Aggregate — the projection never acts as a writer of record for
+// authoritative fields. The .status projection is intentionally not written
+// here (task add has never written .status; `task status` and `task
+// reconcile` own that surface). The projection is one-directional: canonical
+// records are never written. A projection failure never rolls back the
+// authoritative Task Generation (ADR-0007 §7); the projection is retryable
+// and idempotent.
+func (s *Store) ProjectTaskAdd(taskID string, runtime map[string]string) (TaskProjection, error) {
+	if err := validateTaskID(taskID); err != nil {
+		return TaskProjection{}, err
+	}
+	v, err := s.View()
+	if err != nil {
+		return TaskProjection{}, err
+	}
+	agg, ok := v.Current(taskID)
+	if !ok {
+		return TaskProjection{}, fmt.Errorf("%w: task %s not found", taskauthority.ErrNotFound, taskID)
+	}
+	existing, err := home.ReadMeta(s.homeDir, taskID)
+	if err != nil {
+		existing = map[string]string{}
+	}
+	for k, val := range runtime {
+		if val == "" {
+			delete(existing, k)
+			continue
+		}
+		existing[k] = val
+	}
+	derived := deriveMetaProjection(agg, existing)
+	if err := home.WriteMeta(s.homeDir, taskID, derived); err != nil {
+		return TaskProjection{}, err
+	}
+	return TaskProjection{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Meta: ProjectionRepaired}, nil
+}
+
 // reconcile runs one task's meta and status reconciliation, collecting any
 // typed failure detail without ever writing into the authority.
 func (s *Store) reconcile(agg taskauthority.Aggregate, audit []taskauthority.AuditEvent) TaskProjection {
@@ -178,20 +219,25 @@ func (s *Store) reconcileMeta(agg taskauthority.Aggregate) (ProjectionState, err
 }
 
 // deriveStatusLines renders the typed lifecycle audit history of one task as
-// append-only .status lines ("<after>: <reason>"). Dispatch audit events are
-// not task-bound and never become status lines. Lines are deterministic in
-// committed audit order, so reconciliation is idempotent.
+// append-only .status lines ("<after>: <reason>"). Retirement events render
+// as a `retired` line (Task 7.8). Dispatch audit events are not task-bound
+// and never become status lines. Lines are deterministic in committed audit
+// order, so reconciliation is idempotent.
 func deriveStatusLines(audit []taskauthority.AuditEvent) []string {
 	var out []string
 	for _, ev := range audit {
-		if ev.Kind != taskauthority.AuditLifecycle {
-			continue
+		switch ev.Kind {
+		case taskauthority.AuditLifecycle, taskauthority.AuditRetirement:
+			phase := ev.After
+			if ev.Kind == taskauthority.AuditRetirement {
+				phase = taskauthority.PhaseRetired
+			}
+			reason := ev.Reason
+			if reason == "" {
+				reason = string(phase)
+			}
+			out = append(out, string(phase)+": "+reason)
 		}
-		reason := ev.Reason
-		if reason == "" {
-			reason = string(ev.After)
-		}
-		out = append(out, string(ev.After)+": "+reason)
 	}
 	return out
 }

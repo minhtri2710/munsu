@@ -207,7 +207,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			if !opts.Force {
 				expectedManifestSHA := meta["launch_manifest_sha256"]
 				if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
-					return nil, fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err)
+					return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err))
 				}
 			}
 			if err := backend.ReturnWorktree(opts.HomeDir, wtPath); err != nil {

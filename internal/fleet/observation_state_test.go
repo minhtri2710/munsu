@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 // Observation must expose one coherent authoritative state and never report
@@ -16,10 +18,11 @@ type fixedProbe struct{ alive bool }
 
 func (p fixedProbe) Probe(string, map[string]string) (bool, error) { return p.alive, nil }
 
-// setupObservationHome seeds a home with a v1 aggregate, meta, and (for
-// working states) an endpoint binding and in-flight backlog line. The generic
-// home state setter and endpoint binder were deleted with the spawn cutover
-// (Task 4.2); fixtures read-mutate-write through home.WriteTaskAggregate.
+// setupObservationHome seeds a home with a canonical v2 Task Authority record
+// (via the filesystem Store, so the canonical read finds it), meta, and (for
+// working states) an in-flight backlog line. The legacy v1 aggregate fixtures
+// were re-expressed through the Authority at Task 7.8: observation reads the
+// canonical record as state truth and the meta/status projections as display.
 func setupObservationHome(t *testing.T, homeDir, state string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0700); err != nil {
@@ -31,25 +34,40 @@ func setupObservationHome(t *testing.T, homeDir, state string) {
 	if err := home.WriteMeta(homeDir, "task", map[string]string{"window": "w1:p1", "backend": "tmux"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := home.CreateTaskAggregate(homeDir, "task", "owner", "work", "ship", ""); err != nil {
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	agg, ok, err := home.ReadCurrentTaskAggregate(homeDir, "task")
-	if err != nil || !ok {
-		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
+	auth := taskauthority.New(store)
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID: "task", Owner: "owner", Description: "work", Kind: "ship",
+		Reason: "test",
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if state == "working" {
-		agg.Endpoint = &home.TaskEndpointBinding{
-			TaskGeneration: agg.Generation, Backend: "tmux", Handle: "w1:p1",
-			LeaseID: "l1", FenceToken: "f1", BoundAtUnix: 1000,
+		if _, err := auth.Start(taskauthority.StartRequest{
+			OperationID: "op-start-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+			TaskID: "task", ExpectedGeneration: 1, Reason: "spawned",
+		}); err != nil {
+			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("# Backlog\n\n- [-] task: in flight\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
+		return
 	}
-	agg.State = state
-	agg.StateDetail = "spawned"
-	if err := home.WriteTaskAggregate(homeDir, *agg); err != nil {
+	if _, err := auth.Start(taskauthority.StartRequest{
+		OperationID: "op-start-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID: "task", ExpectedGeneration: 1, Reason: "spawned",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Complete(taskauthority.CompleteRequest{
+		OperationID: "op-complete-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID: "task", ExpectedGeneration: 1, To: taskauthority.PhaseDone, Reason: "done",
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

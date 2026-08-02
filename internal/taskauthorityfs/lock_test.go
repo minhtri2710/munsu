@@ -232,3 +232,52 @@ func TestWithLocksRejectsInvalidTaskID(t *testing.T) {
 		t.Fatalf("lock acquisition attempted %d times, want 0 (task id validated before dispatch lock)", calls)
 	}
 }
+
+// TestViewReadDoesNotCreateLockWithoutAuthorityState proves the read path
+// never mutates a home that carries state/ but no task-authority records:
+// serving the empty committed view must not create state/.dispatch.lock
+// (Task 5.2 repair, extended to state/-present homes at Task 7.8).
+func TestViewReadDoesNotCreateLockWithoutAuthorityState(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "legacy.meta"), []byte("kind=ship\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := store.View()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Aggregates) != 0 {
+		t.Fatalf("view = %+v, want empty", v.Aggregates)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "state", ".dispatch.lock")); !os.IsNotExist(err) {
+		t.Fatal("pure read created state/.dispatch.lock on a home without authority state")
+	}
+}
+
+// TestViewFailsClosedOnV1State still takes the lock (a home with authority
+// state is locked exactly as before) and fails closed with the typed
+// migration error; the read never serves a v1 home silently.
+func TestViewFailsClosedOnV1State(t *testing.T) {
+	homeDir := t.TempDir()
+	v1Agg := filepath.Join(homeDir, filepath.FromSlash("state/.task-authority/aggregates"))
+	if err := os.MkdirAll(v1Agg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v1Agg, "legacy.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.View(); !errors.Is(err, ErrMigrationRequired) {
+		t.Fatalf("View over v1 state = %v, want ErrMigrationRequired", err)
+	}
+}

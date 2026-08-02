@@ -33,14 +33,8 @@ func newTaskCmd() *cobra.Command {
 			repo, _ := cmd.Flags().GetString("repo")
 
 			project := ""
-			meta := map[string]string{
-				"description": desc,
-				"kind":        kind,
-			}
 			if repo != "" {
-				meta["repo"] = repo
-				meta["project"] = repo // --repo maps directly to the project name
-				project = repo
+				project = repo // --repo maps directly to the project name
 			}
 
 			auth, err := ctx.TaskAuthority()
@@ -60,9 +54,20 @@ func newTaskCmd() *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			// .meta is a post-commit projection: a projection failure must not
-			// roll back the authoritative Task Generation (ADR-0007 §7).
-			if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
+			// .meta is a post-commit projection (ADR-0007 §7): the authoritative
+			// fields are derived from the canonical aggregate by the projection
+			// layer and the runtime-only repo field is preserved. The direct
+			// home.WriteMeta reach-through is gone (Task 7.8); a projection
+			// failure must not roll back the authoritative Task Generation.
+			store, err := taskauthorityfs.NewStore(ctx.Home)
+			if err != nil {
+				return err
+			}
+			runtimeFields := map[string]string{}
+			if repo != "" {
+				runtimeFields["repo"] = repo
+			}
+			if _, err := store.ProjectTaskAdd(id, runtimeFields); err != nil {
 				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
 			}
 			return writeContract(cmd, Response[MessageResult]{

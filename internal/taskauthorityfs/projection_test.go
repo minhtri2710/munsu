@@ -461,8 +461,22 @@ func TestReconcileUnknownTaskNotFound(t *testing.T) {
 	}
 }
 
-// TestDeriveStatusLinesSkipsDispatchAudit proves dispatch audit events (not
-// task-bound) never become .status lines.
+// TestDeriveStatusLinesRendersRetirement proves a retired task renders a
+// `retired: <reason>` line from its AuditRetirement event (Task 7.8): the
+// retired transition is authoritative lifecycle history and must surface in
+// the .status projection like any other transition.
+func TestDeriveStatusLinesRendersRetirement(t *testing.T) {
+	events := []taskauthority.AuditEvent{
+		{OperationID: "op-create", Actor: taskauthority.Actor{ID: "owner-x"}, Kind: taskauthority.AuditLifecycle, TaskID: "beta", Generation: 1, After: taskauthority.PhaseQueued, Reason: "cli task add", At: 2},
+		{OperationID: "op-retire", Actor: taskauthority.Actor{ID: "owner-x"}, Kind: taskauthority.AuditRetirement, TaskID: "beta", Generation: 1, After: taskauthority.PhaseRetired, Reason: "retirement", At: 3},
+	}
+	got := deriveStatusLines(events)
+	want := []string{"queued: cli task add", "retired: retirement"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("derived = %q, want %q", got, want)
+	}
+}
+
 func TestDeriveStatusLinesSkipsDispatchAudit(t *testing.T) {
 	events := []taskauthority.AuditEvent{
 		{OperationID: "op-dispatch", Actor: taskauthority.Actor{ID: "owner-x"}, Kind: taskauthority.AuditDispatch, At: 1},
@@ -475,5 +489,58 @@ func TestDeriveStatusLinesSkipsDispatchAudit(t *testing.T) {
 	}
 	if strings.Join(got, "") == "" {
 		t.Fatal("derived status lines unexpectedly empty")
+	}
+}
+
+// TestProjectTaskAddDerivesProjectionFromCanonical proves the post-Create
+// .meta projection routes through the projection layer: the runtime-only
+// fields supplied by the caller (repo) are preserved and the authoritative
+// fields (owner, description, kind, project, generation, state) are derived
+// from the canonical aggregate, never from caller-supplied values (Task 7.8).
+func TestProjectTaskAddDerivesProjectionFromCanonical(t *testing.T) {
+	homeDir := t.TempDir()
+	store, err := NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := projectionAuthority(t, homeDir)
+	seedProjectionTask(t, auth, "beta")
+
+	out, err := store.ProjectTaskAdd("beta", map[string]string{"repo": "munsu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.TaskID != "beta" || out.Meta != ProjectionRepaired {
+		t.Fatalf("outcome = %+v", out)
+	}
+	meta, err := home.ReadMeta(homeDir, "beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{
+		"owner":       "owner-x",
+		"description": "work on beta",
+		"kind":        "ship",
+		"project":     "proj-x",
+		"generation":  "1",
+		"state":       "queued",
+		"repo":        "munsu",
+	} {
+		if meta[k] != want {
+			t.Fatalf("meta[%q] = %q, want %q (full meta %v)", k, meta[k], want, meta)
+		}
+	}
+}
+
+// TestProjectTaskAddRejectsUnknownTask proves ProjectTaskAdd fails closed on
+// a task with no canonical record.
+func TestProjectTaskAddRejectsUnknownTask(t *testing.T) {
+	homeDir := t.TempDir()
+	store, err := NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ProjectTaskAdd("nope", map[string]string{"repo": "x"}); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("error = %v, want not found", err)
 	}
 }

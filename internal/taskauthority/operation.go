@@ -112,6 +112,9 @@ const (
 	// committed by the Retire operation after verified merged/delivered
 	// evidence (task-bound, Task 7.7).
 	AuditRetirement = "retirement"
+	// AuditPromote records the generation-bound scout → ship kind promotion
+	// committed by the Promote operation (task-bound, Task 7.8).
+	AuditPromote = "promote"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -222,6 +225,16 @@ func (ev AuditEvent) Validate() error {
 			return validationError("audit event has invalid before phase %q", ev.Before)
 		}
 		if ev.After != PhaseRetired {
+			return validationError("audit event has invalid after phase %q", ev.After)
+		}
+	case AuditPromote:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+		if ev.After != "" && !ev.After.Valid() {
 			return validationError("audit event has invalid after phase %q", ev.After)
 		}
 	case AuditDispatch:

@@ -575,7 +575,7 @@ func (r *Runner) checkBacklogAuthority() error {
 		if metaExists && !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
 		}
-		return r.ensureTaskAggregate(item)
+		return r.ensureTaskAggregate()
 	}
 
 	// Live session without matching state still refuses (stale meta after teardown failure).
@@ -583,16 +583,19 @@ func (r *Runner) checkBacklogAuthority() error {
 		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
 	}
 
-	return r.ensureTaskAggregate(item)
+	return r.ensureTaskAggregate()
 }
 
-func (r *Runner) ensureTaskAggregate(item Item) error {
-	if _, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID); err != nil {
-		return fmt.Errorf("lifecycle guard: reading task aggregate: %w", err)
-	} else if !ok {
-		if _, err := home.CreateTaskAggregate(r.homeDir, r.args.ID, "", item.Description, item.Kind, item.Repo); err != nil {
-			return fmt.Errorf("lifecycle guard: creating task aggregate: %w", err)
-		}
+func (r *Runner) ensureTaskAggregate() error {
+	// The canonical Task Authority record is created by backlog add / task add
+	// through the Authority; the spawn shim never creates aggregates (Task
+	// 7.8). Fail closed when the task has no canonical record — the heal path
+	// is registering the task through the backlog.
+	if r.args.Authority == nil {
+		return fmt.Errorf("lifecycle guard: task authority is not composed for spawn")
+	}
+	if _, err := r.args.Authority.Get(r.args.ID); err != nil {
+		return fmt.Errorf("lifecycle guard: task %q has no canonical Task Authority record; register it with 'backlog add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
 	}
 	return nil
 }
@@ -1321,38 +1324,51 @@ func newEndpointToken() string {
 	return fmt.Sprintf("%x", buf)
 }
 
-// Phase 14: writeTaskMeta writes the task metadata file.
+// Phase 14: writeTaskMeta writes the task metadata file. The side file is a
+// pre-transition runtime observation projection (Task 4.2, Task 7.8
+// adjudication): it carries the runtime-only fields that describe the live
+// soldier session (window, worktree, harness, backend, mode, yolo, model,
+// effort, config digest, launch manifest anchor, endpoint metadata) and never
+// acts as a writer of record for authoritative Task Aggregate fields (kind,
+// project, description, owner, generation, state). Existing projection
+// fields are preserved; runtime fields are overlaid. Authoritative fields
+// are reconciled from the canonical aggregate by the projection layer.
 func (r *Runner) writeTaskMeta() error {
 	yoloVal := "off"
 	if r.args.Yolo {
 		yoloVal = "on"
 	}
-	meta := map[string]string{
-		"window":   r.windowID,
-		"worktree": r.wtPath,
-		"project":  r.args.ProjectName,
-		"projpath": r.projPath,
-		"harness":  r.harness,
-		"backend":  r.endpoint.Backend,
-		"kind":     r.args.Kind,
-		"mode":     r.effectiveMode,
-		"yolo":     yoloVal,
+	meta, err := home.ReadMeta(r.homeDir, r.args.ID)
+	if err != nil {
+		meta = make(map[string]string)
 	}
+	put := func(k, v string) {
+		if v != "" {
+			meta[k] = v
+		}
+	}
+	put("window", r.windowID)
+	put("worktree", r.wtPath)
+	put("projpath", r.projPath)
+	put("harness", r.harness)
+	put("backend", r.endpoint.Backend)
+	put("mode", r.effectiveMode)
+	put("yolo", yoloVal)
 	if r.model != "" {
-		meta["model"] = r.model
+		put("model", r.model)
 	}
 	if r.effort != "" {
-		meta["effort"] = r.effort
+		put("effort", r.effort)
 	}
 	if r.projectConfigLoaded {
-		meta["config_snapshot_digest"] = r.projectConfig.SnapshotDigest
+		put("config_snapshot_digest", r.projectConfig.SnapshotDigest)
 	}
 	if r.manifestSHA256 != "" {
-		meta["launch_manifest_sha256"] = r.manifestSHA256
+		put("launch_manifest_sha256", r.manifestSHA256)
 	}
 
 	for k, v := range r.endpoint.Metadata {
-		meta[k] = v
+		put(k, v)
 	}
 
 	// The capability attestation fields (capability_attestation,

@@ -104,8 +104,18 @@ func newTaskObserveCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			if _, err := home.ReadMeta(ctx.Home, args[0]); err != nil {
-				return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
+			// Canonical record first, then the .meta projection (Task 7.8): a
+			// task exists when either the Task Authority or the projection
+			// knows it. The observation itself reads canonical state through
+			// ReadWithProbe.
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to read task authority")
+			}
+			if _, err := auth.Get(args[0]); err != nil {
+				if _, metaErr := home.ReadMeta(ctx.Home, args[0]); metaErr != nil {
+					return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
+				}
 			}
 			state, err := fleet.ReadWithProbe(ctx.Home, args[0], runtimeTaskEndpointProbe())
 			if err != nil {

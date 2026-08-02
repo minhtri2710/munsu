@@ -115,21 +115,54 @@ func stateDirExists(homeDir string) (bool, error) {
 	return true, nil
 }
 
+// authorityStateExists reports whether the home carries any task-authority
+// state: legacy v1 records, v2 records (an existing v2 root means a writer
+// has been there), or dispatch-control records. The check is strictly
+// read-only and never creates anything.
+func authorityStateExists(homeDir string) (bool, error) {
+	for _, rel := range []string{v1AggregatesRelPath, v1WorktreeLeasesRelPath, v1DispatchControlRelPath} {
+		has, err := hasVisibleEntries(filepath.Join(homeDir, rel))
+		if err != nil {
+			return false, err
+		}
+		if has {
+			return true, nil
+		}
+	}
+	info, err := os.Lstat(filepath.Join(homeDir, filepath.FromSlash(authorityRoot)))
+	if err == nil && info != nil {
+		return true, nil
+	}
+	if !os.IsNotExist(err) {
+		return false, err
+	}
+	return false, nil
+}
+
 // withDispatchLockRead runs fn while holding the shared dispatch-control
-// lock, exactly like withDispatchLock, except that a home with no state/
-// directory at all has nothing to lock: fn is not run, nil is returned, and
-// the caller serves the empty committed view. A missing state/ cannot hide
-// records or interrupted transactions, because every v1 and v2 authority
-// record lives under state/. Taking the lock here would create state/ and
-// state/.dispatch.lock, mutating a home that a pure read must leave
-// untouched. Any home that has state/ — including a symlinked or
-// non-directory state — takes the lock exactly as today and fails closed.
+// lock, exactly like withDispatchLock, except that a home with nothing to
+// lock does not create the lock: a home with no state/ directory at all, or
+// with a state/ directory that carries no task-authority records and no
+// pending transactions, serves the empty committed view without creating
+// state/ or state/.dispatch.lock. A missing state/ cannot hide records or
+// interrupted transactions, because every v1 and v2 authority record lives
+// under state/; likewise a state/ without authority state has no record to
+// be consistent with. Taking the lock here would mutate a home that a pure
+// read must leave untouched. Any home that has authority state takes the
+// lock exactly as today and fails closed.
 func withDispatchLockRead(homeDir string, fn func() error) error {
 	exists, err := stateDirExists(homeDir)
 	if err != nil {
 		return err
 	}
 	if !exists {
+		return nil
+	}
+	hasState, err := authorityStateExists(homeDir)
+	if err != nil {
+		return err
+	}
+	if !hasState {
 		return nil
 	}
 	return withDispatchLock(homeDir, fn)

@@ -167,20 +167,47 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		metaByID[e.ID] = e
 	}
 
+	// Canonical Task Authority records are the preferred state source (Task
+	// 7.8): the authoritative phase and kind win over the .status projection
+	// for the child's current state, and a legacy v1 home fails closed in the
+	// summary validity instead of silently projecting.
+	canonical, canonicalErr := canonicalAggregates(homeDir)
+	if canonicalErr != nil {
+		sum.Valid = false
+		sum.Reason = "task-authority state requires migration or repair: " + canonicalErr.Error()
+		sum.State = "unknown"
+		return sum
+	}
+
 	type childState struct {
-		id, verb, status, kind, detail string
+		id, verb, statusVerb, status, kind, detail string
 	}
 	var children []childState
 	var unknownChildren []string
 	for _, e := range entries {
 		status := strings.TrimSpace(e.LastStatus)
-		verb, detail := splitStatus(status)
+		statusVerb, detail := splitStatus(status)
+		verb := statusVerb
+		kind := e.Kind
+		if agg, ok := canonical[e.ID]; ok {
+			// The authoritative phase is state truth; the status line is
+			// display detail and can never override a newer authoritative
+			// lifecycle transition (criterion 3).
+			verb = string(agg.Phase)
+			kind = agg.Definition.Kind
+			if detail == "" {
+				detail = agg.PhaseDetail
+			}
+			if status == "" {
+				status = string(agg.Phase)
+			}
+		}
 		if status == "" {
 			unknownChildren = append(unknownChildren, e.ID)
 			verb = "unknown"
 		}
 		children = append(children, childState{
-			id: e.ID, verb: verb, status: status, kind: e.Kind, detail: detail,
+			id: e.ID, verb: verb, statusVerb: statusVerb, status: status, kind: kind, detail: detail,
 		})
 	}
 
@@ -218,7 +245,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 				Source:  "status",
 			})
 		}
-		if c.verb == "needs-decision" {
+		if c.statusVerb == "needs-decision" {
 			key := c.id + "\x00default\x00needs-decision"
 			if !seenDecision[key] {
 				seenDecision[key] = true
@@ -345,6 +372,9 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 			continue
 		}
 		verb, _ := splitStatus(e.LastStatus)
+		if agg, ok := canonical[id]; ok {
+			verb = string(agg.Phase)
+		}
 		if verb == "done" || verb == "failed" {
 			terminalInFlight = append(terminalInFlight, id+"="+verb)
 		}

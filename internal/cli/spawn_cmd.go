@@ -9,6 +9,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -310,13 +312,19 @@ func newPromoteCmd() *cobra.Command {
 			}
 			id := args[0]
 
-			// Preflight: verify task meta exists with kind=scout
-			meta, err := home.ReadMeta(ctx.Home, id)
+			auth, err := ctx.TaskAuthority()
 			if err != nil {
-				return fmt.Errorf("reading meta for %s: %w", id, err)
+				return err
 			}
-			if meta["kind"] != "scout" {
-				return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, meta["kind"])
+			// Canonical preflight (Task 7.8): the kind is an authoritative
+			// TaskDefinition field; the projection can never be the preflight
+			// source or override the canonical record.
+			agg, err := auth.Get(id)
+			if err != nil {
+				return fmt.Errorf("promote %s: %w", id, err)
+			}
+			if agg.Definition.Kind != "scout" {
+				return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, agg.Definition.Kind)
 			}
 
 			// Preflight: require report.md to exist
@@ -324,22 +332,31 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, fleet.ReportPath(ctx.Home, id))
 			}
 
-			// Preflight: require last status to be done or resolved
-			if statusLines, err := home.ReadStatus(ctx.Home, id); err == nil && len(statusLines) > 0 {
-				lastLine := statusLines[len(statusLines)-1]
-				lastStatus, _ := home.ParseStatusKey(lastLine)
-				if !strings.HasPrefix(lastStatus, "done") && !strings.HasPrefix(lastStatus, "resolved") {
-					return fmt.Errorf("task %s has last status %q, need 'done' or 'resolved' before promote", id, lastStatus)
-				}
-			} else {
-				return fmt.Errorf("task %s has no status: report done or resolved before promoting", id)
+			// The promotion is a named Authority operation (Task 7.8): it flips
+			// the generation-bound kind scout → ship with the phase prerequisite
+			// enforced inside the Store transaction (done or resolved). A stale
+			// .status projection can never authorize or block the transition.
+			_, actor := resolveTaskActor(ctx.Home)
+			if _, err := auth.Promote(taskauthority.PromoteRequest{
+				OperationID:        newTaskAuthorityOperationID("promote"),
+				Actor:              actor,
+				TaskID:             id,
+				ExpectedGeneration: agg.Generation,
+				Reason:             "cli promote",
+			}); err != nil {
+				return err
 			}
 
-			if _, _, err := home.UpdateCurrentTaskAggregateKind(ctx.Home, id, "ship"); err != nil {
-				return fmt.Errorf("promote %s aggregate: %w", id, err)
+			// .meta kind is a post-commit projection (ADR-0007 §7): reconcile
+			// the authoritative fields from the canonical aggregate. A
+			// projection failure is a typed partial error and never rolls back
+			// the committed promotion.
+			store, err := taskauthorityfs.NewStore(ctx.Home)
+			if err != nil {
+				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
 			}
-			if err := home.PromoteMeta(ctx.Home, id); err != nil {
-				return fmt.Errorf("authoritative task kind committed; promote meta projection failed for %s: %w", id, err)
+			if _, err := store.ReconcileTaskProjections(id); err != nil {
+				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
 			}
 
 			return writeContract(cmd, Response[MessageResult]{
