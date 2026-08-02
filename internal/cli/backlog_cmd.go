@@ -142,6 +142,11 @@ func newBacklogStartCmd() *cobra.Command {
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			// Supervision gate: start fails closed when the watcher lease is
+			// degraded, before any Task Authority call (Task 4.3, ADR-0007 §8).
+			if err := fleet.CheckSupervisionForDispatch(ctx.Home, home.DispatchActionStart); err != nil {
+				return err
+			}
 			return runAuthorityLifecycleTransition(ctx, "start", args, "working", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
 				_, err := auth.Start(taskauthority.StartRequest{
 					OperationID:        newTaskAuthorityOperationID("backlog-start"),

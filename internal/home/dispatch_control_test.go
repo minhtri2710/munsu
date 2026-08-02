@@ -158,61 +158,32 @@ func TestGenerationScopedHoldDoesNotBlockReopenedGeneration(t *testing.T) {
 	}
 }
 
-func TestCheckDispatchHoldWithUnhealthyWatcher(t *testing.T) {
+// TestCheckDispatchHoldIgnoresWatcherHealth proves CheckDispatchHold is
+// holds-only: degraded supervision no longer blocks the durable dispatch
+// check (Task 4.3). Supervision gating is the orchestration layer's job.
+func TestCheckDispatchHoldIgnoresWatcherHealth(t *testing.T) {
 	homeDir := t.TempDir()
 	os.MkdirAll(filepath.Join(homeDir, "state"), 0755)
 
 	// Claim lease with a dead PID — watcher is unhealthy.
 	ClaimWatcherLease(homeDir, 9999999)
 
-	// Degraded actions should be blocked by watcher health.
-	for _, action := range []DispatchAction{DispatchActionHandoff, DispatchActionStart, DispatchActionSpawn} {
-		if err := CheckDispatchHold(homeDir, action, "", "", "", ""); err == nil {
-			t.Errorf("action %s: expected error for unhealthy watcher", action)
-		} else if !errors.Is(err, ErrUnhealthyWatcher) {
-			t.Errorf("action %s: expected ErrUnhealthyWatcher, got %v", action, err)
-		}
-	}
-}
-
-func TestCheckDispatchHoldWithHealthyWatcher(t *testing.T) {
-	homeDir := t.TempDir()
-	os.MkdirAll(filepath.Join(homeDir, "state"), 0755)
-
-	// Claim lease with our own PID and write a fresh beat.
-	pid := os.Getpid()
-	ClaimWatcherLease(homeDir, pid)
-	WriteWatcherBeat(homeDir)
-
-	// Degraded actions should be allowed (no holds, healthy watcher).
+	// Without holds, all actions pass the holds-only check despite the
+	// degraded watcher.
 	for _, action := range []DispatchAction{DispatchActionHandoff, DispatchActionStart, DispatchActionSpawn} {
 		if err := CheckDispatchHold(homeDir, action, "", "", "", ""); err != nil {
-			t.Errorf("action %s with healthy watcher: unexpected error: %v", action, err)
+			t.Errorf("action %s: CheckDispatchHold err = %v, want nil (holds-only)", action, err)
 		}
 	}
-}
 
-func TestCheckDispatchHoldWithWatcherAndHold(t *testing.T) {
-	homeDir := t.TempDir()
-	os.MkdirAll(filepath.Join(homeDir, "state"), 0755)
-
-	// Healthy watcher.
-	pid := os.Getpid()
-	ClaimWatcherLease(homeDir, pid)
-	WriteWatcherBeat(homeDir)
-
-	// Create a dispatch hold.
-	if _, err := CreateDispatchHold(homeDir, DispatchHoldInput{ID: "pause-all", Actions: []DispatchAction{DispatchActionStart}, Reason: "pause all starts"}); err != nil {
+	// A matching hold is still enforced even with an unhealthy watcher.
+	if _, err := CreateDispatchHold(homeDir, DispatchHoldInput{ID: "pause-start", Actions: []DispatchAction{DispatchActionStart}, Reason: "pause all starts"}); err != nil {
 		t.Fatal(err)
 	}
-
-	// Hold should still be enforced even with healthy watcher.
 	if err := CheckDispatchHold(homeDir, DispatchActionStart, "", "", "", ""); !errors.Is(err, ErrDispatchHeld) {
-		t.Errorf("expected ErrDispatchHeld, got %v", err)
+		t.Errorf("held action with unhealthy watcher: err = %v, want ErrDispatchHeld", err)
 	}
-
-	// Non-held action with healthy watcher should be allowed.
 	if err := CheckDispatchHold(homeDir, DispatchActionSpawn, "", "", "", ""); err != nil {
-		t.Errorf("unexpected error for non-held action: %v", err)
+		t.Errorf("non-held action with unhealthy watcher: unexpected error %v", err)
 	}
 }

@@ -151,6 +151,15 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	if err := recoverIncompleteTaskHandoffs(source); err != nil {
 		return err
 	}
+	// Supervision gate: handoff fails closed when the watcher lease of either
+	// home is degraded. Durable Dispatch Holds are evaluated by the holds-only
+	// CheckDispatchHold calls below (Task 4.3, ADR-0007 §8).
+	if err := CheckSupervisionForDispatch(source, mhome.DispatchActionHandoff); err != nil {
+		return err
+	}
+	if err := CheckSupervisionForDispatch(destination, mhome.DispatchActionHandoff); err != nil {
+		return err
+	}
 	if err := mhome.CheckDispatchHold(source, mhome.DispatchActionHandoff, "", "", "", ""); err != nil {
 		return err
 	}

@@ -410,6 +410,30 @@ func TestBacklogRetrySupersedesFailedGeneration(t *testing.T) {
 	}
 }
 
+// TestBacklogStartFailsClosedOnDegradedSupervision proves the CLI start
+// supervision gate (Task 4.3) fires before any Task Authority call: an
+// unhealthy watcher lease fails `backlog start` closed with
+// ErrUnhealthyWatcher and leaves the queued task phase untouched.
+func TestBacklogStartFailsClosedOnDegradedSupervision(t *testing.T) {
+	homeDir := t.TempDir()
+	auth := testAuthorityFor(t, homeDir)
+	seedAuthorityTask(t, auth, "task")
+
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	home.ClaimWatcherLease(homeDir, 9999999)
+
+	out, err := runBacklogLifecycleCommand(t, []string{"backlog", "start", "task", "--home", homeDir})
+	if err == nil || !errors.Is(err, home.ErrUnhealthyWatcher) {
+		t.Fatalf("start err = %v\n%s, want ErrUnhealthyWatcher", err, out)
+	}
+	agg, err := auth.Get("task")
+	if err != nil || agg.Phase != taskauthority.PhaseQueued || agg.Revision != taskauthority.FirstRevision {
+		t.Fatalf("aggregate after failed start = %+v err=%v, want untouched queued seed", agg, err)
+	}
+}
+
 // seedBacklogFileForTest writes a runtime backlog file under homeDir/data,
 // replicating the projection `backlog add` creates so v1-seeded lifecycle
 // tests can drive the backlog projection backend.

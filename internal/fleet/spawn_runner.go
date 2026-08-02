@@ -73,7 +73,7 @@ func (r *Runner) Run() (string, error) {
 	if err := r.resolveHome(); err != nil {
 		return "", err
 	}
-	if err := r.checkDispatchHold(); err != nil {
+	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
 	if err := r.checkSpawnAuthority(); err != nil {
@@ -100,7 +100,7 @@ func (r *Runner) Run() (string, error) {
 	if err := r.checkBacklogAuthority(); err != nil {
 		return "", err
 	}
-	if err := r.checkDispatchHold(); err != nil {
+	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
 	if err := r.resolveProject(); err != nil {
@@ -125,7 +125,7 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	success := false
-	if err := r.checkDispatchHold(); err != nil {
+	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
 	// Fail-closed: return worktree on any subsequent error (but NOT on success).
@@ -588,20 +588,11 @@ func (r *Runner) ensureTaskAggregate(item Item) error {
 	return nil
 }
 
-func (r *Runner) checkDispatchHold() error {
-	generation := ""
-	project := r.args.ProjectName
-	parentID := ""
-	if aggregate, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID); err != nil {
-		return err
-	} else if ok {
-		generation = aggregate.Generation
-		parentID = aggregate.ParentTaskID
-		if project == "" {
-			project = aggregate.Project
-		}
-	}
-	return home.CheckDispatchHold(r.homeDir, home.DispatchActionSpawn, r.args.ID, project, generation, parentID)
+func (r *Runner) checkSupervision() error {
+	// Supervision gate: spawn fails closed when the watcher lease is degraded.
+	// Durable Dispatch Holds are evaluated atomically inside the Task Authority
+	// ConfirmSpawn operation, never here (Task 4.3, ADR-0007 §8).
+	return CheckSupervisionForDispatch(r.homeDir, home.DispatchActionSpawn)
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.

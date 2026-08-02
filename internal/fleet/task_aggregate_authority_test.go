@@ -14,7 +14,6 @@ func TestNoNewTaskAuthorityReachThrough(t *testing.T) {
 	testutil.AssertNoNewTaskAuthorityCallers(t, ".", map[string][]string{
 		"spawn_runner.go": {
 			"CreateTaskAggregate",
-			"CheckDispatchHold",
 		},
 		"task_handoff_transaction.go": {"CheckDispatchHold"},
 	})

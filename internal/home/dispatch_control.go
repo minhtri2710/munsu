@@ -280,12 +280,11 @@ func ReleaseDispatchHold(homeDir, id string) error {
 	})
 }
 
+// CheckDispatchHold evaluates only durable Dispatch Holds. Degraded
+// supervision is a separate orchestration gate (fleet/CLI), never part of a
+// dispatch-hold or lifecycle check (Task 4.3, ADR-0007 §8).
 func CheckDispatchHold(homeDir string, action DispatchAction, taskID, projectID, generation, parentID string) error {
 	return withDispatchControlLock(homeDir, func() error {
-		// Check watcher health first — degraded mode blocks handoff, start, and spawn.
-		if err := CheckWatcherHealthForDispatch(homeDir, action); err != nil {
-			return err
-		}
 		return checkDispatchHoldUnlocked(homeDir, action, taskID, projectID, generation, parentID)
 	})
 }
