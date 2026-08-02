@@ -223,13 +223,17 @@ func newBacklogReadyCmd() *cobra.Command {
 			if len(args) == 1 {
 				return exactCommandCorrection("unsupported_input", "munsu backlog unblock "+shellQuote(args[0]), "backlog ready is query-only; use the exact command in error.action to clear a blocker")
 			}
-			aggs, err := home.ListCurrentTaskAggregates(ctx.Home)
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return err
+			}
+			aggs, err := auth.List()
 			if err != nil {
 				return err
 			}
 			rows := make([]BacklogReadinessRow, 0, len(aggs))
 			for _, agg := range aggs {
-				readiness, err := home.QueryTaskReadiness(ctx.Home, agg.TaskID)
+				readiness, err := auth.Readiness(agg.TaskID)
 				if err != nil {
 					return err
 				}
@@ -302,13 +306,16 @@ func newBacklogRetryCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			if _, err := home.SupersedeTask(ctx.Home, args[0]); err != nil {
+			return runAuthorityLifecycleTransition(ctx, "retry", args, "queued", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
+				_, err := auth.Supersede(taskauthority.SupersedeRequest{
+					OperationID:        newTaskAuthorityOperationID("backlog-retry"),
+					Actor:              actor,
+					TaskID:             agg.TaskID,
+					ExpectedGeneration: agg.Generation,
+					Reason:             "backlog: retry",
+				})
 				return err
-			}
-			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "retry", args); err != nil {
-				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
-			}
-			return nil
+			})
 		}),
 	}
 }

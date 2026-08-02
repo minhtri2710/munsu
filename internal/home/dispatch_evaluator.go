@@ -7,17 +7,15 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-func EvaluateDispatch(homeDir string, requested []string, autonomy DispatchAutonomy) (DispatchInterpretation, []string, error) {
-	return EvaluateDispatchWithDependencies(homeDir, requested, nil, autonomy)
-}
-
-// EvaluateDispatchWithDependencies is the home serialization adapter for
-// dispatch interpretation. It gathers the canonical state facts (current
+// EvaluateDispatchWithDependencies is the retained Phase 6 handoff
+// compatibility adapter: it gathers the canonical state facts (current
 // aggregates and readiness) through the home queries, delegates every
 // interpretation rule — dependency derivation, material ambiguity, stable
 // topological selection, deterministic identity, and outcome classification —
 // to internal/taskauthority, and persists the legacy home-path projection
-// records. It contains no interpretation rules itself.
+// records. It contains no interpretation rules itself. Its sole production
+// caller is fleet/task_handoff_transaction.go; it is removed when the handoff
+// saga cuts over to two Authorities (Task 6.2/6.3).
 func EvaluateDispatchWithDependencies(homeDir string, requested []string, dependencies []DispatchDependency, autonomy DispatchAutonomy) (DispatchInterpretation, []string, error) {
 	if len(requested) == 0 {
 		return DispatchInterpretation{}, nil, fmt.Errorf("dispatch evaluation requires requested tasks")

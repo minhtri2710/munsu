@@ -349,60 +349,44 @@ func runBacklogLifecycleCommand(t *testing.T, args []string) (string, error) {
 	return out.String(), err
 }
 
-// setAggState seeds a legacy v1 aggregate state directly. The generic home
-// state setter was deleted with the spawn cutover (Task 4.2); fixtures that
-// need a specific v1 state read-mutate-write through home.WriteTaskAggregate.
-func setAggState(t *testing.T, homeDir, taskID, state, detail string) {
-	t.Helper()
-	agg, ok, err := home.ReadCurrentTaskAggregate(homeDir, taskID)
-	if err != nil || !ok {
-		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
-	}
-	agg.State = state
-	agg.StateDetail = detail
-	if err := home.WriteTaskAggregate(homeDir, *agg); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// bindEndpointFixture attaches a valid endpoint binding to the current v1
-// aggregate directly. The endpoint binding mutation moved into the Task
-// Authority ConfirmSpawn operation; fixtures that need a bound v1 aggregate
-// mutate it through home.WriteTaskAggregate.
-func bindEndpointFixture(t *testing.T, homeDir, taskID string) {
-	t.Helper()
-	agg, ok, err := home.ReadCurrentTaskAggregate(homeDir, taskID)
-	if err != nil || !ok {
-		t.Fatalf("ReadCurrentTaskAggregate ok=%v err=%v", ok, err)
-	}
-	agg.Endpoint = &home.TaskEndpointBinding{
-		TaskGeneration: agg.Generation, Backend: "herdr", Handle: "w1:p1",
-		LeaseID: "l1", FenceToken: "f1", BoundAtUnix: 1000,
-	}
-	if err := home.WriteTaskAggregate(homeDir, *agg); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// TestBacklogRetrySupersedesFailedGeneration seeds the legacy v1 aggregate
-// directly until Task 3.3 cuts retry over to the Authority.
-func TestBacklogRetrySupersedesFailedGeneration(t *testing.T) {
+// TestBacklogRetrySupersedesTerminalGeneration proves `backlog retry` drives
+// the named Authority Supersede operation (Task 5.3): the terminal generation
+// stays immutable historical state, a new queued Generation starts at
+// Revision one, and the backlog projection updates after the authoritative
+// commit.
+func TestBacklogRetrySupersedesTerminalGeneration(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := home.CreateTaskAggregate(homeDir, "task", "", "work", "ship", ""); err != nil {
+	auth := testAuthorityFor(t, homeDir)
+	seedAuthorityTask(t, auth, "task")
+	if _, err := auth.Complete(taskauthority.CompleteRequest{
+		OperationID:        newTaskAuthorityOperationID("seed-done"),
+		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:             "task",
+		ExpectedGeneration: 1,
+		To:                 taskauthority.PhaseDone,
+		Reason:             "seed",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	setAggState(t, homeDir, "task", "failed", "soldier failed")
-	seedBacklogFileForTest(t, homeDir, "## In flight\n- [-] task: work\n")
+	seedBacklogFileForTest(t, homeDir, "- [x] task: work\n")
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("retry: %v\n%s", err, out)
 	}
-	current, ok, err := home.ReadCurrentTaskAggregate(homeDir, "task")
-	if err != nil || !ok || current.Generation != "2" || current.State != "queued" {
-		t.Fatalf("current aggregate after retry = %+v ok=%v err=%v", current, ok, err)
+	agg, err := auth.Get("task")
+	if err != nil || agg.Generation != 2 || agg.Phase != taskauthority.PhaseQueued || agg.Revision != taskauthority.FirstRevision {
+		t.Fatalf("current aggregate after retry = %+v err=%v", agg, err)
 	}
-	old, err := home.ReadTaskAggregate(homeDir, "task", "1")
-	if err != nil || old.State != "failed" || old.Current {
-		t.Fatalf("historical aggregate = %+v err=%v", old, err)
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.View()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, ok := view.Aggregate("task", 1)
+	if !ok || old.Current || old.Phase != taskauthority.PhaseDone {
+		t.Fatalf("historical aggregate = %+v ok=%v, want immutable done generation 1", old, ok)
 	}
 	backlog, err := os.ReadFile(filepath.Join(homeDir, "data", "md"))
 	if err != nil || !strings.Contains(string(backlog), "[ ] task") {
@@ -447,15 +431,25 @@ func seedBacklogFileForTest(t *testing.T, homeDir, body string) {
 	}
 }
 
-// TestBacklogRetryRefusesLiveGeneration seeds the legacy v1 aggregate
-// directly until Task 3.3 cuts retry over to the Authority.
+// TestBacklogRetryRefusesLiveGeneration proves `backlog retry` fails closed
+// on a generation that still owns live work: the Authority Supersede
+// precondition fires before the backlog projection is touched.
 func TestBacklogRetryRefusesLiveGeneration(t *testing.T) {
 	homeDir := t.TempDir()
-	if _, err := home.CreateTaskAggregate(homeDir, "task", "", "work", "ship", ""); err != nil {
+	auth := testAuthorityFor(t, homeDir)
+	seedAuthorityTask(t, auth, "task")
+	if _, err := auth.Block(taskauthority.BlockRequest{
+		OperationID:        newTaskAuthorityOperationID("seed-block"),
+		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:             "task",
+		ExpectedGeneration: 1,
+		Detail:             "dependency",
+		Reason:             "seed",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	setAggState(t, homeDir, "task", "blocked", "dependency")
-	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err == nil {
-		t.Fatalf("retry of blocked generation succeeded: %s", out)
+	seedBacklogFileForTest(t, homeDir, "[!] task: work\n")
+	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err == nil || !strings.Contains(out, "supersede requires terminal task") {
+		t.Fatalf("retry of blocked generation = %v\n%s, want supersede precondition", err, out)
 	}
 }

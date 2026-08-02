@@ -1,6 +1,6 @@
 package cli
 
-import "github.com/minhtri2710/munsu/internal/home"
+import "github.com/minhtri2710/munsu/internal/taskauthority"
 
 type BacklogReadinessRow struct {
 	TaskID          string   `json:"task_id"`
@@ -9,14 +9,18 @@ type BacklogReadinessRow struct {
 	BlockingReasons []string `json:"blocking_reasons,omitempty"`
 }
 
-func backlogReadinessRow(readiness home.TaskReadiness) BacklogReadinessRow {
+func backlogReadinessRow(readiness taskauthority.Readiness) BacklogReadinessRow {
 	reasons := make([]string, len(readiness.BlockingReasons))
 	for i, reason := range readiness.BlockingReasons {
 		reasons[i] = string(reason)
 	}
+	generation := ""
+	if readiness.Generation != 0 {
+		generation = readiness.Generation.String()
+	}
 	return BacklogReadinessRow{
 		TaskID:          readiness.TaskID,
-		Generation:      readiness.Generation,
+		Generation:      generation,
 		Ready:           readiness.Ready,
 		BlockingReasons: reasons,
 	}
