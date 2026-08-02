@@ -1,0 +1,33 @@
+{
+  "metadataGeneration": {
+    "title": {
+      "instructions": "Use <Program> <Role> — <bounded task>. Keep it under 60 characters and name the role explicitly when the workspace contains orchestrated agents."
+    },
+    "branchName": {
+      "instructions": "Use Conventional Branch format: <type>/<scope>-<short-desc>. Use lowercase kebab-case and no agent or model names."
+    },
+    "commitMessage": {
+      "instructions": "Follow Conventional Commits: <type>(<scope>): <imperative summary>. Describe one coherent change and do not mention the agent or model."
+    },
+    "pullRequest": {
+      "instructions": "Use a concise Conventional Commit-style title. In the body include Summary, Verification, and Risk sections, and list any intentionally skipped checks."
+    }
+  },
+  "scripts": {
+    "build": {
+      "command": "go build ./..."
+    },
+    "vet": {
+      "command": "go vet ./..."
+    },
+    "test": {
+      "command": "go test ./... -count=1"
+    },
+    "test-integration": {
+      "command": "go test -tags=integration ./... -count=1"
+    },
+    "test-authority-race": {
+      "command": "go test -race ./internal/taskauthority ./internal/taskauthorityfs"
+    }
+  }
+}
