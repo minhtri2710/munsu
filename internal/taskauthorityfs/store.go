@@ -93,18 +93,22 @@ func NewStore(homeDir string) (*Store, error) {
 	return &Store{homeDir: homeDir}, nil
 }
 
-// View returns one canonical committed snapshot of the authority state. It
-// fails closed when legacy v1 records exist anywhere under the home
-// (migration is explicit and never automatic), when automatic recovery
-// cannot complete an interrupted transaction safely (divergence or
-// corruption), or when any committed document is corrupt, identity-
-// mismatched, duplicated, or contradicts the current pointer. The entire
-// read — v1 check, automatic recovery, and every record load — runs under
-// state/.dispatch.lock, the same lock Update composes, so an update can
-// never interleave and expose a torn snapshot.
+// View returns one canonical committed snapshot of the authority state. A
+// home with no state/ directory at all carries no authority records and no
+// interrupted transactions, so its committed view is empty and is served
+// without taking the dispatch lock: a pure read never creates state/ or
+// state/.dispatch.lock. Every home that has authority state fails closed
+// when legacy v1 records exist anywhere under the home (migration is
+// explicit and never automatic), when automatic recovery cannot complete
+// an interrupted transaction safely (divergence or corruption), or when any
+// committed document is corrupt, identity-mismatched, duplicated, or
+// contradicts the current pointer. The entire read — v1 check, automatic
+// recovery, and every record load — runs under state/.dispatch.lock, the
+// same lock Update composes, so an update can never interleave and expose a
+// torn snapshot.
 func (s *Store) View() (taskauthority.View, error) {
 	var view taskauthority.View
-	err := withDispatchLock(s.homeDir, func() error {
+	err := withDispatchLockRead(s.homeDir, func() error {
 		var err error
 		view, err = s.canonicalView()
 		return err

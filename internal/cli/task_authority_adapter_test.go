@@ -2,7 +2,6 @@ package cli
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -13,9 +12,9 @@ import (
 // concrete Authority composed over the filesystem Store adapter once per
 // command context (ADR-0007 §9) without package globals. Store construction
 // performs no migration and no mutation: composing the Authority must leave
-// the resolved home untouched. A canonical read on a fresh home returns an
-// empty committed view and creates only the shared state/.dispatch.lock
-// artifact, never authority state.
+// the resolved home untouched, and so must a canonical read on a fresh home,
+// which returns an empty committed view without creating state/ or
+// state/.dispatch.lock.
 func TestTaskAuthorityComposition(t *testing.T) {
 	homeDir := t.TempDir()
 	ctx := Ctx{Home: homeDir}
@@ -42,7 +41,7 @@ func TestTaskAuthorityComposition(t *testing.T) {
 	if len(tasks) != 0 {
 		t.Fatalf("fresh home should list no tasks, got %d", len(tasks))
 	}
-	assertOnlyLockArtifact(t, homeDir)
+	assertEmptyHome(t, homeDir, "after canonical read on a fresh home")
 }
 
 // TestTaskAuthorityInjection proves tests can inject an Authority backed by
@@ -123,33 +122,5 @@ func assertEmptyHome(t *testing.T, homeDir, stage string) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("home not empty %s: %v", stage, names)
-	}
-}
-
-// assertOnlyLockArtifact fails when the home contains anything beyond the
-// shared state/.dispatch.lock artifact a canonical read may create.
-func assertOnlyLockArtifact(t *testing.T, homeDir string) {
-	t.Helper()
-	entries, err := os.ReadDir(homeDir)
-	if err != nil {
-		t.Fatalf("reading home: %v", err)
-	}
-	if len(entries) != 1 || entries[0].Name() != "state" {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Fatalf("canonical read must create only state/, got %v", names)
-	}
-	stateEntries, err := os.ReadDir(filepath.Join(homeDir, "state"))
-	if err != nil {
-		t.Fatalf("reading state/: %v", err)
-	}
-	if len(stateEntries) != 1 || stateEntries[0].Name() != ".dispatch.lock" {
-		names := make([]string, 0, len(stateEntries))
-		for _, e := range stateEntries {
-			names = append(names, e.Name())
-		}
-		t.Fatalf("canonical read must create only state/.dispatch.lock, got %v", names)
 	}
 }

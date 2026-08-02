@@ -98,6 +98,43 @@ func withDispatchLock(homeDir string, fn func() error) error {
 	return fn()
 }
 
+// stateDirExists reports whether homeDir/state exists at all, without
+// creating or following anything. Every v1 and v2 authority record and every
+// transaction manifest lives under state/, so a missing state/ means the
+// home carries no authority state of any kind. The check deliberately does
+// not read through the directory: a symlinked state/ is reported as existing
+// and later fails closed exactly as today.
+func stateDirExists(homeDir string) (bool, error) {
+	_, err := os.Lstat(filepath.Join(homeDir, "state"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// withDispatchLockRead runs fn while holding the shared dispatch-control
+// lock, exactly like withDispatchLock, except that a home with no state/
+// directory at all has nothing to lock: fn is not run, nil is returned, and
+// the caller serves the empty committed view. A missing state/ cannot hide
+// records or interrupted transactions, because every v1 and v2 authority
+// record lives under state/. Taking the lock here would create state/ and
+// state/.dispatch.lock, mutating a home that a pure read must leave
+// untouched. Any home that has state/ — including a symlinked or
+// non-directory state — takes the lock exactly as today and fails closed.
+func withDispatchLockRead(homeDir string, fn func() error) error {
+	exists, err := stateDirExists(homeDir)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	return withDispatchLock(homeDir, fn)
+}
+
 // withLocks runs fn under the canonical lock order: the dispatch lock, then
 // the per-task lock, released in reverse order.
 func withLocks(homeDir, taskID string, fn func() error) error {

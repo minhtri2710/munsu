@@ -208,10 +208,25 @@ func TestStoreConstruction(t *testing.T) {
 	})
 }
 
+// TestViewEmptyHome proves a read on a home with no authority state returns
+// the empty committed view and leaves the home untouched: no state/
+// directory and no state/.dispatch.lock are created. A pure read must never
+// mutate the home it reads (the fleet snapshot contract depends on this).
 func TestViewEmptyHome(t *testing.T) {
-	v := mustView(t, openStore(t, t.TempDir()))
+	home := t.TempDir()
+	v := mustView(t, openStore(t, home))
 	if len(v.Aggregates) != 0 || len(v.Holds) != 0 || len(v.Interpretations) != 0 || len(v.Decisions) != 0 || len(v.Receipts) != 0 || len(v.Audit) != 0 {
 		t.Fatalf("empty home view = %+v, want all record families empty", v)
+	}
+	if _, err := os.Lstat(filepath.Join(home, "state")); !os.IsNotExist(err) {
+		t.Fatalf("read on empty home created state/ (err=%v), want no state directory", err)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("read on empty home mutated it: %v", entries)
 	}
 }
 
