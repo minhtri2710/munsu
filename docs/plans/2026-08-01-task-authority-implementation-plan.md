@@ -12,17 +12,22 @@ Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through 
 
 Task 3.4 is complete: `task status` is audit-only. Appending a status line never mutates the Authoritative Task Aggregate phase (proven against a seeded legacy v1 aggregate and against a canonical Authority record, whose Phase and Revision stay untouched); the existing typed event translation is preserved and pinned by an event-log assertion; help and typed output state the audit-only contract; `home.UpdateCurrentTaskAggregateState` has no CLI caller and its entry left the CLI allowlist (only `spawn_cmd.go` -> `UpdateCurrentTaskAggregateKind` remains for Phase 4). The CLI allowlist gate, `Test.*TaskStatus`, and the fleet/orchestrator `Test.*(Status|Report|Reconcile)` suites are green, confirming material Soldier reports still flow through the existing parent reconciliation path.
 
-Verified on 2026-08-01:
+Task 3.5 is complete: `.meta` and `.status` are reconciled as one-directional projections in `internal/taskauthorityfs` (`ReconcileTaskProjections` for one task, `ReconcileProjections` for all). `.meta` authoritative fields (owner, description, kind, project, generation, state) are derived from the canonical current Task Aggregate; runtime-only projection fields are preserved and empty canonical values drop stale keys. `.status` lines are derived from the typed lifecycle audit history ("<after>: <reason>" in committed audit order); a deleted or corrupt projection is rebuilt, an existing file stays append-only with legacy runtime lines preserved and missing derived lines appended. Repair never touches the authority: aggregate documents, current pointer, and audit events are byte-identical after a pass, and Revision/Generation are pinned in the typed outcome. Reconciliation is idempotent (a second pass reports `unchanged` and rewrites nothing), fails closed on legacy v1 state (`ErrMigrationRequired`, never lazy), and returns a typed partial outcome (`ProjectionFailed` per projection) when a repair cannot complete, leaving the authority intact. `home.WriteStatus` (atomic, locked) is the rebuild primitive beside `AppendStatus`. The CLI surface is `munsu task reconcile [id]` with a typed retryable `ProjectionPartialError` (`projection_failed`) when any projection cannot be repaired.
+
+Verified on 2026-08-01 (Task 3.5):
 
 ```sh
 go build ./...
 go vet ./...
-go test -race ./internal/taskauthority
-go test ./internal/home ./internal/fleet ./internal/cli
-go test ./...
+go test -race ./internal/taskauthority ./internal/taskauthorityfs
+go test ./internal/home ./internal/fleet ./internal/cli ./internal/orchestrator
+go test ./internal/taskauthorityfs -run 'Test.*Projection'
+go test ./internal/cli -run 'Test.*(Projection|TaskShow|TaskList)'
+go test ./... -skip TestAgentSkillMirrorsMatchCanonical
+go test -tags=integration ./... -skip TestAgentSkillMirrorsMatchCanonical
 ```
 
-All commands passed. The previously recorded `internal/bootstrap` timeout did not reproduce, and the full untagged suite is green. `go test -tags=integration ./...` compiles the previously failing tagged paths but remains red in pre-existing CLI/fleet config-migration and Captain config-push fixtures; `internal/taskauthority` passes within that run.
+All commands passed; the integration-tagged run is green across all 13 packages (the previously recorded pre-existing CLI/fleet config-migration and Captain config-push fixture failures did not reproduce). The only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` failure, reproduced on the clean base and unrelated to this slice.
 
 ## Goal
 
@@ -577,10 +582,10 @@ go test ./internal/fleet ./internal/orchestrator -run 'Test.*(Status|Report|Reco
 
 **Acceptance criteria:**
 
-- [ ] `.meta` is derived from canonical aggregate/bindings and cannot write back into authority.
-- [ ] `.status` is derived from typed audit/activity history and remains append-only where compatibility requires it.
-- [ ] Deleting or corrupting a projection can be repaired without changing Revision or Generation.
-- [ ] Projection reconciliation is idempotent and has a typed partial outcome.
+- [x] `.meta` is derived from canonical aggregate/bindings and cannot write back into authority.
+- [x] `.status` is derived from typed audit/activity history and remains append-only where compatibility requires it.
+- [x] Deleting or corrupting a projection can be repaired without changing Revision or Generation.
+- [x] Projection reconciliation is idempotent and has a typed partial outcome.
 
 **Verification:**
 

@@ -9,6 +9,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -246,10 +247,70 @@ rank (munsu backlog start|done|block|unblock|reopen).`,
 	}
 	configureContractCommand(statusCmd)
 
+	reconcileCmd := &cobra.Command{
+		Use:   "reconcile [id]",
+		Short: "Reconcile .meta and .status projections from canonical Task Authority records",
+		Long: `Reconcile the .meta and .status projections from canonical Task
+Authority records. .meta authoritative fields are rewritten from the current
+Task Generation (runtime-only projection fields are preserved); .status lines
+are derived from the typed audit history and appended when missing.
+
+Reconciliation is one-directional: it never changes the authoritative task
+revision or generation, is idempotent, and reports a typed partial outcome
+when a projection cannot be repaired. Without an id it reconciles every
+current task.`,
+		Args: MaximumNArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			store, err := taskauthorityfs.NewStore(ctx.Home)
+			if err != nil {
+				return err
+			}
+			var outcomes []taskauthorityfs.TaskProjection
+			if len(args) == 1 {
+				out, err := store.ReconcileTaskProjections(args[0])
+				if err != nil {
+					return err
+				}
+				outcomes = []taskauthorityfs.TaskProjection{out}
+			} else {
+				outcomes, err = store.ReconcileProjections()
+				if err != nil {
+					return err
+				}
+			}
+			rows := make([]TaskProjectionRow, 0, len(outcomes))
+			var failed []taskauthorityfs.TaskProjection
+			for _, out := range outcomes {
+				rows = append(rows, TaskProjectionRow{
+					TaskID:     out.TaskID,
+					Generation: out.Generation.String(),
+					Revision:   uint64(out.Revision),
+					Meta:       string(out.Meta),
+					Status:     string(out.Status),
+				})
+				if out.Err != "" {
+					failed = append(failed, out)
+				}
+			}
+			if len(failed) > 0 {
+				return &ProjectionPartialError{Failed: failed}
+			}
+			return writeContract(cmd, Response[[]TaskProjectionRow]{
+				SchemaVersion: SchemaVersion,
+				Kind:          "task.reconcile",
+				Status:        "success",
+				Data:          rows,
+				Help:          []string{fmt.Sprintf("Reconciled %d task(s); projection reconciliation never changes authoritative revision or generation", len(rows))},
+			})
+		}),
+	}
+	configureContractCommand(reconcileCmd)
+
 	cmd.AddCommand(addCmd)
 	cmd.AddCommand(listCmd)
 	cmd.AddCommand(showCmd)
 	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(reconcileCmd)
 	cmd.AddCommand(newTaskObserveCmd())
 	return cmd
 }
