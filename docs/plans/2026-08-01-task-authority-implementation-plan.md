@@ -8,7 +8,7 @@
 
 ## Implementation progress
 
-Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`. Task 2.5 is complete through commits `47eaf25a` and `75355dcb`; Checkpoint 2 is complete through `8d07b12`. Task 3.1 is complete through commit `db5c1445`.
+Checkpoint 1 is complete through commit `fca1b38`. Task 2.1 is complete through commits `802ab768` and `6df038ed`. Task 2.2 is complete through commits `69b5a5fc` and `e894f2cf`. Task 2.3 is complete through commits `9dfd902a` and `7fe3d3f9`. Task 2.4 is complete through commit `e172c595`. Task 2.5 is complete through commits `47eaf25a` and `75355dcb`; Checkpoint 2 is complete through `8d07b12`. Task 3.1 is complete through commit `db5c1445`. Task 3.2 is complete through commit `345338b5`: `task add`, `task show`, `task list`, and `backlog add` create and query canonical Task Authority records through the composed Authority; `.meta` and the backlog file are post-commit projections (a projection failure returns a typed `LifecyclePartialError` and never rolls back the authoritative Task Generation); duplicate creation returns a typed conflict with no projection duplicate; the CLI migration allowlist drops `CreateTaskAggregate` for `task_cmd.go`/`backlog_cmd.go`. Fleet `spawn_runner.go` keeps the allowlisted `home.CreateTaskAggregate` call until the Phase 4 spawn cutover, so that function remains exported. The pre-existing `TestAgentSkillMirrorsMatchCanonical` failure reproduces on the clean base and is unrelated to this slice.
 
 Verified on 2026-08-01:
 
@@ -483,11 +483,11 @@ go test ./internal/cli -run 'Test.*(Context|TaskAuthorityComposition)'
 
 **Acceptance criteria:**
 
-- [ ] One create operation produces one queued Task Generation with owner, definition, kind, and project.
-- [ ] Duplicate creation returns typed conflict and creates no projection duplicate.
-- [ ] Task show/list read canonical Authority records; `.meta` cannot override them.
-- [ ] Projection failure returns a typed partial result while preserving the authoritative receipt for reconciliation.
-- [ ] Production callers no longer invoke `home.CreateTaskAggregate`.
+- [x] One create operation produces one queued Task Generation with owner, definition, kind, and project.
+- [x] Duplicate creation returns typed conflict and creates no projection duplicate.
+- [x] Task show/list read canonical Authority records; `.meta` cannot override them.
+- [x] Projection failure returns a typed partial result while preserving the authoritative receipt for reconciliation.
+- [x] Production callers no longer invoke `home.CreateTaskAggregate`.
 
 **Verification:**
 
