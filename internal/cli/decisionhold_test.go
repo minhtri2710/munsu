@@ -249,6 +249,61 @@ func TestDecisionHoldVerifyClean(t *testing.T) {
 	}
 }
 
+// TestDecisionHoldCompleteAppendsResolvedProjection proves the full chain
+// hold → complete → verify is clean: `decision-hold complete` releases the
+// Authority hold AND appends the resolved status projection line, mirroring
+// the resolve path, so verify sees no stale needs-decision line.
+func TestDecisionHoldCompleteAppendsResolvedProjection(t *testing.T) {
+	homeDir := t.TempDir()
+	if out, err := runRoot(t, "decision-hold", "hold", "approach",
+		"--reason", "Pick the UI framework", "--from", "scout-r2",
+		"--home", homeDir, "--output", "json"); err != nil {
+		t.Fatalf("hold: %v\n%s", err, out)
+	}
+
+	out, err := runRoot(t, "decision-hold", "complete", "scout-r2", "approach",
+		"--home", homeDir, "--output", "json")
+	if err != nil {
+		t.Fatalf("complete: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Completed 1 decision hold(s)") {
+		t.Fatalf("complete output = %s", out)
+	}
+
+	// The resolved projection line must mirror the resolve path so the
+	// needs-decision line is not left stale.
+	statuses, err := os.ReadFile(filepath.Join(homeDir, "state", "scout-r2.status"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(statuses)
+	if !strings.Contains(content, "needs-decision: Pick the UI framework [key=approach]") {
+		t.Fatalf("status missing needs-decision line: %q", content)
+	}
+	if !strings.Contains(content, "resolved: recorded (decision noted) [key=approach]") {
+		t.Fatalf("status missing resolved projection line after complete: %q", content)
+	}
+
+	// The Authority hold is released.
+	auth := decisionHoldAuthority(t, homeDir)
+	holds, err := auth.ListHolds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 || holds[0].ReleasedAt == 0 {
+		t.Fatalf("authority holds after complete = %+v, want one released hold", holds)
+	}
+
+	// verify must now be clean.
+	out, err = runRoot(t, "decision-hold", "verify", "scout-r2", "--home", homeDir)
+	if err != nil {
+		t.Fatalf("verify after complete: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "No unresolved decisions") {
+		t.Fatalf("verify output = %s", out)
+	}
+}
+
 // TestDecisionHoldFailsClosedOnLegacyV1Home proves decision-hold commands on
 // a legacy v1 home fail closed with the typed migration-required error
 // surfaced to the operator instead of bypassing the Authority.

@@ -268,6 +268,12 @@ Examples:
 				if err := resolveDecisionHold(ctx, auth, originID, key, "recorded (decision noted)"); err != nil {
 					return fmt.Errorf("completing decision hold %s: %w", key, err)
 				}
+				// The status line is a post-commit projection (ADR-0007 §7),
+				// mirroring the resolve path so the needs-decision line is not
+				// left stale for verify or the scout retirement check.
+				if err := home.AppendStatus(ctx.Home, originID, fmt.Sprintf("resolved: recorded (decision noted) [key=%s]", key)); err != nil {
+					return fmt.Errorf("appending resolved status: %w", err)
+				}
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
