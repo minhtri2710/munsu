@@ -7,6 +7,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -73,17 +74,34 @@ Example:
 			id := args[0]
 			desc := args[1]
 
-			if _, err := home.CreateTaskAggregate(ctx.Home, id, "", desc, kind, repo); err != nil {
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
 				return err
 			}
-			var err error
-			if isDefaultHome(ctx.Home) {
-				err = fleet.AddItemDispatch(ctx.Home, id, desc, kind, repo, false)
-			} else {
-				err = fleet.AddItem(ctx.Home, id, desc, kind, repo, false)
+			owner, actor := resolveTaskActor(ctx.Home)
+			if _, err := auth.Create(taskauthority.CreateRequest{
+				OperationID: newTaskAuthorityOperationID("backlog-add"),
+				Actor:       actor,
+				TaskID:      id,
+				Owner:       owner,
+				Description: desc,
+				Kind:        kind,
+				Project:     repo,
+				Reason:      "cli backlog add",
+			}); err != nil {
+				return err
 			}
-			if err != nil {
-				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
+			// The backlog file is a post-commit projection: a projection
+			// failure must not roll back the authoritative Task Generation
+			// (ADR-0007 §7).
+			var projectionErr error
+			if isDefaultHome(ctx.Home) {
+				projectionErr = fleet.AddItemDispatch(ctx.Home, id, desc, kind, repo, false)
+			} else {
+				projectionErr = fleet.AddItem(ctx.Home, id, desc, kind, repo, false)
+			}
+			if projectionErr != nil {
+				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: projectionErr}
 			}
 			return nil
 		}),

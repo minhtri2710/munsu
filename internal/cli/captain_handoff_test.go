@@ -11,6 +11,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 func TestTaskShowFailsClosedOnMalformedParentHomeDuringRecovery(t *testing.T) {
@@ -26,10 +28,10 @@ func TestTaskShowFailsClosedOnMalformedParentHomeDuringRecovery(t *testing.T) {
 	}
 }
 
-func TestTaskShowRecoversActiveCommittedHandoff(t *testing.T) {
+func TestTaskShowRecoversPendingHandoffAndReadsCanonicalState(t *testing.T) {
 	if os.Getenv("MUNSU_CLI_HANDOFF_HELPER") == "1" {
 		restore := fleet.SetHandoffCrashHookForTest(func(boundary string) {
-			if boundary == "commit-decided" {
+			if boundary == "prepared" {
 				os.Exit(92)
 			}
 		})
@@ -84,12 +86,31 @@ func TestTaskShowRecoversActiveCommittedHandoff(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = show ]; then echo 'state: queued'; exit 0; fi\nif [ \"$1\" = mv ]; then\n  to=\"\"; file=\"\"; shift\n  while [ \"$#\" -gt 0 ]; do case \"$1\" in --to) to=\"$2\"; shift 2;; --file) file=\"$2\"; shift 2;; *) shift;; esac; done\n  printf '# Backlog\\n\\n' > \"$file\"; exit 0\nfi\nexit 2\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run", "^TestTaskShowRecoversActiveCommittedHandoff$", "--")
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestTaskShowRecoversPendingHandoffAndReadsCanonicalState$", "--")
 	cmd.Env = append(os.Environ(), "MUNSU_CLI_HANDOFF_HELPER=1", "MUNSU_CLI_HANDOFF_SOURCE="+parent, "MUNSU_CLI_HANDOFF_DEST="+captain, "PATH="+filepath.Dir(fake)+":"+os.Getenv("PATH"))
 	if output, err := cmd.CombinedOutput(); err == nil {
 		t.Fatal("expected helper crash")
 	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
 		t.Fatalf("helper exit = %v\n%s", err, output)
+	}
+	// Seed the captain home's canonical v2 Authority with the transferred task
+	// (Task 6.2 makes the handoff saga install this atomically). task show then
+	// triggers handoff recovery of the pending v1 journal and serves the
+	// canonical record.
+	store, err := taskauthorityfs.NewStore(captain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
+		OperationID: "cli-handoff-recovery-seed",
+		Actor:       taskauthority.Actor{ID: "captain:api", Rank: "captain"},
+		TaskID:      "TASK-1",
+		Owner:       "captain:api",
+		Description: "CLI recovery",
+		Kind:        "ship",
+		Reason:      "test seed",
+	}); err != nil {
+		t.Fatal(err)
 	}
 	out, err := runMigrateCommand([]string{"--home", captain, "task", "show", "TASK-1"})
 	if err != nil || !strings.Contains(out, "owner: captain:api") || !strings.Contains(out, "description: CLI recovery") {

@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +31,7 @@ func newTaskCmd() *cobra.Command {
 			kind, _ := cmd.Flags().GetString("kind")
 			repo, _ := cmd.Flags().GetString("repo")
 
+			project := ""
 			meta := map[string]string{
 				"description": desc,
 				"kind":        kind,
@@ -36,16 +39,30 @@ func newTaskCmd() *cobra.Command {
 			if repo != "" {
 				meta["repo"] = repo
 				meta["project"] = repo // --repo maps directly to the project name
+				project = repo
 			}
 
-			project := meta["project"]
-			agg, err := home.CreateTaskAggregate(ctx.Home, id, "", desc, kind, project)
+			auth, err := ctx.TaskAuthority()
 			if err != nil {
 				return err
 			}
-			if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
-				_ = home.DeleteTaskAggregate(ctx.Home, id, agg.Generation)
+			owner, actor := resolveTaskActor(ctx.Home)
+			if _, err := auth.Create(taskauthority.CreateRequest{
+				OperationID: newTaskAuthorityOperationID("task-add"),
+				Actor:       actor,
+				TaskID:      id,
+				Owner:       owner,
+				Description: desc,
+				Kind:        kind,
+				Project:     project,
+				Reason:      "cli task add",
+			}); err != nil {
 				return err
+			}
+			// .meta is a post-commit projection: a projection failure must not
+			// roll back the authoritative Task Generation (ADR-0007 §7).
+			if err := home.WriteMeta(ctx.Home, id, meta); err != nil {
+				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
@@ -66,12 +83,16 @@ func newTaskCmd() *cobra.Command {
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			stateFilter, _ := cmd.Flags().GetString("state")
 
-			entries, err := home.ListMeta(ctx.Home)
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return err
+			}
+			aggregates, err := auth.List()
 			if err != nil {
 				return fmt.Errorf("listing tasks: %w", err)
 			}
 
-			if len(entries) == 0 {
+			if len(aggregates) == 0 {
 				return writeContract(cmd, Response[EmptyResult]{
 					SchemaVersion: SchemaVersion,
 					Kind:          "task.list",
@@ -81,21 +102,18 @@ func newTaskCmd() *cobra.Command {
 			}
 
 			var taskEntries []TaskEntry
-			for _, e := range entries {
-				if stateFilter != "" && !strings.Contains(e.LastStatus, stateFilter) {
+			for _, agg := range aggregates {
+				status := string(agg.Phase)
+				if stateFilter != "" && !strings.Contains(status, stateFilter) {
 					continue
 				}
-				project := e.Project
+				project := agg.Definition.Project
 				if project == "" {
 					project = "-"
 				}
-				status := e.LastStatus
-				if status == "" {
-					status = "registered"
-				}
 				taskEntries = append(taskEntries, TaskEntry{
-					ID:      e.ID,
-					Kind:    e.Kind,
+					ID:      agg.TaskID,
+					Kind:    agg.Definition.Kind,
 					Project: project,
 					Status:  status,
 				})
@@ -133,8 +151,13 @@ func newTaskCmd() *cobra.Command {
 			}
 			id = resolvedID
 
-			agg, hasAggregate, err := home.ReadCurrentTaskAggregate(ctx.Home, id)
+			auth, err := ctx.TaskAuthority()
 			if err != nil {
+				return err
+			}
+			agg, err := auth.Get(id)
+			hasAggregate := err == nil
+			if err != nil && !errors.Is(err, taskauthority.ErrNotFound) {
 				return err
 			}
 			meta, metaErr := home.ReadMeta(ctx.Home, id)
@@ -146,15 +169,22 @@ func newTaskCmd() *cobra.Command {
 			b.WriteString(fmt.Sprintf("Task: %s\n---\n", id))
 			if hasAggregate {
 				b.WriteString(fmt.Sprintf("generation: %s\n", agg.Generation))
-				b.WriteString(fmt.Sprintf("owner: %s\n", agg.Owner))
-				if agg.Definition != "" {
-					b.WriteString(fmt.Sprintf("description: %s\n", agg.Definition))
+				b.WriteString(fmt.Sprintf("owner: %s\n", agg.Definition.Owner))
+				if agg.Definition.Description != "" {
+					b.WriteString(fmt.Sprintf("description: %s\n", agg.Definition.Description))
 				}
-				if agg.State != "" {
-					b.WriteString(fmt.Sprintf("state: %s\n", agg.State))
+				if agg.Definition.Kind != "" {
+					b.WriteString(fmt.Sprintf("kind: %s\n", agg.Definition.Kind))
 				}
+				if agg.Definition.Project != "" {
+					b.WriteString(fmt.Sprintf("project: %s\n", agg.Definition.Project))
+				}
+				b.WriteString(fmt.Sprintf("state: %s\n", agg.Phase))
 			}
 			for k, v := range meta {
+				if authoritativeMetaField(k) {
+					continue
+				}
 				b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
 			}
 

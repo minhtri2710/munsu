@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestBacklogAddCreatesQueuedAggregate(t *testing.T) {
@@ -17,9 +18,12 @@ func TestBacklogAddCreatesQueuedAggregate(t *testing.T) {
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	agg, ok, err := home.ReadCurrentTaskAggregate(homeDir, "task")
-	if err != nil || !ok || agg.State != "queued" {
-		t.Fatalf("aggregate = %+v ok=%v err=%v", agg, ok, err)
+	agg, err := testAuthorityFor(t, homeDir).Get("task")
+	if err != nil {
+		t.Fatalf("authority Get: %v", err)
+	}
+	if agg.Phase != taskauthority.PhaseQueued || agg.Generation != 1 {
+		t.Fatalf("aggregate = %+v", agg)
 	}
 }
 
@@ -28,16 +32,16 @@ func TestDuplicateBacklogAddPreservesExistingState(t *testing.T) {
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "original", "--home", homeDir}); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "aggregates", "task", "1.json"))
-	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "aggregates", "task", "current"))
+	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "1.json"))
+	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "current"))
 	beforeBacklog := readFileForTest(t, filepath.Join(homeDir, "data", "md"))
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "changed", "--home", homeDir}); err == nil {
 		t.Fatalf("duplicate add succeeded: %s", out)
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "aggregates", "task", "1.json")); got != beforeAggregate {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "1.json")); got != beforeAggregate {
 		t.Fatal("duplicate add changed aggregate")
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "aggregates", "task", "current")); got != beforePointer {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "current")); got != beforePointer {
 		t.Fatal("duplicate add changed current pointer")
 	}
 	if got := readFileForTest(t, filepath.Join(homeDir, "data", "md")); got != beforeBacklog {
@@ -45,11 +49,16 @@ func TestDuplicateBacklogAddPreservesExistingState(t *testing.T) {
 	}
 }
 
+// TestBacklogStartAndUnblockUseDistinctLifecycleOperations seeds the legacy
+// v1 aggregate directly because backlog add now creates v2 Task Authority
+// records; the backlog start/unblock commands still run the legacy home
+// lifecycle path until Task 3.3 cuts them over.
 func TestBacklogStartAndUnblockUseDistinctLifecycleOperations(t *testing.T) {
 	homeDir := t.TempDir()
-	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
-		t.Fatalf("add: %v\n%s", err, out)
+	if _, err := home.CreateTaskAggregate(homeDir, "task", "", "work", "ship", ""); err != nil {
+		t.Fatal(err)
 	}
+	seedBacklogFileForTest(t, homeDir, "- [ ] task: work\n")
 
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "start", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("start: %v\n%s", err, out)
@@ -68,17 +77,17 @@ func TestBacklogStartAndUnblockUseDistinctLifecycleOperations(t *testing.T) {
 	}
 }
 
+// TestBacklogReopenSynchronizesAggregateAndProjection seeds the legacy v1
+// aggregate directly until Task 3.3 cuts reopen over to the Authority.
 func TestBacklogReopenSynchronizesAggregateAndProjection(t *testing.T) {
 	homeDir := t.TempDir()
-	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
-		t.Fatalf("add: %v\n%s", err, out)
+	if _, err := home.CreateTaskAggregate(homeDir, "task", "", "work", "ship", ""); err != nil {
+		t.Fatal(err)
 	}
 	if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, "task", "done", "merged"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, "data", "md"), []byte("# Backlog\n\n- [x] task: work\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	seedBacklogFileForTest(t, homeDir, "- [x] task: work\n")
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "reopen", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("reopen: %v\n%s", err, out)
 	}
@@ -178,17 +187,17 @@ func runBacklogLifecycleCommand(t *testing.T, args []string) (string, error) {
 	return out.String(), err
 }
 
+// TestBacklogRetrySupersedesFailedGeneration seeds the legacy v1 aggregate
+// directly until Task 3.3 cuts retry over to the Authority.
 func TestBacklogRetrySupersedesFailedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
-	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
-		t.Fatalf("add: %v\n%s", err, out)
+	if _, err := home.CreateTaskAggregate(homeDir, "task", "", "work", "ship", ""); err != nil {
+		t.Fatal(err)
 	}
 	if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, "task", "failed", "soldier failed"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, "data", "md"), []byte("# Backlog\n\n## In flight\n- [-] task: work\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	seedBacklogFileForTest(t, homeDir, "## In flight\n- [-] task: work\n")
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("retry: %v\n%s", err, out)
 	}
@@ -206,10 +215,25 @@ func TestBacklogRetrySupersedesFailedGeneration(t *testing.T) {
 	}
 }
 
+// seedBacklogFileForTest writes a runtime backlog file under homeDir/data,
+// replicating the projection `backlog add` creates so v1-seeded lifecycle
+// tests can drive the backlog projection backend.
+func seedBacklogFileForTest(t *testing.T, homeDir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "data", "md"), []byte("# Backlog\n\n"+body), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBacklogRetryRefusesLiveGeneration seeds the legacy v1 aggregate
+// directly until Task 3.3 cuts retry over to the Authority.
 func TestBacklogRetryRefusesLiveGeneration(t *testing.T) {
 	homeDir := t.TempDir()
-	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
-		t.Fatalf("add: %v\n%s", err, out)
+	if _, err := home.CreateTaskAggregate(homeDir, "task", "", "work", "ship", ""); err != nil {
+		t.Fatal(err)
 	}
 	if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, "task", "blocked", "dependency"); err != nil {
 		t.Fatal(err)

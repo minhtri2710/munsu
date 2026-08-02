@@ -13,13 +13,12 @@ import (
 func TestNoNewTaskAuthorityReachThrough(t *testing.T) {
 	testutil.AssertNoNewTaskAuthorityCallers(t, ".", map[string][]string{
 		"backlog_cmd.go": {
-			"CreateTaskAggregate",
 			"UpdateCurrentTaskAggregateState",
 			"StartTask",
 			"UnblockTask",
 			"ReopenTask",
 		},
 		"spawn_cmd.go": {"UpdateCurrentTaskAggregateKind"},
-		"task_cmd.go":  {"CreateTaskAggregate", "UpdateCurrentTaskAggregateState"},
+		"task_cmd.go":  {"UpdateCurrentTaskAggregateState"},
 	})
 }

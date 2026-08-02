@@ -11,7 +11,7 @@ type LifecyclePartialError struct {
 }
 
 func (e *LifecyclePartialError) Error() string {
-	return fmt.Sprintf("task %s is authoritatively %s; backlog projection failed: %v", e.TaskID, e.State, e.Cause)
+	return fmt.Sprintf("task %s is authoritatively %s; projection failed: %v", e.TaskID, e.State, e.Cause)
 }
 
 func (e *LifecyclePartialError) Unwrap() error { return e.Cause }

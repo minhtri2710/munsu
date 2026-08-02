@@ -564,8 +564,10 @@ func TestTaskListShowsAggregateCount(t *testing.T) {
 		t.Errorf("empty task list should say 'no tasks found', got: %s", output1)
 	}
 
-	// Add one task
-	if err := mhome.WriteMeta(home, "beta", map[string]string{"kind": "ship"}); err != nil {
+	// Add one task through the CLI so canonical Authority state exists
+	root := NewRootCommand()
+	root.SetArgs([]string{"task", "add", "beta", "beta task"})
+	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
 
