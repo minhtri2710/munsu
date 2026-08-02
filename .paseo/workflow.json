@@ -183,7 +183,7 @@
       "enabled": true,
       "rule": "Lead may be idle only while an authorized Peer is running or the full plan is complete",
       "onEngineerComplete": "direct report wakes Lead; launch the prepared independent Reviewer immediately",
-      "onReviewerComplete": "direct verdict wakes Lead; rule, report, archive, and launch the prepared next task immediately"},{
+      "onReviewerComplete": "direct verdict wakes Lead; rule, report, archive, and launch the prepared next task immediately"
     },
     "preparation": {
       "whileEngineerRuns": [
