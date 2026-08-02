@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "paseo.workflow/v1",
+  "workflow": {
+    "name": "supervisor-lead-peer",
+    "visibility": "top-level-agents",
+    "humanPosition": "outside-agent-hierarchy",
+    "defaultWorkspaceIsolation": "worktree",
+    "execution": "sequential-visible-agents"
+  },
+  "roles": {
+    "supervisor": {
+      "providerRole": "supervisor",
+      "standingAuthority": "governance",
+      "visible": true,
+      "responsibilities": [
+        "governance front door",
+        "workflow activation and shutdown",
+        "process memory",
+        "provider-policy enforcement",
+        "resource and lifecycle hygiene"
+      ],
+      "mustNot": [
+        "own product planning",
+        "own architecture decisions",
+        "accept engineering work",
+        "silently override Lead rulings"
+      ]
+    },
+    "lead": {
+      "providerRole": "planning",
+      "standingAuthority": "delivery-owner",
+      "visible": true,
+      "responsibilities": [
+        "planning and replanning",
+        "staffing visible Peers from this role catalog",
+        "integration sequencing",
+        "architecture rulings",
+        "Council triage",
+        "acceptance or reopen ruling"
+      ],
+      "must": [
+        "inspect repository and governing plan before staffing",
+        "issue one bounded assignment per Peer",
+        "respond explicitly to every formal Peer protocol",
+        "run final acceptance gates before declaring a task complete"
+      ],
+      "mustNot": [
+        "delegate acceptance authority",
+        "merge or accept from reports alone",
+        "create invisible loop workers"
+      ]
+    },
+    "peers": {
+      "engineer": {
+        "providerRole": "impl",
+        "visible": true,
+        "mode": "editing",
+        "responsibilities": [
+          "RED tests",
+          "bounded implementation",
+          "focused verification",
+          "one coherent commit"
+        ]
+      },
+      "architect": {
+        "providerRole": "audit",
+        "visible": true,
+        "mode": "read-only",
+        "responsibilities": [
+          "module-boundary review",
+          "invariant review",
+          "migration and cutover ordering",
+          "local-patch-versus-foundation triage"
+        ]
+      },
+      "reviewer": {
+        "providerRole": "audit",
+        "visible": true,
+        "mode": "read-only",
+        "responsibilities": [
+          "spec and acceptance review",
+          "independent test evidence",
+          "regression and architecture gates",
+          "PASS or formal REOPEN_REQUEST"
+        ]
+      },
+      "shadow": {
+        "providerRole": "audit",
+        "visible": true,
+        "mode": "read-only",
+        "responsibilities": [
+          "progress and provider-drift observation",
+          "unresolved dependency detection",
+          "process anomaly detection",
+          "formal BLOCKED or COUNCIL_REQUEST only when warranted"
+        ]
+      }
+    }
+  },
+  "protocols": {
+    "REOPEN_REQUEST": {
+      "issuer": ["engineer", "architect", "reviewer", "shadow"],
+      "recipient": "lead",
+      "requiredFields": ["scope", "evidence", "failedCriterion", "recommendedNextAction"],
+      "leadMustRule": true
+    },
+    "DEPENDENCY_REQUEST": {
+      "issuer": ["engineer", "architect", "reviewer", "shadow"],
+      "recipient": "lead",
+      "requiredFields": ["dependency", "whyRequired", "blockingScope", "alternativesConsidered"],
+      "leadMustRule": true
+    },
+    "BLOCKED": {
+      "issuer": ["engineer", "architect", "reviewer", "shadow"],
+      "recipient": "lead",
+      "requiredFields": ["blocker", "evidence", "safeState", "unblockCondition"],
+      "leadMustRule": true
+    },
+    "COUNCIL_REQUEST": {
+      "issuer": ["architect", "reviewer", "shadow"],
+      "recipient": "lead",
+      "requiredFields": ["foundationQuestion", "localPatchOption", "foundationOption", "blastRadius"],
+      "leadMustRule": true
+    }
+  },
+  "council": {
+    "default": "closed",
+    "openOnlyAfter": "local-patch-versus-foundation-triage",
+    "minimumPeers": ["architect", "reviewer"],
+    "leadOwnsRuling": true
+  },
+  "memory": {
+    "supervisorNotebook": {
+      "purpose": "process-memory",
+      "mustNotContain": [
+        "raw transcript",
+        "task tracker",
+        "product decision log",
+        "engineering acceptance verdict"
+      ]
+    }
+  },
+  "lifecycle": {
+    "taskFlow": [
+      "Lead plans and staffs",
+      "Engineer implements and commits",
+      "Architect reviews foundation and invariants when assigned",
+      "Reviewer independently verifies",
+      "Lead accepts or issues a concrete reopen ruling",
+      "Supervisor archives completed visible agents and enforces resource hygiene"
+    ],
+    "agentVisibilityRequired": true,
+    "archiveAfterLeadRuling": true,
+    "noInternalLoops": true,
+    "noMunsuWorkflow": true
+  },
+  "repository": {
+    "governingPlan": "docs/plans/2026-08-01-task-authority-implementation-plan.md",
+    "currentProgram": "task-authority-cutover",
+    "finalGate": [
+      "git diff --check",
+      "go build ./...",
+      "go vet ./...",
+      "go test -race ./internal/taskauthority ./internal/taskauthorityfs",
+      "go test -tags=integration ./... -count=1",
+      "go test ./... -count=1"
+    ],
+    "worktreeOnlySkip": "TestAgentSkillMirrorsMatchCanonical",
+    "primaryCheckoutMustRunUnskipped": true
+  }
+}
