@@ -36,6 +36,19 @@ func (c *Ctx) TaskAuthority() (*taskauthority.Authority, error) {
 	return c.taskAuthority, nil
 }
 
+// TaskAuthorityFor returns the concrete Authority composed over an explicit
+// home directory. Cross-home delivery resolves the task home (which may be a
+// captain home after handoff) before composing, so the Authority always
+// targets the home that owns the task. Store construction is side-effect
+// free: it performs no migration and no mutation.
+func (c *Ctx) TaskAuthorityFor(homeDir string) (*taskauthority.Authority, error) {
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return taskauthority.New(store), nil
+}
+
 // withHome wraps a cobra RunE so the handler receives a resolved Ctx instead
 // of calling home.Resolve(homeOverride) itself.
 func withHome(fn func(cmd *cobra.Command, args []string, ctx Ctx) error) func(*cobra.Command, []string) error {

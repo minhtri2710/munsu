@@ -43,7 +43,7 @@ func TestPRMerge_FleetSyncReadsMeta(t *testing.T) {
 
 	// PRMerge requires gh-axi. Using a non-existent PR should fail at
 	// the gh-axi merge step, proving the meta was readable.
-	err := PRMerge(homeDir, "test-merge-task", "https://github.com/minhtri2710/munsu/pull/999999", nil)
+	err := PRMerge(homeDir, "test-merge-task", "https://github.com/minhtri2710/munsu/pull/999999", nil, nil)
 
 	// Should fail because PR #999999 doesn't exist (gh-axi merge will error)
 	if err == nil {
@@ -349,7 +349,7 @@ func TestPRMerge_WiresReconcileMergeDelivery(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := PRMerge(homeDir, taskID, prURL, nil)
+	err := PRMerge(homeDir, taskID, prURL, nil, nil)
 
 	// Close and restore
 	w.Close()
@@ -579,7 +579,7 @@ func TestPRMerge_WireErrorOutcome(t *testing.T) {
 			r, w, _ := os.Pipe()
 			os.Stdout = w
 
-			err := PRMerge(homeDir, taskID, prURL, nil)
+			err := PRMerge(homeDir, taskID, prURL, nil, nil)
 
 			w.Close()
 			os.Stdout = oldStdout

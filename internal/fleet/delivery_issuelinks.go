@@ -1,32 +1,19 @@
 package fleet
 
 import (
-	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // CheckIssueStateFn is an injectable function that checks whether an issue
 // is closed on the provider. Returns true when the issue is closed, false
 // when open, and an error when the provider is unavailable.
 type CheckIssueStateFn func(link *domain.IssueLink) (bool, error)
-
-// IssueLinkRepairRecord is a single audit record for an issue link repair.
-// Stored as a JSON array in the meta field `issue_link_repair_history`.
-type IssueLinkRepairRecord struct {
-	Timestamp string                              `json:"timestamp"`
-	Results   []domain.IssueLinkReconciliationResult `json:"results"`
-	Decision  string                              `json:"decision,omitempty"` // "required", "acknowledged", "none"
-}
-
-// Meta field keys for issue link repair lifecycle.
-const (
-	MetaIssueLinkRepairHistory = "issue_link_repair_history"
-)
 
 // defaultCheckIssueState checks the provider for the issue's state.
 // For GitHub issues, uses gh CLI via the GitHubClient.
@@ -159,109 +146,61 @@ func ReconcileIssueLinks(links []domain.IssueLink, checkFn CheckIssueStateFn) []
 	return results
 }
 
-// ReconcileAndStoreIssueLinks reconciles all issue links against the provider
-// and persists the results in the task meta. Returns the reconciliation results.
-// This is the primary integration point for post-merge reconciliation.
-func ReconcileAndStoreIssueLinks(homeDir, taskID string, links []domain.IssueLink, checkFn CheckIssueStateFn) ([]domain.IssueLinkReconciliationResult, error) {
+// ReconcileAndStoreIssueLinks reconciles the task's issue links against the
+// provider and commits the generation-bound issue link definition record and
+// the provider reconciliation evidence through the Task Authority in ONE
+// Store transaction (Task 7.2). The composed Authority must target the exact
+// resolved task home (cross-home delivery); the Expected Generation is read
+// from the Authority and fenced inside the operation. Repeating the same
+// operation (same Task Generation and provider outcome) replays idempotently;
+// a changed outcome under the same operation conflicts non-retryably and
+// preserves the original provider evidence. Returns the reconciliation
+// results. The caller reconciles the .meta projection after the authoritative
+// commit; a projection failure never rolls back the authoritative state.
+func ReconcileAndStoreIssueLinks(homeDir string, auth *taskauthority.Authority, taskID string, links []domain.IssueLink, checkFn CheckIssueStateFn) ([]domain.IssueLinkReconciliationResult, error) {
+	if auth == nil {
+		return nil, fmt.Errorf("issue link reconciliation requires a composed task authority")
+	}
 	if checkFn == nil {
 		checkFn = defaultCheckIssueState
 	}
 
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving task generation: %w", err)
+	}
+
 	results := ReconcileIssueLinks(links, checkFn)
 
-	// Store results in meta
-	meta, err := home.ReadMeta(homeDir, taskID)
+	res, err := auth.ReconcileIssueLinks(taskauthority.ReconcileIssueLinksRequest{
+		OperationID:        fmt.Sprintf("issue-links-reconcile-%s-%s", taskID, agg.Generation),
+		Actor:              deliveryActor(homeDir),
+		TaskID:             taskID,
+		ExpectedGeneration: agg.Generation,
+		Links:              links,
+		Results:            results,
+		Reason:             "post-merge reconciliation",
+	})
 	if err != nil {
-		// If meta doesn't exist, create it
-		meta = make(map[string]string)
+		return nil, err
 	}
-
-	// Store reconciliation results as JSON in meta
-	resultsJSON, _ := json.Marshal(results)
-	meta["issue_link_reconciliation"] = string(resultsJSON)
-
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		return nil, fmt.Errorf("storing issue link reconciliation: %w", err)
-	}
-
-	return results, nil
+	return res.Results, nil
 }
 
-// RepairIssueLinks repairs issue links by re-running reconciliation and
-// auditing the results. It is idempotent and can be safely re-run.
-//
-// The repair process:
-//  1. Read issue links from the task meta
-//  2. Reconcile each link against the provider
-//  3. Store the reconciliation results in meta
-//  4. Requires Decision when any manual-policy link is encountered
-//  5. Records the repair in the audit trail
-//
-// Returns the reconciliation results. When a Decision is required, the
-// results include a manual-policy entry. The caller must check for
-// manual-policy results and prompt for a Decision before considering
-// the repair complete.
-func RepairIssueLinks(homeDir, taskID string, checkFn CheckIssueStateFn) ([]domain.IssueLinkReconciliationResult, error) {
-	if checkFn == nil {
-		checkFn = defaultCheckIssueState
-	}
-
-	meta, err := home.ReadMeta(homeDir, taskID)
+// deliveryActor resolves the authoritative actor identity of the rank running
+// the delivery from the exact task home, matching the legacy home fallback:
+// captain identity for captain homes, otherwise the home identity.
+func deliveryActor(homeDir string) taskauthority.Actor {
+	identity, rank, err := home.ReadHomeIdentity(homeDir)
 	if err != nil {
-		return nil, fmt.Errorf("repair issue links: reading meta: %w", err)
+		identity = filepath.Base(homeDir)
+		rank = home.RankGeneral
 	}
-
-	links := domain.IssueLinksFromMeta(meta)
-	if len(links) == 0 {
-		return nil, nil // no issue links to repair
+	owner := identity
+	if rank == home.RankCaptain {
+		owner = "captain:" + identity
 	}
-
-	// Reconcile all links
-	results := ReconcileIssueLinks(links, checkFn)
-
-	// Build audit record
-	record := IssueLinkRepairRecord{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Results:   results,
-		Decision:  "none",
-	}
-
-	// Check if any manual-policy result requires Decision
-	needsDecision := false
-	for _, r := range results {
-		if r.Status == domain.IssueLinkManualPolicy {
-			needsDecision = true
-			break
-		}
-	}
-
-	if needsDecision {
-		record.Decision = "required"
-	}
-
-	// Store reconciliation results in meta
-	resultsJSON, _ := json.Marshal(results)
-	meta["issue_link_reconciliation"] = string(resultsJSON)
-
-	// Append to repair history
-	meta[MetaIssueLinkRepairHistory] = appendRepairHistory(meta[MetaIssueLinkRepairHistory], &record)
-
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		return nil, fmt.Errorf("repair issue links: writing meta: %w", err)
-	}
-
-	return results, nil
-}
-
-// appendRepairHistory appends a repair record to the existing history JSON.
-func appendRepairHistory(existing string, record *IssueLinkRepairRecord) string {
-	var history []*IssueLinkRepairRecord
-	if existing != "" {
-		json.Unmarshal([]byte(existing), &history)
-	}
-	history = append(history, record)
-	data, _ := json.Marshal(history)
-	return string(data)
+	return taskauthority.Actor{ID: owner, Rank: string(rank)}
 }
 
 // PrepareDeliveryIssueLinks verifies issue links during PrepareDelivery.

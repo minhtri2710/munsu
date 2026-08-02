@@ -83,6 +83,9 @@ const (
 	AuditDispatch = "dispatch"
 	// AuditBinding records a generation-bound worktree binding (task-bound).
 	AuditBinding = "binding"
+	// AuditIssueLinks records a generation-bound issue link definition and
+	// reconciliation commit (task-bound).
+	AuditIssueLinks = "issue-links"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -127,6 +130,13 @@ func (ev AuditEvent) Validate() error {
 			return validationError("audit event has invalid after phase %q", ev.After)
 		}
 	case AuditBinding:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditIssueLinks:
 		if err := validateTaskID(ev.TaskID); err != nil {
 			return err
 		}

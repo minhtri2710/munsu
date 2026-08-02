@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // MergeAndRetireResult captures the full outcome of a composite merge-and-retire
@@ -55,7 +56,10 @@ func (r *MergeAndRetireResult) IsError() bool {
 // Returns a typed composite result. Callers check IsError() to determine the
 // overall outcome. A merged-but-not-retired result is non-zero; retry resumes
 // retirement only.
-func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend BoundTeardown, journals RetirementJournalPort) *MergeAndRetireResult {
+// authority is the composed Task Authority targeting the exact resolved task
+// home (cross-home delivery); it is threaded into PRMerge for the post-merge
+// issue link reconciliation and is unused when the merge phase is skipped.
+func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Authority) *MergeAndRetireResult {
 	// Phase 1: Check if already merged (idempotent resume).
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
@@ -70,7 +74,7 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend Bound
 
 	if !alreadyMerged {
 		// Run the full merge delivery.
-		if err := PRMerge(homeDir, id, prURL, extraArgs); err != nil {
+		if err := PRMerge(homeDir, id, prURL, extraArgs, authority); err != nil {
 			return &MergeAndRetireResult{
 				MergeOutcome: MergeOutcomeFailed,
 				MergeDetail:  err.Error(),

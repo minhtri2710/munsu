@@ -6,6 +6,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // Generation is the positive monotonic identity of one Task lifecycle
@@ -129,6 +131,11 @@ type Aggregate struct {
 	Worktree                     *WorktreeBinding `json:"worktree,omitempty"`
 	DispatchInterpretationID     string           `json:"dispatch_interpretation_id,omitempty"`
 	DispatchInterpretationDigest string           `json:"dispatch_interpretation_digest,omitempty"`
+	// IssueLinks is the generation-bound definition record of the task's
+	// issue links; IssueLinkReconciliation is the provider evidence of one
+	// post-merge reconciliation committed with the same operation (Task 7.2).
+	IssueLinks              []domain.IssueLink                     `json:"issue_links,omitempty"`
+	IssueLinkReconciliation []domain.IssueLinkReconciliationResult `json:"issue_link_reconciliation,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -189,6 +196,9 @@ func validateAggregate(agg Aggregate) error {
 		if err := validateWorktreeBinding(*agg.Worktree); err != nil {
 			return err
 		}
+	}
+	if err := validateIssueLinkDefinition(agg); err != nil {
+		return err
 	}
 	return nil
 }
@@ -259,6 +269,12 @@ func (a Aggregate) clone() Aggregate {
 	if a.Worktree != nil {
 		w := *a.Worktree
 		out.Worktree = &w
+	}
+	if a.IssueLinks != nil {
+		out.IssueLinks = append([]domain.IssueLink(nil), a.IssueLinks...)
+	}
+	if a.IssueLinkReconciliation != nil {
+		out.IssueLinkReconciliation = append([]domain.IssueLinkReconciliationResult(nil), a.IssueLinkReconciliation...)
 	}
 	return out
 }

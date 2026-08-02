@@ -538,7 +538,7 @@ func TestPRMerge_ValidatesIdentity(t *testing.T) {
 	}
 
 	// PRMerge without identity should fail before gh-axi is even looked up
-	err := PRMerge(homeDir, id, "https://github.com/minhtri2710/munsu/pull/999999", nil)
+	err := PRMerge(homeDir, id, "https://github.com/minhtri2710/munsu/pull/999999", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for merge without identity")
 	}
@@ -584,7 +584,7 @@ func TestPRMerge_RejectsURLMismatch(t *testing.T) {
 	}
 
 	// Different PR URL should be rejected
-	err := PRMerge(homeDir, id, "https://github.com/minhtri2710/munsu/pull/999999", nil)
+	err := PRMerge(homeDir, id, "https://github.com/minhtri2710/munsu/pull/999999", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for URL mismatch")
 	}
@@ -614,7 +614,7 @@ func TestPRMerge_RejectsLiveIdentityDrift(t *testing.T) {
 			old := fetchLiveIdentity
 			fetchLiveIdentity = func(string) (*domain.DeliveryIdentity, error) { return &live, nil }
 			t.Cleanup(func() { fetchLiveIdentity = old })
-			err := PRMerge(homeDir, "ship", stored.URL, nil)
+			err := PRMerge(homeDir, "ship", stored.URL, nil, nil)
 			if err == nil || !strings.Contains(err.Error(), "live PR identity changed") || !strings.Contains(err.Error(), "re-run pr-check") {
 				t.Fatalf("error = %v, want live identity refusal", err)
 			}
