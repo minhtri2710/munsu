@@ -50,6 +50,8 @@ go test -tags=integration ./... -count=1 -skip TestAgentSkillMirrorsMatchCanonic
 
 All commands passed; the only skipped test is the documented pre-existing `TestAgentSkillMirrorsMatchCanonical` (branch-untouched, contract-sanctioned worktree skip).
 
+Task 4.1 is complete through commit `bc731f8e`. Independent Reviewer acceptance verified all four criteria: `Authority.BindWorktree` is a named generation-bound operation validating the full payload (repository identity, path, Git/Common dirs, head, lease, fence token, bound timestamp) with a stable Task Operation ID; the lease marker and aggregate binding commit/recover atomically through the `taskauthorityfs` journal (crash matrix at all 10 journal stages, canonical `View` never exposes a partial binding); same-op replay is idempotent, a duplicate Operation ID with changed intent conflicts non-retryably, and any rebind of an already-bound generation fails closed; `home.BindTaskWorktree` is deleted with zero production callers and the allowlist shrunk in the same slice (`TestNoNewTaskAuthorityReachThrough` green in fleet and cli). Spawn wiring injects the composed Authority via `fleet.Args.Authority` from the CLI composition root with `HomeDir: ctx.Home`; `home.TaskWorktreeLeaseActive` read path preserved against the v2 marker namespace; `internal/taskauthority` retains zero filesystem imports. Confirmed transitions: v1 lease path remains a v1-detection location, migration does not yet emit v2 markers (pre-existing), and spawn on v1-state homes fails closed at bind with `ErrMigrationRequired` until Task 4.2 completes the spawn cutover.
+
 ## Goal
 
 Move Authoritative Task Aggregate lifecycle, readiness, and durable dispatch control from `internal/home`, direct CLI mutations, and fleet reach-through into one deep `internal/taskauthority` module. Persist it through a crash-recoverable `internal/taskauthorityfs` adapter composed at the CLI, while preserving current on-disk identities and removing each old mutation path as soon as its final caller migrates.
@@ -642,10 +644,10 @@ go test ./internal/cli -run 'Test.*(Projection|TaskShow|TaskList)'
 
 **Acceptance criteria:**
 
-- [ ] Binding validates repository identity, path, Git/Common directories, head, lease, fence token, and Expected Generation.
-- [ ] Lease marker and aggregate binding commit or recover together.
-- [ ] Rebinding the same identity is idempotent; conflicting binding fails closed.
-- [ ] `home.BindTaskWorktree` has no production caller after cutover.
+- [x] Binding validates repository identity, path, Git/Common directories, head, lease, fence token, and Expected Generation.
+- [x] Lease marker and aggregate binding commit or recover together.
+- [x] Rebinding the same identity is idempotent; conflicting binding fails closed.
+- [x] `home.BindTaskWorktree` has no production caller after cutover.
 
 **Verification:**
 
