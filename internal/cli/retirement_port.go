@@ -1,13 +1,33 @@
 package cli
 
-import "github.com/minhtri2710/munsu/internal/fleet"
+import (
+	"fmt"
 
-type fleetRetirementPort struct{}
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+)
 
-func (fleetRetirementPort) RecoverPendingRetirements(homeDir string) (int, []error) {
-	return fleet.RecoverAllPendingRetirements(homeDir)
+// fleetRetirementPort adapts the orchestrator RetirementPort to the fleet
+// implementation. The merged delivery_state transition routes through the
+// composed Task Authority (Task 7.6): the compose function builds the
+// Authority over the exact home the watcher is servicing, mirroring the
+// delivery command composition root.
+type fleetRetirementPort struct {
+	compose func(homeDir string) (*taskauthority.Authority, error)
 }
 
-func (fleetRetirementPort) RetireMergedPoll(homeDir, taskID, checkPath string) error {
-	return fleet.RetireMergedPoll(homeDir, taskID, checkPath)
+func (p fleetRetirementPort) RecoverPendingRetirements(homeDir string) (int, []error) {
+	auth, err := p.compose(homeDir)
+	if err != nil {
+		return 0, []error{fmt.Errorf("composing task authority for retirement recovery: %w", err)}
+	}
+	return fleet.RecoverAllPendingRetirements(homeDir, auth)
+}
+
+func (p fleetRetirementPort) RetireMergedPoll(homeDir, taskID, checkPath string) error {
+	auth, err := p.compose(homeDir)
+	if err != nil {
+		return fmt.Errorf("composing task authority for merged poll retirement: %w", err)
+	}
+	return fleet.RetireMergedPoll(homeDir, taskID, checkPath, auth)
 }

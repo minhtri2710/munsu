@@ -24,6 +24,20 @@ const (
 	DeliveryTerminalDone      = "done"
 )
 
+// Merge outcome kinds (Task 7.6). Merged and already-merged are the
+// merged-equivalent outcomes; remote-unknown is terminal — once committed,
+// the Authority refuses further provider-mutating attempts and only read
+// reconciliation is permitted. Verified merged truth is never erased by a
+// later ambiguous (remote-unknown), false-negative (open), or stale
+// closed-not-merged (failed) read.
+const (
+	MergeOutcomeMerged        = "merged"
+	MergeOutcomeAlreadyMerged = "already-merged"
+	MergeOutcomeFailed        = "failed"
+	MergeOutcomeOpen          = "open"
+	MergeOutcomeRemoteUnknown = "remote-unknown"
+)
+
 // DeliveryPrepare is the generation-bound delivery preparation record
 // committed by pr-check: the provider identity snapshot, the immutable head
 // SHA the delivery is prepared against, and the review-ready delivery state.
@@ -61,6 +75,11 @@ func validateDeliveryRecord(agg Aggregate) error {
 	}
 	if agg.DeliveryTerminal != nil {
 		if err := validateDeliveryTerminalRecord(*agg.DeliveryTerminal); err != nil {
+			return err
+		}
+	}
+	if agg.MergeAttempt != nil {
+		if err := validateMergeAttemptRecord(*agg.MergeAttempt); err != nil {
 			return err
 		}
 	}
@@ -407,6 +426,208 @@ func validateCompleteDeliveryRequest(req CompleteDeliveryRequest) error {
 	}
 	if req.Identity.HeadSHA != req.HeadSHA {
 		return validationError("delivery terminal head %q does not match identity snapshot head %q", req.HeadSHA, req.Identity.HeadSHA)
+	}
+	return nil
+}
+
+// --- Merge attempt and outcome (Task 7.6) ---
+
+// MergeAttempt is the generation-bound merge attempt and outcome record
+// committed by the RecordMergeAttempt operation: the stable attempt identity
+// binds the provider identity snapshot, the PR identity, and the exact head
+// SHA with the provider-verified remote outcome. A remote-unknown outcome is
+// terminal — once committed, the Authority refuses further provider-mutating
+// attempts and only read reconciliation is permitted. Verified merged truth
+// is never erased by a later ambiguous or false-negative read.
+type MergeAttempt struct {
+	Outcome       string                   `json:"outcome"` // merged | already-merged | failed | open | remote-unknown
+	HeadSHA       string                   `json:"head_sha"`
+	MergedSHA     string                   `json:"merged_sha,omitempty"`
+	Identity      ProviderIdentitySnapshot `json:"identity"`
+	ProviderState string                   `json:"provider_state,omitempty"`
+	Detail        string                   `json:"detail,omitempty"`
+	AttemptedAt   int64                    `json:"attempted_at"`
+	Actor         string                   `json:"actor"`
+}
+
+// validateMergeAttemptRecord checks one generation-bound merge attempt
+// record: a known outcome, a safe immutable head SHA, a complete provider
+// identity snapshot whose head agrees with the record head, and a safe
+// merged SHA when present.
+func validateMergeAttemptRecord(rec MergeAttempt) error {
+	if err := validateMergeOutcome(rec.Outcome); err != nil {
+		return err
+	}
+	if err := validateHeadSHA(rec.HeadSHA); err != nil {
+		return err
+	}
+	if err := validateProviderIdentitySnapshot(rec.Identity); err != nil {
+		return err
+	}
+	if rec.Identity.HeadSHA != rec.HeadSHA {
+		return validationError("merge attempt head %q does not match identity snapshot head %q", rec.HeadSHA, rec.Identity.HeadSHA)
+	}
+	if rec.MergedSHA != "" && (rec.MergedSHA != strings.TrimSpace(rec.MergedSHA) || strings.ContainsAny(rec.MergedSHA, `/\\`)) {
+		return validationError("merge attempt merged SHA %q is unsafe", rec.MergedSHA)
+	}
+	if strings.TrimSpace(rec.Actor) == "" {
+		return validationError("merge attempt missing actor")
+	}
+	if rec.AttemptedAt <= 0 {
+		return validationError("merge attempt missing attempted timestamp")
+	}
+	return nil
+}
+
+// validateMergeOutcome accepts the five merge outcome kinds.
+func validateMergeOutcome(outcome string) error {
+	switch outcome {
+	case MergeOutcomeMerged, MergeOutcomeAlreadyMerged, MergeOutcomeFailed, MergeOutcomeOpen, MergeOutcomeRemoteUnknown:
+		return nil
+	}
+	return validationError("invalid merge outcome %q", outcome)
+}
+
+// mergeOutcomeIsMergedEquiv reports whether a committed outcome is the
+// provider-verified merged truth (merged or already-merged).
+func mergeOutcomeIsMergedEquiv(outcome string) bool {
+	return outcome == MergeOutcomeMerged || outcome == MergeOutcomeAlreadyMerged
+}
+
+// RecordMergeAttemptRequest is the immutable request payload of one
+// generation-bound merge attempt. It carries the exact Task Generation fence,
+// the stable Task Operation identity, the actor, the provider-verified remote
+// outcome, the provider identity snapshot, the exact head SHA the attempt
+// binds, and the provider-reported merged SHA when merged. The Operation ID
+// is excluded from the intent digest, so a retry that changes the outcome or
+// the evidence under the same ID detects a conflict.
+type RecordMergeAttemptRequest struct {
+	OperationID        string
+	Actor              Actor
+	TaskID             string
+	ExpectedGeneration Generation
+	Outcome            string
+	HeadSHA            string
+	MergedSHA          string
+	Identity           ProviderIdentitySnapshot
+	ProviderState      string
+	Detail             string
+	Reason             string
+}
+
+// RecordMergeAttempt is the named semantic operation that commits the
+// generation-bound merge attempt and its provider-verified remote outcome in
+// one Store transaction: the Expected Generation fence is revalidated inside
+// the transaction, the attempt binds the exact head SHA and provider identity
+// snapshot, the Revision advances by exactly one when the attempt commits,
+// one typed merge-outcome audit event commits, and the durable idempotency
+// receipt pins the intent.
+//
+// Once a remote-unknown outcome is committed, the Authority refuses every
+// further provider-mutating attempt with the typed fail-closed
+// ErrMergeMutationRefused; only read reconciliation (Get) is permitted.
+// Verified merged truth is never erased: a re-attempt of a merged-equivalent
+// outcome is an in-value no-op (already-merged idempotency), and a later
+// provider false-negative (open), stale closed-not-merged (failed), or
+// ambiguous (remote-unknown) read never regresses the committed merged
+// outcome. A non-terminal committed outcome (open or failed) is replaced by
+// a fresh attempt. Same-op replay is idempotent; a stale or missing task
+// fails closed.
+func (a *Authority) RecordMergeAttempt(req RecordMergeAttemptRequest) (DeliveryResult, error) {
+	if err := req.ExpectedGeneration.Validate(); err != nil {
+		return DeliveryResult{}, err
+	}
+	if err := validateRecordMergeAttemptRequest(req); err != nil {
+		return DeliveryResult{}, err
+	}
+	op, err := a.operation(req.OperationID, req.Actor, struct {
+		TaskID             string                   `json:"task_id"`
+		ExpectedGeneration uint64                   `json:"expected_generation"`
+		Outcome            string                   `json:"outcome"`
+		HeadSHA            string                   `json:"head_sha"`
+		MergedSHA          string                   `json:"merged_sha,omitempty"`
+		Identity           ProviderIdentitySnapshot `json:"identity"`
+		ProviderState      string                   `json:"provider_state,omitempty"`
+		Detail             string                   `json:"detail,omitempty"`
+		Reason             string                   `json:"reason,omitempty"`
+	}{req.TaskID, uint64(req.ExpectedGeneration), req.Outcome, req.HeadSHA, req.MergedSHA, req.Identity, req.ProviderState, req.Detail, req.Reason})
+	if err != nil {
+		return DeliveryResult{}, err
+	}
+	receipt, err := a.store.Update(op, func(tx *Tx) error {
+		cur, ok := tx.Current(req.TaskID)
+		if !ok {
+			return conflictError(ErrNotFound, "task %s not found", req.TaskID)
+		}
+		if cur.Generation != req.ExpectedGeneration {
+			return conflictError(ErrConflict, "task %s is at generation %s, expected %s", req.TaskID, cur.Generation, req.ExpectedGeneration)
+		}
+		if cur.MergeAttempt != nil {
+			committed := cur.MergeAttempt.Outcome
+			if committed == MergeOutcomeRemoteUnknown {
+				// A remote-unknown outcome forbids repeated provider mutation:
+				// the same mutation attempt must never be repeated, and only
+				// read reconciliation is permitted (ADR-0007 §7).
+				return conflictError(ErrMergeMutationRefused, "task %s generation %s has committed outcome remote-unknown; further provider-mutating merge attempts are refused (read reconciliation only)", req.TaskID, cur.Generation)
+			}
+			if mergeOutcomeIsMergedEquiv(committed) {
+				// Verified remote truth is committed. Already-merged
+				// re-attempts are idempotent, and a provider false-negative
+				// (open), a stale closed-not-merged read (failed), or an
+				// ambiguous read (remote-unknown) never erases it.
+				return nil // in-value no-op: the committed merged truth stands
+			}
+		}
+		updated := cur.clone()
+		rec := MergeAttempt{
+			Outcome:       req.Outcome,
+			HeadSHA:       req.HeadSHA,
+			MergedSHA:     req.MergedSHA,
+			Identity:      req.Identity,
+			ProviderState: req.ProviderState,
+			Detail:        req.Detail,
+			AttemptedAt:   a.now().UnixNano(),
+			Actor:         req.Actor.ID,
+		}
+		updated.MergeAttempt = &rec
+		updated.Revision++
+		if err := tx.PutAggregate(updated); err != nil {
+			return err
+		}
+		return tx.AppendAudit(AuditEvent{
+			OperationID: op.ID,
+			Actor:       op.Actor,
+			Kind:        AuditMergeOutcome,
+			TaskID:      cur.TaskID,
+			Generation:  cur.Generation,
+			Reason:      req.Reason,
+			At:          a.now().UnixNano(),
+		})
+	})
+	if err != nil {
+		return DeliveryResult{}, err
+	}
+	return a.deliveryResultFromReceipt(req.TaskID, receipt)
+}
+
+// validateRecordMergeAttemptRequest validates one merge attempt request: a
+// known outcome, a safe head, a safe merged SHA when present, and a complete
+// provider identity snapshot whose head agrees with the requested head.
+func validateRecordMergeAttemptRequest(req RecordMergeAttemptRequest) error {
+	if err := validateMergeOutcome(req.Outcome); err != nil {
+		return err
+	}
+	if err := validateHeadSHA(req.HeadSHA); err != nil {
+		return err
+	}
+	if req.MergedSHA != "" && (req.MergedSHA != strings.TrimSpace(req.MergedSHA) || strings.ContainsAny(req.MergedSHA, `/\\`)) {
+		return validationError("merge attempt merged SHA %q is unsafe", req.MergedSHA)
+	}
+	if err := validateProviderIdentitySnapshot(req.Identity); err != nil {
+		return err
+	}
+	if req.Identity.HeadSHA != req.HeadSHA {
+		return validationError("merge attempt head %q does not match identity snapshot head %q", req.HeadSHA, req.Identity.HeadSHA)
 	}
 	return nil
 }

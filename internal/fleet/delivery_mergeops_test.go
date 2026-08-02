@@ -3,12 +3,15 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/domain"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func identityFor(owner, repo string, number int, headSHA string) *domain.DeliveryIdentity {
@@ -23,6 +26,25 @@ func identityFor(owner, repo string, number int, headSHA string) *domain.Deliver
 		HeadSHA:    headSHA,
 		CapturedAt: "2024-01-01T00:00:00Z",
 	}
+}
+
+// mergeTestAuth seeds one ship task in an in-memory Authority for a merge
+// outcome test (Task 7.6): the merge attempt commits fenced to the task
+// generation, so the task must exist in the Authority.
+func mergeTestAuth(t *testing.T, taskID string) *taskauthority.Authority {
+	t.Helper()
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "ship",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return auth
 }
 
 func TestMarkMerged_TransitionsToMerged(t *testing.T) {
@@ -50,7 +72,7 @@ func TestMarkMerged_TransitionsToMerged(t *testing.T) {
 
 	ident := identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1")
 
-	if err := MarkMerged(home, taskID, ident); err != nil {
+	if err := MarkMerged(home, taskID, ident, mergeTestAuth(t, taskID)); err != nil {
 		t.Fatalf("MarkMerged: %v", err)
 	}
 
@@ -100,7 +122,7 @@ func TestMarkMerged_Idempotent(t *testing.T) {
 	ident := identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1")
 
 	// First call: idempotent.
-	if err := MarkMerged(home, taskID, ident); err != nil {
+	if err := MarkMerged(home, taskID, ident, mergeTestAuth(t, taskID)); err != nil {
 		t.Fatalf("first MarkMerged: %v", err)
 	}
 
@@ -114,7 +136,7 @@ func TestMarkMerged_Idempotent(t *testing.T) {
 	}
 
 	// Second call: still idempotent.
-	if err := MarkMerged(home, taskID, ident); err != nil {
+	if err := MarkMerged(home, taskID, ident, mergeTestAuth(t, taskID)); err != nil {
 		t.Fatalf("second MarkMerged: %v", err)
 	}
 }
@@ -142,7 +164,7 @@ func TestMarkMerged_EmptyDeliveryState(t *testing.T) {
 
 	ident := identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1")
 
-	if err := MarkMerged(home, taskID, ident); err != nil {
+	if err := MarkMerged(home, taskID, ident, mergeTestAuth(t, taskID)); err != nil {
 		t.Fatalf("MarkMerged: %v", err)
 	}
 
@@ -188,8 +210,8 @@ func TestMarkMerged_CASFailOnIdentityMismatch(t *testing.T) {
 		HeadSHA:  "fff999fff999fff999fff999fff999fff999fff9",
 	}
 
-	if err := MarkMerged(home, taskID, wrongIdent); err == nil {
-		t.Fatal("expected CAS error for identity mismatch")
+	if err := MarkMerged(home, taskID, wrongIdent, mergeTestAuth(t, taskID)); err == nil {
+		t.Fatal("expected error for identity mismatch")
 	}
 
 	// delivery_state should remain unchanged.
@@ -199,6 +221,17 @@ func TestMarkMerged_CASFailOnIdentityMismatch(t *testing.T) {
 	}
 	if result[MetaDeliveryState] != string(DeliveryStateReviewReady) {
 		t.Fatalf("expected delivery_state to remain %q, got %q", DeliveryStateReviewReady, result[MetaDeliveryState])
+	}
+}
+
+func TestMarkMerged_NilAuthFailsClosed(t *testing.T) {
+	home := t.TempDir()
+	taskID := "test-ship"
+	if err := mhome.WriteMeta(home, taskID, map[string]string{"kind": "ship"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	if err := MarkMerged(home, taskID, identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"), nil); err == nil {
+		t.Fatal("expected error when no authority is composed")
 	}
 }
 
@@ -263,7 +296,7 @@ func TestReconcileMergeDelivery_Merged(t *testing.T) {
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("ReconcileMergeDelivery: %v", err)
 	}
@@ -310,7 +343,7 @@ func TestReconcileMergeDelivery_AlreadyMerged(t *testing.T) {
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("ReconcileMergeDelivery: %v", err)
 	}
@@ -354,7 +387,7 @@ func TestReconcileMergeDelivery_Open(t *testing.T) {
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("ReconcileMergeDelivery: %v", err)
 	}
@@ -398,7 +431,7 @@ func TestReconcileMergeDelivery_RemoteUnknown_Timeout(t *testing.T) {
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("ReconcileMergeDelivery: %v", err)
 	}
@@ -443,7 +476,7 @@ func TestReconcileMergeDelivery_PersistentRemoteUnknown_Escalated(t *testing.T) 
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("ReconcileMergeDelivery: %v", err)
 	}
@@ -498,7 +531,7 @@ func TestReconcileMergeDelivery_FalseNegative(t *testing.T) {
 	}()
 
 	// First call: false-negative, PR appears open
-	result1, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result1, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("first ReconcileMergeDelivery: %v", err)
 	}
@@ -510,7 +543,7 @@ func TestReconcileMergeDelivery_FalseNegative(t *testing.T) {
 	writeShipMeta(t, homeDir, taskID, string(DeliveryStateReviewReady), "2")
 
 	// Second call: merged
-	result2, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result2, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("second ReconcileMergeDelivery: %v", err)
 	}
@@ -539,7 +572,7 @@ func TestReconcileMergeDelivery_ExternalMerge(t *testing.T) {
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("ReconcileMergeDelivery: %v", err)
 	}
@@ -566,8 +599,9 @@ func TestReconcileMergeDelivery_ExternalMerge(t *testing.T) {
 
 func TestReconcileMergeDelivery_SameMutationNeverRepeated(t *testing.T) {
 	// Once remote-unknown is persisted, calling ReconcileMergeDelivery
-	// again with the same state should not change the mutation attempt
-	// (the function should re-persist remote-unknown).
+	// again with the same state should not change the mutation attempt:
+	// the Authority refuses further provider-mutating attempts and only
+	// read reconciliation is allowed.
 	homeDir := t.TempDir()
 	taskID := "test-no-repeat"
 	prURL := "https://github.com/testowner/testrepo/pull/42"
@@ -588,8 +622,10 @@ func TestReconcileMergeDelivery_SameMutationNeverRepeated(t *testing.T) {
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	// First call: remote-unknown
-	result1, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	auth := mergeTestAuth(t, taskID)
+
+	// First call: remote-unknown commits.
+	result1, err := ReconcileMergeDelivery(homeDir, taskID, prURL, auth)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -597,9 +633,9 @@ func TestReconcileMergeDelivery_SameMutationNeverRepeated(t *testing.T) {
 		t.Errorf("first call: expected outcome=%q, got %q", MergeOutcomeRemoteUnknown, result1.Outcome)
 	}
 
-	// Provider is still ambiguous — second call should also be remote-unknown
-	// but with escalated=true
-	result2, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	// Provider is still ambiguous — second call is read reconciliation only:
+	// escalated, nothing mutates, the committed revision is unchanged.
+	result2, err := ReconcileMergeDelivery(homeDir, taskID, prURL, auth)
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -608,6 +644,16 @@ func TestReconcileMergeDelivery_SameMutationNeverRepeated(t *testing.T) {
 	}
 	if !result2.Escalated {
 		t.Error("second call: expected Escalated=true")
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Revision != 2 {
+		t.Fatalf("read reconciliation advanced the revision to %d, want 2", agg.Revision)
+	}
+	if agg.MergeAttempt == nil || agg.MergeAttempt.Outcome != taskauthority.MergeOutcomeRemoteUnknown {
+		t.Fatalf("committed merge attempt = %+v, want remote-unknown", agg.MergeAttempt)
 	}
 
 	// The same mutation (same head SHA) was never repeated
@@ -634,7 +680,7 @@ func TestReconcileMergeDelivery_OpenDoesNotRegressFromMerged(t *testing.T) {
 		FetchProviderSnapshot = savedSnapshot
 	}()
 
-	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL)
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, mergeTestAuth(t, taskID))
 	if err != nil {
 		t.Fatalf("ReconcileMergeDelivery: %v", err)
 	}
@@ -678,6 +724,7 @@ func TestMarkMergedFromRecord_Valid(t *testing.T) {
 		"github", "testowner", "testrepo",
 		42, "https://github.com/testowner/testrepo/pull/42",
 		"main", "feature", "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+		mergeTestAuth(t, taskID),
 	); err != nil {
 		t.Fatalf("MarkMergedFromRecord: %v", err)
 	}
@@ -688,5 +735,164 @@ func TestMarkMergedFromRecord_Valid(t *testing.T) {
 	}
 	if result[MetaDeliveryState] != string(DeliveryStateMerged) {
 		t.Fatalf("expected delivery_state=%q, got %q", DeliveryStateMerged, result[MetaDeliveryState])
+	}
+}
+
+// --- StoreMergeAttempt (Task 7.6) ---
+
+func TestStoreMergeAttemptNilAuthFailsClosed(t *testing.T) {
+	if _, err := StoreMergeAttempt(t.TempDir(), nil, "task", MergeOutcomeMerged, identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"), "", "MERGED", "test"); err == nil {
+		t.Fatal("expected error when no authority is composed")
+	}
+}
+
+func TestStoreMergeAttemptMissingTaskFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-missing"
+	if err := mhome.WriteMeta(homeDir, taskID, map[string]string{"kind": "ship"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := StoreMergeAttempt(homeDir, auth, taskID, MergeOutcomeMerged, identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"), "", "MERGED", "test"); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("missing task error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestReconcileMergeDelivery_CommittedRemoteUnknownRefusesMutation proves the
+// remote-unknown fail-closed semantics at the fleet layer: once a
+// remote-unknown outcome is committed, a later provider-verified read is
+// classified read-only (Escalated) and never mutates the committed truth.
+func TestReconcileMergeDelivery_CommittedRemoteUnknownRefusesMutation(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-refused"
+	prURL := "https://github.com/testowner/testrepo/pull/42"
+
+	writeShipMeta(t, homeDir, taskID, string(DeliveryStateReviewReady), "1")
+	auth := mergeTestAuth(t, taskID)
+
+	// Commit a remote-unknown outcome first (as the first reconcile did).
+	if _, err := StoreMergeAttempt(homeDir, auth, taskID, MergeOutcomeRemoteUnknown, identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"), "", "", "provider unreachable"); err != nil {
+		t.Fatalf("StoreMergeAttempt(remote-unknown): %v", err)
+	}
+
+	// The provider is now reachable and confirms merged: the mutation is
+	// refused; only read reconciliation is permitted.
+	saved := ReconcileMergeDelivery
+	savedSnapshot := FetchProviderSnapshot
+	ReconcileMergeDelivery = reconcileMergeDeliveryImpl
+	FetchProviderSnapshot = func(url string) (*ProviderSnapshot, error) {
+		return mergeDeliverySnapshot("MERGED", true, "abc123def456abc123def456abc123def456abc1"), nil
+	}
+	defer func() {
+		ReconcileMergeDelivery = saved
+		FetchProviderSnapshot = savedSnapshot
+	}()
+
+	result, err := ReconcileMergeDelivery(homeDir, taskID, prURL, auth)
+	if err != nil {
+		t.Fatalf("ReconcileMergeDelivery: %v", err)
+	}
+	if !result.Escalated {
+		t.Error("expected Escalated=true for committed remote-unknown read reconciliation")
+	}
+	if !result.RemoteKnown {
+		t.Error("expected RemoteKnown=true (the provider did respond)")
+	}
+
+	// Nothing mutated: the committed remote-unknown outcome and revision stand.
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.MergeAttempt == nil || agg.MergeAttempt.Outcome != taskauthority.MergeOutcomeRemoteUnknown {
+		t.Fatalf("committed outcome was mutated: %+v", agg.MergeAttempt)
+	}
+	if agg.Revision != 2 {
+		t.Fatalf("read reconciliation advanced the revision to %d, want 2", agg.Revision)
+	}
+	meta, err := mhome.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta[MetaDeliveryState] != string(DeliveryStateRemoteUnknown) {
+		t.Fatalf("delivery_state = %q, want remote-unknown", meta[MetaDeliveryState])
+	}
+}
+
+// TestReconcileMergeDelivery_ProjectionFailureNeverErasesRemoteTruth proves
+// that a partial .meta projection failure never rolls back or mutates the
+// committed remote truth (ADR-0007 §7): the authoritative merged attempt
+// commits, the projection returns a typed partial error, and a retry heals
+// the projection idempotently.
+func TestReconcileMergeDelivery_ProjectionFailureNeverErasesRemoteTruth(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-projection"
+	prURL := "https://github.com/testowner/testrepo/pull/42"
+
+	writeShipMeta(t, homeDir, taskID, string(DeliveryStateReviewReady), "1")
+	auth := mergeTestAuth(t, taskID)
+
+	// Make the state path read-only so the projection write fails while the
+	// meta read (and the authoritative commit) still works.
+	if err := os.Chmod(filepath.Join(homeDir, "state"), 0555); err != nil {
+		t.Fatal(err)
+	}
+
+	saved := ReconcileMergeDelivery
+	savedSnapshot := FetchProviderSnapshot
+	ReconcileMergeDelivery = reconcileMergeDeliveryImpl
+	FetchProviderSnapshot = func(url string) (*ProviderSnapshot, error) {
+		return mergeDeliverySnapshot("MERGED", true, "abc123def456abc123def456abc123def456abc1"), nil
+	}
+	defer func() {
+		ReconcileMergeDelivery = saved
+		FetchProviderSnapshot = savedSnapshot
+	}()
+
+	_, err := ReconcileMergeDelivery(homeDir, taskID, prURL, auth)
+	var typed *MergeOutcomeProjectionError
+	if !errors.As(err, &typed) {
+		t.Fatalf("projection error = %v, want *MergeOutcomeProjectionError", err)
+	}
+
+	// The authoritative merged truth is committed and never erased.
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.MergeAttempt == nil || agg.MergeAttempt.Outcome != taskauthority.MergeOutcomeMerged {
+		t.Fatalf("authoritative remote truth lost after projection failure: %+v", agg.MergeAttempt)
+	}
+	if agg.MergeAttempt.MergedSHA != "abc123def456abc123def456abc123def456abc1" {
+		t.Fatalf("merged SHA lost: %+v", agg.MergeAttempt)
+	}
+
+	// The projection did not erase the old meta state (it could not write).
+	meta, err := mhome.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta[MetaDeliveryState] != string(DeliveryStateReviewReady) {
+		t.Fatalf("failed projection mutated meta: %q", meta[MetaDeliveryState])
+	}
+
+	// Retry heals the projection idempotently: the already-merged re-attempt
+	// is an in-value no-op that never erases the committed truth.
+	if err := os.Chmod(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := StoreMergeAttempt(homeDir, auth, taskID, MergeOutcomeMerged, identityFor("testowner", "testrepo", 42, "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"), "abc123def456abc123def456abc123def456abc1", "MERGED", "retry heal")
+	if err != nil {
+		t.Fatalf("StoreMergeAttempt retry: %v", err)
+	}
+	if res.Revision != 2 {
+		t.Fatalf("idempotent re-attempt advanced revision to %d, want 2", res.Revision)
+	}
+	meta, err = mhome.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta[MetaDeliveryState] != string(DeliveryStateMerged) {
+		t.Fatalf("healed delivery_state = %q, want merged", meta[MetaDeliveryState])
 	}
 }

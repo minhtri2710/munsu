@@ -72,6 +72,70 @@ func TestNoDirectDeliveryMetaWritesInCutoverFiles(t *testing.T) {
 	}
 }
 
+// TestNoDirectMergeOutcomeMetaWritesInCutoverFiles pins the Task 7.6 grep
+// gate: the merge-outcome and amendment transition files carry no direct
+// authoritative home.WriteMeta / home.CompareAndSwapMeta writes. The merged /
+// remote-unknown / review-ready / amending delivery_state transitions commit
+// as generation-bound Authority records (RecordMergeAttempt and the
+// PrepareDelivery/SetGitAuthContext operations); the .meta delivery_state and
+// identity keys are reconciled as post-commit projections (ADR-0007 §7), so a
+// direct meta write is only acceptable inside a project* projection helper,
+// and home.CompareAndSwapMeta is banned outright (the merge-outcome CAS moved
+// into the Authority).
+func TestNoDirectMergeOutcomeMetaWritesInCutoverFiles(t *testing.T) {
+	for _, file := range []string{"delivery_mergeops.go", "delivery_amend.go", "delivery_prmerge.go"} {
+		path := file
+		fset := token.NewFileSet()
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		parsed, err := parser.ParseFile(fset, path, src, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", path, err)
+		}
+		enclosing := map[*ast.CallExpr]string{}
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			switch fn := n.(type) {
+			case *ast.FuncDecl:
+				ast.Inspect(fn.Body, func(cn ast.Node) bool {
+					if call, ok := cn.(*ast.CallExpr); ok {
+						enclosing[call] = fn.Name.Name
+					}
+					return true
+				})
+				return false
+			}
+			return true
+		})
+		var authoritative []string
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok || ident.Name != "home" {
+				return true
+			}
+			if sel.Sel.Name == "CompareAndSwapMeta" {
+				authoritative = append(authoritative, "CompareAndSwapMeta")
+			}
+			if sel.Sel.Name == "WriteMeta" && !hasProjectPrefix(enclosing[call]) {
+				authoritative = append(authoritative, "WriteMeta")
+			}
+			return true
+		})
+		if len(authoritative) > 0 {
+			t.Errorf("%s carries authoritative meta mutation(s) %v outside the projection layer; merge outcomes and delivery_state transitions must route through the composed Task Authority (Task 7.6)", file, authoritative)
+		}
+	}
+}
+
 // hasProjectPrefix reports whether the enclosing function name starts with
 // "project" (a post-commit projection helper, ADR-0007 §7).
 func hasProjectPrefix(fn string) bool {

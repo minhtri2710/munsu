@@ -172,6 +172,15 @@ type Aggregate struct {
 	// a delivery terminal state.
 	DeliveryPrepare  *DeliveryPrepare  `json:"delivery_prepare,omitempty"`
 	DeliveryTerminal *DeliveryTerminal `json:"delivery_terminal,omitempty"`
+	// MergeAttempt is the generation-bound merge attempt and outcome record
+	// committed by the RecordMergeAttempt operation (Task 7.6): the stable
+	// attempt identity binds the provider identity, PR identity, and exact
+	// head SHA with the provider-verified remote outcome. A remote-unknown
+	// outcome is terminal: once committed, the Authority refuses further
+	// provider-mutating attempts and only read reconciliation is allowed.
+	// Verified merged truth is never erased by a later ambiguous or
+	// false-negative read.
+	MergeAttempt *MergeAttempt `json:"merge_attempt,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -348,6 +357,10 @@ func (a Aggregate) clone() Aggregate {
 	if a.DeliveryTerminal != nil {
 		tr := *a.DeliveryTerminal
 		out.DeliveryTerminal = &tr
+	}
+	if a.MergeAttempt != nil {
+		m := *a.MergeAttempt
+		out.MergeAttempt = &m
 	}
 	return out
 }

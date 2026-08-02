@@ -111,8 +111,10 @@ func AuthorizeMerge(homeDir string, auth *taskauthority.Authority, taskID string
 // the provided identity, then commits the generation-bound external merge
 // evidence record (bounded: one record per generation; same-op replay
 // idempotent) and reconciles the .meta external_merge projection. The
-// delivery_state=merged transition the legacy function also performed is
-// Task 7.6 and is not part of this record.
+// delivery_state=merged transition the legacy function also performed now
+// commits via the Authority (Task 7.6): the verified external merge evidence
+// drives a generation-bound merged merge outcome, and delivery_state is a
+// post-commit projection.
 func RecordExternalMerge(homeDir string, auth *taskauthority.Authority, taskID, mergedSHA string, expected *domain.DeliveryIdentity) (taskauthority.AuthorizationResult, error) {
 	if auth == nil {
 		return taskauthority.AuthorizationResult{}, fmt.Errorf("external merge record requires a composed task authority")
@@ -140,29 +142,41 @@ func RecordExternalMerge(homeDir string, auth *taskauthority.Authority, taskID, 
 	if err != nil {
 		return taskauthority.AuthorizationResult{}, fmt.Errorf("record external merge: resolving task generation: %w", err)
 	}
-	priorHead := ""
-	if agg.MergeAuthorization != nil {
-		priorHead = agg.MergeAuthorization.HeadSHA
+	var res taskauthority.AuthorizationResult
+	if agg.ExternalMerge == nil {
+		priorHead := ""
+		if agg.MergeAuthorization != nil {
+			priorHead = agg.MergeAuthorization.HeadSHA
+		}
+		res, err = auth.RecordExternalMerge(taskauthority.RecordExternalMergeRequest{
+			OperationID:        mustDeliveryOperationID("merge-ext-record-" + taskID),
+			Actor:              deliveryActor(homeDir),
+			TaskID:             taskID,
+			ExpectedGeneration: agg.Generation,
+			MergedSHA:          mergedSHA,
+			Identity:           storedSnap,
+			ExpectedPriorHead:  priorHead,
+			Reason:             "external merge",
+		})
+		if err != nil {
+			return taskauthority.AuthorizationResult{}, err
+		}
+		committed, err := auth.Get(taskID)
+		if err != nil {
+			return res, &AuthorizationProjectionError{TaskID: taskID, ProjectionErr: err}
+		}
+		if err := projectExternalMerge(homeDir, taskID, committed.ExternalMerge); err != nil {
+			return res, err
+		}
 	}
-	res, err := auth.RecordExternalMerge(taskauthority.RecordExternalMergeRequest{
-		OperationID:        mustDeliveryOperationID("merge-ext-record-" + taskID),
-		Actor:              deliveryActor(homeDir),
-		TaskID:             taskID,
-		ExpectedGeneration: agg.Generation,
-		MergedSHA:          mergedSHA,
-		Identity:           storedSnap,
-		ExpectedPriorHead:  priorHead,
-		Reason:             "external merge",
-	})
-	if err != nil {
-		return taskauthority.AuthorizationResult{}, err
-	}
-	committed, err := auth.Get(taskID)
-	if err != nil {
-		return res, &AuthorizationProjectionError{TaskID: taskID, ProjectionErr: err}
-	}
-	if err := projectExternalMerge(homeDir, taskID, committed.ExternalMerge); err != nil {
-		return res, err
+
+	// The merged-state transition (deferred from Task 7.4) now commits via
+	// the Authority: the verified external merge evidence (identity/head/
+	// merged SHA) drives the generation-bound merged merge outcome, and
+	// delivery_state=merged is a post-commit projection. An already-merged
+	// re-attempt is idempotent.
+	if _, err := StoreMergeAttempt(homeDir, auth, taskID, MergeOutcomeMerged, stored, mergedSHA, "MERGED", "external merge"); err != nil {
+		return taskauthority.AuthorizationResult{}, fmt.Errorf("record external merge: merged transition: %w", err)
 	}
 	return res, nil
 }

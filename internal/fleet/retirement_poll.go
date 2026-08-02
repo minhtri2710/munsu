@@ -14,6 +14,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // PollRetirementSchema is the schema version for PollRetirementRecord.
@@ -332,13 +333,14 @@ func ValidateCheckWithLstat(path string) error {
 //  2. Query provider merge status via QueryDeliveryMergeStatus.
 //  3. Require Merged == true, nonempty provider head, provider-head == stored HeadSHA.
 //  4. Persist the pending retirement record BEFORE publication.
-//  5. Atomically transition delivery_state to merged via MarkMerged.
+//  5. Route the delivery_state=merged transition through the composed Task
+//     Authority via MarkMerged (Task 7.6; no raw CAS remains).
 //  6. Durably publish one deterministic keyed status line.
 //  7. Remove the exact poll artifact (with digest revalidation).
 //  8. Remove the pending retirement record.
 //
 // Fail-closed on any validation step: preserves poll and all artifacts.
-func RetireMergedPoll(homeDir, taskID, checkPath string) error {
+func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Authority) error {
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
 		return fmt.Errorf("poll validation failed: %w", err)
@@ -418,13 +420,15 @@ func RetireMergedPoll(homeDir, taskID, checkPath string) error {
 		return fmt.Errorf("persisting retirement record: %w", err)
 	}
 
-	// Step 5: Atomically transition delivery_state to merged.
-	// This ensures teardown accepts without --force after external merge.
-	// Fail-closed: if CAS fails, the retirement record stays pending and
-	// the next cycle retries via recovery. The publication and poll removal
-	// below do NOT proceed until meta is consistent.
-	if err := MarkMerged(homeDir, taskID, ident); err != nil {
-		return fmt.Errorf("delivery_state CAS failed (pending record exists): %w", err)
+	// Step 5: Route the delivery_state=merged transition through the composed
+	// Task Authority (Task 7.6): the verified merge evidence (identity/head)
+	// drives a generation-bound merged merge outcome and the delivery_state
+	// projection. This ensures teardown accepts without --force after external
+	// merge. Fail-closed: if the transition fails, the retirement record stays
+	// pending and the next cycle retries via recovery. The publication and poll
+	// removal below do NOT proceed until meta is consistent.
+	if err := MarkMerged(homeDir, taskID, ident, auth); err != nil {
+		return fmt.Errorf("delivery_state merged transition failed (pending record exists): %w", err)
 	}
 
 	// Step 6: Durable publication. Only appends if exact evidence is absent.
@@ -539,7 +543,7 @@ func recordToIdentity(rec *PollRetirementRecord) *domain.DeliveryIdentity {
 //  3. Append publication only if exact evidence is absent.
 //  4. Remove poll only after evidence exists (or accept missing poll).
 //  5. Remove completed record.
-func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
+func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Authority) (bool, error) {
 	// Validate record path.
 	if err := ValidateRetirementPath(homeDir, taskID); err != nil {
 		return false, fmt.Errorf("invalid retirement path: %w", err)
@@ -577,13 +581,13 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 			return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", currentHead, rec.HeadSHA)
 		}
 
-		// Atomically transition delivery_state to merged.
-		// This heals orphaned retirement records and is idempotent
-		// (no-op if already merged). Fail-closed: preserves record
+		// Route the delivery_state=merged transition through the composed Task
+		// Authority (Task 7.6). This heals orphaned retirement records and is
+		// idempotent (no-op if already merged). Fail-closed: preserves record
 		// and poll for the next recovery cycle.
 		if currentMeta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-			if err := MarkMerged(homeDir, taskID, recordToIdentity(rec)); err != nil {
-				return false, fmt.Errorf("recovery: delivery_state CAS failed: %w", err)
+			if err := MarkMerged(homeDir, taskID, recordToIdentity(rec), auth); err != nil {
+				return false, fmt.Errorf("recovery: delivery_state merged transition failed: %w", err)
 			}
 		}
 	}
@@ -651,7 +655,7 @@ func RecoverPendingRetirement(homeDir, taskID string) (bool, error) {
 // RecoverAllPendingRetirements scans all pending retirement records and
 // completes each. Returns the count of fully resolved records and any
 // non-fatal errors encountered. Records that fail recovery are preserved.
-func RecoverAllPendingRetirements(homeDir string) (int, []error) {
+func RecoverAllPendingRetirements(homeDir string, auth *taskauthority.Authority) (int, []error) {
 	ids, err := ListPendingRetirements(homeDir)
 	if err != nil {
 		return 0, []error{fmt.Errorf("listing pending retirements: %w", err)}
@@ -660,7 +664,7 @@ func RecoverAllPendingRetirements(homeDir string) (int, []error) {
 	var errors []error
 	resolved := 0
 	for _, id := range ids {
-		if _, recErr := RecoverPendingRetirement(homeDir, id); recErr != nil {
+		if _, recErr := RecoverPendingRetirement(homeDir, id, auth); recErr != nil {
 			errors = append(errors, fmt.Errorf("task %s: %w", id, recErr))
 		} else {
 			resolved++

@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // TestPRMerge_FleetSyncReadsMeta verifies PRMerge reads meta correctly.
@@ -324,7 +325,7 @@ func TestPRMerge_WiresReconcileMergeDelivery(t *testing.T) {
 		// Return the same identity as stored
 		return ident, nil
 	}
-	ReconcileMergeDelivery = func(homeDir, taskID, prURL string) (*MergeDeliveryResult, error) {
+	ReconcileMergeDelivery = func(homeDir, taskID, prURL string, _ *taskauthority.Authority) (*MergeDeliveryResult, error) {
 		calledHome = homeDir
 		calledID = taskID
 		calledURL = prURL
@@ -560,7 +561,7 @@ func TestPRMerge_WireErrorOutcome(t *testing.T) {
 			fetchLiveIdentity = func(prURL string) (*domain.DeliveryIdentity, error) {
 				return ident, nil
 			}
-			ReconcileMergeDelivery = func(homeDir, taskID, prURL string) (*MergeDeliveryResult, error) {
+			ReconcileMergeDelivery = func(homeDir, taskID, prURL string, _ *taskauthority.Authority) (*MergeDeliveryResult, error) {
 				return &MergeDeliveryResult{
 					Outcome:     tc.outcome,
 					RemoteKnown: tc.outcome != MergeOutcomeRemoteUnknown,

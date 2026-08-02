@@ -57,6 +57,28 @@ func amendAuth(t *testing.T, taskID string) *taskauthority.Authority {
 	return auth
 }
 
+// amendAuthAtHead seeds one ship task in an in-memory Authority with a
+// worktree binding and a delivery preparation at the given head, mirroring
+// the pr-check flow (Task 7.6: the amendment rebind acknowledges the
+// committed prior prepared head, so the preparation must exist).
+func amendAuthAtHead(t *testing.T, taskID, headSHA string) *taskauthority.Authority {
+	t.Helper()
+	auth := amendAuth(t, taskID)
+	if _, err := auth.PrepareDelivery(taskauthority.PrepareDeliveryRequest{
+		OperationID:        "op-prepare-" + taskID,
+		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:             taskID,
+		ExpectedGeneration: 1,
+		State:              taskauthority.DeliveryPrepareStateReviewReady,
+		HeadSHA:            headSHA,
+		Identity:           snapshotFromIdentity(testIdentityAtHead(headSHA)),
+		Reason:             "pr-check",
+	}); err != nil {
+		t.Fatalf("PrepareDelivery: %v", err)
+	}
+	return auth
+}
+
 func testIdentity() *domain.DeliveryIdentity {
 	return &domain.DeliveryIdentity{
 		Provider:   "github",
@@ -413,7 +435,7 @@ func TestAcceptAmendment_Success(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	newIdent, record, err := AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
+	newIdent, record, err := AcceptAmendment(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err != nil {
 		t.Fatalf("AcceptAmendment: %v", err)
 	}
@@ -528,7 +550,7 @@ func TestAcceptAmendment_ForcePushRejected(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err = AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
+	_, _, err = AcceptAmendment(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err == nil {
 		t.Fatal("expected error for force-push (non-ancestor)")
 	}
@@ -590,7 +612,7 @@ func TestAcceptAmendment_CASConflict(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, _, err := AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
+	_, _, err := AcceptAmendment(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err == nil {
 		t.Fatal("expected error for CAS conflict")
 	}
@@ -622,7 +644,7 @@ func TestAcceptAmendment_HeadRefChanged(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err := AcceptAmendment(homeDir, id, repo, amendAuth(t, id))
+	_, _, err := AcceptAmendment(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err == nil {
 		t.Fatal("expected error for head ref change")
 	}
@@ -657,7 +679,7 @@ func TestReconcileIdentity_AlreadyUpToDate(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	newIdent, record, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	newIdent, record, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err != nil {
 		t.Fatalf("ReconcileIdentity: %v", err)
 	}
@@ -692,7 +714,7 @@ func TestReconcileIdentity_AdvancedHead(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	newIdent, record, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	newIdent, record, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err != nil {
 		t.Fatalf("ReconcileIdentity: %v", err)
 	}
@@ -744,7 +766,7 @@ func TestReconcileIdentity_MergedPR(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, record, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	_, record, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err != nil {
 		t.Fatalf("ReconcileIdentity: %v", err)
 	}
@@ -818,7 +840,7 @@ func TestReconcileIdentity_ForcePushRejected(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err == nil {
 		t.Fatal("expected error for force-push (non-ancestor)")
 	}
@@ -848,7 +870,7 @@ func TestReconcileIdentity_WrongRef(t *testing.T) {
 	}
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
-	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err == nil {
 		t.Fatal("expected error for head ref mismatch")
 	}
@@ -881,7 +903,7 @@ func TestReconcileIdentity_DuplicateIdempotent(t *testing.T) {
 	defer func() { FetchProviderSnapshot = savedSnap }()
 
 	// First reconciliation
-	_, record1, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	_, record1, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
@@ -890,7 +912,7 @@ func TestReconcileIdentity_DuplicateIdempotent(t *testing.T) {
 	}
 
 	// Second reconciliation — should be idempotent (already up to date)
-	_, record2, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	_, record2, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
@@ -928,7 +950,7 @@ func TestReconcileIdentity_CASConflict(t *testing.T) {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuth(t, id))
+	_, _, err := ReconcileIdentity(homeDir, id, repo, amendAuthAtHead(t, id, oldSHA))
 	if err == nil {
 		t.Fatal("expected error for CAS conflict")
 	}

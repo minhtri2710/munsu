@@ -104,6 +104,10 @@ const (
 	// the delivered/done terminal transition and terminal provider evidence
 	// (task-bound, Task 7.5).
 	AuditDeliveryTerminal = "delivery-terminal"
+	// AuditMergeOutcome records a generation-bound merge attempt and its
+	// provider-verified remote outcome (merged, already-merged, open, failed,
+	// or remote-unknown; task-bound, Task 7.6).
+	AuditMergeOutcome = "merge-outcome"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -190,6 +194,13 @@ func (ev AuditEvent) Validate() error {
 			return err
 		}
 	case AuditDeliveryTerminal:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditMergeOutcome:
 		if err := validateTaskID(ev.TaskID); err != nil {
 			return err
 		}

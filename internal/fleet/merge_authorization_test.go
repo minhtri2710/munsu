@@ -495,11 +495,25 @@ func TestRecordExternalMerge_Success(t *testing.T) {
 		t.Errorf("MergedSHA: got %q, want %q", ext.MergedSHA, mergedSHA)
 	}
 
-	// Task 7.4 scope note: the delivery_state=merged transition the legacy
-	// function performed is Task 7.6 and is intentionally not performed here;
-	// the delivery_state CAS family remains in the mergeops slice.
-	if readMeta[MetaDeliveryState] == string(DeliveryStateMerged) {
-		t.Error("RecordExternalMerge must not transition delivery_state in this slice (Task 7.6)")
+	// Task 7.6: the merged-state transition deferred from Task 7.4 now commits
+	// via the Authority — verified external merge evidence drives the
+	// generation-bound merged merge outcome and the delivery_state=merged
+	// projection.
+	agg2, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if agg2.MergeAttempt == nil || agg2.MergeAttempt.Outcome != taskauthority.MergeOutcomeMerged {
+		t.Fatalf("merged merge outcome missing after external merge: %+v", agg2.MergeAttempt)
+	}
+	if agg2.MergeAttempt.HeadSHA != ident.HeadSHA {
+		t.Errorf("merged outcome head = %q, want %q", agg2.MergeAttempt.HeadSHA, ident.HeadSHA)
+	}
+	if agg2.MergeAttempt.MergedSHA != mergedSHA {
+		t.Errorf("merged outcome merged SHA = %q, want %q", agg2.MergeAttempt.MergedSHA, mergedSHA)
+	}
+	if readMeta[MetaDeliveryState] != string(DeliveryStateMerged) {
+		t.Errorf("delivery_state projection = %q, want merged", readMeta[MetaDeliveryState])
 	}
 }
 

@@ -33,6 +33,10 @@ var (
 	ErrInvalidGeneration = errors.New("invalid task generation")
 	// ErrInvalidInput means a request field or record violates validation.
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrMergeMutationRefused means a remote-unknown merge outcome is
+	// committed and the Authority refuses further provider-mutating merge
+	// attempts; only read reconciliation is permitted (Task 7.6).
+	ErrMergeMutationRefused = errors.New("merge mutation refused: remote-unknown outcome permits read reconciliation only")
 )
 
 // conflictError wraps a sentinel cause in a typed domain error so callers can

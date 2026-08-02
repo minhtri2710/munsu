@@ -34,9 +34,9 @@ func validateLiveIdentity(stored, live *domain.DeliveryIdentity) error {
 // The prURL must be a full https://github.com/<owner>/<repo>/pull/<n> URL.
 // Extra args after `--` can specify merge method: `-- --merge`, `-- --rebase`.
 // authority is the composed Task Authority targeting the exact resolved task
-// home (cross-home delivery); it is used for the post-merge issue link
-// reconciliation commit and is required only when the task carries issue
-// links.
+// home (cross-home delivery); it commits the post-merge merge outcome and
+// issue link reconciliation records and is required (nil fails closed at the
+// reconciliation step).
 func PRMerge(homeDir string, id, prURL string, extraArgs []string, authority *taskauthority.Authority) error {
 	// Reject --repo/-R overrides in extraArgs
 	for _, arg := range extraArgs {
@@ -96,10 +96,11 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string, authority *ta
 	}
 
 	// Reconcile merge delivery: query provider for remote truth, classify the
-	// outcome, and persist the result. This replaces the inline post-merge
-	// snapshot check with a structured reconciliation that handles merged,
-	// already-merged, open, remote-unknown, and failed outcomes.
-	result, reconcileErr := ReconcileMergeDelivery(homeDir, id, ident.URL)
+	// outcome, and persist the result via the composed Authority (Task 7.6).
+	// This replaces the inline post-merge snapshot check with a structured
+	// reconciliation that handles merged, already-merged, open,
+	// remote-unknown, and failed outcomes.
+	result, reconcileErr := ReconcileMergeDelivery(homeDir, id, ident.URL, authority)
 	if reconcileErr != nil {
 		return fmt.Errorf("post-merge reconciliation: %w", reconcileErr)
 	}
