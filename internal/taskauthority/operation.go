@@ -54,7 +54,10 @@ type Receipt struct {
 	Revision    Revision   `json:"revision,omitempty"`
 	Phase       Phase      `json:"phase,omitempty"`
 	Reopened    bool       `json:"reopened,omitempty"`
-	Replayed    bool       `json:"-"`
+	// InterpretationID pins the dispatch interpretation record committed by
+	// the operation, so replay returns the original committed record.
+	InterpretationID string `json:"interpretation_id,omitempty"`
+	Replayed         bool   `json:"-"`
 }
 
 // AuditEvent kinds.

@@ -1,8 +1,6 @@
 package home
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 const dispatchControlSchema = "munsu.dispatch-control/v1"
@@ -132,58 +132,130 @@ func dispatchDecisionPath(homeDir, key string) string {
 	return filepath.Join(dispatchControlDir(homeDir), "decisions", key+".json")
 }
 
+// PersistDispatchInterpretation is the home serialization adapter for a
+// fully-formed interpretation input. It delegates the deterministic identity,
+// dependency snapshot digest, and outcome classification to
+// internal/taskauthority and persists the legacy home-path projection records
+// (interpretation, and on decision-required the decision and task-scoped
+// hold). It contains no interpretation rules.
 func PersistDispatchInterpretation(homeDir string, input DispatchInterpretationInput) (DispatchInterpretation, error) {
-	if len(input.RequestedOrder) == 0 {
-		return DispatchInterpretation{}, fmt.Errorf("dispatch interpretation requires requested tasks")
-	}
-	if len(input.SelectedTasks) == 0 {
-		input.SelectedTasks = append([]string(nil), input.RequestedOrder...)
-	}
-	depsDigest, err := dispatchDependencyDigest(input.Dependencies)
+	result, err := taskauthority.ClassifyInterpretation(taskauthority.InterpretationInput{
+		RequestedOrder:         input.RequestedOrder,
+		Dependencies:           toTaskAuthorityDependencies(input.Dependencies),
+		Autonomy:               taskauthority.DispatchAutonomy(input.Autonomy),
+		ParentInterpretationID: input.ParentInterpretationID,
+		Evidence:               toTaskAuthorityEvidence(input.Evidence),
+		ComputedReadiness:      toTaskAuthorityReadiness(input.ComputedReadiness),
+		SelectedTasks:          input.SelectedTasks,
+		SafeReinterpretation:   input.SafeReinterpretation,
+		MaterialAmbiguity:      input.MaterialAmbiguity,
+	})
 	if err != nil {
 		return DispatchInterpretation{}, err
 	}
-	identity, err := json.Marshal(struct {
-		Requested []string
-		Selected  []string
-		Digest    string
-		Parent    string
-	}{input.RequestedOrder, input.SelectedTasks, depsDigest, input.ParentInterpretationID})
-	if err != nil {
-		return DispatchInterpretation{}, err
-	}
-	identityDigest := sha256.Sum256(identity)
-	record := DispatchInterpretation{SchemaVersion: dispatchControlSchema, ID: "interpretation-" + hex.EncodeToString(identityDigest[:]), RequestedOrder: append([]string(nil), input.RequestedOrder...), ComputedReadiness: append([]DispatchReadiness(nil), input.ComputedReadiness...), SelectedTasks: append([]string(nil), input.SelectedTasks...), Evidence: append([]DispatchEvidence(nil), input.Evidence...), DependencySnapshotDigest: depsDigest, ParentInterpretationID: input.ParentInterpretationID, Outcome: DispatchInterpretationAccepted, CreatedAt: time.Now().UnixNano()}
-	diverged := !equalStrings(input.RequestedOrder, input.SelectedTasks)
-	if diverged || input.MaterialAmbiguity {
-		dependencySafe := isDependencySafeOrder(input.SelectedTasks, input.Dependencies)
-		if input.MaterialAmbiguity || !dependencySafe || !input.SafeReinterpretation || input.Autonomy != DispatchAutonomySafeReinterpretation {
-			record.Outcome = DispatchInterpretationDecisionRequired
-			record.DecisionKey = record.ID + "-decision"
-		} else {
-			record.Outcome = DispatchInterpretationReinterpreted
-		}
-	}
-	if err := withDispatchControlLock(homeDir, func() error {
-		if err := writeDispatchJSON(dispatchInterpretationPath(homeDir, record.ID), record); err != nil {
-			return err
-		}
-		if record.Outcome == DispatchInterpretationDecisionRequired {
-			decision := DispatchDecision{SchemaVersion: dispatchControlSchema, Key: record.DecisionKey, InterpretationID: record.ID, Reason: "material dispatch ambiguity", CreatedAt: time.Now().UnixNano()}
-			if err := writeDispatchJSON(dispatchDecisionPath(homeDir, decision.Key), decision); err != nil {
-				return err
-			}
-			hold := DispatchHold{SchemaVersion: dispatchControlSchema, ID: record.DecisionKey + "-hold", Scope: DispatchHoldScope{TaskIDs: append([]string(nil), input.SelectedTasks...)}, Actions: []DispatchAction{DispatchActionHandoff, DispatchActionStart, DispatchActionSpawn}, Reason: "dispatch decision required", CreatedAt: time.Now().UnixNano()}
-			return writeDispatchJSON(dispatchHoldPath(homeDir, hold.ID), hold)
-		}
-		return nil
-	}); err != nil {
+	record := toHomeInterpretation(result.Record)
+	if err := persistDispatchInterpretationRecords(homeDir, record, result.Decision, result.Hold); err != nil {
 		return record, err
 	}
-	if record.Outcome == DispatchInterpretationDecisionRequired {
+	if result.Record.Outcome == taskauthority.DispatchInterpretationDecisionRequired {
 		return record, ErrDispatchDecisionRequired
 	}
 	return record, nil
+}
+
+// persistDispatchInterpretationRecords writes the interpretation record and,
+// when the outcome is decision-required, the decision and hold records to
+// their legacy home paths under the dispatch control lock.
+func persistDispatchInterpretationRecords(homeDir string, record DispatchInterpretation, decision *taskauthority.DispatchDecision, hold *taskauthority.DispatchHold) error {
+	return withDispatchControlLock(homeDir, func() error {
+		if err := writeDispatchJSON(dispatchInterpretationPath(homeDir, record.ID), record); err != nil {
+			return err
+		}
+		if decision == nil {
+			return nil
+		}
+		if err := writeDispatchJSON(dispatchDecisionPath(homeDir, decision.Key), toHomeDecision(*decision)); err != nil {
+			return err
+		}
+		return writeDispatchJSON(dispatchHoldPath(homeDir, hold.ID), toHomeHold(*hold))
+	})
+}
+
+// toHomeInterpretation renders a canonical taskauthority interpretation
+// record as the legacy home record shape stamped with the dispatch-control
+// schema, preserving the deterministic identity and digest byte-for-byte.
+func toHomeInterpretation(rec taskauthority.DispatchInterpretation) DispatchInterpretation {
+	return DispatchInterpretation{
+		SchemaVersion:            dispatchControlSchema,
+		ID:                       rec.ID,
+		RequestedOrder:           append([]string(nil), rec.RequestedOrder...),
+		ComputedReadiness:        toHomeReadiness(rec.ComputedReadiness),
+		SelectedTasks:            append([]string(nil), rec.SelectedTasks...),
+		Evidence:                 toHomeEvidence(rec.Evidence),
+		DependencySnapshotDigest: rec.DependencySnapshotDigest,
+		ParentInterpretationID:   rec.ParentInterpretationID,
+		Outcome:                  rec.Outcome,
+		DecisionKey:              rec.DecisionKey,
+		CreatedAt:                rec.CreatedAt,
+	}
+}
+
+func toHomeDecision(dec taskauthority.DispatchDecision) DispatchDecision {
+	return DispatchDecision{
+		SchemaVersion:    dispatchControlSchema,
+		Key:              dec.Key,
+		InterpretationID: dec.InterpretationID,
+		Reason:           dec.Reason,
+		CreatedAt:        dec.CreatedAt,
+		ResolvedAt:       dec.ResolvedAt,
+		Answer:           dec.Answer,
+	}
+}
+
+func toHomeHold(hold taskauthority.DispatchHold) DispatchHold {
+	actions := make([]DispatchAction, 0, len(hold.Actions))
+	for _, action := range hold.Actions {
+		actions = append(actions, DispatchAction(action))
+	}
+	return DispatchHold{
+		SchemaVersion: dispatchControlSchema,
+		ID:            hold.ID,
+		Scope:         toHomeHoldScope(hold.Scope),
+		Actions:       actions,
+		Reason:        hold.Reason,
+		CreatedAt:     hold.CreatedAt,
+		ReleasedAt:    hold.ReleasedAt,
+	}
+}
+
+func toHomeReadiness(readiness []taskauthority.DispatchReadiness) []DispatchReadiness {
+	out := make([]DispatchReadiness, 0, len(readiness))
+	for _, item := range readiness {
+		out = append(out, DispatchReadiness{
+			TaskID:          item.TaskID,
+			Generation:      item.Generation,
+			Ready:           item.Ready,
+			BlockingReasons: append([]string(nil), item.BlockingReasons...),
+		})
+	}
+	return out
+}
+
+func toHomeEvidence(evidence []taskauthority.DispatchEvidence) []DispatchEvidence {
+	out := make([]DispatchEvidence, 0, len(evidence))
+	for _, item := range evidence {
+		out = append(out, DispatchEvidence{Source: item.Source, Path: item.Path, Field: item.Field, Value: item.Value})
+	}
+	return out
+}
+
+func toHomeHoldScope(scope taskauthority.DispatchHoldScope) DispatchHoldScope {
+	return DispatchHoldScope{
+		ProjectIDs:  append([]string(nil), scope.ProjectIDs...),
+		TaskIDs:     append([]string(nil), scope.TaskIDs...),
+		Generations: append([]string(nil), scope.Generations...),
+		ParentIDs:   append([]string(nil), scope.ParentIDs...),
+	}
 }
 
 func LoadDispatchInterpretation(homeDir, id string) (DispatchInterpretation, error) {
@@ -210,21 +282,6 @@ func loadDispatchInterpretation(homeDir, id string, seen map[string]bool) (Dispa
 		return record, os.ErrNotExist
 	}
 	return loadDispatchInterpretation(parent, id, seen)
-}
-
-func dispatchDependencyDigest(deps []DispatchDependency) (string, error) {
-	copyDeps := append([]DispatchDependency(nil), deps...)
-	sort.Slice(copyDeps, func(i, j int) bool { return copyDeps[i].TaskID < copyDeps[j].TaskID })
-	for i := range copyDeps {
-		copyDeps[i].DependsOn = append([]string(nil), copyDeps[i].DependsOn...)
-		sort.Strings(copyDeps[i].DependsOn)
-	}
-	data, err := json.Marshal(copyDeps)
-	if err != nil {
-		return "", fmt.Errorf("encoding dependency snapshot: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 func CreateDispatchHold(homeDir string, input DispatchHoldInput) (DispatchHold, error) {
@@ -366,40 +423,6 @@ func uniqueSorted(values []string) []string {
 		}
 	}
 	return result
-}
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func isDependencySafeOrder(selected []string, dependencies []DispatchDependency) bool {
-	positions := make(map[string]int, len(selected))
-	for i, taskID := range selected {
-		if _, exists := positions[taskID]; exists {
-			return false
-		}
-		positions[taskID] = i
-	}
-	for _, dependency := range dependencies {
-		dependentPosition, dependentExists := positions[dependency.TaskID]
-		if !dependentExists {
-			continue
-		}
-		for _, prerequisite := range dependency.DependsOn {
-			prerequisitePosition, prerequisiteExists := positions[prerequisite]
-			if prerequisiteExists && prerequisitePosition > dependentPosition {
-				return false
-			}
-		}
-	}
-	return true
 }
 func writeDispatchJSON(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")

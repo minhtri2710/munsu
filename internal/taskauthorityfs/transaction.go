@@ -229,11 +229,12 @@ type manifestBuilder struct {
 	opID string
 	view taskauthority.View
 
-	entries       map[string]string // rel path -> document payload (later staged write wins)
-	currentByTask map[string]taskauthority.Generation
-	stagedTasks   map[string]bool
-	audit         *taskauthority.AuditEvent
-	outcome       *stagedOutcome
+	entries          map[string]string // rel path -> document payload (later staged write wins)
+	currentByTask    map[string]taskauthority.Generation
+	stagedTasks      map[string]bool
+	audit            *taskauthority.AuditEvent
+	outcome          *stagedOutcome
+	interpretationID string
 }
 
 func newManifestBuilder(opID string, view taskauthority.View) *manifestBuilder {
@@ -287,6 +288,7 @@ func (b *manifestBuilder) ApplyInterpretation(rec taskauthority.DispatchInterpre
 		return err
 	}
 	b.entries[rel] = string(data)
+	b.interpretationID = rec.ID
 	return nil
 }
 
@@ -437,5 +439,6 @@ func (b *manifestBuilder) receipt(digest string, now int64) taskauthority.Receip
 			receipt.Reopened = true
 		}
 	}
+	receipt.InterpretationID = b.interpretationID
 	return receipt
 }

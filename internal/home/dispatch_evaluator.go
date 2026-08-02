@@ -2,22 +2,28 @@ package home
 
 import (
 	"fmt"
-	"sort"
+	"strconv"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func EvaluateDispatch(homeDir string, requested []string, autonomy DispatchAutonomy) (DispatchInterpretation, []string, error) {
 	return EvaluateDispatchWithDependencies(homeDir, requested, nil, autonomy)
 }
 
+// EvaluateDispatchWithDependencies is the home serialization adapter for
+// dispatch interpretation. It gathers the canonical state facts (current
+// aggregates and readiness) through the home queries, delegates every
+// interpretation rule — dependency derivation, material ambiguity, stable
+// topological selection, deterministic identity, and outcome classification —
+// to internal/taskauthority, and persists the legacy home-path projection
+// records. It contains no interpretation rules itself.
 func EvaluateDispatchWithDependencies(homeDir string, requested []string, dependencies []DispatchDependency, autonomy DispatchAutonomy) (DispatchInterpretation, []string, error) {
 	if len(requested) == 0 {
 		return DispatchInterpretation{}, nil, fmt.Errorf("dispatch evaluation requires requested tasks")
 	}
+	aggregates := make(map[string]taskauthority.Aggregate, len(requested))
 	readiness := make([]DispatchReadiness, 0, len(requested))
-	deriveDependencies := dependencies == nil
-	if deriveDependencies {
-		dependencies = make([]DispatchDependency, 0, len(requested))
-	}
 	for _, taskID := range requested {
 		agg, ok, err := ReadCurrentTaskAggregate(homeDir, taskID)
 		if err != nil {
@@ -26,35 +32,95 @@ func EvaluateDispatchWithDependencies(homeDir string, requested []string, depend
 		if !ok {
 			return DispatchInterpretation{}, nil, fmt.Errorf("dispatch evaluation: task %s has no authoritative aggregate", taskID)
 		}
+		aggregates[taskID] = taskAuthorityAggregate(*agg)
 		ready, err := QueryTaskReadiness(homeDir, taskID)
 		if err != nil {
 			return DispatchInterpretation{}, nil, err
 		}
-		readiness = append(readiness, DispatchReadiness{TaskID: taskID, Generation: ready.Generation, Ready: ready.Ready, BlockingReasons: readinessStrings(ready.BlockingReasons)})
-		if deriveDependencies {
-			dependencies = append(dependencies, DispatchDependency{TaskID: taskID, State: agg.State, DependsOn: nonEmptyParent(agg.ParentTaskID)})
-		}
+		readiness = append(readiness, DispatchReadiness{TaskID: ready.TaskID, Generation: ready.Generation, Ready: ready.Ready, BlockingReasons: readinessStrings(ready.BlockingReasons)})
 	}
-	materialAmbiguity := dependencySnapshotAmbiguous(homeDir, dependencies)
-	selected, cycle := stableTopologicalOrder(requested, dependencies)
-	materialAmbiguity = materialAmbiguity || cycle
-	record, err := PersistDispatchInterpretation(homeDir, DispatchInterpretationInput{RequestedOrder: requested, ComputedReadiness: readiness, SelectedTasks: selected, Dependencies: dependencies, SafeReinterpretation: true, MaterialAmbiguity: materialAmbiguity, Autonomy: autonomy})
-	return record, selected, err
+	result, err := taskauthority.EvaluateInterpretation(taskauthority.InterpretationInput{
+		RequestedOrder:       requested,
+		Dependencies:         toTaskAuthorityDependencies(dependencies),
+		Autonomy:             taskauthority.DispatchAutonomy(autonomy),
+		ComputedReadiness:    toTaskAuthorityReadiness(readiness),
+		Aggregates:           aggregates,
+		SafeReinterpretation: true,
+	})
+	if err != nil {
+		return DispatchInterpretation{}, nil, err
+	}
+	record := toHomeInterpretation(result.Record)
+	if err := persistDispatchInterpretationRecords(homeDir, record, result.Decision, result.Hold); err != nil {
+		return record, result.SelectedTasks, err
+	}
+	if result.Record.Outcome == taskauthority.DispatchInterpretationDecisionRequired {
+		return record, result.SelectedTasks, ErrDispatchDecisionRequired
+	}
+	return record, result.SelectedTasks, nil
 }
 
-func dependencySnapshotAmbiguous(homeDir string, dependencies []DispatchDependency) bool {
-	for _, dependency := range dependencies {
-		aggregate, ok, err := ReadCurrentTaskAggregate(homeDir, dependency.TaskID)
-		if err != nil || !ok || (dependency.State != "" && dependency.State != aggregate.State) {
-			return true
-		}
-		for _, prerequisite := range dependency.DependsOn {
-			if _, ok, err := ReadCurrentTaskAggregate(homeDir, prerequisite); err != nil || !ok {
-				return true
-			}
-		}
+// taskAuthorityAggregate translates one legacy home aggregate into the
+// canonical taskauthority record shape the interpretation rules evaluate.
+// The rules read phase, parent linkage, and existence only.
+func taskAuthorityAggregate(agg TaskAggregate) taskauthority.Aggregate {
+	generation, _ := strconv.ParseUint(agg.Generation, 10, 64)
+	return taskauthority.Aggregate{
+		SchemaVersion: taskauthority.TaskAuthoritySchema,
+		TaskID:        agg.TaskID,
+		Generation:    taskauthority.Generation(generation),
+		Revision:      taskauthority.FirstRevision,
+		Current:       agg.Current,
+		Definition: taskauthority.TaskDefinition{
+			Owner:        agg.Owner,
+			Description:  agg.Definition,
+			Kind:         agg.Kind,
+			Project:      agg.Project,
+			ParentTaskID: agg.ParentTaskID,
+		},
+		Phase: taskauthority.Phase(agg.State),
 	}
-	return false
+}
+
+func toTaskAuthorityDependencies(dependencies []DispatchDependency) []taskauthority.DispatchDependency {
+	if dependencies == nil {
+		return nil
+	}
+	out := make([]taskauthority.DispatchDependency, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		out = append(out, taskauthority.DispatchDependency{
+			TaskID:    dependency.TaskID,
+			DependsOn: append([]string(nil), dependency.DependsOn...),
+			State:     dependency.State,
+		})
+	}
+	return out
+}
+
+func toTaskAuthorityReadiness(readiness []DispatchReadiness) []taskauthority.DispatchReadiness {
+	out := make([]taskauthority.DispatchReadiness, 0, len(readiness))
+	for _, item := range readiness {
+		out = append(out, taskauthority.DispatchReadiness{
+			TaskID:          item.TaskID,
+			Generation:      item.Generation,
+			Ready:           item.Ready,
+			BlockingReasons: append([]string(nil), item.BlockingReasons...),
+		})
+	}
+	return out
+}
+
+func toTaskAuthorityEvidence(evidence []DispatchEvidence) []taskauthority.DispatchEvidence {
+	out := make([]taskauthority.DispatchEvidence, 0, len(evidence))
+	for _, item := range evidence {
+		out = append(out, taskauthority.DispatchEvidence{
+			Source: item.Source,
+			Path:   item.Path,
+			Field:  item.Field,
+			Value:  item.Value,
+		})
+	}
+	return out
 }
 
 func readinessStrings(reasons []ReadinessReason) []string {
@@ -63,50 +129,4 @@ func readinessStrings(reasons []ReadinessReason) []string {
 		result[i] = string(reason)
 	}
 	return result
-}
-func nonEmptyParent(parent string) []string {
-	if parent == "" {
-		return nil
-	}
-	return []string{parent}
-}
-func stableTopologicalOrder(requested []string, dependencies []DispatchDependency) ([]string, bool) {
-	positions := make(map[string]int, len(requested))
-	for i, taskID := range requested {
-		positions[taskID] = i
-	}
-	indegree := make(map[string]int, len(requested))
-	out := make(map[string][]string, len(requested))
-	for _, taskID := range requested {
-		indegree[taskID] = 0
-	}
-	for _, dependency := range dependencies {
-		for _, prerequisite := range dependency.DependsOn {
-			if _, ok := positions[prerequisite]; !ok {
-				continue
-			}
-			out[prerequisite] = append(out[prerequisite], dependency.TaskID)
-			indegree[dependency.TaskID]++
-		}
-	}
-	ready := make([]string, 0, len(requested))
-	for _, taskID := range requested {
-		if indegree[taskID] == 0 {
-			ready = append(ready, taskID)
-		}
-	}
-	selected := make([]string, 0, len(requested))
-	for len(ready) > 0 {
-		sort.SliceStable(ready, func(i, j int) bool { return positions[ready[i]] < positions[ready[j]] })
-		taskID := ready[0]
-		ready = ready[1:]
-		selected = append(selected, taskID)
-		for _, dependent := range out[taskID] {
-			indegree[dependent]--
-			if indegree[dependent] == 0 {
-				ready = append(ready, dependent)
-			}
-		}
-	}
-	return selected, len(selected) != len(requested)
 }

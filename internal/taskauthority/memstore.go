@@ -157,6 +157,9 @@ func (s *memStore) Update(op Operation, fn func(tx *Tx) error) (Receipt, error) 
 			receipt.Reopened = true
 		}
 	}
+	if interpretationID, ok := tx.InterpretationOutcome(); ok {
+		receipt.InterpretationID = interpretationID
+	}
 	s.state.receipts[op.ID] = receipt
 	return receipt, nil
 }

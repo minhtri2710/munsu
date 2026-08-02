@@ -313,6 +313,18 @@ func (tx *Tx) Outcome() (Result, bool) {
 	return result, found
 }
 
+// InterpretationOutcome returns the dispatch interpretation ID staged by the
+// transaction, if any. The Store persists it in the operation receipt so
+// replay returns the original committed interpretation record.
+func (tx *Tx) InterpretationOutcome() (string, bool) {
+	for _, change := range tx.changes {
+		if change.kind == "interpretation" {
+			return change.rec.ID, true
+		}
+	}
+	return "", false
+}
+
 // stagesGeneration reports whether the transaction stages any change for the
 // given task generation.
 func (tx *Tx) stagesGeneration(taskID string, generation Generation) bool {
