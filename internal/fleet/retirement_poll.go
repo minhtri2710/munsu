@@ -333,14 +333,14 @@ func ValidateCheckWithLstat(path string) error {
 //  2. Query provider merge status via QueryDeliveryMergeStatus.
 //  3. Require Merged == true, nonempty provider head, provider-head == stored HeadSHA.
 //  4. Persist the pending retirement record BEFORE publication.
-//  5. Route the delivery_state=merged transition through the composed Task
-//     Authority via MarkMerged (Task 7.6; no raw CAS remains).
+//  5. Route the delivery_state=merged transition through the composed
+//     canonical Task Authority via MarkMerged (Task 7.6; no raw CAS remains).
 //  6. Durably publish one deterministic keyed status line.
 //  7. Remove the exact poll artifact (with digest revalidation).
 //  8. Remove the pending retirement record.
 //
 // Fail-closed on any validation step: preserves poll and all artifacts.
-func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Authority) error {
+func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Canonical) error {
 	// Step 0: Lstat validation on check path for crash safety.
 	if err := ValidateCheckWithLstat(checkPath); err != nil {
 		return fmt.Errorf("poll validation failed: %w", err)
@@ -421,8 +421,8 @@ func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Aut
 	}
 
 	// Step 5: Route the delivery_state=merged transition through the composed
-	// Task Authority (Task 7.6): the verified merge evidence (identity/head)
-	// drives a generation-bound merged merge outcome and the delivery_state
+	// canonical Task Authority (Task 7.6): the verified merge evidence
+	// (identity/head) drives the merged outcome and the delivery_state
 	// projection. This ensures teardown accepts without --force after external
 	// merge. Fail-closed: if the transition fails, the retirement record stays
 	// pending and the next cycle retries via recovery. The publication and poll
@@ -543,7 +543,7 @@ func recordToIdentity(rec *PollRetirementRecord) *domain.DeliveryIdentity {
 //  3. Append publication only if exact evidence is absent.
 //  4. Remove poll only after evidence exists (or accept missing poll).
 //  5. Remove completed record.
-func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Authority) (bool, error) {
+func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canonical) (bool, error) {
 	// Validate record path.
 	if err := ValidateRetirementPath(homeDir, taskID); err != nil {
 		return false, fmt.Errorf("invalid retirement path: %w", err)
@@ -581,10 +581,10 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Author
 			return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", currentHead, rec.HeadSHA)
 		}
 
-		// Route the delivery_state=merged transition through the composed Task
-		// Authority (Task 7.6). This heals orphaned retirement records and is
-		// idempotent (no-op if already merged). Fail-closed: preserves record
-		// and poll for the next recovery cycle.
+		// Route the delivery_state=merged transition through the composed
+		// canonical Task Authority (Task 7.6). This heals orphaned retirement
+		// records and is idempotent (no-op if already merged). Fail-closed:
+		// preserves record and poll for the next recovery cycle.
 		if currentMeta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
 			if err := MarkMerged(homeDir, taskID, recordToIdentity(rec), auth); err != nil {
 				return false, fmt.Errorf("recovery: delivery_state merged transition failed: %w", err)
@@ -655,7 +655,7 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Author
 // RecoverAllPendingRetirements scans all pending retirement records and
 // completes each. Returns the count of fully resolved records and any
 // non-fatal errors encountered. Records that fail recovery are preserved.
-func RecoverAllPendingRetirements(homeDir string, auth *taskauthority.Authority) (int, []error) {
+func RecoverAllPendingRetirements(homeDir string, auth *taskauthority.Canonical) (int, []error) {
 	ids, err := ListPendingRetirements(homeDir)
 	if err != nil {
 		return 0, []error{fmt.Errorf("listing pending retirements: %w", err)}

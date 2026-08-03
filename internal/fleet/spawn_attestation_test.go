@@ -15,16 +15,15 @@ import (
 
 // mustSpawnedAttestationTask seeds a task through create + worktree binding +
 // confirm spawn (the working task the attestation binds to) and returns the
-// Runner with an attestation ready to accept.
-func mustSpawnedAttestationTask(t *testing.T, homeDir, taskID string) (*Runner, *taskauthority.Authority) {
+// Runner with an attestation ready to accept. The canonical cutover removed
+// the legacy delivery-plan/attestation aggregate evidence (no canonical
+// primitive survived Task 8.2): the accepted attestation is a runtime
+// observation projected into .meta, and the canonical aggregate pins the
+// generation-scoped bindings and working phase only.
+func mustSpawnedAttestationTask(t *testing.T, homeDir, taskID string) (*Runner, *taskauthority.Canonical) {
 	t.Helper()
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: taskID, Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
 	bindWorktreeForSpawnFixture(t, auth, taskID)
 	r := &Runner{
 		homeDir:       homeDir,
@@ -52,10 +51,10 @@ func mustSpawnedAttestationTask(t *testing.T, homeDir, taskID string) (*Runner, 
 }
 
 // TestSpawnAttachAttestationCommitsAcceptedEvidence proves the post-confirm
-// spawn step commits the accepted capability attestation as authoritative
-// evidence: the delivery plan and the attestation reference land in the
-// Aggregate on the exact generation the ConfirmSpawn receipt supplied, and
-// the .meta projection mirrors the acceptance.
+// spawn step accepts the capability attestation: the canonical aggregate
+// stays working on the exact generation the ConfirmSpawn receipt supplied,
+// and the .meta projection carries the accepted attestation reference and the
+// delivery plan.
 func TestSpawnAttachAttestationCommitsAcceptedEvidence(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-spawn-attach"
@@ -65,15 +64,9 @@ func TestSpawnAttachAttestationCommitsAcceptedEvidence(t *testing.T) {
 		t.Fatalf("attachAttestation: %v", err)
 	}
 
-	agg, err := auth.Get(taskID)
+	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if agg.DeliveryPlan == nil || agg.DeliveryPlan.RequestedMode != "no-mistakes" || agg.DeliveryPlan.EffectiveMode != "direct-PR" || agg.DeliveryPlan.FallbackReason == "" {
-		t.Fatalf("authoritative delivery plan = %+v", agg.DeliveryPlan)
-	}
-	if agg.CapabilityAttestation == nil || agg.CapabilityAttestation.Project != "test-proj" || agg.CapabilityAttestation.Home != homeDir {
-		t.Fatalf("authoritative attestation reference = %+v", agg.CapabilityAttestation)
 	}
 	if agg.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("attestation acceptance must not change phase: %q", agg.Phase)
@@ -90,8 +83,8 @@ func TestSpawnAttachAttestationCommitsAcceptedEvidence(t *testing.T) {
 
 // TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly proves the pre-transition
 // side file writes runtime observations only: the attestation fields are not
-// written before the authoritative acceptance, and appear only after
-// attachAttestation projects them.
+// written before the acceptance, and appear only after attachAttestation
+// projects them.
 func TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-spawn-side-file"
@@ -106,7 +99,7 @@ func TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly(t *testing.T) {
 	}
 	for _, key := range []string{MetaCapabilityAttestation, MetaRequestedMode, MetaEffectiveMode, MetaFallbackReason} {
 		if _, ok := meta[key]; ok {
-			t.Errorf("writeTaskMeta must not write %q before the authoritative acceptance", key)
+			t.Errorf("writeTaskMeta must not write %q before the acceptance", key)
 		}
 	}
 	if meta["mode"] != "direct-PR" {
@@ -124,22 +117,22 @@ func TestSpawnWriteTaskMetaKeepsAttestationRuntimeOnly(t *testing.T) {
 	if meta[MetaEffectiveMode] != "direct-PR" || meta[MetaRequestedMode] != "no-mistakes" {
 		t.Fatalf("projected meta = %v", meta)
 	}
-	if _, err := auth.Get(taskID); err != nil {
+	if _, err := auth.Get(mustTaskID(t, taskID)); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 }
 
 // TestSpawnAttachAttestationRejectedKeepsObservationRuntimeOnly proves a
-// rejected acceptance leaves the runtime observation outside the Aggregate:
-// a malformed attestation reference fails closed and the delivery plan and
-// attestation reference stay unset.
+// rejected acceptance leaves the runtime observation outside the canonical
+// aggregate: a malformed attestation reference fails closed and the task
+// stays working with its bindings unchanged.
 func TestSpawnAttachAttestationRejectedKeepsObservationRuntimeOnly(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-spawn-rejected"
 	r, auth := mustSpawnedAttestationTask(t, homeDir, taskID)
 
-	// An attestation with an empty project cannot become authoritative
-	// evidence; it stays a runtime observation.
+	// An attestation with an empty project cannot be accepted; it stays a
+	// runtime observation.
 	r.attestation = CreateCapabilityAttestation(
 		"", homeDir, "pi", "pi",
 		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
@@ -149,12 +142,9 @@ func TestSpawnAttachAttestationRejectedKeepsObservationRuntimeOnly(t *testing.T)
 		t.Fatal("expected rejection for malformed attestation reference")
 	}
 
-	agg, err := auth.Get(taskID)
+	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if agg.DeliveryPlan != nil || agg.CapabilityAttestation != nil {
-		t.Fatalf("rejected acceptance must not mutate the aggregate: %+v", agg)
 	}
 	if agg.Revision != 3 {
 		t.Fatalf("revision = %d, want 3 (create, bind worktree, confirm spawn)", agg.Revision)
@@ -170,13 +160,6 @@ func TestSpawnAttachAttestationRejectedKeepsObservationRuntimeOnly(t *testing.T)
 func TestSpawnAttachAttestationFailsClosedWithoutAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-spawn-no-auth"
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: taskID, Owner: "general", Kind: "ship",
-	}); err != nil {
-		t.Fatal(err)
-	}
 	r := &Runner{
 		homeDir: homeDir,
 		args:    Args{ID: taskID}, // no Authority composed
@@ -193,7 +176,8 @@ func TestSpawnAttachAttestationFailsClosedWithoutAuthority(t *testing.T) {
 
 // TestSpawnAttachAttestationProjectionFailureNeverRollsBack proves the typed
 // partial projection outcome: when the .meta projection cannot be written the
-// authoritative acceptance stays committed.
+// acceptance stays projected-or-failed without mutating the canonical
+// aggregate (the canonical surface carries no attestation state to roll back).
 func TestSpawnAttachAttestationProjectionFailureNeverRollsBack(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-spawn-proj-fail"
@@ -208,14 +192,11 @@ func TestSpawnAttachAttestationProjectionFailureNeverRollsBack(t *testing.T) {
 	if !errors.As(err, &typed) {
 		t.Fatalf("attachAttestation error = %v, want *AttestationProjectionError", err)
 	}
-	agg, err := auth.Get(taskID)
+	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.DeliveryPlan == nil || agg.DeliveryPlan.EffectiveMode != "direct-PR" {
-		t.Fatalf("authoritative plan must survive the projection failure: %+v", agg.DeliveryPlan)
-	}
-	if agg.Revision != 4 {
-		t.Fatalf("revision = %d, want 4 (create, bind, confirm spawn, attach)", agg.Revision)
+	if agg.Phase != taskauthority.PhaseWorking || agg.Revision != 3 {
+		t.Fatalf("canonical aggregate must stay working at revision 3 across the projection failure: %+v", agg)
 	}
 }

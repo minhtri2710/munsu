@@ -8,18 +8,105 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
-// bindWorktreeForSpawnFixture binds a generation-scoped worktree through the
-// Authority so ConfirmSpawn can evaluate its worktree-binding precondition.
-func bindWorktreeForSpawnFixture(t *testing.T, auth *taskauthority.Authority, taskID string) {
+// mustOpID builds a validated typed Operation identity.
+func mustOpID(t *testing.T, value string) domain.OperationID {
 	t.Helper()
-	if _, err := auth.BindWorktree(taskauthority.BindWorktreeRequest{
-		OperationID: "op-bind-wt-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: taskID, ExpectedGeneration: 1,
+	id, err := domain.NewOperationID(value)
+	if err != nil {
+		t.Fatalf("NewOperationID(%s): %v", value, err)
+	}
+	return id
+}
+
+// mustTaskID builds a validated typed Task identity.
+func mustTaskID(t *testing.T, value string) domain.TaskID {
+	t.Helper()
+	id, err := domain.NewTaskID(value)
+	if err != nil {
+		t.Fatalf("NewTaskID(%s): %v", value, err)
+	}
+	return id
+}
+
+// mustCanonical creates a canonical Task Authority over a fresh real home.
+// The canonical path is the only surface; there is no in-memory fake.
+func mustCanonical(t *testing.T) *taskauthority.Canonical {
+	t.Helper()
+	h, err := home.Init(t.TempDir())
+	if err != nil {
+		t.Fatalf("home.Init: %v", err)
+	}
+	c, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatalf("NewCanonical: %v", err)
+	}
+	return c
+}
+
+// mustHome opens the initialized canonical home at dir, returning the
+// canonical-rooted home. The canonical root may resolve symlinks (e.g.
+// /var -> /private/var on macOS), so callers must derive all home paths from
+// the returned Home.Root() rather than from the literal dir when canonical
+// state and projections must agree.
+func mustHome(t *testing.T, dir string) *home.Home {
+	t.Helper()
+	h, err := home.Open(dir)
+	if err != nil {
+		t.Fatalf("home.Open(%s): %v", dir, err)
+	}
+	return h
+}
+
+// canonicalCreateTask creates one task through the canonical surface.
+func canonicalCreateTask(t *testing.T, c *taskauthority.Canonical, taskID, kind, project string) {
+	t.Helper()
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, taskID), Owner: "general", Description: "Ready", Kind: kind, Reason: "test",
+	}
+	if project != "" {
+		p, err := domain.NewProjectID(project)
+		if err != nil {
+			t.Fatalf("NewProjectID(%s): %v", project, err)
+		}
+		req.Project = p
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-create-"+taskID), req)
+	if err != nil {
+		t.Fatalf("NewOperation(%s): %v", taskID, err)
+	}
+	if _, err := c.Create(op, req); err != nil {
+		t.Fatalf("Create(%s): %v", taskID, err)
+	}
+}
+
+// canonicalAtHome builds a canonical Task Authority over the initialized home
+// at homeDir (the home must already be initialized by the caller). It is used
+// by spawn binding tests that must observe durable lease markers on the exact
+// home the Runner resolves.
+func canonicalAtHome(t *testing.T, homeDir string) *taskauthority.Canonical {
+	t.Helper()
+	c, err := taskauthority.NewCanonical(mustHome(t, homeDir))
+	if err != nil {
+		t.Fatalf("NewCanonical: %v", err)
+	}
+	return c
+}
+
+// bindWorktreeForSpawnFixture binds a generation-scoped worktree through the
+// canonical Authority so ConfirmSpawn can evaluate its worktree-binding
+// precondition. The task is created at generation 1 revision 1, so the bind
+// carries the exact precondition (1,1).
+func bindWorktreeForSpawnFixture(t *testing.T, auth *taskauthority.Canonical, taskID string) {
+	t.Helper()
+	req := taskauthority.CanonicalBindWorktreeRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(1, 1),
 		Binding: taskauthority.WorktreeBinding{
 			RepositoryIdentity: "repo-identity",
 			Path:               "/tmp/wt",
@@ -31,20 +118,20 @@ func bindWorktreeForSpawnFixture(t *testing.T, auth *taskauthority.Authority, ta
 			BoundAtUnix:        time.Now().Unix(),
 		},
 		Reason: "spawn",
-	}); err != nil {
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-bind-wt-"+taskID), req)
+	if err != nil {
+		t.Fatalf("NewOperation(%s): %v", taskID, err)
+	}
+	if _, err := auth.BindWorktree(op, req); err != nil {
 		t.Fatalf("BindWorktree(%s): %v", taskID, err)
 	}
 }
 
 func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T) {
 	homeDir := t.TempDir()
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-bind", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: "bind-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, "bind-task", "ship", "test-proj")
 	bindWorktreeForSpawnFixture(t, auth, "bind-task")
 	r := &Runner{
 		homeDir:       homeDir,
@@ -73,7 +160,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 	if err := r.writeTaskMeta(); err != nil {
 		t.Fatalf("writeTaskMeta: %v", err)
 	}
-	before, err := auth.Get("bind-task")
+	before, err := auth.Get(mustTaskID(t, "bind-task"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +168,11 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 		t.Fatalf("meta write alone must not bind the endpoint or mark the task working: %+v", before)
 	}
 	// ConfirmSpawn commits the endpoint binding and the working transition
-	// together in one Store transaction.
+	// together in one canonical operation.
 	if _, err := r.confirmSpawn(); err != nil {
 		t.Fatalf("confirmSpawn: %v", err)
 	}
-	bound, err := auth.Get("bind-task")
+	bound, err := auth.Get(mustTaskID(t, "bind-task"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,18 +210,16 @@ func TestSpawnBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) 
 	worktree := filepath.Join(t.TempDir(), "wt")
 	runGitForSpawnBinding(t, primary, "worktree", "add", "--detach", worktree)
 	homeDir := t.TempDir()
-	auth := taskauthority.New(mustNewFSAuthorityStore(t, homeDir))
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-bind-wt", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: "bind-wt", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
+	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
+	auth := canonicalAtHome(t, homeDir)
+	canonicalCreateTask(t, auth, "bind-wt", "ship", "test-proj")
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-wt", ProjectName: "test-proj", Authority: auth}, projPath: primary, wtPath: worktree}
 	if err := r.bindWorktree(); err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
-	agg, err := auth.Get("bind-wt")
+	agg, err := auth.Get(mustTaskID(t, "bind-wt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,17 +238,6 @@ func TestSpawnBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) 
 	}) {
 		t.Fatalf("lease marker not active for binding %+v", agg.Worktree)
 	}
-}
-
-// mustNewFSAuthorityStore builds a filesystem Store over a temp home for
-// spawn binding tests that must observe durable lease markers.
-func mustNewFSAuthorityStore(t *testing.T, homeDir string) *taskauthorityfs.Store {
-	t.Helper()
-	store, err := taskauthorityfs.NewStore(homeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return store
 }
 
 func initRepoForSpawnBinding(t *testing.T, dir string) string {
@@ -195,13 +269,8 @@ func runGitForSpawnBinding(t *testing.T, dir string, args ...string) {
 
 func TestEndpointBindingMetadataFailureLeavesTaskNonWorking(t *testing.T) {
 	homeDir := t.TempDir()
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-meta", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: "bind-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, "bind-task", "ship", "test-proj")
 	bindWorktreeForSpawnFixture(t, auth, "bind-task")
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task", Authority: auth}, endpoint: CreatedEndpoint{Backend: "tmux", Handle: "munsu:@1"}}
 	stateDir := home.StateDir(homeDir)
@@ -217,7 +286,7 @@ func TestEndpointBindingMetadataFailureLeavesTaskNonWorking(t *testing.T) {
 	}
 	// ConfirmSpawn runs after the meta projection in Run(); a metadata
 	// failure leaves the task queued with no endpoint binding.
-	agg, err := auth.Get("bind-task")
+	agg, err := auth.Get(mustTaskID(t, "bind-task"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,19 +297,14 @@ func TestEndpointBindingMetadataFailureLeavesTaskNonWorking(t *testing.T) {
 
 func TestEndpointBindingFailureLeavesTaskNonWorking(t *testing.T) {
 	homeDir := t.TempDir()
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-fail", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: "bind-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, "bind-task", "ship", "test-proj")
 	bindWorktreeForSpawnFixture(t, auth, "bind-task")
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-task", Authority: auth}, endpoint: CreatedEndpoint{Backend: "tmux"}}
 	if _, err := r.confirmSpawn(); err == nil {
 		t.Fatal("expected binding failure for incomplete endpoint")
 	}
-	agg, err := auth.Get("bind-task")
+	agg, err := auth.Get(mustTaskID(t, "bind-task"))
 	if err != nil {
 		t.Fatal(err)
 	}
