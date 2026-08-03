@@ -267,6 +267,60 @@ func TestRunPrune_ApplyNoMatchIsNoop(t *testing.T) {
 	}
 }
 
+func TestRunPrune_CaptainHomesLabelsOwned(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "home")
+	os.MkdirAll(homeDir, 0755)
+
+	// Captain home with a provenance marker so its WorkspaceTag is a readable
+	// captain label, not just the hash hometag.
+	captainHome := filepath.Join(tmp, "captain-home")
+	os.MkdirAll(captainHome, 0755)
+	marker := "munsu-v2\nAPI Supervisor\n" + captainHome + "\n"
+	if err := os.WriteFile(filepath.Join(captainHome, ".munsu-captain-home"), []byte(marker), 0644); err != nil {
+		t.Fatal(err)
+	}
+	captainTag := WorkspaceTag(captainHome)
+
+	wsJSON := `[{"label":"` + captainTag + `","workspace_id":"wCaptain","tab_count":0,"agent_status":"none"}]`
+	fakePath := writeFakeHerdrPrune(t, tmp, wsJSON)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", fakePath+":"+oldPath)
+
+	// Without the caller-supplied captain homes the captain label is foreign.
+	result, err := RunPrune(PruneOptions{
+		Session: "test-session",
+		Apply:   true,
+		HomeDir: homeDir,
+	})
+	if err != nil {
+		t.Fatalf("RunPrune failed: %v", err)
+	}
+	if result.Workspaces[0].Action != "keep" {
+		t.Errorf("without CaptainHomes: Action = %q, want keep (label not owned)", result.Workspaces[0].Action)
+	}
+
+	// With the caller-supplied captain home the label is owned and prunable.
+	result, err = RunPrune(PruneOptions{
+		Session:      "test-session",
+		Apply:        true,
+		HomeDir:      homeDir,
+		CaptainHomes: []string{captainHome},
+	})
+	if err != nil {
+		t.Fatalf("RunPrune failed: %v", err)
+	}
+	if len(result.Workspaces) != 1 {
+		t.Fatalf("len(Workspaces) = %d, want 1", len(result.Workspaces))
+	}
+	if result.Workspaces[0].Action != "closed" {
+		t.Errorf("with CaptainHomes: Action = %q, want closed", result.Workspaces[0].Action)
+	}
+	if result.Closed != 1 {
+		t.Errorf("Closed = %d, want 1", result.Closed)
+	}
+}
+
 func TestRunPrune_MetaReferencedSkipped(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, "home")
