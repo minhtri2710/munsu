@@ -10,13 +10,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
+	tauth "github.com/minhtri2710/munsu/internal/taskauthority"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
-func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
+// TestHandoffOwnershipConflictLeavesBacklogUnchanged proves a handoff that
+// fails during key resolution (the same task is owned by both the source and
+// a captain under its captains/ tree, so the key is ambiguous) never mutates
+// the source or destination backlog: the tasks-axi move runs only after the
+// authoritative transfer gate passes.
+func TestHandoffOwnershipConflictLeavesBacklogUnchanged(t *testing.T) {
 	path, err := exec.LookPath("tasks-axi")
 	if err != nil {
 		t.Skip("tasks-axi not found")
@@ -24,10 +28,10 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 
 	parent := t.TempDir()
 	captainHome := filepath.Join(parent, "captains", "handoff-sm")
-	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
+	if _, err := mhome.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(captainHome, "data"), 0755); err != nil {
+	if _, err := mhome.Init(captainHome); err != nil {
 		t.Fatal(err)
 	}
 	if err := SeedProvenance(captainHome, "handoff-sm"); err != nil {
@@ -48,8 +52,10 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 	}
 	runTasksAxi("add", "blocker-a", "Blocker", "--file", source)
 	runTasksAxi("add", "dependent-b", "Dependent", "--blocked-by", "blocker-a", "--file", source)
+	// Both the source and the destination captain own blocker-a.
 	writeIntegrationHandoffAuthority(t, parent, "blocker-a", "Blocker")
 	writeIntegrationHandoffAuthority(t, parent, "dependent-b", "Dependent")
+	writeIntegrationHandoffAuthority(t, captainHome, "blocker-a", "Captain Blocker")
 	if err := os.WriteFile(destination, []byte("# Backlog\n\n## Queued\n\n## Done\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +71,7 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 
 	err = Handoff(parent, captainHome, []string{"blocker-a"})
 	if err == nil {
-		t.Fatal("expected dependency-stranding handoff refusal")
+		t.Fatal("expected ambiguous ownership refusal")
 	}
 
 	sourceAfter, err := os.ReadFile(source)
@@ -77,29 +83,28 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(sourceAfter, sourceBefore) {
-		t.Fatal("source backlog changed after failed atomic handoff")
+		t.Fatal("source backlog changed after failed handoff")
 	}
 	if !bytes.Equal(destinationAfter, destinationBefore) {
-		t.Fatal("destination backlog changed after failed atomic handoff")
+		t.Fatal("destination backlog changed after failed handoff")
 	}
 }
 
+// writeIntegrationHandoffAuthority creates one canonical ship task through the
+// canonical surface and its projections.
 func writeIntegrationHandoffAuthority(t *testing.T, homeDir, taskID, description string) {
 	t.Helper()
-	store, err := taskauthorityfs.NewStore(homeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
-		OperationID: "integration-seed-" + taskID,
-		Actor:       taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:      taskID,
+	c := mustCanonical(t, homeDir)
+	req := tauth.CanonicalCreateRequest{
+		HomeID:      c.HomeID(),
+		TaskID:      mustTaskID(t, taskID),
 		Owner:       "general",
 		Description: description,
 		Kind:        "ship",
-		Project:     "munsu",
+		Project:     mustProjectID(t, "munsu"),
 		Reason:      "seed",
-	}); err != nil {
+	}
+	if _, err := c.Create(mustOp(t, "integration-seed-"+taskID, req), req); err != nil {
 		t.Fatal(err)
 	}
 	if err := mhome.WriteMeta(homeDir, taskID, map[string]string{"description": description, "kind": "ship", "project": "munsu", "generation": "1"}); err != nil {
