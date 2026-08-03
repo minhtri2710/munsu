@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestCheckSessionScope_RefusesAmbientGateWithoutProjects(t *testing.T) {
@@ -429,6 +431,11 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeScopeRefusal(t *testing.T) {
 
 func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) {
 	home := t.TempDir()
+	// #407 integrated Fleet-backed reads (scope + registry) require a canonical
+	// home; init the temp dir truthfully before overlaying the in-flight task.
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(home, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
