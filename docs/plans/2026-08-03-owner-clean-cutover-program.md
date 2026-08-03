@@ -70,3 +70,14 @@ paths, commands, fixtures, comments, skills, and documents did not survive.
 Confirmed pre-existing — not caused by #403 or by the Lead docs commit. It keeps the full
 `go test ./...` gate red until repaired separately. Must be triaged/authorized before the
 #418 activation gate. It is unrelated to the Home mechanics.
+
+### RESOLVED (2026-08-03) — pre-existing activation-gate repair
+
+Authorized by the Supervisor as a pre-existing-defect repair OUTSIDE issues #402–#418.
+Read-only triage (`37f2a65`) classed it as outside the program; root cause commit `0bce4616`
+added canonical companions without mirroring them. Implemented as one isolated commit
+`49841760` on `fix/skill-mirror-parity` (Engineer `088ddc6a`), reviewed PASS by independent
+reviewer `0c0ac4a7`, integrated into the Lead branch. Added exactly three byte-identical
+mirror files: `.agents/skills/captain-provisioning/{MIGRATION,REFERENCE}.md` and
+`.agents/skills/munsu-update/REFERENCE.md`. Full `go test ./...` now PASSES. This is a
+pre-existing activation-gate repair, NOT completion of any issue #402–#418.
