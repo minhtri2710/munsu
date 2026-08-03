@@ -71,10 +71,5 @@ func evaluateReadiness(holds []DispatchHold, agg Aggregate) Readiness {
 
 // holdsBlockStart reports whether any committed start hold matches the task.
 func holdsBlockStart(holds []DispatchHold, agg Aggregate) bool {
-	for _, hold := range holds {
-		if hold.Matches(DispatchActionStart, agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID) {
-			return true
-		}
-	}
-	return false
+	return holdsBlockAction(holds, DispatchActionStart, agg)
 }
