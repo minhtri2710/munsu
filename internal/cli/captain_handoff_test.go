@@ -11,6 +11,8 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 func TestTaskShowFailsClosedOnMalformedParentHomeDuringRecovery(t *testing.T) {
@@ -26,10 +28,10 @@ func TestTaskShowFailsClosedOnMalformedParentHomeDuringRecovery(t *testing.T) {
 	}
 }
 
-func TestTaskShowRecoversActiveCommittedHandoff(t *testing.T) {
+func TestTaskShowRecoversPendingHandoffAndReadsCanonicalState(t *testing.T) {
 	if os.Getenv("MUNSU_CLI_HANDOFF_HELPER") == "1" {
 		restore := fleet.SetHandoffCrashHookForTest(func(boundary string) {
-			if boundary == "commit-decided" {
+			if boundary == "prepared" {
 				os.Exit(92)
 			}
 		})
@@ -53,7 +55,21 @@ func TestTaskShowRecoversActiveCommittedHandoff(t *testing.T) {
 	if err := config.Set(captain, "parent-home", parent); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteTaskAggregate(parent, home.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: "1", Current: true, Owner: "general", Definition: "CLI recovery", State: "queued", Kind: "ship"}); err != nil {
+	// The Task 6.2 saga operates on v2 homes: seed the source's canonical
+	// authority state instead of the legacy v1 aggregate.
+	store, err := taskauthorityfs.NewStore(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
+		OperationID: "cli-handoff-seed",
+		Actor:       taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID:      "TASK-1",
+		Owner:       "general",
+		Description: "CLI recovery",
+		Kind:        "ship",
+		Reason:      "test seed",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := home.WriteMeta(parent, "TASK-1", map[string]string{"description": "CLI recovery", "generation": "1"}); err != nil {
@@ -84,16 +100,56 @@ func TestTaskShowRecoversActiveCommittedHandoff(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = show ]; then echo 'state: queued'; exit 0; fi\nif [ \"$1\" = mv ]; then\n  to=\"\"; file=\"\"; shift\n  while [ \"$#\" -gt 0 ]; do case \"$1\" in --to) to=\"$2\"; shift 2;; --file) file=\"$2\"; shift 2;; *) shift;; esac; done\n  printf '# Backlog\\n\\n' > \"$file\"; exit 0\nfi\nexit 2\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run", "^TestTaskShowRecoversActiveCommittedHandoff$", "--")
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestTaskShowRecoversPendingHandoffAndReadsCanonicalState$", "--")
 	cmd.Env = append(os.Environ(), "MUNSU_CLI_HANDOFF_HELPER=1", "MUNSU_CLI_HANDOFF_SOURCE="+parent, "MUNSU_CLI_HANDOFF_DEST="+captain, "PATH="+filepath.Dir(fake)+":"+os.Getenv("PATH"))
 	if output, err := cmd.CombinedOutput(); err == nil {
 		t.Fatal("expected helper crash")
 	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
 		t.Fatalf("helper exit = %v\n%s", err, output)
 	}
+	// Seed the captain home's canonical v2 Authority with the transferred task
+	// (Task 6.2 makes the handoff saga install this atomically). task show then
+	// triggers handoff recovery of the pending journal and serves the
+	// canonical record.
+	store, err = taskauthorityfs.NewStore(captain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
+		OperationID: "cli-handoff-recovery-seed",
+		Actor:       taskauthority.Actor{ID: "captain:api", Rank: "captain"},
+		TaskID:      "TASK-1",
+		Owner:       "captain:api",
+		Description: "CLI recovery",
+		Kind:        "ship",
+		Reason:      "test seed",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	out, err := runMigrateCommand([]string{"--home", captain, "task", "show", "TASK-1"})
 	if err != nil || !strings.Contains(out, "owner: captain:api") || !strings.Contains(out, "description: CLI recovery") {
 		t.Fatalf("task show recovery err=%v out=%s", err, out)
+	}
+}
+
+// seedCLIHandoffTaskV2 creates a canonical v2 task at a home for CLI handoff
+// resolution tests.
+func seedCLIHandoffTaskV2(t *testing.T, homeDir, taskID, owner, description string) {
+	t.Helper()
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
+		OperationID: "cli-seed-" + taskID + "-" + owner,
+		Actor:       taskauthority.Actor{ID: owner, Rank: "general"},
+		TaskID:      taskID,
+		Owner:       owner,
+		Description: description,
+		Kind:        "ship",
+		Reason:      "test seed",
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -113,15 +169,9 @@ func TestCaptainHandoffAmbiguousIDCorrectionsPreserveDestinationAndSourceHome(t 
 	if err := os.WriteFile(filepath.Join(captain, ".munsu-captain-home"), []byte("munsu-v2\napi\n"+canonicalCaptain+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.WriteTaskAggregate(parent, home.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: "1", Current: true, Owner: "general", Definition: "source", State: "queued", Kind: "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteTaskAggregate(captain, home.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: "1", Current: true, Owner: "captain:api", Definition: "captain", State: "queued", Kind: "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteTaskAggregate(other, home.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: "TASK-1", Generation: "1", Current: true, Owner: "captain:other", Definition: "other", State: "queued", Kind: "ship"}); err != nil {
-		t.Fatal(err)
-	}
+	seedCLIHandoffTaskV2(t, parent, "TASK-1", "general", "source")
+	seedCLIHandoffTaskV2(t, captain, "TASK-1", "captain:api", "captain")
+	seedCLIHandoffTaskV2(t, other, "TASK-1", "captain:other", "other")
 	canonicalParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		t.Fatal(err)

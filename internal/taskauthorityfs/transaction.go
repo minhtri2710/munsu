@@ -229,11 +229,12 @@ type manifestBuilder struct {
 	opID string
 	view taskauthority.View
 
-	entries       map[string]string // rel path -> document payload (later staged write wins)
-	currentByTask map[string]taskauthority.Generation
-	stagedTasks   map[string]bool
-	audit         *taskauthority.AuditEvent
-	outcome       *stagedOutcome
+	entries          map[string]string // rel path -> document payload (later staged write wins)
+	currentByTask    map[string]taskauthority.Generation
+	stagedTasks      map[string]bool
+	audit            *taskauthority.AuditEvent
+	outcome          *stagedOutcome
+	interpretationID string
 }
 
 func newManifestBuilder(opID string, view taskauthority.View) *manifestBuilder {
@@ -287,6 +288,7 @@ func (b *manifestBuilder) ApplyInterpretation(rec taskauthority.DispatchInterpre
 		return err
 	}
 	b.entries[rel] = string(data)
+	b.interpretationID = rec.ID
 	return nil
 }
 
@@ -321,6 +323,38 @@ func (b *manifestBuilder) ApplyAudit(ev taskauthority.AuditEvent) error {
 	b.entries[rel] = string(data)
 	cp := ev
 	b.audit = &cp
+	return nil
+}
+
+// ApplyAuditRecord stages a historical audit event transferred from another
+// authority: the document is written keyed by the event's own operation ID,
+// but it is not the transaction's typed audit event (the manifest pins the
+// receive operation's own audit in its Audit field). The destination receive
+// operation uses this to carry the source generation's audit history
+// verbatim.
+func (b *manifestBuilder) ApplyAuditRecord(ev taskauthority.AuditEvent) error {
+	rel, err := AuditRelPath(ev.OperationID)
+	if err != nil {
+		return err
+	}
+	data, err := EncodeAudit(ev)
+	if err != nil {
+		return err
+	}
+	b.entries[rel] = string(data)
+	return nil
+}
+
+func (b *manifestBuilder) ApplyLeaseMarker(marker taskauthority.LeaseMarker) error {
+	rel, err := WorktreeLeaseRelPath(marker.TaskID, marker.TaskGeneration, marker.LeaseID)
+	if err != nil {
+		return err
+	}
+	data, err := EncodeLeaseMarker(marker)
+	if err != nil {
+		return err
+	}
+	b.entries[rel] = string(data)
 	return nil
 }
 
@@ -424,5 +458,6 @@ func (b *manifestBuilder) receipt(digest string, now int64) taskauthority.Receip
 			receipt.Reopened = true
 		}
 	}
+	receipt.InterpretationID = b.interpretationID
 	return receipt
 }

@@ -28,16 +28,31 @@ type Operation struct {
 // 64-character non-hex digest must fail exactly like a short one so every
 // adapter rejects it with the same typed error.
 func (op Operation) Validate() error {
-	if op.ID == "" || strings.ContainsAny(op.ID, `/\\`) {
-		return validationError("operation ID must be a safe non-empty value")
+	if err := validateOperationID(op.ID); err != nil {
+		return err
 	}
-	if len(op.Digest) != 64 {
-		return validationError("operation digest must be a 64-hex sha256 digest")
-	}
-	if _, err := hex.DecodeString(op.Digest); err != nil {
+	if !isSHA256Hex(op.Digest) {
 		return validationError("operation digest must be a 64-hex sha256 digest")
 	}
 	return nil
+}
+
+// validateOperationID rejects empty or unsafe operation identities shared by
+// operations and transfer intents.
+func validateOperationID(id string) error {
+	if id == "" || strings.ContainsAny(id, `/\\`) {
+		return validationError("operation ID must be a safe non-empty value")
+	}
+	return nil
+}
+
+// isSHA256Hex reports whether the value is a full 64-hex sha256 digest.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 // Receipt is the durable record of one committed operation. Task identity is
@@ -54,7 +69,10 @@ type Receipt struct {
 	Revision    Revision   `json:"revision,omitempty"`
 	Phase       Phase      `json:"phase,omitempty"`
 	Reopened    bool       `json:"reopened,omitempty"`
-	Replayed    bool       `json:"-"`
+	// InterpretationID pins the dispatch interpretation record committed by
+	// the operation, so replay returns the original committed record.
+	InterpretationID string `json:"interpretation_id,omitempty"`
+	Replayed         bool   `json:"-"`
 }
 
 // AuditEvent kinds.
@@ -63,6 +81,40 @@ const (
 	AuditLifecycle = "lifecycle"
 	// AuditDispatch records a dispatch-control mutation (not task-bound).
 	AuditDispatch = "dispatch"
+	// AuditBinding records a generation-bound worktree binding (task-bound).
+	AuditBinding = "binding"
+	// AuditIssueLinks records a generation-bound issue link definition and
+	// reconciliation commit (task-bound).
+	AuditIssueLinks = "issue-links"
+	// AuditAttestation records the acceptance of a generation-bound delivery
+	// plan and capability attestation (task-bound).
+	AuditAttestation = "attestation"
+	// AuditMergeAuthorization records a generation-bound merge authorization
+	// or external merge evidence commit (task-bound, Task 7.4).
+	AuditMergeAuthorization = "merge-authorization"
+	// AuditGitAuthorization records a generation-bound git authorization
+	// change: the capability tier, the amendment/retirement context, or the
+	// elevated git mutation authorization (task-bound, Task 7.4).
+	AuditGitAuthorization = "git-authorization"
+	// AuditDeliveryPrepare records a generation-bound delivery preparation:
+	// the provider identity, head SHA, and review-ready state committed by
+	// pr-check (task-bound, Task 7.5).
+	AuditDeliveryPrepare = "delivery-prepare"
+	// AuditDeliveryTerminal records a generation-bound delivery completion:
+	// the delivered/done terminal transition and terminal provider evidence
+	// (task-bound, Task 7.5).
+	AuditDeliveryTerminal = "delivery-terminal"
+	// AuditMergeOutcome records a generation-bound merge attempt and its
+	// provider-verified remote outcome (merged, already-merged, open, failed,
+	// or remote-unknown; task-bound, Task 7.6).
+	AuditMergeOutcome = "merge-outcome"
+	// AuditRetirement records the generation-bound retired phase transition
+	// committed by the Retire operation after verified merged/delivered
+	// evidence (task-bound, Task 7.7).
+	AuditRetirement = "retirement"
+	// AuditPromote records the generation-bound scout → ship kind promotion
+	// committed by the Promote operation (task-bound, Task 7.8).
+	AuditPromote = "promote"
 )
 
 // AuditEvent is a typed audit record committed in the same Store transaction
@@ -104,6 +156,85 @@ func (ev AuditEvent) Validate() error {
 			return validationError("audit event has invalid before phase %q", ev.Before)
 		}
 		if !ev.After.Valid() {
+			return validationError("audit event has invalid after phase %q", ev.After)
+		}
+	case AuditBinding:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditIssueLinks:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditAttestation:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditMergeAuthorization:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditGitAuthorization:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditDeliveryPrepare:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditDeliveryTerminal:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditMergeOutcome:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+	case AuditRetirement:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+		if ev.Before != "" && !ev.Before.Valid() {
+			return validationError("audit event has invalid before phase %q", ev.Before)
+		}
+		if ev.After != PhaseRetired {
+			return validationError("audit event has invalid after phase %q", ev.After)
+		}
+	case AuditPromote:
+		if err := validateTaskID(ev.TaskID); err != nil {
+			return err
+		}
+		if err := ev.Generation.Validate(); err != nil {
+			return err
+		}
+		if ev.After != "" && !ev.After.Valid() {
 			return validationError("audit event has invalid after phase %q", ev.After)
 		}
 	case AuditDispatch:

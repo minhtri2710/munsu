@@ -391,6 +391,37 @@ func Run(t *testing.T, newStore func() taskauthority.Store) {
 		}
 	})
 
+	t.Run("foreign audit record commits keyed by its own operation", func(t *testing.T) {
+		s := newStore()
+		_, err := s.Update(op("op-receive", "t1"), func(tx *taskauthority.Tx) error {
+			if err := tx.PutAggregate(mustAggregate(t, "t1", 1, "queued")); err != nil {
+				return err
+			}
+			// A historical audit event transferred from the source authority
+			// carries its own operation ID; the destination receive operation
+			// stages it alongside the transaction's own typed audit event.
+			historical := mustAudit(t, "source-create-t1-1", "t1", 1, "", "queued")
+			if err := tx.PutAuditRecord(historical); err != nil {
+				return err
+			}
+			return tx.AppendAudit(mustAudit(t, "op-receive", "t1", 1, "", "queued"))
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, _ := s.View()
+		if len(v.Audit) != 2 {
+			t.Fatalf("audit = %d events, want 2", len(v.Audit))
+		}
+		seen := map[string]bool{}
+		for _, ev := range v.Audit {
+			seen[ev.OperationID] = true
+		}
+		if !seen["source-create-t1-1"] || !seen["op-receive"] {
+			t.Fatalf("audit events = %+v, want source history and receive audit", v.Audit)
+		}
+	})
+
 	t.Run("empty transaction receipt", func(t *testing.T) {
 		s := newStore()
 		first, err := s.Update(op("op-empty", ""), func(tx *taskauthority.Tx) error { return nil })

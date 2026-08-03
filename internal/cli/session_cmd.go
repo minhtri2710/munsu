@@ -12,6 +12,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -41,9 +42,9 @@ func newBriefCmd() *cobra.Command {
 				return err
 			}
 
-			// Require existing task aggregate or legacy task meta unless --force.
+			// Require existing canonical task or legacy task meta unless --force.
 			if !force {
-				if _, ok, err := mhome.ReadCurrentTaskAggregate(ctx.Home, id); err != nil {
+				if ok, err := currentTaskExists(ctx.Home, id); err != nil {
 					return err
 				} else if !ok {
 					if _, err := mhome.ReadMeta(ctx.Home, id); err != nil {
@@ -309,7 +310,8 @@ func newWatchCmd() *cobra.Command {
 		Short: "Run the persistent watcher daemon",
 		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			reason, err := orchestrator.RunWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), fleetRetirementPort{}, runtimeTaskStatePort{})
+			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Authority, error) { return ctx.TaskAuthorityFor(h) }}
+			reason, err := orchestrator.RunWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, runtimeTaskStatePort{})
 			if err != nil {
 				return err
 			}

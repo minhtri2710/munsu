@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
@@ -423,6 +426,30 @@ func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
 	}
 }
 
+// seedRetireAuthority seeds the task in the filesystem-backed Task Authority
+// over homeDir, mirroring production spawn (tasks are created via the
+// Authority at launch). The teardown command composes the Authority over the
+// resolved task home (Task 7.7), and the retirement transition fails closed
+// without the authoritative record.
+func seedRetireAuthority(t *testing.T, homeDir, taskID string) {
+	t.Helper()
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := taskauthority.New(store)
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "scout",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestTeardownCmd_UplinkAckInTempHome proves the CLI `munsu teardown` command
 // enforces the exact uplink ack in a non-default temp home. It:
 //  1. Creates a scout task with material status + report.md (passes scoutSafetyCheck)
@@ -432,6 +459,11 @@ func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
 func TestTeardownCmd_UplinkAckInTempHome(t *testing.T) {
 	tmpDir := t.TempDir()
 	soldierID := "teardown-homer-test"
+
+	// Seed the authoritative task record the teardown retirement transition
+	// requires (Task 7.7): production tasks are created via the Authority at
+	// spawn.
+	seedRetireAuthority(t, tmpDir, soldierID)
 
 	// Set up state dir
 	stateDir := filepath.Join(tmpDir, "state")
@@ -504,6 +536,11 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 	tmpDir := t.TempDir()
 	soldierID := "teardown-force-test"
 
+	// Seed the authoritative task record the teardown retirement transition
+	// requires (Task 7.7): production tasks are created via the Authority at
+	// spawn.
+	seedRetireAuthority(t, tmpDir, soldierID)
+
 	stateDir := filepath.Join(tmpDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
@@ -556,6 +593,11 @@ func TestTeardownCmd_ForceSkipsUplinkCheckInTempHome(t *testing.T) {
 func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	tmpDir := t.TempDir()
 	soldierID := "teardown-wrong-key-test"
+
+	// Seed the authoritative task record the teardown retirement transition
+	// requires (Task 7.7): production tasks are created via the Authority at
+	// spawn.
+	seedRetireAuthority(t, tmpDir, soldierID)
 	termKey := "uplink"
 
 	stateDir := filepath.Join(tmpDir, "state")
@@ -633,5 +675,117 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	err = root.Execute()
 	if err != nil {
 		t.Fatalf("with exact taskID+key ack, teardown should succeed, got: %v", err)
+	}
+}
+
+// TestPromoteRoutesThroughTaskAuthority proves `promote` commits the scout →
+// ship kind change through the composed Task Authority and reconciles the
+// .meta kind projection from the canonical aggregate (Task 7.8): the legacy
+// home.UpdateCurrentTaskAggregateKind / home.PromoteMeta reach-through is
+// gone, and a stale or tampered projection can never override the canonical
+// record.
+func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	// Seed a done scout task through the Authority (fs store), matching the
+	// canonical preflight promote requires.
+	auth := testAuthorityFor(t, homeDir)
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-scout", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID: "scout-a", Owner: "owner", Description: "explore", Kind: "scout", Project: "proj-x",
+		Reason: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Complete(taskauthority.CompleteRequest{
+		OperationID: "op-complete-scout", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID: "scout-a", ExpectedGeneration: 1, To: taskauthority.PhaseDone, Reason: "explored",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Projection: task add equivalent through the projection layer.
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ProjectTaskAdd("scout-a", map[string]string{"repo": "proj-x"}); err != nil {
+		t.Fatal(err)
+	}
+	// Report required by promote preflight.
+	dataDir := filepath.Join(homeDir, "data", "scout-a")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# findings"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := runTaskCommand(t, []string{"promote", "scout-a", "--home", homeDir}); err != nil {
+		t.Fatalf("promote: %v\n%s", err, out)
+	}
+	agg, err := auth.Get("scout-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Definition.Kind != "ship" {
+		t.Fatalf("canonical kind = %q, want ship", agg.Definition.Kind)
+	}
+	// .meta kind projection reconciled from the canonical aggregate.
+	meta, err := home.ReadMeta(homeDir, "scout-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta["kind"] != "ship" {
+		t.Fatalf("meta kind = %q, want ship", meta["kind"])
+	}
+	if meta["generation"] != "1" || meta["state"] != "done" {
+		t.Fatalf("meta projection = %v", meta)
+	}
+}
+
+// TestPromoteRefusesNonTerminalScout proves `promote` fails closed through
+// the Authority: a queued scout (or any non-terminal scout) is refused and
+// the canonical record is never mutated.
+func TestPromoteRefusesNonTerminalScout(t *testing.T) {
+	homeDir := t.TempDir()
+	auth := testAuthorityFor(t, homeDir)
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-scout", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID: "scout-b", Owner: "owner", Description: "explore", Kind: "scout",
+		Reason: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runTaskCommand(t, []string{"promote", "scout-b", "--home", homeDir}); err == nil {
+		t.Fatalf("promote queued scout succeeded:\n%s", out)
+	}
+	agg, err := auth.Get("scout-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Definition.Kind != "scout" || agg.Phase != taskauthority.PhaseQueued {
+		t.Fatalf("aggregate mutated on refused promote = %+v", agg)
+	}
+}
+
+// TestPromoteRefusesAbsentTask proves `promote` fails closed on a task with
+// no canonical record: the CLI preflight reads the Authority and the typed
+// ErrNotFound invariant is surfaced without creating or mutating anything
+// (Task 8.2 sweep closing the 8.1 coverage gap).
+func TestPromoteRefusesAbsentTask(t *testing.T) {
+	homeDir := t.TempDir()
+	out, err := runTaskCommand(t, []string{"promote", "scout-absent", "--home", homeDir})
+	if err == nil {
+		t.Fatalf("promote absent task succeeded:\n%s", out)
+	}
+	if !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("promote absent task err = %v, want typed ErrNotFound", err)
+	}
+	// Nothing was created: the canonical view stays empty and no projections
+	// were written.
+	if _, err := testAuthorityFor(t, homeDir).Get("scout-absent"); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("absent task appears after failed promote: %v", err)
+	}
+	if _, err := home.ReadMeta(homeDir, "scout-absent"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("meta written for absent task: %v", err)
 	}
 }

@@ -433,6 +433,17 @@ type TaskEntry struct {
 	Status  string `json:"status,omitempty"`
 }
 
+// TaskProjectionRow is one task's .meta/.status projection reconciliation
+// outcome. Generation and Revision pin the canonical record the projections
+// were derived from: reconciliation never changes them.
+type TaskProjectionRow struct {
+	TaskID     string `json:"task_id"`
+	Generation string `json:"generation"`
+	Revision   uint64 `json:"revision"`
+	Meta       string `json:"meta"`
+	Status     string `json:"status"`
+}
+
 // ProjectEntry is one row in a project list.
 type ProjectEntry struct {
 	Name        string `json:"name"`

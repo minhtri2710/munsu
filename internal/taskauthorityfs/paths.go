@@ -22,6 +22,7 @@ const (
 	auditDir           = authorityRoot + "/audit"
 	receiptsDir        = authorityRoot + "/receipts"
 	transactionsDir    = authorityRoot + "/transactions"
+	worktreeLeasesDir  = authorityRoot + "/worktree-leases"
 	currentFileName    = "current"
 	documentExt        = ".json"
 )
@@ -155,6 +156,34 @@ func TransactionManifestRelPath(operationID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(transactionsDir, name+documentExt), nil
+}
+
+// validateLeaseID checks a worktree lease token renders as one safe filename
+// component (the marker read path builds <leaseID>.json), rejecting traversal
+// and hidden identities.
+func validateLeaseID(leaseID string) error {
+	if leaseID == "" || leaseID == "." || leaseID == ".." || filepath.Base(leaseID) != leaseID ||
+		strings.ContainsAny(leaseID, "/\\\x00") || strings.HasPrefix(leaseID, ".") {
+		return pathError("invalid lease id %q", leaseID)
+	}
+	return nil
+}
+
+// WorktreeLeaseRelPath returns the versioned rel path of one worktree lease
+// marker document, keyed by task id, generation, and lease id. The marker
+// commits in the same transaction as the binding it accompanies and is read
+// by the legacy lease check, so the filename keeps the raw lease id.
+func WorktreeLeaseRelPath(taskID string, generation taskauthority.Generation, leaseID string) (string, error) {
+	if err := validateTaskID(taskID); err != nil {
+		return "", err
+	}
+	if err := generation.Validate(); err != nil {
+		return "", pathError("invalid generation %s: %v", generation, err)
+	}
+	if err := validateLeaseID(leaseID); err != nil {
+		return "", err
+	}
+	return filepath.Join(worktreeLeasesDir, taskID, generation.String(), leaseID+documentExt), nil
 }
 
 // EncodeCurrentPointer renders the current generation pointer file content

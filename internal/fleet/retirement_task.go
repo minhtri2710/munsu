@@ -3,16 +3,18 @@ package fleet
 
 import (
 	"fmt"
-	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // Options controls teardown behavior.
@@ -28,9 +30,69 @@ type TeardownResult struct {
 	Proofs []string // merge-proof evidence emitted by safety checks
 }
 
+// RetirementCleanupPendingError is the typed partial outcome of a retirement
+// whose authoritative Retire transition committed but whose saga-side cleanup
+// did not complete (ADR-0007 §7): the retired phase and typed audit stand
+// durably, cleanup is resumable, and a retry replays the durable receipt
+// idempotently and resumes cleanup — never re-running merge/reconciliation.
+// The committed merged truth is never rolled back or mutated by a cleanup
+// failure.
+type RetirementCleanupPendingError struct {
+	TaskID     string
+	Generation taskauthority.Generation
+	Revision   taskauthority.Revision
+	CleanupErr error
+}
+
+func (e *RetirementCleanupPendingError) Error() string {
+	return fmt.Sprintf("retirement committed for %s (generation %s revision %d) but cleanup is pending: %v", e.TaskID, e.Generation, e.Revision, e.CleanupErr)
+}
+
+func (e *RetirementCleanupPendingError) Unwrap() error { return e.CleanupErr }
+
+// taskRetireOperationID returns the stable Task Operation identity of the
+// retirement transition for one task generation (ADR-0007 §6): retries replay
+// the durable receipt idempotently instead of re-committing, and a reopened
+// generation retires under its own identity.
+func taskRetireOperationID(taskID string, generation taskauthority.Generation) string {
+	return fmt.Sprintf("task-retire-%s-%s", taskID, generation)
+}
+
+// retireTaskAuthoritatively commits the retired phase transition through the
+// composed Task Authority (Task 7.7). RequireVerifiedDelivery is derived from
+// the task meta's delivery identity: an identity-bearing task is only
+// retired-eligible with provider-verified merged/delivered evidence in its
+// authoritative state (the calling flow's safety checks already verified the
+// eligibility gates); a task without a delivery identity retires under the
+// baseline prerequisite (exact generation, not already retired). The
+// Operation identity is stable per task generation, so a retry after a
+// committed receipt replays it idempotently. Production callers always
+// supply the Authority; nil fails closed.
+func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *taskauthority.Authority) (taskauthority.Result, error) {
+	if authority == nil {
+		return taskauthority.Result{}, fmt.Errorf("retirement requires a composed task authority")
+	}
+	agg, err := authority.Get(opts.ID)
+	if err != nil {
+		return taskauthority.Result{}, fmt.Errorf("resolving task generation: %w", err)
+	}
+	requireVerifiedDelivery := false
+	if ident, err := domain.IdentityFromMeta(meta); err == nil && ident != nil {
+		requireVerifiedDelivery = true
+	}
+	return authority.Retire(taskauthority.RetireRequest{
+		OperationID:             taskRetireOperationID(opts.ID, agg.Generation),
+		Actor:                   deliveryActor(opts.HomeDir),
+		TaskID:                  opts.ID,
+		ExpectedGeneration:      agg.Generation,
+		RequireVerifiedDelivery: requireVerifiedDelivery,
+		Reason:                  "retirement",
+	})
+}
+
 // Run fails closed because teardown requires a task-bound endpoint capability.
 // Production callers must compose that capability through RunWithBackend.
-func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort) (*TeardownResult, error) {
+func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Authority) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
@@ -78,12 +140,38 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
+	// The authoritative retirement transition commits via the composed Task
+	// Authority BEFORE saga-side cleanup (Task 7.7): the durable receipt pins
+	// the retired phase + typed audit, and cleanup runs strictly after it and
+	// never re-runs merge/reconciliation. A retry after a committed receipt
+	// replays the receipt idempotently and resumes cleanup. An identity-bearing
+	// task is only retired-eligible with provider-verified merged/delivered
+	// evidence in its authoritative state; otherwise the operation fails
+	// closed with a typed precondition error. nil fails closed.
+	committed, err := retireTaskAuthoritatively(opts, meta, authority)
+	if err != nil {
+		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
+	}
+
+	// cleanupPending wraps a saga-side cleanup failure after the durable
+	// receipt: the retired phase and typed audit stand, cleanup is resumable
+	// and never reruns merge/reconciliation, and the committed merged truth is
+	// never rolled back or mutated.
+	cleanupPending := func(stepErr error) (*TeardownResult, error) {
+		return result, &RetirementCleanupPendingError{
+			TaskID:     opts.ID,
+			Generation: committed.Generation,
+			Revision:   committed.Revision,
+			CleanupErr: stepErr,
+		}
+	}
+
 	// 1. Kill session window
 	var wtPath string
 	if windowID, ok := meta["window"]; ok && windowID != "" {
 		status, err := backend.Probe(opts.HomeDir, meta)
 		if err != nil {
-			return nil, fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err)
+			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
 		if !status.Alive {
 			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", windowID))
@@ -93,7 +181,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				request.DenyWorkspaceClose = true
 			}
 			if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
-				return nil, fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err)
+				return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
 			}
 			result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", windowID))
 		}
@@ -119,11 +207,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			if !opts.Force {
 				expectedManifestSHA := meta["launch_manifest_sha256"]
 				if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {
-					return nil, fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err)
+					return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err))
 				}
 			}
 			if err := backend.ReturnWorktree(opts.HomeDir, wtPath); err != nil {
-				return nil, fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err)
+				return cleanupPending(fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err))
 			}
 			result.Steps = append(result.Steps, "worktree returned to pool")
 		} else {
@@ -149,7 +237,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// (for permanent durability) follows the current-state precedence pattern.
 	journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
 	if err != nil {
-		return nil, fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err)
+		return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
 	}
 	result.Steps = append(result.Steps, journalSteps...)
 
@@ -240,8 +328,13 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 		return fmt.Errorf("checking report.md: %w", err)
 	}
 
-	// After report exists, check for unresolved decision holds.
-	unresolvedKeys, err := Verify(opts.HomeDir, opts.ID, nil)
+	// After report exists, check for unresolved decision holds. The decision
+	// hold lifecycle mirrors into the task status projection (a needs-decision
+	// line until a resolved line is recorded), and teardown is not a held
+	// dispatch action (holds gate handoff/start/spawn, ADR-0004 §7), so the
+	// safety check reads the status projection — projection compatibility
+	// remains permitted while the authoritative dispatch cutover proceeds.
+	unresolvedKeys, err := unresolvedDecisionKeysFromStatus(opts.HomeDir, opts.ID)
 	if err != nil {
 		return fmt.Errorf("checking decision holds: %w", err)
 	}
@@ -250,6 +343,38 @@ func scoutSafetyCheck(opts Options, meta map[string]string) error {
 	}
 
 	return nil
+}
+
+// unresolvedDecisionKeysFromStatus derives unresolved decision keys from the
+// task status projection: a needs-decision line whose key has no resolved
+// counterpart is still open.
+func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) {
+	statusLines, err := home.ReadStatus(homeDir, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("reading status for %s: %w", taskID, err)
+	}
+	resolved := map[string]bool{}
+	needs := map[string]bool{}
+	for _, line := range statusLines {
+		_, key := home.ParseStatusKey(line)
+		if key == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "resolved:") {
+			resolved[key] = true
+		}
+		if strings.HasPrefix(line, "needs-decision:") {
+			needs[key] = true
+		}
+	}
+	var unresolved []string
+	for key := range needs {
+		if !resolved[key] {
+			unresolved = append(unresolved, key)
+		}
+	}
+	sort.Strings(unresolved)
+	return unresolved, nil
 }
 
 // shipSafetyCheck verifies work is landed before

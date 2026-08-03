@@ -12,6 +12,6 @@ import (
 // internal test package cannot import the harness package without a cycle.
 func TestStoreContract(t *testing.T) {
 	storecontract.Run(t, func() taskauthority.Store {
-		return taskauthority.NewMemStoreForTest()
+		return taskauthority.NewMemStore()
 	})
 }

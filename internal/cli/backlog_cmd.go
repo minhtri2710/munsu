@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -73,17 +73,34 @@ Example:
 			id := args[0]
 			desc := args[1]
 
-			if _, err := home.CreateTaskAggregate(ctx.Home, id, "", desc, kind, repo); err != nil {
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
 				return err
 			}
-			var err error
-			if isDefaultHome(ctx.Home) {
-				err = fleet.AddItemDispatch(ctx.Home, id, desc, kind, repo, false)
-			} else {
-				err = fleet.AddItem(ctx.Home, id, desc, kind, repo, false)
+			owner, actor := resolveTaskActor(ctx.Home)
+			if _, err := auth.Create(taskauthority.CreateRequest{
+				OperationID: newTaskAuthorityOperationID("backlog-add"),
+				Actor:       actor,
+				TaskID:      id,
+				Owner:       owner,
+				Description: desc,
+				Kind:        kind,
+				Project:     repo,
+				Reason:      "cli backlog add",
+			}); err != nil {
+				return err
 			}
-			if err != nil {
-				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
+			// The backlog file is a post-commit projection: a projection
+			// failure must not roll back the authoritative Task Generation
+			// (ADR-0007 §7).
+			var projectionErr error
+			if isDefaultHome(ctx.Home) {
+				projectionErr = fleet.AddItemDispatch(ctx.Home, id, desc, kind, repo, false)
+			} else {
+				projectionErr = fleet.AddItem(ctx.Home, id, desc, kind, repo, false)
+			}
+			if projectionErr != nil {
+				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: projectionErr}
 			}
 			return nil
 		}),
@@ -125,14 +142,21 @@ func newBacklogStartCmd() *cobra.Command {
 		Short: "Start a backlog item (mark in-flight)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			_, err := home.StartTask(ctx.Home, args[0])
-			if err != nil {
+			// Supervision gate: start fails closed when the watcher lease is
+			// degraded, before any Task Authority call (Task 4.3, ADR-0007 §8).
+			if err := fleet.CheckSupervisionForDispatch(ctx.Home, home.DispatchActionStart); err != nil {
 				return err
 			}
-			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "start", args); err != nil {
-				return &LifecyclePartialError{TaskID: args[0], State: "working", Cause: err}
-			}
-			return nil
+			return runAuthorityLifecycleTransition(ctx, "start", args, "working", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
+				_, err := auth.Start(taskauthority.StartRequest{
+					OperationID:        newTaskAuthorityOperationID("backlog-start"),
+					Actor:              actor,
+					TaskID:             agg.TaskID,
+					ExpectedGeneration: agg.Generation,
+					Reason:             "backlog: start",
+				})
+				return err
+			})
 		}),
 	}
 }
@@ -143,7 +167,17 @@ func newBacklogDoneCmd() *cobra.Command {
 		Short: "Mark a backlog item as done",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return runBacklogTransition(ctx.Home, "done", args, fleet.StateDone, "done", "backlog: done")
+			return runAuthorityLifecycleTransition(ctx, "done", args, "done", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
+				_, err := auth.Complete(taskauthority.CompleteRequest{
+					OperationID:        newTaskAuthorityOperationID("backlog-done"),
+					Actor:              actor,
+					TaskID:             agg.TaskID,
+					ExpectedGeneration: agg.Generation,
+					To:                 taskauthority.PhaseDone,
+					Reason:             "backlog: done",
+				})
+				return err
+			})
 		}),
 	}
 }
@@ -158,14 +192,22 @@ When --by is omitted, falls back to manual backend.`,
 
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if by != "" {
-				args = append(args, "--by", by)
-			}
 			detail := "backlog: blocked"
 			if by != "" {
 				detail += " by " + by
+				args = append(args, "--by", by)
 			}
-			return runBacklogTransition(ctx.Home, "block", args, fleet.StateBlocked, "blocked", detail)
+			return runAuthorityLifecycleTransition(ctx, "block", args, "blocked", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
+				_, err := auth.Block(taskauthority.BlockRequest{
+					OperationID:        newTaskAuthorityOperationID("backlog-block"),
+					Actor:              actor,
+					TaskID:             agg.TaskID,
+					ExpectedGeneration: agg.Generation,
+					Detail:             detail,
+					Reason:             "backlog: block",
+				})
+				return err
+			})
 		}),
 	}
 	cmd.Flags().StringVar(&by, "by", "", "Dependency that blocks this item (required for tasks-axi backend)")
@@ -181,13 +223,17 @@ func newBacklogReadyCmd() *cobra.Command {
 			if len(args) == 1 {
 				return exactCommandCorrection("unsupported_input", "munsu backlog unblock "+shellQuote(args[0]), "backlog ready is query-only; use the exact command in error.action to clear a blocker")
 			}
-			aggs, err := home.ListCurrentTaskAggregates(ctx.Home)
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return err
+			}
+			aggs, err := auth.List()
 			if err != nil {
 				return err
 			}
 			rows := make([]BacklogReadinessRow, 0, len(aggs))
 			for _, agg := range aggs {
-				readiness, err := home.QueryTaskReadiness(ctx.Home, agg.TaskID)
+				readiness, err := auth.Readiness(agg.TaskID)
 				if err != nil {
 					return err
 				}
@@ -214,13 +260,16 @@ func newBacklogUnblockCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			if _, err := home.UnblockTask(ctx.Home, args[0]); err != nil {
+			return runAuthorityLifecycleTransition(ctx, "unblock", args, "queued", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
+				_, err := auth.Unblock(taskauthority.UnblockRequest{
+					OperationID:        newTaskAuthorityOperationID("backlog-unblock"),
+					Actor:              actor,
+					TaskID:             agg.TaskID,
+					ExpectedGeneration: agg.Generation,
+					Reason:             "backlog: unblock",
+				})
 				return err
-			}
-			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "unblock", args); err != nil {
-				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
-			}
-			return nil
+			})
 		}),
 	}
 }
@@ -234,14 +283,16 @@ func newBacklogReopenCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			_, err := home.ReopenTask(ctx.Home, args[0])
-			if err != nil {
+			return runAuthorityLifecycleTransition(ctx, "reopen", args, "queued", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
+				_, err := auth.Reopen(taskauthority.ReopenRequest{
+					OperationID:        newTaskAuthorityOperationID("backlog-reopen"),
+					Actor:              actor,
+					TaskID:             agg.TaskID,
+					ExpectedGeneration: agg.Generation,
+					Reason:             "backlog: reopen",
+				})
 				return err
-			}
-			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "reopen", args); err != nil {
-				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
-			}
-			return nil
+			})
 		}),
 	}
 }
@@ -255,13 +306,16 @@ func newBacklogRetryCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			if _, err := home.SupersedeTask(ctx.Home, args[0]); err != nil {
+			return runAuthorityLifecycleTransition(ctx, "retry", args, "queued", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
+				_, err := auth.Supersede(taskauthority.SupersedeRequest{
+					OperationID:        newTaskAuthorityOperationID("backlog-retry"),
+					Actor:              actor,
+					TaskID:             agg.TaskID,
+					ExpectedGeneration: agg.Generation,
+					Reason:             "backlog: retry",
+				})
 				return err
-			}
-			if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), "retry", args); err != nil {
-				return &LifecyclePartialError{TaskID: args[0], State: "queued", Cause: err}
-			}
-			return nil
+			})
 		}),
 	}
 }
@@ -300,30 +354,26 @@ func refuseCaptainBacklogMutation() error {
 	return nil
 }
 
-func runBacklogTransition(homeDir, verb string, args []string, to fleet.TaskState, aggregateState, detail string) error {
-	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
-		return nil
-	}
+func runAuthorityLifecycleTransition(ctx Ctx, verb string, args []string, projectionState string, op func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error) error {
 	taskID := args[0]
-	item, found, err := fleet.GetItem(homeDir, taskID)
+	auth, err := ctx.TaskAuthority()
 	if err != nil {
 		return err
 	}
-	if found && !item.State.CanTransitionTo(to) {
-		return fmt.Errorf("backlog: cannot transition from %s to %s", item.State, to)
-	}
-	prior, hadAggregate, err := home.ReadCurrentTaskAggregate(homeDir, taskID)
+	agg, err := auth.Get(taskID)
 	if err != nil {
 		return err
 	}
-	if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, taskID, aggregateState, detail); err != nil {
+	_, actor := resolveTaskActor(ctx.Home)
+	if err := op(auth, agg, actor); err != nil {
 		return err
 	}
-	if err := fleet.Run(homeDir, isDefaultHome(homeDir), verb, args); err != nil {
-		if hadAggregate {
-			_ = home.WriteTaskAggregate(homeDir, *prior)
-		}
-		return err
+	// The backlog file is a post-commit projection: a projection failure must
+	// not roll back the authoritative lifecycle transition (ADR-0007 §7). The
+	// projection can be retried independently; the authoritative operation is
+	// never replayed.
+	if err := fleet.Run(ctx.Home, isDefaultHome(ctx.Home), verb, args); err != nil {
+		return &LifecyclePartialError{TaskID: taskID, State: projectionState, Cause: err}
 	}
 	return nil
 }

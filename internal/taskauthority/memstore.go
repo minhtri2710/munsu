@@ -89,8 +89,10 @@ func aggregateKey(taskID string, generation Generation) string {
 	return taskID + "\x00" + generation.String()
 }
 
-// memStore is a test-only in-memory Store adapter. It serializes all updates
-// under one transaction mutex and contains no lifecycle rules.
+// memStore is an in-memory Store adapter. It serializes all updates under
+// one transaction mutex and contains no lifecycle rules. It is the second
+// intended Store implementation (ADR-0007 §4): tests exercise the real
+// Authority over it, including CLI composition injection.
 type memStore struct {
 	mu    sync.Mutex
 	state *memState
@@ -107,10 +109,8 @@ func newMemStore() *memStore {
 	return &memStore{state: newMemState(), now: time.Now}
 }
 
-// NewMemStoreForTest constructs an empty in-memory Store for the external
-// contract-suite test package. Test-only: the in-memory adapter has no
-// production consumer yet.
-func NewMemStoreForTest() Store {
+// NewMemStore constructs an empty in-memory Store adapter.
+func NewMemStore() Store {
 	return newMemStore()
 }
 
@@ -157,6 +157,9 @@ func (s *memStore) Update(op Operation, fn func(tx *Tx) error) (Receipt, error) 
 			receipt.Reopened = true
 		}
 	}
+	if interpretationID, ok := tx.InterpretationOutcome(); ok {
+		receipt.InterpretationID = interpretationID
+	}
 	s.state.receipts[op.ID] = receipt
 	return receipt, nil
 }
@@ -197,14 +200,13 @@ func (a *memApplier) ApplyAudit(ev AuditEvent) error {
 	return nil
 }
 
-// failApplier returns a static error from every apply method; contract tests
-// use it to prove partial application is rejected by the adapter.
-type failApplier struct{ err error }
-
-func (f *failApplier) ApplyAggregate(Aggregate) error { return f.err }
-func (f *failApplier) ApplyHold(DispatchHold) error   { return f.err }
-func (f *failApplier) ApplyInterpretation(DispatchInterpretation) error {
-	return f.err
+func (a *memApplier) ApplyAuditRecord(ev AuditEvent) error {
+	a.state.audit = append(a.state.audit, ev)
+	return nil
 }
-func (f *failApplier) ApplyDecision(DispatchDecision) error { return f.err }
-func (f *failApplier) ApplyAudit(AuditEvent) error          { return f.err }
+
+func (a *memApplier) ApplyLeaseMarker(marker LeaseMarker) error {
+	// The in-memory adapter carries no lease files; the marker is validated
+	// and discarded, matching the filesystem adapter's durable write.
+	return marker.Validate()
+}

@@ -53,7 +53,7 @@ The --event-id should be unique per turn boundary (e.g., a timestamp or turn cou
 			if meta, err := home.ReadMeta(homeDir, taskID); err == nil {
 				fallbackGeneration = meta["generation"]
 			}
-			metaGeneration, err := home.CurrentTaskGeneration(homeDir, taskID, fallbackGeneration)
+			metaGeneration, err := currentTaskGeneration(homeDir, taskID, fallbackGeneration)
 			if err != nil {
 				return fmt.Errorf("ready: reading task aggregate: %w", err)
 			}

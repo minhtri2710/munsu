@@ -14,6 +14,7 @@ import (
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // Runner orchestrates the full spawn sequence through private phase methods.
@@ -72,7 +73,7 @@ func (r *Runner) Run() (string, error) {
 	if err := r.resolveHome(); err != nil {
 		return "", err
 	}
-	if err := r.checkDispatchHold(); err != nil {
+	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
 	if err := r.checkSpawnAuthority(); err != nil {
@@ -99,7 +100,7 @@ func (r *Runner) Run() (string, error) {
 	if err := r.checkBacklogAuthority(); err != nil {
 		return "", err
 	}
-	if err := r.checkDispatchHold(); err != nil {
+	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
 	if err := r.resolveProject(); err != nil {
@@ -124,7 +125,7 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	success := false
-	if err := r.checkDispatchHold(); err != nil {
+	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
 	// Fail-closed: return worktree on any subsequent error (but NOT on success).
@@ -164,17 +165,22 @@ func (r *Runner) Run() (string, error) {
 	if err := r.verifyEndpointReadyBeforePersist(); err != nil {
 		return "", err
 	}
-	if err := r.bindEndpoint(); err != nil {
-		_ = r.endpoints.Dispose(r.endpoint)
-		return "", err
-	}
 	if err := r.writeTaskMeta(); err != nil {
 		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
 	}
-	if err := r.markWorkingAfterBinding(); err != nil {
+	spawned, err := r.confirmSpawn()
+	if err != nil {
 		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
+	}
+	// The accepted capability attestation becomes authoritative evidence
+	// after ConfirmSpawn: the authoritative Generation comes from the
+	// ConfirmSpawn receipt. A failure keeps the observation runtime-only and
+	// is reported as a warning — the task is already working and the window
+	// is live, so the spawn itself never rolls back.
+	if err := r.attachAttestation(spawned.Generation); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	r.appendSpawnedStatus()
 	r.printEndpointInfo()
@@ -569,7 +575,7 @@ func (r *Runner) checkBacklogAuthority() error {
 		if metaExists && !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
 		}
-		return r.ensureTaskAggregate(item)
+		return r.ensureTaskAggregate()
 	}
 
 	// Live session without matching state still refuses (stale meta after teardown failure).
@@ -577,34 +583,28 @@ func (r *Runner) checkBacklogAuthority() error {
 		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
 	}
 
-	return r.ensureTaskAggregate(item)
+	return r.ensureTaskAggregate()
 }
 
-func (r *Runner) ensureTaskAggregate(item Item) error {
-	if _, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID); err != nil {
-		return fmt.Errorf("lifecycle guard: reading task aggregate: %w", err)
-	} else if !ok {
-		if _, err := home.CreateTaskAggregate(r.homeDir, r.args.ID, "", item.Description, item.Kind, item.Repo); err != nil {
-			return fmt.Errorf("lifecycle guard: creating task aggregate: %w", err)
-		}
+func (r *Runner) ensureTaskAggregate() error {
+	// The canonical Task Authority record is created by backlog add / task add
+	// through the Authority; the spawn shim never creates aggregates (Task
+	// 7.8). Fail closed when the task has no canonical record — the heal path
+	// is registering the task through the backlog.
+	if r.args.Authority == nil {
+		return fmt.Errorf("lifecycle guard: task authority is not composed for spawn")
+	}
+	if _, err := r.args.Authority.Get(r.args.ID); err != nil {
+		return fmt.Errorf("lifecycle guard: task %q has no canonical Task Authority record; register it with 'backlog add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
 	}
 	return nil
 }
 
-func (r *Runner) checkDispatchHold() error {
-	generation := ""
-	project := r.args.ProjectName
-	parentID := ""
-	if aggregate, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID); err != nil {
-		return err
-	} else if ok {
-		generation = aggregate.Generation
-		parentID = aggregate.ParentTaskID
-		if project == "" {
-			project = aggregate.Project
-		}
-	}
-	return home.CheckDispatchHold(r.homeDir, home.DispatchActionSpawn, r.args.ID, project, generation, parentID)
+func (r *Runner) checkSupervision() error {
+	// Supervision gate: spawn fails closed when the watcher lease is degraded.
+	// Durable Dispatch Holds are evaluated atomically inside the Task Authority
+	// ConfirmSpawn operation, never here (Task 4.3, ADR-0007 §8).
+	return CheckSupervisionForDispatch(r.homeDir, home.DispatchActionSpawn)
 }
 
 // Phase 6: resolveProject resolves the project repo path from registry.
@@ -1187,49 +1187,71 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 }
 
 func (r *Runner) bindWorktree() error {
-	agg, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID)
-	if err != nil {
-		return err
+	if r.args.Authority == nil {
+		return fmt.Errorf("binding worktree before endpoint launch: task authority is not composed for spawn")
 	}
-	if !ok {
-		return fmt.Errorf("task aggregate %s has no current generation for worktree binding", r.args.ID)
-	}
-	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, agg.Generation)
+	agg, err := r.args.Authority.Get(r.args.ID)
 	if err != nil {
 		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
-	if err := home.BindTaskWorktree(r.homeDir, r.args.ID, agg.Generation, binding); err != nil {
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath)
+	if err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	if _, err := r.args.Authority.BindWorktree(taskauthority.BindWorktreeRequest{
+		OperationID:        fmt.Sprintf("spawn-bind-wt-%s-%d", r.args.ID, agg.Generation),
+		Actor:              r.spawnActor(),
+		TaskID:             r.args.ID,
+		ExpectedGeneration: agg.Generation,
+		Binding:            binding,
+		Reason:             "spawn",
+	}); err != nil {
 		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
 	return nil
 }
 
-func buildTaskWorktreeBinding(primaryPath, worktreePath, generation string) (home.TaskWorktreeBinding, error) {
+// spawnActor resolves the authoritative actor identity of the rank running
+// the spawn from the exact home, matching the legacy home fallback: captain
+// identity for captain homes, otherwise the home identity.
+func (r *Runner) spawnActor() taskauthority.Actor {
+	identity, rank, err := home.ReadHomeIdentity(r.homeDir)
+	if err != nil {
+		identity = filepath.Base(r.homeDir)
+		rank = home.RankGeneral
+	}
+	owner := identity
+	if rank == home.RankCaptain {
+		owner = "captain:" + identity
+	}
+	return taskauthority.Actor{ID: owner, Rank: string(rank)}
+}
+
+func buildTaskWorktreeBinding(primaryPath, worktreePath string) (taskauthority.WorktreeBinding, error) {
 	canonicalWorktree, err := canonicalExistingPath(worktreePath)
 	if err != nil {
-		return home.TaskWorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
 	}
 	identity, gitDir, commonDir, err := ClassifyIdentity(canonicalWorktree)
 	if err != nil {
-		return home.TaskWorktreeBinding{}, err
+		return taskauthority.WorktreeBinding{}, err
 	}
 	if identity != Worktree {
-		return home.TaskWorktreeBinding{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
 	}
 	repoIdentity := commonDir
 	if primaryPath != "" {
 		_, _, primaryCommonDir, err := ClassifyIdentity(primaryPath)
 		if err != nil {
-			return home.TaskWorktreeBinding{}, fmt.Errorf("classifying repository identity: %w", err)
+			return taskauthority.WorktreeBinding{}, fmt.Errorf("classifying repository identity: %w", err)
 		}
 		repoIdentity = primaryCommonDir
 	}
 	head, err := gitRevParseForBinding(canonicalWorktree, "HEAD")
 	if err != nil {
-		return home.TaskWorktreeBinding{}, fmt.Errorf("reading worktree head: %w", err)
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("reading worktree head: %w", err)
 	}
-	return home.TaskWorktreeBinding{
-		TaskGeneration:     generation,
+	return taskauthority.WorktreeBinding{
 		RepositoryIdentity: repoIdentity,
 		Path:               canonicalWorktree,
 		GitDir:             gitDir,
@@ -1251,15 +1273,26 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (r *Runner) bindEndpoint() error {
-	agg, ok, err := home.ReadCurrentTaskAggregate(r.homeDir, r.args.ID)
+// confirmSpawn persists the endpoint binding and the queued → working
+// transition as one atomic Task Authority operation after the endpoint is
+// verified ready and the task meta projection is written. The endpoint
+// binding is an aggregate field, so it commits through the existing journal
+// with the transition, the Revision advance, the typed audit event, and the
+// durable idempotency receipt. A failed persistence leaves the task queued
+// with no endpoint binding. The Runner fails closed when no Authority is
+// composed, exactly like bindWorktree. The returned Result is the
+// authoritative outcome of the spawn (the ConfirmSpawn receipt): its
+// Generation is the exact generation the attestation evidence binds to
+// (Task 7.3).
+func (r *Runner) confirmSpawn() (taskauthority.Result, error) {
+	if r.args.Authority == nil {
+		return taskauthority.Result{}, fmt.Errorf("confirming spawn: task authority is not composed for spawn")
+	}
+	agg, err := r.args.Authority.Get(r.args.ID)
 	if err != nil {
-		return err
+		return taskauthority.Result{}, fmt.Errorf("confirming spawn: %w", err)
 	}
-	if !ok {
-		return fmt.Errorf("task aggregate %s has no current generation for endpoint binding", r.args.ID)
-	}
-	binding := home.TaskEndpointBinding{
+	binding := taskauthority.EndpointBinding{
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
 		LeaseID:      newEndpointToken(),
@@ -1269,17 +1302,18 @@ func (r *Runner) bindEndpoint() error {
 		TabID:        r.endpoint.TabID,
 		BoundAtUnix:  time.Now().Unix(),
 	}
-	if err := home.BindTaskEndpoint(r.homeDir, r.args.ID, agg.Generation, binding); err != nil {
-		return fmt.Errorf("binding endpoint before working: %w", err)
+	res, err := r.args.Authority.ConfirmSpawn(taskauthority.ConfirmSpawnRequest{
+		OperationID:        fmt.Sprintf("spawn-confirm-%s-%d", r.args.ID, agg.Generation),
+		Actor:              r.spawnActor(),
+		TaskID:             r.args.ID,
+		ExpectedGeneration: agg.Generation,
+		Binding:            binding,
+		Reason:             "spawned",
+	})
+	if err != nil {
+		return taskauthority.Result{}, fmt.Errorf("confirming spawn: %w", err)
 	}
-	return nil
-}
-
-func (r *Runner) markWorkingAfterBinding() error {
-	if _, _, err := home.UpdateCurrentTaskAggregateState(r.homeDir, r.args.ID, "working", "spawned"); err != nil {
-		return fmt.Errorf("marking task working after endpoint binding: %w", err)
-	}
-	return nil
+	return res, nil
 }
 
 func newEndpointToken() string {
@@ -1290,49 +1324,61 @@ func newEndpointToken() string {
 	return fmt.Sprintf("%x", buf)
 }
 
-// Phase 14: writeTaskMeta writes the task metadata file.
+// Phase 14: writeTaskMeta writes the task metadata file. The side file is a
+// pre-transition runtime observation projection (Task 4.2, Task 7.8
+// adjudication): it carries the runtime-only fields that describe the live
+// soldier session (window, worktree, harness, backend, mode, yolo, model,
+// effort, config digest, launch manifest anchor, endpoint metadata) and never
+// acts as a writer of record for authoritative Task Aggregate fields (kind,
+// project, description, owner, generation, state). Existing projection
+// fields are preserved; runtime fields are overlaid. Authoritative fields
+// are reconciled from the canonical aggregate by the projection layer.
 func (r *Runner) writeTaskMeta() error {
 	yoloVal := "off"
 	if r.args.Yolo {
 		yoloVal = "on"
 	}
-	meta := map[string]string{
-		"window":   r.windowID,
-		"worktree": r.wtPath,
-		"project":  r.args.ProjectName,
-		"projpath": r.projPath,
-		"harness":  r.harness,
-		"backend":  r.endpoint.Backend,
-		"kind":     r.args.Kind,
-		"mode":     r.effectiveMode,
-		"yolo":     yoloVal,
+	meta, err := home.ReadMeta(r.homeDir, r.args.ID)
+	if err != nil {
+		meta = make(map[string]string)
 	}
+	put := func(k, v string) {
+		if v != "" {
+			meta[k] = v
+		}
+	}
+	put("window", r.windowID)
+	put("worktree", r.wtPath)
+	put("projpath", r.projPath)
+	put("harness", r.harness)
+	put("backend", r.endpoint.Backend)
+	put("mode", r.effectiveMode)
+	put("yolo", yoloVal)
 	if r.model != "" {
-		meta["model"] = r.model
+		put("model", r.model)
 	}
 	if r.effort != "" {
-		meta["effort"] = r.effort
+		put("effort", r.effort)
 	}
 	if r.projectConfigLoaded {
-		meta["config_snapshot_digest"] = r.projectConfig.SnapshotDigest
+		put("config_snapshot_digest", r.projectConfig.SnapshotDigest)
 	}
 	if r.manifestSHA256 != "" {
-		meta["launch_manifest_sha256"] = r.manifestSHA256
+		put("launch_manifest_sha256", r.manifestSHA256)
 	}
 
 	for k, v := range r.endpoint.Metadata {
-		meta[k] = v
+		put(k, v)
 	}
 
-	// Persist capability attestation for lifecycle visibility.
-	if r.attestation != nil {
-		meta[MetaCapabilityAttestation] = r.attestationJSON()
-		meta[MetaRequestedMode] = r.attestation.RequestedMode
-		meta[MetaEffectiveMode] = r.attestation.EffectiveMode
-		if r.attestation.FallbackReason != "" {
-			meta[MetaFallbackReason] = r.attestation.FallbackReason
-		}
-	}
+	// The capability attestation fields (capability_attestation,
+	// attestation_requested_mode, attestation_effective_mode,
+	// attestation_fallback_reason) are NOT written here: this pre-transition
+	// side file is runtime observations only (Task 4.2). The accepted
+	// attestation becomes authoritative evidence through the Task Authority
+	// after ConfirmSpawn (Task 7.3); the .meta fields are a post-confirm
+	// runtime projection of that authoritative acceptance written by
+	// projectAttestationEvidence, never a writer of record.
 
 	if err := home.WriteMeta(r.homeDir, r.args.ID, meta); err != nil {
 		return fmt.Errorf("writing task meta: %w", err)
@@ -1340,16 +1386,76 @@ func (r *Runner) writeTaskMeta() error {
 	return nil
 }
 
-// attestationJSON returns the JSON serialization of the attestation.
-func (r *Runner) attestationJSON() string {
+// attachAttestation commits the accepted capability attestation as
+// authoritative evidence through the composed Task Authority after
+// ConfirmSpawn, then projects the acceptance into .meta. The expected
+// generation comes from the ConfirmSpawn receipt, so the evidence binds the
+// exact generation the spawn committed. The task is already working when
+// this runs: a failure keeps the observation runtime-only and is surfaced by
+// the caller as a warning, never rolling back the authoritative spawn.
+func (r *Runner) attachAttestation(generation taskauthority.Generation) error {
 	if r.attestation == nil {
-		return ""
+		return nil
 	}
-	data, err := json.Marshal(r.attestation)
+	if r.args.Authority == nil {
+		return fmt.Errorf("attaching attestation evidence: task authority is not composed for spawn")
+	}
+	configDigest := ""
+	if r.projectConfigLoaded {
+		configDigest = r.projectConfig.SnapshotDigest
+	}
+	res, err := StoreAttestationEvidence(r.homeDir, r.args.Authority, r.args.ID, generation, r.attestation, configDigest)
 	if err != nil {
-		return ""
+		return fmt.Errorf("attaching attestation evidence: %w", err)
 	}
-	return string(data)
+	if projErr := projectAttestationEvidence(r.homeDir, r.args.ID, r.attestation, res); projErr != nil {
+		return projErr
+	}
+	return nil
+}
+
+// AttestationProjectionError is the typed partial outcome of an attestation
+// acceptance whose authoritative commit succeeded but whose .meta projection
+// could not be written (ADR-0007 §7). The authoritative state is never
+// rolled back; the projection can be retried independently and replays
+// idempotently.
+type AttestationProjectionError struct {
+	TaskID        string
+	ProjectionErr error
+}
+
+func (e *AttestationProjectionError) Error() string {
+	return fmt.Sprintf("attestation evidence committed for %s but projection failed: %v", e.TaskID, e.ProjectionErr)
+}
+
+func (e *AttestationProjectionError) Unwrap() error { return e.ProjectionErr }
+
+// projectAttestationEvidence writes the .meta attestation fields as a
+// runtime projection of the authoritative acceptance committed by
+// AttachAttestation (Task 7.3). The projection is one-directional: it
+// mirrors the accepted evidence and never writes into the Authority. A
+// projection failure returns a typed partial error and never rolls back the
+// authoritative commit; the projection is retryable without replaying the
+// authoritative operation.
+func projectAttestationEvidence(homeDir, taskID string, att *CapabilityAttestation, res taskauthority.AttachAttestationResult) error {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		meta = make(map[string]string)
+	}
+	data, err := json.Marshal(att)
+	if err != nil {
+		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
+	}
+	meta[MetaCapabilityAttestation] = string(data)
+	meta[MetaRequestedMode] = att.RequestedMode
+	meta[MetaEffectiveMode] = att.EffectiveMode
+	if att.FallbackReason != "" {
+		meta[MetaFallbackReason] = att.FallbackReason
+	}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
+	}
+	return nil
 }
 
 // Phase 15: appendSpawnedStatus appends the working: spawned status line.

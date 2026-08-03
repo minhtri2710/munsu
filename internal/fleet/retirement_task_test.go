@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // setupGitRepo initializes a git repo in dir.
@@ -400,7 +402,7 @@ func TestRun_NoMeta(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{})
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "nonexistent"))
 	if err == nil {
 		t.Fatal("should fail for nonexistent task")
 	}
@@ -418,7 +420,7 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "nonexistent.meta"), []byte(metaContent), 0644)
 
 	// With --force, it should try to proceed (will fail at session/return steps but not at safety)
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "nonexistent"))
 	if err != nil {
 		t.Fatalf("with --force should not fail at safety: %v", err)
 	}
@@ -438,13 +440,13 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Without --force, should fail
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{})
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
 	if err == nil {
 		t.Fatal("should fail for scout without report without --force")
 	}
 
 	// With --force, should proceed
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}
@@ -479,7 +481,7 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 
 	// Run teardown with --force to skip safety
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "test-residual"))
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -539,7 +541,7 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	}
 
 	// Run teardown with --force
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "legacy-test"))
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -572,18 +574,17 @@ func TestScoutSafetyCheck_UnresolvedHolds(t *testing.T) {
 	os.MkdirAll(reportDir, 0755)
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
 
-	// Create unresolved decision holds.
-	_, err := Create(tmp, "scout-1", "approach", "Pick the UI framework")
-	if err != nil {
+	// Create unresolved decision holds by appending the needs-decision status
+	// projection the decision-hold lifecycle mirrors into.
+	if err := mhome.AppendStatus(tmp, "scout-1", "needs-decision: Pick the UI framework [key=approach]"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Create(tmp, "scout-1", "db-schema", "Choose DB schema")
-	if err != nil {
+	if err := mhome.AppendStatus(tmp, "scout-1", "needs-decision: Choose DB schema [key=db-schema]"); err != nil {
 		t.Fatal(err)
 	}
 
 	// scoutSafetyCheck should fail listing unresolved keys.
-	err = scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
 	if err == nil {
 		t.Fatal("should fail when unresolved decision holds exist")
 	}
@@ -603,18 +604,16 @@ func TestScoutSafetyCheck_NoUnresolvedHolds(t *testing.T) {
 	os.MkdirAll(reportDir, 0755)
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
 
-	// Create a hold and resolve it.
-	_, err := Create(tmp, "scout-1", "approach", "Pick the UI framework")
-	if err != nil {
+	// Create a hold and resolve it through the status projection.
+	if err := mhome.AppendStatus(tmp, "scout-1", "needs-decision: Pick the UI framework [key=approach]"); err != nil {
 		t.Fatal(err)
 	}
-	err = Resolve(tmp, "scout-1", "approach", "Choose React", nil)
-	if err != nil {
+	if err := mhome.AppendStatus(tmp, "scout-1", "resolved: Choose React [key=approach]"); err != nil {
 		t.Fatal(err)
 	}
 
 	// scoutSafetyCheck should pass since all holds are resolved.
-	err = scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
+	err := scoutSafetyCheck(Options{ID: "scout-1", HomeDir: tmp}, nil)
 	if err != nil {
 		t.Fatalf("should pass when all holds resolved: %v", err)
 	}
@@ -635,14 +634,13 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	reportDir := filepath.Join(tmp, "data", "scout-test")
 	os.MkdirAll(reportDir, 0755)
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
-	// Create unresolved decision holds.
-	_, err := Create(tmp, "scout-test", "approach", "Pick the UI framework")
-	if err != nil {
+	// Create unresolved decision holds via the status projection.
+	if err := mhome.AppendStatus(tmp, "scout-test", "needs-decision: Pick the UI framework [key=approach]"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Without --force, should fail due to unresolved holds.
-	_, err = RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{})
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
 	if err == nil {
 		t.Fatal("should fail for scout with unresolved holds without --force")
 	}
@@ -651,7 +649,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 
 	// With --force, should proceed past safety checks.
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{})
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}

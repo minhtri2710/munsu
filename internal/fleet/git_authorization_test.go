@@ -8,9 +8,10 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// --- GitCapabilityTier tests ---
+// --- GitCapabilityTier tests (read path over the .meta projection) ---
 
 func TestGitCapabilityTier_DefaultToWrite(t *testing.T) {
 	homeDir := t.TempDir()
@@ -21,8 +22,8 @@ func TestGitCapabilityTier_DefaultToWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveGitCapabilityTier: %v", err)
 	}
-	if tier != GitTierWrite {
-		t.Errorf("expected default tier %q, got %q", GitTierWrite, tier)
+	if tier != taskauthority.GitTierWrite {
+		t.Errorf("expected default tier %q, got %q", taskauthority.GitTierWrite, tier)
 	}
 }
 
@@ -30,134 +31,218 @@ func TestGitCapabilityTier_SetAndRead(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-tier-set"
 
-	// Set tier
-	if err := SetGitCapabilityTier(homeDir, taskID, GitTierRewrite); err != nil {
-		t.Fatalf("SetGitCapabilityTier: %v", err)
+	// Seed the .meta projection as the production wrapper reconciles it
+	// after the authoritative commit (Task 7.4).
+	meta := map[string]string{"generation": "1", "kind": "ship"}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	if err := projectGitCapabilityTier(homeDir, taskID, string(taskauthority.GitTierRewrite)); err != nil {
+		t.Fatalf("projectGitCapabilityTier: %v", err)
 	}
 
-	// Read back
 	tier, err := ResolveGitCapabilityTier(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ResolveGitCapabilityTier: %v", err)
 	}
-	if tier != GitTierRewrite {
-		t.Errorf("expected tier %q, got %q", GitTierRewrite, tier)
+	if tier != taskauthority.GitTierRewrite {
+		t.Errorf("expected tier %q, got %q", taskauthority.GitTierRewrite, tier)
 	}
 }
 
-func TestGitCapabilityTier_ImmutableAfterSet(t *testing.T) {
+func TestGitCapabilityTier_UnknownTierDefaultsToWrite(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-tier-unknown"
+
+	meta := map[string]string{"git_capability_tier": "super"}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	tier, err := ResolveGitCapabilityTier(homeDir, taskID)
+	if err == nil {
+		t.Fatal("expected error for unknown tier")
+	}
+	if tier != taskauthority.GitTierWrite {
+		t.Errorf("expected fallback tier %q, got %q", taskauthority.GitTierWrite, tier)
+	}
+}
+
+// --- StoreGitCapabilityTier tests (fleet cutover through the Authority) ---
+
+// newGitAuthAuthority seeds one worktree-bound task in an Authority.
+func newGitAuthAuthority(t *testing.T, taskID string) *taskauthority.Authority {
+	t.Helper()
+	return amendAuth(t, taskID)
+}
+
+func TestStoreGitCapabilityTier_Success(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-store-tier"
+	meta := map[string]string{"generation": "1", "kind": "ship"}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	auth := newGitAuthAuthority(t, taskID)
+
+	res, err := StoreGitCapabilityTier(homeDir, auth, taskID, taskauthority.GitTierRewrite)
+	if err != nil {
+		t.Fatalf("StoreGitCapabilityTier: %v", err)
+	}
+	if res.TaskID != taskID || res.Generation != 1 || res.Replayed {
+		t.Fatalf("tier result = %+v", res)
+	}
+
+	// The authoritative Aggregate holds the generation-bound tier.
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if agg.GitCapabilityTier != string(taskauthority.GitTierRewrite) {
+		t.Fatalf("authoritative tier = %q, want %q", agg.GitCapabilityTier, taskauthority.GitTierRewrite)
+	}
+
+	// The .meta projection is reconciled.
+	readMeta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if readMeta[MetaGitCapabilityTier] != string(taskauthority.GitTierRewrite) {
+		t.Errorf("projected tier = %q, want %q", readMeta[MetaGitCapabilityTier], taskauthority.GitTierRewrite)
+	}
+}
+
+func TestStoreGitCapabilityTier_ImmutableAfterSet(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-tier-immutable"
-
-	// Set tier
-	if err := SetGitCapabilityTier(homeDir, taskID, GitTierRewrite); err != nil {
-		t.Fatalf("SetGitCapabilityTier: %v", err)
+	meta := map[string]string{"generation": "1", "kind": "ship"}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	// Overwrite with different tier
-	if err := SetGitCapabilityTier(homeDir, taskID, GitTierCleanup); err != nil {
-		t.Fatalf("SetGitCapabilityTier: %v", err)
+	if _, err := StoreGitCapabilityTier(homeDir, auth, taskID, taskauthority.GitTierRewrite); err != nil {
+		t.Fatalf("StoreGitCapabilityTier(rewrite): %v", err)
 	}
-
-	// Verify it was overwritten (meta is mutable, but the launch-time contract
-	// says the tier should not change during a launch — that's enforced by
-	// the caller not calling SetGitCapabilityTier after launch)
-	tier, err := ResolveGitCapabilityTier(homeDir, taskID)
+	// The launch-time contract is enforced: a different tier on the same
+	// generation conflicts (the old meta write silently overwrote; the
+	// Authority binds the tier, Task 7.4).
+	if _, err := StoreGitCapabilityTier(homeDir, auth, taskID, taskauthority.GitTierCleanup); err == nil {
+		t.Fatal("expected conflict when changing the tier within the generation")
+	}
+	agg, err := auth.Get(taskID)
 	if err != nil {
-		t.Fatalf("ResolveGitCapabilityTier: %v", err)
+		t.Fatal(err)
 	}
-	if tier != GitTierCleanup {
-		t.Errorf("expected tier %q, got %q", GitTierCleanup, tier)
+	if agg.GitCapabilityTier != string(taskauthority.GitTierRewrite) {
+		t.Fatalf("tier changed after rejected set: %q", agg.GitCapabilityTier)
+	}
+}
+
+func TestStoreGitCapabilityTier_FailsClosedWithoutAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-tier-no-auth"
+	if _, err := StoreGitCapabilityTier(homeDir, nil, taskID, taskauthority.GitTierRewrite); err == nil {
+		t.Fatal("expected error when no authority is composed")
 	}
 }
 
 // --- TierEnough tests ---
 
 func TestTierEnough_Same(t *testing.T) {
-	if !TierEnough(GitTierWrite, GitTierWrite) {
+	if !TierEnough(taskauthority.GitTierWrite, taskauthority.GitTierWrite) {
 		t.Error("write should be enough for write")
 	}
 }
 
 func TestTierEnough_Higher(t *testing.T) {
-	if !TierEnough(GitTierRewrite, GitTierWrite) {
+	if !TierEnough(taskauthority.GitTierRewrite, taskauthority.GitTierWrite) {
 		t.Error("rewrite should be enough for write")
 	}
 }
 
 func TestTierEnough_Lower(t *testing.T) {
-	if TierEnough(GitTierRead, GitTierWrite) {
+	if TierEnough(taskauthority.GitTierRead, taskauthority.GitTierWrite) {
 		t.Error("read should NOT be enough for write")
 	}
 }
 
 func TestTierEnough_RewriteNeedsRewriteOrHigher(t *testing.T) {
-	if TierEnough(GitTierWrite, GitTierRewrite) {
+	if TierEnough(taskauthority.GitTierWrite, taskauthority.GitTierRewrite) {
 		t.Error("write should NOT be enough for rewrite")
 	}
-	if !TierEnough(GitTierRewrite, GitTierRewrite) {
+	if !TierEnough(taskauthority.GitTierRewrite, taskauthority.GitTierRewrite) {
 		t.Error("rewrite should be enough for rewrite")
 	}
-	if !TierEnough(GitTierCleanup, GitTierRewrite) {
+	if !TierEnough(taskauthority.GitTierCleanup, taskauthority.GitTierRewrite) {
 		t.Error("cleanup should be enough for rewrite")
 	}
 }
 
 func TestTierEnough_CleanupNeedsCleanupOrHigher(t *testing.T) {
-	if TierEnough(GitTierRewrite, GitTierCleanup) {
+	if TierEnough(taskauthority.GitTierRewrite, taskauthority.GitTierCleanup) {
 		t.Error("rewrite should NOT be enough for cleanup")
 	}
-	if !TierEnough(GitTierCleanup, GitTierCleanup) {
+	if !TierEnough(taskauthority.GitTierCleanup, taskauthority.GitTierCleanup) {
 		t.Error("cleanup should be enough for cleanup")
 	}
-	if !TierEnough(GitTierAdmin, GitTierCleanup) {
+	if !TierEnough(taskauthority.GitTierAdmin, taskauthority.GitTierCleanup) {
 		t.Error("admin should be enough for cleanup")
 	}
 }
 
-// --- OperationRequiresTier tests ---
+// --- OperationRequiresTier tests (moved to the Authority module) ---
 
 func TestOperationRequiresTier_ForceWithLease(t *testing.T) {
-	if tier := OperationRequiresTier(GitOpForceWithLease); tier != GitTierRewrite {
+	if tier := taskauthority.OperationRequiresTier(taskauthority.GitOpForceWithLease); tier != taskauthority.GitTierRewrite {
 		t.Errorf("expected rewrite, got %q", tier)
 	}
 }
 
 func TestOperationRequiresTier_BranchDelete(t *testing.T) {
-	if tier := OperationRequiresTier(GitOpBranchDelete); tier != GitTierCleanup {
+	if tier := taskauthority.OperationRequiresTier(taskauthority.GitOpBranchDelete); tier != taskauthority.GitTierCleanup {
 		t.Errorf("expected cleanup, got %q", tier)
 	}
 }
 
 func TestOperationRequiresTier_PushDelete(t *testing.T) {
-	if tier := OperationRequiresTier(GitOpPushDelete); tier != GitTierCleanup {
+	if tier := taskauthority.OperationRequiresTier(taskauthority.GitOpPushDelete); tier != taskauthority.GitTierCleanup {
 		t.Errorf("expected cleanup, got %q", tier)
 	}
 }
 
-func TestOperationRequiresTier_WriteOps(t *testing.T) {
-	// All write operations should require only write tier
-	writeOps := []GitOperation{GitOpForceWithLease, GitOpRebase, GitOpReset, GitOpAmendCommit, GitOpCherryPick, GitOpRevert, GitOpClean}
-	for _, op := range writeOps {
-		tier := OperationRequiresTier(op)
-		if tier != GitTierRewrite && tier != GitTierCleanup {
+func TestOperationRequiresTier_ElevatedOps(t *testing.T) {
+	elevated := []taskauthority.GitOperation{
+		taskauthority.GitOpForceWithLease, taskauthority.GitOpRebase, taskauthority.GitOpReset,
+		taskauthority.GitOpAmendCommit, taskauthority.GitOpCherryPick, taskauthority.GitOpRevert,
+		taskauthority.GitOpClean, taskauthority.GitOpBranchDelete, taskauthority.GitOpPushDelete,
+	}
+	for _, op := range elevated {
+		tier := taskauthority.OperationRequiresTier(op)
+		if tier != taskauthority.GitTierRewrite && tier != taskauthority.GitTierCleanup {
 			t.Errorf("operation %q requires tier %q, expected rewrite or cleanup", op, tier)
 		}
+	}
+}
+
+func TestOperationRequiresTier_WriteOps(t *testing.T) {
+	// Operations not listed require at most write tier.
+	if tier := taskauthority.OperationRequiresTier(taskauthority.GitOperation("add")); tier != taskauthority.GitTierWrite {
+		t.Errorf("expected write, got %q", tier)
 	}
 }
 
 // --- GitMutationAuthorization round-trip ---
 
 func TestGitMutationAuthorization_RoundTrip(t *testing.T) {
-	auth := &GitMutationAuthorization{
-		TaskGeneration: "7",
-		Operation:      GitOpForceWithLease,
-		ExpectedState: GitExpectedState{
+	auth := &taskauthority.GitMutationAuthorization{
+		Operation: taskauthority.GitOpForceWithLease,
+		ExpectedState: taskauthority.GitExpectedState{
 			Ref:    "refs/heads/mu/test-task",
 			OldSHA: "abc123abc123abc123abc123abc123abc123abc1",
 			NewSHA: "def456def456def456def456def456def456def4",
 		},
-		AuthorizedAt: "2026-07-20T12:00:00Z",
+		AuthorizedAt: 1,
 		Authorizer:   "general",
 		Context:      "amendment",
 	}
@@ -167,14 +252,11 @@ func TestGitMutationAuthorization_RoundTrip(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	var restored GitMutationAuthorization
+	var restored taskauthority.GitMutationAuthorization
 	if err := json.Unmarshal(data, &restored); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if restored.TaskGeneration != auth.TaskGeneration {
-		t.Errorf("TaskGeneration: got %q, want %q", restored.TaskGeneration, auth.TaskGeneration)
-	}
 	if restored.Operation != auth.Operation {
 		t.Errorf("Operation: got %q, want %q", restored.Operation, auth.Operation)
 	}
@@ -187,9 +269,6 @@ func TestGitMutationAuthorization_RoundTrip(t *testing.T) {
 	if restored.ExpectedState.NewSHA != auth.ExpectedState.NewSHA {
 		t.Errorf("NewSHA: got %q, want %q", restored.ExpectedState.NewSHA, auth.ExpectedState.NewSHA)
 	}
-	if restored.AuthorizedAt != auth.AuthorizedAt {
-		t.Errorf("AuthorizedAt: got %q, want %q", restored.AuthorizedAt, auth.AuthorizedAt)
-	}
 	if restored.Authorizer != auth.Authorizer {
 		t.Errorf("Authorizer: got %q, want %q", restored.Authorizer, auth.Authorizer)
 	}
@@ -198,75 +277,91 @@ func TestGitMutationAuthorization_RoundTrip(t *testing.T) {
 	}
 }
 
-// --- AuthorizeGitMutation tests ---
+// --- StoreGitMutationAuthorization / ClearStoredGitMutationAuthorization tests ---
 
-func TestAuthorizeGitMutation_Success(t *testing.T) {
+func mustGitState(ref, oldSHA, newSHA string) taskauthority.GitExpectedState {
+	return taskauthority.GitExpectedState{Ref: ref, OldSHA: oldSHA, NewSHA: newSHA}
+}
+
+func TestStoreGitMutationAuthorization_Success(t *testing.T) {
 	homeDir := t.TempDir()
-	taskID := "test-auth-mutation"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation, "kind": "ship"}
+	taskID := "test-store-git-auth"
+	meta := map[string]string{"generation": "1", "kind": "ship"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	expected := GitExpectedState{
-		Ref:    "refs/heads/mu/test-task",
-		OldSHA: "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		NewSHA: "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
-	}
-
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment")
+	expected := mustGitState("refs/heads/mu/test-task", "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol", "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew")
+	res, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, expected, "general", "amendment")
 	if err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
+		t.Fatalf("StoreGitMutationAuthorization: %v", err)
+	}
+	if res.TaskID != taskID || res.Generation != 1 || res.Replayed {
+		t.Fatalf("authorize result = %+v", res)
 	}
 
-	if auth.Operation != GitOpForceWithLease {
-		t.Errorf("Operation: got %q, want %q", auth.Operation, GitOpForceWithLease)
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if auth.ExpectedState.OldSHA != expected.OldSHA {
-		t.Errorf("OldSHA: got %q, want %q", auth.ExpectedState.OldSHA, expected.OldSHA)
-	}
-	if auth.Authorizer != "general" {
-		t.Errorf("Authorizer: got %q, want %q", auth.Authorizer, "general")
-	}
-	if auth.Context != "amendment" {
-		t.Errorf("Context: got %q, want %q", auth.Context, "amendment")
-	}
-	if auth.AuthorizedAt == "" {
-		t.Error("AuthorizedAt must be set")
+	if agg.GitMutationAuthorization == nil || agg.GitMutationAuthorization.Operation != taskauthority.GitOpForceWithLease ||
+		agg.GitMutationAuthorization.ExpectedState.OldSHA != expected.OldSHA ||
+		agg.GitMutationAuthorization.Authorizer != "general" || agg.GitMutationAuthorization.Context != "amendment" {
+		t.Fatalf("authoritative record = %+v", agg.GitMutationAuthorization)
 	}
 
-	// Verify persisted in meta
+	// The .meta projection is reconciled so the safety read path sees it.
 	readMeta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
 	if readMeta[MetaGitMutationAuth] == "" {
-		t.Fatal("git_mutation_authorization should be set in meta")
+		t.Fatal("git_mutation_authorization projection should be set in meta")
 	}
-
-	var stored GitMutationAuthorization
+	var stored taskauthority.GitMutationAuthorization
 	if err := json.Unmarshal([]byte(readMeta[MetaGitMutationAuth]), &stored); err != nil {
 		t.Fatalf("unmarshal stored: %v", err)
 	}
 	if stored.ExpectedState.OldSHA != expected.OldSHA {
 		t.Errorf("stored OldSHA: got %q, want %q", stored.ExpectedState.OldSHA, expected.OldSHA)
 	}
+
+	// Clear through the Authority.
+	clearRes, err := ClearStoredGitMutationAuthorization(homeDir, auth, taskID)
+	if err != nil {
+		t.Fatalf("ClearStoredGitMutationAuthorization: %v", err)
+	}
+	if clearRes.TaskID != taskID {
+		t.Fatalf("clear result = %+v", clearRes)
+	}
+	agg, err = auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.GitMutationAuthorization != nil {
+		t.Fatalf("record not cleared: %+v", agg.GitMutationAuthorization)
+	}
+	readMeta, err = home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if readMeta[MetaGitMutationAuth] != "" {
+		t.Error("git_mutation_authorization projection should be cleared")
+	}
 }
 
-func TestAuthorizeGitMutation_RejectsWriteOps(t *testing.T) {
+func TestStoreGitMutationAuthorization_RejectsWriteOps(t *testing.T) {
 	homeDir := t.TempDir()
-	taskID := "test-auth-writeop"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	taskID := "test-store-writeop"
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	// Write-tier operations should not need authorization
-	_, err := AuthorizeGitMutation(homeDir, taskID, generation, "add", GitExpectedState{Ref: "ref", OldSHA: "old", NewSHA: "new"}, "general", "standalone")
+	// Write-tier operations should not need authorization.
+	_, err := StoreGitMutationAuthorization(homeDir, auth, taskID, "add", mustGitState("ref", "old", "new"), "general", "standalone")
 	if err == nil {
 		t.Fatal("expected error for write-tier operation")
 	}
@@ -275,118 +370,66 @@ func TestAuthorizeGitMutation_RejectsWriteOps(t *testing.T) {
 	}
 }
 
-func TestAuthorizeGitMutation_RejectsMissingExpectedState(t *testing.T) {
+func TestStoreGitMutationAuthorization_RejectsMissingExpectedState(t *testing.T) {
 	homeDir := t.TempDir()
-	taskID := "test-auth-missing-state"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	taskID := "test-store-missing-state"
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	// Missing ref
-	_, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, GitExpectedState{Ref: "", OldSHA: "old", NewSHA: "new"}, "general", "amendment")
-	if err == nil {
+	// Missing ref.
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, mustGitState("", "old", "new"), "general", "amendment"); err == nil {
 		t.Fatal("expected error for missing ref")
 	}
-
-	// Missing old SHA
-	_, err = AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, GitExpectedState{Ref: "refs/heads/mu/test", OldSHA: "", NewSHA: "new"}, "general", "amendment")
-	if err == nil {
+	// Missing old SHA.
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, mustGitState("refs/heads/mu/test", "", "new"), "general", "amendment"); err == nil {
 		t.Fatal("expected error for missing old SHA")
 	}
-
-	// Missing new SHA (for force-with-lease, new SHA is required)
-	_, err = AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, GitExpectedState{Ref: "refs/heads/mu/test", OldSHA: "old", NewSHA: ""}, "general", "amendment")
-	if err == nil {
+	// Missing new SHA (for force-with-lease, new SHA is required).
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, mustGitState("refs/heads/mu/test", "old", ""), "general", "amendment"); err == nil {
 		t.Fatal("expected error for missing new SHA")
 	}
-	if !strings.Contains(err.Error(), "expected new SHA is required for operation") {
-		t.Errorf("expected 'expected new SHA is required for operation' error, got: %v", err)
-	}
-
-	// Missing new SHA for branch-delete (should be allowed)
-	_, err = AuthorizeGitMutation(homeDir, taskID, generation, GitOpBranchDelete, GitExpectedState{Ref: "refs/heads/mu/test", OldSHA: "old", NewSHA: ""}, "retirement", "retirement")
-	if err != nil {
+	// Missing new SHA for branch-delete should be allowed.
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpBranchDelete, mustGitState("refs/heads/mu/test", "old", ""), "retirement", "retirement"); err != nil {
 		t.Fatalf("expected nil for missing new SHA on branch-delete: %v", err)
 	}
-
-	// Missing new SHA for push-delete (should be allowed)
-	_, err = AuthorizeGitMutation(homeDir, taskID, generation, GitOpPushDelete, GitExpectedState{Ref: "refs/heads/mu/test", OldSHA: "old", NewSHA: ""}, "retirement", "retirement")
-	if err != nil {
-		t.Fatalf("expected nil for missing new SHA on push-delete: %v", err)
-	}
 }
 
-func TestAuthorizeGitMutation_RejectsInvalidContext(t *testing.T) {
+func TestStoreGitMutationAuthorization_FailsClosedWithoutAuthority(t *testing.T) {
 	homeDir := t.TempDir()
-	taskID := "test-auth-invalid-ctx"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	_, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, GitExpectedState{Ref: "ref", OldSHA: "old", NewSHA: "new"}, "general", "invalid-context")
-	if err == nil {
-		t.Fatal("expected error for invalid context")
-	}
-	if !strings.Contains(err.Error(), "invalid context") {
-		t.Errorf("expected 'invalid context' error, got: %v", err)
+	taskID := "test-store-no-auth"
+	if _, err := StoreGitMutationAuthorization(homeDir, nil, taskID, taskauthority.GitOpForceWithLease, mustGitState("r", "o", "n"), "general", "amendment"); err == nil {
+		t.Fatal("expected error when no authority is composed")
 	}
 }
 
-func TestAuthorizeGitMutation_RejectsGenerationMismatch(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-auth-gen-mismatch"
-
-	meta := map[string]string{"generation": "7"}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	_, err := AuthorizeGitMutation(homeDir, taskID, "8", GitOpForceWithLease, GitExpectedState{Ref: "ref", OldSHA: "old", NewSHA: "new"}, "general", "amendment")
-	if err == nil {
-		t.Fatal("expected error for generation mismatch")
-	}
-	if !strings.Contains(err.Error(), "generation mismatch") {
-		t.Errorf("expected 'generation mismatch' error, got: %v", err)
-	}
-}
-
-// --- CheckGitMutationAuthorization tests ---
+// --- CheckGitMutationAuthorization tests (read path over the projection) ---
 
 func TestCheckGitMutationAuthorization_Success(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-check-auth-ok"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	expected := GitExpectedState{
-		Ref:    "refs/heads/mu/test-task",
-		OldSHA: "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		NewSHA: "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
+	expected := mustGitState("refs/heads/mu/test-task", "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol", "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew")
+
+	// Authorize through the Authority (commits + projects).
+	auth := newGitAuthAuthority(t, taskID)
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, expected, "general", "amendment"); err != nil {
+		t.Fatalf("StoreGitMutationAuthorization: %v", err)
 	}
 
-	// Authorize first
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment")
-	if err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
-	}
-
-	// Check with matching current SHA — should succeed
-	checked, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpForceWithLease, expected.OldSHA)
+	// Check with matching current SHA — should succeed.
+	checked, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, expected.OldSHA)
 	if err != nil {
 		t.Fatalf("CheckGitMutationAuthorization: %v", err)
 	}
-	if checked.Operation != auth.Operation {
-		t.Errorf("Operation: got %q, want %q", checked.Operation, auth.Operation)
+	if checked.Operation != taskauthority.GitOpForceWithLease {
+		t.Errorf("Operation: got %q, want %q", checked.Operation, taskauthority.GitOpForceWithLease)
 	}
 }
 
@@ -394,12 +437,12 @@ func TestCheckGitMutationAuthorization_NoAuthorization(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-check-no-auth"
 
-	meta := map[string]string{"generation": "7"}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpForceWithLease, "sha")
+	_, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, "sha")
 	if err == nil {
 		t.Fatal("expected error for no authorization")
 	}
@@ -413,26 +456,19 @@ func TestCheckGitMutationAuthorization_NoAuthorization(t *testing.T) {
 func TestCheckGitMutationAuthorization_WrongOperation(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-check-wrong-op"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	expected := GitExpectedState{
-		Ref:    "refs/heads/mu/test-task",
-		OldSHA: "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		NewSHA: "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
+	expected := mustGitState("refs/heads/mu/test-task", "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol", "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew")
+	auth := newGitAuthAuthority(t, taskID)
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, expected, "general", "amendment"); err != nil {
+		t.Fatalf("StoreGitMutationAuthorization: %v", err)
 	}
 
-	// Authorize for force-with-lease
-	if _, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment"); err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
-	}
-
-	// Check for branch-delete — should fail
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpBranchDelete, "")
+	// Check for branch-delete — should fail.
+	_, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpBranchDelete, "")
 	if err == nil {
 		t.Fatal("expected error for wrong operation")
 	}
@@ -444,26 +480,19 @@ func TestCheckGitMutationAuthorization_WrongOperation(t *testing.T) {
 func TestCheckGitMutationAuthorization_StaleSHA(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-check-stale-sha"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	expected := GitExpectedState{
-		Ref:    "refs/heads/mu/test-task",
-		OldSHA: "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		NewSHA: "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
+	expected := mustGitState("refs/heads/mu/test-task", "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol", "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew")
+	auth := newGitAuthAuthority(t, taskID)
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, expected, "general", "amendment"); err != nil {
+		t.Fatalf("StoreGitMutationAuthorization: %v", err)
 	}
 
-	// Authorize
-	if _, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment"); err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
-	}
-
-	// Check with different current SHA — should fail
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpForceWithLease, "differentdifferentdifferentdifferentdifferentd")
+	// Check with different current SHA — should fail.
+	_, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, "differentdifferentdifferentdifferentdifferentd")
 	if err == nil {
 		t.Fatal("expected error for stale SHA")
 	}
@@ -475,123 +504,38 @@ func TestCheckGitMutationAuthorization_StaleSHA(t *testing.T) {
 func TestCheckGitMutationAuthorization_SkipSHA(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-check-skip-sha"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	expected := GitExpectedState{
-		Ref:    "refs/heads/mu/test-task",
-		OldSHA: "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		NewSHA: "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
+	expected := mustGitState("refs/heads/mu/test-task", "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol", "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew")
+	auth := newGitAuthAuthority(t, taskID)
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, expected, "general", "amendment"); err != nil {
+		t.Fatalf("StoreGitMutationAuthorization: %v", err)
 	}
 
-	if _, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment"); err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
-	}
-
-	// Check with empty current SHA — allowed (skip SHA check for non-push ops)
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpForceWithLease, "")
-	if err != nil {
+	// Check with empty current SHA — allowed (skip SHA check).
+	if _, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, ""); err != nil {
 		t.Fatalf("expected nil for empty SHA (skip check): %v", err)
 	}
 }
 
-// --- AuthorizeForceWithLease tests ---
-
-func TestAuthorizeForceWithLease_Success(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-fwl-auth"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	auth, err := AuthorizeForceWithLease(homeDir, taskID, generation,
-		"refs/heads/mu/test-task",
-		"oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		"newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
-		"amendment", "amendment")
-	if err != nil {
-		t.Fatalf("AuthorizeForceWithLease: %v", err)
-	}
-
-	if auth.Operation != GitOpForceWithLease {
-		t.Errorf("Operation: got %q, want %q", auth.Operation, GitOpForceWithLease)
-	}
-	if auth.Context != "amendment" {
-		t.Errorf("Context: got %q, want %q", auth.Context, "amendment")
-	}
-}
-
-// --- ClearGitMutationAuthorization tests ---
-
-func TestClearGitMutationAuthorization_Success(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-clear-auth"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	expected := GitExpectedState{
-		Ref:    "refs/heads/mu/test-task",
-		OldSHA: "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		NewSHA: "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
-	}
-
-	if _, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment"); err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
-	}
-
-	// Clear
-	if err := ClearGitMutationAuthorization(homeDir, taskID); err != nil {
-		t.Fatalf("ClearGitMutationAuthorization: %v", err)
-	}
-
-	// Verify cleared
-	readMeta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if readMeta[MetaGitMutationAuth] != "" {
-		t.Error("git_mutation_authorization should be cleared")
-	}
-}
-
-func TestClearGitMutationAuthorization_NoAuth(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-clear-no-auth"
-
-	meta := map[string]string{"generation": "7"}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Clearing when no authorization exists should succeed (idempotent)
-	if err := ClearGitMutationAuthorization(homeDir, taskID); err != nil {
-		t.Fatalf("expected nil for clearing no auth: %v", err)
-	}
-}
-
-// --- SetGitAuthContext / ReadGitAuthContext tests ---
+// --- Set/Read git auth context through the Authority ---
 
 func TestGitAuthContext_SetAndRead(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-ctx-set"
+	meta := map[string]string{"generation": "1", "kind": "ship"}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	// Set context
-	if err := SetGitAuthContext(homeDir, taskID, "amendment"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
+	if _, err := StoreGitAuthContext(homeDir, auth, taskID, "amendment"); err != nil {
+		t.Fatalf("StoreGitAuthContext: %v", err)
 	}
 
-	// Read back
 	ctx, err := ReadGitAuthContext(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ReadGitAuthContext: %v", err)
@@ -599,22 +543,12 @@ func TestGitAuthContext_SetAndRead(t *testing.T) {
 	if ctx != "amendment" {
 		t.Errorf("expected context 'amendment', got %q", ctx)
 	}
-}
 
-func TestGitAuthContext_Clear(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-ctx-clear"
-
-	if err := SetGitAuthContext(homeDir, taskID, "retirement"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
+	// Clear through the Authority.
+	if _, err := StoreGitAuthContext(homeDir, auth, taskID, ""); err != nil {
+		t.Fatalf("StoreGitAuthContext(clear): %v", err)
 	}
-
-	// Clear
-	if err := SetGitAuthContext(homeDir, taskID, ""); err != nil {
-		t.Fatalf("SetGitAuthContext(clear): %v", err)
-	}
-
-	ctx, err := ReadGitAuthContext(homeDir, taskID)
+	ctx, err = ReadGitAuthContext(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ReadGitAuthContext: %v", err)
 	}
@@ -633,6 +567,14 @@ func TestGitAuthContext_DefaultEmpty(t *testing.T) {
 	}
 	if ctx != "" {
 		t.Errorf("expected empty context, got %q", ctx)
+	}
+}
+
+func TestStoreGitAuthContext_FailsClosedWithoutAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-ctx-no-auth"
+	if _, err := StoreGitAuthContext(homeDir, nil, taskID, "amendment"); err == nil {
+		t.Fatal("expected error when no authority is composed")
 	}
 }
 
@@ -714,32 +656,30 @@ func TestPushDeleteRequested_NormalPush(t *testing.T) {
 	}
 }
 
-// --- ReadGitMutationAuthorization tests ---
+// --- ReadGitMutationAuthorization tests (projection read) ---
 
 func TestReadGitMutationAuthorization_Exists(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-read-auth"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	expected := GitExpectedState{Ref: "r", OldSHA: "o", NewSHA: "n"}
-	if _, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment"); err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
+	auth := newGitAuthAuthority(t, taskID)
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease, mustGitState("r", "o", "n"), "general", "amendment"); err != nil {
+		t.Fatalf("StoreGitMutationAuthorization: %v", err)
 	}
 
-	auth, err := ReadGitMutationAuthorization(homeDir, taskID)
+	rec, err := ReadGitMutationAuthorization(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ReadGitMutationAuthorization: %v", err)
 	}
-	if auth == nil {
+	if rec == nil {
 		t.Fatal("expected non-nil authorization")
 	}
-	if auth.Operation != GitOpForceWithLease {
-		t.Errorf("Operation: got %q, want %q", auth.Operation, GitOpForceWithLease)
+	if rec.Operation != taskauthority.GitOpForceWithLease {
+		t.Errorf("Operation: got %q, want %q", rec.Operation, taskauthority.GitOpForceWithLease)
 	}
 }
 
@@ -747,52 +687,46 @@ func TestReadGitMutationAuthorization_None(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-read-auth-none"
 
-	meta := map[string]string{"generation": "7"}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	auth, err := ReadGitMutationAuthorization(homeDir, taskID)
+	rec, err := ReadGitMutationAuthorization(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ReadGitMutationAuthorization: %v", err)
 	}
-	if auth != nil {
+	if rec != nil {
 		t.Fatal("expected nil authorization")
 	}
 }
 
-// --- Authorize/Check/Complete flow for force-with-lease ---
+// --- Full flow: context + authorize + check + clear through the Authority ---
 
 func TestForceWithLeaseFullFlow(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-fwl-flow"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	// 1. Set git auth context for amendment
-	if err := SetGitAuthContext(homeDir, taskID, "amendment"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
+	// 1. Set git auth context for amendment.
+	if _, err := StoreGitAuthContext(homeDir, auth, taskID, "amendment"); err != nil {
+		t.Fatalf("StoreGitAuthContext: %v", err)
 	}
 
-	// 2. Authorize force-with-lease
-	auth, err := AuthorizeForceWithLease(homeDir, taskID, generation,
-		"refs/heads/mu/test-task",
-		"oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		"newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
-		"amendment", "amendment")
-	if err != nil {
-		t.Fatalf("AuthorizeForceWithLease: %v", err)
-	}
-	if auth.Context != "amendment" {
-		t.Errorf("expected context 'amendment', got %q", auth.Context)
+	// 2. Authorize force-with-lease.
+	oldSHA := "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol"
+	newSHA := "newnewnewnewnewnewnewnewnewnewnewnewnewnewnew"
+	if _, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpForceWithLease,
+		mustGitState("refs/heads/mu/test-task", oldSHA, newSHA), "amendment", "amendment"); err != nil {
+		t.Fatalf("StoreGitMutationAuthorization: %v", err)
 	}
 
-	// 3. Check authorization with matching SHA
-	checked, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpForceWithLease, "oldoldoldoldoldoldoldoldoldoldoldoldoldoldol")
+	// 3. Check authorization with matching SHA.
+	checked, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, oldSHA)
 	if err != nil {
 		t.Fatalf("CheckGitMutationAuthorization: %v", err)
 	}
@@ -800,14 +734,13 @@ func TestForceWithLeaseFullFlow(t *testing.T) {
 		t.Fatal("expected non-nil check")
 	}
 
-	// 4. Clear authorization after mutation completes
-	if err := ClearGitMutationAuthorization(homeDir, taskID); err != nil {
-		t.Fatalf("ClearGitMutationAuthorization: %v", err)
+	// 4. Clear authorization after mutation completes.
+	if _, err := ClearStoredGitMutationAuthorization(homeDir, auth, taskID); err != nil {
+		t.Fatalf("ClearStoredGitMutationAuthorization: %v", err)
 	}
 
-	// 5. Verify cleared
-	_, err = CheckGitMutationAuthorization(homeDir, taskID, GitOpForceWithLease, "")
-	if err == nil {
+	// 5. Verify cleared.
+	if _, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, ""); err == nil {
 		t.Fatal("expected error after clearing authorization")
 	}
 }
@@ -817,35 +750,31 @@ func TestForceWithLeaseFullFlow(t *testing.T) {
 func TestAuthorizeRewrite_Authorized(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-rewrite-auth"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	expected := GitExpectedState{Ref: "r", OldSHA: "o", NewSHA: "n"}
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpRebase, expected, "general", "amendment")
+	res, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpRebase, mustGitState("r", "o", "n"), "general", "amendment")
 	if err != nil {
-		t.Fatalf("AuthorizeGitMutation(rebase): %v", err)
+		t.Fatalf("StoreGitMutationAuthorization(rebase): %v", err)
 	}
-	if auth.Operation != GitOpRebase {
-		t.Errorf("expected rebase, got %q", auth.Operation)
+	if res.TaskID != taskID {
+		t.Fatalf("result = %+v", res)
 	}
 }
 
 func TestAuthorizeRewrite_RefusedWithoutAuth(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-rewrite-refused"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	// Check without authorization — should fail
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpRebase, "")
+	// Check without authorization — should fail.
+	_, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpRebase, "")
 	if err == nil {
 		t.Fatal("expected error for unauthorized rewrite")
 	}
@@ -854,98 +783,38 @@ func TestAuthorizeRewrite_RefusedWithoutAuth(t *testing.T) {
 	}
 }
 
-func TestAuthorizeRewrite_RefusedWrongContext(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-rewrite-wrong-ctx"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Set retirement context
-	if err := SetGitAuthContext(homeDir, taskID, "retirement"); err != nil {
-		t.Fatalf("SetGitAuthContext: %v", err)
-	}
-
-	expected := GitExpectedState{Ref: "r", OldSHA: "o", NewSHA: "n"}
-
-	// Authorize with amendment context — should fail because context is "retirement"
-	// (Note: AuthorizeGitMutation doesn't check context against meta — it stores
-	// the context in the authorization record. The context check happens in the
-	// safety check layer.)
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpRebase, expected, "general", "standalone")
-	if err != nil {
-		t.Fatalf("AuthorizeGitMutation: %v", err)
-	}
-	if auth.Context != "standalone" {
-		t.Errorf("expected context 'standalone', got %q", auth.Context)
-	}
-}
-
 // --- Authorize/Refuse cleanup operations ---
 
 func TestAuthorizeCleanup_Authorized(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-cleanup-auth"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
+	auth := newGitAuthAuthority(t, taskID)
 
-	expected := GitExpectedState{Ref: "refs/heads/mu/test-task", OldSHA: "o", NewSHA: ""}
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpBranchDelete, expected, "retirement", "retirement")
+	res, err := StoreGitMutationAuthorization(homeDir, auth, taskID, taskauthority.GitOpBranchDelete,
+		mustGitState("refs/heads/mu/test-task", "o", ""), "retirement", "retirement")
 	if err != nil {
-		t.Fatalf("AuthorizeGitMutation(branch-delete): %v", err)
+		t.Fatalf("StoreGitMutationAuthorization(branch-delete): %v", err)
 	}
-	if auth.Operation != GitOpBranchDelete {
-		t.Errorf("expected branch-delete, got %q", auth.Operation)
-	}
-	if auth.Context != "retirement" {
-		t.Errorf("expected context 'retirement', got %q", auth.Context)
+	if res.TaskID != taskID {
+		t.Fatalf("result = %+v", res)
 	}
 }
 
 func TestAuthorizeCleanup_RefusedWithoutAuth(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-cleanup-refused"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
+	meta := map[string]string{"generation": "1"}
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatalf("WriteMeta: %v", err)
 	}
 
-	// Check without authorization
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpBranchDelete, "")
-	if err == nil {
+	// Check without authorization.
+	if _, err := CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpBranchDelete, ""); err == nil {
 		t.Fatal("expected error for unauthorized cleanup")
-	}
-}
-
-func TestAuthorizeCleanup_RefusedWrongContext(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-cleanup-wrong-ctx"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	expected := GitExpectedState{Ref: "refs/heads/mu/test-task", OldSHA: "o", NewSHA: ""}
-
-	// Authorize push-delete with amendment context — should be allowed
-	// (the authorization just stores the context; enforcement is in the safety check)
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpPushDelete, expected, "amendment", "amendment")
-	if err != nil {
-		t.Fatalf("AuthorizeGitMutation(push-delete): %v", err)
-	}
-	if auth.Context != "amendment" {
-		t.Errorf("expected context 'amendment', got %q", auth.Context)
 	}
 }
 
@@ -954,7 +823,7 @@ func TestAuthorizeCleanup_RefusedWrongContext(t *testing.T) {
 func TestErrNoGitMutationAuthorization_Type(t *testing.T) {
 	err := &ErrNoGitMutationAuthorization{
 		TaskID:    "test-task",
-		Operation: GitOpForceWithLease,
+		Operation: taskauthority.GitOpForceWithLease,
 		Reason:    "no record",
 	}
 	if err.Error() == "" {
@@ -971,8 +840,8 @@ func TestErrNoGitMutationAuthorization_Type(t *testing.T) {
 func TestErrStaleGitMutationAuthorization_Type(t *testing.T) {
 	err := &ErrStaleGitMutationAuthorization{
 		TaskID:    "test-task",
-		Operation: GitOpForceWithLease,
-		Expected:  GitExpectedState{Ref: "refs/heads/main", OldSHA: "aaa", NewSHA: "bbb"},
+		Operation: taskauthority.GitOpForceWithLease,
+		Expected:  mustGitState("refs/heads/main", "aaa", "bbb"),
 		ActualSHA: "ccc",
 		Reason:    "SHA changed",
 	}
@@ -997,164 +866,5 @@ func TestErrForcePushDenied_Type(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--force-with-lease") {
 		t.Errorf("expected remediation hint, got: %v", err)
-	}
-}
-
-// --- CAS conflict during authorization ---
-
-func TestAuthorizeGitMutation_CASConflict(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-auth-cas"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	expected := GitExpectedState{Ref: "r", OldSHA: "o", NewSHA: "n"}
-
-	// Change generation behind our back
-	meta["generation"] = "8"
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Authorize with original generation — should fail because generation changed
-	_, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpForceWithLease, expected, "general", "amendment")
-	if err == nil {
-		t.Fatal("expected error for CAS conflict (generation changed)")
-	}
-	if !strings.Contains(err.Error(), "generation mismatch") {
-		t.Errorf("expected 'generation mismatch' error, got: %v", err)
-	}
-}
-
-// --- Authorize/Refuse ref operations ---
-
-func TestAuthorizeGitMutation_RefOperation(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-ref-op"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Authorize cherry-pick (rewrite tier)
-	expected := GitExpectedState{Ref: "refs/heads/mu/test-task", OldSHA: "o", NewSHA: "n"}
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpCherryPick, expected, "general", "amendment")
-	if err != nil {
-		t.Fatalf("AuthorizeGitMutation(cherry-pick): %v", err)
-	}
-	if auth.Operation != GitOpCherryPick {
-		t.Errorf("expected cherry-pick, got %q", auth.Operation)
-	}
-}
-
-func TestAuthorizeGitMutation_RefusedNoAuth(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-ref-no-auth"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Check revert without authorization
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpRevert, "")
-	if err == nil {
-		t.Fatal("expected error for unauthorized revert")
-	}
-}
-
-// --- Authorize/Refuse push operations ---
-
-func TestAuthorizePush_ForceWithLeaseAuthorized(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-push-fwl"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Authorize force-with-lease
-	auth, err := AuthorizeForceWithLease(homeDir, taskID, generation,
-		"refs/heads/mu/test-task",
-		"oldoldoldoldoldoldoldoldoldoldoldoldoldoldol",
-		"newnewnewnewnewnewnewnewnewnewnewnewnewnewnew",
-		"general", "amendment")
-	if err != nil {
-		t.Fatalf("AuthorizeForceWithLease: %v", err)
-	}
-	if auth.Operation != GitOpForceWithLease {
-		t.Errorf("expected force-with-lease, got %q", auth.Operation)
-	}
-}
-
-func TestAuthorizePush_UnrestrictedForceDenied(t *testing.T) {
-	// Unrestricted force should be denied regardless of any authorization
-	homeDir := t.TempDir()
-	taskID := "test-push-force"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Verify UnrestrictedForceDenied rejects --force
-	if !UnrestrictedForceDenied([]string{"--force"}) {
-		t.Error("--force should be denied by UnrestrictedForceDenied")
-	}
-
-	// Verify UnrestrictedForceDenied rejects -f
-	if !UnrestrictedForceDenied([]string{"-f"}) {
-		t.Error("-f should be denied by UnrestrictedForceDenied")
-	}
-}
-
-func TestAuthorizePush_RefusedNoAuth(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-push-no-auth"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Check force-with-lease without authorization
-	_, err := CheckGitMutationAuthorization(homeDir, taskID, GitOpForceWithLease, "some-sha")
-	if err == nil {
-		t.Fatal("expected error for unauthorized force-with-lease")
-	}
-}
-
-func TestAuthorizePush_PushDeleteAuthorized(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-push-delete"
-	generation := "7"
-
-	meta := map[string]string{"generation": generation}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	// Authorize push-delete
-	expected := GitExpectedState{Ref: "refs/heads/mu/test-task", OldSHA: "o", NewSHA: ""}
-	auth, err := AuthorizeGitMutation(homeDir, taskID, generation, GitOpPushDelete, expected, "retirement", "retirement")
-	if err != nil {
-		t.Fatalf("AuthorizeGitMutation(push-delete): %v", err)
-	}
-	if auth.Operation != GitOpPushDelete {
-		t.Errorf("expected push-delete, got %q", auth.Operation)
-	}
-	if auth.Context != "retirement" {
-		t.Errorf("expected context 'retirement', got %q", auth.Context)
 	}
 }

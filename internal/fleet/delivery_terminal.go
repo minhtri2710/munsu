@@ -2,11 +2,14 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"os"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // captureTerminalIdentity is a variable for testing — can be replaced to
@@ -17,14 +20,14 @@ var captureTerminalIdentity = captureTerminalIdentityViaProvider
 
 // PrepareDeliveryResult captures the outcome of a PrepareDelivery verification.
 type PrepareDeliveryResult struct {
-	IdentityVerified  bool   `json:"identityVerified"`
-	HeadImmutable     bool   `json:"headImmutable"`
-	ChecksGreen       bool   `json:"checksGreen"`
-	DeliveryState     string `json:"deliveryState"`
-	ProviderState     string `json:"providerState"`
-	StoredHeadSHA     string `json:"storedHeadSHA"`
-	ProviderHeadSHA   string `json:"providerHeadSHA"`
-	CheckDetail       string `json:"checkDetail,omitempty"`
+	IdentityVerified bool   `json:"identityVerified"`
+	HeadImmutable    bool   `json:"headImmutable"`
+	ChecksGreen      bool   `json:"checksGreen"`
+	DeliveryState    string `json:"deliveryState"`
+	ProviderState    string `json:"providerState"`
+	StoredHeadSHA    string `json:"storedHeadSHA"`
+	ProviderHeadSHA  string `json:"providerHeadSHA"`
+	CheckDetail      string `json:"checkDetail,omitempty"`
 }
 
 // verifyProviderChecksGreen checks whether all checks on an open PR are green
@@ -90,12 +93,20 @@ var verifyProviderChecksGreen = func(stored *domain.DeliveryIdentity) (bool, str
 //  2. Fetch provider snapshot to verify identity fields match
 //  3. Verify immutable head (provider head SHA matches stored)
 //  4. Verify PR is merged OR open with all checks green
-//  5. On success, CAS transition delivery_state to delivered
+//  5. On success, route the delivered terminal transition through the
+//     composed Task Authority (Task 7.5): the generation-bound terminal
+//     evidence record commits with the delivered transition, and the
+//     delivery_state meta key is reconciled as a post-commit projection.
+//     A projection failure returns a typed partial error and never rolls
+//     back the authoritative commit.
 //
 // Returns a PrepareDeliveryResult with per-check verdicts. Even on success,
 // callers should inspect the result for diagnostics. On verification failure,
 // returns an error describing the first failing check.
-func PrepareDelivery(homeDir, taskID string) (*PrepareDeliveryResult, error) {
+func PrepareDelivery(homeDir, taskID string, auth *taskauthority.Authority) (*PrepareDeliveryResult, error) {
+	if auth == nil {
+		return nil, fmt.Errorf("prepare delivery: requires a composed task authority")
+	}
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("prepare delivery: reading meta: %w", err)
@@ -181,18 +192,17 @@ func PrepareDelivery(homeDir, taskID string) (*PrepareDeliveryResult, error) {
 			}
 		}
 
-		// Step 5: CAS transition to delivered
-		checks := identityChecks(stored)
-		checks[MetaDeliveryState] = meta[MetaDeliveryState]
-		checks[MetaIdentityRevision] = meta[MetaIdentityRevision]
-
-		updates := map[string]string{
-			MetaDeliveryState:    string(DeliveryStateDelivered),
-			MetaIdentityRevision: incrementRevision(meta[MetaIdentityRevision]),
-		}
-
-		if _, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
-			return nil, fmt.Errorf("prepare delivery: cas: %w", err)
+		// Step 5: authoritative delivered terminal transition (Task 7.5).
+		// The terminal evidence record commits inside the Authority; the
+		// delivery_state meta key is a post-commit projection. A projection
+		// failure warns and never rolls back the authoritative commit.
+		if _, err := StoreDeliveryCompletion(homeDir, auth, taskID, taskauthority.DeliveryTerminalDelivered, stored); err != nil {
+			var projErr *DeliveryProjectionError
+			if errors.As(err, &projErr) {
+				fmt.Fprintf(os.Stderr, "Warning: delivery projection failed: %v\n", projErr)
+			} else {
+				return nil, fmt.Errorf("prepare delivery: terminal transition: %w", err)
+			}
 		}
 
 		return result, nil
@@ -232,18 +242,14 @@ func PrepareDelivery(homeDir, taskID string) (*PrepareDeliveryResult, error) {
 			}
 		}
 
-		// Step 5: CAS transition to delivered
-		checks := identityChecks(stored)
-		checks[MetaDeliveryState] = meta[MetaDeliveryState]
-		checks[MetaIdentityRevision] = meta[MetaIdentityRevision]
-
-		updates := map[string]string{
-			MetaDeliveryState:    string(DeliveryStateDelivered),
-			MetaIdentityRevision: incrementRevision(meta[MetaIdentityRevision]),
-		}
-
-		if _, err := home.CompareAndSwapMeta(homeDir, taskID, checks, updates); err != nil {
-			return nil, fmt.Errorf("prepare delivery: cas: %w", err)
+		// Step 5: authoritative delivered terminal transition (Task 7.5).
+		if _, err := StoreDeliveryCompletion(homeDir, auth, taskID, taskauthority.DeliveryTerminalDelivered, stored); err != nil {
+			var projErr *DeliveryProjectionError
+			if errors.As(err, &projErr) {
+				fmt.Fprintf(os.Stderr, "Warning: delivery projection failed: %v\n", projErr)
+			} else {
+				return nil, fmt.Errorf("prepare delivery: terminal transition: %w", err)
+			}
 		}
 
 		return result, nil
@@ -412,20 +418,25 @@ func ExtractPRURL(msg string) (string, bool, error) {
 	return candidate, true, nil
 }
 
-// CaptureTerminalIdentity captures and persists delivery identity from a PR URL
-// before a terminal report is considered successful. It runs at the report_cmd
-// seam, before any status append, receipt, event, or wake write.
+// CaptureTerminalIdentity captures the terminal provider evidence and routes
+// the done terminal transition through the composed Task Authority (Task
+// 7.5). It runs at the report_cmd seam, before any status append, receipt,
+// event, or wake write.
 //
 // Idempotent: if meta already contains a complete matching identity, it is
-// validated and reused without rewriting or changing its timestamp. If the
-// reported URL conflicts with stored identity, it fails closed.
+// validated and reused without re-capturing from the provider. The terminal
+// evidence record commits inside the Authority (the transition is an
+// in-value no-op on retry) and the identity keys are reconciled as a
+// post-commit projection; a projection failure returns a typed partial
+// error and never rolls back the authoritative commit. If the reported URL
+// conflicts with the stored identity, it fails closed.
 //
-// Provider/identity failure fails closed: no terminal status, receipt, ack reset,
-// event, or wake is produced. Retry is idempotent.
+// Provider/identity/authority failure fails closed: no terminal status,
+// receipt, ack reset, event, or wake is produced. Retry is idempotent.
 //
-// When no PR URL is present in msg (non-PR terminal report), no identity capture
-// is attempted — the function returns nil.
-func CaptureTerminalIdentity(homeDir, taskID, msg string) error {
+// When no PR URL is present in msg (non-PR terminal report), no identity
+// capture is attempted — the function returns nil.
+func CaptureTerminalIdentity(homeDir, taskID, msg string, auth *taskauthority.Authority) error {
 	// Extract and validate the PR URL
 	prURL, found, err := ExtractPRURL(msg)
 	if err != nil {
@@ -435,54 +446,199 @@ func CaptureTerminalIdentity(homeDir, taskID, msg string) error {
 		// Not a PR report — skip identity capture
 		return nil
 	}
+	if auth == nil {
+		return fmt.Errorf("terminal identity: requires a composed task authority")
+	}
 
-	// Check existing meta for already-complete identity (idempotent retry)
+	// Resolve the terminal evidence identity. A complete matching stored
+	// identity is reused (idempotent retry / pr-checked path); otherwise the
+	// evidence is captured fresh from the provider and the Authority fails
+	// closed if it does not bind the prepared head and PR.
 	meta, metaErr := home.ReadMeta(homeDir, taskID)
+	var ident *domain.DeliveryIdentity
 	if metaErr == nil {
 		if existingURL, ok := meta["pr_url"]; ok && existingURL != "" {
 			// URL already stored — check if it matches the one being reported
 			if existingURL != prURL {
 				return fmt.Errorf("terminal identity: reported PR URL %q conflicts with stored pr_url %q in meta; use pr-check to update", prURL, existingURL)
 			}
-
 			// Check if stored identity is already complete
 			if existing, err := domain.IdentityFromMeta(meta); err == nil && existing != nil {
 				if err := domain.ValidateIdentity(existing); err == nil {
-					// Complete matching identity already exists — idempotent skip
-					return nil
+					ident = existing
 				}
 			}
 		}
 	}
 
-	// Capture fresh from the provider
-	ident, err := captureTerminalIdentity(prURL)
-	if err != nil {
-		return fmt.Errorf("terminal identity: capturing from provider: %w", err)
+	// Capture fresh from the provider when no complete stored identity exists.
+	if ident == nil {
+		ident, err = captureTerminalIdentity(prURL)
+		if err != nil {
+			return fmt.Errorf("terminal identity: capturing from provider: %w", err)
+		}
+		// Validate captured identity before routing
+		if err := domain.ValidateIdentity(ident); err != nil {
+			return fmt.Errorf("terminal identity: provider returned incomplete data: %w", err)
+		}
 	}
 
-	// Validate captured identity before persisting
+	// Route the done terminal transition through the composed Authority. The
+	// terminal evidence record commits inside the Authority; the identity
+	// meta keys are reconciled as a post-commit projection inside the
+	// wrapper. A projection failure is a typed partial error (non-rollback).
+	if _, err := StoreDeliveryCompletion(homeDir, auth, taskID, taskauthority.DeliveryTerminalDone, ident); err != nil {
+		return fmt.Errorf("terminal identity: %w", err)
+	}
+
+	return nil
+}
+
+// --- Delivery authority wrappers (Task 7.5) ---
+
+// DeliveryProjectionError is the typed partial outcome of a delivery
+// operation whose authoritative commit succeeded but whose .meta projection
+// could not be written. The authoritative state is never rolled back; the
+// projection can be retried independently and replays idempotently
+// (ADR-0007 §7).
+type DeliveryProjectionError struct {
+	TaskID        string
+	ProjectionErr error
+}
+
+func (e *DeliveryProjectionError) Error() string {
+	return fmt.Sprintf("delivery committed for %s but projection failed: %v", e.TaskID, e.ProjectionErr)
+}
+
+func (e *DeliveryProjectionError) Unwrap() error { return e.ProjectionErr }
+
+// StoreDeliveryPrepare routes the pr-check delivery preparation through the
+// composed Task Authority (Task 7.5): the generation-bound delivery prepare
+// record (provider identity snapshot, immutable head SHA, review-ready
+// state) commits fenced to the aggregate generation, and the identity meta
+// keys plus delivery_state are reconciled as a post-commit projection. The
+// expected prior prepared head is acknowledged (force-with-lease): a changed
+// head must be re-prepared explicitly, never silently reused. Re-preparing
+// the identical identity and head is an in-value no-op. Production callers
+// always supply the Authority; nil fails closed.
+func StoreDeliveryPrepare(homeDir string, auth *taskauthority.Authority, taskID string, ident *domain.DeliveryIdentity) (taskauthority.DeliveryResult, error) {
+	if auth == nil {
+		return taskauthority.DeliveryResult{}, fmt.Errorf("delivery preparation requires a composed task authority")
+	}
 	if err := domain.ValidateIdentity(ident); err != nil {
-		return fmt.Errorf("terminal identity: provider returned incomplete data: %w", err)
+		return taskauthority.DeliveryResult{}, fmt.Errorf("store delivery prepare: invalid identity: %w", err)
 	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		return taskauthority.DeliveryResult{}, fmt.Errorf("store delivery prepare: resolving task generation: %w", err)
+	}
+	priorHead := ""
+	if agg.DeliveryPrepare != nil {
+		priorHead = agg.DeliveryPrepare.HeadSHA
+	}
+	res, err := auth.PrepareDelivery(taskauthority.PrepareDeliveryRequest{
+		OperationID:        mustDeliveryOperationID("delivery-prepare-" + taskID),
+		Actor:              deliveryActor(homeDir),
+		TaskID:             taskID,
+		ExpectedGeneration: agg.Generation,
+		State:              taskauthority.DeliveryPrepareStateReviewReady,
+		HeadSHA:            ident.HeadSHA,
+		Identity:           snapshotFromIdentity(ident),
+		ExpectedPriorHead:  priorHead,
+		Reason:             "pr-check",
+	})
+	if err != nil {
+		return taskauthority.DeliveryResult{}, err
+	}
+	if err := projectDeliveryPrepareMeta(homeDir, taskID, ident); err != nil {
+		return res, err
+	}
+	return res, nil
+}
 
-	// Read existing meta, preserving all fields
-	if meta == nil || metaErr != nil {
+// StoreDeliveryCompletion routes a delivered/done terminal transition through
+// the composed Task Authority (Task 7.5): the generation-bound terminal
+// evidence record (terminal transition, exact head, provider identity
+// snapshot) commits fenced to the aggregate generation, and the identity
+// meta keys plus the delivery_state projection are reconciled as a
+// post-commit projection. A changed head vs the prepared head, or a terminal
+// identity for a different PR, fails closed; replaying the same terminal
+// state for the same head is an in-value no-op. Production callers always
+// supply the Authority; nil fails closed.
+func StoreDeliveryCompletion(homeDir string, auth *taskauthority.Authority, taskID, terminal string, ident *domain.DeliveryIdentity) (taskauthority.DeliveryResult, error) {
+	if auth == nil {
+		return taskauthority.DeliveryResult{}, fmt.Errorf("delivery completion requires a composed task authority")
+	}
+	if err := domain.ValidateIdentity(ident); err != nil {
+		return taskauthority.DeliveryResult{}, fmt.Errorf("store delivery completion: invalid identity: %w", err)
+	}
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		return taskauthority.DeliveryResult{}, fmt.Errorf("store delivery completion: resolving task generation: %w", err)
+	}
+	res, err := auth.CompleteDelivery(taskauthority.CompleteDeliveryRequest{
+		OperationID:        mustDeliveryOperationID("delivery-complete-" + taskID),
+		Actor:              deliveryActor(homeDir),
+		TaskID:             taskID,
+		ExpectedGeneration: agg.Generation,
+		Terminal:           terminal,
+		HeadSHA:            ident.HeadSHA,
+		Identity:           snapshotFromIdentity(ident),
+		Reason:             "delivery terminal transition",
+	})
+	if err != nil {
+		return taskauthority.DeliveryResult{}, err
+	}
+	if err := projectDeliveryTerminalMeta(homeDir, taskID, terminal, ident); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// --- Delivery projection helpers (caller-owned, ADR-0007 §7) ---
+
+// projectDeliveryPrepareMeta reconciles the .meta delivery identity keys,
+// the legacy pr/pr_head keys, and delivery_state=review-ready after the
+// authoritative delivery preparation commit.
+func projectDeliveryPrepareMeta(homeDir, taskID string, ident *domain.DeliveryIdentity) error {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
 		meta = make(map[string]string)
 	}
-
-	// Write identity fields into the meta map
 	for k, v := range ident.ToMeta() {
 		meta[k] = v
 	}
-	// Ensure legacy keys are set
-	meta["pr"] = prURL
+	meta["pr"] = ident.URL
 	meta["pr_head"] = ident.HeadSHA
-
-	// Persist atomically
+	meta[MetaDeliveryState] = string(DeliveryStateReviewReady)
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		return fmt.Errorf("terminal identity: persisting to task meta: %w", err)
+		return &DeliveryProjectionError{TaskID: taskID, ProjectionErr: err}
 	}
+	return nil
+}
 
+// projectDeliveryTerminalMeta reconciles the .meta delivery identity keys
+// and the delivery_state projection after the authoritative delivery
+// completion commit. The delivered projection mirrors the legacy CAS
+// (delivery_state + identity revision advance); done carries no delivery
+// state meta value (done is the report state, the terminal record is
+// authoritative).
+func projectDeliveryTerminalMeta(homeDir, taskID, terminal string, ident *domain.DeliveryIdentity) error {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		meta = make(map[string]string)
+	}
+	for k, v := range ident.ToMeta() {
+		meta[k] = v
+	}
+	meta["pr"] = ident.URL
+	meta["pr_head"] = ident.HeadSHA
+	if terminal == taskauthority.DeliveryTerminalDelivered {
+		meta[MetaDeliveryState] = string(DeliveryStateDelivered)
+		meta[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
+	}
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		return &DeliveryProjectionError{TaskID: taskID, ProjectionErr: err}
+	}
 	return nil
 }

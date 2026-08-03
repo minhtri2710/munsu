@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 var fetchLiveIdentity = CaptureIdentity
@@ -31,7 +33,11 @@ func validateLiveIdentity(stored, live *domain.DeliveryIdentity) error {
 // After merging, it also runs a best-effort fleet sync of the project clone.
 // The prURL must be a full https://github.com/<owner>/<repo>/pull/<n> URL.
 // Extra args after `--` can specify merge method: `-- --merge`, `-- --rebase`.
-func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
+// authority is the composed Task Authority targeting the exact resolved task
+// home (cross-home delivery); it commits the post-merge merge outcome and
+// issue link reconciliation records and is required (nil fails closed at the
+// reconciliation step).
+func PRMerge(homeDir string, id, prURL string, extraArgs []string, authority *taskauthority.Authority) error {
 	// Reject --repo/-R overrides in extraArgs
 	for _, arg := range extraArgs {
 		if arg == "--repo" || arg == "-R" || strings.HasPrefix(arg, "--repo=") {
@@ -90,10 +96,11 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 	}
 
 	// Reconcile merge delivery: query provider for remote truth, classify the
-	// outcome, and persist the result. This replaces the inline post-merge
-	// snapshot check with a structured reconciliation that handles merged,
-	// already-merged, open, remote-unknown, and failed outcomes.
-	result, reconcileErr := ReconcileMergeDelivery(homeDir, id, ident.URL)
+	// outcome, and persist the result via the composed Authority (Task 7.6).
+	// This replaces the inline post-merge snapshot check with a structured
+	// reconciliation that handles merged, already-merged, open,
+	// remote-unknown, and failed outcomes.
+	result, reconcileErr := ReconcileMergeDelivery(homeDir, id, ident.URL, authority)
 	if reconcileErr != nil {
 		return fmt.Errorf("post-merge reconciliation: %w", reconcileErr)
 	}
@@ -123,10 +130,13 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 
 		// Reconcile issue links after successful merge
 		if links := domain.IssueLinksFromMeta(meta); len(links) > 0 {
-			linkResults, linkErr := ReconcileAndStoreIssueLinks(homeDir, id, links, nil)
+			linkResults, linkErr := ReconcileAndStoreIssueLinks(homeDir, authority, id, links, nil)
 			if linkErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: issue link reconciliation failed: %v\n", linkErr)
 			} else {
+				if projErr := projectIssueLinkReconciliation(homeDir, id, linkResults); projErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: issue link reconciliation projection failed: %v\n", projErr)
+				}
 				fmt.Print(RenderIssueLinkReconciliationResults(linkResults))
 			}
 		}
@@ -137,6 +147,42 @@ func PRMerge(homeDir string, id, prURL string, extraArgs []string) error {
 		return fmt.Errorf("merge delivery: %s %s", result.Outcome, result.Detail)
 	}
 
+	return nil
+}
+
+// IssueLinkProjectionError is the typed partial outcome of an issue link
+// reconciliation whose authoritative commit succeeded but whose .meta
+// projection could not be written (ADR-0007 §7). The authoritative state is
+// never rolled back; the projection can be retried independently and replays
+// idempotently.
+type IssueLinkProjectionError struct {
+	TaskID        string
+	ProjectionErr error
+}
+
+func (e *IssueLinkProjectionError) Error() string {
+	return fmt.Sprintf("issue link reconciliation committed for %s but projection failed: %v", e.TaskID, e.ProjectionErr)
+}
+
+func (e *IssueLinkProjectionError) Unwrap() error { return e.ProjectionErr }
+
+// projectIssueLinkReconciliation reconciles the .meta issue_link_reconciliation
+// projection after the authoritative issue link commit. A projection failure
+// returns a typed partial error and never rolls back the authoritative state;
+// the projection is retryable without replaying the authoritative operation.
+func projectIssueLinkReconciliation(homeDir, taskID string, results []domain.IssueLinkReconciliationResult) error {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		meta = make(map[string]string)
+	}
+	data, err := json.Marshal(results)
+	if err != nil {
+		return &IssueLinkProjectionError{TaskID: taskID, ProjectionErr: err}
+	}
+	meta["issue_link_reconciliation"] = string(data)
+	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
+		return &IssueLinkProjectionError{TaskID: taskID, ProjectionErr: err}
+	}
 	return nil
 }
 

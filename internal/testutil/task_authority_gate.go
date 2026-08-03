@@ -13,21 +13,15 @@ import (
 // LegacyTaskAuthoritySymbols are home task aggregate/lifecycle/dispatch
 // mutations that the Task Authority migration (ADR-0007) replaces slice by
 // slice. New production callers of these symbols are banned by the migration
-// gate; the per-package allowlist only shrinks as slices land.
+// gate; the per-package allowlist only shrinks as slices land. The remaining
+// entries are the documented exceptions: CreateTaskAggregate and
+// UpdateCurrentTaskAggregateKind are Phase 4 spawn cutover leftovers
+// (allowlisted in fleet/spawn_runner.go and cli/spawn_cmd.go). The Phase 6
+// handoff compatibility entries (CheckDispatchHold, PersistDispatchInterpretation)
+// emptied when the handoff saga cut over to two Authorities (Task 6.2).
 var LegacyTaskAuthoritySymbols = []string{
 	"CreateTaskAggregate",
-	"UpdateCurrentTaskAggregateState",
 	"UpdateCurrentTaskAggregateKind",
-	"StartTask",
-	"UnblockTask",
-	"ReopenTask",
-	"BindTaskWorktree",
-	"BindTaskEndpoint",
-	"CheckDispatchHold",
-	"CreateDispatchHold",
-	"ReleaseDispatchHold",
-	"ResolveDispatchDecision",
-	"PersistDispatchInterpretation",
 }
 
 // AssertNoNewTaskAuthorityCallers fails when any production file under pkgDir

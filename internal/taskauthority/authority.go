@@ -1,6 +1,7 @@
 package taskauthority
 
 import (
+	"sort"
 	"time"
 )
 
@@ -54,6 +55,19 @@ func (a *Authority) List() ([]Aggregate, error) {
 		agg, _ := v.Current(id)
 		out = append(out, agg)
 	}
+	return out, nil
+}
+
+// ListHolds returns the committed dispatch holds sorted by ID. It is the
+// read-side query behind the human decision-hold surface (ADR-0007 §2): the
+// durable hold truth lives in the Authority Store, never in legacy files.
+func (a *Authority) ListHolds() ([]DispatchHold, error) {
+	v, err := a.store.View()
+	if err != nil {
+		return nil, err
+	}
+	out := append([]DispatchHold(nil), v.Holds...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 

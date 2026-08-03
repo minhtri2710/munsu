@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // --- CapabilityAttestation creation tests ---
@@ -322,20 +324,206 @@ func TestHandleLateCapabilityLoss_WithFallbackPolicy(t *testing.T) {
 	}
 }
 
-// --- PersistAttestationToMeta / ReadAttestationFromMeta tests ---
+// --- StoreAttestationEvidence / AttestationProjectionError tests ---
 
-func TestPersistAttestationToMeta_RoundTrip(t *testing.T) {
+// mustAttestedTask seeds one queued task in an in-memory Authority and
+// returns the authority. The task generation is 1.
+func mustAttestedTask(t *testing.T, taskID string) *taskauthority.Authority {
+	t.Helper()
+	auth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := auth.Create(taskauthority.CreateRequest{
+		OperationID: "op-create-" + taskID,
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "owner",
+		Kind:        "ship",
+		Reason:      "create",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return auth
+}
+
+func TestStoreAttestationEvidence_CommitsToAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-attestation-evidence"
+	auth := mustAttestedTask(t, taskID)
+
+	att := CreateCapabilityAttestation(
+		"test-project", homeDir, "pi", "pi",
+		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		nil,
+	)
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "digest-abc")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	if res.Revision != 2 || res.Replayed || res.Generation != 1 {
+		t.Fatalf("result = %+v, want revision 2 generation 1", res)
+	}
+
+	// The authoritative Aggregate holds the generation-bound delivery plan
+	// and the capability-attestation reference.
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if agg.DeliveryPlan == nil || agg.DeliveryPlan.RequestedMode != "no-mistakes" ||
+		agg.DeliveryPlan.EffectiveMode != "direct-PR" || agg.DeliveryPlan.FallbackReason == "" {
+		t.Fatalf("committed delivery plan = %+v", agg.DeliveryPlan)
+	}
+	if agg.CapabilityAttestation == nil || agg.CapabilityAttestation.Project != "test-project" ||
+		agg.CapabilityAttestation.Home != homeDir || agg.CapabilityAttestation.ConfigDigest != "digest-abc" {
+		t.Fatalf("committed attestation reference = %+v", agg.CapabilityAttestation)
+	}
+	if agg.Revision != 2 {
+		t.Fatalf("revision = %d, want 2", agg.Revision)
+	}
+}
+
+// TestStoreAttestationEvidence_NoMetaWrite proves the production integration
+// point no longer writes task .meta directly: after the authoritative commit,
+// the .meta attestation projection keys are untouched and only the
+// caller-owned projection helper writes them.
+func TestStoreAttestationEvidence_NoMetaWrite(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-evidence-no-meta-write"
+	auth := mustAttestedTask(t, taskID)
+	if err := home.WriteMeta(homeDir, taskID, map[string]string{"kind": "ship"}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	att := CreateCapabilityAttestation(
+		"test-project", homeDir, "pi", "pi",
+		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		nil,
+	)
+	if _, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, ""); err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+
+	readMeta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if _, ok := readMeta[MetaCapabilityAttestation]; ok {
+		t.Error("StoreAttestationEvidence must not write the .meta capability_attestation key")
+	}
+	if _, ok := readMeta[MetaRequestedMode]; ok {
+		t.Error("StoreAttestationEvidence must not write the .meta requested-mode key")
+	}
+	if _, ok := readMeta[MetaEffectiveMode]; ok {
+		t.Error("StoreAttestationEvidence must not write the .meta effective-mode key")
+	}
+}
+
+func TestStoreAttestationEvidence_IdempotentRetry(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-evidence-idempotent"
+	auth := mustAttestedTask(t, taskID)
+
+	att := CreateCapabilityAttestation(
+		"test-project", homeDir, "pi", "pi",
+		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		nil,
+	)
+	first, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("first store: %v", err)
+	}
+	second, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("second store: %v", err)
+	}
+	if !second.Replayed || second.Revision != first.Revision || second.Generation != first.Generation {
+		t.Fatalf("retry = %+v, want replay of %+v", second, first)
+	}
+
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Revision != 2 {
+		t.Fatalf("retry advanced revision to %d, want 2", agg.Revision)
+	}
+}
+
+// TestStoreAttestationEvidence_CrossHomeTaskHome proves the composed
+// Authority targets the resolved task home (cross-home delivery): the
+// authoritative commit lands in the task-home store, while the command home
+// is untouched.
+func TestStoreAttestationEvidence_CrossHomeTaskHome(t *testing.T) {
+	commandHome := t.TempDir()
+	taskHome := t.TempDir()
+	taskID := "test-evidence-cross-home"
+
+	auth := mustAttestedTask(t, taskID)
+	att := CreateCapabilityAttestation(
+		"test-project", taskHome, "pi", "pi",
+		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		nil,
+	)
+	res, err := StoreAttestationEvidence(taskHome, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	if projErr := projectAttestationEvidence(taskHome, taskID, att, res); projErr != nil {
+		t.Fatalf("projectAttestationEvidence: %v", projErr)
+	}
+
+	// The command home carries no task meta and no authority state.
+	if _, err := home.ReadMeta(commandHome, taskID); err == nil {
+		t.Error("command home must not own the task meta")
+	}
+	cmdAuth := taskauthority.New(taskauthority.NewMemStore())
+	if _, err := cmdAuth.Get(taskID); !errors.Is(err, taskauthority.ErrNotFound) {
+		t.Fatalf("command-home authority must not own the task: %v", err)
+	}
+	// The task home projection carries the attestation fields.
+	meta, err := home.ReadMeta(taskHome, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta(taskHome): %v", err)
+	}
+	if meta[MetaEffectiveMode] != "direct-PR" {
+		t.Fatalf("task-home projection effective mode = %q", meta[MetaEffectiveMode])
+	}
+}
+
+// TestStoreAttestationEvidence_FailsClosedWithoutAuthority proves the
+// production integration point fails closed when no composed Authority is
+// provided instead of writing meta directly.
+func TestStoreAttestationEvidence_FailsClosedWithoutAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	att := CreateCapabilityAttestation(
+		"test-project", homeDir, "pi", "pi",
+		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		nil,
+	)
+	if _, err := StoreAttestationEvidence(homeDir, nil, "test-task", 1, att, ""); err == nil {
+		t.Fatal("expected error when no authority is composed")
+	}
+}
+
+// TestAttestationEvidenceRoundTripThroughAuthority proves the attestation
+// round-trips through the Authority commit and the .meta projection: the
+// authoritative Aggregate carries the delivery plan and reference, and the
+// projection mirrors the accepted evidence.
+func TestAttestationEvidenceRoundTripThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-attestation-persist"
+	auth := mustAttestedTask(t, taskID)
 
 	att := CreateCapabilityAttestation(
 		"test-project", homeDir, "pi", "pi",
 		"no-mistakes", "no-mistakes", "",
 		nil,
 	)
-
-	if err := PersistAttestationToMeta(homeDir, taskID, att); err != nil {
-		t.Fatalf("PersistAttestationToMeta: %v", err)
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	if projErr := projectAttestationEvidence(homeDir, taskID, att, res); projErr != nil {
+		t.Fatalf("projectAttestationEvidence: %v", projErr)
 	}
 
 	restored, err := ReadAttestationFromMeta(homeDir, taskID)
@@ -345,7 +533,6 @@ func TestPersistAttestationToMeta_RoundTrip(t *testing.T) {
 	if restored == nil {
 		t.Fatal("ReadAttestationFromMeta returned nil")
 	}
-
 	if restored.Project != att.Project {
 		t.Errorf("Project: got %q, want %q", restored.Project, att.Project)
 	}
@@ -360,25 +547,28 @@ func TestPersistAttestationToMeta_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestPersistAttestationToMeta_WritesModeFields(t *testing.T) {
+func TestProjectAttestationEvidence_WritesModeFields(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-mode-fields"
+	auth := mustAttestedTask(t, taskID)
 
 	att := CreateCapabilityAttestation(
 		"test-project", homeDir, "pi", "pi",
 		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
 		nil,
 	)
-
-	if err := PersistAttestationToMeta(homeDir, taskID, att); err != nil {
-		t.Fatalf("PersistAttestationToMeta: %v", err)
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	if projErr := projectAttestationEvidence(homeDir, taskID, att, res); projErr != nil {
+		t.Fatalf("projectAttestationEvidence: %v", projErr)
 	}
 
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-
 	if meta[MetaRequestedMode] != "no-mistakes" {
 		t.Errorf("MetaRequestedMode = %q, want %q", meta[MetaRequestedMode], "no-mistakes")
 	}
@@ -388,35 +578,123 @@ func TestPersistAttestationToMeta_WritesModeFields(t *testing.T) {
 	if meta[MetaFallbackReason] != "no-mistakes not on PATH; defaulting to direct-PR" {
 		t.Errorf("MetaFallbackReason = %q, want %q", meta[MetaFallbackReason], "no-mistakes not on PATH; defaulting to direct-PR")
 	}
+	if meta[MetaCapabilityAttestation] == "" {
+		t.Error("MetaCapabilityAttestation should hold the serialized attestation")
+	}
 }
 
-func TestPersistAttestationToMeta_NoFallbackReason(t *testing.T) {
+func TestProjectAttestationEvidence_NoFallbackReason(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-no-fallback"
+	auth := mustAttestedTask(t, taskID)
 
 	att := CreateCapabilityAttestation(
 		"test-project", homeDir, "pi", "pi",
 		"direct-PR", "direct-PR", "", nil,
 	)
-
-	if err := PersistAttestationToMeta(homeDir, taskID, att); err != nil {
-		t.Fatalf("PersistAttestationToMeta: %v", err)
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	if projErr := projectAttestationEvidence(homeDir, taskID, att, res); projErr != nil {
+		t.Fatalf("projectAttestationEvidence: %v", projErr)
 	}
 
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-
 	if meta[MetaRequestedMode] != "direct-PR" {
 		t.Errorf("MetaRequestedMode = %q, want %q", meta[MetaRequestedMode], "direct-PR")
 	}
 	if meta[MetaEffectiveMode] != "direct-PR" {
 		t.Errorf("MetaEffectiveMode = %q, want %q", meta[MetaEffectiveMode], "direct-PR")
 	}
-	// Fallback reason should not be set in meta when empty.
 	if _, ok := meta[MetaFallbackReason]; ok {
 		t.Error("MetaFallbackReason should not be set when empty")
+	}
+}
+
+func TestProjectAttestationEvidence_PreservesExistingMeta(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-preserve"
+	auth := mustAttestedTask(t, taskID)
+
+	// Write initial meta with existing fields.
+	if err := home.WriteMeta(homeDir, taskID, map[string]string{
+		"project": "existing-project",
+		"kind":    "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	att := CreateCapabilityAttestation(
+		"test-project", homeDir, "pi", "pi",
+		"direct-PR", "direct-PR", "", nil,
+	)
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	if projErr := projectAttestationEvidence(homeDir, taskID, att, res); projErr != nil {
+		t.Fatalf("projectAttestationEvidence: %v", projErr)
+	}
+
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if meta["kind"] != "ship" {
+		t.Errorf("kind should be preserved, got %q", meta["kind"])
+	}
+	if meta[MetaRequestedMode] != "direct-PR" {
+		t.Errorf("MetaRequestedMode = %q, want %q", meta[MetaRequestedMode], "direct-PR")
+	}
+}
+
+// TestProjectAttestationEvidence_TypedPartialError proves a projection
+// failure returns a typed partial error and never rolls back the
+// authoritative acceptance.
+func TestProjectAttestationEvidence_TypedPartialError(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "test-projection-failure"
+	auth := mustAttestedTask(t, taskID)
+
+	// Make the state path unwritable so the projection write fails.
+	if err := os.WriteFile(filepath.Join(homeDir, "state"), []byte("block"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	att := CreateCapabilityAttestation(
+		"test-project", homeDir, "pi", "pi",
+		"no-mistakes", "direct-PR", "no-mistakes not on PATH; defaulting to direct-PR",
+		nil,
+	)
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+
+	projErr := projectAttestationEvidence(homeDir, taskID, att, res)
+	var typed *AttestationProjectionError
+	if !errors.As(projErr, &typed) {
+		t.Fatalf("projection error = %v, want *AttestationProjectionError", projErr)
+	}
+	if typed.TaskID != taskID {
+		t.Fatalf("typed error task = %q, want %q", typed.TaskID, taskID)
+	}
+
+	// The authoritative acceptance stays committed: the delivery plan and the
+	// attestation reference are intact.
+	agg, err := auth.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.DeliveryPlan == nil || agg.DeliveryPlan.EffectiveMode != "direct-PR" {
+		t.Fatalf("authoritative plan lost after projection failure: %+v", agg.DeliveryPlan)
+	}
+	if agg.Revision != 2 {
+		t.Fatalf("revision = %d, want 2 after projection failure", agg.Revision)
 	}
 }
 
@@ -452,14 +730,19 @@ func TestReadAttestationFromMeta_NoMeta(t *testing.T) {
 func TestModeVisibilityFields_ReturnsFields(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-visibility"
+	auth := mustAttestedTask(t, taskID)
 
 	att := CreateCapabilityAttestation(
 		"test-project", homeDir, "pi", "pi",
 		"no-mistakes", "direct-PR", "test fallback reason",
 		nil,
 	)
-	if err := PersistAttestationToMeta(homeDir, taskID, att); err != nil {
-		t.Fatalf("PersistAttestationToMeta: %v", err)
+	res, err := StoreAttestationEvidence(homeDir, auth, taskID, 1, att, "")
+	if err != nil {
+		t.Fatalf("StoreAttestationEvidence: %v", err)
+	}
+	if projErr := projectAttestationEvidence(homeDir, taskID, att, res); projErr != nil {
+		t.Fatalf("projectAttestationEvidence: %v", projErr)
 	}
 
 	requested, effective, fallbackReason, err := ModeVisibilityFields(homeDir, taskID)
@@ -602,52 +885,14 @@ func TestCreateCapabilityAttestation_EmptyFields(t *testing.T) {
 
 func TestCheckCapabilityAttestation_MissingExpiry(t *testing.T) {
 	att := &CapabilityAttestation{
-		Project:       "test",
-		Capabilities:  []CapabilityEntry{},
+		Project:      "test",
+		Capabilities: []CapabilityEntry{},
 		// No Expiry set
 	}
 	changed, _ := CheckCapabilityAttestation(att)
 	// Without expiry, the check should not report changed due to expiry.
 	// It may still report changed if capabilities differ, but shouldn't panic.
 	_ = changed
-}
-
-func TestPersistAttestationToMeta_ExistingMetaPreserved(t *testing.T) {
-	homeDir := t.TempDir()
-	taskID := "test-preserve"
-
-	// Write initial meta with existing fields.
-	if err := home.WriteMeta(homeDir, taskID, map[string]string{
-		"project": "existing-project",
-		"kind":    "ship",
-	}); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	att := CreateCapabilityAttestation(
-		"test-project", homeDir, "pi", "pi",
-		"direct-PR", "direct-PR", "", nil,
-	)
-	if err := PersistAttestationToMeta(homeDir, taskID, att); err != nil {
-		t.Fatalf("PersistAttestationToMeta: %v", err)
-	}
-
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-
-	// Original fields should still be present.
-	if meta["project"] != "test-project" {
-		// Note: PersistAttestationToMeta starts with att.Project, not the stored project.
-		// The attestation is the source of truth for the project field.
-	}
-	if meta["kind"] != "ship" {
-		t.Errorf("kind should be preserved, got %q", meta["kind"])
-	}
-	if meta[MetaRequestedMode] != "direct-PR" {
-		t.Errorf("MetaRequestedMode = %q, want %q", meta[MetaRequestedMode], "direct-PR")
-	}
 }
 
 // --- HandleLateCapabilityLoss edge cases ---
@@ -667,11 +912,11 @@ func TestHandleLateCapabilityLoss_NilAttestation(t *testing.T) {
 
 func TestHandleLateCapabilityLoss_ExpiredWithPreAuth(t *testing.T) {
 	att := &CapabilityAttestation{
-		Project:       "test",
-		Expiry:        time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339),
-		Capabilities:  probeDeliveryCapabilities(),
+		Project:        "test",
+		Expiry:         time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339),
+		Capabilities:   probeDeliveryCapabilities(),
 		FallbackPolicy: &FallbackPolicy{AuthorizedMode: "local-only", Reason: "emergency fallback"},
-		EffectiveMode: "no-mistakes",
+		EffectiveMode:  "no-mistakes",
 	}
 
 	result := HandleLateCapabilityLoss(att)
@@ -816,11 +1061,11 @@ func TestCreateCapabilityAttestation_NoMistakesServiceFailure(t *testing.T) {
 
 func TestHandleLateCapabilityLoss_FallbackPolicyMatch(t *testing.T) {
 	att := &CapabilityAttestation{
-		Project:       "test",
-		Expiry:        time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339),
-		Capabilities:  probeDeliveryCapabilities(),
+		Project:        "test",
+		Expiry:         time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339),
+		Capabilities:   probeDeliveryCapabilities(),
 		FallbackPolicy: &FallbackPolicy{AuthorizedMode: "direct-PR", Reason: "emergency fallback"},
-		EffectiveMode: "no-mistakes",
+		EffectiveMode:  "no-mistakes",
 	}
 
 	// The FallbackPolicy.AuthorizedMode should be used as the fallback mode.

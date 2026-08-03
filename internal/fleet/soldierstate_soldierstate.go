@@ -1,6 +1,8 @@
 // Package soldierstate reads and reports the current state of a soldier.
 // The precedence hierarchy for current-state truth is:
-//  1. Task Aggregate, when present after migration
+//  1. Canonical Task Authority record, when present (Task 7.8): the
+//     authoritative phase is state truth; .meta/.status are display fallback
+//     and can never override a newer authoritative lifecycle transition
 //  2. Backlog state projection (legacy fallback only)
 //  3. Task meta/status projection (legacy fallback only)
 //  4. Provider state (GitHub PR merged/closed/open)
@@ -78,21 +80,26 @@ func ReadSoldierState(homeDir string, id string) (*State, error) {
 func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 
-	agg, hasAggregate, aggErr := home.ReadCurrentTaskAggregate(homeDir, id)
-	if aggErr != nil {
-		return nil, aggErr
+	// Canonical Task Authority state first (Task 7.8): the authoritative
+	// phase is state truth; .meta/.status are projection and display fallback
+	// and can never override a newer authoritative lifecycle transition. A
+	// missing record falls back to the legacy projection tiers below; a
+	// legacy v1 home fails closed (migration is explicit).
+	agg, canonical, err := currentCanonicalAggregate(homeDir, id)
+	if err != nil {
+		return nil, err
 	}
 	// Read meta for operational projections when present.
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
-		if hasAggregate {
-			s.Status = agg.State
+		if canonical {
+			s.Status = string(agg.Phase)
 			if s.Status == "" {
 				s.Status = "unknown"
 			}
-			s.Description = agg.StateDetail
+			s.Description = agg.PhaseDetail
 			if s.Description == "" {
-				s.Description = agg.Definition
+				s.Description = agg.Definition.Description
 			}
 			s.StatusLogSuperseded = true
 			// No meta means no window to probe; a superseded live claim cannot
@@ -115,18 +122,29 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	}
 	s.OpenActivities = home.OpenActivities(statusPath)
 
-	if hasAggregate {
-		s.Status = agg.State
+	if !canonical {
+		// Legacy fail-closed posture (Task 7.8): a meta-only task that claims
+		// delivery outcomes without an authoritative record is never silently
+		// projected by the observation.
+		if claim := legacyDeliveryClaim(meta); claim != "" {
+			return nil, &LegacyDeliveryEvidenceError{TaskID: id, Field: claim}
+		}
+	}
+
+	if canonical {
+		s.Status = string(agg.Phase)
 		if s.Status == "" {
 			s.Status = "unknown"
 		}
-		s.Description = agg.StateDetail
+		s.Description = agg.PhaseDetail
 		if s.Description == "" {
-			s.Description = agg.Definition
+			s.Description = agg.Definition.Description
 		}
+		// The canonical record is the top-precedence source: the status log is
+		// always superseded display, never state truth.
+		s.StatusLogSuperseded = true
 		if backlogState, ok := readBacklogState(homeDir, id); ok {
 			s.BacklogState = backlogState.String()
-			s.StatusLogSuperseded = true
 		}
 		probeConsulted := false
 		if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {

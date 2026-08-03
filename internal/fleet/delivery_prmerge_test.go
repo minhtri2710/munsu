@@ -12,6 +12,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // TestPRMerge_FleetSyncReadsMeta verifies PRMerge reads meta correctly.
@@ -43,7 +44,7 @@ func TestPRMerge_FleetSyncReadsMeta(t *testing.T) {
 
 	// PRMerge requires gh-axi. Using a non-existent PR should fail at
 	// the gh-axi merge step, proving the meta was readable.
-	err := PRMerge(homeDir, "test-merge-task", "https://github.com/minhtri2710/munsu/pull/999999", nil)
+	err := PRMerge(homeDir, "test-merge-task", "https://github.com/minhtri2710/munsu/pull/999999", nil, nil)
 
 	// Should fail because PR #999999 doesn't exist (gh-axi merge will error)
 	if err == nil {
@@ -76,7 +77,7 @@ func TestCheckScriptFleetSyncPattern(t *testing.T) {
 
 	// Use a real PR URL (PR #24 from the munsu repo)
 	prURL := "https://github.com/minhtri2710/munsu/pull/24"
-	if err := PRCheck(homeDir, "pattern-task", prURL); err != nil {
+	if err := PRCheck(homeDir, "pattern-task", prURL, preparedCheckAuth(t, "pattern-task")); err != nil {
 		t.Fatalf("PRCheck: %v", err)
 	}
 
@@ -324,7 +325,7 @@ func TestPRMerge_WiresReconcileMergeDelivery(t *testing.T) {
 		// Return the same identity as stored
 		return ident, nil
 	}
-	ReconcileMergeDelivery = func(homeDir, taskID, prURL string) (*MergeDeliveryResult, error) {
+	ReconcileMergeDelivery = func(homeDir, taskID, prURL string, _ *taskauthority.Authority) (*MergeDeliveryResult, error) {
 		calledHome = homeDir
 		calledID = taskID
 		calledURL = prURL
@@ -349,7 +350,7 @@ func TestPRMerge_WiresReconcileMergeDelivery(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := PRMerge(homeDir, taskID, prURL, nil)
+	err := PRMerge(homeDir, taskID, prURL, nil, nil)
 
 	// Close and restore
 	w.Close()
@@ -560,7 +561,7 @@ func TestPRMerge_WireErrorOutcome(t *testing.T) {
 			fetchLiveIdentity = func(prURL string) (*domain.DeliveryIdentity, error) {
 				return ident, nil
 			}
-			ReconcileMergeDelivery = func(homeDir, taskID, prURL string) (*MergeDeliveryResult, error) {
+			ReconcileMergeDelivery = func(homeDir, taskID, prURL string, _ *taskauthority.Authority) (*MergeDeliveryResult, error) {
 				return &MergeDeliveryResult{
 					Outcome:     tc.outcome,
 					RemoteKnown: tc.outcome != MergeOutcomeRemoteUnknown,
@@ -579,7 +580,7 @@ func TestPRMerge_WireErrorOutcome(t *testing.T) {
 			r, w, _ := os.Pipe()
 			os.Stdout = w
 
-			err := PRMerge(homeDir, taskID, prURL, nil)
+			err := PRMerge(homeDir, taskID, prURL, nil, nil)
 
 			w.Close()
 			os.Stdout = oldStdout

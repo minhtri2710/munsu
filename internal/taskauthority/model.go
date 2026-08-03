@@ -6,6 +6,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // Generation is the positive monotonic identity of one Task lifecycle
@@ -129,6 +131,56 @@ type Aggregate struct {
 	Worktree                     *WorktreeBinding `json:"worktree,omitempty"`
 	DispatchInterpretationID     string           `json:"dispatch_interpretation_id,omitempty"`
 	DispatchInterpretationDigest string           `json:"dispatch_interpretation_digest,omitempty"`
+	// IssueLinks is the generation-bound definition record of the task's
+	// issue links; IssueLinkReconciliation is the provider evidence of one
+	// post-merge reconciliation committed with the same operation (Task 7.2).
+	IssueLinks              []domain.IssueLink                     `json:"issue_links,omitempty"`
+	IssueLinkReconciliation []domain.IssueLinkReconciliationResult `json:"issue_link_reconciliation,omitempty"`
+	// DeliveryPlan and CapabilityAttestation are the generation-bound
+	// delivery-plan and capability-attestation definition records committed
+	// together by the AttachAttestation operation (Task 7.3, ADR-0004 §6).
+	// The plan records the bounded requested → effective mode transition with
+	// its fallback reason; the attestation reference binds project, home, and
+	// config snapshot digest. Runtime capability observation data stays
+	// outside the Aggregate.
+	DeliveryPlan          *DeliveryPlan          `json:"delivery_plan,omitempty"`
+	CapabilityAttestation *CapabilityAttestation `json:"capability_attestation,omitempty"`
+	// MergeAuthorization is the generation-bound merge authorization record
+	// committed by the AuthorizeMerge operation: it binds the provider
+	// identity snapshot and the immutable head SHA the merge was authorized
+	// against (Task 7.4). A changed head makes the prior authorization stale
+	// and is never silently reused. ExternalMerge is the generation-bound
+	// evidence record of an external merge committed by RecordExternalMerge.
+	MergeAuthorization *MergeAuthorization  `json:"merge_authorization,omitempty"`
+	ExternalMerge      *ExternalMergeRecord `json:"external_merge,omitempty"`
+	// GitCapabilityTier, GitAuthContext, and GitMutationAuthorization are the
+	// generation-bound git authorization records committed by the
+	// SetGitCapabilityTier, SetGitAuthContext, and
+	// AuthorizeGitMutation/ClearGitMutationAuthorization operations (Task
+	// 7.4): the launch capability tier, the amendment/retirement context, and
+	// the elevated git mutation authorization with its exact expected state.
+	GitCapabilityTier        string                    `json:"git_capability_tier,omitempty"`
+	GitAuthContext           string                    `json:"git_auth_context,omitempty"`
+	GitMutationAuthorization *GitMutationAuthorization `json:"git_mutation_authorization,omitempty"`
+	// DeliveryPrepare is the generation-bound delivery preparation record
+	// committed by the PrepareDelivery operation (Task 7.5): the provider
+	// identity snapshot, the immutable head SHA the delivery is prepared
+	// against, and the review-ready delivery state. DeliveryTerminal is the
+	// generation-bound terminal evidence record committed by the
+	// CompleteDelivery operation: the delivered/done terminal transition,
+	// the exact head, and the terminal provider evidence. resolved is never
+	// a delivery terminal state.
+	DeliveryPrepare  *DeliveryPrepare  `json:"delivery_prepare,omitempty"`
+	DeliveryTerminal *DeliveryTerminal `json:"delivery_terminal,omitempty"`
+	// MergeAttempt is the generation-bound merge attempt and outcome record
+	// committed by the RecordMergeAttempt operation (Task 7.6): the stable
+	// attempt identity binds the provider identity, PR identity, and exact
+	// head SHA with the provider-verified remote outcome. A remote-unknown
+	// outcome is terminal: once committed, the Authority refuses further
+	// provider-mutating attempts and only read reconciliation is allowed.
+	// Verified merged truth is never erased by a later ambiguous or
+	// false-negative read.
+	MergeAttempt *MergeAttempt `json:"merge_attempt,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -189,6 +241,18 @@ func validateAggregate(agg Aggregate) error {
 		if err := validateWorktreeBinding(*agg.Worktree); err != nil {
 			return err
 		}
+	}
+	if err := validateIssueLinkDefinition(agg); err != nil {
+		return err
+	}
+	if err := validateDeliveryDefinition(agg); err != nil {
+		return err
+	}
+	if err := validateAuthorizationDefinition(agg); err != nil {
+		return err
+	}
+	if err := validateDeliveryRecord(agg); err != nil {
+		return err
 	}
 	return nil
 }
@@ -259,6 +323,44 @@ func (a Aggregate) clone() Aggregate {
 	if a.Worktree != nil {
 		w := *a.Worktree
 		out.Worktree = &w
+	}
+	if a.IssueLinks != nil {
+		out.IssueLinks = append([]domain.IssueLink(nil), a.IssueLinks...)
+	}
+	if a.IssueLinkReconciliation != nil {
+		out.IssueLinkReconciliation = append([]domain.IssueLinkReconciliationResult(nil), a.IssueLinkReconciliation...)
+	}
+	if a.DeliveryPlan != nil {
+		p := *a.DeliveryPlan
+		out.DeliveryPlan = &p
+	}
+	if a.CapabilityAttestation != nil {
+		c := *a.CapabilityAttestation
+		out.CapabilityAttestation = &c
+	}
+	if a.MergeAuthorization != nil {
+		m := *a.MergeAuthorization
+		out.MergeAuthorization = &m
+	}
+	if a.ExternalMerge != nil {
+		e := *a.ExternalMerge
+		out.ExternalMerge = &e
+	}
+	if a.GitMutationAuthorization != nil {
+		g := *a.GitMutationAuthorization
+		out.GitMutationAuthorization = &g
+	}
+	if a.DeliveryPrepare != nil {
+		p := *a.DeliveryPrepare
+		out.DeliveryPrepare = &p
+	}
+	if a.DeliveryTerminal != nil {
+		tr := *a.DeliveryTerminal
+		out.DeliveryTerminal = &tr
+	}
+	if a.MergeAttempt != nil {
+		m := *a.MergeAttempt
+		out.MergeAttempt = &m
 	}
 	return out
 }

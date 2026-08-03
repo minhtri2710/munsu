@@ -92,7 +92,17 @@ captain home (so general can arm checks after captain handoff + spawn).`,
 				return fmt.Errorf("pr-check %s: %w", id, err)
 			}
 
-			return fleet.RoutePRCheck(taskHome, id, prURL)
+			// The delivery preparation routes through the composed Task
+			// Authority over the exact resolved task home (Task 7.5): the
+			// generation-bound prepare record (provider identity, head,
+			// review-ready state) is authoritative; the identity meta keys
+			// are a post-commit projection.
+			auth, err := ctx.TaskAuthorityFor(taskHome)
+			if err != nil {
+				return fmt.Errorf("pr-check %s: composing task authority: %w", id, err)
+			}
+
+			return fleet.RoutePRCheck(taskHome, id, prURL, auth)
 		}),
 	}
 }
@@ -127,11 +137,16 @@ Without --teardown, the command prints the exact teardown invocation to run next
 				return fmt.Errorf("pr-merge %s: %w", id, err)
 			}
 
+			auth, err := ctx.TaskAuthorityFor(taskHome)
+			if err != nil {
+				return fmt.Errorf("pr-merge %s: composing task authority: %w", id, err)
+			}
+
 			if !doTeardown {
 				// Without --teardown: run PRMerge only (no retirement).
 				// On retry, if already merged, PRMerge will fail closed —
 				// the user should retry with --teardown to resume retirement.
-				if err := fleet.PRMerge(taskHome, id, prURL, extra); err != nil {
+				if err := fleet.PRMerge(taskHome, id, prURL, extra, auth); err != nil {
 					return err
 				}
 				return nil
@@ -140,7 +155,7 @@ Without --teardown, the command prints the exact teardown invocation to run next
 			// merge delivery and retirement. On retry after partial cleanup,
 			// it detects delivery_state=merged and resumes retirement only.
 			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
-			mars := fleet.MergeAndRetire(taskHome, id, prURL, extra, newSessionBoundTeardown(), orchestratorRetirementJournals{})
+			mars := fleet.MergeAndRetire(taskHome, id, prURL, extra, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			if mars.TeardownResult != nil {
 				for _, step := range mars.TeardownResult.Steps {
 					fmt.Println(step)
@@ -195,6 +210,13 @@ Use 'delivery reconcile' to recover from already-stale metadata.`,
 				return fmt.Errorf("pr-amend: %w", err)
 			}
 
+			// The git authorization context routes through the composed Task
+			// Authority over the same home that owns the task meta (Task 7.4).
+			auth, err := ctx.TaskAuthorityFor(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("pr-amend: composing task authority: %w", err)
+			}
+
 			// Begin amendment (CAS review-ready -> amending) — idempotent: if already
 			// in amending state (e.g. retry after partial failure), skip begin.
 			currentMeta, err := home.ReadMeta(ctx.Home, id)
@@ -203,13 +225,13 @@ Use 'delivery reconcile' to recover from already-stale metadata.`,
 			}
 
 			if currentMeta[fleet.MetaDeliveryState] != string(fleet.DeliveryStateAmending) {
-				if _, err := fleet.BeginAmendment(ctx.Home, id); err != nil {
+				if _, err := fleet.BeginAmendment(ctx.Home, id, auth); err != nil {
 					return fmt.Errorf("pr-amend: begin: %w", err)
 				}
 			}
 
 			// Accept amendment (verify provider, CAS update identity)
-			newIdent, record, err := fleet.AcceptAmendment(ctx.Home, id, wtPath)
+			newIdent, record, err := fleet.AcceptAmendment(ctx.Home, id, wtPath, auth)
 			if err != nil {
 				return fmt.Errorf("pr-amend: accept: %w", err)
 			}
@@ -249,7 +271,14 @@ state. Use 'pr-check' to recapture from scratch after such events.`,
 				return fmt.Errorf("reconcile: %w", err)
 			}
 
-			newIdent, record, err := fleet.ReconcileIdentity(ctx.Home, id, wtPath)
+			// The git authorization context routes through the composed Task
+			// Authority over the same home that owns the task meta (Task 7.4).
+			auth, err := ctx.TaskAuthorityFor(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("reconcile: composing task authority: %w", err)
+			}
+
+			newIdent, record, err := fleet.ReconcileIdentity(ctx.Home, id, wtPath, auth)
 			if err != nil {
 				return fmt.Errorf("reconcile: %w", err)
 			}

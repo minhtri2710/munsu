@@ -1,51 +1,58 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"os"
 	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // PRCheck runs `munsu pr-check <id> <pr-url>`.
 // It captures the full delivery identity (PR URL, head SHA, head ref, base ref,
-// owner, repo, provider, and timestamp) in task meta, and writes a check.sh
-// script that polls the PR merge status via `gh pr view`.
+// owner, repo, provider, and timestamp) and routes it through the composed Task
+// Authority as the generation-bound delivery preparation (Task 7.5), then
+// writes a check.sh script that polls the PR merge status via `gh pr view`.
 // On detecting a merged PR, the check.sh script also runs
 // `munsu fleet sync` to sync the project clone.
-func PRCheck(homeDir string, id, prURL string) error {
+func PRCheck(homeDir string, id, prURL string, auth *taskauthority.Authority) error {
+	if auth == nil {
+		return fmt.Errorf("pr-check: requires a composed task authority")
+	}
+
 	// Capture the full delivery identity atomically
 	ident, err := CaptureIdentity(prURL)
 	if err != nil {
 		return fmt.Errorf("capturing delivery identity: %w", err)
 	}
 
-	// Validate identity before persisting
+	// Validate identity before routing
 	if err := domain.ValidateIdentity(ident); err != nil {
 		return fmt.Errorf("captured identity is incomplete: %w", err)
 	}
 
-	// Read existing meta (ignore error if it doesn't exist)
+	// Route the delivery preparation through the composed Authority (Task
+	// 7.5): the generation-bound prepare record commits with the identity
+	// and review-ready state, and the identity meta keys are reconciled as a
+	// post-commit projection. A projection failure returns a typed partial
+	// error and never rolls back the authoritative commit.
+	if _, err := StoreDeliveryPrepare(homeDir, auth, id, ident); err != nil {
+		var projErr *DeliveryProjectionError
+		if errors.As(err, &projErr) {
+			fmt.Fprintf(os.Stderr, "Warning: delivery projection failed: %v\n", projErr)
+		} else {
+			return fmt.Errorf("pr-check: delivery preparation: %w", err)
+		}
+	}
+
+	// Resolve project name for fleet-sync in check.sh script
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {
 		meta = make(map[string]string)
 	}
-
-	// Write full delivery identity to meta (overwrites legacy pr/pr_head keys too)
-	for k, v := range ident.ToMeta() {
-		meta[k] = v
-	}
-	meta["pr"] = prURL                                         // legacy key for compatibility
-	meta["pr_head"] = ident.HeadSHA                            // legacy key for compatibility
-	meta[MetaDeliveryState] = string(DeliveryStateReviewReady) // initialize lifecycle
-
-	if err := home.WriteMeta(homeDir, id, meta); err != nil {
-		return fmt.Errorf("writing task meta: %w", err)
-	}
-
-	// Resolve project name for fleet-sync in check.sh script
 	project := meta["project"]
 	if project == "" {
 		project = ident.Repo

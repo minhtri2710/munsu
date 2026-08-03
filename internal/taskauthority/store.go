@@ -60,6 +60,16 @@ func (v View) Hold(id string) (DispatchHold, bool) {
 	return DispatchHold{}, false
 }
 
+// Decision returns the named dispatch decision, if any.
+func (v View) Decision(key string) (DispatchDecision, bool) {
+	for _, decision := range v.Decisions {
+		if decision.Key == key {
+			return decision, true
+		}
+	}
+	return DispatchDecision{}, false
+}
+
 // sortedTaskIDs returns the distinct task IDs in the view.
 func (v View) sortedTaskIDs() []string {
 	seen := map[string]bool{}
@@ -85,15 +95,22 @@ type ChangeApplier interface {
 	ApplyInterpretation(rec DispatchInterpretation) error
 	ApplyDecision(dec DispatchDecision) error
 	ApplyAudit(ev AuditEvent) error
+	// ApplyAuditRecord stages a historical audit event transferred from
+	// another authority, keyed by its own operation ID (the destination
+	// receive path). It is distinct from ApplyAudit so adapters keep the
+	// one-typed-audit-event-per-operation rule for their own operations.
+	ApplyAuditRecord(ev AuditEvent) error
+	ApplyLeaseMarker(marker LeaseMarker) error
 }
 
 type stagedChange struct {
-	kind  string
-	agg   Aggregate
-	hold  DispatchHold
-	rec   DispatchInterpretation
-	dec   DispatchDecision
-	audit AuditEvent
+	kind        string
+	agg         Aggregate
+	hold        DispatchHold
+	rec         DispatchInterpretation
+	dec         DispatchDecision
+	audit       AuditEvent
+	leaseMarker LeaseMarker
 }
 
 // Tx stages one authoritative transaction against a committed snapshot.
@@ -118,6 +135,11 @@ func (tx *Tx) Current(taskID string) (Aggregate, bool) {
 // Hold returns the committed named hold, if any.
 func (tx *Tx) Hold(id string) (DispatchHold, bool) {
 	return tx.view.Hold(id)
+}
+
+// Decision returns the committed named dispatch decision, if any.
+func (tx *Tx) Decision(key string) (DispatchDecision, bool) {
+	return tx.view.Decision(key)
 }
 
 // Holds returns the committed dispatch holds.
@@ -172,6 +194,18 @@ func (tx *Tx) PutDecision(dec DispatchDecision) error {
 	return nil
 }
 
+// PutLeaseMarker stages a worktree lease marker for the transaction. The
+// marker commits atomically with the binding that leases the worktree; the
+// adapter persists it as a compatibility document read by the legacy lease
+// check.
+func (tx *Tx) PutLeaseMarker(marker LeaseMarker) error {
+	if err := marker.Validate(); err != nil {
+		return err
+	}
+	tx.changes = append(tx.changes, stagedChange{kind: "lease", leaseMarker: marker})
+	return nil
+}
+
 // AppendAudit stages a typed audit event for the transaction. At most one
 // typed audit event may commit per operation: the audit identity is the
 // operation id, so a second event would collide on the same record.
@@ -184,6 +218,19 @@ func (tx *Tx) AppendAudit(ev AuditEvent) error {
 	}
 	tx.auditAppended = true
 	tx.changes = append(tx.changes, stagedChange{kind: "audit", audit: ev})
+	return nil
+}
+
+// PutAuditRecord stages a historical typed audit event whose operation
+// identity belongs to another (source) authority. The destination receive
+// operation uses it to carry the transferred Task Generation's audit history
+// verbatim; the document commits keyed by the event's own operation ID and is
+// never confused with the transaction's single typed audit event.
+func (tx *Tx) PutAuditRecord(ev AuditEvent) error {
+	if err := ev.Validate(); err != nil {
+		return err
+	}
+	tx.changes = append(tx.changes, stagedChange{kind: "auditRecord", audit: ev})
 	return nil
 }
 
@@ -214,6 +261,14 @@ func (tx *Tx) Apply(applier ChangeApplier) error {
 		case "audit":
 			if err := applier.ApplyAudit(change.audit); err != nil {
 				return fmt.Errorf("applying audit event: %w", err)
+			}
+		case "auditRecord":
+			if err := applier.ApplyAuditRecord(change.audit); err != nil {
+				return fmt.Errorf("applying audit record: %w", err)
+			}
+		case "lease":
+			if err := applier.ApplyLeaseMarker(change.leaseMarker); err != nil {
+				return fmt.Errorf("applying lease marker: %w", err)
 			}
 		}
 	}
@@ -293,6 +348,18 @@ func (tx *Tx) Outcome() (Result, bool) {
 		found = true
 	}
 	return result, found
+}
+
+// InterpretationOutcome returns the dispatch interpretation ID staged by the
+// transaction, if any. The Store persists it in the operation receipt so
+// replay returns the original committed interpretation record.
+func (tx *Tx) InterpretationOutcome() (string, bool) {
+	for _, change := range tx.changes {
+		if change.kind == "interpretation" {
+			return change.rec.ID, true
+		}
+	}
+	return "", false
 }
 
 // stagesGeneration reports whether the transaction stages any change for the

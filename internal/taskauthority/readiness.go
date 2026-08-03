@@ -40,8 +40,15 @@ func (a *Authority) Readiness(taskID string) (Readiness, error) {
 	if !ok {
 		return Readiness{TaskID: taskID, BlockingReasons: []ReadinessReason{ReadinessNotFound}}, nil
 	}
-	result := Readiness{TaskID: taskID, Generation: agg.Generation}
-	if holdsBlockStart(v, agg) {
+	return evaluateReadiness(v.Holds, agg), nil
+}
+
+// evaluateReadiness evaluates one aggregate's readiness against the given
+// committed holds. It is shared by the Readiness query and the in-transaction
+// interpretation evaluation so both see identical semantics.
+func evaluateReadiness(holds []DispatchHold, agg Aggregate) Readiness {
+	result := Readiness{TaskID: agg.TaskID, Generation: agg.Generation}
+	if holdsBlockStart(holds, agg) {
 		result.BlockingReasons = append(result.BlockingReasons, ReadinessDispatchHold)
 	}
 	if strings.TrimSpace(agg.Definition.Owner) == "" {
@@ -59,12 +66,12 @@ func (a *Authority) Readiness(taskID string) (Readiness, error) {
 	default: // done, resolved, retired
 		result.BlockingReasons = append(result.BlockingReasons, ReadinessTerminal)
 	}
-	return result, nil
+	return result
 }
 
 // holdsBlockStart reports whether any committed start hold matches the task.
-func holdsBlockStart(v View, agg Aggregate) bool {
-	for _, hold := range v.Holds {
+func holdsBlockStart(holds []DispatchHold, agg Aggregate) bool {
+	for _, hold := range holds {
 		if hold.Matches(DispatchActionStart, agg.TaskID, agg.Definition.Project, agg.Generation.String(), agg.Definition.ParentTaskID) {
 			return true
 		}

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +8,8 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 type gitCommandSafety struct {
@@ -50,21 +51,32 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 		if homeDir == "" || taskID == "" {
 			return true, "git mutation requires active munsu task worktree binding"
 		}
-		agg, ok, err := home.ReadCurrentTaskAggregate(homeDir, taskID)
+		// The worktree binding is read from the canonical v2 task-authority
+		// view (Task 8.2): the v1 aggregate store is gone, and a v1 home
+		// fails closed with the typed migration-required error.
+		store, err := taskauthorityfs.NewStore(homeDir)
 		if err != nil {
 			return true, "git mutation worktree binding unavailable: " + err.Error()
 		}
+		view, err := store.View()
+		if err != nil {
+			return true, "git mutation worktree binding unavailable: " + err.Error()
+		}
+		agg, ok := view.Current(taskID)
 		if !ok || agg.Worktree == nil {
-			if staleBindingExists(homeDir, taskID, agg) {
+			if staleBindingExists(view, taskID) {
 				return true, "stale generation: worktree binding is not on current task generation"
 			}
 			return true, "git mutation requires active worktree binding"
 		}
 		binding := agg.Worktree
-		if binding.TaskGeneration != agg.Generation {
-			return true, fmt.Sprintf("stale generation: binding=%s current=%s", binding.TaskGeneration, agg.Generation)
-		}
-		if !home.TaskWorktreeLeaseActive(homeDir, taskID, *binding) {
+		// The lease marker is a v2-namespace compatibility artifact read by
+		// the home lease check; the binding's generation is the aggregate's.
+		if !home.TaskWorktreeLeaseActive(homeDir, taskID, home.TaskWorktreeBinding{
+			TaskGeneration: agg.Generation.String(),
+			LeaseID:        binding.LeaseID,
+			FenceToken:     binding.FenceToken,
+		}) {
 			return true, "recycled lease: worktree binding lease no longer matches active task"
 		}
 		if reason := validateGitTargetBinding(parsed, binding); reason != "" {
@@ -77,16 +89,12 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	return false, ""
 }
 
-func staleBindingExists(homeDir, taskID string, current *home.TaskAggregate) bool {
-	aggregates, err := home.ListTaskAggregates(homeDir)
-	if err != nil {
-		return false
+func staleBindingExists(view taskauthority.View, taskID string) bool {
+	currentGeneration := taskauthority.Generation(0)
+	if agg, ok := view.Current(taskID); ok {
+		currentGeneration = agg.Generation
 	}
-	currentGeneration := ""
-	if current != nil {
-		currentGeneration = current.Generation
-	}
-	for _, agg := range aggregates {
+	for _, agg := range view.Aggregates {
 		if agg.TaskID == taskID && agg.Generation != currentGeneration && agg.Worktree != nil {
 			return true
 		}
@@ -94,7 +102,7 @@ func staleBindingExists(homeDir, taskID string, current *home.TaskAggregate) boo
 	return false
 }
 
-func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, binding *home.TaskWorktreeBinding) string {
+func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
 	taskBranch := "mu/" + taskID
 	currentBranch, err := gitSafetyOutput(binding.Path, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -135,7 +143,7 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		}
 		// Branch deletion requires cleanup tier and retirement context.
 		if isBranchDelete(g.args) {
-			if ctx == "retirement" && fleet.TierEnough(tier, fleet.GitTierCleanup) {
+			if ctx == "retirement" && fleet.TierEnough(tier, taskauthority.GitTierCleanup) {
 				return ""
 			}
 			return "branch deletion requires cleanup authority (retirement context)"
@@ -153,14 +161,14 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		}
 		// Force-with-lease requires authorization with expected-state comparison.
 		if fleet.ForceWithLeaseRequested(g.args) {
-			if _, err := fleet.CheckGitMutationAuthorization(homeDir, taskID, fleet.GitOpForceWithLease, ""); err != nil {
+			if _, err := fleet.CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, ""); err != nil {
 				return "force-with-lease is not authorized: " + err.Error()
 			}
 			return ""
 		}
 		// Push --delete requires cleanup tier and retirement context.
 		if fleet.PushDeleteRequested(g.args, g.pushRefspec) {
-			if ctx == "retirement" && fleet.TierEnough(tier, fleet.GitTierCleanup) {
+			if ctx == "retirement" && fleet.TierEnough(tier, taskauthority.GitTierCleanup) {
 				return ""
 			}
 			return "push --delete requires cleanup authority (retirement context)"
@@ -174,7 +182,7 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "rebase", "reset", "merge", "cherry-pick", "revert":
 		// Rewrite operations require amendment context and rewrite tier.
-		if ctx == "amendment" && fleet.TierEnough(tier, fleet.GitTierRewrite) {
+		if ctx == "amendment" && fleet.TierEnough(tier, taskauthority.GitTierRewrite) {
 			return ""
 		}
 		return "rewrite operations require amendment context and rewrite authority"
@@ -318,7 +326,7 @@ func fillGitCommandDetails(g *gitCommandSafety) {
 	}
 }
 
-func validateGitTargetBinding(g gitCommandSafety, binding *home.TaskWorktreeBinding) string {
+func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
 	identity, gitDir, commonDir, err := gitSafetyIdentity(g.targetPath)
 	if err != nil {
 		return "git mutation target unavailable: " + err.Error()

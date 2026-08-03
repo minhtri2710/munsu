@@ -28,7 +28,7 @@ func TestMergeAndRetire_AlreadyMergedSkipsMerge(t *testing.T) {
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
 
 	// Call MergeAndRetire with already-merged state.
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{})
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -90,8 +90,10 @@ func TestMergeAndRetire_AlreadyMergedPartialCleanupRetry(t *testing.T) {
 	// simulate a failure that prevents cleanup (e.g., dispose error stops
 	// the process before meta removal).
 	// We use a fakeTeardown that returns an error on Dispose, which causes
-	// RetireTask to fail before removing meta.
-	firstResult := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true, disposeErr: os.ErrPermission}, fakeRetirementJournals{})
+	// RetireTask to fail before removing meta. One Authority spans both
+	// attempts so the retry replays the durable retirement receipt.
+	auth := mergeTestAuth(t, taskID)
+	firstResult := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true, disposeErr: os.ErrPermission}, fakeRetirementJournals{}, auth)
 	if firstResult == nil {
 		t.Fatal("expected non-nil first result")
 	}
@@ -130,8 +132,9 @@ func TestMergeAndRetire_AlreadyMergedPartialCleanupRetry(t *testing.T) {
 	}
 
 	// Phase 3: Retry — merge should be skipped again (already merged),
-	// and retirement should resume from the beginning.
-	secondResult := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{})
+	// and retirement should resume from the beginning, replaying the durable
+	// receipt and continuing the saga-side cleanup.
+	secondResult := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if secondResult == nil {
 		t.Fatal("expected non-nil second result")
 	}
@@ -171,7 +174,7 @@ func TestMergeAndRetire_AlreadyMergedWorktreeGone(t *testing.T) {
 	// The worktree path doesn't exist, but Force=true (due to alreadyMerged)
 	// skips the worktree-based safety checks. RetireTask handles the missing
 	// worktree path gracefully ("worktree path no longer exists").
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{})
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -214,7 +217,7 @@ func TestMergeAndRetire_MergeFailed(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644)
 
 	// Call MergeAndRetire with a malformed PR URL so PRMerge fails.
-	result := MergeAndRetire(homeDir, taskID, "not-a-valid-url", nil, fakeTeardown{}, fakeRetirementJournals{})
+	result := MergeAndRetire(homeDir, taskID, "not-a-valid-url", nil, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -252,7 +255,7 @@ func TestMergeAndRetire_NilMeta(t *testing.T) {
 	taskID := "test-nonexistent"
 
 	// No meta file exists — PRMerge won't be called because ReadMeta fails first.
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{}, fakeRetirementJournals{})
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -290,7 +293,7 @@ func TestMergeAndRetire_AlreadyMergedResidualArtifacts(t *testing.T) {
 	}
 
 	// First attempt: success (all artifacts cleaned).
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{})
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}

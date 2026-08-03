@@ -38,6 +38,28 @@ func validateTaskID(id string) error {
 	return nil
 }
 
+// AmbiguousTaskIDError reports that one requested task ID resolves to more
+// than one munsu home (the primary home or a captain sub-home). It is shared
+// by the CLI task lookup and the fleet handoff saga, which both collect
+// canonical owners per home; CorrectionCommands renders the --home-pinned
+// commands an operator can run against each owner.
+type AmbiguousTaskIDError struct {
+	Requested string
+	Matches   []string
+}
+
+func (e *AmbiguousTaskIDError) Error() string {
+	return fmt.Sprintf("task ID %q is ambiguous; use one of: %s", e.Requested, strings.Join(e.Matches, ", "))
+}
+
+func (e *AmbiguousTaskIDError) CorrectionCommands(command string) []string {
+	commands := make([]string, 0, len(e.Matches))
+	for _, match := range e.Matches {
+		commands = append(commands, command+" "+e.Requested+" --home "+match)
+	}
+	return commands
+}
+
 func ensurePrivateStateDir(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err
@@ -52,7 +74,7 @@ func ensurePrivateStateDir(path string) error {
 // WriteMeta writes a task meta file at $MUNSU_HOME/state/<id>.meta.
 // The map is serialized as key=value lines, one per field.
 // Uses atomic write: unique temp file + rename to prevent partial writes.
-// Acquires the advisory lock to prevent races with CompareAndSwapMeta.
+// Acquires the advisory lock to serialize concurrent writers.
 func WriteMeta(homeDir string, id string, meta map[string]string) error {
 	_, unlock, err := acquireMetaLock(homeDir, id)
 	if err != nil {
@@ -156,6 +178,57 @@ func AppendStatus(homeDir string, id, line string) error {
 	return nil
 }
 
+// WriteStatus atomically overwrites the task status projection at
+// $MUNSU_HOME/state/<id>.status with the given lines. It is the rebuild
+// primitive for projection reconciliation: the status file is an append-only
+// projection of typed audit history, and a deleted or corrupt projection is
+// rebuilt from canonical records without touching the authority.
+// Acquires the advisory per-task lock, mirroring WriteMeta.
+func WriteStatus(homeDir string, id string, lines []string) error {
+	_, unlock, err := acquireMetaLock(homeDir, id)
+	if err != nil {
+		return fmt.Errorf("write status: %w", err)
+	}
+	defer unlock()
+
+	p, err := statusPath(homeDir, id)
+	if err != nil {
+		return err
+	}
+	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
+		return fmt.Errorf("creating state directory: %w", err)
+	}
+	var b strings.Builder
+	for _, line := range lines {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	tmpF, err := os.CreateTemp(filepath.Dir(p), id+".status.*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp status file: %w", err)
+	}
+	tmpPath := tmpF.Name()
+	if err := tmpF.Chmod(0600); err != nil {
+		tmpF.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("securing temp status file: %w", err)
+	}
+	if _, err := tmpF.WriteString(b.String()); err != nil {
+		tmpF.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing temp status file: %w", err)
+	}
+	if err := tmpF.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing temp status file: %w", err)
+	}
+	if err := os.Rename(tmpPath, p); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("renaming temp status file: %w", err)
+	}
+	return nil
+}
+
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<id>.status.
 func ReadStatus(homeDir string, id string) ([]string, error) {
 	p, err := statusPath(homeDir, id)
@@ -228,19 +301,6 @@ func RemoveStatusKey(line string) string {
 	return msg
 }
 
-// PromoteMeta flips a task's kind from scout to ship in the meta file.
-func PromoteMeta(homeDir string, id string) error {
-	meta, err := ReadMeta(homeDir, id)
-	if err != nil {
-		return fmt.Errorf("reading meta for promote: %w", err)
-	}
-	if meta["kind"] != "scout" {
-		return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, meta["kind"])
-	}
-	meta["kind"] = "ship"
-	return WriteMeta(homeDir, id, meta)
-}
-
 // ValidMetaFields lists the recognized fields in a task meta file.
 var ValidMetaFields = []string{
 	"window", "worktree", "project", "harness",
@@ -297,7 +357,6 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 	}
 
 	var result []MetaEntry
-	seenResult := map[string]bool{}
 	for _, id := range taskIDs {
 		meta, err := ReadMeta(homeDir, id)
 		if err != nil {
@@ -326,42 +385,12 @@ func ListMeta(homeDir string) ([]MetaEntry, error) {
 
 		kind := meta["kind"]
 		project := pickProject(meta)
-		if agg, ok, err := ReadCurrentTaskAggregate(homeDir, id); err == nil && ok {
-			if agg.Kind != "" {
-				kind = agg.Kind
-			}
-			if agg.Project != "" {
-				project = agg.Project
-			}
-			if agg.State != "" {
-				lastStatus = agg.State
-				if agg.StateDetail != "" {
-					lastStatus += ": " + agg.StateDetail
-				}
-			}
-		}
-
 		result = append(result, MetaEntry{
 			ID:         id,
 			Kind:       kind,
 			Project:    project,
 			LastStatus: lastStatus,
 		})
-		seenResult[id] = true
-	}
-	aggregates, err := ListCurrentTaskAggregates(homeDir)
-	if err != nil {
-		return nil, err
-	}
-	for _, agg := range aggregates {
-		if seenResult[agg.TaskID] {
-			continue
-		}
-		lastStatus := agg.State
-		if lastStatus != "" && agg.StateDetail != "" {
-			lastStatus += ": " + agg.StateDetail
-		}
-		result = append(result, MetaEntry{ID: agg.TaskID, Kind: agg.Kind, Project: agg.Project, LastStatus: lastStatus})
 	}
 
 	return result, nil
@@ -373,19 +402,6 @@ func pickProject(meta map[string]string) string {
 		return p
 	}
 	return meta["repo"]
-}
-
-// --- Compare-and-swap meta primitive ---
-
-// CASError represents a compare-and-swap conflict.
-type CASError struct {
-	Key      string
-	Expected string
-	Actual   string
-}
-
-func (e *CASError) Error() string {
-	return fmt.Sprintf("cas conflict: key %q expected %q but got %q", e.Key, e.Expected, e.Actual)
 }
 
 // lockPath returns the path to the advisory lock file for a meta file.
@@ -420,45 +436,4 @@ func acquireMetaLock(homeDir, id string) (*os.File, func(), error) {
 		unlockFile(f)
 		f.Close()
 	}, nil
-}
-
-// CompareAndSwapMeta atomically reads task meta, checks that all expected
-// key=value pairs match, and applies updates under an advisory lock.
-// Returns the updated meta on success. Returns *CASError on mismatch.
-// The lock is process-scoped and released on process exit.
-func CompareAndSwapMeta(homeDir, id string, checks, updates map[string]string) (map[string]string, error) {
-	_, unlock, err := acquireMetaLock(homeDir, id)
-	if err != nil {
-		return nil, fmt.Errorf("cas: %w", err)
-	}
-	defer unlock()
-
-	meta, err := ReadMeta(homeDir, id)
-	if err != nil {
-		return nil, fmt.Errorf("cas: reading meta: %w", err)
-	}
-
-	for k, expectedV := range checks {
-		actualV, ok := meta[k]
-		if !ok {
-			// Allow empty string checks to match missing keys
-			if expectedV == "" {
-				continue
-			}
-			return nil, &CASError{Key: k, Expected: expectedV, Actual: "<missing>"}
-		}
-		if actualV != expectedV {
-			return nil, &CASError{Key: k, Expected: expectedV, Actual: actualV}
-		}
-	}
-
-	for k, v := range updates {
-		meta[k] = v
-	}
-
-	if err := writeMetaLocked(homeDir, id, meta); err != nil {
-		return nil, fmt.Errorf("cas: writing meta: %w", err)
-	}
-
-	return meta, nil
 }

@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/taskauthority"
+	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
+
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -83,7 +86,20 @@ func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
 
 func writeIntegrationHandoffAuthority(t *testing.T, homeDir, taskID, description string) {
 	t.Helper()
-	if err := mhome.WriteTaskAggregate(homeDir, mhome.TaskAggregate{SchemaVersion: "munsu.task-aggregate/v1", TaskID: taskID, Generation: "1", Current: true, Owner: "general", Definition: description, State: "queued", Kind: "ship", Project: "munsu"}); err != nil {
+	store, err := taskauthorityfs.NewStore(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
+		OperationID: "integration-seed-" + taskID,
+		Actor:       taskauthority.Actor{ID: "general", Rank: "general"},
+		TaskID:      taskID,
+		Owner:       "general",
+		Description: description,
+		Kind:        "ship",
+		Project:     "munsu",
+		Reason:      "seed",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := mhome.WriteMeta(homeDir, taskID, map[string]string{"description": description, "kind": "ship", "project": "munsu", "generation": "1"}); err != nil {

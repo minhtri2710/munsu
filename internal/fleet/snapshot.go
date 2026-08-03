@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -169,6 +170,16 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 }
 
 func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) error {
+	// Canonical Task Authority records are the preferred source (Task 7.8):
+	// authoritative kind/project/phase win, and the .meta/.status projections
+	// are display fallback only — a stale .status can never override a newer
+	// authoritative lifecycle transition. A legacy v1 home fails closed
+	// (migration is explicit, never automatic).
+	canonical, err := canonicalAggregates(taskHome)
+	if err != nil {
+		return fmt.Errorf("reading canonical task authority state for %s: %w", taskHome, err)
+	}
+
 	metasDir := filepath.Join(taskHome, "state")
 	entries, err := os.ReadDir(metasDir)
 	if err != nil {
@@ -188,19 +199,24 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 		if err != nil {
 			continue
 		}
-		agg, hasAggregate, err := mhome.ReadCurrentTaskAggregate(taskHome, id)
-		if err != nil {
-			continue
+		agg, hasCanonical := canonical[id]
+		if !hasCanonical {
+			// Legacy fail-closed posture (Task 7.8): a meta-only task that
+			// claims delivery outcomes without an authoritative record is
+			// never silently projected.
+			if claim := legacyDeliveryClaim(meta); claim != "" {
+				return &LegacyDeliveryEvidenceError{TaskID: id, Field: claim}
+			}
 		}
 
 		project := meta["project"]
 		kind := meta["kind"]
-		if hasAggregate {
-			if agg.Project != "" {
-				project = agg.Project
+		if hasCanonical {
+			if agg.Definition.Project != "" {
+				project = agg.Definition.Project
 			}
-			if agg.Kind != "" {
-				kind = agg.Kind
+			if agg.Definition.Kind != "" {
+				kind = agg.Definition.Kind
 			}
 		}
 		ts := TaskSnapshot{
@@ -240,13 +256,16 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			}
 		}
 
-		// Resolve current-state projection when resolver is wired.
+		// Resolve current-state projection when resolver is wired. A
+		// canonical record wins: the authoritative phase is the current state
+		// and the status log is superseded display (a stale .status can never
+		// override a newer authoritative lifecycle transition).
 		info := CurrentState(taskHome, id, meta)
-		if hasAggregate {
-			ts.CurrentState = agg.State
-			ts.CurrentDescription = agg.StateDetail
+		if hasCanonical {
+			ts.CurrentState = string(agg.Phase)
+			ts.CurrentDescription = agg.PhaseDetail
 			if ts.CurrentDescription == "" {
-				ts.CurrentDescription = agg.Definition
+				ts.CurrentDescription = agg.Definition.Description
 			}
 			ts.StatusLogSuperseded = true
 			ts.OpenActivities = info.OpenActivities
@@ -261,17 +280,20 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 		snap.Tasks = append(snap.Tasks, ts)
 		seenIDs[id] = true
 	}
-	aggregates, err := mhome.ListCurrentTaskAggregates(taskHome)
-	if err != nil {
-		return err
+	// Canonical tasks with no .meta projection are still part of the fleet.
+	canonicalIDs := make([]string, 0, len(canonical))
+	for id := range canonical {
+		canonicalIDs = append(canonicalIDs, id)
 	}
-	for _, agg := range aggregates {
-		if seenIDs[agg.TaskID] {
+	sort.Strings(canonicalIDs)
+	for _, id := range canonicalIDs {
+		if seenIDs[id] {
 			continue
 		}
-		ts := TaskSnapshot{ID: agg.TaskID, Project: agg.Project, Kind: agg.Kind, Home: homeLabel, Source: source, CurrentState: agg.State, CurrentDescription: agg.StateDetail, StatusLogSuperseded: true}
+		agg := canonical[id]
+		ts := TaskSnapshot{ID: id, Project: agg.Definition.Project, Kind: agg.Definition.Kind, Home: homeLabel, Source: source, CurrentState: string(agg.Phase), CurrentDescription: agg.PhaseDetail, StatusLogSuperseded: true}
 		if ts.CurrentDescription == "" {
-			ts.CurrentDescription = agg.Definition
+			ts.CurrentDescription = agg.Definition.Description
 		}
 		snap.Tasks = append(snap.Tasks, ts)
 	}

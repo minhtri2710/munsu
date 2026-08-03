@@ -23,14 +23,20 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Capability | munsu command | munsu Go package | Status |
 |---|---|---|---|
 | Home directory | `munsu home` | `internal/home` | **implemented** |
-| Task meta + status protocol (append-only event log; keyed open/close) | `munsu task add/show/status`; current via `soldier-state` | `internal/home`, `internal/orchestrator`, `internal/fleet` | **implemented** (list: delegated to tasks-axi) |
+| Task lifecycle (canonical aggregate: Create/Start/Block/Unblock/Complete/Reopen/Supersede/Retire/Promote) | `munsu task add`, `munsu backlog`, `munsu spawn promote`, retirement flows | `internal/taskauthority` (rules), `internal/taskauthorityfs` (store), `internal/cli`/`internal/fleet` (composition) | **implemented** |
+| Task meta + status projections (`.meta` reconciled after authoritative commits; `.status` append-only, ADR-0007 §7) | `munsu task add/show/status/reconcile`; current via `soldier-state` | `internal/taskauthorityfs` (projection layer), `internal/taskauthority` (authoritative source), `internal/fleet` (soldier-state), `internal/home` (generic `.meta`/`.status` primitives) | **implemented** (list: delegated to tasks-axi) |
+| Dispatch control (holds/interpretation/decision) | `munsu decision-hold hold/complete/verify/resolve/list`, spawn and supervision flows | `internal/taskauthority`, `internal/taskauthorityfs` | **implemented** |
+| Worktree/endpoint binding + spawn confirmation | `munsu spawn` | `internal/taskauthority` (`BindWorktree`, `ConfirmSpawn`), `internal/taskauthorityfs`, `internal/fleet` | **implemented** |
+| Delivery invariants (prepare/complete, merge attempt, issue-link reconcile, attestation, git authorization) | `munsu delivery pr-check/pr-merge/merge-local/pr-amend/reconcile/merge-status` | `internal/taskauthority` (invariant ops), `internal/fleet` (orchestration) | **implemented** |
+| Handoff receipt (`ReceiveTransfer`) | `munsu captain handoff` | `internal/fleet` (saga), `internal/taskauthority` (receipt) | **implemented** |
+| Task authority migration (v1 → v2) | `munsu migrate task-authority plan/apply` | `internal/taskauthorityfs` | **implemented** (legacy `munsu migrate task-aggregates` removed; unmigrated v1 homes fail closed `ErrMigrationRequired`) |
 | Send message to soldier | `munsu send` | `internal/cli`, `internal/fleet`, `internal/home` (durable mailbox) | **implemented** (typed mailbox envelope/pending/ack; reconciliation through CLI-composed lifecycle ports) |
 | Spawn soldier | `munsu spawn` | `internal/cli`, `internal/fleet` | **implemented** |
 | Brief soldier | `munsu brief` | `internal/fleet` | **implemented** |
 | Teardown soldier context | `munsu teardown` | `internal/orchestrator` | **implemented** |
 | Peek at soldier output | `munsu peek` | `internal/cli` | **implemented** |
 | Soldier state query | `munsu soldier-state` | `internal/fleet` | **implemented** |
-| Promote soldier task | `munsu promote` | `internal/home` | **implemented** |
+| Promote soldier task | `munsu spawn promote` | `internal/taskauthority` (`Authority.Promote`), `internal/cli` | **implemented** |
 | Harness detection/verification | `munsu harness detect/soldier/captain` | `internal/harness` | **implemented** |
 | Project mode | `munsu project mode` | `internal/fleet` | **implemented** |
 | Fleet sync | `munsu fleet sync` | `internal/fleet` | **implemented** |
@@ -49,8 +55,8 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Project registry | `munsu project add/list/show/rm` | `internal/fleet` | **implemented** |
 | Backlog (tasks-axi + manual fallback) | `munsu backlog` | `internal/fleet` | **implemented** |
 | Review diff | `munsu delivery review-diff` | `internal/fleet` | **implemented** |
-| PR check/merge | `munsu delivery pr-check` / `munsu delivery pr-merge` | `internal/fleet` | **implemented** |
-| Local merge | `munsu delivery merge-local` | `internal/fleet` | **implemented** |
+| PR check/merge | `munsu delivery pr-check` / `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented** |
+| Local merge | `munsu delivery merge-local` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented** |
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/backend`, `internal/cli` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
 | Session backend (tmux + herdr + zellij) | `--backend` flag | `internal/backend` | **implemented** (zellij experimental) |

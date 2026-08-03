@@ -7,35 +7,44 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestBacklogReadyReportsDistinctReasonsAndIsPure(t *testing.T) {
 	homeDir := t.TempDir()
+	auth := testAuthorityFor(t, homeDir)
+	seedAuthorityTask(t, auth, "queued")
 	for _, tc := range []struct {
 		id    string
 		state string
 	}{
-		{"queued", "queued"},
 		{"blocked", "blocked"},
 		{"working", "working"},
 		{"done", "done"},
 	} {
-		if _, err := home.CreateTaskAggregate(homeDir, tc.id, "owner", tc.id, "ship", ""); err != nil {
-			t.Fatal(err)
-		}
-		if tc.state == "working" {
-			if err := home.BindTaskEndpoint(homeDir, tc.id, "1", home.TaskEndpointBinding{
-				Backend: "tmux", Handle: "pane", LeaseID: "lease", FenceToken: "fence", BoundAtUnix: 1,
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if tc.state != "queued" {
-			if _, _, err := home.UpdateCurrentTaskAggregateState(homeDir, tc.id, tc.state, "reason"); err != nil {
-				t.Fatal(err)
-			}
-		}
+		seedAuthorityTask(t, auth, tc.id)
+	}
+	if _, err := auth.Block(taskauthority.BlockRequest{
+		OperationID: newTaskAuthorityOperationID("seed-block"),
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      "blocked", ExpectedGeneration: 1,
+		Detail: "dependency", Reason: "seed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Start(taskauthority.StartRequest{
+		OperationID: newTaskAuthorityOperationID("seed-start"),
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      "working", ExpectedGeneration: 1, Reason: "seed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Complete(taskauthority.CompleteRequest{
+		OperationID: newTaskAuthorityOperationID("seed-done"),
+		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
+		TaskID:      "done", ExpectedGeneration: 1, To: taskauthority.PhaseDone, Reason: "seed",
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0700); err != nil {
 		t.Fatal(err)
@@ -101,8 +110,8 @@ func snapshotReadinessFiles(t *testing.T, homeDir string) string {
 	}
 	for _, id := range []string{"queued", "blocked", "working", "done"} {
 		paths = append(paths,
-			filepath.Join(homeDir, "state", ".task-authority", "aggregates", id, "1.json"),
-			filepath.Join(homeDir, "state", ".task-authority", "aggregates", id, "current"),
+			filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", id, "1.json"),
+			filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", id, "current"),
 		)
 	}
 	for _, path := range paths {

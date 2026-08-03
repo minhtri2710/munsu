@@ -45,7 +45,7 @@ func TestPRCheck_GeneratesCheckScriptWithFleetSync(t *testing.T) {
 	prURL := "https://github.com/minhtri2710/munsu/pull/24"
 
 	// Run PRCheck - this will call gh CLI to fetch the head SHA
-	if err := PRCheck(homeDir, "test-task", prURL); err != nil {
+	if err := PRCheck(homeDir, "test-task", prURL, preparedCheckAuth(t, "test-task")); err != nil {
 		t.Fatalf("PRCheck: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestPRCheck_GeneratesCheckScriptWithoutProjectFallback(t *testing.T) {
 	// Use a real PR URL
 	prURL := "https://github.com/minhtri2710/munsu/pull/24"
 
-	if err := PRCheck(homeDir, "test-task-no-project", prURL); err != nil {
+	if err := PRCheck(homeDir, "test-task-no-project", prURL, preparedCheckAuth(t, "test-task-no-project")); err != nil {
 		t.Fatalf("PRCheck: %v", err)
 	}
 
