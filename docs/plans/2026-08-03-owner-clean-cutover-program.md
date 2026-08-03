@@ -59,6 +59,14 @@ those criteria plus the ADR-0008 invariants.
   `taskauthorityfs`/`storecontract` aligned to the same v1 contract and staged for deletion
   in #417. Re-review PASS on `de48a6ea`; full suite green after integration. Legacy CLI
   wiring and `taskauthorityfs` deletion deferred to #416/#417.
+- #406 (Task Authority durability/bindings/recovery) — **PROVISIONAL groundwork, NOT ACCEPTED.**
+  Re-review head `885cb837` (test-only `storecontract` seam removed; canonical lifecycle
+  durability proven). Criterion 4 (whole-module Store seam no longer required) is OPEN: the
+  production `Store`/`memStore`/legacy `Authority` remain required by features owned by
+  #412/#413/#414 and by unrewired callers (#407/#416). Status: `#406 groundwork
+  reviewed/integration-authorized` (if re-review passes). `#406 ACCEPTED` only when all four
+  criteria are met on the integrated path. See `docs/plans/2026-08-03-seam-elimination-
+  inventory.md` for the completion plan.
 - Mirror parity repair (pre-existing) — resolved, integrated `49841760`.
 
 ## Staffing / integration policy
