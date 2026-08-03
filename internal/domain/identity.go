@@ -7,30 +7,32 @@ import (
 	"strings"
 )
 
-// Kind is the explicit kind of a scoped identity. A scoped identity is never
-// constructed from an ambiguous bare value: the kind is always named. This is
-// the fail-closed boundary between CLI shorthand resolution and core modules.
+// Kind is the explicit scope of a typed identity. Every typed identity is a
+// distinct nominal type carrying a fixed Kind; the compiler prevents
+// substituting one identity for another at an owner boundary. A Kind is never
+// inferred from a bare value.
 type Kind string
 
 const (
-	// KindTask is the scoped identity kind for a Task mutation target.
+	// KindTask is the identity kind for a Task mutation target.
 	KindTask Kind = "task"
-	// KindCaptain is the scoped identity kind for a Captain mutation target.
+	// KindCaptain is the identity kind for a Captain mutation target.
 	KindCaptain Kind = "captain"
-	// KindOperation is the scoped identity kind for a cross-module mutation
-	// operation.
-	KindOperation Kind = "operation"
-	// KindResource is the scoped identity kind for a resource-binding
-	// mutation (endpoint, worktree, lease, ...).
-	KindResource Kind = "resource"
-	// KindHome is the scoped identity kind for a canonical home.
+	// KindProject is the identity kind for a Project mutation target.
+	KindProject Kind = "project"
+	// KindHome is the identity kind for a canonical home.
 	KindHome Kind = "home"
+	// KindOperation is the identity kind for a cross-module mutation operation.
+	KindOperation Kind = "operation"
+	// KindResource is the identity kind for a resource-binding mutation
+	// (endpoint, worktree, lease, ...).
+	KindResource Kind = "resource"
 )
 
-// Valid reports whether the kind is a known scoped identity kind.
+// Valid reports whether the kind is a known typed identity kind.
 func (k Kind) Valid() bool {
 	switch k {
-	case KindTask, KindCaptain, KindOperation, KindResource, KindHome:
+	case KindTask, KindCaptain, KindProject, KindHome, KindOperation, KindResource:
 		return true
 	}
 	return false
@@ -40,55 +42,110 @@ func (k Kind) Valid() bool {
 // is missing, ambiguous, or cannot be resolved.
 var (
 	// ErrAmbiguousIdentity reports a bare or otherwise ambiguous identity that
-	// cannot be resolved to exactly one scoped identity.
+	// cannot be resolved to exactly one typed identity.
 	ErrAmbiguousIdentity = errors.New("munsu: ambiguous identity; a kind is required")
 
-	// ErrInvalidIdentity reports a malformed or unsupported scoped identity.
-	ErrInvalidIdentity = errors.New("munsu: invalid scoped identity")
+	// ErrInvalidIdentity reports a malformed or unsupported typed identity.
+	ErrInvalidIdentity = errors.New("munsu: invalid typed identity")
 
-	// ErrUnknownKind reports an unknown scoped identity kind.
-	ErrUnknownKind = errors.New("munsu: unknown scoped identity kind")
+	// ErrUnknownKind reports an unknown identity kind.
+	ErrUnknownKind = errors.New("munsu: unknown identity kind")
 )
 
-// ScopedID is a typed, scoped identity with a stable canonical form. It is
-// the only accepted way to name a cross-module mutation target. A ScopedID is
-// constructed with an explicit Kind and a validated value; it never accepts an
-// ambiguous bare string.
-type ScopedID struct {
-	Kind  Kind
-	Value string
+// Scoped is the common surface of every typed scoped identity. The concrete
+// identity types (TaskID, CaptainID, ProjectID, HomeID, OperationID,
+// ResourceID) are distinct nominal types, so the compiler rejects passing one
+// where another is expected. Scoped is used only for serialization and
+// diagnostics; typed owner operations always take the concrete type.
+type Scoped interface {
+	// Kind returns the fixed identity kind.
+	Kind() Kind
+	// Value returns the raw identity value.
+	Value() string
+	// Canonical returns the stable "kind:value" canonical form.
+	Canonical() string
+	// Validate rejects malformed or unsafe identities.
+	Validate() error
 }
 
-// TaskID returns a scoped identity for a Task value.
-func TaskID(value string) ScopedID { return ScopedID{Kind: KindTask, Value: value} }
+// scoped is the shared storage of a typed identity. It is embedded unexported
+// so each concrete type is a distinct nominal type whose methods are promoted
+// from scoped; external code can only construct a concrete identity through
+// its validated constructor.
+type scoped struct {
+	kind  Kind
+	value string
+}
 
-// CaptainID returns a scoped identity for a Captain value.
-func CaptainID(value string) ScopedID { return ScopedID{Kind: KindCaptain, Value: value} }
+func (s scoped) Kind() Kind        { return s.kind }
+func (s scoped) Value() string     { return s.value }
+func (s scoped) Canonical() string { return string(s.kind) + ":" + s.value }
+func (s scoped) Validate() error   { return validateScopedValue(s.value) }
 
-// OperationID returns a scoped identity for an operation value.
-func OperationID(value string) ScopedID { return ScopedID{Kind: KindOperation, Value: value} }
+// The concrete typed identity types. Each is a distinct nominal type, so
+// taskID, captainID, projectID, homeID, operationID, and resourceID are never
+// interchangeable at a typed boundary.
+type (
+	TaskID      struct{ scoped }
+	CaptainID   struct{ scoped }
+	ProjectID   struct{ scoped }
+	HomeID      struct{ scoped }
+	OperationID struct{ scoped }
+	ResourceID  struct{ scoped }
+)
 
-// ResourceID returns a scoped identity for a resource-binding value.
-func ResourceID(value string) ScopedID { return ScopedID{Kind: KindResource, Value: value} }
-
-// HomeID returns a scoped identity for a canonical home value.
-func HomeID(value string) ScopedID { return ScopedID{Kind: KindHome, Value: value} }
-
-// Canonical returns the stable canonical form of the identity: "kind:value".
-// This is the durable spelling used for keys, logs, and cross-module
-// references.
-func (id ScopedID) Canonical() string { return string(id.Kind) + ":" + id.Value }
-
-// Validate checks the identity kind and value and rejects ambiguous or
-// malformed identities.
-func (id ScopedID) Validate() error {
-	if !id.Kind.Valid() {
-		return fmt.Errorf("%w: %q", ErrUnknownKind, id.Kind)
+// NewTaskID returns a validated Task identity, failing closed on an unsafe
+// value.
+func NewTaskID(value string) (TaskID, error) {
+	if err := validateScopedValue(value); err != nil {
+		return TaskID{}, err
 	}
-	if err := validateScopedValue(id.Value); err != nil {
-		return err
+	return TaskID{scoped{kind: KindTask, value: value}}, nil
+}
+
+// NewCaptainID returns a validated Captain identity, failing closed on an
+// unsafe value.
+func NewCaptainID(value string) (CaptainID, error) {
+	if err := validateScopedValue(value); err != nil {
+		return CaptainID{}, err
 	}
-	return nil
+	return CaptainID{scoped{kind: KindCaptain, value: value}}, nil
+}
+
+// NewProjectID returns a validated Project identity, failing closed on an
+// unsafe value.
+func NewProjectID(value string) (ProjectID, error) {
+	if err := validateScopedValue(value); err != nil {
+		return ProjectID{}, err
+	}
+	return ProjectID{scoped{kind: KindProject, value: value}}, nil
+}
+
+// NewHomeID returns a validated Home identity, failing closed on an unsafe
+// value.
+func NewHomeID(value string) (HomeID, error) {
+	if err := validateScopedValue(value); err != nil {
+		return HomeID{}, err
+	}
+	return HomeID{scoped{kind: KindHome, value: value}}, nil
+}
+
+// NewOperationID returns a validated operation identity, failing closed on an
+// unsafe value.
+func NewOperationID(value string) (OperationID, error) {
+	if err := validateScopedValue(value); err != nil {
+		return OperationID{}, err
+	}
+	return OperationID{scoped{kind: KindOperation, value: value}}, nil
+}
+
+// NewResourceID returns a validated resource-binding identity, failing closed
+// on an unsafe value.
+func NewResourceID(value string) (ResourceID, error) {
+	if err := validateScopedValue(value); err != nil {
+		return ResourceID{}, err
+	}
+	return ResourceID{scoped{kind: KindResource, value: value}}, nil
 }
 
 func validateScopedValue(value string) error {
@@ -100,34 +157,40 @@ func validateScopedValue(value string) error {
 
 func isSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }
 
-// Resolve converts an explicit kind and value into a ScopedID. It refuses to
-// infer the kind from a bare value: callers must always name the kind. This is
-// the fail-closed boundary between CLI shorthand resolution and core modules.
-func Resolve(kind Kind, value string) (ScopedID, error) {
-	id := ScopedID{Kind: kind, Value: value}
-	if err := id.Validate(); err != nil {
-		return ScopedID{}, err
-	}
-	return id, nil
-}
-
-// ParseCanonical parses a canonical "kind:value" identity. A bare value
-// without a kind is ambiguous and fails closed; a value with more than one
-// colon is malformed.
-func ParseCanonical(raw string) (ScopedID, error) {
+// ParseCanonical parses a canonical "kind:value" identity into its concrete
+// typed identity. A bare value without a kind is ambiguous and fails closed;
+// a value with more than one colon, an unknown kind, or an unsafe value fails
+// closed. The returned value is a concrete typed identity (TaskID, CaptainID,
+// ProjectID, HomeID, OperationID, or ResourceID) that callers type-assert to
+// the exact kind; typed owner operations never accept a bare or differently
+// typed identity.
+func ParseCanonical(raw string) (Scoped, error) {
 	if raw == "" {
-		return ScopedID{}, fmt.Errorf("%w: empty identity", ErrAmbiguousIdentity)
+		return nil, fmt.Errorf("%w: empty identity", ErrAmbiguousIdentity)
 	}
 	idx := strings.Index(raw, ":")
 	if idx <= 0 {
-		return ScopedID{}, fmt.Errorf("%w: %q (a kind:value form is required)", ErrAmbiguousIdentity, raw)
+		return nil, fmt.Errorf("%w: %q (a kind:value form is required)", ErrAmbiguousIdentity, raw)
 	}
 	if strings.Index(raw[idx+1:], ":") >= 0 {
-		return ScopedID{}, fmt.Errorf("%w: %q", ErrInvalidIdentity, raw)
+		return nil, fmt.Errorf("%w: %q", ErrInvalidIdentity, raw)
 	}
-	id := ScopedID{Kind: Kind(raw[:idx]), Value: raw[idx+1:]}
-	if err := id.Validate(); err != nil {
-		return ScopedID{}, err
+	kind := Kind(raw[:idx])
+	value := raw[idx+1:]
+	switch kind {
+	case KindTask:
+		return NewTaskID(value)
+	case KindCaptain:
+		return NewCaptainID(value)
+	case KindProject:
+		return NewProjectID(value)
+	case KindHome:
+		return NewHomeID(value)
+	case KindOperation:
+		return NewOperationID(value)
+	case KindResource:
+		return NewResourceID(value)
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrUnknownKind, kind)
 	}
-	return id, nil
 }

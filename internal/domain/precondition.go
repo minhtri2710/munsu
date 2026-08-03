@@ -43,12 +43,13 @@ func (p Precondition) Validate() error {
 	return nil
 }
 
-// Conflict is a typed stale-precondition conflict. It wraps the underlying
-// storage conflict (home.ErrConflict) so callers can distinguish a stale
-// intent from other failures, and it satisfies errors.Is for
-// ErrStalePrecondition.
+// Conflict is a typed stale-precondition conflict. It is produced only when a
+// mutation's expected generation or revision is verified not to match current
+// state; it wraps the underlying storage conflict (home.ErrConflict) so
+// callers distinguish a stale intent from other failures, and it satisfies
+// errors.Is for ErrStalePrecondition.
 type Conflict struct {
-	ID                 ScopedID
+	ID                 Scoped
 	ExpectedGeneration uint64
 	ActualGeneration   uint64
 	ExpectedRevision   uint64
@@ -56,16 +57,22 @@ type Conflict struct {
 	Err                error
 }
 
-// Reconcile wraps a home.Commit conflict (or any error) into a typed Conflict
-// for the given target identity and precondition. The stored actual values are
-// left zero until the caller records them with WithActual.
-func Reconcile(id ScopedID, p Precondition, err error) *Conflict {
+// ConflictFrom returns a typed Conflict only when recognize verifies that err
+// is a genuine generation/revision mismatch (e.g. errors.Is(err,
+// home.ErrConflict)). Any other error — storage, permission, I/O, decoding,
+// corruption — is returned as (nil, false) so it keeps its truthful category
+// and is never mislabeled as stale. recognize is the owning module's conflict
+// verifier.
+func ConflictFrom(id Scoped, p Precondition, err error, recognize func(error) bool) (*Conflict, bool) {
+	if err == nil || !recognize(err) {
+		return nil, false
+	}
 	return &Conflict{
 		ID:                 id,
 		ExpectedGeneration: p.Generation,
 		ExpectedRevision:   p.Revision,
 		Err:                err,
-	}
+	}, true
 }
 
 // WithActual records the current generation and revision observed at conflict
