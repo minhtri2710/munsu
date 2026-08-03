@@ -150,6 +150,13 @@ Confirmed pre-existing — not caused by #403 or by the Lead docs commit. It kee
 `go test ./...` gate red until repaired separately. Must be triaged/authorized before the
 #418 activation gate. It is unrelated to the Home mechanics.
 
+### Intermittent orchestrator AFK-daemon flake (tracked, observed 2026-08-03)
+
+`internal/orchestrator` has an intermittent test flake ("signal: terminated" in an AFK
+daemon test) observed under full-suite load; it does not reproduce in isolation and is
+unrelated to #406 (the #406 changes are confined to `internal/taskauthority`). Confirmed
+passing on re-run. Track before the #418 activation gate.
+
 ### RESOLVED (2026-08-03) — pre-existing activation-gate repair
 
 Authorized by the Supervisor as a pre-existing-defect repair OUTSIDE issues #402–#418.
