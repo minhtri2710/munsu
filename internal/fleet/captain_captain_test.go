@@ -75,13 +75,12 @@ func setupFakeBins() (string, func()) {
 // --- Legacy registry / config-inheritance helpers ---
 //
 // ParseRegistry, RegistryPath, and getInheritableList were removed from the
-// fleet package during the legacy-config hard cut. Their current production
-// owners live unexported in internal/configmigration; these test-local ports
-// mirror those owners so legacy-format registry tests keep compiling.
+// fleet package during the legacy-config hard cut and the configmigration
+// package was deleted. These test-local ports preserve the legacy-format
+// registry parsing semantics so legacy-format registry tests keep compiling.
 
 // ParseRegistry parses a legacy captains.md registry file and returns Info
-// entries. Mirrors configmigration.parseRegistry (semantics preserved from the
-// former fleet ParseRegistry).
+// entries. Test-local port of the former fleet ParseRegistry.
 func ParseRegistry(registryPath string) ([]Info, error) {
 	f, err := os.Open(registryPath)
 	if err != nil {
@@ -134,7 +133,7 @@ func ParseRegistry(registryPath string) ([]Info, error) {
 }
 
 // extractMetaValue pulls the value for key out of a legacy captains.md
-// meta block (key: value; ...). Mirrors configmigration.extractMetaValue.
+// meta block (key: value; ...). Test-local port of the former fleet parser.
 func extractMetaValue(meta, key string) string {
 	parts := strings.Split(meta, ";")
 	for _, p := range parts {
@@ -148,13 +147,13 @@ func extractMetaValue(meta, key string) string {
 }
 
 // RegistryPath returns the path to the legacy projects.md registry file.
-// Mirrors configmigration.registryPath.
+// Test-local port of the former fleet parser.
 func RegistryPath(homeDir string) string {
 	return filepath.Join(homeDir, "data", "projects.md")
 }
 
 // getInheritableList returns the list of inheritable config file names.
-// Mirrors configmigration.getInheritableList (current behavior).
+// Test-local port of the former fleet parser.
 func getInheritableList() []string {
 	env := os.Getenv("MUNSU_INHERITABLE_CONFIG")
 	if env != "" {
@@ -3907,8 +3906,8 @@ func TestMigrateRollbackSafety(t *testing.T) {
 // TestConfigPush_InheritsEnvOverriddenKeys proves that MUNSU_INHERITABLE_CONFIG
 // no longer filters config push: after the typed-config hard cut the resolved
 // config is authoritative and the full inherited surface is always propagated.
-// The env list helper itself (configmigration.getInheritableList) is covered by
-// the TestGetInheritableListCaptains_* tests below.
+// The env list helper itself is covered by the TestGetInheritableListCaptains_*
+// tests below.
 func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key:another-key:extra-key")
 
