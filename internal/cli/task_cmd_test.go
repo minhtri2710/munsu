@@ -128,7 +128,7 @@ func TestTaskStatusMissingTaskStillAuditOnly(t *testing.T) {
 		t.Fatalf("task status on missing task: %v\n%s", err, out)
 	}
 	// No authoritative aggregate may appear as a side effect.
-	if _, err := os.Stat(filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "ghost")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "ghost")); !os.IsNotExist(err) {
 		t.Fatalf("task status created an authoritative record for a missing task")
 	}
 	lines, err := home.ReadStatus(homeDir, "ghost")

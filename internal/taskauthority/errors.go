@@ -1,6 +1,7 @@
 // Package taskauthority owns task lifecycle, readiness, and durable dispatch
-// control as one deep module. Callers use named semantic operations; the
-// implementation seam below the business rules is the transactional Store.
+// control as one deep module. Callers use named semantic operations. The
+// canonical surface (Canonical) is backed by the canonical home's durable
+// mechanics; the legacy Authority/Store surface is staged for removal.
 package taskauthority
 
 import (

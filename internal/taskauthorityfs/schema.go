@@ -19,8 +19,10 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// SchemaVersion is the versioned identity of every v2 authority document.
-const SchemaVersion = "munsu.task-authority/v2"
+// SchemaVersion is the versioned identity of every v1 authority document. It
+// is the single current document identity (ADR-0008 §11), matching the
+// canonical taskauthority.TaskAuthoritySchema.
+const SchemaVersion = "munsu.task-authority/v1"
 
 // V1SchemaVersion is the legacy v1 aggregate identity. taskauthorityfs
 // recognizes it for detection only and never writes or migrates v1 records.

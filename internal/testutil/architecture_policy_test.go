@@ -53,8 +53,8 @@ func TestPackageTopology(t *testing.T) {
 			if path == root+"domain" && strings.HasPrefix(imp, root) {
 				t.Errorf("domain imports core package %s", imp)
 			}
-			if path == root+"taskauthority" && imp != root+"domain" && strings.HasPrefix(imp, root) {
-				t.Errorf("taskauthority imports core package %s; it must stay pure (domain only)", imp)
+			if path == root+"taskauthority" && imp != root+"domain" && imp != root+"home" && strings.HasPrefix(imp, root) {
+				t.Errorf("taskauthority imports core package %s; it must stay pure (domain, home only)", imp)
 			}
 		}
 	}

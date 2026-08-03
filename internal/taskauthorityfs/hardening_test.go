@@ -106,7 +106,7 @@ func TestViewRejectsSymlinks(t *testing.T) {
 		home := t.TempDir()
 		outside := filepath.Join(t.TempDir(), "hold-1.json")
 		writeFile(t, outside, encodeHold(t, "hold-1"))
-		linkAt(t, home, "state/.task-authority/v2/holds/686f6c642d31.json", outside)
+		linkAt(t, home, "state/.task-authority/v1/holds/686f6c642d31.json", outside)
 		assertCorrupt(t, home)
 	})
 
@@ -115,7 +115,7 @@ func TestViewRejectsSymlinks(t *testing.T) {
 		writeCurrentPointer(t, home, "t1", 1)
 		outside := filepath.Join(t.TempDir(), "t1-1.json")
 		writeFile(t, outside, encodeAggregate(t, "t1", 1, 1))
-		linkAt(t, home, "state/.task-authority/v2/aggregates/t1/1.json", outside)
+		linkAt(t, home, "state/.task-authority/v1/aggregates/t1/1.json", outside)
 		assertCorrupt(t, home)
 	})
 
@@ -124,7 +124,7 @@ func TestViewRejectsSymlinks(t *testing.T) {
 		writeAggregateDoc(t, home, "t1", 1, 1, true)
 		outside := filepath.Join(t.TempDir(), "current")
 		writeFile(t, outside, []byte("1\n"))
-		linkAt(t, home, "state/.task-authority/v2/aggregates/t1/current", outside)
+		linkAt(t, home, "state/.task-authority/v1/aggregates/t1/current", outside)
 		assertCorrupt(t, home)
 	})
 
@@ -132,8 +132,8 @@ func TestViewRejectsSymlinks(t *testing.T) {
 		home := t.TempDir()
 		// Real hold-1 document, then a hold-2 link that resolves to it. The
 		// link must be rejected before identity checks can read through it.
-		writeFile(t, filepath.Join(home, "state/.task-authority/v2/holds/686f6c642d31.json"), encodeHold(t, "hold-1"))
-		linkAt(t, home, "state/.task-authority/v2/holds/686f6c642d32.json", "686f6c642d31.json")
+		writeFile(t, filepath.Join(home, "state/.task-authority/v1/holds/686f6c642d31.json"), encodeHold(t, "hold-1"))
+		linkAt(t, home, "state/.task-authority/v1/holds/686f6c642d32.json", "686f6c642d31.json")
 		assertCorrupt(t, home)
 	})
 
@@ -142,7 +142,7 @@ func TestViewRejectsSymlinks(t *testing.T) {
 		outside := filepath.Join(t.TempDir(), "t1")
 		writeFile(t, filepath.Join(outside, currentFileName), []byte("1\n"))
 		writeFile(t, filepath.Join(outside, "1.json"), encodeAggregate(t, "t1", 1, 1))
-		linkAt(t, home, "state/.task-authority/v2/aggregates/t1", outside)
+		linkAt(t, home, "state/.task-authority/v1/aggregates/t1", outside)
 		assertCorrupt(t, home)
 	})
 
@@ -152,7 +152,7 @@ func TestViewRejectsSymlinks(t *testing.T) {
 		writeAggregateDoc(t, home, "t1", 1, 1, true)
 		outside := filepath.Join(t.TempDir(), "README")
 		writeFile(t, outside, []byte("x"))
-		linkAt(t, home, "state/.task-authority/v2/aggregates/t1/README", outside)
+		linkAt(t, home, "state/.task-authority/v1/aggregates/t1/README", outside)
 		assertCorrupt(t, home)
 	})
 }

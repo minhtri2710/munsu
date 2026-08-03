@@ -79,8 +79,8 @@ func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 		t.Fatalf("first add: %v\n%s", err, out)
 	}
 	beforeMeta := readFileForTest(t, filepath.Join(homeDir, "state", "beta.meta"))
-	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "1.json"))
-	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "current"))
+	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "1.json"))
+	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "current"))
 	if _, err := runTaskCommand(t, []string{"task", "add", "beta", "changed", "--home", homeDir}); err == nil {
 		t.Fatal("duplicate task add succeeded")
 	} else if !errors.Is(err, taskauthority.ErrConflict) {
@@ -89,10 +89,10 @@ func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 	if got := readFileForTest(t, filepath.Join(homeDir, "state", "beta.meta")); got != beforeMeta {
 		t.Fatal("duplicate add rewrote meta projection")
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "1.json")); got != beforeAggregate {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "1.json")); got != beforeAggregate {
 		t.Fatal("duplicate add changed authoritative aggregate")
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "current")); got != beforePointer {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "current")); got != beforePointer {
 		t.Fatal("duplicate add changed current pointer")
 	}
 }

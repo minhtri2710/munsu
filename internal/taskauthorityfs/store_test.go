@@ -437,38 +437,38 @@ func TestViewFailsClosedOnCorruption(t *testing.T) {
 	t.Run("invalid aggregate json", func(t *testing.T) {
 		home := t.TempDir()
 		writeCurrentPointer(t, home, "t1", 1)
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/1.json", []byte("{not json"))
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/1.json", []byte("{not json"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("invalid current pointer", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/current", []byte("not-a-number\n"))
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/current", []byte("not-a-number\n"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("invalid hold json", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/holds/686f6c642d31.json", []byte("{not json"))
+		writeDocAt(t, home, "state/.task-authority/v1/holds/686f6c642d31.json", []byte("{not json"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("invalid receipt json", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/receipts/6f703a31.json", []byte("{not json"))
+		writeDocAt(t, home, "state/.task-authority/v1/receipts/6f703a31.json", []byte("{not json"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("invalid audit json", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/audit/6f703a31.json", []byte("{not json"))
+		writeDocAt(t, home, "state/.task-authority/v1/audit/6f703a31.json", []byte("{not json"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("legacy v1 document inside v2 namespace", func(t *testing.T) {
 		home := t.TempDir()
 		writeCurrentPointer(t, home, "t1", 1)
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/1.json", []byte(`{"schema_version":"munsu.task-aggregate/v1","task_id":"t1","current":true}`))
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/1.json", []byte(`{"schema_version":"munsu.task-aggregate/v1","task_id":"t1","current":true}`))
 		_, err := openStore(t, home).View()
 		if !errors.Is(err, ErrUnsupportedVersion) {
 			t.Fatalf("View error = %v, want ErrUnsupportedVersion", err)
@@ -477,31 +477,31 @@ func TestViewFailsClosedOnCorruption(t *testing.T) {
 
 	t.Run("non-json visible file in record dir", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/holds/note.txt", []byte("x"))
+		writeDocAt(t, home, "state/.task-authority/v1/holds/note.txt", []byte("x"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("directory in record dir", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/holds/sub/1.json", []byte("{}"))
+		writeDocAt(t, home, "state/.task-authority/v1/holds/sub/1.json", []byte("{}"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("non-hex record filename", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/holds/zzz.json", []byte("{}"))
+		writeDocAt(t, home, "state/.task-authority/v1/holds/zzz.json", []byte("{}"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("stray file in aggregates root", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/stray.json", []byte("{}"))
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/stray.json", []byte("{}"))
 		assertCorrupt(t, home)
 	})
 
 	t.Run("unexpected entry in task dir", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/README", []byte("x"))
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/README", []byte("x"))
 		assertCorrupt(t, home)
 	})
 }
@@ -579,7 +579,7 @@ func TestViewFailsClosedOnIdentityMismatch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/1.json", data)
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/1.json", data)
 		assertCorrupt(t, home)
 	})
 
@@ -596,7 +596,7 @@ func TestViewFailsClosedOnIdentityMismatch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/1.json", data)
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/1.json", data)
 		assertCorrupt(t, home)
 	})
 }
@@ -617,7 +617,7 @@ func TestViewFailsClosedOnCurrentContradictions(t *testing.T) {
 
 	t.Run("empty task directory fails closed", func(t *testing.T) {
 		home := t.TempDir()
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/.keep", []byte("x"))
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/.keep", []byte("x"))
 		assertCorrupt(t, home)
 	})
 
@@ -654,7 +654,7 @@ func TestViewFailsClosedOnCurrentContradictions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/01.json", data)
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/01.json", data)
 		assertCorrupt(t, home)
 	})
 }

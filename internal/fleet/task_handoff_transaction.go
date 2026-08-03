@@ -24,7 +24,7 @@ import (
 const taskHandoffDirName = ".task-handoff"
 
 // Handoff transfers queued tasks through a durable, resumable transaction
-// between two v2 task-authority homes (ADR-0007 §10): the source task is read
+// between two v1 task-authority homes (ADR-0007 §10): the source task is read
 // through the source Authority, the complete Task Generation is committed at
 // the destination through the destination Authority's receive operation (one
 // Store transaction, durable receipt), and only then is source ownership
@@ -210,8 +210,8 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	if err != nil {
 		return err
 	}
-	// Task 6.2 cutover: the saga operates only on v2 homes. A home that still
-	// carries legacy v1 task-authority records fails closed with the typed
+	// Task 6.2 cutover: the saga operates only on current v1 homes. A home that
+	// still carries legacy v1 task-authority records fails closed with the typed
 	// migration-required error surfaced by the CLI; there is no silent v1
 	// fallback (authoritative mutation compatibility may not persist).
 	for _, store := range []*taskauthorityfs.Store{sourceStore, destinationStore} {
@@ -220,7 +220,7 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 			if store == destinationStore {
 				home = destination
 			}
-			return fmt.Errorf("handoff requires task-authority v2 state at %s: %w", home, err)
+			return fmt.Errorf("handoff requires task-authority v1 state at %s: %w", home, err)
 		}
 	}
 	sourceAuth := taskauthority.New(sourceStore)
@@ -374,7 +374,7 @@ func checkHandoffHolds(auth *taskauthority.Authority, taskID, project, generatio
 	return nil
 }
 
-// handoffCandidateOwners returns every canonical v2 home that currently owns
+// handoffCandidateOwners returns every canonical v1 home that currently owns
 // the task: the source home plus every captain under its captains/ tree.
 // Ownership is read from the canonical stores, so a home owns the task when
 // its current aggregate exists. A home that cannot serve a canonical view
@@ -649,7 +649,7 @@ func prepareHandoff(source, destination, owner string, keys []string, sourceBack
 		destinationAgg.DispatchInterpretationDigest = interpretation.DependencySnapshotDigest
 		payload := buildTransferPayload(sourceView, destinationAgg, interpretation)
 		task := handoffTask{ID: taskID, Generation: generation.String(), Intent: intent, Payload: payload}
-		for _, rel := range taskAggregateAuthorityRelPathsV2(taskID, generation) {
+		for _, rel := range taskAggregateAuthorityRelPaths(taskID, generation) {
 			file, err := inventoryHandoffFile(source, filepath.Join(source, rel))
 			if err != nil {
 				return nil, "", err
@@ -723,12 +723,12 @@ func buildTransferPayload(sourceView taskauthority.View, agg taskauthority.Aggre
 	return payload
 }
 
-// taskAggregateAuthorityRelPathsV2 returns the v2 canonical aggregate document
-// and current pointer for one task generation.
-func taskAggregateAuthorityRelPathsV2(taskID string, generation taskauthority.Generation) []string {
+// taskAggregateAuthorityRelPaths returns the current v1 canonical aggregate
+// document and current pointer for one task generation.
+func taskAggregateAuthorityRelPaths(taskID string, generation taskauthority.Generation) []string {
 	return []string{
-		filepath.Join("state", ".task-authority", "v2", "aggregates", taskID, generation.String()+".json"),
-		filepath.Join("state", ".task-authority", "v2", "aggregates", taskID, "current"),
+		filepath.Join("state", ".task-authority", "v1", "aggregates", taskID, generation.String()+".json"),
+		filepath.Join("state", ".task-authority", "v1", "aggregates", taskID, "current"),
 	}
 }
 

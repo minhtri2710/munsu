@@ -6,16 +6,16 @@ import (
 	"path/filepath"
 )
 
-// taskAuthorityDir is the home-relative v2 task-authority namespace root.
+// taskAuthorityDir is the home-relative v1 task-authority namespace root.
 // The v1 aggregate store under state/.task-authority/aggregates was deleted
-// in Task 8.2; this constant now only locates the v2 worktree-lease markers.
+// in Task 8.2; this constant now only locates the v1 worktree-lease markers.
 const taskAuthorityDir = "state/.task-authority"
 
 // TaskWorktreeBinding is the v1 worktree binding shape decoded by the
 // task-authority migration (internal/taskauthorityfs convertV1Aggregate).
-// It is decode-only: the v1 aggregate store that produced it was deleted in
-// Task 8.2, and v2 bindings live on taskauthority.Aggregate.Worktree. The
-// lease read below converts a v2 binding into this shape.
+// It is decode-only: the legacy aggregate store that produced it was deleted
+// in Task 8.2, and current bindings live on taskauthority.Aggregate.Worktree.
+// The lease read below converts a current binding into this shape.
 type TaskWorktreeBinding struct {
 	TaskGeneration     string `json:"task_generation"`
 	RepositoryIdentity string `json:"repository_identity"`
@@ -36,7 +36,7 @@ type taskWorktreeLeaseMarker struct {
 }
 
 func taskWorktreeLeasePath(homeDir, taskID, generation, leaseID string) string {
-	return filepath.Join(homeDir, taskAuthorityDir, "v2", "worktree-leases", taskID, generation, leaseID+".json")
+	return filepath.Join(homeDir, taskAuthorityDir, "v1", "worktree-leases", taskID, generation, leaseID+".json")
 }
 
 func TaskWorktreeLeaseActive(homeDir, taskID string, binding TaskWorktreeBinding) bool {

@@ -164,8 +164,8 @@ func readFileBytes(t *testing.T, path string) []byte {
 	return data
 }
 
-func v2RootExists(home string) bool {
-	_, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v2"))
+func v1RootExists(home string) bool {
+	_, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v1"))
 	return err == nil
 }
 
@@ -450,7 +450,7 @@ func TestMigrationPlanQuarantinesUnconvertibleSource(t *testing.T) {
 		{
 			name: "unsupported document schema",
 			setup: func(t *testing.T, home string) {
-				writeDocAt(t, home, "state/.task-authority/aggregates/t1/1.json", []byte(`{"schema_version":"munsu.task-authority/v2","task_id":"t1","generation":1,"revision":1,"phase":"queued","current":true}`))
+				writeDocAt(t, home, "state/.task-authority/aggregates/t1/1.json", []byte(`{"schema_version":"munsu.task-authority/v3","task_id":"t1","generation":1,"revision":1,"phase":"queued","current":true}`))
 			},
 			wantQ: 1,
 		},
@@ -609,8 +609,8 @@ func TestMigrationApplyRefusesQuarantinedPlan(t *testing.T) {
 	if _, err := ApplyMigration(plan); err == nil {
 		t.Fatal("apply succeeded on quarantined plan, want refusal")
 	}
-	if v2RootExists(home) {
-		t.Fatal("apply created v2 state on quarantined plan")
+	if v1RootExists(home) {
+		t.Fatal("apply created v1 state on quarantined plan")
 	}
 	if _, err := os.Stat(filepath.Join(home, "state", ".task-authority-migration", "receipt.json")); !os.IsNotExist(err) {
 		t.Fatal("apply wrote receipt on quarantined plan")
@@ -626,8 +626,8 @@ func TestMigrationApplySourceChangedFailsClosed(t *testing.T) {
 	if _, err := ApplyMigration(plan); err == nil {
 		t.Fatal("apply succeeded on changed source, want failure")
 	}
-	if v2RootExists(home) {
-		t.Fatal("apply created v2 state on changed source")
+	if v1RootExists(home) {
+		t.Fatal("apply created v1 state on changed source")
 	}
 	if v1SourcesRemain(home) != true {
 		t.Fatal("v1 source was touched by failed apply")
@@ -651,8 +651,8 @@ func TestMigrationApplyHomeIdentityChangedFailsClosed(t *testing.T) {
 	if _, err := ApplyMigration(plan); err == nil {
 		t.Fatal("apply succeeded on changed home identity, want failure")
 	}
-	if v2RootExists(home) {
-		t.Fatal("apply created v2 state on changed identity")
+	if v1RootExists(home) {
+		t.Fatal("apply created v1 state on changed identity")
 	}
 }
 
@@ -660,8 +660,8 @@ func TestMigrationApplyTargetConflictFailsClosed(t *testing.T) {
 	home := t.TempDir()
 	writeV1Agg(t, home, "t1", "1", true, nil)
 	plan := planHome(t, home)
-	// A conflicting target already exists in the v2 namespace.
-	writeDocAt(t, home, "state/.task-authority/v2/aggregates/other/1.json", []byte(`{"schema_version":"munsu.task-authority/v2","task_id":"other","generation":1,"revision":1,"current":true,"definition":{"owner":"x"},"phase":"queued"}`))
+	// A conflicting target already exists in the v1 namespace.
+	writeDocAt(t, home, "state/.task-authority/v1/aggregates/other/1.json", []byte(`{"schema_version":"munsu.task-authority/v1","task_id":"other","generation":1,"revision":1,"current":true,"definition":{"owner":"x"},"phase":"queued"}`))
 	if _, err := ApplyMigration(plan); err == nil {
 		t.Fatal("apply succeeded over conflicting target, want failure")
 	}
@@ -695,8 +695,8 @@ func TestMigrationApplyAlreadyMigratedDoesNotRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, rel := range []string{
-		"state/.task-authority/v2/aggregates/t1/1.json",
-		"state/.task-authority/v2/aggregates/t1/current",
+		"state/.task-authority/v1/aggregates/t1/1.json",
+		"state/.task-authority/v1/aggregates/t1/current",
 		holdRel,
 	} {
 		abs := filepath.Join(home, filepath.FromSlash(rel))
@@ -735,8 +735,8 @@ func TestMigrationApplyResumesAfterCrash(t *testing.T) {
 			crashAfter: "install",
 			verify: func(t *testing.T, home string, plan *MigrationPlan) {
 				// v2 installed, journal not yet committed: retry re-installs.
-				if !v2RootExists(home) {
-					t.Fatal("expected installed v2 after crash at install")
+				if !v1RootExists(home) {
+					t.Fatal("expected installed v1 after crash at install")
 				}
 			},
 		},
@@ -830,8 +830,8 @@ func TestMigrationViewUpdateDetectOnlyNoSideEffects(t *testing.T) {
 	if _, err := store.Update(op, func(tx *taskauthority.Tx) error { return errors.New("must not run") }); !errors.Is(err, ErrMigrationRequired) {
 		t.Fatalf("Update error = %v, want ErrMigrationRequired", err)
 	}
-	if v2RootExists(home) {
-		t.Fatal("detect-only View/Update created v2 state")
+	if v1RootExists(home) {
+		t.Fatal("detect-only View/Update created v1 state")
 	}
 
 	// After explicit migration the same store serves the converted state.

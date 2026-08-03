@@ -51,9 +51,9 @@ func writeFileAtomic(homeDir, path string, data []byte) error {
 // ensureDirSafe creates dir and every missing parent beneath the authority
 // root one component at a time with DirPerm, verifying each existing
 // component is a real directory and never a symlink. The trusted prefix
-// (home/state/.task-authority/v2) is itself walked component-wise from the
+// (home/state/.task-authority/v1) is itself walked component-wise from the
 // trust boundary — homeDir — with Lstat before every traversal, so a hostile
-// or corrupt link at state, .task-authority, or v2 can never redirect an
+// or corrupt link at state, .task-authority, or v1 can never redirect an
 // authority write outside the home. The final component is re-secured to
 // DirPerm.
 func ensureDirSafe(homeDir, dir string) error {

@@ -337,7 +337,7 @@ func TestWorktreeLeaseRelPathValidatesIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rel != filepath.ToSlash(filepath.Join("state", ".task-authority", "v2", "worktree-leases", "t1", "3", "lease-3.json")) {
+	if rel != filepath.ToSlash(filepath.Join("state", ".task-authority", "v1", "worktree-leases", "t1", "3", "lease-3.json")) {
 		t.Fatalf("marker rel path = %q", rel)
 	}
 }

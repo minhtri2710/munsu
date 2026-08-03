@@ -202,7 +202,7 @@ func TestRecoveryFailsClosedOnDivergence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeDocAt(t, home, "state/.task-authority/v2/aggregates/t1/1.json", data)
+		writeDocAt(t, home, "state/.task-authority/v1/aggregates/t1/1.json", data)
 
 		_, err = openStore(t, home).View()
 		if !errors.Is(err, ErrRecoveryRequired) {
@@ -231,7 +231,7 @@ func TestRecoveryFailsClosedOnDivergence(t *testing.T) {
 		if err := os.WriteFile(outside, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		abs := filepath.Join(home, "state", ".task-authority", "v2", "aggregates", "t1")
+		abs := filepath.Join(home, "state", ".task-authority", "v1", "aggregates", "t1")
 		if err := os.MkdirAll(abs, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +257,7 @@ func TestRecoveryRejectsSymlinkedParent(t *testing.T) {
 	if err := os.MkdirAll(outside, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	abs := filepath.Join(home, "state", ".task-authority", "v2")
+	abs := filepath.Join(home, "state", ".task-authority", "v1")
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		t.Fatal(err)
 	}

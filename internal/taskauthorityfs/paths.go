@@ -10,11 +10,11 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// On-disk layout. All v2 documents live under the versioned v2 namespace;
+// On-disk layout. All v1 documents live under the versioned v1 namespace;
 // the legacy v1 aggregate layout in "state/.task-authority/aggregates" is a
 // sibling that this package detects but never writes or migrates.
 const (
-	authorityRoot      = "state/.task-authority/v2"
+	authorityRoot      = "state/.task-authority/v1"
 	aggregatesDir      = authorityRoot + "/aggregates"
 	holdsDir           = authorityRoot + "/holds"
 	interpretationsDir = authorityRoot + "/interpretations"
