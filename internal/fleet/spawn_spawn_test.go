@@ -1456,6 +1456,9 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	t.Setenv("MUNSU_ROLE", "general")
 	t.Chdir(t.TempDir())
 	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	binDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(binDir, "pi"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
 		t.Fatal(err)
@@ -1498,26 +1501,13 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 		t.Fatal(err)
 	}
 	// Typed project registry replaces the legacy projects.md: spawn resolves
-	// the project through data/projects.json with a local-only mode.
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
+	// the project through the canonical Fleet Registry with a local-only mode.
+	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreCaptainRegistry(homeDir, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(homeDir, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-proj", Path: projectDir, Mode: "local-only"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-proj", Path: projectDir, Mode: "local-only"},
+	}, nil)
 
 	briefDir := filepath.Join(homeDir, "data", "reconcile-task")
 	if err := os.MkdirAll(briefDir, 0755); err != nil {
