@@ -18,7 +18,7 @@ import (
 var authorityRootRelDirs = []string{
 	"state",
 	"state/.task-authority",
-	"state/.task-authority/v2",
+	"state/.task-authority/v1",
 }
 
 // assertDirEmpty fails when dir contains any entry. Used to prove an outside
@@ -82,8 +82,8 @@ func TestTrustBoundaryIsHomeDir(t *testing.T) {
 		}
 		// The documents physically land inside the symlink target.
 		for _, rel := range []string{
-			"state/.task-authority/v2/aggregates/t1/1.json",
-			"state/.task-authority/v2/aggregates/t1/current",
+			"state/.task-authority/v1/aggregates/t1/1.json",
+			"state/.task-authority/v1/aggregates/t1/current",
 		} {
 			if _, err := os.Stat(filepath.Join(target, filepath.FromSlash(rel))); err != nil {
 				t.Fatalf("document not written under the home target at %s: %v", rel, err)
@@ -137,7 +137,7 @@ func TestRecoveryRejectsSymlinkedTransactionsDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	abs := filepath.Join(home, "state", ".task-authority", "v2", "transactions")
+	abs := filepath.Join(home, "state", ".task-authority", "v1", "transactions")
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestRecoveryRejectsSymlinkedTransactionsDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(txns, fileIDEncode(m.OperationID)+documentExt)); err != nil {
 		t.Fatalf("outside manifest was touched during recovery: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v2", "aggregates", "t1", "1.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v1", "aggregates", "t1", "1.json")); !os.IsNotExist(err) {
 		t.Fatalf("recovery applied an outside manifest into the home (stat err = %v)", err)
 	}
 }
@@ -175,7 +175,7 @@ func TestRecoveryRejectsSymlinkedManifestFile(t *testing.T) {
 	if err := os.WriteFile(outside, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifestAbs := filepath.Join(home, "state", ".task-authority", "v2", "transactions", fileIDEncode(m.OperationID)+documentExt)
+	manifestAbs := filepath.Join(home, "state", ".task-authority", "v1", "transactions", fileIDEncode(m.OperationID)+documentExt)
 	if err := os.Remove(manifestAbs); err != nil {
 		t.Fatal(err)
 	}

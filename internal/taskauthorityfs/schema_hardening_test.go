@@ -80,22 +80,22 @@ func TestSafeFileIDCollisionFreeAndRoundTrip(t *testing.T) {
 func TestTransactionManifestPathValidation(t *testing.T) {
 	base := fixtureManifest(t)
 	validPaths := []string{
-		"state/.task-authority/v2/aggregates/t1/1.json",
-		"state/.task-authority/v2/aggregates/t1/current",
-		"state/.task-authority/v2/receipts/op-1.json",
+		"state/.task-authority/v1/aggregates/t1/1.json",
+		"state/.task-authority/v1/aggregates/t1/current",
+		"state/.task-authority/v1/receipts/op-1.json",
 	}
 	invalidPaths := []string{
 		"",                                     // empty
-		"/state/.task-authority/v2/a.json",     // absolute (native)
+		"/state/.task-authority/v1/a.json",     // absolute (native)
 		`\state\.task-authority\v2\a.json`,     // absolute (windows)
-		"state/.task-authority/v2/../escape",   // parent traversal
+		"state/.task-authority/v1/../escape",   // parent traversal
 		"../escape",                            // leading traversal
 		"state/other/place",                    // outside the v2 namespace
-		"state/.task-authority/v2",             // the root itself, not a file under it
-		"state/.task-authority/v2evil/a.json",  // prefix lookalike of the root
-		"state/.task-authority/v2/./a.json",    // not clean
-		"state/.task-authority/v2/a//b.json",   // not clean
-		"state/.task-authority/v2/a/../b.json", // not clean
+		"state/.task-authority/v1",             // the root itself, not a file under it
+		"state/.task-authority/v1evil/a.json",  // prefix lookalike of the root
+		"state/.task-authority/v1/./a.json",    // not clean
+		"state/.task-authority/v1/a//b.json",   // not clean
+		"state/.task-authority/v1/a/../b.json", // not clean
 	}
 
 	t.Run("valid paths accepted", func(t *testing.T) {
@@ -278,7 +278,7 @@ func TestHasV1RecordsExpandedDetection(t *testing.T) {
 				t.Fatalf("HasV1Records mutated the legacy record at %s", record)
 			}
 			// Detection must not create any v2 state.
-			if _, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v2")); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v1")); !os.IsNotExist(err) {
 				t.Fatalf("HasV1Records created v2 state: %v", err)
 			}
 		})
@@ -292,7 +292,7 @@ func TestHasV1RecordsExpandedDetection(t *testing.T) {
 
 	t.Run("v2-only home reports no v1 records", func(t *testing.T) {
 		home := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(home, "state", ".task-authority", "v2", "aggregates"), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Join(home, "state", ".task-authority", "v1", "aggregates"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if has, err := HasV1Records(home); err != nil || has {

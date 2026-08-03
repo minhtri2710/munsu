@@ -207,15 +207,15 @@ func TestMigrationSymlinkAttacks(t *testing.T) {
 		{
 			name: "old dir",
 			plant: func(t *testing.T, home, outside string, plan *MigrationPlan) {
-				// The v2 target parent must be real; only the .old cleanup path
+				// The v1 target parent must be real; only the .old cleanup path
 				// is attacked.
-				mustSymlink(t, outside, filepath.Join(home, "state", ".task-authority", "v2.old"))
+				mustSymlink(t, outside, filepath.Join(home, "state", ".task-authority", "v1.old"))
 			},
 		},
 		{
 			name: "installing dir",
 			plant: func(t *testing.T, home, outside string, plan *MigrationPlan) {
-				mustSymlink(t, outside, filepath.Join(home, "state", ".task-authority", "v2.installing"))
+				mustSymlink(t, outside, filepath.Join(home, "state", ".task-authority", "v1.installing"))
 			},
 		},
 		{

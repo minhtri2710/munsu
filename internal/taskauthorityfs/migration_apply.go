@@ -452,7 +452,7 @@ func checkTargetConflicts(plan *MigrationPlan, canon string) error {
 		}
 		rel = filepath.ToSlash(rel)
 		if !expected[authorityRoot+"/"+rel] {
-			return fmt.Errorf("target conflict: existing v2 file %s is not a planned migration target", authorityRoot+"/"+rel)
+			return fmt.Errorf("target conflict: existing v1 file %s is not a planned migration target", authorityRoot+"/"+rel)
 		}
 		return nil
 	})
@@ -561,7 +561,7 @@ func buildStagedTargets(plan *MigrationPlan, canon string, now int64) ([]stagedF
 }
 
 // writeStagedTargets writes every staged document under the stage root, which
-// mirrors the home layout (state/.task-authority/v2/...). The v2 root is
+// mirrors the home layout (state/.task-authority/v1/...). The v1 root is
 // created even for an empty target set so a zero-record migration installs a
 // valid empty namespace.
 func writeStagedTargets(canon, stageRoot string, files []stagedFile) error {

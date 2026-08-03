@@ -184,8 +184,10 @@ type Aggregate struct {
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
-// JSON representation of authoritative records.
-const TaskAuthoritySchema = "munsu.task-authority/v2"
+// JSON representation of authoritative records. It is the single current
+// document identity (ADR-0008 §11): internal-history v2 identities are
+// replaced in place by the first supported current v1 definition.
+const TaskAuthoritySchema = "munsu.task-authority/v1"
 
 // NewAggregate builds the first Generation of a task with Revision one and
 // phase queued, validating the request fields.

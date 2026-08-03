@@ -57,7 +57,7 @@ func TestMigrateTaskAuthorityPlanAndApplyCommands(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, "state", ".task-authority", "aggregates")); !os.IsNotExist(err) {
 		t.Fatalf("v1 aggregates still present after apply")
 	}
-	if _, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v2", "aggregates", "ship-1", "1.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, "state", ".task-authority", "v1", "aggregates", "ship-1", "1.json")); err != nil {
 		t.Fatalf("v2 aggregate not installed: %v", err)
 	}
 

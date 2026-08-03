@@ -34,16 +34,16 @@ func TestDuplicateBacklogAddPreservesExistingState(t *testing.T) {
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "original", "--home", homeDir}); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "1.json"))
-	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "current"))
+	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "1.json"))
+	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "current"))
 	beforeBacklog := readFileForTest(t, filepath.Join(homeDir, "data", "md"))
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "changed", "--home", homeDir}); err == nil {
 		t.Fatalf("duplicate add succeeded: %s", out)
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "1.json")); got != beforeAggregate {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "1.json")); got != beforeAggregate {
 		t.Fatal("duplicate add changed aggregate")
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "task", "current")); got != beforePointer {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "current")); got != beforePointer {
 		t.Fatal("duplicate add changed current pointer")
 	}
 	if got := readFileForTest(t, filepath.Join(homeDir, "data", "md")); got != beforeBacklog {

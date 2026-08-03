@@ -658,3 +658,120 @@ func TestCanonicalCrashRecovery(t *testing.T) {
 		t.Fatalf("start after recovery: %v", err)
 	}
 }
+
+func TestCanonicalDocumentsCarryCurrentV1Identity(t *testing.T) {
+	c, h, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	hold := CanonicalAddHoldRequest{
+		HomeID:  c.HomeID(),
+		HoldID:  "hold-v1",
+		Scope:   DispatchHoldScope{TaskIDs: []string{"t1"}},
+		Actions: []DispatchAction{DispatchActionStart},
+		Reason:  "v1 identity",
+	}
+	if _, err := c.AddHold(mustOperation(t, "op-hold-v1", hold), hold); err != nil {
+		t.Fatalf("AddHold: %v", err)
+	}
+
+	// The canonical task document on disk carries the exact current v1
+	// identity, not a legacy v2 identity.
+	aggData, ok, err := readDocForTest(h, taskCurrentKey("t1"))
+	if err != nil || !ok {
+		t.Fatalf("read task doc: ok=%v err=%v", ok, err)
+	}
+	var doc taskDoc
+	if err := json.Unmarshal(aggData, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Aggregate.SchemaVersion != TaskAuthoritySchema {
+		t.Fatalf("aggregate schema = %q, want canonical %q", doc.Aggregate.SchemaVersion, TaskAuthoritySchema)
+	}
+	if TaskAuthoritySchema != "munsu.task-authority/v1" {
+		t.Fatalf("TaskAuthoritySchema = %q, want the current v1 identity", TaskAuthoritySchema)
+	}
+
+	holdData, ok, err := readDocForTest(h, holdKey("hold-v1"))
+	if err != nil || !ok {
+		t.Fatalf("read hold doc: ok=%v err=%v", ok, err)
+	}
+	var holdDocOnDisk holdDoc
+	if err := json.Unmarshal(holdData, &holdDocOnDisk); err != nil {
+		t.Fatal(err)
+	}
+	if holdDocOnDisk.Hold.SchemaVersion != TaskAuthoritySchema {
+		t.Fatalf("hold schema = %q, want canonical %q", holdDocOnDisk.Hold.SchemaVersion, TaskAuthoritySchema)
+	}
+
+	// A current-v1 reread through the canonical surface succeeds.
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.SchemaVersion != TaskAuthoritySchema {
+		t.Fatalf("reread aggregate schema = %q", agg.SchemaVersion)
+	}
+	holds, err := c.ListHolds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 || holds[0].SchemaVersion != TaskAuthoritySchema {
+		t.Fatalf("reread holds = %+v", holds)
+	}
+}
+
+func TestCanonicalRejectsHistoricalV2Input(t *testing.T) {
+	c, h, _ := newTestCanonical(t)
+
+	// Plant a legacy v2-identity task document directly on disk. The canonical
+	// surface must fail closed: it never accepts, migrates, or upgrades the
+	// historical v2 identity to the current v1.
+	if err := os.WriteFile(mustPathForTest(t, h, taskCurrentKey("legacy")), []byte(`{"home_revision":1,"aggregate":{"schema_version":"munsu.task-authority/v2","task_id":"legacy","generation":1,"revision":1,"current":true,"definition":{"owner":"o"},"phase":"queued"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.Get(mustTaskID(t, "legacy")); err == nil {
+		t.Fatalf("Get on legacy v2 document = nil error, want fail closed")
+	}
+	if _, err := c.List(); err == nil {
+		t.Fatalf("List with legacy v2 document = nil error, want fail closed")
+	}
+	if _, err := c.Readiness(mustTaskID(t, "legacy")); err == nil {
+		t.Fatalf("Readiness on legacy v2 document = nil error, want fail closed")
+	}
+}
+
+func TestCanonicalRejectsUnknownSchema(t *testing.T) {
+	c, h, _ := newTestCanonical(t)
+
+	// A future/unknown schema must fail closed exactly like the malformed
+	// current state; it is never accepted as canonical truth.
+	if err := os.WriteFile(mustPathForTest(t, h, taskCurrentKey("future")), []byte(`{"home_revision":1,"aggregate":{"schema_version":"munsu.task-authority/v9","task_id":"future","generation":1,"revision":1,"current":true,"definition":{"owner":"o"},"phase":"queued"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Get(mustTaskID(t, "future")); err == nil {
+		t.Fatalf("Get on unknown schema = nil error, want fail closed")
+	}
+}
+
+func readDocForTest(h *home.Home, key string) ([]byte, bool, error) {
+	data, err := h.Read(home.RootState, key)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func mustPathForTest(t *testing.T, h *home.Home, key string) string {
+	t.Helper()
+	p, err := h.Path(home.RootState, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}

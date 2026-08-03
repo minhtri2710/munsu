@@ -468,7 +468,7 @@ func TestHandoffFailureLeavesTaskAuthorityUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedHandoffTaskV2(t, parent, "TASK-1", map[string]string{"description": "Preserve authority", "kind": "ship", "project": "munsu", "issue": "#384", "delivery_plan": "no-mistakes", "context_hints": "read AGENTS.md", "generation": "7"})
-	beforeAgg := mustReadFleetTestFile(t, filepath.Join(parent, "state", ".task-authority", "v2", "aggregates", "TASK-1", "7.json"))
+	beforeAgg := mustReadFleetTestFile(t, filepath.Join(parent, "state", ".task-authority", "v1", "aggregates", "TASK-1", "7.json"))
 	beforeMeta := mustReadFleetTestFile(t, filepath.Join(parent, "state", "TASK-1.meta"))
 	beforeStatus := mustReadFleetTestFile(t, filepath.Join(parent, "state", "TASK-1.status"))
 
@@ -487,7 +487,7 @@ func TestHandoffFailureLeavesTaskAuthorityUnchanged(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected handoff failure")
 	}
-	if got := mustReadFleetTestFile(t, filepath.Join(parent, "state", ".task-authority", "v2", "aggregates", "TASK-1", "7.json")); !bytes.Equal(got, beforeAgg) {
+	if got := mustReadFleetTestFile(t, filepath.Join(parent, "state", ".task-authority", "v1", "aggregates", "TASK-1", "7.json")); !bytes.Equal(got, beforeAgg) {
 		t.Fatal("source aggregate changed after failed handoff")
 	}
 	if got := mustReadFleetTestFile(t, filepath.Join(parent, "state", "TASK-1.meta")); !bytes.Equal(got, beforeMeta) {

@@ -327,9 +327,9 @@ func TestReconcileNeverMutatesAuthority(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home.StateDir(homeDir), "beta.status"), []byte{0x00}, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	aggBefore := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "1.json"))
-	pointerBefore := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "current"))
-	auditDir := filepath.Join(homeDir, "state", ".task-authority", "v2", "audit")
+	aggBefore := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "1.json"))
+	pointerBefore := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "current"))
+	auditDir := filepath.Join(homeDir, "state", ".task-authority", "v1", "audit")
 	auditBefore := map[string]string{}
 	for _, name := range mustReadDir(t, auditDir) {
 		auditBefore[name] = readFileForProjection(t, filepath.Join(auditDir, name))
@@ -341,10 +341,10 @@ func TestReconcileNeverMutatesAuthority(t *testing.T) {
 	if _, err := store.ReconcileTaskProjections("beta"); err != nil {
 		t.Fatal(err)
 	}
-	if got := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "1.json")); got != aggBefore {
+	if got := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "1.json")); got != aggBefore {
 		t.Fatal("reconciliation mutated the aggregate document")
 	}
-	if got := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "current")); got != pointerBefore {
+	if got := readFileForProjection(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "beta", "current")); got != pointerBefore {
 		t.Fatal("reconciliation mutated the current pointer")
 	}
 	for name, before := range auditBefore {

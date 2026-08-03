@@ -110,8 +110,8 @@ func snapshotReadinessFiles(t *testing.T, homeDir string) string {
 	}
 	for _, id := range []string{"queued", "blocked", "working", "done"} {
 		paths = append(paths,
-			filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", id, "1.json"),
-			filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", id, "current"),
+			filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", id, "1.json"),
+			filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", id, "current"),
 		)
 	}
 	for _, path := range paths {

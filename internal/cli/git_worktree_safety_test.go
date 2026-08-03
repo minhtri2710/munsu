@@ -570,7 +570,7 @@ func setSafetyWorktreeHead(t *testing.T, homeDir, taskID, head string) {
 // task-authority BindWorktree transaction commits.
 func writeSafetyLeaseMarker(t *testing.T, homeDir, taskID, generation string, binding home.TaskWorktreeBinding) {
 	t.Helper()
-	rel := filepath.Join(homeDir, "state", ".task-authority", "v2", "worktree-leases", taskID, generation, binding.LeaseID+".json")
+	rel := filepath.Join(homeDir, "state", ".task-authority", "v1", "worktree-leases", taskID, generation, binding.LeaseID+".json")
 	if err := os.MkdirAll(filepath.Dir(rel), 0700); err != nil {
 		t.Fatal(err)
 	}

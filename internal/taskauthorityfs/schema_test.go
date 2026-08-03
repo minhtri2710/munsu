@@ -121,9 +121,9 @@ func fixtureManifest(t *testing.T) TransactionManifest {
 		OperationID:        "op-1",
 		Digest:             testDigest(),
 		ExpectedGeneration: 1,
-		Before:             []ManifestEntry{{Path: "state/.task-authority/v2/aggregates/t1/1.json", Digest: testDigest()}},
+		Before:             []ManifestEntry{{Path: "state/.task-authority/v1/aggregates/t1/1.json", Digest: testDigest()}},
 		After: []ManifestEntry{{
-			Path:    "state/.task-authority/v2/aggregates/t1/1.json",
+			Path:    "state/.task-authority/v1/aggregates/t1/1.json",
 			Digest:  DigestHex(payload),
 			Payload: string(payload),
 		}},
@@ -414,29 +414,29 @@ func TestUnsupportedVersionV1DetectOnly(t *testing.T) {
 		t.Fatalf("v1 detection mutated the legacy document")
 	}
 
-	// Empty home and v2-only home report no v1 records.
+	// Empty home and v1-only home report no v1 records.
 	if has, err := HasV1Records(t.TempDir()); err != nil || has {
 		t.Fatalf("HasV1Records(empty) = %v, %v, want false, nil", has, err)
 	}
-	v2Home := t.TempDir()
-	v2Dir := filepath.Join(v2Home, "state", ".task-authority", "v2")
-	if err := os.MkdirAll(v2Dir, 0o700); err != nil {
+	v1Home := t.TempDir()
+	v1Dir := filepath.Join(v1Home, "state", ".task-authority", "v1")
+	if err := os.MkdirAll(v1Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if has, err := HasV1Records(v2Home); err != nil || has {
-		t.Fatalf("HasV1Records(v2-only) = %v, %v, want false, nil", has, err)
+	if has, err := HasV1Records(v1Home); err != nil || has {
+		t.Fatalf("HasV1Records(v1-only) = %v, %v, want false, nil", has, err)
 	}
 
-	// v2 aggregate paths never collide with the legacy v1 layout.
+	// v1 aggregate paths never collide with the legacy v1 layout.
 	rel, err := AggregateRelPath("t1", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.HasPrefix(rel, "state"+string(filepath.Separator)+".task-authority"+string(filepath.Separator)+"aggregates") {
-		t.Fatalf("v2 aggregate path %q collides with the v1 layout", rel)
+		t.Fatalf("v1 aggregate path %q collides with the v1 layout", rel)
 	}
-	if !strings.HasPrefix(rel, "state"+string(filepath.Separator)+".task-authority"+string(filepath.Separator)+"v2") {
-		t.Fatalf("v2 aggregate path %q is not under the v2 namespace", rel)
+	if !strings.HasPrefix(rel, "state"+string(filepath.Separator)+".task-authority"+string(filepath.Separator)+"v1") {
+		t.Fatalf("v1 aggregate path %q is not under the v1 namespace", rel)
 	}
 
 	// Encode never emits a v1 identity.
@@ -589,21 +589,21 @@ func TestPathRelPaths(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := join("state", ".task-authority", "v2", "aggregates", "t1", "1.json"); rel != want {
+		if want := join("state", ".task-authority", "v1", "aggregates", "t1", "1.json"); rel != want {
 			t.Errorf("AggregateRelPath = %q, want %q", rel, want)
 		}
 		rel, err = AggregateRelPath("task-42", 7)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := join("state", ".task-authority", "v2", "aggregates", "task-42", "7.json"); rel != want {
+		if want := join("state", ".task-authority", "v1", "aggregates", "task-42", "7.json"); rel != want {
 			t.Errorf("AggregateRelPath = %q, want %q", rel, want)
 		}
 		cur, err := CurrentPointerRelPath("t1")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := join("state", ".task-authority", "v2", "aggregates", "t1", "current"); cur != want {
+		if want := join("state", ".task-authority", "v1", "aggregates", "t1", "current"); cur != want {
 			t.Errorf("CurrentPointerRelPath = %q, want %q", cur, want)
 		}
 	})
@@ -614,9 +614,9 @@ func TestPathRelPaths(t *testing.T) {
 			got  string
 			want string
 		}{
-			{"hold", relPath(t, func() (string, error) { return HoldRelPath("hold-1") }), join("state", ".task-authority", "v2", "holds", "686f6c642d31.json")},
-			{"interpretation", relPath(t, func() (string, error) { return InterpretationRelPath("interp-1") }), join("state", ".task-authority", "v2", "interpretations", "696e746572702d31.json")},
-			{"decision", relPath(t, func() (string, error) { return DecisionRelPath("decision-1") }), join("state", ".task-authority", "v2", "decisions", "6465636973696f6e2d31.json")},
+			{"hold", relPath(t, func() (string, error) { return HoldRelPath("hold-1") }), join("state", ".task-authority", "v1", "holds", "686f6c642d31.json")},
+			{"interpretation", relPath(t, func() (string, error) { return InterpretationRelPath("interp-1") }), join("state", ".task-authority", "v1", "interpretations", "696e746572702d31.json")},
+			{"decision", relPath(t, func() (string, error) { return DecisionRelPath("decision-1") }), join("state", ".task-authority", "v1", "decisions", "6465636973696f6e2d31.json")},
 		}
 		for _, tc := range cases {
 			if tc.got != tc.want {
@@ -631,9 +631,9 @@ func TestPathRelPaths(t *testing.T) {
 			got  string
 			want string
 		}{
-			{"audit", relPath(t, func() (string, error) { return AuditRelPath("op:1") }), join("state", ".task-authority", "v2", "audit", "6f703a31.json")},
-			{"receipt", relPath(t, func() (string, error) { return ReceiptRelPath("op:1") }), join("state", ".task-authority", "v2", "receipts", "6f703a31.json")},
-			{"manifest", relPath(t, func() (string, error) { return TransactionManifestRelPath("op:1") }), join("state", ".task-authority", "v2", "transactions", "6f703a31.json")},
+			{"audit", relPath(t, func() (string, error) { return AuditRelPath("op:1") }), join("state", ".task-authority", "v1", "audit", "6f703a31.json")},
+			{"receipt", relPath(t, func() (string, error) { return ReceiptRelPath("op:1") }), join("state", ".task-authority", "v1", "receipts", "6f703a31.json")},
+			{"manifest", relPath(t, func() (string, error) { return TransactionManifestRelPath("op:1") }), join("state", ".task-authority", "v1", "transactions", "6f703a31.json")},
 		}
 		for _, tc := range cases {
 			if tc.got != tc.want {
