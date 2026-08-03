@@ -51,6 +51,14 @@ those criteria plus the ADR-0008 invariants.
   `ConflictFrom` (only verified mismatches become ErrStalePrecondition). `Mutation`
   envelope removed. Rework review PASS on commit `99f9442f`; full suite green after
   integration.
+- #405 (Task lifecycle over canonical Task Authority) — ACCEPTED after REWORK (hard cut),
+  integrated. Canonical `Canonical` surface in `internal/taskauthority` (Create/Get/List/
+  Start/Block/Unblock/Complete/Reopen/Readiness/AddHold/ReleaseHold/ListHolds) backed by
+  `internal/home` durable mechanics and typed `domain` identities/operations/preconditions.
+  `TaskAuthoritySchema` hard-cut to `munsu.task-authority/v1` (ADR-0008 §11); legacy
+  `taskauthorityfs`/`storecontract` aligned to the same v1 contract and staged for deletion
+  in #417. Re-review PASS on `de48a6ea`; full suite green after integration. Legacy CLI
+  wiring and `taskauthorityfs` deletion deferred to #416/#417.
 - Mirror parity repair (pre-existing) — resolved, integrated `49841760`.
 
 ## Staffing / integration policy
