@@ -114,27 +114,25 @@ paths, commands, fixtures, comments, skills, and documents did not survive.
 - Does not override the Peer direct-report protocol, independent-review gates, worktree
   isolation, provider resolution, or the >200k-token compaction rule.
 
-## Peer context compaction rule (Supervisor, 2026-08-03)
+## Peer/Lead context compaction rule (Supervisor, 2026-08-03)
 
-- When a Peer's observed context/token usage exceeds 200,000 tokens, require that Peer to
-  compact its context before continuing substantial work.
-- Use provider-supported compaction/session summarization. Preserve in the compacted
-  context: assigned outcome and ownership boundary, Lead agent ID (`5331588`), exact
-  branch/workspace/head, decisions and rulings, files changed or reviewed, unresolved
-  findings, verification already run, current next action, and the mandatory final
-  direct-report protocol.
-- Do not compact solely from an unsupported guess. Apply when Paseo/provider metadata
-  reports usage above the threshold or the Peer explicitly reports it.
-- Compaction must not reset ownership, create a replacement implementation path, discard
-  unresolved review findings, or silently lose the final-report requirement.
-- After compaction, the Peer confirms continuity to the Lead before resuming edits/review.
-  If compaction is unavailable or fails, the Peer reports BLOCKED with observed token usage
-  and provider limitation; the Lead decides whether to relaunch a replacement Peer with a
-  bounded context pack.
-- Do not poll running agents merely to measure tokens; apply using normal notifications,
-  reports, or already-available lifecycle metadata.
-- Applies to all Engineer, Reviewer, Architect, Shadow, Advisor, and Council Peers under
-  this Lead.
+- Applies to the Lead and every Engineer, Reviewer, Architect, Shadow, Advisor, and Council
+  Peer. Threshold: observed context usage >200,000 tokens.
+- Do NOT poll solely to measure usage; use provider/Paseo metadata or agent self-report via
+  normal lifecycle signals.
+- Before continuing substantial work after crossing the threshold, use provider-supported
+  compaction.
+- **Lead compaction must preserve:** Lead role and Supervisor identity (`3954417`),
+  authorized program scope, dependency DAG and issue status, workspace/branch/exact head,
+  rulings and acceptance decisions, unresolved blockers, verification state, next action,
+  every active child-agent ID/status/scope/expected report, and milestone/report protocols.
+- **Peer compaction must preserve:** role, Lead agent ID (`5331588`), assigned outcome and
+  ownership boundary, workspace/branch/head, decisions, files changed/reviewed, unresolved
+  findings, verification, next action, and the final direct-report protocol.
+- After compacting, confirm continuity to the owning parent before substantial work resumes.
+- If Peer compaction fails, report BLOCKED to the Lead. If Lead compaction fails, report
+  BLOCKED to the Supervisor. The owning parent may relaunch with a bounded context pack;
+  ownership and unresolved findings must not be silently lost.
 
 ## Known pre-existing issue (tracked, outside #403)
 
