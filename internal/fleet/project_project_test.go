@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- Legacy project registry helpers ---
@@ -220,8 +221,10 @@ func TestAddIdempotent(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, ".munsu")
 
-	// Add the same project twice
-	if err := Add(homeDir, "dup-proj", "/path/first", "feat", true); err != nil {
+	// Add the same project twice with an identical definition — the canonical
+	// Fleet Registry treats the re-registration as a successful no-op and
+	// never creates a duplicate entry.
+	if err := Add(homeDir, "dup-proj", "/path/captain", "fix", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := Add(homeDir, "dup-proj", "/path/captain", "fix", false); err != nil {
@@ -237,7 +240,7 @@ func TestAddIdempotent(t *testing.T) {
 		t.Fatalf("expected 1 project after duplicate add, got %d: %+v", len(projects), projects)
 	}
 
-	// Entry should have been updated to captain call's values
+	// Entry should carry the registered definition.
 	p := projects[0]
 	if p.Name != "dup-proj" {
 		t.Errorf("Name = %q, want %q", p.Name, "dup-proj")
@@ -353,21 +356,24 @@ func boolPtr(v bool) *bool {
 }
 
 // TestRegistryFileFormat proves that List round-trips every registry field from
-// the typed project registry (data/projects.json), including the +yolo flag
-// expressed as requireNoMistakes=false. Legacy projects.md parsing is covered
-// by the ParseEntry/FormatEntry round-trip tests above.
+// the canonical Fleet Registry, including the +yolo flag expressed as
+// requireNoMistakes=false. Legacy projects.md parsing is covered by the
+// ParseEntry/FormatEntry round-trip tests above.
 func TestRegistryFileFormat(t *testing.T) {
 	tmp := t.TempDir()
 
-	if err := config.StoreProjectRegistry(tmp, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "alpha", Path: "First project", Mode: "feat"},
-			{Name: "beta", Path: "Captain project", Mode: "fix", Config: config.ProjectOverlay{RequireNoMistakes: boolPtr(false)}},
-			{Name: "gamma", Path: "Yolo without mode", Config: config.ProjectOverlay{RequireNoMistakes: boolPtr(false)}},
-			{Name: "delta", Path: "No mode project"},
-		},
-	}); err != nil {
+	// Register each project through the canonical Fleet Registry (the sole
+	// lifecycle authority) and assert List round-trips the fields.
+	if err := Add(tmp, "alpha", "First project", "feat", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(tmp, "beta", "Captain project", "fix", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(tmp, "gamma", "Yolo without mode", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(tmp, "delta", "No mode project", "", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -379,18 +385,26 @@ func TestRegistryFileFormat(t *testing.T) {
 		t.Fatalf("expected 4 projects, got %d", len(projects))
 	}
 
-	// Verify each entry
-	if projects[0].Name != "alpha" || projects[0].Mode != "feat" || projects[0].Yolo {
-		t.Errorf("alpha: %+v", projects[0])
+	// Verify each entry (List is ID-sorted; look up by name).
+	byName := map[string]*Project{}
+	for _, p := range projects {
+		byName[p.Name] = p
 	}
-	if projects[1].Name != "beta" || projects[1].Mode != "fix" || !projects[1].Yolo {
-		t.Errorf("beta: %+v", projects[1])
+	alpha := byName["alpha"]
+	beta := byName["beta"]
+	gamma := byName["gamma"]
+	delta := byName["delta"]
+	if alpha.Name != "alpha" || alpha.Mode != "feat" || alpha.Yolo {
+		t.Errorf("alpha: %+v", alpha)
 	}
-	if projects[2].Name != "gamma" || projects[2].Mode != "" || !projects[2].Yolo {
-		t.Errorf("gamma: %+v", projects[2])
+	if beta.Name != "beta" || beta.Mode != "fix" || !beta.Yolo {
+		t.Errorf("beta: %+v", beta)
 	}
-	if projects[3].Name != "delta" || projects[3].Mode != "" || projects[3].Yolo {
-		t.Errorf("delta: %+v", projects[3])
+	if gamma.Name != "gamma" || gamma.Mode != "" || !gamma.Yolo {
+		t.Errorf("gamma: %+v", gamma)
+	}
+	if delta.Name != "delta" || delta.Mode != "" || delta.Yolo {
+		t.Errorf("delta: %+v", delta)
 	}
 }
 
@@ -424,20 +438,20 @@ func TestResolveRepoPath_LocalPath(t *testing.T) {
 func TestResolveRepoPath_ClonedProject(t *testing.T) {
 	tmp := t.TempDir()
 	homeDir := filepath.Join(tmp, "munsu-home")
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	projectsDir := filepath.Join(homeDir, "projects")
 	if err := os.MkdirAll(projectsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Register a URL-backed project directly in the typed registry (no clone).
-	if err := config.StoreProjectRegistry(homeDir, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "cloned-proj", Path: "https://github.com/user/repo.git"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	// Register a URL-backed project in the canonical Fleet Registry (no clone).
+	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+	}, []testProjectRecord{
+		{Name: "cloned-proj", Path: "https://github.com/user/repo.git"},
+	}, nil)
 
 	// Create the projects/<name> dir to simulate a clone
 	cloneDir := filepath.Join(projectsDir, "cloned-proj")

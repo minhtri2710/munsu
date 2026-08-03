@@ -60,12 +60,7 @@ func TestPropagateConfig_TypedSnapshotsTargetOwningCaptain(t *testing.T) {
 	ackConfigRequirement(t, parent, alphaHome)
 	ackConfigRequirement(t, parent, betaHome)
 
-	base, captains, projects, err := config.LoadDocuments(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projects.Projects[0].Config.Model = "alpha-new"
-	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
+	if err := config.StoreProjectOverlay(parent, "alpha", config.ProjectOverlay{Model: "alpha-new"}); err != nil {
 		t.Fatal(err)
 	}
 	alphaSender2 := &fakeBoundSender{acknowledged: true}
@@ -89,8 +84,12 @@ func TestPropagateConfig_TypedSnapshotsTargetOwningCaptain(t *testing.T) {
 		t.Fatalf("beta sends = %d, want 0 for alpha-only overlay change", len(betaSender2.sent))
 	}
 
+	base, err := config.LoadFleetBase(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
 	base.Config.DefaultMode = "local-only"
-	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
+	if err := config.StoreFleetBase(parent, base); err != nil {
 		t.Fatal(err)
 	}
 	alphaSender3 := &fakeBoundSender{acknowledged: true}
@@ -115,11 +114,7 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 	writeTypedPropagationDocuments(t, parent, alphaHome, betaHome)
 	writeCaptainMeta(t, parent, "alpha-captain", alphaHome, "alpha-window")
 
-	base, captains, projects, err := config.LoadDocuments(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectedSnapshot, err := config.ResolveProject(base, captains, projects, "alpha", config.BoundaryOverrides{})
+	expectedSnapshot, err := ResolveProjectSnapshot(parent, "alpha", config.BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +131,8 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 		published, err := config.LoadPublishedSnapshot(alphaHome)
 		if err != nil {
 			t.Errorf("published snapshot missing before notification: %v", err)
-		} else if got := published.Config(); !reflect.DeepEqual(got, expectedSnapshot) {
-			t.Errorf("published snapshot = %+v, want General resolution %+v", got, expectedSnapshot)
+		} else if got := published.Config(); !reflect.DeepEqual(got, expectedSnapshot.Config()) {
+			t.Errorf("published snapshot = %+v, want General resolution %+v", got, expectedSnapshot.Config())
 		}
 		gen, digest, found, err := ReadConfigRereadGen(alphaHome)
 		if err != nil || !found {
@@ -209,15 +204,25 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 func writeTypedPropagationDocuments(t *testing.T, parent, alphaHome, betaHome string) {
 	t.Helper()
 	base := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{SoldierHarness: "pi", Model: "base-model", DefaultMode: "direct-pr"}}
-	captains := config.CaptainRegistryDocument{SchemaVersion: config.CaptainRegistrySchemaVersion, Captains: []config.CaptainRecord{
-		{ID: "alpha-captain", Home: alphaHome, Project: "alpha"},
-		{ID: "beta-captain", Home: betaHome, Project: "beta"},
-	}}
-	projects := config.ProjectRegistryDocument{SchemaVersion: config.ProjectRegistrySchemaVersion, Projects: []config.ProjectRecord{
-		{Name: "alpha", Path: filepath.Join(parent, "projects", "alpha"), Config: config.ProjectOverlay{Model: "alpha-model"}},
-		{Name: "beta", Path: filepath.Join(parent, "projects", "beta"), Config: config.ProjectOverlay{Model: "beta-model"}},
-	}}
-	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
+	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct {
+		name    string
+		overlay config.ProjectOverlay
+	}{
+		{name: "alpha", overlay: config.ProjectOverlay{Model: "alpha-model"}},
+		{name: "beta", overlay: config.ProjectOverlay{Model: "beta-model"}},
+	} {
+		if err := config.StoreProjectOverlay(parent, p.name, p.overlay); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Register captains and their owning projects via the canonical Fleet Registry.
+	if err := Register(parent, "alpha-captain", alphaHome, "captain", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "beta-captain", betaHome, "captain", "beta"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -578,21 +583,11 @@ func TestPropagateConfig_MultipleInheritableProps(t *testing.T) {
 			BacklogBackend: "tasks-axi",
 		},
 	}
-	captains := config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-		Captains: []config.CaptainRecord{
-			{ID: "test-sm", Home: captainHome, Project: "test-sm"},
-		},
-	}
-	projects := config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: parent, Mode: "no-mistakes"},
-		},
-	}
-	if err := config.StoreDocuments(parent, base, captains, projects); err != nil {
-		t.Fatal(err)
-	}
+	storeTestDocuments(t, parent, base, []testProjectRecord{
+		{Name: "test-sm", Path: parent, Mode: "no-mistakes"},
+	}, []testCaptainRecord{
+		{ID: "test-sm", Home: captainHome, Project: "test-sm"},
+	})
 
 	sender := &fakeBoundSender{acknowledged: true}
 	result, err := PropagateConfig(PropagateConfigRequest{
@@ -997,9 +992,9 @@ func TestPropagateConfig_InvalidParentRegistry(t *testing.T) {
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "test-sm")
 
-	// Write a malformed projects.json (invalid schema version).
-	os.MkdirAll(filepath.Join(parent, "data"), 0755)
-	os.WriteFile(filepath.Join(parent, config.ProjectDocumentPath), []byte(`{"schemaVersion":"invalid","projects":[]}`+"\n"), 0644)
+	// Write a malformed Fleet registry project document (invalid schema).
+	os.MkdirAll(filepath.Join(parent, "state", "fleet-registry"), 0755)
+	os.WriteFile(filepath.Join(parent, "state", "fleet-registry", "projects.json"), []byte(`{"home_revision":1,"projects":[{"schema_version":"bad","id":"x","name":"x","path":"/x"}]}`+"\n"), 0644)
 
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 
@@ -1012,7 +1007,7 @@ func TestPropagateConfig_InvalidParentRegistry(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid parent project registry")
 	}
-	if !strings.Contains(err.Error(), "schemaVersion") {
+	if !strings.Contains(err.Error(), "schema") {
 		t.Errorf("error = %v, want schema validation error", err)
 	}
 }

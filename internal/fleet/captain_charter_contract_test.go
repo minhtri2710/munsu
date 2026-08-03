@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // =============================================================================
@@ -16,6 +18,9 @@ import (
 // an existing AGENTS.md file with a pointer — user/project-owned content is preserved.
 func TestExistingAGENTSMD_Preservation(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	// First seed creates both .captain-charter.md and AGENTS.md.
@@ -184,6 +189,9 @@ func TestCharter_RelaySemantics(t *testing.T) {
 // .captain-charter.md with the current version.
 func TestCharter_ConfigPushRefresh(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	// Seed a captain.
@@ -233,7 +241,12 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 //   - .captain-charter.md exists with current charter
 func TestManagedWorktree_CharterUntracked(t *testing.T) {
 	parent := t.TempDir()
-	// Parent must be a git repo with an origin for remote validation.
+	// The parent is both a munsu home (canonical) and a git repo with an
+	// origin for remote validation. Initialize the home first so the Fleet
+	// Registry can operate on it.
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 
 	repo := t.TempDir()

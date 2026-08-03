@@ -521,16 +521,10 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 			},
 		},
 	}
-	captains := fleetconfig.CaptainRegistryDocument{SchemaVersion: fleetconfig.CaptainRegistrySchemaVersion}
-	projects := fleetconfig.ProjectRegistryDocument{
-		SchemaVersion: fleetconfig.ProjectRegistrySchemaVersion,
-		Projects: []fleetconfig.ProjectRecord{
-			{Name: "quota-proj", Path: filepath.Join(homeDir, "projects", "quota-proj")},
-		},
+	projects := []testProjectRecord{
+		{Name: "quota-proj", Path: filepath.Join(homeDir, "projects", "quota-proj")},
 	}
-	if err := fleetconfig.StoreDocuments(homeDir, base, captains, projects); err != nil {
-		t.Fatal(err)
-	}
+	storeTestDocuments(t, homeDir, base, projects, nil)
 	spawnContext(t, homeDir)
 	writeModelAllowlist(t, homeDir, "codex:q-model\n")
 

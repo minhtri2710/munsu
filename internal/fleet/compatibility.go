@@ -493,8 +493,8 @@ func checkLegacyConfigExists(homeDir string) RequirementResult {
 	}
 	typedPaths := []string{
 		filepath.Join(homeDir, config.BaseDocumentPath),
-		filepath.Join(homeDir, config.CaptainDocumentPath),
-		filepath.Join(homeDir, config.ProjectDocumentPath),
+		filepath.Join(homeDir, "state", "fleet-registry", "captains.json"),
+		filepath.Join(homeDir, "state", "fleet-registry", "projects.json"),
 	}
 	allTypedPresent := true
 	for _, p := range typedPaths {

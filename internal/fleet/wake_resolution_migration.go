@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -90,16 +89,18 @@ func PlanFleetWakeResolutionMigration(parentHome string) WakeResolutionFleetPlan
 	plan := WakeResolutionFleetPlan{ParentHome: parentHome}
 	plan.Outcomes = append(plan.Outcomes, planWakeResolutionHome(parentHome))
 
-	// Read from typed captain registry.
-	registry, err := config.LoadCaptainRegistry(parentHome)
+	// Read from the canonical Fleet captain registry.
+	r, err := openRegistry(parentHome)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return plan
-		}
 		plan.Outcomes = append(plan.Outcomes, WakeResolutionFleetHomeOutcome{Home: parentHome, Status: "error", Error: err.Error()})
 		return plan
 	}
-	for _, captain := range registry.Captains {
+	captains, err := r.ListCaptains()
+	if err != nil {
+		plan.Outcomes = append(plan.Outcomes, WakeResolutionFleetHomeOutcome{Home: parentHome, Status: "error", Error: err.Error()})
+		return plan
+	}
+	for _, captain := range captains {
 		if captain.Home == "" {
 			plan.Outcomes = append(plan.Outcomes, WakeResolutionFleetHomeOutcome{Status: "error", Error: "captain registry entry missing home"})
 			continue

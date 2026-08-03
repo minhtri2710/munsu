@@ -127,6 +127,9 @@ func TestLaunchEndpointFailureWritesNoMetadata(t *testing.T) {
 	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
 	t.Cleanup(func() { captainLookPath = oldLookPath })
 	parent := t.TempDir()
+	if _, err := mhome.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
 		t.Fatal(err)
 	}

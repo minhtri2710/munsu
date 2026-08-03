@@ -254,7 +254,7 @@ func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error
 	if agg, err := sourceAuth.Get(keys[0]); err != nil {
 		return err
 	} else if agg.Definition.Project != "" {
-		if snapshot, err := config.LoadResolvedSnapshot(source, agg.Definition.Project, config.BoundaryOverrides{}); err == nil {
+		if snapshot, err := ResolveProjectSnapshot(source, agg.Definition.Project, config.BoundaryOverrides{}); err == nil {
 			autonomy = taskauthority.DispatchAutonomy(snapshot.Config().DispatchAutonomy)
 		}
 	}

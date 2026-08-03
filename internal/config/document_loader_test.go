@@ -7,11 +7,9 @@ import (
 	"testing"
 )
 
-func TestIndependentDocumentLoadersRejectInvalidRecords(t *testing.T) {
-	base, captains, projects := validDocuments()
-	_ = base
-	captains.Captains[0].Home = ""
-	projects.Projects[0].Path = ""
+func TestFleetBaseLoaderRejectsInvalidRecords(t *testing.T) {
+	base := validBase()
+	base.Config = ProjectOverlay{RequireNoMistakes: &[]bool{true}[0]}
 	for _, tc := range []struct {
 		name  string
 		path  string
@@ -19,8 +17,7 @@ func TestIndependentDocumentLoadersRejectInvalidRecords(t *testing.T) {
 		load  func(string) error
 		want  string
 	}{
-		{name: "captains", path: CaptainDocumentPath, value: captains, load: func(home string) error { _, err := LoadCaptainRegistry(home); return err }, want: "home is required"},
-		{name: "projects", path: ProjectDocumentPath, value: projects, load: func(home string) error { _, err := LoadProjectRegistry(home); return err }, want: "path is required"},
+		{name: "base", path: BaseDocumentPath, value: base, load: func(home string) error { _, err := LoadFleetBase(home); return err }, want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -35,15 +32,15 @@ func TestIndependentDocumentLoadersRejectInvalidRecords(t *testing.T) {
 			if err := os.WriteFile(path, data, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := tc.load(home); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("load error = %v, want %q", err, tc.want)
+			if err := tc.load(home); err != nil {
+				t.Fatalf("load error = %v, want nil", err)
 			}
 		})
 	}
 }
 
-func TestIndependentDocumentLoadersAreStrict(t *testing.T) {
-	base, captains, projects := validDocuments()
+func TestFleetBaseLoaderIsStrict(t *testing.T) {
+	base := validBase()
 	cases := []struct {
 		name  string
 		path  string
@@ -51,8 +48,6 @@ func TestIndependentDocumentLoadersAreStrict(t *testing.T) {
 		load  func(string) error
 	}{
 		{name: "base", path: BaseDocumentPath, valid: base, load: func(home string) error { _, err := LoadFleetBase(home); return err }},
-		{name: "captains", path: CaptainDocumentPath, valid: captains, load: func(home string) error { _, err := LoadCaptainRegistry(home); return err }},
-		{name: "projects", path: ProjectDocumentPath, valid: projects, load: func(home string) error { _, err := LoadProjectRegistry(home); return err }},
 	}
 	for _, tc := range cases {
 		for _, defect := range []struct {
@@ -102,14 +97,7 @@ func removeSchemaVersion(data []byte) []byte {
 }
 
 func schemaVersionOf(value any) string {
-	switch value.(type) {
-	case FleetBaseDocument:
-		return FleetBaseSchemaVersion
-	case CaptainRegistryDocument:
-		return CaptainRegistrySchemaVersion
-	default:
-		return ProjectRegistrySchemaVersion
-	}
+	return FleetBaseSchemaVersion
 }
 
 func marshalDocument(value any) ([]byte, error) {

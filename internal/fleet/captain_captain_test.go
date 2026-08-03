@@ -348,6 +348,9 @@ func TestDefaultCaptainCharter_ContainsReturnChannel(t *testing.T) {
 
 func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "api")
 	if err := seedWithParentTest("api", sm, parent, ""); err != nil {
 		t.Fatal(err)
@@ -438,6 +441,9 @@ func TestSeed_InvalidPath(t *testing.T) {
 
 func TestSeedWorktree_CreatesWorktreeAndStructure(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	// If parent is a git repo with an origin, it needs one for remote validation.
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 
@@ -522,6 +528,9 @@ func TestSeedWorktree_NonGitSource(t *testing.T) {
 
 func TestSeedWorktree_Idempotent(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -542,6 +551,9 @@ func TestSeedWorktree_Idempotent(t *testing.T) {
 
 func TestSeedWorktree_ForceReplaces(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -585,6 +597,9 @@ func TestSeedWorktree_RemoteMismatch(t *testing.T) {
 
 func TestSeedWorktree_ExplicitRef(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -640,6 +655,9 @@ func TestSeedWorktree_RollbackOnFailure(t *testing.T) {
 
 func TestSeedWorktree_RollbackUnregisterOnFailure(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -663,6 +681,9 @@ func TestSeedWorktree_RollbackUnregisterOnFailure(t *testing.T) {
 
 func TestSeedWorktree_ParentHomeCharter(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -714,6 +735,9 @@ func TestResolveDefaultBranch_UsesOriginHead(t *testing.T) {
 
 func TestSeedWorktree_GitignoreContent(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -908,18 +932,21 @@ func TestListCaptains_Empty(t *testing.T) {
 
 func TestListCaptains_WithRegistryFile(t *testing.T) {
 	parent := t.TempDir()
-	// Typed captain registry: ListCaptains reads data/captains.json. Legacy
-	// captains.md parsing (meta blocks, comment skipping) now lives in
-	// configmigration and is covered by the ParseRegistry tests below.
-	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-		Captains: []config.CaptainRecord{
-			{ID: "sm-alpha", Home: "/home/sm-alpha", Project: "project-a"},
-			{ID: "sm-beta", Home: "/home/sm-beta", Project: "project-b"},
-		},
-	}); err != nil {
+	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
+	// The canonical Fleet Registry is the sole captain lifecycle authority:
+	// captains are registered with an owning-Project binding and ListCaptains
+	// reads them back.
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+	}, []testProjectRecord{
+		{Name: "project-a", Path: "/home/sm-alpha"},
+		{Name: "project-b", Path: "/home/sm-beta"},
+	}, []testCaptainRecord{
+		{ID: "sm-alpha", Home: "/home/sm-alpha", Project: "project-a"},
+		{ID: "sm-beta", Home: "/home/sm-beta", Project: "project-b"},
+	})
 
 	mates, err := ListCaptains(parent)
 	if err != nil {
@@ -947,32 +974,6 @@ func TestListCaptains_WithRegistryFile(t *testing.T) {
 	}
 	if !found["sm-beta"] {
 		t.Error("sm-beta not found in list")
-	}
-}
-
-func TestListCaptains_SkipsCommentLines(t *testing.T) {
-	parent := t.TempDir()
-	// JSON registries have no comment lines; comment skipping lives in the
-	// legacy captains.md parser (configmigration.parseRegistry, mirrored by
-	// ParseRegistry). ListCaptains returns exactly the registered captains.
-	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-		Captains: []config.CaptainRecord{
-			{ID: "valid-sm", Home: "/home/valid-sm", Project: "test"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	mates, err := ListCaptains(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(mates) != 1 {
-		t.Errorf("expected 1 captain, got %d", len(mates))
-	}
-	if mates[0].ID != "valid-sm" {
-		t.Errorf("expected valid-sm, got %q", mates[0].ID)
 	}
 }
 
@@ -1037,6 +1038,9 @@ func TestConfigPush_RefusesUnmarkedHome(t *testing.T) {
 
 func TestConfigPush_Basic(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
@@ -1044,7 +1048,7 @@ func TestConfigPush_Basic(t *testing.T) {
 
 	// Typed parent config: the inheritable surface is the resolved project
 	// config (soldier harness + dispatch profiles) published as a snapshot.
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
@@ -1052,17 +1056,9 @@ func TestConfigPush_Basic(t *testing.T) {
 				{Name: "default", Harness: "pi", Model: "claude-sonnet"},
 			},
 		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
@@ -1090,6 +1086,9 @@ func TestConfigPush_Basic(t *testing.T) {
 // not retained across pushes (the typed mirror-deletion equivalent).
 func TestConfigPush_MirrorDeletions(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
@@ -1105,14 +1104,11 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 			Config:        overlay,
 		})
 	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := storeBase("pi"); err != nil {
 		t.Fatal(err)
 	}
@@ -1150,6 +1146,9 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 
 func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
@@ -1158,20 +1157,12 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	// Captain-local (non-inherited) config must survive config push.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
 
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
@@ -1200,29 +1191,24 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 // hard cut; the typed equivalent is the fleet base captainProfile.
 func TestConfigPush_CaptainShared(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
 		CaptainProfile: config.CaptainProfile{
 			Harness: "pi",
 			Model:   "claude-sonnet",
 		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
@@ -1245,6 +1231,9 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 // removes the shared captain profile, the next push no longer carries it.
 func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
@@ -1257,14 +1246,11 @@ func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 			CaptainProfile: profile,
 		})
 	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := storeBase(config.CaptainProfile{Harness: "pi", Model: "claude-sonnet"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1334,6 +1320,9 @@ func TestConfigPush_RejectsSymlinkEscape(t *testing.T) {
 // not rewriting an unchanged inherited file).
 func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	if err := os.MkdirAll(filepath.Join(smHome, "config"), 0755); err != nil {
 		t.Fatal(err)
@@ -1341,20 +1330,12 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := SeedProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
@@ -1381,6 +1362,9 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 
 func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
@@ -1389,18 +1373,10 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	// Typed project registry on the General home: configPush resolves and
 	// publishes the captain's project as the inherited config snapshot.
 	repo := t.TempDir()
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "munsu", Path: repo, Mode: "no-mistakes"},
-			{Name: "toy", Path: "/tmp/toy", Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	storeTestDocuments(t, parent, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}, []testProjectRecord{
+		{Name: "munsu", Path: repo, Mode: "no-mistakes"},
+		{Name: "toy", Path: "/tmp/toy", Mode: "no-mistakes"},
+	}, nil)
 	if err := Register(parent, "test-sm", smHome, "captain", "munsu"); err != nil {
 		t.Fatal(err)
 	}
@@ -1439,38 +1415,11 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	}
 }
 
-// TestConfigPush_RemovedProjectFailsClosed is the migrated mirror-deletion
-// test: when the parent's project registry no longer carries the captain's
-// project (parent "has no projects"), configPush must fail closed instead of
-// silently publishing a stale resolution.
-func TestConfigPush_RemovedProjectFailsClosed(t *testing.T) {
-	parent := t.TempDir()
-	smHome := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
-	os.MkdirAll(filepath.Join(smHome, "data"), 0755)
-	SeedProvenance(smHome, "test-sm")
-
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{SchemaVersion: config.ProjectRegistrySchemaVersion}); err != nil {
-		t.Fatal(err)
-	}
-	if err := Register(parent, "test-sm", smHome, "captain", "stale"); err != nil {
-		t.Fatal(err)
-	}
-
-	err := configPush(parent, smHome)
-	if err == nil || !strings.Contains(err.Error(), "unknown project") {
-		t.Fatalf("configPush error = %v, want fail-closed on removed project", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(smHome, config.PublishedSnapshotPath)); !os.IsNotExist(statErr) {
-		t.Error("no published snapshot should exist when the parent project registry has no matching project")
-	}
-}
-
 func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	sm := filepath.Join(parent, "captains", "ops")
 	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
@@ -1496,6 +1445,9 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 // config/parent-home in the captain home.
 func TestSeedWithParent_WritesParentHomeConfig(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 
@@ -1600,6 +1552,9 @@ func TestUpdate_StateOnlyCaptainConfigPush(t *testing.T) {
 func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 
@@ -2106,6 +2061,9 @@ func TestRetire_RefusesUnmarkedWithRemoveHome(t *testing.T) {
 
 func TestRetire_RemoveHome(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
@@ -2122,6 +2080,9 @@ func TestRetire_RemoveHome(t *testing.T) {
 
 func TestRetire_KeepHome(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
@@ -2594,16 +2555,13 @@ func TestConverge_RefusesUnmarkedHome(t *testing.T) {
 
 func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	os.WriteFile(filepath.Join(parent, "AGENTS.md"), []byte("# Parent charter\n"), 0644)
 
 	// Typed parent config binds both captains to projects so converge's
 	// inheritance push publishes a resolved snapshot per captain.
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
-		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
-	}); err != nil {
-		t.Fatal(err)
-	}
 
 	// Create two captains with provenance markers.
 	sm1 := filepath.Join(parent, "captains", "sm-alpha")
@@ -2620,24 +2578,16 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 	os.WriteFile(filepath.Join(sm2, "AGENTS.md"), []byte("# Beta\n"), 0644)
 	SeedProvenance(sm2, "sm-beta")
 
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "sm-alpha", Path: sm1, Mode: "no-mistakes"},
-			{Name: "sm-beta", Path: sm2, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-		Captains: []config.CaptainRecord{
-			{ID: "sm-alpha", Home: sm1, Project: "sm-alpha"},
-			{ID: "sm-beta", Home: sm2, Project: "sm-beta"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+	}, []testProjectRecord{
+		{Name: "sm-alpha", Path: sm1, Mode: "no-mistakes"},
+		{Name: "sm-beta", Path: sm2, Mode: "no-mistakes"},
+	}, []testCaptainRecord{
+		{ID: "sm-alpha", Home: sm1, Project: "sm-alpha"},
+		{ID: "sm-beta", Home: sm2, Project: "sm-beta"},
+	})
 
 	// Run converge.
 	_, err := Converge(parent, []Info{
@@ -2700,6 +2650,9 @@ func TestTaskIDForCaptain(t *testing.T) {
 
 func TestRegister_Idempotent(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "api")
 	os.MkdirAll(sm, 0755)
 	if err := SeedProvenance(sm, "api"); err != nil {
@@ -2722,6 +2675,9 @@ func TestRegister_Idempotent(t *testing.T) {
 
 func TestSeedWithParent_Registers(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "ops")
 	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
@@ -2759,6 +2715,9 @@ func TestBuildLaunchArgs_PiLoadsOnlyCanonicalIntegration(t *testing.T) {
 
 func TestUnregister_RemovesEntry(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smA := filepath.Join(parent, "captains", "alpha")
 	smB := filepath.Join(parent, "captains", "beta")
 	os.MkdirAll(smA, 0755)
@@ -2820,6 +2779,9 @@ func TestInFlightSoldierIDs(t *testing.T) {
 
 func TestRetire_UnregistersFromRegistry(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
@@ -2845,6 +2807,9 @@ func TestRetire_UnregistersFromRegistry(t *testing.T) {
 
 func TestRetire_RefusesInFlightWithoutForce(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
@@ -2874,6 +2839,9 @@ func TestRetire_RefusesInFlightWithoutForce(t *testing.T) {
 
 func TestRetire_ForceAllowsInFlight(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
@@ -2899,6 +2867,9 @@ func TestRetire_ForceAllowsInFlight(t *testing.T) {
 
 func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "ext-sm")
 	if err := seedWithParentTest("ext-sm", sm, parent, "# charter\n"); err != nil {
 		t.Fatal(err)
@@ -2995,6 +2966,9 @@ func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parent := t.TempDir()
+			if _, err := home.Init(parent); err != nil {
+				t.Fatal(err)
+			}
 			if err := config.Set(parent, "captain-harness", "pi"); err != nil {
 				t.Fatal(err)
 			}
@@ -3019,6 +2993,9 @@ func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
 
 func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	if err := config.Set(parent, "captain-harness", harness.Claude); err != nil {
 		t.Fatal(err)
 	}
@@ -3162,6 +3139,9 @@ func newWorktreeFixture(t *testing.T) string {
 func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
@@ -3273,6 +3253,9 @@ func TestSeedFromWorktree_CreatesDetachedWorktree(t *testing.T) {
 func TestSeedFromWorktree_Idempotent(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	// First call: creates the worktree.
@@ -3288,6 +3271,9 @@ func TestSeedFromWorktree_Idempotent(t *testing.T) {
 
 func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "existing-sm")
 
 	// Create a state-only captain home first.
@@ -3310,6 +3296,9 @@ func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 func TestSeedFromWorktree_ManagedWorktreeClean(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	// Pre-populate parent config so ConfigPush has something to push.
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
 		t.Fatal(err)
@@ -3385,6 +3374,9 @@ func TestIsManagedWorktree(t *testing.T) {
 	t.Run("returns true for seeded worktree captain home", func(t *testing.T) {
 		project := newWorktreeFixture(t)
 		parent := t.TempDir()
+		if _, err := home.Init(parent); err != nil {
+			t.Fatal(err)
+		}
 		homePath := filepath.Join(parent, "captains", "test-captain")
 		if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 			t.Fatal(err)
@@ -3451,6 +3443,9 @@ func stateOnlyHomeFixture(t *testing.T, parent, id string) string {
 func TestMigrateToWorktree_SuccessPath(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	id := "test-captain"
 	smHome := stateOnlyHomeFixture(t, parent, id)
 
@@ -3558,6 +3553,9 @@ func TestMigrateToWorktree_SuccessPath(t *testing.T) {
 
 func TestMigrateToWorktree_RefusesManagedWorktree(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	project := newWorktreeFixture(t)
 
 	id := "test-captain"
@@ -3644,6 +3642,9 @@ func TestMigrateToWorktree_RemoteMismatchRefused(t *testing.T) {
 func TestSeedWorktree_GitClean(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
@@ -3685,6 +3686,9 @@ func TestSeedWorktree_GitClean(t *testing.T) {
 func TestRepairWorktreeAdminPath(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create worktree at a temp path, then rename to final captain home.
 	tempPath := filepath.Join(parent, "captains", "temp-worktree")
@@ -3744,6 +3748,9 @@ func TestUpdate_ManagedWorktreeUsesProvenanceRepo(t *testing.T) {
 
 	// Create a fake General state home (NOT a git repo).
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	// Write the parent provenance marker so ValidateProvenance passes.
 	if err := os.MkdirAll(filepath.Join(parent, "captains"), 0755); err != nil {
 		t.Fatal(err)
@@ -3810,6 +3817,9 @@ func TestUpdate_ManagedWorktreeUsesProvenanceRepo(t *testing.T) {
 func TestUpdate_ManagedWorktreeAlreadyCurrent(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
@@ -3833,6 +3843,9 @@ func TestUpdate_ManagedWorktreeAlreadyCurrent(t *testing.T) {
 func TestUpdate_ManagedWorktreeNoParentGit(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	homePath := filepath.Join(parent, "captains", "test-captain")
 
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
@@ -3900,25 +3913,20 @@ func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key:another-key:extra-key")
 
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
@@ -3945,6 +3953,9 @@ func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key")
 
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
@@ -3963,14 +3974,11 @@ func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
 			Config:        overlay,
 		})
 	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := storeBase("pi"); err != nil {
 		t.Fatal(err)
 	}
@@ -4018,25 +4026,20 @@ func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "")
 
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(smHome, 0755)
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
+	}, nil)
 	if err := Register(parent, "test-sm", smHome, "", "test-sm"); err != nil {
 		t.Fatal(err)
 	}
@@ -4064,6 +4067,9 @@ func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
 func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	// Track AGENTS.md so the worktree seed carries a user-owned file.
 	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("# Agents\n"), 0644)
@@ -4074,28 +4080,14 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "test-captain")
 	// Typed parent config binds the captain to a project so the seed's
 	// PropagateConfig publishes a resolved snapshot into the worktree.
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "claude"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-captain", Path: project, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-		Captains: []config.CaptainRecord{
-			{ID: "test-captain", Home: homePath, Project: "test-captain"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+	}, []testCaptainRecord{
+		{ID: "test-captain", Home: homePath, Project: "test-captain"},
+	})
 
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
@@ -4129,6 +4121,9 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 func TestManagedCleanState_PreservesHolds(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	// Write AGENTS.md into source repo so it's tracked.
 	trackedAgents := "# Project AGENTS.md\n\nUser-owned tracked content.\n"
@@ -4216,6 +4211,9 @@ func TestManagedCleanState_PreservesHolds(t *testing.T) {
 func TestManagedCleanState_OperationalDirsAreIgnored(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	// Track AGENTS.md so we can verify it stays clean.
 	trackedAgents := "# Project AGENTS.md\n"
@@ -4268,6 +4266,9 @@ func TestManagedCleanState_OperationalDirsAreIgnored(t *testing.T) {
 func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	trackedAgents := "# My Custom AGENTS.md\n\nThis content must survive multiple pushes.\n"
 	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
@@ -4279,28 +4280,14 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 	homePath := filepath.Join(parent, "captains", "test-captain")
 	// Typed parent config binds the captain to a project so each configPush
 	// publishes a resolved snapshot into the worktree.
-	if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreProjectRegistry(parent, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-captain", Path: project, Mode: "no-mistakes"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.StoreCaptainRegistry(parent, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-		Captains: []config.CaptainRecord{
-			{ID: "test-captain", Home: homePath, Project: "test-captain"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
+	}, []testCaptainRecord{
+		{ID: "test-captain", Home: homePath, Project: "test-captain"},
+	})
 
 	if err := seedFromWorktreeTest("test-captain", homePath, project, parent, "", false, ""); err != nil {
 		t.Fatal(err)
@@ -4368,6 +4355,9 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 func TestManagedCleanState_HoldsSurviveMultipleCycles(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	trackedAgents := "# Project AGENTS.md\n"
 	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
@@ -4439,6 +4429,9 @@ func TestManagedCleanState_HoldsSurviveMultipleCycles(t *testing.T) {
 func TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	trackedAgents := "# Project AGENTS.md\n"
 	os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte(trackedAgents), 0644)
@@ -4488,6 +4481,9 @@ func TestManagedCleanState_ConfigPushDoesNotTouchUntrackedFiles(t *testing.T) {
 func TestMigrateToWorktree_HoldsPreservedClean(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	id := "test-captain"
 	smHome := stateOnlyHomeFixture(t, parent, id)
 
@@ -4624,6 +4620,9 @@ func TestSeedCaptainFromWorktree_RequiresIntegrationBeforeMutation(t *testing.T)
 
 func TestSeedCaptainFromWorktree_IntegrationFailureRollsBack(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -4640,6 +4639,9 @@ func TestSeedCaptainFromWorktree_IntegrationFailureRollsBack(t *testing.T) {
 
 func TestSeedCaptainFromWorktree_InvokesIntegrationOnce(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 	repo := t.TempDir()
 	initTestRepo(t, repo, "https://github.com/test/repo.git")
@@ -4653,6 +4655,9 @@ func TestSeedCaptainFromWorktree_InvokesIntegrationOnce(t *testing.T) {
 func TestMigrateCaptainToWorktree_InvokesIntegrationOnce(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	id := "test-captain"
 	h := stateOnlyHomeFixture(t, parent, id)
 	port := &countingIntegrationPort{}
@@ -4665,6 +4670,9 @@ func TestMigrateCaptainToWorktree_InvokesIntegrationOnce(t *testing.T) {
 func TestMigrateCaptainToWorktree_IntegrationFailureRestoresHome(t *testing.T) {
 	project := newWorktreeFixture(t)
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	id := "test-captain"
 	h := stateOnlyHomeFixture(t, parent, id)
 	sentinel := filepath.Join(h, "state", "sentinel.txt")

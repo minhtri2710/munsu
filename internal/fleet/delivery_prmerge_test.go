@@ -125,33 +125,23 @@ func TestFleetSyncEndToEnd(t *testing.T) {
 	}
 
 	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatalf("initializing home: %v", err)
+	}
 	projectsDir := filepath.Join(homeDir, "projects")
 	if err := os.MkdirAll(projectsDir, 0755); err != nil {
 		t.Fatalf("creating projects dir: %v", err)
 	}
 
 	// Typed fleet config replaces the legacy projects.md: fleet sync reads
-	// the project registry from data/projects.json. The legacy +yolo flag is
-	// expressed as requireNoMistakes=false in the project overlay.
+	// the project registry from the canonical Fleet Registry. The legacy +yolo
+	// flag is expressed as requireNoMistakes=false in the project overlay.
 	falseVal := false
-	if err := config.StoreFleetBase(homeDir, config.FleetBaseDocument{
+	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-	}); err != nil {
-		t.Fatalf("writing fleet base: %v", err)
-	}
-	if err := config.StoreCaptainRegistry(homeDir, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-	}); err != nil {
-		t.Fatalf("writing captain registry: %v", err)
-	}
-	if err := config.StoreProjectRegistry(homeDir, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-project", Path: "test project", Mode: "ship", Config: config.ProjectOverlay{RequireNoMistakes: &falseVal}},
-		},
-	}); err != nil {
-		t.Fatalf("writing projects registry: %v", err)
-	}
+	}, []testProjectRecord{
+		{Name: "test-project", Path: "test project", Mode: "ship", Config: config.ProjectOverlay{RequireNoMistakes: &falseVal}},
+	}, nil)
 
 	// Create a bare repo as upstream
 	remoteDir := filepath.Join(homeDir, "remote.git")
