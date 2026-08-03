@@ -76,6 +76,20 @@ Full Go build/vet/test, current contract, crash/replay/fencing suites, architect
 performance budget, and a clean diff/repo scan confirming deleted identifiers, versions,
 paths, commands, fixtures, comments, skills, and documents did not survive.
 
+## Task decomposition rule (Supervisor orchestration config, 2026-08-03)
+
+- When one authorized task is too large for one Peer, decompose it into the smallest
+  coherent outcome-and-ownership scopes and staff multiple Paseo Peers.
+- Parallelize only scopes with non-overlapping file and contract ownership.
+- Serialize shared foundations, shared contracts, overlapping file ownership, and
+  integration-sensitive dependencies.
+- Each Peer still requires its own outcome-focused brief, isolated editing workspace when
+  applicable, direct final report, and independent review gate.
+- Lead retains dependency ordering, architecture rulings, cross-scope decisions, integration,
+  and final acceptance. Do not delegate Lead authority or create nested hidden orchestrators.
+- Peer creation inside the already authorized program scope does not require additional human
+  confirmation.
+
 ## Authorization policy (Supervisor, 2026-08-03)
 
 - For answer/explain/review/diagnose/research/plan requests: inspect and report the result;
