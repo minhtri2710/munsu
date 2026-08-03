@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- Generation tracking ---
@@ -557,6 +558,9 @@ func TestReconcileLegacy_SupersededByCurrentGen(t *testing.T) {
 // is identical.
 func TestConfigPushWithResult_GenerationAdvance(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	captainHome := filepath.Join(parent, "captains", "test")
 	writeFakeCaptainMarker(t, captainHome, "test")
 	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)
@@ -641,6 +645,9 @@ func TestConfigPushWithResult_NoCaptainHomeError(t *testing.T) {
 // by not failing (generation tracking is separate from mailbox write).
 func TestConfigPushWithResult_HealCrash(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	captainHome := filepath.Join(parent, "captains", "test")
 	writeFakeCaptainMarker(t, captainHome, "test")
 	os.MkdirAll(filepath.Join(captainHome, "config"), 0755)

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/configmigration"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -48,10 +47,6 @@ func ComputeInheritedConfigDigest(captainHome string) (string, error) {
 	data, err := os.ReadFile(snapshotPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Check if legacy config exists.
-			if needed, cmd := configmigration.NeedsConfigMigration(captainHome); needed {
-				return "", fmt.Errorf("legacy configuration detected; run %s to migrate", cmd)
-			}
 			return "", ErrNoPublishedSnapshot
 		}
 		return "", fmt.Errorf("reading published config snapshot for digest: %w", err)

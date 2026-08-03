@@ -8,72 +8,21 @@ import (
 	"testing"
 )
 
-func TestValidateDocumentsRejectsIndependentSchemaVersions(t *testing.T) {
-	base, captains, projects := validDocuments()
-	for _, tc := range []struct {
-		name     string
-		edit     func()
-		validate func() error
-	}{
-		{name: "base", edit: func() { base.SchemaVersion = "future" }, validate: func() error { return base.Validate() }},
-		{name: "captains", edit: func() { captains.SchemaVersion = "future" }, validate: func() error { return captains.Validate() }},
-		{name: "projects", edit: func() { projects.SchemaVersion = "future" }, validate: func() error { return projects.Validate() }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			base, captains, projects = validDocuments()
-			tc.edit()
-			if err := tc.validate(); err == nil || !strings.Contains(err.Error(), "schemaVersion") {
-				t.Fatalf("Validate() error = %v, want schemaVersion refusal", err)
-			}
-		})
-	}
-}
-
-func TestValidateFleetBindings(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		mutate func(*CaptainRegistryDocument, *ProjectRegistryDocument)
-		want   string
-	}{
-		{name: "captain missing project", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) { c.Captains[0].Project = "" }, want: ""},
-		{name: "unknown project", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) { c.Captains[0].Project = "missing" }, want: "unknown project"},
-		{name: "duplicate owner", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) {
-			c.Captains = append(c.Captains, CaptainRecord{ID: "c2", Home: "/c2", Project: "alpha"})
-		}, want: "already owned"},
-		{name: "empty Captain home", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) { c.Captains[0].Home = "" }, want: "home is required"},
-		{name: "empty project path", mutate: func(_ *CaptainRegistryDocument, p *ProjectRegistryDocument) { p.Projects[0].Path = "" }, want: "path is required"},
-		{name: "duplicate Captain id", mutate: func(c *CaptainRegistryDocument, _ *ProjectRegistryDocument) {
-			c.Captains = append(c.Captains, CaptainRecord{ID: "c1", Home: "/c2", Project: "beta"})
-		}, want: "duplicate Captain"},
-		{name: "duplicate project name", mutate: func(_ *CaptainRegistryDocument, p *ProjectRegistryDocument) {
-			p.Projects = append(p.Projects, ProjectRecord{Name: "alpha", Path: "/other"})
-		}, want: "duplicate project"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, c, p := validDocuments()
-			tc.mutate(&c, &p)
-			err := ValidateFleetBindings(c, p)
-			if tc.want == "" {
-				// Empty want means expect no error.
-				if err != nil {
-					t.Fatalf("ValidateFleetBindings() error = %v, want nil", err)
-				}
-			} else {
-				if err == nil || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("ValidateFleetBindings() error = %v, want %q", err, tc.want)
-				}
-			}
-		})
+func TestValidateBaseRejectsIndependentSchemaVersions(t *testing.T) {
+	base := validBase()
+	base.SchemaVersion = "future"
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "schemaVersion") {
+		t.Fatalf("Validate() error = %v, want schemaVersion refusal", err)
 	}
 }
 
 func TestResolveProjectConfigDistinctProjectsAndCaptainFallback(t *testing.T) {
-	base, captains, projects := validDocuments()
-	alpha, err := ResolveProject(base, captains, projects, "alpha", BoundaryOverrides{})
+	base := validBase()
+	alpha, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}, CaptainProfile{Harness: "pi"}), BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := ResolveProject(base, captains, projects, "beta", BoundaryOverrides{})
+	beta, err := ResolveProject(base, validFacts("beta", "/beta", "direct-pr", ProjectOverlay{SoldierHarness: "codex"}, CaptainProfile{}), BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,9 +41,9 @@ func TestResolveProjectConfigDistinctProjectsAndCaptainFallback(t *testing.T) {
 }
 
 func TestResolveProjectOverlayDefaultModeOverridesProjectModeAlias(t *testing.T) {
-	base, captains, projects := validDocuments()
-	projects.Projects[0].Config.DefaultMode = "no-mistakes"
-	resolved, err := ResolveProject(base, captains, projects, "alpha", BoundaryOverrides{})
+	base := validBase()
+	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DefaultMode: "no-mistakes"}, CaptainProfile{})
+	resolved, err := ResolveProject(base, facts, BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,14 +53,15 @@ func TestResolveProjectOverlayDefaultModeOverridesProjectModeAlias(t *testing.T)
 }
 
 func TestResolveProjectConfigBoundaryOverridesAndImmutability(t *testing.T) {
-	base, captains, projects := validDocuments()
-	before := projects.Projects[0].Config.DispatchProfiles[0].Harness
-	resolved, err := ResolveProject(base, captains, projects, "alpha", BoundaryOverrides{Model: "env-model", DefaultMode: "direct-pr"})
+	base := validBase()
+	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}, CaptainProfile{})
+	before := facts.Overlay.DispatchProfiles[0].Harness
+	resolved, err := ResolveProject(base, facts, BoundaryOverrides{Model: "env-model", DefaultMode: "direct-pr"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolved.DispatchProfiles[0].Harness = "changed"
-	if projects.Projects[0].Config.DispatchProfiles[0].Harness != before {
+	if facts.Overlay.DispatchProfiles[0].Harness != before {
 		t.Fatal("resolver mutated or shared dispatch profile storage")
 	}
 	if resolved.Model != "env-model" || resolved.DefaultMode != "direct-pr" {
@@ -120,16 +70,16 @@ func TestResolveProjectConfigBoundaryOverridesAndImmutability(t *testing.T) {
 }
 
 func TestProjectDigestIsDeterministicAndTargeted(t *testing.T) {
-	base, captains, projects := validDocuments()
-	alpha := projects.Projects[0]
-	beta := projects.Projects[1]
+	base := validBase()
+	alpha := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{})
+	beta := validFacts("beta", "/beta", "direct-pr", ProjectOverlay{}, CaptainProfile{})
 	a1, _ := ProjectDigest(base, alpha)
 	a2, _ := ProjectDigest(base, alpha)
 	b1, _ := ProjectDigest(base, beta)
 	if a1 != a2 {
 		t.Fatalf("digest is not deterministic: %s != %s", a1, a2)
 	}
-	alpha.Config.Model = "changed"
+	alpha.Overlay.Model = "changed"
 	a3, _ := ProjectDigest(base, alpha)
 	b2, _ := ProjectDigest(base, beta)
 	if a1 == a3 {
@@ -138,37 +88,35 @@ func TestProjectDigestIsDeterministicAndTargeted(t *testing.T) {
 	if b1 != b2 {
 		t.Fatal("beta digest changed for alpha-only overlay")
 	}
-	alpha.Config.Model = ""
+	alpha.Overlay.Model = ""
 	base.Config.Model = "new-base"
 	a4, _ := ProjectDigest(base, alpha)
 	b3, _ := ProjectDigest(base, beta)
 	if a1 == a4 || b1 == b3 {
 		t.Fatal("base change must change every project digest")
 	}
-	captains.Captains[0].CaptainProfile.Model = "captain-only"
-	resolvedCaptain, _ := ResolveProject(base, captains, projects, "alpha", BoundaryOverrides{})
-	resolvedBoundary, _ := ResolveProject(base, captains, projects, "alpha", BoundaryOverrides{Model: "boundary-only"})
+	withProfile := alpha
+	withProfile.CaptainProfile.Model = "captain-only"
+	resolvedCaptain, _ := ResolveProject(base, withProfile, BoundaryOverrides{})
+	resolvedBoundary, _ := ResolveProject(base, alpha, BoundaryOverrides{Model: "boundary-only"})
 	if resolvedCaptain.Digest != a4 || resolvedBoundary.Digest != a4 {
 		t.Fatal("Captain profile or boundary override entered project digest")
 	}
-	alpha.Config.DefaultMode = "no-mistakes"
-	withOverlay, _ := ProjectDigest(base, alpha)
-	alpha.Mode = "direct-pr"
-	stillOverlay, _ := ProjectDigest(base, alpha)
-	if withOverlay != stillOverlay {
+	withOverlay := alpha
+	withOverlay.Overlay.DefaultMode = "no-mistakes"
+	withOverlayDigest, _ := ProjectDigest(base, withOverlay)
+	withMode := withOverlay
+	withMode.Mode = "direct-pr"
+	withModeDigest, _ := ProjectDigest(base, withMode)
+	if withOverlayDigest != withModeDigest {
 		t.Fatal("project mode overrode explicit overlay DefaultMode in digest")
 	}
 }
 
 func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
-	home := t.TempDir()
-	base, captains, projects := validDocuments()
-	projects.Projects[0].Config.DispatchProfiles[0].Match = []string{"alpha"}
-	projects.Projects[0].Config.DispatchProfiles[0].Use = []DispatchCandidate{{Harness: "claude"}}
-	if err := StoreDocuments(home, base, captains, projects); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := LoadResolvedSnapshot(home, "alpha", BoundaryOverrides{})
+	base := validBase()
+	facts := validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude", Match: []string{"alpha"}, Use: []DispatchCandidate{{Harness: "claude"}}}}}, CaptainProfile{})
+	snapshot, err := NewResolvedSnapshot(base, facts, BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,33 +126,30 @@ func TestResolvedSnapshotIsFrozenAndReturnsDeepCopies(t *testing.T) {
 	if snapshot.Config().DispatchProfiles[0].Match[0] != "alpha" || snapshot.Config().DispatchProfiles[0].Use[0].Harness != "claude" {
 		t.Fatal("snapshot accessor shares nested mutable storage")
 	}
-	projects.Projects[0].Config.Model = "new-on-disk"
-	if err := StoreProjectRegistry(home, projects); err != nil {
-		t.Fatal(err)
-	}
+	facts.Overlay.Model = "new-on-disk"
 	if snapshot.Config().Model == "new-on-disk" {
-		t.Fatal("existing snapshot observed later disk write")
+		t.Fatal("existing snapshot observed later facts mutation")
 	}
-	newSnapshot, err := LoadResolvedSnapshot(home, "alpha", BoundaryOverrides{})
+	newSnapshot, err := NewResolvedSnapshot(base, facts, BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if newSnapshot.Config().Model != "new-on-disk" {
-		t.Fatal("new snapshot did not observe disk write")
+		t.Fatal("new snapshot did not observe facts mutation")
 	}
 }
 
 func TestResolveProjectDoesNotReadEnvironment(t *testing.T) {
 	t.Setenv("MUNSU_MODEL_OVERRIDE", "environment-model")
-	base, captains, projects := validDocuments()
-	resolved, err := ResolveProject(base, captains, projects, "alpha", BoundaryOverrides{})
+	base := validBase()
+	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "", ProjectOverlay{}, CaptainProfile{}), BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved.Model != "base-model" {
 		t.Fatalf("resolver read process environment: %q", resolved.Model)
 	}
-	overridden, err := ResolveProject(base, captains, projects, "alpha", BoundaryOverrides{Model: "typed-boundary"})
+	overridden, err := ResolveProject(base, validFacts("alpha", "/alpha", "", ProjectOverlay{}, CaptainProfile{}), BoundaryOverrides{Model: "typed-boundary"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,18 +158,18 @@ func TestResolveProjectDoesNotReadEnvironment(t *testing.T) {
 	}
 }
 
-func TestDocumentStoreRoundTripAndStrictDecode(t *testing.T) {
+func TestFleetBaseRoundTripAndStrictDecode(t *testing.T) {
 	home := t.TempDir()
-	base, captains, projects := validDocuments()
-	if err := StoreDocuments(home, base, captains, projects); err != nil {
+	base := validBase()
+	if err := StoreFleetBase(home, base); err != nil {
 		t.Fatal(err)
 	}
-	gotBase, gotCaptains, gotProjects, err := LoadDocuments(home)
+	got, err := LoadFleetBase(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(base, gotBase) || !reflect.DeepEqual(captains, gotCaptains) || !reflect.DeepEqual(projects, gotProjects) {
-		t.Fatalf("round trip mismatch\nbase=%+v\ncaptains=%+v\nprojects=%+v", gotBase, gotCaptains, gotProjects)
+	if !reflect.DeepEqual(base, got) {
+		t.Fatalf("round trip mismatch\nbase=%+v\ngot=%+v", got, base)
 	}
 	path := filepath.Join(home, BaseDocumentPath)
 	data, _ := os.ReadFile(path)
@@ -232,31 +177,27 @@ func TestDocumentStoreRoundTripAndStrictDecode(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := LoadDocuments(home); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("LoadDocuments() error = %v, want strict decode refusal", err)
+	if _, err := LoadFleetBase(home); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("LoadFleetBase() error = %v, want strict decode refusal", err)
 	}
 }
 
 func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 	home := t.TempDir()
-	base, captains, projects := validDocuments()
-	if err := StoreDocuments(home, base, captains, projects); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := LoadResolvedSnapshot(home, "alpha", BoundaryOverrides{})
+	base := validBase()
+	resolved, err := ResolveProject(base, validFacts("alpha", "/alpha", "direct-pr", ProjectOverlay{}, CaptainProfile{}), BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := StorePublishedSnapshot(home, resolved.Config()); err != nil {
+	if err := StorePublishedSnapshot(home, resolved); err != nil {
 		t.Fatal(err)
 	}
-
 	loaded, err := LoadPublishedSnapshot(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(loaded.Config(), resolved.Config()) {
-		t.Fatalf("published snapshot mismatch\nwant=%+v\ngot=%+v", resolved.Config(), loaded.Config())
+	if !reflect.DeepEqual(loaded.Config(), resolved) {
+		t.Fatalf("published snapshot mismatch\nwant=%+v\ngot=%+v", resolved, loaded.Config())
 	}
 
 	path := filepath.Join(home, PublishedSnapshotPath)
@@ -273,9 +214,27 @@ func TestPublishedSnapshotRoundTripAndStrictValidation(t *testing.T) {
 	}
 }
 
-func validDocuments() (FleetBaseDocument, CaptainRegistryDocument, ProjectRegistryDocument) {
-	base := FleetBaseDocument{SchemaVersion: FleetBaseSchemaVersion, Config: ProjectOverlay{SoldierHarness: "pi", Model: "base-model", DefaultMode: "no-mistakes", DispatchProfiles: []DispatchProfile{{Name: "base", Harness: "pi"}}}, CaptainProfile: CaptainProfile{Harness: "pi", Model: "base-model"}}
-	captains := CaptainRegistryDocument{SchemaVersion: CaptainRegistrySchemaVersion, Captains: []CaptainRecord{{ID: "c1", Home: "/c1", Project: "alpha", CaptainProfile: CaptainProfile{Harness: "pi"}}}}
-	projects := ProjectRegistryDocument{SchemaVersion: ProjectRegistrySchemaVersion, Projects: []ProjectRecord{{Name: "alpha", Path: "/alpha", Mode: "direct-pr", Config: ProjectOverlay{SoldierHarness: "claude", DispatchProfiles: []DispatchProfile{{Name: "alpha", Harness: "claude"}}}}, {Name: "beta", Path: "/beta", Mode: "direct-pr", Config: ProjectOverlay{SoldierHarness: "codex"}}}}
-	return base, captains, projects
+func validBase() FleetBaseDocument {
+	return FleetBaseDocument{
+		SchemaVersion: FleetBaseSchemaVersion,
+		Config: ProjectOverlay{
+			SoldierHarness: "pi",
+			Model:          "base-model",
+			DefaultMode:    "no-mistakes",
+			DispatchProfiles: []DispatchProfile{
+				{Name: "base", Harness: "pi"},
+			},
+		},
+		CaptainProfile: CaptainProfile{Harness: "pi", Model: "base-model"},
+	}
+}
+
+func validFacts(name, path, mode string, overlay ProjectOverlay, captainProfile CaptainProfile) ProjectFacts {
+	return ProjectFacts{
+		Name:           name,
+		Path:           path,
+		Mode:           mode,
+		Overlay:        overlay,
+		CaptainProfile: captainProfile,
+	}
 }

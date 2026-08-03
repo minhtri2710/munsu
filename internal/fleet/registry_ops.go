@@ -445,20 +445,14 @@ func (r *Registry) BindCaptain(op domain.Operation, req BindCaptainRequest) (Out
 	if req.Precondition.Generation != registryGeneration {
 		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
 	}
-	// Serialize on the binding aggregate; the project and captain registry
-	// locks are also taken so concurrent Register/Retire of the same entities
-	// is excluded. Lock order is deterministic (project, captain, binding) to
-	// avoid deadlock.
-	lk, err := r.h.Lock(projectRegistryScope)
-	if err != nil {
-		return Outcome{}, err
-	}
-	defer lk.Release()
-	clk, err := r.h.Lock(captainRegistryScope)
-	if err != nil {
-		return Outcome{}, err
-	}
-	defer clk.Release()
+	// Serialize on the binding aggregate only. The project and captain
+	// existence checks are reads; the only operations that remove those
+	// entities (RetireProject, RetireCaptain) both take the binding lock in
+	// their critical section, so holding it excludes a concurrent retirement
+	// of the bound entities. RegisterProject/RegisterCaptain only add
+	// entities and never invalidate a bind. Taking all three aggregate locks
+	// would serialize unrelated Project/Captain registration while a bind
+	// executes; the binding scope alone is the smallest truthful scope.
 	blk, err := r.h.Lock(bindingScope)
 	if err != nil {
 		return Outcome{}, err
@@ -552,11 +546,10 @@ func (r *Registry) UnbindCaptain(op domain.Operation, req UnbindCaptainRequest) 
 	if req.Precondition.Generation != registryGeneration {
 		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
 	}
-	clk, err := r.h.Lock(captainRegistryScope)
-	if err != nil {
-		return Outcome{}, err
-	}
-	defer clk.Release()
+	// Serialize on the binding aggregate only. RetireCaptain (the operation
+	// that removes the captain) takes the binding lock in its critical
+	// section, so holding it excludes a concurrent retirement between the
+	// captain existence check and the binding clear.
 	blk, err := r.h.Lock(bindingScope)
 	if err != nil {
 		return Outcome{}, err

@@ -88,13 +88,13 @@ func TestResolveSpawnProjectConfigFreezesSnapshotAndDigest(t *testing.T) {
 	}
 	before := resolved.Frozen.Config()
 
-	base, captains, projects, err := fleetconfig.LoadDocuments(home)
+	alphaOverlay, err := fleetconfig.LoadProjectOverlay(home, "alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	projects.Projects[0].Config.Model = "mutated-model"
-	projects.Projects[0].Config.DispatchProfiles[0].Model = "mutated-profile-model"
-	if err := fleetconfig.StoreDocuments(home, base, captains, projects); err != nil {
+	alphaOverlay.Model = "mutated-model"
+	alphaOverlay.DispatchProfiles[0].Model = "mutated-profile-model"
+	if err := fleetconfig.StoreProjectOverlay(home, "alpha", alphaOverlay); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,30 +150,26 @@ func TestCaptainSpawnConsumesPublishedSnapshotWithoutLocalResolution(t *testing.
 	captain := seedCaptainForTest(t, parent, "alpha-captain")
 	writeSpawnSnapshotDocuments(t, parent)
 
-	base, captains, projects, err := fleetconfig.LoadDocuments(parent)
+	resolved, err := ResolveProjectSnapshot(parent, "alpha", fleetconfig.BoundaryOverrides{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := fleetconfig.ResolveProject(base, captains, projects, "alpha", fleetconfig.BoundaryOverrides{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fleetconfig.StorePublishedSnapshot(captain, resolved); err != nil {
+	if err := fleetconfig.StorePublishedSnapshot(captain, resolved.Config()); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := os.Remove(filepath.Join(captain, fleetconfig.BaseDocumentPath)); err == nil || !os.IsNotExist(err) {
 		t.Fatalf("expected captain base document to be absent, got %v", err)
 	}
-	if err := os.Remove(filepath.Join(captain, fleetconfig.ProjectDocumentPath)); err == nil || !os.IsNotExist(err) {
-		t.Fatalf("expected captain project document to be absent, got %v", err)
+	if err := os.Remove(filepath.Join(captain, fleetconfig.ProjectOverlayDocumentPath)); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("expected captain project overlay document to be absent, got %v", err)
 	}
 
 	got, err := ResolveSpawnProjectConfig(captain, Args{ProjectName: "alpha"}, "captain")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SnapshotDigest != resolved.Digest || got.ProjectName != "alpha" {
+	if got.SnapshotDigest != resolved.Config().Digest || got.ProjectName != "alpha" {
 		t.Fatalf("captain did not consume published snapshot: %+v", got)
 	}
 }
@@ -200,23 +196,30 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 	}{
 		{name: "unknown project", project: "missing", want: fleetconfig.RemediateUnknownProject},
 		{name: "invalid profile", project: "alpha", mutate: func(home string) {
-			base, captains, projects, err := fleetconfig.LoadDocuments(home)
+			overlay, err := fleetconfig.LoadProjectOverlay(home, "alpha")
 			if err != nil {
 				t.Fatal(err)
 			}
-			projects.Projects[0].Config.DispatchProfiles[0].Harness = "bogus"
-			if err := fleetconfig.StoreDocuments(home, base, captains, projects); err != nil {
+			overlay.DispatchProfiles[0].Harness = "bogus"
+			if err := fleetconfig.StoreProjectOverlay(home, "alpha", overlay); err != nil {
 				t.Fatal(err)
 			}
 		}, want: fleetconfig.RemediateInvalidProfile},
 		{name: "missing harness", project: "alpha", mutate: func(home string) {
-			base, captains, projects, err := fleetconfig.LoadDocuments(home)
+			base, err := fleetconfig.LoadFleetBase(home)
 			if err != nil {
 				t.Fatal(err)
 			}
 			base.Config.SoldierHarness = ""
-			projects.Projects[0].Config.DispatchProfiles = nil
-			if err := fleetconfig.StoreDocuments(home, base, captains, projects); err != nil {
+			if err := fleetconfig.StoreFleetBase(home, base); err != nil {
+				t.Fatal(err)
+			}
+			overlay, err := fleetconfig.LoadProjectOverlay(home, "alpha")
+			if err != nil {
+				t.Fatal(err)
+			}
+			overlay.DispatchProfiles = nil
+			if err := fleetconfig.StoreProjectOverlay(home, "alpha", overlay); err != nil {
 				t.Fatal(err)
 			}
 		}, want: fleetconfig.RemediateInvalidProfile},
@@ -226,12 +229,12 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 			}
 		}, want: fleetconfig.RemediateIncompatibleSnapshot},
 		{name: "incompatible snapshot", project: "alpha", mutate: func(home string) {
-			path := filepath.Join(home, fleetconfig.ProjectDocumentPath)
+			path := filepath.Join(home, "state", "fleet-registry", "projects.json")
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			data = []byte(strings.Replace(string(data), fleetconfig.ProjectRegistrySchemaVersion, "munsu.config.projects/v999", 1))
+			data = []byte(strings.Replace(string(data), "munsu.fleet.registry/v1", "munsu.fleet.registry/v999", 1))
 			if err := os.WriteFile(path, data, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -270,38 +273,30 @@ func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 		},
 		CaptainProfile: fleetconfig.CaptainProfile{Harness: "pi", Model: "captain-model"},
 	}
-	captains := fleetconfig.CaptainRegistryDocument{
-		SchemaVersion: fleetconfig.CaptainRegistrySchemaVersion,
-		Captains: []fleetconfig.CaptainRecord{
-			{ID: "alpha-captain", Home: filepath.Join(home, "captains", "alpha"), Project: "alpha"},
-			{ID: "beta-captain", Home: filepath.Join(home, "captains", "beta"), Project: "beta"},
-		},
-	}
-	projects := fleetconfig.ProjectRegistryDocument{
-		SchemaVersion: fleetconfig.ProjectRegistrySchemaVersion,
-		Projects: []fleetconfig.ProjectRecord{
-			{
-				Name: "alpha",
-				Path: filepath.Join(home, "projects", "alpha"),
-				Config: fleetconfig.ProjectOverlay{
-					Model: "alpha-model",
-					DispatchProfiles: []fleetconfig.DispatchProfile{
-						{Name: "alpha-docs", Match: []string{"docs"}, Harness: "claude", Model: "alpha-docs", Effort: "low"},
-						{Name: "alpha-ui", Match: []string{"ui"}, Harness: "pi", Model: "alpha-ui", Effort: "high"},
-					},
-				},
-			},
-			{
-				Name: "beta",
-				Path: filepath.Join(home, "projects", "beta"),
-				Config: fleetconfig.ProjectOverlay{
-					SoldierHarness: "codex",
-					Model:          "beta-model",
+	projects := []testProjectRecord{
+		{
+			Name: "alpha",
+			Path: filepath.Join(home, "projects", "alpha"),
+			Config: fleetconfig.ProjectOverlay{
+				Model: "alpha-model",
+				DispatchProfiles: []fleetconfig.DispatchProfile{
+					{Name: "alpha-docs", Match: []string{"docs"}, Harness: "claude", Model: "alpha-docs", Effort: "low"},
+					{Name: "alpha-ui", Match: []string{"ui"}, Harness: "pi", Model: "alpha-ui", Effort: "high"},
 				},
 			},
 		},
+		{
+			Name: "beta",
+			Path: filepath.Join(home, "projects", "beta"),
+			Config: fleetconfig.ProjectOverlay{
+				SoldierHarness: "codex",
+				Model:          "beta-model",
+			},
+		},
 	}
-	if err := fleetconfig.StoreDocuments(home, base, captains, projects); err != nil {
-		t.Fatal(err)
+	captains := []testCaptainRecord{
+		{ID: "alpha-captain", Home: filepath.Join(home, "captains", "alpha"), Project: "alpha"},
+		{ID: "beta-captain", Home: filepath.Join(home, "captains", "beta"), Project: "beta"},
 	}
+	storeTestDocuments(t, home, base, projects, captains)
 }

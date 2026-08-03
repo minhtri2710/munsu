@@ -41,6 +41,9 @@ import (
 func IncidentReplay_GeneralToCaptainHandoff(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatalf("init parent home: %v", err)
+	}
 	os.MkdirAll(filepath.Join(parent, "config"), 0755)
 	os.WriteFile(filepath.Join(parent, "config", "soldier-harness"), []byte("pi\n"), 0644)
 

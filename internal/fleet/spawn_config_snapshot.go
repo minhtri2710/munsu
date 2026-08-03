@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,7 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 	if rank == "captain" {
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
 	} else {
-		snapshot, err = fleetconfig.LoadResolvedSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
 	}
 	if err != nil {
 		return SpawnProjectConfig{}, classifySnapshotError(args.ProjectName, err)
@@ -99,10 +100,8 @@ func TypedConfigAvailable(homeDir string) bool {
 	if fleetconfig.PublishedSnapshotAvailable(homeDir) {
 		return true
 	}
-	for _, path := range []string{fleetconfig.BaseDocumentPath, fleetconfig.CaptainDocumentPath, fleetconfig.ProjectDocumentPath} {
-		if _, err := os.Stat(filepath.Join(homeDir, path)); err == nil {
-			return true
-		}
+	if _, err := os.Stat(filepath.Join(homeDir, fleetconfig.BaseDocumentPath)); err == nil {
+		return true
 	}
 	return false
 }
@@ -110,13 +109,13 @@ func TypedConfigAvailable(homeDir string) bool {
 func classifySnapshotError(projectName string, err error) error {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "unknown project"):
+	case errors.Is(err, ErrNotFound), strings.Contains(msg, "not found"), strings.Contains(msg, "unknown project"):
 		return fleetconfig.Remediate(
 			fleetconfig.RemediateUnknownProject,
-			fmt.Sprintf("register project %q in data/projects.json", projectName),
+			fmt.Sprintf("register project %q in the Fleet project registry", projectName),
 			err,
 		)
-	case strings.Contains(msg, "schemaVersion"), strings.Contains(msg, "reading typed config document"):
+	case strings.Contains(msg, "schema"), strings.Contains(msg, "schemaVersion"), strings.Contains(msg, "reading typed config document"):
 		return fleetconfig.Remediate(
 			fleetconfig.RemediateIncompatibleSnapshot,
 			"migrate typed config documents to the supported schema versions",

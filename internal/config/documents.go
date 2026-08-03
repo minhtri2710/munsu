@@ -12,13 +12,9 @@ import (
 )
 
 const (
-	FleetBaseSchemaVersion       = "munsu.config.base/v1"
-	CaptainRegistrySchemaVersion = "munsu.config.captains/v1"
-	ProjectRegistrySchemaVersion = "munsu.config.projects/v1"
+	FleetBaseSchemaVersion = "munsu.config.base/v1"
 
-	BaseDocumentPath    = "config/base.json"
-	CaptainDocumentPath = "data/captains.json"
-	ProjectDocumentPath = "data/projects.json"
+	BaseDocumentPath = "config/base.json"
 )
 
 type DispatchCandidate struct {
@@ -62,28 +58,18 @@ type FleetBaseDocument struct {
 	CaptainProfile CaptainProfile `json:"captainProfile,omitempty"`
 }
 
-type CaptainRecord struct {
-	ID             string         `json:"id"`
-	Home           string         `json:"home"`
-	Project        string         `json:"project"`
-	CaptainProfile CaptainProfile `json:"captainProfile,omitempty"`
-}
-
-type CaptainRegistryDocument struct {
-	SchemaVersion string          `json:"schemaVersion"`
-	Captains      []CaptainRecord `json:"captains"`
-}
-
-type ProjectRecord struct {
-	Name   string         `json:"name"`
-	Path   string         `json:"path"`
-	Mode   string         `json:"mode,omitempty"`
-	Config ProjectOverlay `json:"config,omitempty"`
-}
-
-type ProjectRegistryDocument struct {
-	SchemaVersion string          `json:"schemaVersion"`
-	Projects      []ProjectRecord `json:"projects"`
+// ProjectFacts is the narrow, Fleet-owned scoped facts Config accepts to
+// resolve one Project's overlay. It carries the Project's identity and the
+// owning Captain's profile. Config never reads or stores a Project/Captain
+// registry; Fleet supplies these facts at composition time. Overlay/profile
+// values keyed by scoped identity are Config-owned but are supplied here so
+// Config has no registry persistence authority.
+type ProjectFacts struct {
+	Name           string
+	Path           string
+	Mode           string
+	Overlay        ProjectOverlay
+	CaptainProfile CaptainProfile
 }
 
 type BoundaryOverrides struct {
@@ -114,46 +100,6 @@ func (d FleetBaseDocument) Validate() error {
 	return validateSchema("fleet base", d.SchemaVersion, FleetBaseSchemaVersion)
 }
 
-func (d CaptainRegistryDocument) Validate() error {
-	if err := validateSchema("Captain registry", d.SchemaVersion, CaptainRegistrySchemaVersion); err != nil {
-		return err
-	}
-	ids := make(map[string]struct{}, len(d.Captains))
-	for _, captain := range d.Captains {
-		if captain.ID == "" {
-			return fmt.Errorf("Captain id is required")
-		}
-		if captain.Home == "" {
-			return fmt.Errorf("Captain %q home is required", captain.ID)
-		}
-		if _, exists := ids[captain.ID]; exists {
-			return fmt.Errorf("duplicate Captain %q", captain.ID)
-		}
-		ids[captain.ID] = struct{}{}
-	}
-	return nil
-}
-
-func (d ProjectRegistryDocument) Validate() error {
-	if err := validateSchema("project registry", d.SchemaVersion, ProjectRegistrySchemaVersion); err != nil {
-		return err
-	}
-	names := make(map[string]struct{}, len(d.Projects))
-	for _, project := range d.Projects {
-		if project.Name == "" {
-			return fmt.Errorf("project name is required")
-		}
-		if project.Path == "" {
-			return fmt.Errorf("project %q path is required", project.Name)
-		}
-		if _, exists := names[project.Name]; exists {
-			return fmt.Errorf("duplicate project %q", project.Name)
-		}
-		names[project.Name] = struct{}{}
-	}
-	return nil
-}
-
 func validateSchema(name, got, want string) error {
 	if got != want {
 		return fmt.Errorf("%s schemaVersion %q is unsupported; expected %q", name, got, want)
@@ -161,68 +107,34 @@ func validateSchema(name, got, want string) error {
 	return nil
 }
 
-func ValidateFleetBindings(captains CaptainRegistryDocument, projects ProjectRegistryDocument) error {
-	if err := captains.Validate(); err != nil {
-		return err
-	}
-	if err := projects.Validate(); err != nil {
-		return err
-	}
-	known := make(map[string]struct{}, len(projects.Projects))
-	for _, project := range projects.Projects {
-		known[project.Name] = struct{}{}
-	}
-	owners := make(map[string]string)
-	for _, captain := range captains.Captains {
-		if captain.Project == "" {
-			continue
-		}
-		if _, exists := known[captain.Project]; !exists {
-			return fmt.Errorf("Captain %q references unknown project %q", captain.ID, captain.Project)
-		}
-		if owner, exists := owners[captain.Project]; exists {
-			return fmt.Errorf("project %q is already owned by Captain %q", captain.Project, owner)
-		}
-		owners[captain.Project] = captain.ID
-	}
-	return nil
-}
-
-func ResolveProject(base FleetBaseDocument, captains CaptainRegistryDocument, projects ProjectRegistryDocument, projectName string, overrides BoundaryOverrides) (ResolvedProjectConfig, error) {
+// ResolveProject resolves one Project's overlay from the Fleet-owned scoped
+// facts and the base overlay. Config owns the overlay resolution and the
+// deterministic digest; it owns no registry and cannot mutate Project/Captain
+// lifecycle.
+func ResolveProject(base FleetBaseDocument, facts ProjectFacts, overrides BoundaryOverrides) (ResolvedProjectConfig, error) {
 	if err := base.Validate(); err != nil {
 		return ResolvedProjectConfig{}, err
 	}
-	if err := ValidateFleetBindings(captains, projects); err != nil {
-		return ResolvedProjectConfig{}, err
+	if facts.Name == "" {
+		return ResolvedProjectConfig{}, fmt.Errorf("project name is required")
 	}
-	var project *ProjectRecord
-	for i := range projects.Projects {
-		if projects.Projects[i].Name == projectName {
-			project = &projects.Projects[i]
-			break
-		}
-	}
-	if project == nil {
-		return ResolvedProjectConfig{}, fmt.Errorf("unknown project %q", projectName)
+	if facts.Path == "" {
+		return ResolvedProjectConfig{}, fmt.Errorf("project %q path is required", facts.Name)
 	}
 
-	effective := resolvedOverlay(base.Config, *project)
-	digest, err := ProjectDigest(base, *project)
+	effective := resolvedOverlay(base.Config, facts.Overlay, facts.Mode)
+	digest, err := ProjectDigest(base, facts)
 	if err != nil {
 		return ResolvedProjectConfig{}, err
 	}
 	applyBoundaryOverrides(&effective, overrides)
 
 	captainProfile := base.CaptainProfile
-	for _, captain := range captains.Captains {
-		if captain.Project == projectName {
-			applyCaptainProfile(&captainProfile, captain.CaptainProfile)
-			break
-		}
-	}
+	applyCaptainProfile(&captainProfile, facts.CaptainProfile)
+
 	require := effective.RequireNoMistakes != nil && *effective.RequireNoMistakes
 	return ResolvedProjectConfig{
-		Project: project.Name, ProjectPath: project.Path,
+		Project: facts.Name, ProjectPath: facts.Path,
 		SoldierHarness: effective.SoldierHarness, Model: effective.Model,
 		DispatchAutonomy: effective.DispatchAutonomy,
 		DefaultMode:      effective.DefaultMode, RequireNoMistakes: require,
@@ -296,18 +208,20 @@ func cloneProfiles(src []DispatchProfile) []DispatchProfile {
 	return result
 }
 
-// ProjectDigest returns the deterministic persisted digest for base plus one project overlay.
-func ProjectDigest(base FleetBaseDocument, project ProjectRecord) (string, error) {
+// ProjectDigest returns the deterministic persisted digest for the base plus
+// one Project's overlay facts. It is Config-owned and independent of any
+// registry: the digest covers the resolved overlay only.
+func ProjectDigest(base FleetBaseDocument, facts ProjectFacts) (string, error) {
 	if err := base.Validate(); err != nil {
 		return "", err
 	}
-	if project.Name == "" {
+	if facts.Name == "" {
 		return "", fmt.Errorf("project name is required")
 	}
-	if project.Path == "" {
-		return "", fmt.Errorf("project %q path is required", project.Name)
+	if facts.Path == "" {
+		return "", fmt.Errorf("project %q path is required", facts.Name)
 	}
-	config := resolvedOverlay(base.Config, project)
+	config := resolvedOverlay(base.Config, facts.Overlay, facts.Mode)
 	data, err := json.Marshal(config)
 	if err != nil {
 		return "", fmt.Errorf("marshal resolved project config: %w", err)
@@ -316,11 +230,11 @@ func ProjectDigest(base FleetBaseDocument, project ProjectRecord) (string, error
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func resolvedOverlay(base ProjectOverlay, project ProjectRecord) ProjectOverlay {
+func resolvedOverlay(base ProjectOverlay, overlay ProjectOverlay, mode string) ProjectOverlay {
 	effective := cloneOverlay(base)
-	applyOverlay(&effective, project.Config)
-	if project.Mode != "" && project.Config.DefaultMode == "" {
-		effective.DefaultMode = project.Mode
+	applyOverlay(&effective, overlay)
+	if mode != "" && overlay.DefaultMode == "" {
+		effective.DefaultMode = mode
 	}
 	return effective
 }
@@ -333,79 +247,11 @@ func LoadFleetBase(home string) (FleetBaseDocument, error) {
 	return document, document.Validate()
 }
 
-func LoadCaptainRegistry(home string) (CaptainRegistryDocument, error) {
-	var document CaptainRegistryDocument
-	if err := loadDocument(filepath.Join(home, CaptainDocumentPath), &document); err != nil {
-		return document, err
-	}
-	return document, document.Validate()
-}
-
-func LoadProjectRegistry(home string) (ProjectRegistryDocument, error) {
-	var document ProjectRegistryDocument
-	if err := loadDocument(filepath.Join(home, ProjectDocumentPath), &document); err != nil {
-		return document, err
-	}
-	return document, document.Validate()
-}
-
 func StoreFleetBase(home string, document FleetBaseDocument) error {
 	if err := document.Validate(); err != nil {
 		return err
 	}
 	return storeDocument(filepath.Join(home, BaseDocumentPath), document)
-}
-
-func StoreCaptainRegistry(home string, document CaptainRegistryDocument) error {
-	if err := document.Validate(); err != nil {
-		return err
-	}
-	return storeDocument(filepath.Join(home, CaptainDocumentPath), document)
-}
-
-func StoreProjectRegistry(home string, document ProjectRegistryDocument) error {
-	if err := document.Validate(); err != nil {
-		return err
-	}
-	return storeDocument(filepath.Join(home, ProjectDocumentPath), document)
-}
-
-func LoadDocuments(home string) (FleetBaseDocument, CaptainRegistryDocument, ProjectRegistryDocument, error) {
-	base, err := LoadFleetBase(home)
-	if err != nil {
-		return FleetBaseDocument{}, CaptainRegistryDocument{}, ProjectRegistryDocument{}, err
-	}
-	captains, err := LoadCaptainRegistry(home)
-	if err != nil {
-		return base, CaptainRegistryDocument{}, ProjectRegistryDocument{}, err
-	}
-	projects, err := LoadProjectRegistry(home)
-	if err != nil {
-		return base, captains, ProjectRegistryDocument{}, err
-	}
-	if err := ValidateFleetBindings(captains, projects); err != nil {
-		return base, captains, projects, err
-	}
-	return base, captains, projects, nil
-}
-
-func StoreDocuments(home string, base FleetBaseDocument, captains CaptainRegistryDocument, projects ProjectRegistryDocument) error {
-	if err := base.Validate(); err != nil {
-		return err
-	}
-	if err := ValidateFleetBindings(captains, projects); err != nil {
-		return err
-	}
-	if err := StoreFleetBase(home, base); err != nil {
-		return err
-	}
-	if err := StoreCaptainRegistry(home, captains); err != nil {
-		return err
-	}
-	if err := StoreProjectRegistry(home, projects); err != nil {
-		return err
-	}
-	return nil
 }
 
 func loadDocument(path string, target any) error {

@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/configmigration"
+	"github.com/minhtri2710/munsu/internal/domain"
 )
 
 // Project represents a registered or ad-hoc project entry.
@@ -40,30 +39,10 @@ func isURL(s string) bool {
 		strings.HasPrefix(s, "ssh://")
 }
 
-// checkLegacyConfig returns an error if legacy config files exist and the
-// typed documents are not yet installed. This is called at the top of
-// registry-mutating functions to prevent writes to legacy files.
-func checkLegacyConfig(homeDir string) error {
-	needed, _ := configmigration.NeedsConfigMigration(homeDir)
-	if needed {
-		return configmigration.LegacyConfigCheckError(homeDir)
-	}
-	return nil
-}
-
-// Add registers a project. If pathOrURL is a URL, clones it first.
-// If the name is already registered, updates the existing entry in-place.
+// Add registers a project in the canonical Fleet Registry. If pathOrURL is a
+// URL, it is cloned first. If the name is already registered, the existing
+// entry is updated in-place.
 func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
-	// Check for legacy config before writing.
-	if err := checkLegacyConfig(homeDir); err != nil {
-		return err
-	}
-
-	// Ensure data directory exists
-	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0755); err != nil {
-		return fmt.Errorf("creating data directory: %w", err)
-	}
-
 	// Clone if URL
 	if isURL(pathOrURL) {
 		projDir := filepath.Join(ProjectsDir(homeDir), name)
@@ -78,82 +57,82 @@ func Add(homeDir, name, pathOrURL, mode string, yolo bool) error {
 		}
 	}
 
-	// Load or initialize typed project registry.
-	registry, err := config.LoadProjectRegistry(homeDir)
+	r, err := openRegistry(homeDir)
 	if err != nil {
-		// If the file doesn't exist yet, start with an empty registry.
-		if errors.Is(err, os.ErrNotExist) {
-			registry = config.ProjectRegistryDocument{
-				SchemaVersion: config.ProjectRegistrySchemaVersion,
-			}
-		} else {
+		return err
+	}
+	projectID, err := domain.NewProjectID(name)
+	if err != nil {
+		return fmt.Errorf("register project %q: %w", name, err)
+	}
+	_, gerr := r.GetProject(projectID)
+	if gerr == nil {
+		// Update in-place: register the same ID with the new definition.
+		rev, err := r.ProjectRevision()
+		if err != nil {
 			return fmt.Errorf("reading project registry: %w", err)
 		}
-	}
-
-	record := config.ProjectRecord{
-		Name: name,
-		Path: pathOrURL,
-		Mode: mode,
-	}
-	// Yolo (skip pre-flight gates) is preserved through the typed schema as
-	// requireNoMistakes=false. When yolo is false the overlay is left unset so
-	// an in-place update clears a previously stored +yolo flag.
-	if yolo {
-		falseVal := false
-		record.Config.RequireNoMistakes = &falseVal
-	}
-
-	// Check if name already exists — update in-place to avoid duplicates.
-	for i, p := range registry.Projects {
-		if p.Name == name {
-			registry.Projects[i] = record
-			if err := config.StoreProjectRegistry(homeDir, registry); err != nil {
-				return fmt.Errorf("writing project registry: %w", err)
-			}
-			fmt.Printf("Updated project %q (%s)\n", name, pathOrURL)
-			return nil
+		req := RegisterProjectRequest{
+			HomeID:       r.HomeID(),
+			ProjectID:    projectID,
+			Name:         name,
+			Path:         pathOrURL,
+			Mode:         mode,
+			Yolo:         yolo,
+			Precondition: preconditionOf(rev),
+			Reason:       "update",
 		}
+		if _, err := r.RegisterProject(opFor(req), req); err != nil {
+			return fmt.Errorf("writing project registry: %w", err)
+		}
+		fmt.Printf("Updated project %q (%s)\n", name, pathOrURL)
+		return nil
 	}
-
-	// Append new entry.
-	registry.Projects = append(registry.Projects, record)
-	if err := config.StoreProjectRegistry(homeDir, registry); err != nil {
+	if !errors.Is(gerr, ErrNotFound) {
+		return fmt.Errorf("reading project registry: %w", gerr)
+	}
+	rev, err := r.ProjectRevision()
+	if err != nil {
+		return fmt.Errorf("reading project registry: %w", err)
+	}
+	req := RegisterProjectRequest{
+		HomeID:       r.HomeID(),
+		ProjectID:    projectID,
+		Name:         name,
+		Path:         pathOrURL,
+		Mode:         mode,
+		Yolo:         yolo,
+		Precondition: preconditionOf(rev),
+		Reason:       "register",
+	}
+	if _, err := r.RegisterProject(opFor(req), req); err != nil {
 		return fmt.Errorf("writing project registry: %w", err)
 	}
-
 	fmt.Printf("Registered project %q (%s)\n", name, pathOrURL)
 	return nil
 }
 
-// List reads and returns all registered projects.
+// List reads and returns all registered projects from the canonical Fleet Registry.
 func List(homeDir string) ([]*Project, error) {
-	if err := checkLegacyConfig(homeDir); err != nil {
+	r, err := openRegistry(homeDir)
+	if err != nil {
 		return nil, err
 	}
-
-	registry, err := config.LoadProjectRegistry(homeDir)
+	projects, err := r.ListProjects()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("reading project registry: %w", err)
 	}
-
-	var projects []*Project
-	for _, p := range registry.Projects {
-		// The typed schema expresses the legacy +yolo flag as
-		// requireNoMistakes=false; map it back so CLI list/mode surface it.
-		yolo := p.Config.RequireNoMistakes != nil && !*p.Config.RequireNoMistakes
-		projects = append(projects, &Project{
+	var result []*Project
+	for _, p := range projects {
+		result = append(result, &Project{
 			Name:        p.Name,
 			Mode:        p.Mode,
-			Yolo:        yolo,
+			Yolo:        p.Yolo,
 			Description: p.Path,
 			Added:       today(),
 		})
 	}
-	return projects, nil
+	return result, nil
 }
 
 // Find looks up a project by name in the registry.
@@ -170,35 +149,34 @@ func Find(homeDir, name string) (*Project, error) {
 	return nil, fmt.Errorf("project %q not found in registry", name)
 }
 
-// Rm removes a project from the registry (but does not delete cloned repos).
+// Rm removes a project from the canonical Fleet Registry (but does not delete
+// cloned repos). A project that is still owned by a Captain cannot be retired.
 func Rm(homeDir, name string) error {
-	if err := checkLegacyConfig(homeDir); err != nil {
+	r, err := openRegistry(homeDir)
+	if err != nil {
 		return err
 	}
-
-	registry, err := config.LoadProjectRegistry(homeDir)
+	projectID, err := domain.NewProjectID(name)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove project %q: %w", name, err)
+	}
+	if _, err := r.GetProject(projectID); err != nil {
+		if errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("project %q not found in registry", name)
 		}
 		return fmt.Errorf("reading project registry: %w", err)
 	}
-
-	found := false
-	var updated []config.ProjectRecord
-	for _, p := range registry.Projects {
-		if p.Name == name {
-			found = true
-			continue
-		}
-		updated = append(updated, p)
+	rev, err := r.ProjectRevision()
+	if err != nil {
+		return fmt.Errorf("reading project registry: %w", err)
 	}
-	if !found {
-		return fmt.Errorf("project %q not found in registry", name)
+	ret := RetireProjectRequest{
+		HomeID:       r.HomeID(),
+		ProjectID:    projectID,
+		Precondition: preconditionOf(rev),
+		Reason:       "remove",
 	}
-
-	registry.Projects = updated
-	if err := config.StoreProjectRegistry(homeDir, registry); err != nil {
+	if _, err := r.RetireProject(opFor(ret), ret); err != nil {
 		return fmt.Errorf("writing project registry: %w", err)
 	}
 	fmt.Printf("Removed project %q from registry\n", name)
