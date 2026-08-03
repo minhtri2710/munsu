@@ -76,6 +76,28 @@ Full Go build/vet/test, current contract, crash/replay/fencing suites, architect
 performance budget, and a clean diff/repo scan confirming deleted identifiers, versions,
 paths, commands, fixtures, comments, skills, and documents did not survive.
 
+## Peer context compaction rule (Supervisor, 2026-08-03)
+
+- When a Peer's observed context/token usage exceeds 200,000 tokens, require that Peer to
+  compact its context before continuing substantial work.
+- Use provider-supported compaction/session summarization. Preserve in the compacted
+  context: assigned outcome and ownership boundary, Lead agent ID (`5331588`), exact
+  branch/workspace/head, decisions and rulings, files changed or reviewed, unresolved
+  findings, verification already run, current next action, and the mandatory final
+  direct-report protocol.
+- Do not compact solely from an unsupported guess. Apply when Paseo/provider metadata
+  reports usage above the threshold or the Peer explicitly reports it.
+- Compaction must not reset ownership, create a replacement implementation path, discard
+  unresolved review findings, or silently lose the final-report requirement.
+- After compaction, the Peer confirms continuity to the Lead before resuming edits/review.
+  If compaction is unavailable or fails, the Peer reports BLOCKED with observed token usage
+  and provider limitation; the Lead decides whether to relaunch a replacement Peer with a
+  bounded context pack.
+- Do not poll running agents merely to measure tokens; apply using normal notifications,
+  reports, or already-available lifecycle metadata.
+- Applies to all Engineer, Reviewer, Architect, Shadow, Advisor, and Council Peers under
+  this Lead.
+
 ## Known pre-existing issue (tracked, outside #403)
 
 `internal/cli` `TestAgentSkillMirrorsMatchCanonical` fails on the base commit `d217664f`
