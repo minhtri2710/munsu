@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // preconditionFields returns the canonical precondition fields for a request
-// digest. The registry is a single aggregate, so the precondition carries the
-// registry generation and the committed revision.
+// digest.
 func preconditionFields(p domain.Precondition) struct {
 	Generation uint64 `json:"generation"`
 	Revision   uint64 `json:"revision"`
@@ -61,28 +61,63 @@ func (r *Registry) RegisterProject(op domain.Operation, req RegisterProjectReque
 	if err := requireNonEmpty("project path", req.Path); err != nil {
 		return Outcome{}, err
 	}
-	return r.mutate(op, req, req.HomeID, req.ProjectID, req.Precondition, func(doc *registryDoc) (Outcome, bool, error) {
-		for i := range doc.Projects {
-			if doc.Projects[i].ID != req.ProjectID.Value() {
-				continue
-			}
-			existing := doc.Projects[i]
-			if existing.Name == req.Name && existing.Path == req.Path && existing.Mode == req.Mode && existing.Yolo == req.Yolo {
-				return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, false, nil
-			}
-			return Outcome{}, false, conflictError(ErrConflict, "project %s already exists with a different definition", req.ProjectID.Value())
+	if err := r.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := req.Precondition.Validate(); err != nil {
+		return Outcome{}, err
+	}
+	if req.Precondition.Generation != registryGeneration {
+		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
+	}
+	lk, err := r.h.Lock(projectRegistryScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer lk.Release()
+
+	if rec, ok, err := r.checkedReceipt(op); err != nil {
+		return Outcome{}, err
+	} else if ok {
+		return rec.outcome(), nil
+	}
+
+	doc, err := r.readProjectRegistry()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := verifyPrecondition(req.ProjectID, req.Precondition, doc.HomeRevision); err != nil {
+		return Outcome{}, err
+	}
+	for i := range doc.Projects {
+		if doc.Projects[i].ID != req.ProjectID.Value() {
+			continue
 		}
-		doc.Projects = append(doc.Projects, projectRecord{
-			SchemaVersion: FleetRegistrySchema,
-			ID:            req.ProjectID.Value(),
-			Name:          req.Name,
-			Path:          req.Path,
-			Mode:          req.Mode,
-			Yolo:          req.Yolo,
-			RegisteredAt:  r.now().Unix(),
-		})
-		return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, true, nil
+		if doc.Projects[i].Name == req.Name && doc.Projects[i].Path == req.Path && doc.Projects[i].Mode == req.Mode && doc.Projects[i].Yolo == req.Yolo {
+			return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, nil
+		}
+		return Outcome{}, conflictError(ErrConflict, "project %s already exists with a different definition", req.ProjectID.Value())
+	}
+	next := doc
+	next.HomeRevision++
+	next.Projects = append(next.Projects, projectRecord{
+		SchemaVersion: FleetRegistrySchema,
+		ID:            req.ProjectID.Value(),
+		Name:          req.Name,
+		Path:          req.Path,
+		Mode:          req.Mode,
+		Yolo:          req.Yolo,
+		RegisteredAt:  r.now().Unix(),
 	})
+	rec := receiptFor(op, Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID})
+	items, err := projectRegistryItems(rec, next)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if _, err := r.h.Commit(lk, op.ID.Value(), doc.HomeRevision, items); err != nil {
+		return Outcome{}, commitError(req.ProjectID, req.Precondition, err)
+	}
+	return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, nil
 }
 
 // RetireProjectRequest retires one Project from the Fleet registry.
@@ -109,25 +144,72 @@ func (r RetireProjectRequest) DigestBytes() ([]byte, error) {
 // Project that is still owned by a Captain cannot be retired (fail closed);
 // the Captain must be unbound or retired first.
 func (r *Registry) RetireProject(op domain.Operation, req RetireProjectRequest) (Outcome, error) {
-	return r.mutate(op, req, req.HomeID, req.ProjectID, req.Precondition, func(doc *registryDoc) (Outcome, bool, error) {
-		idx := -1
-		for i := range doc.Projects {
-			if doc.Projects[i].ID == req.ProjectID.Value() {
-				idx = i
-				break
-			}
+	if err := r.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := req.Precondition.Validate(); err != nil {
+		return Outcome{}, err
+	}
+	if req.Precondition.Generation != registryGeneration {
+		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
+	}
+	lk, err := r.h.Lock(projectRegistryScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer lk.Release()
+
+	if rec, ok, err := r.checkedReceipt(op); err != nil {
+		return Outcome{}, err
+	} else if ok {
+		return rec.outcome(), nil
+	}
+
+	doc, err := r.readProjectRegistry()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := verifyPrecondition(req.ProjectID, req.Precondition, doc.HomeRevision); err != nil {
+		return Outcome{}, err
+	}
+	idx := -1
+	for i := range doc.Projects {
+		if doc.Projects[i].ID == req.ProjectID.Value() {
+			idx = i
+			break
 		}
-		if idx < 0 {
-			return Outcome{}, false, conflictError(ErrNotFound, "project %s not found", req.ProjectID.Value())
+	}
+	if idx < 0 {
+		return Outcome{}, conflictError(ErrNotFound, "project %s not found", req.ProjectID.Value())
+	}
+	// Hold the binding lock to prevent a concurrent Bind from claiming the
+	// project between the ownership check and the retirement.
+	blk, err := r.h.Lock(bindingScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer blk.Release()
+	bind, err := r.readBindingDoc()
+	if err != nil {
+		return Outcome{}, err
+	}
+	for _, b := range bind.Bindings {
+		if b.ProjectID == req.ProjectID.Value() {
+			return Outcome{}, conflictError(ErrConflict, "project %s is still owned by captain %s", req.ProjectID.Value(), b.CaptainID)
 		}
-		for _, c := range doc.Captains {
-			if c.ProjectID == req.ProjectID.Value() {
-				return Outcome{}, false, conflictError(ErrConflict, "project %s is still owned by captain %s", req.ProjectID.Value(), c.ID)
-			}
-		}
-		doc.Projects = append(doc.Projects[:idx], doc.Projects[idx+1:]...)
-		return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, true, nil
-	})
+	}
+	next := doc
+	next.HomeRevision++
+	next.Projects = append(next.Projects[:idx], next.Projects[idx+1:]...)
+	rec := receiptFor(op, Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID})
+	items, err := projectRegistryItems(rec, next)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if _, err := r.h.Commit(lk, op.ID.Value(), doc.HomeRevision, items); err != nil {
+		return Outcome{}, commitError(req.ProjectID, req.Precondition, err)
+	}
+	return Outcome{HomeID: req.HomeID, ProjectID: req.ProjectID}, nil
 }
 
 // RegisterCaptainRequest registers one Captain in the Fleet registry.
@@ -161,26 +243,61 @@ func (r *Registry) RegisterCaptain(op domain.Operation, req RegisterCaptainReque
 	if err := requireNonEmpty("captain home", req.Home); err != nil {
 		return Outcome{}, err
 	}
-	return r.mutate(op, req, req.HomeID, req.CaptainID, req.Precondition, func(doc *registryDoc) (Outcome, bool, error) {
-		for i := range doc.Captains {
-			if doc.Captains[i].ID != req.CaptainID.Value() {
-				continue
-			}
-			existing := doc.Captains[i]
-			if existing.Home == req.Home && existing.Scope == req.Scope {
-				return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, false, nil
-			}
-			return Outcome{}, false, conflictError(ErrConflict, "captain %s already exists with a different definition", req.CaptainID.Value())
+	if err := r.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := req.Precondition.Validate(); err != nil {
+		return Outcome{}, err
+	}
+	if req.Precondition.Generation != registryGeneration {
+		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
+	}
+	lk, err := r.h.Lock(captainRegistryScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer lk.Release()
+
+	if rec, ok, err := r.checkedReceipt(op); err != nil {
+		return Outcome{}, err
+	} else if ok {
+		return rec.outcome(), nil
+	}
+
+	doc, err := r.readCaptainRegistry()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := verifyPrecondition(req.CaptainID, req.Precondition, doc.HomeRevision); err != nil {
+		return Outcome{}, err
+	}
+	for i := range doc.Captains {
+		if doc.Captains[i].ID != req.CaptainID.Value() {
+			continue
 		}
-		doc.Captains = append(doc.Captains, captainRecord{
-			SchemaVersion: FleetRegistrySchema,
-			ID:            req.CaptainID.Value(),
-			Home:          req.Home,
-			Scope:         req.Scope,
-			RegisteredAt:  r.now().Unix(),
-		})
-		return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, true, nil
+		if doc.Captains[i].Home == req.Home && doc.Captains[i].Scope == req.Scope {
+			return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, nil
+		}
+		return Outcome{}, conflictError(ErrConflict, "captain %s already exists with a different definition", req.CaptainID.Value())
+	}
+	next := doc
+	next.HomeRevision++
+	next.Captains = append(next.Captains, captainRecord{
+		SchemaVersion: FleetRegistrySchema,
+		ID:            req.CaptainID.Value(),
+		Home:          req.Home,
+		Scope:         req.Scope,
+		RegisteredAt:  r.now().Unix(),
 	})
+	rec := receiptFor(op, Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID})
+	items, err := captainRegistryItems(rec, next)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if _, err := r.h.Commit(lk, op.ID.Value(), doc.HomeRevision, items); err != nil {
+		return Outcome{}, commitError(req.CaptainID, req.Precondition, err)
+	}
+	return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, nil
 }
 
 // RetireCaptainRequest retires one Captain from the Fleet registry.
@@ -204,22 +321,90 @@ func (r RetireCaptainRequest) DigestBytes() ([]byte, error) {
 }
 
 // RetireCaptain is the canonical operation that retires one Captain. Retiring
-// a Captain clears its Project binding, leaving the Project unowned.
+// a Captain clears its Project binding (leaving the Project unowned) and then
+// removes the Captain from the registry. The binding is cleared before the
+// Captain is removed so an interrupted retirement leaves a valid unbound
+// Captain rather than a dangling binding.
 func (r *Registry) RetireCaptain(op domain.Operation, req RetireCaptainRequest) (Outcome, error) {
-	return r.mutate(op, req, req.HomeID, req.CaptainID, req.Precondition, func(doc *registryDoc) (Outcome, bool, error) {
-		idx := -1
-		for i := range doc.Captains {
-			if doc.Captains[i].ID == req.CaptainID.Value() {
-				idx = i
-				break
-			}
+	if err := r.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := req.Precondition.Validate(); err != nil {
+		return Outcome{}, err
+	}
+	if req.Precondition.Generation != registryGeneration {
+		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
+	}
+	lk, err := r.h.Lock(captainRegistryScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer lk.Release()
+
+	if rec, ok, err := r.checkedReceipt(op); err != nil {
+		return Outcome{}, err
+	} else if ok {
+		return rec.outcome(), nil
+	}
+
+	doc, err := r.readCaptainRegistry()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := verifyPrecondition(req.CaptainID, req.Precondition, doc.HomeRevision); err != nil {
+		return Outcome{}, err
+	}
+	idx := -1
+	for i := range doc.Captains {
+		if doc.Captains[i].ID == req.CaptainID.Value() {
+			idx = i
+			break
 		}
-		if idx < 0 {
-			return Outcome{}, false, conflictError(ErrNotFound, "captain %s not found", req.CaptainID.Value())
+	}
+	if idx < 0 {
+		return Outcome{}, conflictError(ErrNotFound, "captain %s not found", req.CaptainID.Value())
+	}
+
+	blk, err := r.h.Lock(bindingScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer blk.Release()
+
+	// Phase 1: clear the Captain's binding (Binding aggregate).
+	bind, err := r.readBindingDoc()
+	if err != nil {
+		return Outcome{}, err
+	}
+	cleared, keep := clearBinding(bind, req.CaptainID.Value())
+	if cleared {
+		nextBind := bind
+		nextBind.HomeRevision++
+		nextBind.Bindings = keep
+		bindItem, err := bindingDocumentItem(nextBind)
+		if err != nil {
+			return Outcome{}, err
 		}
-		doc.Captains = append(doc.Captains[:idx], doc.Captains[idx+1:]...)
-		return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, true, nil
-	})
+		// Write only the binding change so a crash leaves the Captain unbound;
+		// the receipt is written with the final Captain removal.
+		if _, err := r.h.Commit(blk, op.ID.Value()+"-bind", bind.HomeRevision, []home.ChangeItem{bindItem}); err != nil {
+			return Outcome{}, commitError(req.CaptainID, req.Precondition, err)
+		}
+	}
+
+	// Phase 2: remove the Captain and write the receipt.
+	next := doc
+	next.HomeRevision++
+	next.Captains = append(next.Captains[:idx], next.Captains[idx+1:]...)
+	rec := receiptFor(op, Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID})
+	items, err := captainRegistryItems(rec, next)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if _, err := r.h.Commit(lk, op.ID.Value(), doc.HomeRevision, items); err != nil {
+		return Outcome{}, commitError(req.CaptainID, req.Precondition, err)
+	}
+	return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, nil
 }
 
 // BindCaptainRequest binds one Captain to one ownable Project.
@@ -245,43 +430,93 @@ func (r BindCaptainRequest) DigestBytes() ([]byte, error) {
 }
 
 // BindCaptain is the canonical operation that binds one Captain to one
-// Project under the registry invariants: one Project per Captain (a Captain
-// holds a single Project slot) and at most one owning Captain per Project.
-// Binding a Captain that is already bound to this Project is a successful
-// no-op; binding to a Project owned by another Captain conflicts.
+// Project under the registry invariants: one Project per Captain and at most
+// one owning Captain per Project. Binding a Captain that is already bound to
+// this Project is a successful no-op; binding to a Project owned by another
+// Captain conflicts. Rebinding a Captain from one Project to another is atomic
+// within the Binding aggregate.
 func (r *Registry) BindCaptain(op domain.Operation, req BindCaptainRequest) (Outcome, error) {
-	return r.mutate(op, req, req.HomeID, req.CaptainID, req.Precondition, func(doc *registryDoc) (Outcome, bool, error) {
-		ci := -1
-		for i := range doc.Captains {
-			if doc.Captains[i].ID == req.CaptainID.Value() {
-				ci = i
-				break
-			}
+	if err := r.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := req.Precondition.Validate(); err != nil {
+		return Outcome{}, err
+	}
+	if req.Precondition.Generation != registryGeneration {
+		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
+	}
+	// Serialize on the binding aggregate; the project and captain registry
+	// locks are also taken so concurrent Register/Retire of the same entities
+	// is excluded. Lock order is deterministic (project, captain, binding) to
+	// avoid deadlock.
+	lk, err := r.h.Lock(projectRegistryScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer lk.Release()
+	clk, err := r.h.Lock(captainRegistryScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer clk.Release()
+	blk, err := r.h.Lock(bindingScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer blk.Release()
+
+	if rec, ok, err := r.checkedReceipt(op); err != nil {
+		return Outcome{}, err
+	} else if ok {
+		return rec.outcome(), nil
+	}
+
+	pdoc, err := r.readProjectRegistry()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if !containsProject(pdoc, req.ProjectID.Value()) {
+		return Outcome{}, conflictError(ErrNotFound, "project %s not found", req.ProjectID.Value())
+	}
+	cdoc, err := r.readCaptainRegistry()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if !containsCaptain(cdoc, req.CaptainID.Value()) {
+		return Outcome{}, conflictError(ErrNotFound, "captain %s not found", req.CaptainID.Value())
+	}
+
+	bind, err := r.readBindingDoc()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := verifyPrecondition(req.CaptainID, req.Precondition, bind.HomeRevision); err != nil {
+		return Outcome{}, err
+	}
+	// At most one owning Captain per Project.
+	for _, b := range bind.Bindings {
+		if b.ProjectID == req.ProjectID.Value() && b.CaptainID != req.CaptainID.Value() {
+			return Outcome{}, conflictError(ErrConflict, "project %s is already owned by captain %s", req.ProjectID.Value(), b.CaptainID)
 		}
-		if ci < 0 {
-			return Outcome{}, false, conflictError(ErrNotFound, "captain %s not found", req.CaptainID.Value())
+	}
+	// Already bound to this Project -> no-op.
+	for _, b := range bind.Bindings {
+		if b.ProjectID == req.ProjectID.Value() && b.CaptainID == req.CaptainID.Value() {
+			return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID, ProjectID: req.ProjectID}, nil
 		}
-		pi := -1
-		for i := range doc.Projects {
-			if doc.Projects[i].ID == req.ProjectID.Value() {
-				pi = i
-				break
-			}
-		}
-		if pi < 0 {
-			return Outcome{}, false, conflictError(ErrNotFound, "project %s not found", req.ProjectID.Value())
-		}
-		if doc.Captains[ci].ProjectID == req.ProjectID.Value() {
-			return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID, ProjectID: req.ProjectID}, false, nil
-		}
-		for _, c := range doc.Captains {
-			if c.ID != req.CaptainID.Value() && c.ProjectID == req.ProjectID.Value() {
-				return Outcome{}, false, conflictError(ErrConflict, "project %s is already owned by captain %s", req.ProjectID.Value(), c.ID)
-			}
-		}
-		doc.Captains[ci].ProjectID = req.ProjectID.Value()
-		return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID, ProjectID: req.ProjectID}, true, nil
-	})
+	}
+	next := bind
+	next.HomeRevision++
+	next.Bindings = upsertBinding(bind.Bindings, req.ProjectID.Value(), req.CaptainID.Value())
+	rec := receiptFor(op, Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID, ProjectID: req.ProjectID})
+	items, err := bindingItems(rec, next)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if _, err := r.h.Commit(blk, op.ID.Value(), bind.HomeRevision, items); err != nil {
+		return Outcome{}, commitError(req.CaptainID, req.Precondition, err)
+	}
+	return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID, ProjectID: req.ProjectID}, nil
 }
 
 // UnbindCaptainRequest unbinds one Captain from its Project.
@@ -308,21 +543,161 @@ func (r UnbindCaptainRequest) DigestBytes() ([]byte, error) {
 // Project, leaving the Project unowned. Unbinding an already-unbound Captain
 // is a successful no-op.
 func (r *Registry) UnbindCaptain(op domain.Operation, req UnbindCaptainRequest) (Outcome, error) {
-	return r.mutate(op, req, req.HomeID, req.CaptainID, req.Precondition, func(doc *registryDoc) (Outcome, bool, error) {
-		ci := -1
-		for i := range doc.Captains {
-			if doc.Captains[i].ID == req.CaptainID.Value() {
-				ci = i
-				break
-			}
+	if err := r.prepare(op, req, req.HomeID); err != nil {
+		return Outcome{}, err
+	}
+	if err := req.Precondition.Validate(); err != nil {
+		return Outcome{}, err
+	}
+	if req.Precondition.Generation != registryGeneration {
+		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
+	}
+	clk, err := r.h.Lock(captainRegistryScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer clk.Release()
+	blk, err := r.h.Lock(bindingScope)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer blk.Release()
+
+	if rec, ok, err := r.checkedReceipt(op); err != nil {
+		return Outcome{}, err
+	} else if ok {
+		return rec.outcome(), nil
+	}
+
+	cdoc, err := r.readCaptainRegistry()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if !containsCaptain(cdoc, req.CaptainID.Value()) {
+		return Outcome{}, conflictError(ErrNotFound, "captain %s not found", req.CaptainID.Value())
+	}
+	bind, err := r.readBindingDoc()
+	if err != nil {
+		return Outcome{}, err
+	}
+	if err := verifyPrecondition(req.CaptainID, req.Precondition, bind.HomeRevision); err != nil {
+		return Outcome{}, err
+	}
+	cleared, keep := clearBinding(bind, req.CaptainID.Value())
+	if !cleared {
+		return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, nil
+	}
+	next := bind
+	next.HomeRevision++
+	next.Bindings = keep
+	rec := receiptFor(op, Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID})
+	items, err := bindingItems(rec, next)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if _, err := r.h.Commit(blk, op.ID.Value(), bind.HomeRevision, items); err != nil {
+		return Outcome{}, commitError(req.CaptainID, req.Precondition, err)
+	}
+	return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, nil
+}
+
+// --- Change items ----------------------------------------------------------
+
+func projectRegistryItems(rec receipt, doc projectRegistryDoc) ([]home.ChangeItem, error) {
+	docData, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	recData, err := json.Marshal(rec)
+	if err != nil {
+		return nil, err
+	}
+	return []home.ChangeItem{
+		{Root: registryRoot, Key: projectsKey, Data: docData},
+		{Root: registryRoot, Key: receiptKey(rec.OperationID), Data: recData},
+	}, nil
+}
+
+func captainRegistryItems(rec receipt, doc captainRegistryDoc) ([]home.ChangeItem, error) {
+	docData, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	recData, err := json.Marshal(rec)
+	if err != nil {
+		return nil, err
+	}
+	return []home.ChangeItem{
+		{Root: registryRoot, Key: captainsKey, Data: docData},
+		{Root: registryRoot, Key: receiptKey(rec.OperationID), Data: recData},
+	}, nil
+}
+
+func bindingItems(rec receipt, doc bindingDoc) ([]home.ChangeItem, error) {
+	docData, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	recData, err := json.Marshal(rec)
+	if err != nil {
+		return nil, err
+	}
+	return []home.ChangeItem{
+		{Root: registryRoot, Key: bindingsKey, Data: docData},
+		{Root: registryRoot, Key: receiptKey(rec.OperationID), Data: recData},
+	}, nil
+}
+
+func bindingDocumentItem(doc bindingDoc) (home.ChangeItem, error) {
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return home.ChangeItem{}, err
+	}
+	return home.ChangeItem{Root: registryRoot, Key: bindingsKey, Data: data}, nil
+}
+
+func containsProject(doc projectRegistryDoc, id string) bool {
+	for _, p := range doc.Projects {
+		if p.ID == id {
+			return true
 		}
-		if ci < 0 {
-			return Outcome{}, false, conflictError(ErrNotFound, "captain %s not found", req.CaptainID.Value())
+	}
+	return false
+}
+
+func containsCaptain(doc captainRegistryDoc, id string) bool {
+	for _, c := range doc.Captains {
+		if c.ID == id {
+			return true
 		}
-		if doc.Captains[ci].ProjectID == "" {
-			return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, false, nil
+	}
+	return false
+}
+
+// clearBinding removes the binding for captainID. It returns whether a
+// binding was removed and the resulting binding list.
+func clearBinding(bind bindingDoc, captainID string) (bool, []bindingRecord) {
+	keep := make([]bindingRecord, 0, len(bind.Bindings))
+	cleared := false
+	for _, b := range bind.Bindings {
+		if b.CaptainID == captainID {
+			cleared = true
+			continue
 		}
-		doc.Captains[ci].ProjectID = ""
-		return Outcome{HomeID: req.HomeID, CaptainID: req.CaptainID}, true, nil
-	})
+		keep = append(keep, b)
+	}
+	return cleared, keep
+}
+
+// upsertBinding sets or replaces the binding for projectID to captainID,
+// releasing any prior Project owned by captainID.
+func upsertBinding(bindings []bindingRecord, projectID, captainID string) []bindingRecord {
+	out := make([]bindingRecord, 0, len(bindings)+1)
+	for _, b := range bindings {
+		if b.CaptainID == captainID || b.ProjectID == projectID {
+			continue
+		}
+		out = append(out, b)
+	}
+	return append(out, bindingRecord{ProjectID: projectID, CaptainID: captainID})
 }

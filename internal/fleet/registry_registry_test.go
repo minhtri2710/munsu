@@ -60,7 +60,7 @@ func mustCaptainID(t *testing.T, value string) domain.CaptainID {
 
 func mustRegisterProject(t *testing.T, r *Registry, name string) {
 	t.Helper()
-	rev, err := r.Revision()
+	rev, err := r.ProjectRevision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func mustRegisterProject(t *testing.T, r *Registry, name string) {
 
 func mustRegisterCaptain(t *testing.T, r *Registry, id string) {
 	t.Helper()
-	rev, err := r.Revision()
+	rev, err := r.CaptainRevision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func mustRegisterCaptain(t *testing.T, r *Registry, id string) {
 
 func mustBind(t *testing.T, r *Registry, captainID, projectID string) {
 	t.Helper()
-	rev, err := r.Revision()
+	rev, err := r.BindingRevision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestRegistryRegisterQuery(t *testing.T) {
 	}
 }
 
-func TestRegistryAffinityInvariants(t *testing.T) {
+func TestRegistryBindingInvariants(t *testing.T) {
 	r, _, _ := newTestRegistry(t)
 	mustRegisterProject(t, r, "alpha")
 	mustRegisterProject(t, r, "beta")
@@ -183,7 +183,7 @@ func TestRegistryAffinityInvariants(t *testing.T) {
 	}
 
 	// A second captain cannot own the same project (at most one owning captain).
-	rev, err := r.Revision()
+	rev, err := r.BindingRevision()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestRegistryAffinityInvariants(t *testing.T) {
 	}
 
 	// Rebinding c1 from alpha to gamma leaves alpha unowned and c1 on gamma.
-	rev, _ = r.Revision()
+	rev, _ = r.BindingRevision()
 	rebind := BindCaptainRequest{
 		HomeID:       r.HomeID(),
 		CaptainID:    mustCaptainID(t, "c1"),
@@ -232,7 +232,7 @@ func TestRegistryBindUnknownFailsClosed(t *testing.T) {
 	mustRegisterCaptain(t, r, "c1")
 
 	// Unknown captain.
-	rev, _ := r.Revision()
+	rev, _ := r.BindingRevision()
 	req := BindCaptainRequest{
 		HomeID:       r.HomeID(),
 		CaptainID:    mustCaptainID(t, "nope"),
@@ -245,7 +245,7 @@ func TestRegistryBindUnknownFailsClosed(t *testing.T) {
 	}
 
 	// Unknown project.
-	rev, _ = r.Revision()
+	rev, _ = r.BindingRevision()
 	req = BindCaptainRequest{
 		HomeID:       r.HomeID(),
 		CaptainID:    mustCaptainID(t, "c1"),
@@ -265,7 +265,7 @@ func TestRegistryRetire(t *testing.T) {
 	mustBind(t, r, "c1", "alpha")
 
 	// A bound project cannot be retired.
-	rev, _ := r.Revision()
+	rev, _ := r.ProjectRevision()
 	reject := RetireProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "alpha"),
@@ -278,7 +278,7 @@ func TestRegistryRetire(t *testing.T) {
 
 	// Retiring the captain clears the binding; the project becomes unowned and
 	// can then be retired.
-	rev, _ = r.Revision()
+	rev, _ = r.CaptainRevision()
 	capRetire := RetireCaptainRequest{
 		HomeID:       r.HomeID(),
 		CaptainID:    mustCaptainID(t, "c1"),
@@ -296,7 +296,7 @@ func TestRegistryRetire(t *testing.T) {
 		t.Fatalf("alpha should be unowned after captain retire, got %s", owner.Value())
 	}
 
-	rev, _ = r.Revision()
+	rev, _ = r.ProjectRevision()
 	projRetire := RetireProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "alpha"),
@@ -311,7 +311,7 @@ func TestRegistryRetire(t *testing.T) {
 	}
 
 	// Retiring a missing entity fails closed.
-	rev, _ = r.Revision()
+	rev, _ = r.ProjectRevision()
 	missing := RetireProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "ghost"),
@@ -326,14 +326,13 @@ func TestRegistryRetire(t *testing.T) {
 func TestRegistryOperationReplay(t *testing.T) {
 	r, _, _ := newTestRegistry(t)
 
-	rev, _ := r.Revision()
 	req := RegisterProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "alpha"),
 		Name:         "alpha",
 		Path:         "/proj/alpha",
 		Mode:         "no-mistakes",
-		Precondition: preconditionOf(rev),
+		Precondition: preconditionOf(0),
 		Reason:       "register",
 	}
 	op := mustOp(t, "op-register-replay", req)
@@ -359,13 +358,12 @@ func TestRegistryOperationReplay(t *testing.T) {
 func TestRegistryOperationIDReusedWithDifferentIntent(t *testing.T) {
 	r, _, _ := newTestRegistry(t)
 
-	rev, _ := r.Revision()
 	createReq := RegisterProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "alpha"),
 		Name:         "alpha",
 		Path:         "/proj/alpha",
-		Precondition: preconditionOf(rev),
+		Precondition: preconditionOf(0),
 		Reason:       "register",
 	}
 	op := mustOp(t, "op-shared", createReq)
@@ -379,7 +377,7 @@ func TestRegistryOperationIDReusedWithDifferentIntent(t *testing.T) {
 		ProjectID:    mustProjectID(t, "beta"),
 		Name:         "beta",
 		Path:         "/proj/beta",
-		Precondition: preconditionOf(rev),
+		Precondition: preconditionOf(0),
 		Reason:       "register",
 	}
 	reused, err := domain.NewOperation(op.ID, other)
@@ -395,7 +393,7 @@ func TestRegistryStalePreconditionConflict(t *testing.T) {
 	r, _, _ := newTestRegistry(t)
 	mustRegisterProject(t, r, "alpha")
 
-	// Expect revision 9, but the current registry revision is 1.
+	// Expect revision 9, but the current project revision is 1.
 	req := RegisterProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "beta"),
@@ -443,7 +441,7 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 	mustBind(t, r, "c1", "alpha")
 
 	// Re-registering an identical project is a no-op (new operation ID).
-	rev, _ := r.Revision()
+	rev, _ := r.ProjectRevision()
 	req := RegisterProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "alpha"),
@@ -458,7 +456,7 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 	}
 
 	// A different definition under the same ID conflicts.
-	rev, _ = r.Revision()
+	rev, _ = r.ProjectRevision()
 	diff := req
 	diff.Path = "/proj/other"
 	diff.Precondition = preconditionOf(rev)
@@ -467,7 +465,7 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 	}
 
 	// Re-binding an already-bound relationship is a no-op.
-	rev, _ = r.Revision()
+	rev, _ = r.BindingRevision()
 	rebind := BindCaptainRequest{
 		HomeID:       r.HomeID(),
 		CaptainID:    mustCaptainID(t, "c1"),
@@ -480,7 +478,7 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 	}
 
 	// Unbinding an already-unbound captain is a no-op.
-	rev, _ = r.Revision()
+	rev, _ = r.BindingRevision()
 	unbind := UnbindCaptainRequest{
 		HomeID:       r.HomeID(),
 		CaptainID:    mustCaptainID(t, "c1"),
@@ -490,7 +488,7 @@ func TestRegistryNaturalIdempotency(t *testing.T) {
 	if _, err := r.UnbindCaptain(mustOp(t, "op-unbind-1", unbind), unbind); err != nil {
 		t.Fatalf("UnbindCaptain: %v", err)
 	}
-	rev, _ = r.Revision()
+	rev, _ = r.BindingRevision()
 	unbind.Precondition = preconditionOf(rev)
 	if _, err := r.UnbindCaptain(mustOp(t, "op-unbind-2", unbind), unbind); err != nil {
 		t.Fatalf("UnbindCaptain already unbound: %v", err)
@@ -531,13 +529,12 @@ func TestRegistryRereadAfterHomeReopen(t *testing.T) {
 
 func TestRegistryReceiptSurvivesReopen(t *testing.T) {
 	r, _, root := newTestRegistry(t)
-	rev, _ := r.Revision()
 	req := RegisterProjectRequest{
 		HomeID:       r.HomeID(),
 		ProjectID:    mustProjectID(t, "alpha"),
 		Name:         "alpha",
 		Path:         "/proj/alpha",
-		Precondition: preconditionOf(rev),
+		Precondition: preconditionOf(0),
 		Reason:       "register",
 	}
 	op := mustOp(t, "op-register-persist", req)
@@ -563,16 +560,15 @@ func TestRegistryReceiptSurvivesReopen(t *testing.T) {
 }
 
 func TestRegistryDocumentsCarryCurrentV1Identity(t *testing.T) {
-	r, h, _ := newTestRegistry(t)
+	r, _, _ := newTestRegistry(t)
 	mustRegisterProject(t, r, "alpha")
 	mustRegisterCaptain(t, r, "c1")
 
-	// The registry aggregate on disk carries the exact current v1 identity.
-	data, ok, err := r.readDoc(registryDocumentKey())
+	data, ok, err := r.readDoc(projectsKey)
 	if err != nil || !ok {
-		t.Fatalf("read registry doc: ok=%v err=%v", ok, err)
+		t.Fatalf("read project doc: ok=%v err=%v", ok, err)
 	}
-	var doc registryDoc
+	var doc projectRegistryDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
@@ -582,8 +578,17 @@ func TestRegistryDocumentsCarryCurrentV1Identity(t *testing.T) {
 	if len(doc.Projects) != 1 || doc.Projects[0].SchemaVersion != FleetRegistrySchema {
 		t.Fatalf("project schema = %+v", doc.Projects)
 	}
-	if len(doc.Captains) != 1 || doc.Captains[0].SchemaVersion != FleetRegistrySchema {
-		t.Fatalf("captain schema = %+v", doc.Captains)
+
+	captainData, ok, err := r.readDoc(captainsKey)
+	if err != nil || !ok {
+		t.Fatalf("read captain doc: ok=%v err=%v", ok, err)
+	}
+	var cdoc captainRegistryDoc
+	if err := json.Unmarshal(captainData, &cdoc); err != nil {
+		t.Fatal(err)
+	}
+	if len(cdoc.Captains) != 1 || cdoc.Captains[0].SchemaVersion != FleetRegistrySchema {
+		t.Fatalf("captain schema = %+v", cdoc.Captains)
 	}
 
 	// A current-v1 reread through the canonical surface succeeds.
@@ -596,15 +601,13 @@ func TestRegistryDocumentsCarryCurrentV1Identity(t *testing.T) {
 	if _, err := r.ListProjects(); err != nil {
 		t.Fatal(err)
 	}
-
-	_ = h
 }
 
 func TestRegistryMalformedCurrentStateFailsClosed(t *testing.T) {
 	r, h, _ := newTestRegistry(t)
 	mustRegisterProject(t, r, "alpha")
 
-	path, err := h.Path(home.RootState, registryDocumentKey())
+	path, err := h.Path(home.RootState, projectsKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -622,25 +625,25 @@ func TestRegistryMalformedCurrentStateFailsClosed(t *testing.T) {
 	if _, err := r2.ListProjects(); err == nil {
 		t.Fatalf("ListProjects on malformed state = nil error, want failure")
 	}
-	if _, err := r2.Revision(); err == nil {
-		t.Fatalf("Revision on malformed state = nil error, want failure")
+	if _, err := r2.ProjectRevision(); err == nil {
+		t.Fatalf("ProjectRevision on malformed state = nil error, want failure")
 	}
 }
 
 func TestRegistryRejectsHistoricalV2Input(t *testing.T) {
 	r, h, _ := newTestRegistry(t)
 
-	// Plant a legacy v2-identity registry document directly on disk. The
+	// Plant a legacy v2-identity project document directly on disk. The
 	// canonical surface must fail closed: it never accepts, migrates, or
 	// upgrades the historical v2 identity to the current v1.
-	path, err := h.Path(home.RootState, registryDocumentKey())
+	path, err := h.Path(home.RootState, projectsKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"home_revision":1,"projects":[{"schema_version":"munsu.fleet.registry/v2","id":"legacy","name":"legacy","path":"/x"}],"captains":[]}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"home_revision":1,"projects":[{"schema_version":"munsu.fleet.registry/v2","id":"legacy","name":"legacy","path":"/x"}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 

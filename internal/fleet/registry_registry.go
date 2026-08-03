@@ -5,11 +5,16 @@
 // through typed operations and queries. Config consumes scoped registry facts
 // only; it no longer creates, retires, or rebinds them.
 //
-// The canonical implementation is one deep aggregate under the home state
-// root. Every mutation is an atomic journaled change-set under the smallest
-// scoped fenced lock (the registry aggregate), is idempotent by Operation
-// identity, and is durable in the current v1 state through home's mechanics.
-// There is no Store interface, in-memory fake, projection, or legacy adapter
+// The canonical implementation uses three independent aggregates: the Project
+// registry, the Captain registry, and the Captain-Project Binding. Each has its
+// own scoped fenced lock and revision, so independent Project and Captain
+// operations never share a lock (no fleet-wide serialization). The Binding is
+// one bounded aggregate because enforcing the one-to-one invariants (one
+// Project per Captain, at most one owning Captain per Project) requires atomic
+// serialization of the binding state. Retirement rewrites an aggregate without
+// the retired entry (home.Commit is write-only and the ADR forbids tombstones,
+// so entities are never left as deletion markers). There is no Store
+// interface, in-memory fake, projection, legacy adapter, or fleet-wide lock
 // behind this surface.
 package fleet
 
@@ -31,10 +36,7 @@ import (
 // accepted; anything else fails closed.
 const FleetRegistrySchema = "munsu.fleet.registry/v1"
 
-// registryGeneration is the single generation of the registry aggregate. The
-// registry is one aggregate (projects, captains, and bindings are coupled by
-// the binding invariants), so it has one optimistic generation and one scope
-// revision.
+// registryGeneration is the single generation of every registry aggregate.
 const registryGeneration uint64 = 1
 
 // registryRoot is the logical home root under which the registry lives, and
@@ -43,18 +45,6 @@ const (
 	registryRoot = home.RootState
 	registryDir  = "fleet-registry"
 )
-
-// registryScope is the smallest fenced lock scope for the registry aggregate.
-// Project and Captain mutations share this scope because the binding
-// invariants couple them into one aggregate; there is no global lock.
-const registryScope = "fleet-registry"
-
-// registryDocumentKey is the durable registry aggregate document.
-func registryDocumentKey() string { return registryDir + "/registry.json" }
-
-// registryReceiptKey is the durable operation receipt for one committed
-// registry mutation.
-func registryReceiptKey(opID string) string { return registryDir + "/receipts/" + opID + ".json" }
 
 // Sentinel errors reachable through errors.Is on every typed error returned
 // by the Registry.
@@ -75,6 +65,25 @@ var (
 	ErrInvalidInput = errors.New("fleet: invalid input")
 )
 
+// Registry durable document keys under the home state root.
+const (
+	projectsKey = "fleet-registry/projects.json"
+	captainsKey = "fleet-registry/captains.json"
+	bindingsKey = "fleet-registry/bindings.json"
+	receiptsDir = "fleet-registry/receipts"
+)
+
+func receiptKey(opID string) string { return receiptsDir + "/" + opID + ".json" }
+
+// Independent fenced lock scopes for the three registry aggregates. There is
+// no lock that covers more than one aggregate, so Project and Captain
+// operations are truly concurrent.
+const (
+	projectRegistryScope = "fleet-projects"
+	captainRegistryScope = "fleet-captains"
+	bindingScope         = "fleet-bindings"
+)
+
 // RegisteredProject is a registered project in the Fleet registry.
 type RegisteredProject struct {
 	ID           domain.ProjectID
@@ -85,13 +94,11 @@ type RegisteredProject struct {
 	RegisteredAt int64
 }
 
-// RegisteredCaptain is a registered captain in the Fleet registry. A captain owns
-// at most one Project (ProjectID is zero when unbound).
+// RegisteredCaptain is a registered captain in the Fleet registry.
 type RegisteredCaptain struct {
 	ID           domain.CaptainID
 	Home         string
 	Scope        string
-	ProjectID    domain.ProjectID
 	RegisteredAt int64
 }
 
@@ -143,23 +150,39 @@ type projectRecord struct {
 }
 
 // captainRecord is the durable v1 encoding of one registered Captain. The
-// binding is expressed as the owning Project's ID value (empty when unbound).
+// binding is owned by the binding aggregate, not the captain record.
 type captainRecord struct {
 	SchemaVersion string `json:"schema_version"`
 	ID            string `json:"id"`
 	Home          string `json:"home"`
 	Scope         string `json:"scope,omitempty"`
-	ProjectID     string `json:"project_id,omitempty"`
 	RegisteredAt  int64  `json:"registered_at_unix"`
 }
 
-// registryDoc is the durable registry aggregate. It carries the home scope
-// revision so the next mutation can pass the correct optimistic
-// expectedRevision to home.Commit.
-type registryDoc struct {
+// projectRegistryDoc is the durable Project registry aggregate.
+type projectRegistryDoc struct {
 	HomeRevision uint64          `json:"home_revision"`
 	Projects     []projectRecord `json:"projects"`
+}
+
+// captainRegistryDoc is the durable Captain registry aggregate.
+type captainRegistryDoc struct {
+	HomeRevision uint64          `json:"home_revision"`
 	Captains     []captainRecord `json:"captains"`
+}
+
+// bindingRecord is one durable one-to-one claim: a Project is owned by exactly
+// one Captain (at most one owning Captain per Project), and a Captain owns at
+// most one Project.
+type bindingRecord struct {
+	ProjectID string `json:"project_id"`
+	CaptainID string `json:"captain_id"`
+}
+
+// bindingDoc is the durable Binding aggregate.
+type bindingDoc struct {
+	HomeRevision uint64          `json:"home_revision"`
+	Bindings     []bindingRecord `json:"bindings"`
 }
 
 // receipt pins one committed Operation identity and its outcome so replay
@@ -195,14 +218,6 @@ func receiptFor(op domain.Operation, out Outcome) receipt {
 	}
 }
 
-// clone returns a shallow copy of the registry aggregate for mutation.
-func (d *registryDoc) clone() *registryDoc {
-	cp := *d
-	cp.Projects = append([]projectRecord(nil), d.Projects...)
-	cp.Captains = append([]captainRecord(nil), d.Captains...)
-	return &cp
-}
-
 // --- Reads ---------------------------------------------------------------
 
 // readDoc reads one canonical document under the home state root, reporting
@@ -218,32 +233,68 @@ func (r *Registry) readDoc(key string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// readRegistryDoc reads and validates the current registry aggregate. A fresh
-// registry (no document yet) is reported as an empty aggregate at revision 0.
-// Malformed current state fails closed instead of being served.
-func (r *Registry) readRegistryDoc() (*registryDoc, error) {
-	data, ok, err := r.readDoc(registryDocumentKey())
+// readProjectRegistry reads and validates the Project registry aggregate.
+func (r *Registry) readProjectRegistry() (projectRegistryDoc, error) {
+	data, ok, err := r.readDoc(projectsKey)
 	if err != nil || !ok {
 		if err != nil {
-			return nil, err
+			return projectRegistryDoc{}, err
 		}
-		return &registryDoc{}, nil
+		return projectRegistryDoc{}, nil
 	}
-	var doc registryDoc
+	var doc projectRegistryDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, internalError("decode fleet registry document: %v", err)
+		return projectRegistryDoc{}, internalError("decode project registry: %v", err)
 	}
-	if err := validateRegistryDoc(&doc); err != nil {
-		return nil, internalError("fleet registry has malformed current state: %v", err)
+	if err := validateProjectRegistry(&doc); err != nil {
+		return projectRegistryDoc{}, internalError("project registry has malformed current state: %v", err)
 	}
-	return &doc, nil
+	return doc, nil
+}
+
+// readCaptainRegistry reads and validates the Captain registry aggregate.
+func (r *Registry) readCaptainRegistry() (captainRegistryDoc, error) {
+	data, ok, err := r.readDoc(captainsKey)
+	if err != nil || !ok {
+		if err != nil {
+			return captainRegistryDoc{}, err
+		}
+		return captainRegistryDoc{}, nil
+	}
+	var doc captainRegistryDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return captainRegistryDoc{}, internalError("decode captain registry: %v", err)
+	}
+	if err := validateCaptainRegistry(&doc); err != nil {
+		return captainRegistryDoc{}, internalError("captain registry has malformed current state: %v", err)
+	}
+	return doc, nil
+}
+
+// readBindingDoc reads and validates the Binding aggregate.
+func (r *Registry) readBindingDoc() (bindingDoc, error) {
+	data, ok, err := r.readDoc(bindingsKey)
+	if err != nil || !ok {
+		if err != nil {
+			return bindingDoc{}, err
+		}
+		return bindingDoc{}, nil
+	}
+	var doc bindingDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return bindingDoc{}, internalError("decode binding document: %v", err)
+	}
+	if err := validateBindingDoc(&doc); err != nil {
+		return bindingDoc{}, internalError("binding aggregate has malformed current state: %v", err)
+	}
+	return doc, nil
 }
 
 // checkedReceipt returns the committed receipt for an operation. A matching
 // digest means the operation already committed (replay); a different digest
 // is a non-retryable operation identity conflict.
 func (r *Registry) checkedReceipt(op domain.Operation) (receipt, bool, error) {
-	data, ok, err := r.readDoc(registryReceiptKey(op.ID.Value()))
+	data, ok, err := r.readDoc(receiptKey(op.ID.Value()))
 	if err != nil || !ok {
 		return receipt{}, false, err
 	}
@@ -283,8 +334,7 @@ func (r *Registry) verifyHome(homeID domain.HomeID) error {
 }
 
 // verifyPrecondition fails closed with a typed domain.Conflict when the
-// committed registry revision does not match the precondition. Conflicts
-// originate only here and from a home.ErrConflict commit error.
+// committed revision does not match the precondition.
 func verifyPrecondition(target domain.Scoped, prec domain.Precondition, actualRev uint64) error {
 	if prec.Generation == registryGeneration && prec.Revision == actualRev {
 		return nil
@@ -308,83 +358,10 @@ func commitError(target domain.Scoped, prec domain.Precondition, err error) erro
 	return err
 }
 
-// mutate runs one registry-scoped mutation under the registry aggregate's
-// fenced lock: receipt idempotency first, then precondition verification, then
-// one atomic home.Commit that writes the new registry aggregate and the
-// operation receipt together. Natural idempotency (a no-op definition) is
-// detected by apply and returns without committing.
-func (r *Registry) mutate(op domain.Operation, req domain.Intent, homeID domain.HomeID, target domain.Scoped, prec domain.Precondition, apply func(*registryDoc) (Outcome, bool, error)) (Outcome, error) {
-	if err := r.prepare(op, req, homeID); err != nil {
-		return Outcome{}, err
-	}
-	if err := prec.Validate(); err != nil {
-		return Outcome{}, err
-	}
-	if prec.Generation != registryGeneration {
-		return Outcome{}, validationError("registry precondition generation must be %d", registryGeneration)
-	}
-	lk, err := r.h.Lock(registryScope)
-	if err != nil {
-		return Outcome{}, err
-	}
-	defer lk.Release()
+// --- Aggregate validation -------------------------------------------------
 
-	if rec, ok, err := r.checkedReceipt(op); err != nil {
-		return Outcome{}, err
-	} else if ok {
-		return rec.outcome(), nil
-	}
-
-	doc, err := r.readRegistryDoc()
-	if err != nil {
-		return Outcome{}, err
-	}
-	if err := verifyPrecondition(target, prec, doc.HomeRevision); err != nil {
-		return Outcome{}, err
-	}
-	next := doc.clone()
-	next.HomeRevision = doc.HomeRevision + 1
-	outcome, changed, err := apply(next)
-	if err != nil {
-		return Outcome{}, err
-	}
-	if !changed {
-		return outcome, nil
-	}
-	rec := receiptFor(op, outcome)
-	items, err := registryItems(next, rec)
-	if err != nil {
-		return Outcome{}, err
-	}
-	if _, err := r.h.Commit(lk, op.ID.Value(), doc.HomeRevision, items); err != nil {
-		return Outcome{}, commitError(target, prec, err)
-	}
-	return outcome, nil
-}
-
-func registryItems(doc *registryDoc, rec receipt) ([]home.ChangeItem, error) {
-	docData, err := json.Marshal(doc)
-	if err != nil {
-		return nil, err
-	}
-	recData, err := json.Marshal(rec)
-	if err != nil {
-		return nil, err
-	}
-	return []home.ChangeItem{
-		{Root: registryRoot, Key: registryDocumentKey(), Data: docData},
-		{Root: registryRoot, Key: registryReceiptKey(rec.OperationID), Data: recData},
-	}, nil
-}
-
-// --- Registry document validation -----------------------------------------
-
-// validateRegistryDoc rejects malformed or mutually inconsistent current
-// state. A registry aggregate must carry the current v1 identity, unique
-// Project and Captain IDs, and consistent bindings (one Project per Captain
-// and at most one owning Captain per Project).
-func validateRegistryDoc(doc *registryDoc) error {
-	projects := make(map[string]struct{}, len(doc.Projects))
+func validateProjectRegistry(doc *projectRegistryDoc) error {
+	seen := make(map[string]struct{}, len(doc.Projects))
 	for _, p := range doc.Projects {
 		if p.SchemaVersion != FleetRegistrySchema {
 			return fmt.Errorf("project %q has schema %q, want %q", p.ID, p.SchemaVersion, FleetRegistrySchema)
@@ -392,13 +369,16 @@ func validateRegistryDoc(doc *registryDoc) error {
 		if p.ID == "" || p.Name == "" {
 			return fmt.Errorf("project record requires id and name")
 		}
-		if _, exists := projects[p.ID]; exists {
+		if _, exists := seen[p.ID]; exists {
 			return fmt.Errorf("duplicate project %q", p.ID)
 		}
-		projects[p.ID] = struct{}{}
+		seen[p.ID] = struct{}{}
 	}
-	captains := make(map[string]struct{}, len(doc.Captains))
-	owners := make(map[string]string, len(doc.Captains))
+	return nil
+}
+
+func validateCaptainRegistry(doc *captainRegistryDoc) error {
+	seen := make(map[string]struct{}, len(doc.Captains))
 	for _, c := range doc.Captains {
 		if c.SchemaVersion != FleetRegistrySchema {
 			return fmt.Errorf("captain %q has schema %q, want %q", c.ID, c.SchemaVersion, FleetRegistrySchema)
@@ -406,30 +386,56 @@ func validateRegistryDoc(doc *registryDoc) error {
 		if c.ID == "" || c.Home == "" {
 			return fmt.Errorf("captain record requires id and home")
 		}
-		if _, exists := captains[c.ID]; exists {
+		if _, exists := seen[c.ID]; exists {
 			return fmt.Errorf("duplicate captain %q", c.ID)
 		}
-		captains[c.ID] = struct{}{}
-		if c.ProjectID == "" {
-			continue
+		seen[c.ID] = struct{}{}
+	}
+	return nil
+}
+
+func validateBindingDoc(doc *bindingDoc) error {
+	seenProject := make(map[string]struct{}, len(doc.Bindings))
+	seenCaptain := make(map[string]struct{}, len(doc.Bindings))
+	for _, b := range doc.Bindings {
+		if b.ProjectID == "" || b.CaptainID == "" {
+			return fmt.Errorf("binding record requires project and captain")
 		}
-		if _, exists := projects[c.ProjectID]; !exists {
-			return fmt.Errorf("captain %q references unknown project %q", c.ID, c.ProjectID)
+		if _, exists := seenProject[b.ProjectID]; exists {
+			return fmt.Errorf("project %q is owned by more than one captain", b.ProjectID)
 		}
-		if owner, exists := owners[c.ProjectID]; exists {
-			return fmt.Errorf("project %q is already owned by captain %q", c.ProjectID, owner)
+		if _, exists := seenCaptain[b.CaptainID]; exists {
+			return fmt.Errorf("captain %q owns more than one project", b.CaptainID)
 		}
-		owners[c.ProjectID] = c.ID
+		seenProject[b.ProjectID] = struct{}{}
+		seenCaptain[b.CaptainID] = struct{}{}
 	}
 	return nil
 }
 
 // --- Queries --------------------------------------------------------------
 
-// Revision returns the current optimistic revision of the registry aggregate,
-// for building a Precondition on the next mutation.
-func (r *Registry) Revision() (uint64, error) {
-	doc, err := r.readRegistryDoc()
+// ProjectRevision returns the current revision of the Project registry aggregate.
+func (r *Registry) ProjectRevision() (uint64, error) {
+	doc, err := r.readProjectRegistry()
+	if err != nil {
+		return 0, err
+	}
+	return doc.HomeRevision, nil
+}
+
+// CaptainRevision returns the current revision of the Captain registry aggregate.
+func (r *Registry) CaptainRevision() (uint64, error) {
+	doc, err := r.readCaptainRegistry()
+	if err != nil {
+		return 0, err
+	}
+	return doc.HomeRevision, nil
+}
+
+// BindingRevision returns the current revision of the Binding aggregate.
+func (r *Registry) BindingRevision() (uint64, error) {
+	doc, err := r.readBindingDoc()
 	if err != nil {
 		return 0, err
 	}
@@ -441,7 +447,7 @@ func (r *Registry) GetProject(projectID domain.ProjectID) (RegisteredProject, er
 	if err := projectID.Validate(); err != nil {
 		return RegisteredProject{}, err
 	}
-	doc, err := r.readRegistryDoc()
+	doc, err := r.readProjectRegistry()
 	if err != nil {
 		return RegisteredProject{}, err
 	}
@@ -455,7 +461,7 @@ func (r *Registry) GetProject(projectID domain.ProjectID) (RegisteredProject, er
 
 // ListProjects returns the registered Projects sorted by ID.
 func (r *Registry) ListProjects() ([]RegisteredProject, error) {
-	doc, err := r.readRegistryDoc()
+	doc, err := r.readProjectRegistry()
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +478,7 @@ func (r *Registry) GetCaptain(captainID domain.CaptainID) (RegisteredCaptain, er
 	if err := captainID.Validate(); err != nil {
 		return RegisteredCaptain{}, err
 	}
-	doc, err := r.readRegistryDoc()
+	doc, err := r.readCaptainRegistry()
 	if err != nil {
 		return RegisteredCaptain{}, err
 	}
@@ -486,7 +492,7 @@ func (r *Registry) GetCaptain(captainID domain.CaptainID) (RegisteredCaptain, er
 
 // ListCaptains returns the registered Captains sorted by ID.
 func (r *Registry) ListCaptains() ([]RegisteredCaptain, error) {
-	doc, err := r.readRegistryDoc()
+	doc, err := r.readCaptainRegistry()
 	if err != nil {
 		return nil, err
 	}
@@ -504,23 +510,16 @@ func (r *Registry) OwnerOf(projectID domain.ProjectID) (domain.CaptainID, error)
 	if err := projectID.Validate(); err != nil {
 		return domain.CaptainID{}, err
 	}
-	doc, err := r.readRegistryDoc()
+	if _, err := r.GetProject(projectID); err != nil {
+		return domain.CaptainID{}, err
+	}
+	doc, err := r.readBindingDoc()
 	if err != nil {
 		return domain.CaptainID{}, err
 	}
-	found := false
-	for _, p := range doc.Projects {
-		if p.ID == projectID.Value() {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return domain.CaptainID{}, conflictError(ErrNotFound, "project %s not found", projectID.Value())
-	}
-	for _, c := range doc.Captains {
-		if c.ProjectID == projectID.Value() {
-			id, err := domain.NewCaptainID(c.ID)
+	for _, b := range doc.Bindings {
+		if b.ProjectID == projectID.Value() {
+			id, err := domain.NewCaptainID(b.CaptainID)
 			if err != nil {
 				return domain.CaptainID{}, err
 			}
@@ -536,23 +535,23 @@ func (r *Registry) ProjectOf(captainID domain.CaptainID) (domain.ProjectID, erro
 	if err := captainID.Validate(); err != nil {
 		return domain.ProjectID{}, err
 	}
-	doc, err := r.readRegistryDoc()
+	if _, err := r.GetCaptain(captainID); err != nil {
+		return domain.ProjectID{}, err
+	}
+	doc, err := r.readBindingDoc()
 	if err != nil {
 		return domain.ProjectID{}, err
 	}
-	for _, c := range doc.Captains {
-		if c.ID == captainID.Value() {
-			if c.ProjectID == "" {
-				return domain.ProjectID{}, nil
-			}
-			id, err := domain.NewProjectID(c.ProjectID)
+	for _, b := range doc.Bindings {
+		if b.CaptainID == captainID.Value() {
+			id, err := domain.NewProjectID(b.ProjectID)
 			if err != nil {
 				return domain.ProjectID{}, err
 			}
 			return id, nil
 		}
 	}
-	return domain.ProjectID{}, conflictError(ErrNotFound, "captain %s not found", captainID.Value())
+	return domain.ProjectID{}, nil
 }
 
 func projectFromRecord(rec projectRecord) RegisteredProject {
@@ -569,12 +568,10 @@ func projectFromRecord(rec projectRecord) RegisteredProject {
 
 func captainFromRecord(rec captainRecord) RegisteredCaptain {
 	id, _ := domain.NewCaptainID(rec.ID)
-	projectID, _ := domain.NewProjectID(rec.ProjectID)
 	return RegisteredCaptain{
 		ID:           id,
 		Home:         rec.Home,
 		Scope:        rec.Scope,
-		ProjectID:    projectID,
 		RegisteredAt: rec.RegisteredAt,
 	}
 }
