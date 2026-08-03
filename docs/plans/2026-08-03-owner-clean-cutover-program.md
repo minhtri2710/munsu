@@ -62,3 +62,11 @@ those criteria plus the ADR-0008 invariants.
 Full Go build/vet/test, current contract, crash/replay/fencing suites, architecture policy,
 performance budget, and a clean diff/repo scan confirming deleted identifiers, versions,
 paths, commands, fixtures, comments, skills, and documents did not survive.
+
+## Known pre-existing issue (tracked, outside #403)
+
+`internal/cli` `TestAgentSkillMirrorsMatchCanonical` fails on the base commit `d217664f`
+(canonical skill-mirror file-count mismatch for `captain-provisioning`/`munsu-update`).
+Confirmed pre-existing — not caused by #403 or by the Lead docs commit. It keeps the full
+`go test ./...` gate red until repaired separately. Must be triaged/authorized before the
+#418 activation gate. It is unrelated to the Home mechanics.
