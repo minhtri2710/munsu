@@ -40,6 +40,19 @@ Each issue's acceptance criteria in its GitHub body are the acceptance contract.
 Reviewer, an independent read-only audit provider, verifies the exact commit/head against
 those criteria plus the ADR-0008 invariants.
 
+## Progress
+
+- #403 (Home foundation) — ACCEPTED, integrated `edbee73e`. Canonical `internal/home`
+  durable mechanics (Init/Open/Identity/RootFor/Path/Read/Commit/Lock/AcquireLease,
+  typed errors, journal recovery).
+- #404 (scoped identity + operation preconditions) — ACCEPTED after REWORK, integrated.
+  `internal/domain` now has typed nominal identities (TaskID, CaptainID, ProjectID,
+  HomeID, OperationID, ResourceID), `Operation`+typed `Intent` digest, `Precondition`/
+  `ConflictFrom` (only verified mismatches become ErrStalePrecondition). `Mutation`
+  envelope removed. Rework review PASS on commit `99f9442f`; full suite green after
+  integration.
+- Mirror parity repair (pre-existing) — resolved, integrated `49841760`.
+
 ## Staffing / integration policy
 
 - Lead `5331588` creates every Engineer (impl provider, editing) and Reviewer (audit
