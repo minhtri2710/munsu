@@ -76,6 +76,30 @@ Full Go build/vet/test, current contract, crash/replay/fencing suites, architect
 performance budget, and a clean diff/repo scan confirming deleted identifiers, versions,
 paths, commands, fixtures, comments, skills, and documents did not survive.
 
+## Authorization policy (Supervisor, 2026-08-03)
+
+- For answer/explain/review/diagnose/research/plan requests: inspect and report the result;
+  do not modify files, agent state, GitHub state, or external systems unless the request
+  explicitly asks for changes.
+- For change/build/fix requests: make the requested in-scope local changes and run
+  relevant non-destructive validation without asking for confirmation first.
+- Require explicit human confirmation before: external writes or externally visible
+  mutations; pushing/opening/merging PRs or changing GitHub issue state; destructive or
+  irreversible actions; purchases or paid resource usage; credential/permission/security-
+  sensitive changes; materially expanding scope beyond the authorized outcome and ownership
+  boundary.
+- Creating/managing authorized Paseo Peers is NOT a scope expansion, provided their work
+  stays within the Lead's existing authorization.
+- Ordinary local implementation, commits on isolated local branches, tests, builds, vet,
+  static checks, and read-only inspection are pre-authorized when required by the assigned
+  change/fix outcome.
+- Do not manufacture confirmation requests for routine local decisions.
+- Existing stricter program constraints remain: no push/PR/merge to origin, GitHub issue
+  mutation/closure, destructive action, or material scope expansion without explicit human
+  authorization.
+- Does not override the Peer direct-report protocol, independent-review gates, worktree
+  isolation, provider resolution, or the >200k-token compaction rule.
+
 ## Peer context compaction rule (Supervisor, 2026-08-03)
 
 - When a Peer's observed context/token usage exceeds 200,000 tokens, require that Peer to
