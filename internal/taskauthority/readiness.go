@@ -14,6 +14,14 @@ const (
 	ReadinessInFlight     ReadinessReason = "in-flight"
 	ReadinessTerminal     ReadinessReason = "terminal"
 	ReadinessDispatchHold ReadinessReason = "dispatch-hold"
+	// ReadinessReservedForTransfer reports a queued task whose current
+	// generation is actively reserved for transfer: unrelated dispatch/
+	// readiness activity is fenced and the task is not ready.
+	ReadinessReservedForTransfer ReadinessReason = "reserved-for-transfer"
+	// ReadinessNotCurrent reports a task generation that is superseded or not
+	// the current/active generation: it is not ready and not current Task
+	// truth.
+	ReadinessNotCurrent ReadinessReason = "not-current"
 )
 
 // Readiness is the canonical readiness evaluation of one task. Watcher health
@@ -26,28 +34,21 @@ type Readiness struct {
 	BlockingReasons []ReadinessReason
 }
 
-// Readiness evaluates the current authoritative task state against the start
-// action's durable dispatch control.
-func (a *Authority) Readiness(taskID string) (Readiness, error) {
-	if err := validateTaskID(taskID); err != nil {
-		return Readiness{}, err
-	}
-	v, err := a.store.View()
-	if err != nil {
-		return Readiness{}, err
-	}
-	agg, ok := v.Current(taskID)
-	if !ok {
-		return Readiness{TaskID: taskID, BlockingReasons: []ReadinessReason{ReadinessNotFound}}, nil
-	}
-	return evaluateReadiness(v.Holds, agg), nil
-}
-
 // evaluateReadiness evaluates one aggregate's readiness against the given
-// committed holds. It is shared by the Readiness query and the in-transaction
-// interpretation evaluation so both see identical semantics.
+// committed holds. A non-current/superseded generation is never ready; an
+// actively reserved-for-transfer generation is never ready (unrelated dispatch
+// activity is fenced). Dispatch Holds are independent controls and cannot
+// override either reason.
 func evaluateReadiness(holds []DispatchHold, agg Aggregate) Readiness {
 	result := Readiness{TaskID: agg.TaskID, Generation: agg.Generation}
+	if !agg.Current {
+		result.BlockingReasons = append(result.BlockingReasons, ReadinessNotCurrent)
+		return result
+	}
+	if activeReservation(agg.Transfer) {
+		result.BlockingReasons = append(result.BlockingReasons, ReadinessReservedForTransfer)
+		return result
+	}
 	if holdsBlockStart(holds, agg) {
 		result.BlockingReasons = append(result.BlockingReasons, ReadinessDispatchHold)
 	}
@@ -67,6 +68,13 @@ func evaluateReadiness(holds []DispatchHold, agg Aggregate) Readiness {
 		result.BlockingReasons = append(result.BlockingReasons, ReadinessTerminal)
 	}
 	return result
+}
+
+// activeReservation reports whether the transfer state is an active source
+// reservation (set by ReserveTransfer and not yet committed) that fences the
+// task's unrelated dispatch/readiness activity.
+func activeReservation(ts *TransferState) bool {
+	return ts != nil && !ts.Transferred && ts.DestinationHome != ""
 }
 
 // holdsBlockStart reports whether any committed start hold matches the task.

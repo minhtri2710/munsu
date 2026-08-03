@@ -117,70 +117,74 @@ type WorktreeBinding struct {
 	BoundAtUnix        int64  `json:"bound_at_unix"`
 }
 
+// TransferState is the generation-bound transfer reservation or reception
+// state of one Task Generation. It is set only by the transfer boundary
+// operations (ReserveTransfer / ReceiveTransfer) and is never the vehicle for
+// raw document copy: the destination re-creates the generation from a typed
+// TaskDefinition, never from the source Aggregate document. On the source it
+// records the reservation/fencing (destination target, fence token); on the
+// destination it records the received generation's provenance (source home and
+// generation). Transferred marks a source generation superseded by a committed
+// transfer; Activation records the committed destination-activation evidence
+// bound to the reservation.
+type TransferState struct {
+	ReservationID    string                  `json:"reservation_id,omitempty"`
+	DestinationHome  string                  `json:"destination_home,omitempty"`
+	FenceToken       string                  `json:"fence_token,omitempty"`
+	SourceHome       string                  `json:"source_home,omitempty"`
+	SourceGeneration Generation              `json:"source_generation,omitempty"`
+	ReservedAt       int64                   `json:"reserved_at,omitempty"`
+	Transferred      bool                    `json:"transferred,omitempty"`
+	Activation       *TransferActivationInfo `json:"activation,omitempty"`
+}
+
+// TransferActivationInfo is the durable destination-activation evidence bound
+// to one source reservation, recorded by CommitTransfer. #413 obtains and
+// persists this evidence through its own orchestration; CommitTransfer
+// verifies only the evidence shape/binding against the exact source
+// reservation and records it durably so the source supersession is never made
+// without destination-activation proof. No raw document and no cross-home
+// trust/authentication policy beyond typed receipt binding is invented here.
+type TransferActivationInfo struct {
+	ReservationID         string     `json:"reservation_id"`
+	TaskID                string     `json:"task_id"`
+	SourceHome            string     `json:"source_home"`
+	SourceGeneration      Generation `json:"source_generation"`
+	DestinationHome       string     `json:"destination_home"`
+	DestinationGeneration Generation `json:"destination_generation"`
+	ActivationOperationID string     `json:"activation_operation_id"`
+	ActivationDigest      string     `json:"activation_digest"`
+}
+
+// RetirementEvidence is the immutable, generation-bound record of the resource
+// ownership a retired generation released. It preserves the exact endpoint and
+// worktree lease identities (lease IDs, fence tokens, handles/paths, repository
+// identity), the task generation, and the retirement Operation ID, so #412 can
+// release only resources still owned by that generation and for diagnostics.
+// The retired generation's active Endpoint/Worktree are nil: it no longer acts
+// as an active binding owner, while the evidence remains durably rereadable.
+type RetirementEvidence struct {
+	OperationID string           `json:"operation_id,omitempty"`
+	Generation  Generation       `json:"generation"`
+	RetiredAt   int64            `json:"retired_at,omitempty"`
+	Endpoint    *EndpointBinding `json:"endpoint,omitempty"`
+	Worktree    *WorktreeBinding `json:"worktree,omitempty"`
+}
+
 // Aggregate is the authoritative record of one Task Generation.
 type Aggregate struct {
-	SchemaVersion                string           `json:"schema_version"`
-	TaskID                       string           `json:"task_id"`
-	Generation                   Generation       `json:"generation"`
-	Revision                     Revision         `json:"revision"`
-	Current                      bool             `json:"current"`
-	Definition                   TaskDefinition   `json:"definition"`
-	Phase                        Phase            `json:"phase"`
-	PhaseDetail                  string           `json:"phase_detail,omitempty"`
-	Endpoint                     *EndpointBinding `json:"endpoint,omitempty"`
-	Worktree                     *WorktreeBinding `json:"worktree,omitempty"`
-	DispatchInterpretationID     string           `json:"dispatch_interpretation_id,omitempty"`
-	DispatchInterpretationDigest string           `json:"dispatch_interpretation_digest,omitempty"`
-	// IssueLinks is the generation-bound definition record of the task's
-	// issue links; IssueLinkReconciliation is the provider evidence of one
-	// post-merge reconciliation committed with the same operation (Task 7.2).
-	IssueLinks              []domain.IssueLink                     `json:"issue_links,omitempty"`
-	IssueLinkReconciliation []domain.IssueLinkReconciliationResult `json:"issue_link_reconciliation,omitempty"`
-	// DeliveryPlan and CapabilityAttestation are the generation-bound
-	// delivery-plan and capability-attestation definition records committed
-	// together by the AttachAttestation operation (Task 7.3, ADR-0004 §6).
-	// The plan records the bounded requested → effective mode transition with
-	// its fallback reason; the attestation reference binds project, home, and
-	// config snapshot digest. Runtime capability observation data stays
-	// outside the Aggregate.
-	DeliveryPlan          *DeliveryPlan          `json:"delivery_plan,omitempty"`
-	CapabilityAttestation *CapabilityAttestation `json:"capability_attestation,omitempty"`
-	// MergeAuthorization is the generation-bound merge authorization record
-	// committed by the AuthorizeMerge operation: it binds the provider
-	// identity snapshot and the immutable head SHA the merge was authorized
-	// against (Task 7.4). A changed head makes the prior authorization stale
-	// and is never silently reused. ExternalMerge is the generation-bound
-	// evidence record of an external merge committed by RecordExternalMerge.
-	MergeAuthorization *MergeAuthorization  `json:"merge_authorization,omitempty"`
-	ExternalMerge      *ExternalMergeRecord `json:"external_merge,omitempty"`
-	// GitCapabilityTier, GitAuthContext, and GitMutationAuthorization are the
-	// generation-bound git authorization records committed by the
-	// SetGitCapabilityTier, SetGitAuthContext, and
-	// AuthorizeGitMutation/ClearGitMutationAuthorization operations (Task
-	// 7.4): the launch capability tier, the amendment/retirement context, and
-	// the elevated git mutation authorization with its exact expected state.
-	GitCapabilityTier        string                    `json:"git_capability_tier,omitempty"`
-	GitAuthContext           string                    `json:"git_auth_context,omitempty"`
-	GitMutationAuthorization *GitMutationAuthorization `json:"git_mutation_authorization,omitempty"`
-	// DeliveryPrepare is the generation-bound delivery preparation record
-	// committed by the PrepareDelivery operation (Task 7.5): the provider
-	// identity snapshot, the immutable head SHA the delivery is prepared
-	// against, and the review-ready delivery state. DeliveryTerminal is the
-	// generation-bound terminal evidence record committed by the
-	// CompleteDelivery operation: the delivered/done terminal transition,
-	// the exact head, and the terminal provider evidence. resolved is never
-	// a delivery terminal state.
-	DeliveryPrepare  *DeliveryPrepare  `json:"delivery_prepare,omitempty"`
-	DeliveryTerminal *DeliveryTerminal `json:"delivery_terminal,omitempty"`
-	// MergeAttempt is the generation-bound merge attempt and outcome record
-	// committed by the RecordMergeAttempt operation (Task 7.6): the stable
-	// attempt identity binds the provider identity, PR identity, and exact
-	// head SHA with the provider-verified remote outcome. A remote-unknown
-	// outcome is terminal: once committed, the Authority refuses further
-	// provider-mutating attempts and only read reconciliation is allowed.
-	// Verified merged truth is never erased by a later ambiguous or
-	// false-negative read.
-	MergeAttempt *MergeAttempt `json:"merge_attempt,omitempty"`
+	SchemaVersion string              `json:"schema_version"`
+	TaskID        string              `json:"task_id"`
+	Generation    Generation          `json:"generation"`
+	Revision      Revision            `json:"revision"`
+	Current       bool                `json:"current"`
+	Definition    TaskDefinition      `json:"definition"`
+	Phase         Phase               `json:"phase"`
+	PhaseDetail   string              `json:"phase_detail,omitempty"`
+	Endpoint      *EndpointBinding    `json:"endpoint,omitempty"`
+	Worktree      *WorktreeBinding    `json:"worktree,omitempty"`
+	Transfer      *TransferState      `json:"transfer,omitempty"`
+	Retirement    *RetirementEvidence `json:"retirement,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -244,17 +248,90 @@ func validateAggregate(agg Aggregate) error {
 			return err
 		}
 	}
-	if err := validateIssueLinkDefinition(agg); err != nil {
+	if agg.Transfer != nil {
+		if err := validateTransferState(*agg.Transfer); err != nil {
+			return err
+		}
+	}
+	if agg.Retirement != nil {
+		if err := validateRetirementEvidence(*agg.Retirement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRetirementEvidence checks the preserved retirement evidence shape:
+// a non-empty retirement Operation ID, a valid generation, and valid preserved
+// bindings when present.
+func validateRetirementEvidence(ev RetirementEvidence) error {
+	if ev.OperationID == "" || strings.ContainsAny(ev.OperationID, `/\\`) {
+		return validationError("retirement evidence missing operation id")
+	}
+	if err := ev.Generation.Validate(); err != nil {
 		return err
 	}
-	if err := validateDeliveryDefinition(agg); err != nil {
+	if ev.RetiredAt <= 0 {
+		return validationError("retirement evidence missing retired timestamp")
+	}
+	if ev.Endpoint != nil {
+		if err := validateEndpointBinding(*ev.Endpoint); err != nil {
+			return err
+		}
+	}
+	if ev.Worktree != nil {
+		if err := validateWorktreeBinding(*ev.Worktree); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTransferState checks the generation-bound transfer state shape.
+func validateTransferState(ts TransferState) error {
+	if ts.ReservationID == "" || strings.ContainsAny(ts.ReservationID, `/\\`) {
+		return validationError("transfer reservation ID must be a safe non-empty value")
+	}
+	if ts.DestinationHome != "" && strings.ContainsAny(ts.DestinationHome, `/\\`) {
+		return validationError("transfer destination home must be a safe value")
+	}
+	if ts.SourceHome != "" && strings.ContainsAny(ts.SourceHome, `/\\`) {
+		return validationError("transfer source home must be a safe value")
+	}
+	if ts.SourceGeneration != 0 {
+		if err := ts.SourceGeneration.Validate(); err != nil {
+			return err
+		}
+	}
+	if ts.Activation != nil {
+		if err := validateTransferActivation(*ts.Activation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTransferActivation checks the recorded destination-activation
+// evidence shape: every binding field must be present and safe, the source
+// generation must be valid, and the activation digest must be a full sha256
+// hex digest.
+func validateTransferActivation(a TransferActivationInfo) error {
+	if a.ReservationID == "" || a.TaskID == "" || a.SourceHome == "" || a.DestinationHome == "" || a.ActivationOperationID == "" {
+		return validationError("transfer activation evidence is incomplete")
+	}
+	if err := a.SourceGeneration.Validate(); err != nil {
 		return err
 	}
-	if err := validateAuthorizationDefinition(agg); err != nil {
+	if err := a.DestinationGeneration.Validate(); err != nil {
 		return err
 	}
-	if err := validateDeliveryRecord(agg); err != nil {
-		return err
+	for _, v := range []string{a.ReservationID, a.TaskID, a.SourceHome, a.DestinationHome, a.ActivationOperationID} {
+		if strings.ContainsAny(v, `/\\`) {
+			return validationError("transfer activation evidence carries an unsafe identity value")
+		}
+	}
+	if !domain.IsSHA256(a.ActivationDigest) {
+		return validationError("transfer activation digest must be a 64-hex sha256 digest")
 	}
 	return nil
 }
@@ -326,43 +403,25 @@ func (a Aggregate) clone() Aggregate {
 		w := *a.Worktree
 		out.Worktree = &w
 	}
-	if a.IssueLinks != nil {
-		out.IssueLinks = append([]domain.IssueLink(nil), a.IssueLinks...)
+	if a.Transfer != nil {
+		t := *a.Transfer
+		if t.Activation != nil {
+			act := *t.Activation
+			t.Activation = &act
+		}
+		out.Transfer = &t
 	}
-	if a.IssueLinkReconciliation != nil {
-		out.IssueLinkReconciliation = append([]domain.IssueLinkReconciliationResult(nil), a.IssueLinkReconciliation...)
-	}
-	if a.DeliveryPlan != nil {
-		p := *a.DeliveryPlan
-		out.DeliveryPlan = &p
-	}
-	if a.CapabilityAttestation != nil {
-		c := *a.CapabilityAttestation
-		out.CapabilityAttestation = &c
-	}
-	if a.MergeAuthorization != nil {
-		m := *a.MergeAuthorization
-		out.MergeAuthorization = &m
-	}
-	if a.ExternalMerge != nil {
-		e := *a.ExternalMerge
-		out.ExternalMerge = &e
-	}
-	if a.GitMutationAuthorization != nil {
-		g := *a.GitMutationAuthorization
-		out.GitMutationAuthorization = &g
-	}
-	if a.DeliveryPrepare != nil {
-		p := *a.DeliveryPrepare
-		out.DeliveryPrepare = &p
-	}
-	if a.DeliveryTerminal != nil {
-		tr := *a.DeliveryTerminal
-		out.DeliveryTerminal = &tr
-	}
-	if a.MergeAttempt != nil {
-		m := *a.MergeAttempt
-		out.MergeAttempt = &m
+	if a.Retirement != nil {
+		e := *a.Retirement
+		if e.Endpoint != nil {
+			cp := *e.Endpoint
+			e.Endpoint = &cp
+		}
+		if e.Worktree != nil {
+			cp := *e.Worktree
+			e.Worktree = &cp
+		}
+		out.Retirement = &e
 	}
 	return out
 }
