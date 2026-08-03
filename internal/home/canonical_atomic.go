@@ -1,0 +1,53 @@
+package home
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// atomicWrite durably writes data to path via a unique temp file in the same
+// directory, an fsync, and a rename, followed by a directory fsync. On success
+// readers observe either the old or the new content, never a partial write.
+func canonicalAtomicWrite(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("home: create write dir: %w", err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return fmt.Errorf("home: secure write dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".home-write-*")
+	if err != nil {
+		return fmt.Errorf("home: create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("home: secure temp: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("home: write temp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("home: sync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("home: close temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("home: rename into place: %w", err)
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("home: open write dir: %w", err)
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("home: sync write dir: %w", err)
+	}
+	return nil
+}
