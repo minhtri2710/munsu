@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -92,6 +93,14 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 						return fmt.Errorf("config set %s: %w", key, err)
 					}
 				}
+				// Authoring boundary: write the captain launch profile into the
+				// fleet base document (config/base.json). The base.json
+				// CaptainProfile is the ONLY source consumed by captain
+				// operations; the flat file remains a diagnostics-only echo.
+				if err := setCaptainProfileInBase(ctx.Home, config.CaptainProfile{Harness: prof.Harness, Model: prof.Model, Effort: prof.Effort}); err != nil {
+					return err
+				}
+				return config.Set(ctx.Home, key, value)
 			case "model-allowlist":
 				// One <harness>:<model> identity per line; empty (deny-all) is allowed.
 				if err := harness.ValidateModelAllowlist(value); err != nil {
@@ -105,6 +114,29 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 	cmd.AddCommand(newConfigShowCmd())
 	cmd.AddCommand(newConfigDispatchCmd())
 	return cmd
+}
+
+// setCaptainProfileInBase writes the captain launch profile into the fleet
+// base document (config/base.json), creating the document when absent and
+// preserving all other fields. A malformed/invalid existing document fails
+// closed (no self-repair). The base.json CaptainProfile is the ONLY captain
+// operation source; the flat config/captain-harness file is a
+// diagnostics-only echo.
+func setCaptainProfileInBase(homeDir string, prof config.CaptainProfile) error {
+	baseDoc, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		if _, statErr := os.Stat(filepath.Join(homeDir, config.BaseDocumentPath)); statErr == nil {
+			return fmt.Errorf("config set captain-harness: loading fleet base document: %w", err)
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+		baseDoc = config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
+	}
+	baseDoc.CaptainProfile = prof
+	if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
+		return fmt.Errorf("config set captain-harness: writing fleet base captainProfile: %w", err)
+	}
+	return nil
 }
 
 func newConfigShowCmd() *cobra.Command {

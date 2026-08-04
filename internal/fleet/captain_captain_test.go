@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -188,7 +189,7 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	}
 	writeCanonicalPiIntegration(t, smHome)
 
-	binName, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	binName, args, err := buildLaunchArgs(smHome, harness.Pi, config.CaptainProfile{}, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchArgs() error: %v", err)
 	}
@@ -217,7 +218,7 @@ func TestBuildLaunchArgs_PiLoadsCanonicalIntegrationExactlyOnce(t *testing.T) {
 	}
 	writeCanonicalPiIntegration(t, home)
 
-	_, args, err := buildLaunchArgs(home, harness.Pi, t.TempDir())
+	_, args, err := buildLaunchArgs(home, harness.Pi, config.CaptainProfile{}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +249,7 @@ func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	_, _, err := buildLaunchArgs(home, harness.Pi, t.TempDir())
+	_, _, err := buildLaunchArgs(home, harness.Pi, config.CaptainProfile{}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected missing canonical integration error")
 	}
@@ -260,7 +261,7 @@ func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) 
 func TestBuildLaunchArgs_UnverifiedCaptainHarnesses(t *testing.T) {
 	for _, name := range []string{harness.Claude, harness.Codex, harness.Opencode, harness.Grok, harness.Agy} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := buildLaunchArgs(t.TempDir(), name, t.TempDir())
+			_, _, err := buildLaunchArgs(t.TempDir(), name, config.CaptainProfile{}, t.TempDir())
 			if err == nil {
 				t.Fatal("expected unverified captain contract error")
 			}
@@ -272,7 +273,7 @@ func TestBuildLaunchArgs_UnverifiedCaptainHarnesses(t *testing.T) {
 }
 
 func TestBuildLaunchArgs_MissingCharterFailsClosed(t *testing.T) {
-	_, _, err := buildLaunchArgs(t.TempDir(), harness.Pi, t.TempDir())
+	_, _, err := buildLaunchArgs(t.TempDir(), harness.Pi, config.CaptainProfile{}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected missing AGENTS.md error")
 	}
@@ -282,7 +283,7 @@ func TestBuildLaunchArgs_MissingCharterFailsClosed(t *testing.T) {
 }
 
 func TestCaptainBuildLaunchArgs_UnknownHarness(t *testing.T) {
-	_, _, err := buildLaunchArgs("/tmp", "unknown_harness", "/tmp")
+	_, _, err := buildLaunchArgs("/tmp", "unknown_harness", config.CaptainProfile{}, "/tmp")
 	if err == nil {
 		t.Fatal("expected error for unknown harness")
 	}
@@ -301,9 +302,11 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 	model := "opencode-go/deepseek-v4-flash"
-	os.WriteFile(filepath.Join(configDir, "model"), []byte(model+"\n"), 0644)
+	// A legacy flat config/model pin must NOT be consulted: the model comes
+	// only from the published-snapshot CaptainProfile.
+	os.WriteFile(filepath.Join(configDir, "model"), []byte("should-not-use\n"), 0644)
 
-	binName, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	binName, args, err := buildLaunchArgs(smHome, harness.Pi, config.CaptainProfile{Harness: "pi", Model: model}, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchArgs error: %v", err)
 	}
@@ -1905,6 +1908,46 @@ func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 	}
 }
 
+func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "no-profile")
+	writeCanonicalPiIntegration(t, captainHome)
+	// Mirror an existing home authored before captain authoring existed:
+	// base.json has SoldierHarness/Backend but the CaptainProfile is absent.
+	// Re-publishing keeps the snapshot profile empty.
+	republishWithCaptainProfile(t, parent, captainHome, config.CaptainProfile{})
+	err := Launch(captainHome, parent, testLaunchEndpoint{})
+	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
+		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot", err)
+	}
+	if _, err := home.ReadMeta(parent, taskIDForCaptain("no-profile")); err == nil {
+		t.Fatal("metadata written on failed launch")
+	}
+}
+
+func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "flat-only")
+	writeCanonicalPiIntegration(t, captainHome)
+	// The snapshot profile is empty; a legacy flat config/captain-harness pin
+	// must NOT rescue resolution (hard cut: no flat-file read in captain
+	// operation resolution).
+	republishWithCaptainProfile(t, parent, captainHome, config.CaptainProfile{})
+	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
+		t.Fatal(err)
+	}
+	err := Launch(captainHome, parent, testLaunchEndpoint{})
+	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
+		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot despite flat captain-harness pin", err)
+	}
+}
+
 func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
 	parent := t.TempDir()
 	sm := filepath.Join(parent, "captains", "test-sm")
@@ -2734,7 +2777,7 @@ func TestBuildLaunchArgs_PiLoadsOnlyCanonicalIntegration(t *testing.T) {
 		os.WriteFile(filepath.Join(extDir, name), []byte("//x\n"), 0644)
 	}
 
-	_, _, err := buildLaunchArgs(sm, "pi", parent)
+	_, _, err := buildLaunchArgs(sm, "pi", config.CaptainProfile{}, parent)
 	if err == nil || !strings.Contains(err.Error(), "compatibility Pi integration alias") {
 		t.Fatalf("buildLaunchArgs() error = %v, want compatibility alias refusal", err)
 	}
@@ -2931,7 +2974,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 		t.Fatalf("ConfigPush: %v", err)
 	}
 
-	name, args, err := buildLaunchArgs(sm, harness.Pi, parent)
+	name, args, err := buildLaunchArgs(sm, harness.Pi, config.CaptainProfile{}, parent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2997,12 +3040,6 @@ func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parent := t.TempDir()
-			if _, err := home.Init(parent); err != nil {
-				t.Fatal(err)
-			}
-			if err := config.Set(parent, "captain-harness", "pi"); err != nil {
-				t.Fatal(err)
-			}
 			home := seedCaptainForTest(t, parent, "pi-captain")
 			writeCanonicalPiIntegration(t, home)
 			writeCaptainMeta(t, parent, "pi-captain", home, "dead-window")
@@ -3024,13 +3061,10 @@ func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
 
 func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
 	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.Set(parent, "captain-harness", harness.Claude); err != nil {
-		t.Fatal(err)
-	}
 	home := seedCaptainForTest(t, parent, "claude-captain")
+	// Explicit authoring: the snapshot CaptainProfile pins claude; the flat
+	// config/captain-harness is never consulted for captain operations.
+	republishWithCaptainProfile(t, parent, home, config.CaptainProfile{Harness: harness.Claude})
 	writeCaptainMeta(t, parent, "claude-captain", home, "dead-window")
 	integration := &countingStatusIntegrationPort{}
 	result, err := Recover(parent, []Info{{ID: "claude-captain", Home: home}}, RecoverCapabilities{Integration: integration, Launch: &countingLaunchEndpoint{}, Probe: &testProbeEndpoint{result: CaptainProbeResult{}}})
@@ -3107,11 +3141,13 @@ func TestBuildLaunchArgs_CaptainHarnessMultiToken(t *testing.T) {
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi cliproxyapi/grok-4.5 low\n"), 0644)
-	// legacy model must not win over multi-token
+	// Flat pins must NOT be consulted for the launch profile: harness, model
+	// and effort tokens come only from the published-snapshot CaptainProfile.
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("claude should-not-win\n"), 0644)
+	// legacy model must not win over the snapshot profile
 	os.WriteFile(filepath.Join(configDir, "model"), []byte("should-not-use\n"), 0644)
 
-	_, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	_, args, err := buildLaunchArgs(smHome, harness.Pi, config.CaptainProfile{Harness: "pi", Model: "cliproxyapi/grok-4.5", Effort: "low"}, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchArgs: %v", err)
 	}

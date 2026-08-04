@@ -95,6 +95,7 @@ func createTestPublishedSnapshot(t *testing.T, captainHome string) {
 		SoldierHarness:    "pi",
 		Backend:           "tmux",
 		RequireNoMistakes: true,
+		CaptainProfile:    config.CaptainProfile{Harness: "pi"},
 		Digest:            "0000000000000000000000000000000000000000000000000000000000000000",
 	}
 	if err := config.StorePublishedSnapshot(captainHome, resolved); err != nil {
@@ -119,8 +120,47 @@ func setupTypedParentHome(t *testing.T, parent string, projectName string) {
 		Config: config.ProjectOverlay{
 			Backend: "tmux",
 		},
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}
 	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// captainHomeWithSnapshot creates a captain home whose published snapshot
+// carries the given CaptainProfile. The snapshot is the ONLY captain harness
+// identity source for recovery/launch operations; no flat pins are consulted.
+func captainHomeWithSnapshot(t *testing.T, profile config.CaptainProfile) string {
+	t.Helper()
+	home := t.TempDir()
+	resolved := config.ResolvedProjectConfig{
+		Project:        "test-project",
+		ProjectPath:    home,
+		Backend:        "tmux",
+		CaptainProfile: profile,
+		Digest:         "0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	if err := config.StorePublishedSnapshot(home, resolved); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// republishWithCaptainProfile re-stores the fleet base with the given
+// CaptainProfile (preserving the rest of the existing document) and republishes
+// the captain's snapshot, mirroring explicit authoring via
+// `munsu config set captain-harness`.
+func republishWithCaptainProfile(t *testing.T, parent, captainHome string, profile config.CaptainProfile) {
+	t.Helper()
+	base, err := config.LoadFleetBase(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.CaptainProfile = profile
+	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishResolvedSnapshot(parent, captainHome); err != nil {
 		t.Fatal(err)
 	}
 }
