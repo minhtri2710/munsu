@@ -205,14 +205,10 @@ func TestSpawn_MalformedPolicyFailsClosed(t *testing.T) {
 // shares the same validation seam before any pane side effects.
 func TestCaptainLaunch_DeniedModelFailsClosed(t *testing.T) {
 	parent := t.TempDir()
-	// Captain model resolves from the parent's config/model.
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	deniedModel := "claude-sonnet-4-20250515"
-	if err := os.WriteFile(filepath.Join(parent, "config", "model"), []byte(deniedModel+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
 	captainHome := filepath.Join(t.TempDir(), "captains", "alpha")
@@ -224,7 +220,8 @@ func TestCaptainLaunch_DeniedModelFailsClosed(t *testing.T) {
 	}
 	writeCanonicalPiIntegration(t, captainHome)
 
-	_, _, err := buildLaunchArgs(captainHome, harness.Pi, parent)
+	// The model comes only from the published-snapshot CaptainProfile.
+	_, _, err := buildLaunchArgs(captainHome, harness.Pi, config.CaptainProfile{Harness: harness.Pi, Model: deniedModel}, parent)
 	if err == nil {
 		t.Fatal("expected captain launch denial")
 	}
@@ -241,9 +238,6 @@ func TestCaptainLaunch_AllowedModelPasses(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "model"), []byte("opencode-go/deepseek-v4-flash\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
 	captainHome := filepath.Join(t.TempDir(), "captains", "alpha")
@@ -255,7 +249,8 @@ func TestCaptainLaunch_AllowedModelPasses(t *testing.T) {
 	}
 	writeCanonicalPiIntegration(t, captainHome)
 
-	_, args, err := buildLaunchArgs(captainHome, harness.Pi, parent)
+	// The model comes only from the published-snapshot CaptainProfile.
+	_, args, err := buildLaunchArgs(captainHome, harness.Pi, config.CaptainProfile{Harness: harness.Pi, Model: "opencode-go/deepseek-v4-flash"}, parent)
 	if err != nil {
 		t.Fatalf("allowed captain model should pass: %v", err)
 	}
@@ -277,20 +272,15 @@ func TestRecoverLaunchReadiness_DeniedModelFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "captain-harness"), []byte("pi\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "model"), []byte("claude-sonnet-4-20250515\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
 	oldLookPath := captainLookPath
 	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	defer func() { captainLookPath = oldLookPath }()
 
+	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi, Model: "claude-sonnet-4-20250515"})
 	tx := &RecoverTransaction{}
-	res := tx.stepLaunchReadiness(parent, Info{ID: "alpha", Home: filepath.Join(parent, "captains", "alpha")})
+	res := tx.stepLaunchReadiness(parent, Info{ID: "alpha", Home: captainHome})
 	if res.State != StepFailed {
 		t.Fatalf("launch readiness state = %q, want failed; detail: %s", res.State, res.Detail)
 	}
@@ -304,20 +294,15 @@ func TestRecoverLaunchReadiness_AllowedModelPasses(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "captain-harness"), []byte("pi\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "model"), []byte("opencode-go/deepseek-v4-flash\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
 	oldLookPath := captainLookPath
 	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	defer func() { captainLookPath = oldLookPath }()
 
+	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi, Model: "opencode-go/deepseek-v4-flash"})
 	tx := &RecoverTransaction{}
-	res := tx.stepLaunchReadiness(parent, Info{ID: "alpha", Home: filepath.Join(parent, "captains", "alpha")})
+	res := tx.stepLaunchReadiness(parent, Info{ID: "alpha", Home: captainHome})
 	if res.State != StepOk {
 		t.Fatalf("launch readiness state = %q, want ok; detail: %s", res.State, res.Detail)
 	}
@@ -363,10 +348,6 @@ func TestCaptainLaunch_NoModelWithPolicyFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	// captain-harness pins pi with no model token; no config/model at all.
-	if err := os.WriteFile(filepath.Join(parent, "config", "captain-harness"), []byte("pi\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
 	captainHome := filepath.Join(t.TempDir(), "captains", "alpha")
@@ -378,7 +359,7 @@ func TestCaptainLaunch_NoModelWithPolicyFailsClosed(t *testing.T) {
 	}
 	writeCanonicalPiIntegration(t, captainHome)
 
-	_, _, err := buildLaunchArgs(captainHome, harness.Pi, parent)
+	_, _, err := buildLaunchArgs(captainHome, harness.Pi, config.CaptainProfile{Harness: harness.Pi}, parent)
 	if err == nil {
 		t.Fatal("expected captain launch denial for unresolved model under active policy")
 	}
@@ -395,17 +376,15 @@ func TestRecoverLaunchReadiness_NoModelWithPolicyFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(parent, "config"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "captain-harness"), []byte("pi\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	writeModelAllowlist(t, parent, "pi:opencode-go/deepseek-v4-flash\n")
 
 	oldLookPath := captainLookPath
 	captainLookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	defer func() { captainLookPath = oldLookPath }()
 
+	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: harness.Pi})
 	tx := &RecoverTransaction{}
-	res := tx.stepLaunchReadiness(parent, Info{ID: "alpha", Home: filepath.Join(parent, "captains", "alpha")})
+	res := tx.stepLaunchReadiness(parent, Info{ID: "alpha", Home: captainHome})
 	if res.State != StepFailed {
 		t.Fatalf("launch readiness state = %q, want failed for unresolved model under active policy; detail: %s", res.State, res.Detail)
 	}
@@ -512,6 +491,7 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
 		Config: fleetconfig.ProjectOverlay{
 			DefaultMode: "direct-pr",
+			Backend:     "tmux",
 			DispatchProfiles: []fleetconfig.DispatchProfile{
 				{Name: "quota", Match: []string{"*"}, SelectStrategy: "quota-balanced",
 					Use: []fleetconfig.DispatchCandidate{

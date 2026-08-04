@@ -2,19 +2,28 @@ package cli
 
 import (
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 type sessionUplinkTransport struct {
-	resolve func(string, string) (backend.Backend, string, error)
+	resolve  func(string, string) (backend.Backend, string, error)
+	identity func(string) (string, error)
 }
 
 func newSessionUplinkTransport() orchestrator.NotificationTransport {
-	return sessionUplinkTransport{resolve: backend.Resolve}
+	return sessionUplinkTransport{resolve: backend.Resolve, identity: fleet.ResolveGeneralHomeBackend}
 }
 
 func (t sessionUplinkTransport) Notify(senderHome string, target orchestrator.TargetResult, payload string) orchestrator.UplinkNotifyResult {
-	bk, _, err := t.resolve(senderHome, "")
+	if t.identity == nil {
+		return orchestrator.UplinkNotifyResult{Queued: true}
+	}
+	backendName, err := t.identity(senderHome)
+	if err != nil {
+		return orchestrator.UplinkNotifyResult{Queued: true}
+	}
+	bk, _, err := t.resolve(senderHome, backendName)
 	if err != nil {
 		return orchestrator.UplinkNotifyResult{Queued: true}
 	}

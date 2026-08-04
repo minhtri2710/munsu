@@ -1,24 +1,18 @@
 package fleet
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
-func TestLaunchReadinessUsesParentCaptainProfileModel(t *testing.T) {
+func TestLaunchReadinessUsesSnapshotCaptainProfileModel(t *testing.T) {
 	oldLookPath := captainLookPath
 	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
 	t.Cleanup(func() { captainLookPath = oldLookPath })
 	parent := t.TempDir()
-	captainHome := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "captain-harness"), []byte("pi cline-pass/deepseek-v4-flash medium\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	captainHome := captainHomeWithSnapshot(t, config.CaptainProfile{Harness: "pi", Model: "cline-pass/deepseek-v4-flash", Effort: "medium"})
 
 	step := (&RecoverTransaction{}).stepLaunchReadiness(parent, Info{Home: captainHome})
 	if step.State != StepOk {

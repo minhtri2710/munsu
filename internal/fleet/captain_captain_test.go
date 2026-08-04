@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -188,7 +189,7 @@ func TestBuildLaunchArgs_VerifiedCaptainHarness(t *testing.T) {
 	}
 	writeCanonicalPiIntegration(t, smHome)
 
-	binName, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	binName, args, err := buildLaunchArgs(smHome, harness.Pi, config.CaptainProfile{}, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchArgs() error: %v", err)
 	}
@@ -217,7 +218,7 @@ func TestBuildLaunchArgs_PiLoadsCanonicalIntegrationExactlyOnce(t *testing.T) {
 	}
 	writeCanonicalPiIntegration(t, home)
 
-	_, args, err := buildLaunchArgs(home, harness.Pi, t.TempDir())
+	_, args, err := buildLaunchArgs(home, harness.Pi, config.CaptainProfile{}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +249,7 @@ func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	_, _, err := buildLaunchArgs(home, harness.Pi, t.TempDir())
+	_, _, err := buildLaunchArgs(home, harness.Pi, config.CaptainProfile{}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected missing canonical integration error")
 	}
@@ -260,7 +261,7 @@ func TestBuildLaunchArgs_PiMissingCanonicalIntegrationFailsClosed(t *testing.T) 
 func TestBuildLaunchArgs_UnverifiedCaptainHarnesses(t *testing.T) {
 	for _, name := range []string{harness.Claude, harness.Codex, harness.Opencode, harness.Grok, harness.Agy} {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := buildLaunchArgs(t.TempDir(), name, t.TempDir())
+			_, _, err := buildLaunchArgs(t.TempDir(), name, config.CaptainProfile{}, t.TempDir())
 			if err == nil {
 				t.Fatal("expected unverified captain contract error")
 			}
@@ -272,7 +273,7 @@ func TestBuildLaunchArgs_UnverifiedCaptainHarnesses(t *testing.T) {
 }
 
 func TestBuildLaunchArgs_MissingCharterFailsClosed(t *testing.T) {
-	_, _, err := buildLaunchArgs(t.TempDir(), harness.Pi, t.TempDir())
+	_, _, err := buildLaunchArgs(t.TempDir(), harness.Pi, config.CaptainProfile{}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected missing AGENTS.md error")
 	}
@@ -282,7 +283,7 @@ func TestBuildLaunchArgs_MissingCharterFailsClosed(t *testing.T) {
 }
 
 func TestCaptainBuildLaunchArgs_UnknownHarness(t *testing.T) {
-	_, _, err := buildLaunchArgs("/tmp", "unknown_harness", "/tmp")
+	_, _, err := buildLaunchArgs("/tmp", "unknown_harness", config.CaptainProfile{}, "/tmp")
 	if err == nil {
 		t.Fatal("expected error for unknown harness")
 	}
@@ -301,9 +302,11 @@ func TestBuildLaunchArgs_ConfigModelPropagation(t *testing.T) {
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
 	model := "opencode-go/deepseek-v4-flash"
-	os.WriteFile(filepath.Join(configDir, "model"), []byte(model+"\n"), 0644)
+	// A legacy flat config/model pin must NOT be consulted: the model comes
+	// only from the published-snapshot CaptainProfile.
+	os.WriteFile(filepath.Join(configDir, "model"), []byte("should-not-use\n"), 0644)
 
-	binName, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	binName, args, err := buildLaunchArgs(smHome, harness.Pi, config.CaptainProfile{Harness: "pi", Model: model}, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchArgs error: %v", err)
 	}
@@ -351,6 +354,10 @@ func TestSeedWithParent_WritesDefaultCaptainCharter(t *testing.T) {
 		t.Fatal(err)
 	}
 	sm := filepath.Join(parent, "captains", "api")
+	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	if err := config.StoreProjectOverlay(parent, "api", config.ProjectOverlay{Backend: "tmux"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedWithParentTest("api", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1047,10 +1054,12 @@ func TestConfigPush_Basic(t *testing.T) {
 
 	// Typed parent config: the inheritable surface is the resolved project
 	// config (soldier harness + dispatch profiles) published as a snapshot.
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
+			Backend:        "tmux",
 			DispatchProfiles: []config.DispatchProfile{
 				{Name: "default", Harness: "pi", Model: "claude-sonnet"},
 			},
@@ -1093,8 +1102,10 @@ func TestConfigPush_MirrorDeletions(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
+	// Explicit fixture Backend literal: ResolveProject fails closed on an
+	// empty backend identity.
 	storeBase := func(harness string) error {
-		overlay := config.ProjectOverlay{}
+		overlay := config.ProjectOverlay{Backend: "tmux"}
 		if harness != "" {
 			overlay.SoldierHarness = harness
 		}
@@ -1156,9 +1167,10 @@ func TestConfigPush_OnlyInheritableDeleted(t *testing.T) {
 	// Captain-local (non-inherited) config must survive config push.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
 
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
 	}, nil)
@@ -1200,7 +1212,7 @@ func TestConfigPush_CaptainShared(t *testing.T) {
 
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 		CaptainProfile: config.CaptainProfile{
 			Harness: "pi",
 			Model:   "claude-sonnet",
@@ -1238,10 +1250,12 @@ func TestConfigPush_CaptainSharedMirrorDeletion(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
+	// Explicit fixture Backend literal: ResolveProject fails closed on an
+	// empty backend identity.
 	storeBase := func(profile config.CaptainProfile) error {
 		return config.StoreFleetBase(parent, config.FleetBaseDocument{
 			SchemaVersion:  config.FleetBaseSchemaVersion,
-			Config:         config.ProjectOverlay{SoldierHarness: "pi"},
+			Config:         config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 			CaptainProfile: profile,
 		})
 	}
@@ -1329,9 +1343,10 @@ func TestConfigPush_IdempotentPreservesMtime(t *testing.T) {
 	if err := SeedProvenance(smHome, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
 	}, nil)
@@ -1372,7 +1387,11 @@ func TestConfigPush_ProjectsRegistry(t *testing.T) {
 	// Typed project registry on the General home: configPush resolves and
 	// publishes the captain's project as the inherited config snapshot.
 	repo := t.TempDir()
-	storeTestDocuments(t, parent, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}, []testProjectRecord{
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
+	storeTestDocuments(t, parent, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux"},
+	}, []testProjectRecord{
 		{Name: "munsu", Path: repo, Mode: "no-mistakes"},
 		{Name: "toy", Path: "/tmp/toy", Mode: "no-mistakes"},
 	}, nil)
@@ -1421,6 +1440,10 @@ func TestSeedWithParent_InheritsProjectsAndConfig(t *testing.T) {
 	}
 
 	sm := filepath.Join(parent, "captains", "ops")
+	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1451,6 +1474,10 @@ func TestSeedWithParent_WritesParentHomeConfig(t *testing.T) {
 	os.MkdirAll(filepath.Join(parent, "data"), 0755)
 
 	sm := filepath.Join(parent, "captains", "ops")
+	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1881,8 +1908,51 @@ func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 	}
 }
 
+func TestLaunch_EmptySnapshotCaptainProfileFailsClosed(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "no-profile")
+	writeCanonicalPiIntegration(t, captainHome)
+	// Mirror an existing home authored before captain authoring existed:
+	// base.json has SoldierHarness/Backend but the CaptainProfile is absent.
+	// Re-publishing keeps the snapshot profile empty.
+	republishWithCaptainProfile(t, parent, captainHome, config.CaptainProfile{})
+	err := Launch(captainHome, parent, testLaunchEndpoint{})
+	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
+		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot", err)
+	}
+	if _, err := home.ReadMeta(parent, taskIDForCaptain("no-profile")); err == nil {
+		t.Fatal("metadata written on failed launch")
+	}
+}
+
+func TestLaunch_FlatFileCaptainHarnessDoesNotRescueMissingSnapshotProfile(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "flat-only")
+	writeCanonicalPiIntegration(t, captainHome)
+	// The snapshot profile is empty; a legacy flat config/captain-harness pin
+	// must NOT rescue resolution (hard cut: no flat-file read in captain
+	// operation resolution).
+	republishWithCaptainProfile(t, parent, captainHome, config.CaptainProfile{})
+	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
+		t.Fatal(err)
+	}
+	err := Launch(captainHome, parent, testLaunchEndpoint{})
+	if !errors.Is(err, harness.ErrNoCaptainHarnessInSnapshot) {
+		t.Fatalf("Launch() error = %v, want ErrNoCaptainHarnessInSnapshot despite flat captain-harness pin", err)
+	}
+}
+
 func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
 
@@ -1895,30 +1965,38 @@ func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
 	}
 }
 
-func TestHandoff_RequiresTasksAxi(t *testing.T) {
+// TestHandoff_TransfersToCaptainWithoutTasksAxi replaces the legacy
+// tasks-axi-dependent contract: the journaled Task Transfer needs no tasks-axi
+// binary and moves one queued task's ownership to the captain.
+func TestHandoff_TransfersToCaptainWithoutTasksAxi(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(sm, 0755)
-	SeedProvenance(sm, "test-sm")
+	if _, err := home.Init(sm); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(sm, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
 
-	origPath := captainLookPath
-	captainLookPath = func(name string) (string, error) {
-		return "", os.ErrNotExist
+	if err := Handoff(parent, sm, []string{"TASK-1"}); err != nil {
+		t.Fatalf("Handoff: %v", err)
 	}
-	defer func() { captainLookPath = origPath }()
-
-	err := Handoff(parent, sm, []string{"TASK-1"})
-	if err == nil {
-		t.Fatal("expected error for missing tasks-axi")
+	agg := mustTransferOwner(t, sm, "TASK-1")
+	if agg.Definition.Owner != "captain:test-sm" {
+		t.Fatalf("destination owner = %q, want captain:test-sm", agg.Definition.Owner)
 	}
-	if !strings.Contains(err.Error(), "tasks-axi not found") {
-		t.Errorf("error should mention missing tasks-axi, got: %v", err)
-	}
+	mustTransferNoOwner(t, parent, "TASK-1")
 }
 
 func TestHandoff_RefusesSelfParent(t *testing.T) {
 	parent := t.TempDir()
-	os.MkdirAll(parent, 0755)
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	SeedProvenance(parent, "parent-sm")
 
 	err := Handoff(parent, parent, []string{"TASK-1"})
@@ -1930,96 +2008,55 @@ func TestHandoff_RefusesSelfParent(t *testing.T) {
 	}
 }
 
-func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
+// TestHandoff_JournaledTransferOwnershipMovesToCaptain replaces the legacy
+// staged-mv/backlog-copy contract: the durable journaled transfer moves one
+// queued task's ownership to the captain with a single destination generation,
+// and the pending journal is removed on success.
+func TestHandoff_JournaledTransferOwnershipMovesToCaptain(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
-	if err := os.MkdirAll(sm, 0755); err != nil {
+	if _, err := home.Init(sm); err != nil {
 		t.Fatal(err)
 	}
 	if err := SeedProvenance(sm, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"TASK-1", "TASK-2"} {
-		seedHandoffTaskV2Default(t, parent, id)
-	}
+	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
 
-	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] TASK-1\n- [ ] TASK-2\n"), 0644); err != nil {
-		t.Fatal(err)
+	if err := Handoff(parent, sm, []string{"TASK-1"}); err != nil {
+		t.Fatalf("Handoff: %v", err)
 	}
-
-	origPath := captainLookPath
-	origBackend := isTasksAxiBackend
-	defer func() {
-		captainLookPath = origPath
-		isTasksAxiBackend = origBackend
-	}()
-
-	argsPath := filepath.Join(parent, "args.txt")
-	fakeTasksAxi := filepath.Join(parent, "fake-tasks-axi")
-	fakeScript := "#!/bin/sh\nif [ \"$1\" = show ]; then echo 'state: queued'; exit 0; fi\nprintf '%s\\n' \"$@\" > " + shQuote(argsPath) + "\n"
-	if err := os.WriteFile(fakeTasksAxi, []byte(fakeScript), 0755); err != nil {
-		t.Fatal(err)
+	agg := mustTransferOwner(t, sm, "TASK-1")
+	if agg.Generation != 1 || agg.Definition.Owner != "captain:test-sm" {
+		t.Fatalf("destination aggregate = %+v, want generation 1 captain owner", agg)
 	}
-	captainLookPath = func(name string) (string, error) { return fakeTasksAxi, nil }
-	isTasksAxiBackend = func(string) bool { return true }
-
-	if err := Handoff(parent, sm, []string{"TASK-1", "TASK-2"}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := strings.Split(strings.TrimSpace(string(data)), "\n")
-	want := []string{
-		"mv", "TASK-1", "TASK-2",
-	}
-	if len(args) < len(want) {
-		t.Fatalf("args = %#v, want prefix %#v", args, want)
-	}
-	for i := range want {
-		if args[i] != want[i] {
-			t.Fatalf("args[%d] = %q, want %q", i, args[i], want[i])
-		}
-	}
-	// Durable handoff operates on staged backlog copies, not home paths.
-	if !strings.HasSuffix(args[4], "destination-backlog-post") {
-		t.Errorf("args[4] = %q, want suffix destination-backlog-post", args[4])
-	}
-	if !strings.HasSuffix(args[6], "source-backlog-post") {
-		t.Errorf("args[6] = %q, want suffix source-backlog-post", args[6])
+	mustTransferNoOwner(t, parent, "TASK-1")
+	if n := pendingJournalCount(t, parent); n != 0 {
+		t.Fatalf("pending journal remains after transfer: %d", n)
 	}
 }
 
-func TestHandoff_RefusesManualBackend(t *testing.T) {
+// TestHandoff_RefusesNonCanonicalDestination replaces the legacy manual-backend
+// contract: the journaled transfer fails closed when the destination is not a
+// canonical home.
+func TestHandoff_RefusesNonCanonicalDestination(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
 	SeedProvenance(sm, "test-sm")
 
-	origPath := captainLookPath
-	origBackend := isTasksAxiBackend
-	defer func() {
-		captainLookPath = origPath
-		isTasksAxiBackend = origBackend
-	}()
-
-	// Override isTasksAxiBackend to return false (manual backend).
-	isTasksAxiBackend = func(string) bool { return false }
-
-	captainLookPath = func(name string) (string, error) {
-		return "/usr/bin/tasks-axi", nil
-	}
-
 	err := Handoff(parent, sm, []string{"TASK-1"})
 	if err == nil {
-		t.Fatal("expected error for manual backend")
+		t.Fatal("expected error for non-canonical destination")
 	}
-	if !strings.Contains(err.Error(), "backlog backend is not set to tasks-axi") {
-		t.Errorf("error should mention backend mismatch, got: %v", err)
+	if !strings.Contains(err.Error(), "munsu home") && !strings.Contains(err.Error(), "home") {
+		t.Errorf("error should mention the canonical-home failure, got: %v", err)
 	}
 }
 
@@ -2579,7 +2616,7 @@ func TestConverge_ValidMarkersWithConfigPush(t *testing.T) {
 
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "sm-alpha", Path: sm1, Mode: "no-mistakes"},
 		{Name: "sm-beta", Path: sm2, Mode: "no-mistakes"},
@@ -2678,6 +2715,10 @@ func TestSeedWithParent_Registers(t *testing.T) {
 		t.Fatal(err)
 	}
 	sm := filepath.Join(parent, "captains", "ops")
+	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	if err := config.StoreProjectOverlay(parent, "ops", config.ProjectOverlay{Backend: "tmux"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedWithParentTest("ops", sm, parent, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -2706,7 +2747,7 @@ func TestBuildLaunchArgs_PiLoadsOnlyCanonicalIntegration(t *testing.T) {
 		os.WriteFile(filepath.Join(extDir, name), []byte("//x\n"), 0644)
 	}
 
-	_, _, err := buildLaunchArgs(sm, "pi", parent)
+	_, _, err := buildLaunchArgs(sm, "pi", config.CaptainProfile{}, parent)
 	if err == nil || !strings.Contains(err.Error(), "compatibility Pi integration alias") {
 		t.Fatalf("buildLaunchArgs() error = %v, want compatibility alias refusal", err)
 	}
@@ -2870,6 +2911,10 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	sm := filepath.Join(parent, "captains", "ext-sm")
+	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	if err := config.StoreProjectOverlay(parent, "ext-sm", config.ProjectOverlay{Backend: "tmux"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedWithParentTest("ext-sm", sm, parent, "# charter\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -2899,7 +2944,7 @@ func TestEnsureCaptainPiExtensions_InstallsBeforeLaunchArgs(t *testing.T) {
 		t.Fatalf("ConfigPush: %v", err)
 	}
 
-	name, args, err := buildLaunchArgs(sm, harness.Pi, parent)
+	name, args, err := buildLaunchArgs(sm, harness.Pi, config.CaptainProfile{}, parent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2965,12 +3010,6 @@ func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parent := t.TempDir()
-			if _, err := home.Init(parent); err != nil {
-				t.Fatal(err)
-			}
-			if err := config.Set(parent, "captain-harness", "pi"); err != nil {
-				t.Fatal(err)
-			}
 			home := seedCaptainForTest(t, parent, "pi-captain")
 			writeCanonicalPiIntegration(t, home)
 			writeCaptainMeta(t, parent, "pi-captain", home, "dead-window")
@@ -2992,13 +3031,10 @@ func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
 
 func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
 	parent := t.TempDir()
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.Set(parent, "captain-harness", harness.Claude); err != nil {
-		t.Fatal(err)
-	}
 	home := seedCaptainForTest(t, parent, "claude-captain")
+	// Explicit authoring: the snapshot CaptainProfile pins claude; the flat
+	// config/captain-harness is never consulted for captain operations.
+	republishWithCaptainProfile(t, parent, home, config.CaptainProfile{Harness: harness.Claude})
 	writeCaptainMeta(t, parent, "claude-captain", home, "dead-window")
 	integration := &countingStatusIntegrationPort{}
 	result, err := Recover(parent, []Info{{ID: "claude-captain", Home: home}}, RecoverCapabilities{Integration: integration, Launch: &countingLaunchEndpoint{}, Probe: &testProbeEndpoint{result: CaptainProbeResult{}}})
@@ -3075,11 +3111,13 @@ func TestBuildLaunchArgs_CaptainHarnessMultiToken(t *testing.T) {
 
 	configDir := filepath.Join(tmp, "config")
 	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("pi cliproxyapi/grok-4.5 low\n"), 0644)
-	// legacy model must not win over multi-token
+	// Flat pins must NOT be consulted for the launch profile: harness, model
+	// and effort tokens come only from the published-snapshot CaptainProfile.
+	os.WriteFile(filepath.Join(configDir, "captain-harness"), []byte("claude should-not-win\n"), 0644)
+	// legacy model must not win over the snapshot profile
 	os.WriteFile(filepath.Join(configDir, "model"), []byte("should-not-use\n"), 0644)
 
-	_, args, err := buildLaunchArgs(smHome, harness.Pi, tmp)
+	_, args, err := buildLaunchArgs(smHome, harness.Pi, config.CaptainProfile{Harness: "pi", Model: "cliproxyapi/grok-4.5", Effort: "low"}, tmp)
 	if err != nil {
 		t.Fatalf("buildLaunchArgs: %v", err)
 	}
@@ -3276,6 +3314,10 @@ func TestSeedFromWorktree_RefusesStateOnlyHome(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "existing-sm")
 
 	// Create a state-only captain home first.
+	// Explicit fixture Backend overlay: ResolveProject fails closed on empty.
+	if err := config.StoreProjectOverlay(parent, "existing-sm", config.ProjectOverlay{Backend: "tmux"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := seedWithParentTest("existing-sm", homePath, parent, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -3920,9 +3962,10 @@ func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
 	}, nil)
@@ -3963,8 +4006,9 @@ func TestConfigPush_InheritsEnvMirrorDeletions(t *testing.T) {
 	// Captain-local (non-inherited) key must survive regardless of env.
 	os.WriteFile(filepath.Join(smHome, "config", "model"), []byte("some-model\n"), 0644)
 
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeBase := func(harness string) error {
-		overlay := config.ProjectOverlay{}
+		overlay := config.ProjectOverlay{Backend: "tmux"}
 		if harness != "" {
 			overlay.SoldierHarness = harness
 		}
@@ -4033,9 +4077,10 @@ func TestConfigPush_InheritsAllowsEmptyEnvListCaptains(t *testing.T) {
 	os.MkdirAll(filepath.Join(smHome, "config"), 0755)
 	SeedProvenance(smHome, "test-sm")
 
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-sm", Path: smHome, Mode: "no-mistakes"},
 	}, nil)
@@ -4079,9 +4124,10 @@ func TestConfigPush_RefusesTrackedDestination(t *testing.T) {
 	homePath := filepath.Join(parent, "captains", "test-captain")
 	// Typed parent config binds the captain to a project so the seed's
 	// PropagateConfig publishes a resolved snapshot into the worktree.
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "claude"},
+		Config:        config.ProjectOverlay{SoldierHarness: "claude", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
 	}, []testCaptainRecord{
@@ -4279,9 +4325,10 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 	homePath := filepath.Join(parent, "captains", "test-captain")
 	// Typed parent config binds the captain to a project so each configPush
 	// publishes a resolved snapshot into the worktree.
+	// Explicit fixture Backend literal: ResolveProject fails closed on empty.
 	storeTestDocuments(t, parent, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-captain", Path: project, Mode: "no-mistakes"},
 	}, []testCaptainRecord{
@@ -4298,7 +4345,7 @@ func TestManagedCleanState_AGENTSMD_PreservedAfterMultipleConfigPush(t *testing.
 		content := fmt.Sprintf("pi-%d", i)
 		if err := config.StoreFleetBase(parent, config.FleetBaseDocument{
 			SchemaVersion: config.FleetBaseSchemaVersion,
-			Config:        config.ProjectOverlay{SoldierHarness: content},
+			Config:        config.ProjectOverlay{SoldierHarness: content, Backend: "tmux"},
 		}); err != nil {
 			t.Fatalf("StoreFleetBase cycle %d: %v", i, err)
 		}

@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -700,11 +701,31 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_ROLE", "general")
 
-	// Explicitly configure manual backend — this test spawns against a manually
-	// written backlog and expects native parser behavior.
+	// Explicitly author the current-v1 snapshot identities. The test spawns
+	// against a manually written backlog and expects native parser behavior;
+	// soldier operation resolution is snapshot-only.
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "pi",
+			Backend:        "tmux",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(tmpDir, "test-project", filepath.Join(tmpDir, "project"), "", false); err != nil {
+		t.Fatal(err)
+	}
 	configDir := filepath.Join(tmpDir, "config")
-	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create brief file so preflightBrief passes
 	briefDir := filepath.Join(tmpDir, "data", "test-task")
@@ -812,18 +833,12 @@ func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
 	}
 }
 
-// seedSpawnAuthority composes an in-memory Authority that owns one task, so
-// checkBacklogAuthority's canonical aggregate query finds it (Task 7.8).
-func seedSpawnAuthority(t *testing.T, taskID string) *taskauthority.Authority {
+// seedSpawnAuthority composes a canonical Task Authority that owns one task,
+// so checkBacklogAuthority's canonical aggregate query finds it (Task 7.8).
+func seedSpawnAuthority(t *testing.T, taskID string) *taskauthority.Canonical {
 	t.Helper()
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: taskID, Owner: "general", Description: "Ready", Kind: "ship",
-		Reason: "test",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, taskID, "ship", "")
 	return auth
 }
 
@@ -1077,33 +1092,45 @@ func TestAuthorizeSpawnAllowsCaptainPrimaryCheckout(t *testing.T) {
 	}
 }
 
-func TestBootstrapWindowExportsSoldierRole(t *testing.T) {
-	worktreeDir := t.TempDir()
-	var sent string
-	r := &Runner{
-		homeDir:    t.TempDir(),
-		wtPath:     worktreeDir,
-		launchBin:  "pi",
-		launchArgs: []string{"--model", "gpt-5", "--thinking", "high", "test prompt"},
-		windowID:   "win-1",
-		endpoints:  fakeEndpointCapabilities{backend: &fakeBackend{sendKeys: func(windowID, text string) error { sent = text; return nil }}},
-		endpoint:   CreatedEndpoint{Backend: "test", Handle: "win-1"},
+func TestSubmitLaunchExportsSoldierRoleAndGuardsSubmission(t *testing.T) {
+	f := newLaunchFixture(t, "submit-role")
+	// Drive the real launch path through the durable endpoint attach, then
+	// exercise the real submission (submitLaunch writes the deterministic
+	// artifact, records the launch evidence, and submits exactly once).
+	if err := runLaunchPhases(f, "attach-endpoint"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("launch phases: %v", err)
 	}
-	r.bootstrapWindow()
+	if err := f.runner.submitLaunch(); err != nil {
+		t.Fatalf("submitLaunch: %v", err)
+	}
 
-	script, err := os.ReadFile(filepath.Join(worktreeDir, ".soldier-launch.sh"))
+	script, err := os.ReadFile(filepath.Join(f.runner.wtPath, LaunchScriptName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(script), "export MUNSU_ROLE=soldier") {
 		t.Fatalf("launch script missing soldier role:\n%s", script)
 	}
-	if sent == "" {
-		t.Fatal("bootstrapWindow did not send launch command")
+	if !strings.Contains(string(script), "test brief") {
+		t.Fatalf("launch script must contain the prompt (brief) argument:\n%s", script)
 	}
-	// Verify prompt arg is in the script.
-	if !strings.Contains(string(script), "test prompt") {
-		t.Fatalf("launch script must contain prompt argument:\n%s", script)
+	// The real production artifact embeds the persistent re-entrant guard
+	// before the harness exec (same launch identity exits; no second process).
+	if !strings.Contains(string(script), "launch guard identity mismatch") || !strings.Contains(string(script), "exec ") {
+		t.Fatalf("launch script missing the persistent re-entrant guard:\n%s", script)
+	}
+	if f.endpoints.submitCount() != 1 {
+		t.Fatalf("submitLaunch did not send the launch command exactly once")
+	}
+
+	// The submission is re-entrant under the exact launch identity: repeating
+	// submitLaunch skips the submission once the launch evidence is durably
+	// recorded (never a duplicate launch).
+	if err := f.runner.submitLaunch(); err != nil {
+		t.Fatalf("guarded re-submit: %v", err)
+	}
+	if f.endpoints.submitCount() != 1 {
+		t.Fatalf("duplicate launch submission: count=%d, want 1", f.endpoints.submitCount())
 	}
 }
 
@@ -1489,7 +1516,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	// the project through the canonical Fleet Registry with a local-only mode.
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-proj", Path: projectDir, Mode: "local-only"},
 	}, nil)
@@ -1512,15 +1539,11 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	}
 
 	// The spawn cutover (Task 4.1) routes the worktree binding through the
-	// composed Task Authority: inject an in-memory-backed Authority that
-	// already owns the task so bindWorktree runs against canonical state.
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-reconcile", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: "reconcile-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	// composed canonical Task Authority: inject a canonical home-backed
+	// Authority that already owns the task so bindWorktree runs against
+	// canonical state.
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, "reconcile-task", "ship", "test-proj")
 
 	args := Args{
 		ID:          "reconcile-task",
@@ -1631,13 +1654,8 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "side-file-authoritative"
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: taskID, Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
 	r := &Runner{
 		homeDir:       homeDir,
 		args:          Args{ID: taskID, ProjectName: "test-proj", Kind: "scout", Authority: auth},
@@ -1692,6 +1710,12 @@ func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
 // closed otherwise without writing any v1 aggregate state.
 func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	homeDir := t.TempDir()
+	// The canonical home must be initialized before the projection is written
+	// so the composed canonical Authority is bound to the same home the
+	// projection reads.
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	// Backlog has the task, but the Authority has no record: the old shim
 	// would create a legacy aggregate; the Authority query must fail closed.
 	if err := home.WriteMeta(homeDir, "no-agg", map[string]string{"kind": "ship"}); err != nil {
@@ -1703,11 +1727,15 @@ func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [ ] no-agg: work\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := &Runner{
 		homeDir: homeDir,
-		args:    Args{ID: "no-agg", Authority: taskauthority.New(taskauthority.NewMemStore())},
+		args:    Args{ID: "no-agg", Authority: auth},
 	}
-	err := r.checkBacklogAuthority()
+	err = r.checkBacklogAuthority()
 	if err == nil {
 		t.Fatal("expected error when the task has no canonical aggregate")
 	}

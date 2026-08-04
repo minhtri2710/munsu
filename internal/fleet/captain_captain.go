@@ -889,9 +889,18 @@ func Unregister(parentHome, id string) error {
 }
 
 // ListCaptains returns all registered captains from the canonical Fleet
-// Registry, including the bound Project for each captain.
+// Registry, including the bound Project for each captain. The listing is
+// read-only: an uninitialized home carries no captains and is never created —
+// read contracts must not mutate home state.
 func ListCaptains(parentHome string) ([]Info, error) {
-	r, err := openRegistry(parentHome)
+	h, err := home.Open(parentHome)
+	if err != nil {
+		if errors.Is(err, home.ErrNotInitialized) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r, err := NewRegistry(h)
 	if err != nil {
 		return nil, err
 	}
@@ -928,7 +937,9 @@ Do not inspect mailbox files directly.
 
 // buildLaunchArgs returns the harness binary name and argument list for a captain launch.
 // Pi receives the charter as system context without an initial user turn.
-func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error) {
+// prof is the captain's published-snapshot CaptainProfile (harness model/effort);
+// allowlistHome is the General home whose optional model allowlist is enforced.
+func buildLaunchArgs(captainHome, h string, prof config.CaptainProfile, allowlistHome string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(h)
 	if !ok {
 		return "", nil, fmt.Errorf("captain launch: harness %q is not a verified harness", h)
@@ -959,12 +970,12 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		}
 	}
 
-	// Model/effort: config/captain-harness multi-token line, then config/model.
-	prof, _ := harness.CaptainProfileFromHome(parentHome)
+	// Model/effort come only from the published-snapshot CaptainProfile. No
+	// flat-file or legacy config pin is consulted at launch.
 	// Enforce the optional munsu model allowlist before any launch side effects.
 	// CheckModelAllowed fails closed when a policy is present but the identity
 	// is unresolved (empty model), so a runtime default cannot bypass the policy.
-	if err := harness.CheckModelAllowed(parentHome, h, prof.Model); err != nil {
+	if err := harness.CheckModelAllowed(allowlistHome, h, prof.Model); err != nil {
 		return "", nil, fmt.Errorf("captain launch: %w", err)
 	}
 	args := []string{}
@@ -1053,12 +1064,21 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 		}
 	}
 
-	h, err := harness.Captain(parentHome)
+	// The captain's harness identity and launch profile are bound from the
+	// captain's PUBLISHED snapshot (the composed config.ResolveProject output
+	// written by publishResolvedSnapshot during PropagateConfig). Resolution
+	// fails closed: an empty CaptainProfile is a typed launch failure, never
+	// a fallback to flat files or Detect.
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		return fmt.Errorf("loading captain published snapshot for launch: %w", err)
+	}
+	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
 	if err != nil {
 		return fmt.Errorf("resolving captain harness: %w", err)
 	}
 
-	binName, args, err := buildLaunchArgs(captainHome, h, parentHome)
+	binName, args, err := buildLaunchArgs(captainHome, h, snapshot.Config().CaptainProfile, parentHome)
 	if err != nil {
 		return err
 	}
@@ -1084,7 +1104,12 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	if err != nil {
 		return fmt.Errorf("building launch script: %w", err)
 	}
-	launched, err := endpoint.Launch(parentHome, LaunchRequest{WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome})
+	// The backend identity is bound at creation from the captain's PUBLISHED
+	// snapshot (the composed config.ResolveProject output written by
+	// publishResolvedSnapshot during PropagateConfig). A strict roundtrip
+	// enforces a non-empty identity; the endpoint never receives "".
+	backendIdentity := snapshot.Config().Backend
+	launched, err := endpoint.Launch(parentHome, LaunchRequest{WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome, Backend: backendIdentity})
 	if err != nil {
 		return fmt.Errorf("launching captain endpoint: %w", err)
 	}
@@ -1228,33 +1253,6 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	}
 
 	return nil
-}
-
-// --- Handoff ---
-
-// Handoff moves backlog items from the parent home to a captain atomically.
-// All requested keys must preclassify as queued before the command runs.
-// extractTaskStateFromShow parses the state field from tasks-axi show output.
-// Returns empty string if not found.
-func extractTaskStateFromShow(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "state:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "state:"))
-		}
-	}
-	return ""
-}
-
-// isTasksAxiBackend checks whether config/backlog-backend is set to tasks-axi or unset.
-// Override in tests.
-var isTasksAxiBackend = func(parentHome string) bool {
-	val, err := config.Get(parentHome, "backlog-backend")
-	if err != nil {
-		// Config key not found — default is tasks-axi.
-		return true
-	}
-	return val == "tasks-axi"
 }
 
 func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
@@ -2110,7 +2108,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
 			if launched {
 				// Launched-but-dead: verify the canonical Pi integration before recovery.
-				if integrationErr := requireHealthyPiIntegration(parentHome, sm.Home, caps.Integration); integrationErr != nil {
+				if integrationErr := requireHealthyPiIntegration(sm.Home, caps.Integration); integrationErr != nil {
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
 					errs = append(errs, fmt.Sprintf("%s: auto-recover blocked: %v", sm.ID, integrationErr))
 					continue
@@ -2263,10 +2261,14 @@ func (r *RecoverResult) StepsString() string {
 // recorded on the entry) and continues with the remaining captains. Seeded-but-never-
 // launched captains are reported but not launched. The sweep holds the converge lock so
 // it does not race with an in-flight converge.
-func requireHealthyPiIntegration(parentHome, captainHome string, integration IntegrationPort) error {
-	h, err := harness.Captain(parentHome)
-	if err != nil || h == "" {
-		return fmt.Errorf("resolving captain harness: %v", err)
+func requireHealthyPiIntegration(captainHome string, integration IntegrationPort) error {
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		return fmt.Errorf("loading captain published snapshot for integration check: %w", err)
+	}
+	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
+	if err != nil {
+		return fmt.Errorf("resolving captain harness: %w", err)
 	}
 	if h != harness.Pi {
 		return nil
@@ -2353,7 +2355,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 		}
 
 		// Launched-but-dead: verify the bound harness integration before relaunch.
-		if integrationErr := requireHealthyPiIntegration(parentHome, sm.Home, capabilities.Integration); integrationErr != nil {
+		if integrationErr := requireHealthyPiIntegration(sm.Home, capabilities.Integration); integrationErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = integrationErr.Error()
 			res.Failed++

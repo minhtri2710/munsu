@@ -15,10 +15,6 @@ import (
 // blank lines and # comments are ignored.
 const ModelAllowlistKey = "model-allowlist"
 
-// ModelAllowlistOverrideEnv is the environment override for the allowlist,
-// consistent with the MUNSU_<KEY>_OVERRIDE convention in config.Get.
-const ModelAllowlistOverrideEnv = "MUNSU_MODEL_ALLOWLIST_OVERRIDE"
-
 // ModelAllowlistPath returns the config file path for the allowlist under homeDir.
 func ModelAllowlistPath(homeDir string) string {
 	return filepath.Join(config.ConfigDir(homeDir), ModelAllowlistKey)
@@ -37,11 +33,8 @@ func PolicyHome(homeDir string) string {
 }
 
 // ModelAllowlistPresent reports whether an allowlist policy is configured for
-// homeDir (config file or environment override). Absence is not an error.
+// homeDir (config file). Absence is not an error.
 func ModelAllowlistPresent(homeDir string) (bool, error) {
-	if _, ok := os.LookupEnv(ModelAllowlistOverrideEnv); ok {
-		return true, nil
-	}
 	path := ModelAllowlistPath(PolicyHome(homeDir))
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -108,19 +101,14 @@ func canonicalModelIdentity(line string) (string, error) {
 func LoadModelAllowlist(homeDir string) (map[string]bool, bool, error) {
 	policyHome := PolicyHome(homeDir)
 	path := ModelAllowlistPath(policyHome)
-	var raw string
-	if val, ok := os.LookupEnv(ModelAllowlistOverrideEnv); ok {
-		raw = val
-	} else {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, false, nil
-			}
-			return nil, false, fmt.Errorf("model allowlist: reading %s: %w", path, err)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
 		}
-		raw = string(data)
+		return nil, false, fmt.Errorf("model allowlist: reading %s: %w", path, err)
 	}
+	raw := string(data)
 	identities, err := parseModelAllowlist(raw)
 	if err != nil {
 		return nil, true, err

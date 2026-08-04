@@ -45,6 +45,47 @@ func (t *TmuxBackend) ensureSession(session string) error {
 	return nil
 }
 
+// FindOrCreateWindow returns the existing window with the given name in the
+// session, or creates it. It is the reservation-aware find-or-create contract
+// for reentrant endpoint recovery: the launch intent scopes the window label
+// per generation, so repeating the same launch finds the SAME window (created
+// by an earlier attempt) and a different launch never reuses it. Multiple
+// windows with the same name fail closed as ambiguous.
+func (t *TmuxBackend) FindOrCreateWindow(session, name string) (string, error) {
+	bin, err := tmuxBin()
+	if err != nil {
+		return "", err
+	}
+	if err := t.ensureSession(session); err != nil {
+		return "", err
+	}
+	out, err := exec.Command(bin, "list-windows", "-t", session, "-F", "#{window_name}\t#{window_id}").Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("tmux list-windows: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", fmt.Errorf("tmux list-windows: %w", err)
+	}
+	var matches []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 2)
+		if len(fields) == 2 && fields[0] == name {
+			matches = append(matches, fields[1])
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return session + ":" + matches[0], nil
+	case 0:
+		return t.NewWindow(session, name)
+	default:
+		return "", fmt.Errorf("tmux find-or-create: %d windows named %q in session %q; ambiguous", len(matches), name, session)
+	}
+}
+
 // NewWindow creates a new tmux window in the given session.
 // If the session does not exist, it is created automatically.
 // It uses `tmux new-window -P -F "#{window_id}" -n <name>`.

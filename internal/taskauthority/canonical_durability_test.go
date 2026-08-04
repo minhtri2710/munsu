@@ -261,3 +261,201 @@ func TestCanonicalBlockOperationReusedConflict(t *testing.T) {
 func errorsIsOperationConflict(err error) bool {
 	return errors.Is(err, ErrOperationConflict)
 }
+
+// TestCanonicalBeginSpawnInterruptedCommitRecovers proves an interrupted
+// BeginSpawn commit is recovered mechanically on the next home.Open: the
+// launch intent commits exactly once, the revision advances exactly once, and
+// the recovered launch fence is active (the worktree binding must match the
+// recovered intent's reservation). Replaying the interrupted operation returns
+// the original committed outcome without re-committing.
+func TestCanonicalBeginSpawnInterruptedCommitRecovers(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+
+	// Build the real BeginSpawn operation so the planted receipt carries the
+	// true intent digest; the post-recovery replay uses the same identity.
+	req := launchRequest(c, "t1", preconditionOf(1, 1))
+	op := mustOperation(t, "op-interrupted-begin", req)
+
+	next := Aggregate{
+		SchemaVersion: TaskAuthoritySchema,
+		TaskID:        "t1",
+		Generation:    1,
+		Revision:      2,
+		Current:       true,
+		Definition:    TaskDefinition{Owner: "owner", Description: "work", Kind: "ship"},
+		Phase:         PhaseQueued,
+		Launch: &LaunchIntent{
+			OperationID:           op.ID.Value(),
+			SnapshotDigest:        req.SnapshotDigest,
+			Backend:               req.Backend,
+			Harness:               req.Harness,
+			Model:                 req.Model,
+			Effort:                req.Effort,
+			Mode:                  req.Mode,
+			Kind:                  req.Kind,
+			Project:               req.Project,
+			ParentTaskID:          req.ParentTaskID,
+			LaunchID:              req.LaunchID,
+			WindowLabel:           req.WindowLabel,
+			WorktreeReservationID: req.WorktreeReservationID,
+			WorktreeFenceToken:    req.WorktreeFenceToken,
+			EndpointReservationID: req.EndpointReservationID,
+			EndpointFenceToken:    req.EndpointFenceToken,
+			PlannedAt:             1000,
+		},
+	}
+	docData, err := json.Marshal(taskDoc{HomeRevision: 2, Aggregate: next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := receipt{OperationID: op.ID.Value(), Digest: op.Digest, TaskID: "t1", Generation: 1, Revision: 2, Phase: string(PhaseQueued)}
+	recData, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plantInterruptedJournal(t, root, taskScope("t1"), "op-interrupted-begin", 1, 2, []home.ChangeItem{
+		{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
+		{Root: home.RootState, Key: receiptKey("op-interrupted-begin"), Data: recData},
+	})
+
+	c2 := reopenCanonical(t, root)
+	agg, err := c2.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("read recovered task: %v", err)
+	}
+	if agg.Revision != 2 || agg.Launch == nil || agg.Launch.LaunchID != "launch-t1" {
+		t.Fatalf("recovered aggregate = revision %d launch %+v, want rev 2 with committed intent", agg.Revision, agg.Launch)
+	}
+
+	// The recovered launch fence is active: a worktree binding that does not
+	// match the recovered reservation fails closed, and one that matches
+	// succeeds.
+	bwBad := CanonicalBindWorktreeRequest{
+		HomeID:       c2.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 2),
+		Binding:      worktreeBinding(),
+		Reason:       "bind worktree",
+	}
+	if _, err := c2.BindWorktree(mustOperation(t, "op-recovered-bad-wt", bwBad), bwBad); !errors.Is(err, ErrConflict) {
+		t.Fatalf("worktree binding outside recovered fence = %v, want ErrConflict", err)
+	}
+	bwGood := CanonicalBindWorktreeRequest{
+		HomeID:       c2.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 2),
+		Binding:      launchWorktreeBinding(req),
+		Reason:       "bind worktree",
+	}
+	if _, err := c2.BindWorktree(mustOperation(t, "op-recovered-good-wt", bwGood), bwGood); err != nil {
+		t.Fatalf("worktree binding under recovered fence: %v", err)
+	}
+
+	// Replaying the interrupted BeginSpawn returns the original outcome.
+	out, err := c2.BeginSpawn(op, req)
+	if err != nil {
+		t.Fatalf("BeginSpawn replay after recovery: %v", err)
+	}
+	if !out.Replayed || out.Revision != 2 {
+		t.Fatalf("BeginSpawn replay = %+v, want Replayed rev 2", out)
+	}
+}
+
+// TestCanonicalLaunchOperationReceiptsSurviveReopen proves the durable
+// operation receipts of the launch operations (begin spawn / attach endpoint /
+// record launch / bind endpoint) survive a home reopen and replay the original
+// committed outcome through a fresh Canonical.
+func TestCanonicalLaunchOperationReceiptsSurviveReopen(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+
+	req := launchRequest(c, "t1", preconditionOf(1, 1))
+	beginOp := mustOperation(t, "op-durable-begin", req)
+	if _, err := c.BeginSpawn(beginOp, req); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
+	rev := uint64(2)
+
+	bw := CanonicalBindWorktreeRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, rev),
+		Binding:      launchWorktreeBinding(req),
+		Reason:       "bind worktree",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-durable-wt", bw), bw); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	rev++
+
+	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
+	attachOp := mustOperation(t, "op-durable-attach", attach)
+	if _, err := c.AttachEndpoint(attachOp, attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	rev++
+
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, rev), req)
+	recordOp := mustOperation(t, "op-durable-record", record)
+	if _, err := c.RecordLaunch(recordOp, record); err != nil {
+		t.Fatalf("RecordLaunch: %v", err)
+	}
+	rev++
+
+	be := CanonicalBindEndpointRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, rev),
+		Binding:      launchEndpointBinding(req, "handle-1"),
+		Reason:       "spawn",
+	}
+	beOp := mustOperation(t, "op-durable-bind", be)
+	if _, err := c.BindEndpoint(beOp, be); err != nil {
+		t.Fatalf("BindEndpoint: %v", err)
+	}
+
+	// Reopen the home and replay each launch operation's receipt.
+	c2 := reopenCanonical(t, root)
+
+	beginOut, err := c2.BeginSpawn(beginOp, req)
+	if err != nil {
+		t.Fatalf("BeginSpawn replay after reopen: %v", err)
+	}
+	if !beginOut.Replayed || beginOut.Phase != PhaseQueued || beginOut.Revision != 2 {
+		t.Fatalf("BeginSpawn replay = %+v, want Replayed queued rev 2", beginOut)
+	}
+
+	attachOut, err := c2.AttachEndpoint(attachOp, attach)
+	if err != nil {
+		t.Fatalf("AttachEndpoint replay after reopen: %v", err)
+	}
+	if !attachOut.Replayed || attachOut.Phase != PhaseQueued || attachOut.Revision != 4 {
+		t.Fatalf("AttachEndpoint replay = %+v, want Replayed queued rev 4", attachOut)
+	}
+
+	recordOut, err := c2.RecordLaunch(recordOp, record)
+	if err != nil {
+		t.Fatalf("RecordLaunch replay after reopen: %v", err)
+	}
+	if !recordOut.Replayed || recordOut.Phase != PhaseQueued || recordOut.Revision != 5 {
+		t.Fatalf("RecordLaunch replay = %+v, want Replayed queued rev 5", recordOut)
+	}
+
+	beOut, err := c2.BindEndpoint(beOp, be)
+	if err != nil {
+		t.Fatalf("BindEndpoint replay after reopen: %v", err)
+	}
+	if !beOut.Replayed || beOut.Phase != PhaseWorking || beOut.Revision != 6 {
+		t.Fatalf("BindEndpoint replay = %+v, want Replayed working rev 6", beOut)
+	}
+
+	// The recovered launch state is complete and current.
+	agg, err := c2.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Phase != PhaseWorking || agg.Launch == nil || agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil {
+		t.Fatalf("recovered launch state = %+v", agg)
+	}
+}

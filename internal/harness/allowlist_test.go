@@ -68,14 +68,18 @@ func TestModelAllowlistPresent(t *testing.T) {
 			t.Fatal("file policy should be present")
 		}
 	})
-	t.Run("env override present", func(t *testing.T) {
-		t.Setenv(ModelAllowlistOverrideEnv, "pi:sonnet")
-		ok, err := ModelAllowlistPresent(t.TempDir())
+	t.Run("absent file is absent", func(t *testing.T) {
+		home := t.TempDir()
+		// No allowlist file: the policy must be absent. The ambient env
+		// override input was removed, so a stale override cannot activate it.
+		staleEnv := "MUNSU_" + "MODEL_ALLOWLIST" + "_OVERRIDE"
+		t.Setenv(staleEnv, "pi:sonnet")
+		ok, err := ModelAllowlistPresent(home)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !ok {
-			t.Fatal("env policy should be present")
+		if ok {
+			t.Fatal("absent policy file must report absent; ambient env input was removed")
 		}
 	})
 	t.Run("captain home sees parent policy", func(t *testing.T) {
@@ -178,21 +182,6 @@ func TestLoadModelAllowlist(t *testing.T) {
 			if !present {
 				t.Errorf("malformed policy %q must report present", content)
 			}
-		}
-	})
-	t.Run("env override wins", func(t *testing.T) {
-		home := t.TempDir()
-		writeAllowlist(t, home, "pi:from-file\n")
-		t.Setenv(ModelAllowlistOverrideEnv, "codex:from-env")
-		allowed, present, err := LoadModelAllowlist(home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !present {
-			t.Fatal("policy should be present via env")
-		}
-		if allowed["codex:from-env"] == false || allowed["pi:from-file"] {
-			t.Fatalf("env override should replace file policy, got %v", allowed)
 		}
 	})
 }

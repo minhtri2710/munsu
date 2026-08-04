@@ -85,13 +85,17 @@ func seedCaptainForTest(t *testing.T, parent, id string) string {
 
 // createTestPublishedSnapshot writes a minimal published snapshot to the
 // captain home so ComputeInheritedConfigDigest and related functions work.
+// The Backend is an explicit fixture literal ("tmux") so StorePublishedSnapshot
+// (which fails closed on an empty identity) accepts it.
 func createTestPublishedSnapshot(t *testing.T, captainHome string) {
 	t.Helper()
 	resolved := config.ResolvedProjectConfig{
 		Project:           "test-project",
 		ProjectPath:       captainHome,
 		SoldierHarness:    "pi",
+		Backend:           "tmux",
 		RequireNoMistakes: true,
+		CaptainProfile:    config.CaptainProfile{Harness: "pi"},
 		Digest:            "0000000000000000000000000000000000000000000000000000000000000000",
 	}
 	if err := config.StorePublishedSnapshot(captainHome, resolved); err != nil {
@@ -108,11 +112,55 @@ func setupTypedParentHome(t *testing.T, parent string, projectName string) {
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	// Create or update fleet base document with empty config.
+	// Create or update fleet base document with the typed Backend identity so
+	// publishResolvedSnapshot (config.ResolveProject) resolves a non-empty
+	// backend: an empty identity is a typed validation failure at HEAD.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			Backend: "tmux",
+		},
+		CaptainProfile: config.CaptainProfile{Harness: "pi"},
 	}
 	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// captainHomeWithSnapshot creates a captain home whose published snapshot
+// carries the given CaptainProfile. The snapshot is the ONLY captain harness
+// identity source for recovery/launch operations; no flat pins are consulted.
+func captainHomeWithSnapshot(t *testing.T, profile config.CaptainProfile) string {
+	t.Helper()
+	home := t.TempDir()
+	resolved := config.ResolvedProjectConfig{
+		Project:        "test-project",
+		ProjectPath:    home,
+		Backend:        "tmux",
+		CaptainProfile: profile,
+		Digest:         "0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	if err := config.StorePublishedSnapshot(home, resolved); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+// republishWithCaptainProfile re-stores the fleet base with the given
+// CaptainProfile (preserving the rest of the existing document) and republishes
+// the captain's snapshot, mirroring explicit authoring via
+// `munsu config set captain-harness`.
+func republishWithCaptainProfile(t *testing.T, parent, captainHome string, profile config.CaptainProfile) {
+	t.Helper()
+	base, err := config.LoadFleetBase(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.CaptainProfile = profile
+	if err := config.StoreFleetBase(parent, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishResolvedSnapshot(parent, captainHome); err != nil {
 		t.Fatal(err)
 	}
 }

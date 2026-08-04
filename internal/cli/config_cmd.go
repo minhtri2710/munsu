@@ -3,11 +3,12 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
@@ -19,8 +20,9 @@ func newConfigCmd() *cobra.Command {
 		Long: `Read, write, and view munsu configuration.
 
 Configuration values are stored as files under $MUNSU_HOME/config/<key>.
-The backend key reports the live-resolved backend (file pin, then active
-TMUX/HERDR_ENV session); other keys report the persisted file value.
+The backend key reports the persisted snapshot Backend (the published config
+snapshot or the fleet base document's typed Backend); other keys report the
+persisted file value.
 
 Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 `,
@@ -31,12 +33,14 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key := args[0]
-			// backend is runtime-resolved (env detection), not persisted, so report the live backend.
+			// backend is a persisted snapshot identity (published snapshot or fleet
+			// base document's typed Backend), never a live env/PATH probe. Report
+			// the persisted snapshot Backend, or a typed missing-input when none is
+			// persisted.
 			if key == "backend" {
-				pin, _ := config.Get(ctx.Home, key)
-				resolved, _ := bootstrap.ResolveBackend(pin)
-				if resolved == "" {
-					resolved = "none"
+				resolved, err := fleet.ResolveGeneralHomeBackend(ctx.Home)
+				if err != nil || resolved == "" {
+					return usageError("missing_input", "Set backend in the fleet base config and rerun `munsu config get backend`", "no persisted backend identity is available")
 				}
 				return writeContract(cmd, Response[MessageResult]{
 					SchemaVersion: SchemaVersion,
@@ -89,6 +93,14 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 						return fmt.Errorf("config set %s: %w", key, err)
 					}
 				}
+				// Authoring boundary: write the captain launch profile into the
+				// fleet base document (config/base.json). The base.json
+				// CaptainProfile is the ONLY source consumed by captain
+				// operations; the flat file remains a diagnostics-only echo.
+				if err := setCaptainProfileInBase(ctx.Home, config.CaptainProfile{Harness: prof.Harness, Model: prof.Model, Effort: prof.Effort}); err != nil {
+					return err
+				}
+				return config.Set(ctx.Home, key, value)
 			case "model-allowlist":
 				// One <harness>:<model> identity per line; empty (deny-all) is allowed.
 				if err := harness.ValidateModelAllowlist(value); err != nil {
@@ -102,6 +114,29 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 	cmd.AddCommand(newConfigShowCmd())
 	cmd.AddCommand(newConfigDispatchCmd())
 	return cmd
+}
+
+// setCaptainProfileInBase writes the captain launch profile into the fleet
+// base document (config/base.json), creating the document when absent and
+// preserving all other fields. A malformed/invalid existing document fails
+// closed (no self-repair). The base.json CaptainProfile is the ONLY captain
+// operation source; the flat config/captain-harness file is a
+// diagnostics-only echo.
+func setCaptainProfileInBase(homeDir string, prof config.CaptainProfile) error {
+	baseDoc, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		if _, statErr := os.Stat(filepath.Join(homeDir, config.BaseDocumentPath)); statErr == nil {
+			return fmt.Errorf("config set captain-harness: loading fleet base document: %w", err)
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+		baseDoc = config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
+	}
+	baseDoc.CaptainProfile = prof
+	if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
+		return fmt.Errorf("config set captain-harness: writing fleet base captainProfile: %w", err)
+	}
+	return nil
 }
 
 func newConfigShowCmd() *cobra.Command {

@@ -238,6 +238,123 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 	return adapter.Name, args, nil
 }
 
+// LaunchArtifact is the deterministic launch artifact of one launch
+// submission: the re-entrant script path and the exact command submitted to
+// the endpoint, with its sha256 digest. The command digest binds the durable
+// launch evidence to the exact submission. GuardName/GuardIdentity expose the
+// persistent guard marker the script creates before execing the harness.
+type LaunchArtifact struct {
+	ScriptPath    string
+	Command       string
+	CommandDigest string
+	GuardName     string
+	GuardIdentity string
+}
+
+// LaunchArtifactInput carries the immutable launch identity for one artifact.
+// Every value is deterministic per launch, so the artifact (and its command
+// digest) is identical on every attempt of the same launch.
+type LaunchArtifactInput struct {
+	WorktreePath   string
+	HomeDir        string
+	TaskID         string
+	SnapshotDigest string
+	LaunchBin      string
+	LaunchArgs     []string
+	LaunchID       string
+	Generation     string
+	EndpointFence  string
+}
+
+// buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
+// the worktree and returns the exact submission command with its sha256
+// digest. The script embeds the persistent re-entrant launch guard: BEFORE
+// invoking/execing the harness it writes a durable guard marker (keyed by
+// task+generation, carrying the exact launch identity) and exits/no-ops when
+// the marker already carries the same identity, fails closed on a different
+// identity/fence, and only then execs the harness. A duplicate submission of
+// the same launch can therefore never start a second Soldier process; when
+// the guard exists but the process cannot prove readiness, recovery fails
+// closed instead of launching another process. An existing script whose
+// content differs fails closed (identity mismatch, never overwritten).
+func buildLaunchArtifact(in LaunchArtifactInput) (LaunchArtifact, error) {
+	if in.LaunchBin == "" || len(in.LaunchArgs) == 0 {
+		return LaunchArtifact{}, fmt.Errorf("soldier launch: no prompt-arg launch command; harness does not support prompt-arg delivery")
+	}
+	if in.LaunchID == "" || in.Generation == "" || in.EndpointFence == "" {
+		return LaunchArtifact{}, fmt.Errorf("soldier launch: re-entrant launch guard requires the exact launch identity (launch id, generation, fence)")
+	}
+	guardName := fmt.Sprintf(".soldier-launch-guard-%s-%s", labelComponent(in.TaskID), in.Generation)
+	guardIdentity := in.LaunchID + "|" + in.Generation + "|" + in.EndpointFence
+
+	var b strings.Builder
+	b.WriteString("#!/usr/bin/env bash\n")
+	b.WriteString("set -euo pipefail\n")
+	b.WriteString("cd ")
+	b.WriteString(spawnShQuote(in.WorktreePath))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_HOME=")
+	b.WriteString(spawnShQuote(in.HomeDir))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_ROLE=soldier\n")
+	b.WriteString("export MUNSU_TASK_ID=")
+	b.WriteString(spawnShQuote(in.TaskID))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_PARENT_STATUS=")
+	b.WriteString(spawnShQuote(in.HomeDir))
+	b.WriteString("\n")
+	if in.SnapshotDigest != "" {
+		b.WriteString("export MUNSU_CONFIG_SNAPSHOT_DIGEST=")
+		b.WriteString(spawnShQuote(in.SnapshotDigest))
+		b.WriteString("\n")
+	}
+	// Persistent re-entrant launch guard: created by the launched script
+	// BEFORE invoking the harness. The guard directory is created atomically
+	// (mkdir succeeds for exactly one submission), so even concurrent
+	// submissions cannot both exec the harness: the loser exits. Same launch
+	// identity re-entry exits (the original harness remains the pane process);
+	// a different identity/fence fails closed; a guard with no provable
+	// readiness is never re-launched.
+	b.WriteString("guard=")
+	b.WriteString(spawnShQuote(guardName))
+	b.WriteString("\n")
+	b.WriteString("identity=")
+	b.WriteString(spawnShQuote(guardIdentity))
+	b.WriteString("\n")
+	b.WriteString("if ! mkdir \"$guard\" 2>/dev/null; then\n")
+	b.WriteString("  existing=\"$(cat \"$guard/identity\" 2>/dev/null || true)\"\n")
+	b.WriteString("  if [ \"$existing\" != \"$identity\" ]; then\n")
+	b.WriteString("    echo \"launch guard identity mismatch: existing '$existing' want '$identity'\" >&2\n")
+	b.WriteString("    exit 1\n")
+	b.WriteString("  fi\n")
+	b.WriteString("  echo \"launch $identity already guarded; no second process\" >&2\n")
+	b.WriteString("  exit 0\n")
+	b.WriteString("fi\n")
+	b.WriteString("printf '%s' \"$identity\" > \"$guard/identity\"\n")
+	b.WriteString("exec ")
+	b.WriteString(spawnShQuote(in.LaunchBin))
+	for _, arg := range in.LaunchArgs {
+		b.WriteString(" ")
+		b.WriteString(spawnShQuote(arg))
+	}
+	b.WriteString("\n")
+	content := b.String()
+
+	scriptPath := filepath.Join(in.WorktreePath, LaunchScriptName)
+	if existing, err := os.ReadFile(scriptPath); err == nil {
+		if string(existing) != content {
+			return LaunchArtifact{}, fmt.Errorf("launch artifact %s already exists with different content; identity mismatch, refuse to overwrite", scriptPath)
+		}
+	} else if !os.IsNotExist(err) {
+		return LaunchArtifact{}, fmt.Errorf("reading existing launch artifact: %w", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		return LaunchArtifact{}, fmt.Errorf("writing launch script: %w", err)
+	}
+	command := "bash " + spawnShQuote(scriptPath)
+	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command)), GuardName: guardName, GuardIdentity: guardIdentity}, nil
+}
+
 // PersistLaunchFiles writes all durable launch files to the worktree:
 // .soldier-charter.md, .soldier-brief.md, .soldier-envelope.json, and .soldier-prompt.md.
 // Returns an error if any write fails.

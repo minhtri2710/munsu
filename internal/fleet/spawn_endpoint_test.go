@@ -1,8 +1,14 @@
 package fleet
 
+// fakeEndpointCapabilities is the shared reservation-aware test double: it
+// satisfies the single mandatory EndpointCapabilities contract via
+// CreateReserved (find-or-create under the exact reservation identity is
+// exercised by reentrantEndpointCapabilities in the launch tests; this fake
+// delegates to its backend's NewWindow for the preflight/integration tests
+// that only exercise first-attempt creation).
 type fakeEndpointCapabilities struct{ backend *fakeBackend }
 
-func (f fakeEndpointCapabilities) Create(req CreateRequest) (CreatedEndpoint, error) {
+func (f fakeEndpointCapabilities) CreateReserved(req CreateRequest) (CreatedEndpoint, error) {
 	id, err := f.backend.NewWindow(req.Home, req.TabName)
 	return CreatedEndpoint{Backend: "test", Handle: id}, err
 }

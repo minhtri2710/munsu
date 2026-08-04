@@ -57,56 +57,14 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error (tmux not on PATH), got nil")
 	}
-	// TestSendCmd_UsesMetaBackend — verifies send uses backend from task meta
-	// instead of global config. With typed prompt submission, TmuxBackend returns
-	// unsupported (no PromptSubmitter). The error should reference the backend
-	// that was actually used (TmuxBackend), not the config default (herdr).
-	if !strings.Contains(err.Error(), "TmuxBackend") && !strings.Contains(err.Error(), "unsupported") {
-		t.Errorf("expected error mentioning TmuxBackend/unsupported (from meta backend), got: %v", err)
+	// send resolves the session backend from task meta (backend=tmux, not the
+	// global config herdr). The shared constructBackend fails closed when tmux
+	// is absent on PATH with a typed "<name>: not found on PATH" error.
+	if !strings.Contains(err.Error(), "tmux: not found on PATH") {
+		t.Errorf("expected error mentioning 'tmux: not found on PATH' (from meta backend), got: %v", err)
 	}
-}
-
-// TestSendCmd_UsesConfigBackendWhenMetaHasNone verifies that send falls back to
-// global config when task meta does not specify a backend.
-func TestSendCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Write global config saying "herdr"
-	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write task meta with NO backend field (uses global config)
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	metaContent := "window=@0\nkind=ship\n" // no backend field
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	statusContent := "working: spawned\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.status"), []byte(statusContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", "/dev/null")
-	defer os.Setenv("PATH", oldPath)
-
-	root := NewRootCommand()
-	root.SetArgs([]string{"send", "test-task", "echo hello", "--home", tmpDir})
-	err := root.Execute()
-
-	if err == nil {
-		t.Fatal("expected error (herdr not on PATH), got nil")
-	}
-	if !strings.Contains(err.Error(), "not alive") {
-		t.Errorf("expected error mentioning 'not alive' (herdr resolved from config but not executable), got: %v", err)
+	if strings.Contains(err.Error(), "herdr") {
+		t.Errorf("send must use the meta backend (tmux), not the global config (herdr), got: %v", err)
 	}
 }
 

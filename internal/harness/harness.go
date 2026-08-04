@@ -4,6 +4,7 @@ package harness
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -202,13 +203,37 @@ func lookupConfig(homeDir, key string) (string, bool) {
 	return "", false
 }
 
-// Soldier resolves the soldier harness following the fallback chain:
+// ErrNoSoldierHarnessInSnapshot is returned by ResolveSoldierFromSnapshot when
+// the resolved project snapshot carries no soldier harness identity.
+var ErrNoSoldierHarnessInSnapshot = errors.New("no soldier harness identity resolved from snapshot")
+
+// ResolveSoldierFromSnapshot resolves the soldier harness from a resolved
+// project snapshot only. It fails closed when the snapshot carries no soldier
+// harness identity, and rejects unknown harness names via ValidateHarness.
+// Snapshot-only: no flat-file lookup, no Detect, no env/PATH input.
+// Operations consume this function; Soldier remains the diagnostics/legacy
+// surface with its fallback chain.
+func ResolveSoldierFromSnapshot(cfg config.ResolvedProjectConfig) (string, error) {
+	if cfg.SoldierHarness == "" {
+		return "", fmt.Errorf("%w: project %q", ErrNoSoldierHarnessInSnapshot, cfg.Project)
+	}
+	if err := ValidateHarness(cfg.SoldierHarness); err != nil {
+		return "", fmt.Errorf("snapshot soldier harness: %w", err)
+	}
+	return cfg.SoldierHarness, nil
+}
+
+// Soldier resolves the soldier harness following the legacy fallback chain
+// (diagnostics surface):
 //
-//  1. Default harness from config/soldier-dispatch.json
-//  2. config/soldier-harness file value
-//  3. Detected harness from Detect()
+//  1. Published snapshot (captain context)
+//  2. Fleet base document (general context)
+//  3. config/soldier-harness file value
+//  4. Detected harness from Detect()
 //
 // The config/soldier-harness value "default" is treated as unset.
+// Operations resolve the soldier harness from the snapshot only via
+// ResolveSoldierFromSnapshot; Soldier remains for diagnostics.
 func Soldier(homeDir string) (string, error) {
 	// 1. Try published snapshot (captain context)
 	snapshot, err := config.LoadPublishedSnapshot(homeDir)
@@ -277,6 +302,26 @@ func ParseHarnessLine(line string) CaptainProfile {
 		p.Effort = fields[2]
 	}
 	return p
+}
+
+// ErrNoCaptainHarnessInSnapshot is returned by ResolveCaptainFromSnapshot when
+// the resolved project snapshot carries no captain profile harness identity.
+var ErrNoCaptainHarnessInSnapshot = errors.New("no captain harness identity resolved from snapshot")
+
+// ResolveCaptainFromSnapshot resolves the captain harness from a resolved
+// project snapshot only. It fails closed when the snapshot carries no captain
+// harness identity, and rejects unknown harness names via ValidateHarness.
+// Snapshot-only: no flat-file lookup, no Detect, no env/PATH input.
+// Operations consume this function; Captain remains the diagnostics/legacy
+// surface with its fallback chain.
+func ResolveCaptainFromSnapshot(cfg config.ResolvedProjectConfig) (string, error) {
+	if cfg.CaptainProfile.Harness == "" {
+		return "", fmt.Errorf("%w: project %q", ErrNoCaptainHarnessInSnapshot, cfg.Project)
+	}
+	if err := ValidateHarness(cfg.CaptainProfile.Harness); err != nil {
+		return "", fmt.Errorf("snapshot captain harness: %w", err)
+	}
+	return cfg.CaptainProfile.Harness, nil
 }
 
 // Captain resolves the general harness following:

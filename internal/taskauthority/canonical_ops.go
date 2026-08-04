@@ -81,8 +81,10 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	return outcomeFor(op, agg, false), nil
 }
 
-// Get returns the current authoritative Task Aggregate for the task. It is
-// the canonical detail read; malformed current state fails closed.
+// Get returns the current authoritative Task Aggregate for the task. It is a
+// current-Task-truth query: a superseded/non-current generation is not returned
+// as current truth (it fails closed with ErrNotFound). Malformed current state
+// fails closed.
 func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 	if err := taskID.Validate(); err != nil {
 		return Aggregate{}, err
@@ -91,13 +93,46 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 	if err != nil {
 		return Aggregate{}, err
 	}
-	if !exists {
+	if !exists || !doc.Aggregate.Current {
 		return Aggregate{}, conflictError(ErrNotFound, "task %s not found", taskID.Value())
 	}
 	return doc.Aggregate.clone(), nil
 }
 
+// GetGeneration returns the stored generation document for a task as a narrow
+// historical/audit read. It is NOT a current-Task-truth query: a superseded or
+// non-current generation is returned by its exact generation for audit and
+// transfer-recovery evidence, and a caller distinguishing current truth must
+// use Get. If the task has no document for the requested generation it fails
+// closed with ErrNotFound.
+func (c *Canonical) GetGeneration(taskID domain.TaskID, gen Generation) (Aggregate, error) {
+	if err := taskID.Validate(); err != nil {
+		return Aggregate{}, err
+	}
+	if err := gen.Validate(); err != nil {
+		return Aggregate{}, err
+	}
+	// Prefer the current document when it is the requested generation (it may
+	// be a superseded source still stored at current.json for audit); otherwise
+	// read the generation document.
+	if doc, exists, err := c.readTaskDoc(taskID.Value()); err != nil {
+		return Aggregate{}, err
+	} else if exists && doc.Aggregate.Generation == gen {
+		return doc.Aggregate.clone(), nil
+	}
+	doc, exists, err := c.readGenDoc(taskID.Value(), uint64(gen))
+	if err != nil {
+		return Aggregate{}, err
+	}
+	if !exists {
+		return Aggregate{}, conflictError(ErrNotFound, "task %s generation %s not found", taskID.Value(), gen)
+	}
+	return doc.Aggregate.clone(), nil
+}
+
 // List returns the current authoritative Task Aggregates sorted by task ID.
+// It is a current-Task-truth query: superseded/non-current generations are
+// excluded.
 func (c *Canonical) List() ([]Aggregate, error) {
 	ids, err := c.listTaskIDs()
 	if err != nil {
@@ -109,7 +144,7 @@ func (c *Canonical) List() ([]Aggregate, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !exists {
+		if !exists || !doc.Aggregate.Current {
 			continue
 		}
 		out = append(out, doc.Aggregate.clone())
@@ -311,6 +346,12 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	}
 	cur := doc.Aggregate
 	if err := verifyPrecondition(req.TaskID, cur, req.Precondition); err != nil {
+		return Outcome{}, err
+	}
+	if err := c.checkMutableCurrent(cur); err != nil {
+		return Outcome{}, err
+	}
+	if err := c.checkReservationFence(cur, nil); err != nil {
 		return Outcome{}, err
 	}
 	if !cur.Phase.terminal() {

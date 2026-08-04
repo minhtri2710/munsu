@@ -153,6 +153,7 @@ func TestComputeInheritedConfigDigest_Deterministic(t *testing.T) {
 			Project:           "test-project",
 			ProjectPath:       "/fixed/path",
 			SoldierHarness:    "pi",
+			Backend:           "tmux",
 			RequireNoMistakes: true,
 			Digest:            "0000000000000000000000000000000000000000000000000000000000000000",
 		}
@@ -250,6 +251,7 @@ func TestAdvanceConfigRereadGen_ContentChange(t *testing.T) {
 		Project:           "test-project",
 		ProjectPath:       home,
 		SoldierHarness:    "codex",
+		Backend:           "tmux",
 		RequireNoMistakes: true,
 		Digest:            "1111111111111111111111111111111111111111111111111111111111111111",
 	}
@@ -272,6 +274,7 @@ func TestAdvanceConfigRereadGen_ContentChange(t *testing.T) {
 		Project:           "test-project",
 		ProjectPath:       home,
 		SoldierHarness:    "pi",
+		Backend:           "tmux",
 		RequireNoMistakes: false,
 		Digest:            "2222222222222222222222222222222222222222222222222222222222222222",
 	}

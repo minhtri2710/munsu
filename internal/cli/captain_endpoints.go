@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -16,7 +17,13 @@ func newSessionLaunchEndpoint() sessionLaunchEndpoint {
 	return sessionLaunchEndpoint{resolve: backend.Resolve}
 }
 func (e sessionLaunchEndpoint) Launch(home string, req fleet.LaunchRequest) (fleet.LaunchResult, error) {
-	bk, name, err := e.resolve(home, "")
+	// The backend identity is resolved by the caller (fleet.Launch) from the
+	// captain's published snapshot; the endpoint never hardcodes "" and never
+	// auto-detects. An empty identity is a caller/contract violation.
+	if req.Backend == "" {
+		return fleet.LaunchResult{}, fmt.Errorf("captain launch requires an explicit backend identity (resolved snapshot Backend)")
+	}
+	bk, name, err := e.resolve(home, req.Backend)
 	if err != nil {
 		return fleet.LaunchResult{}, err
 	}
@@ -40,7 +47,12 @@ func (e sessionLaunchEndpoint) Launch(home string, req fleet.LaunchRequest) (fle
 	return fleet.LaunchResult{Backend: name, Window: window, Meta: meta}, nil
 }
 func (e sessionLaunchEndpoint) Cleanup(home string, result fleet.LaunchResult) error {
-	bk, _, err := e.resolve(home, "")
+	// Post-launch lifecycle consumes the durable bound identity from the
+	// launch result (the same identity used at creation).
+	if result.Backend == "" {
+		return fmt.Errorf("captain cleanup requires the bound backend identity (launch result Backend)")
+	}
+	bk, _, err := e.resolve(home, result.Backend)
 	if err != nil {
 		return err
 	}

@@ -260,6 +260,115 @@ type herdrWorkspaceCreateResponse struct {
 	} `json:"result"`
 }
 
+// herdrTabListResponse parses the JSON response of `herdr tab list`.
+type herdrTabListResponse struct {
+	Result struct {
+		Tabs []struct {
+			Label string `json:"label"`
+			TabID string `json:"tab_id"`
+		} `json:"tabs"`
+	} `json:"result"`
+}
+
+// herdrPaneListResponse parses the JSON response of `herdr pane list`.
+type herdrPaneListResponse struct {
+	Result struct {
+		Panes []struct {
+			PaneID string `json:"pane_id"`
+			TabID  string `json:"tab_id"`
+		} `json:"panes"`
+	} `json:"result"`
+}
+
+// findTabByLabel returns the tab id of the exactly-labeled tab in the
+// workspace, or "" when absent. Multiple tabs with the same label fail
+// closed as ambiguous (a launch reservation must own exactly one tab).
+func (h *HerdrBackend) findTabByLabel(workspaceID, label string) (string, error) {
+	out, err := h.herdr("tab", "list", "--workspace", workspaceID)
+	if err != nil {
+		return "", fmt.Errorf("listing tabs: %w", err)
+	}
+	var resp herdrTabListResponse
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return "", fmt.Errorf("parsing tab list: %w", err)
+	}
+	var matches []string
+	for _, tab := range resp.Result.Tabs {
+		if tab.Label == label {
+			matches = append(matches, tab.TabID)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", nil
+	default:
+		return "", fmt.Errorf("herdr find-or-create: %d tabs labeled %q in workspace %s; ambiguous", len(matches), label, workspaceID)
+	}
+}
+
+// findPaneForTab returns the pane id of the tab in the workspace, or "" when
+// the tab has no pane (a tab without a pane cannot be a live endpoint; the
+// caller fails closed instead of creating a replacement).
+func (h *HerdrBackend) findPaneForTab(workspaceID, tabID string) (string, error) {
+	out, err := h.herdr("pane", "list", "--workspace", workspaceID)
+	if err != nil {
+		return "", fmt.Errorf("listing panes: %w", err)
+	}
+	var resp herdrPaneListResponse
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return "", fmt.Errorf("parsing pane list: %w", err)
+	}
+	for _, pane := range resp.Result.Panes {
+		if pane.TabID == tabID {
+			return pane.PaneID, nil
+		}
+	}
+	return "", nil
+}
+
+// FindOrCreateWindow finds-or-creates the tab owned by the launch
+// reservation's generation-scoped window label inside the workspace label. It
+// is the real reservation-aware find-or-create contract: repeating the same
+// label (the same launch reservation) returns the SAME tab — the one created
+// by an earlier attempt — never a replacement. The tab's pane id is resolved
+// from the live pane list; a labeled tab without a pane, or multiple tabs
+// with the same label, fail closed.
+func (h *HerdrBackend) FindOrCreateWindow(session, name string) (string, error) {
+	wsName := session
+	if wsName == "" {
+		wsName = h.Session
+	}
+	workspaceID, err := h.findOrCreateWorkspace(wsName)
+	if err != nil {
+		return "", err
+	}
+	tabID, err := h.findTabByLabel(workspaceID, name)
+	if err != nil {
+		return "", err
+	}
+	if tabID == "" {
+		return h.NewWindow(session, name)
+	}
+	paneID, err := h.findPaneForTab(workspaceID, tabID)
+	if err != nil {
+		return "", err
+	}
+	if paneID == "" {
+		return "", fmt.Errorf("herdr find-or-create: tab %q labeled %q in workspace %s has no pane; refuse to create a replacement", tabID, name, workspaceID)
+	}
+	// Populate lastCreate so MetaExtras carries the recovered endpoint's
+	// session/workspace/tab identity exactly like a fresh create.
+	h.lastCreate = &herdrLastCreate{
+		Session:     h.Session,
+		WorkspaceID: workspaceID,
+		TabID:       tabID,
+		PaneID:      paneID,
+	}
+	return h.Session + ":" + paneID, nil
+}
+
 // NewWindow creates a new tab in the herdr workspace identified by session.
 // The session parameter is the workspace label (e.g., derived from MUNSU_HOME).
 // The name parameter is the tab label (e.g., the task ID).

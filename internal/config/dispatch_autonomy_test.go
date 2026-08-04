@@ -7,7 +7,7 @@ import (
 func TestResolveProjectCarriesDispatchAutonomyThroughOverlay(t *testing.T) {
 	base := FleetBaseDocument{
 		SchemaVersion: FleetBaseSchemaVersion,
-		Config:        ProjectOverlay{DispatchAutonomy: "manual"},
+		Config:        ProjectOverlay{DispatchAutonomy: "manual", Backend: "tmux"},
 	}
 	facts := ProjectFacts{
 		Name:    "project",

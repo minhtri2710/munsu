@@ -35,7 +35,7 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 	if rank == "captain" {
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
 	} else {
-		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{Backend: args.Backend})
 	}
 	if err != nil {
 		return SpawnProjectConfig{}, classifySnapshotError(args.ProjectName, err)
@@ -109,6 +109,34 @@ func TypedConfigAvailable(homeDir string) bool {
 		return true
 	}
 	return false
+}
+
+// ResolveGeneralHomeBackend resolves the session backend identity for a home
+// without task context from the typed snapshot surface, mirroring the
+// ResolveSpawnProjectConfig rank precedence:
+//   - captain context: the published config snapshot (the composed
+//     config.ResolveProject output; its Backend is required non-empty by
+//     strict snapshot validation).
+//   - general context: the fleet base document's typed Backend.
+//
+// There is no auto-detection and no fallback identity: an empty identity is a
+// typed failure, never a device/PATH/env choice.
+func ResolveGeneralHomeBackend(homeDir string) (string, error) {
+	if fleetconfig.PublishedSnapshotAvailable(homeDir) {
+		snapshot, err := fleetconfig.LoadPublishedSnapshot(homeDir)
+		if err != nil {
+			return "", err
+		}
+		return snapshot.Config().Backend, nil
+	}
+	base, err := fleetconfig.LoadFleetBase(homeDir)
+	if err != nil {
+		return "", err
+	}
+	if base.Config.Backend == "" {
+		return "", fmt.Errorf("general home %q resolved no session backend identity: set backend in the fleet base config", homeDir)
+	}
+	return base.Config.Backend, nil
 }
 
 func classifySnapshotError(projectName string, err error) error {

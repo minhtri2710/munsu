@@ -194,6 +194,43 @@ func (c *Canonical) readHoldDoc(holdID string) (holdDoc, bool, error) {
 	return doc, true, nil
 }
 
+// readGenDoc reads and validates one non-current generation document of a
+// task. It is used by the transfer boundary to read a received generation at
+// the destination before activation. Malformed state fails closed.
+func (c *Canonical) readGenDoc(taskID string, gen uint64) (taskDoc, bool, error) {
+	data, ok, err := c.readDoc(taskGenKey(taskID, gen))
+	if err != nil || !ok {
+		return taskDoc{}, ok, err
+	}
+	var doc taskDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return taskDoc{}, true, internalError("decode task %s generation %d document: %v", taskID, gen, err)
+	}
+	if err := validateAggregate(doc.Aggregate); err != nil {
+		return taskDoc{}, true, internalError("task %s generation %d has malformed state: %v", taskID, gen, err)
+	}
+	return doc, true, nil
+}
+
+// taskHasGenerationDocs reports whether the task directory holds ANY document
+// (current.json or a gen-N.json generation record). It is the destination
+// receive's absence test: a receive must never overwrite or conflict with
+// existing destination history, so any existing document fails closed.
+func (c *Canonical) taskHasGenerationDocs(taskID string) (bool, error) {
+	path, err := c.h.Path(canonicalRoot, tasksDir+"/"+taskID)
+	if err != nil {
+		return false, err
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return len(entries) > 0, nil
+}
+
 // listTaskIDs enumerates the committed task IDs by reading the tasks
 // directory under the verified home state root. Individual documents are
 // read through home.Read; this is a read-only query over canonical state.
@@ -316,6 +353,60 @@ func commitError(taskID domain.TaskID, prec domain.Precondition, err error) erro
 // one atomic home.Commit that writes the new current document and the
 // operation receipt together.
 func (c *Canonical) mutateTask(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error)) (Outcome, error) {
+	return c.mutateTaskFenced(op, taskID, prec, apply, nil)
+}
+
+// mutateTaskTransfer runs one task-scoped mutation that is authorized to
+// continue the transfer state machine on a task with an active source
+// reservation. gate must match the current reservation's ID and fence token;
+// the common fence check rejects any other mutation on a reserved task.
+func (c *Canonical) mutateTaskTransfer(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, gate reservationGate, apply func(Aggregate) (Aggregate, error)) (Outcome, error) {
+	return c.mutateTaskFenced(op, taskID, prec, apply, &gate)
+}
+
+// mutationGate is the internal transfer-continuation capability. It is built
+// only inside the transfer boundary operations from the request's reservation
+// ID and fence token, never accepted from a caller as a raw bypass boolean or
+// string. The common mutation fence verifies it matches the current
+// reservation before allowing a mutation on a reserved task.
+type reservationGate struct {
+	reservationID string
+	fenceToken    string
+}
+
+// checkReservationFence fails closed when the current aggregate has an active
+// source reservation (set by ReserveTransfer and not yet committed) and the
+// mutation is not a transfer continuation bound to that exact reservation/fence.
+// A nil gate (every ordinary lifecycle/dispatch/binding/retirement mutation) is
+// rejected. A stale fence token fails closed even with a matching reservation
+// ID, so a stale process cannot mutate after the reservation fence changed.
+// Non-current/superseded generations are rejected separately, before this
+// fence is consulted.
+func (c *Canonical) checkReservationFence(cur Aggregate, gate *reservationGate) error {
+	ts := cur.Transfer
+	if ts == nil || ts.Transferred || ts.DestinationHome == "" {
+		return nil
+	}
+	if gate == nil {
+		return conflictError(ErrConflict, "task %s generation %s is reserved for transfer; unrelated mutations fail closed", cur.TaskID, cur.Generation)
+	}
+	if gate.reservationID != ts.ReservationID || gate.fenceToken != ts.FenceToken {
+		return conflictError(ErrConflict, "task %s generation %s reservation fence mismatch; stale transfer cannot mutate", cur.TaskID, cur.Generation)
+	}
+	return nil
+}
+
+// checkMutableCurrent fails closed for any non-current/superseded generation:
+// a superseded source generation must never regain mutability, and it must be
+// rejected independently of (and before) any active-reservation consideration.
+func (c *Canonical) checkMutableCurrent(cur Aggregate) error {
+	if !cur.Current {
+		return conflictError(ErrConflict, "task %s generation %s is not current; it is superseded and cannot be mutated", cur.TaskID, cur.Generation)
+	}
+	return nil
+}
+
+func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error), gate *reservationGate) (Outcome, error) {
 	if err := op.Validate(); err != nil {
 		return Outcome{}, err
 	}
@@ -342,6 +433,14 @@ func (c *Canonical) mutateTask(op domain.Operation, taskID domain.TaskID, prec d
 		return Outcome{}, conflictError(ErrNotFound, "task %s not found", taskID.Value())
 	}
 	if err := verifyPrecondition(taskID, doc.Aggregate, prec); err != nil {
+		return Outcome{}, err
+	}
+	// Reject non-current/superseded generations first, independently of
+	// Transfer state; then apply the active-reservation fence for current tasks.
+	if err := c.checkMutableCurrent(doc.Aggregate); err != nil {
+		return Outcome{}, err
+	}
+	if err := c.checkReservationFence(doc.Aggregate, gate); err != nil {
 		return Outcome{}, err
 	}
 	next, err := apply(doc.Aggregate)

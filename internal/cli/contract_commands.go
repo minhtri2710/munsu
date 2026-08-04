@@ -64,10 +64,7 @@ func newBackendCmd() *cobra.Command {
 				return err
 			}
 			if backendName == "" {
-				_, backendName, err = backend.Resolve(ctx.Home, "")
-				if err != nil {
-					return operationError("dependency_unavailable", "Configure a supported session backend and rerun `munsu backend capabilities`", "No supported session backend is available")
-				}
+				return usageError("missing_input", "Run `munsu backend capabilities --backend tmux` or `munsu backend capabilities --backend herdr`", "an explicit backend identity is required for backend capabilities")
 			}
 			return writeContract(cmd, Response[BackendCapabilities]{
 				SchemaVersion: SchemaVersion,

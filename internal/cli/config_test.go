@@ -30,12 +30,16 @@ func extractConfigValueFromTOON(output string) string {
 }
 
 // TestConfigGetKnownSet verifies config get returns the exact value for a
-// known key that has been set.
+// known key that has been persisted. Backend is a typed snapshot identity: the
+// persisted truth comes from the fleet base document, not the legacy flat pin.
 func TestConfigGetKnownSet(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	if err := config.Set(tmpDir, "backend", "tmux"); err != nil {
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,30 +80,6 @@ func TestConfigGetKnownUnset(t *testing.T) {
 	got := strings.TrimSpace(buf.String())
 	if got != "" {
 		t.Errorf("config get known-unset: expected empty output, got %q", got)
-	}
-}
-
-// TestConfigGetBackendResolvesLive verifies `config get backend` reports the
-// live runtime backend (env detection), not an empty stored value -- the init
-// hint "config get backend → Check detected backend" must be truthful.
-func TestConfigGetBackendResolvesLive(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("TMUX", "") // cleared so HERDR_ENV precedence wins
-	t.Setenv("HERDR_ENV", "1")
-
-	root := NewRootCommand()
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"config", "get", "backend"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("config get backend: %v", err)
-	}
-
-	if got := strings.TrimSpace(buf.String()); !strings.Contains(got, "herdr") {
-		t.Errorf("config get backend: expected resolved 'herdr', got %q", got)
 	}
 }
 
@@ -228,6 +208,12 @@ func TestConfigGetAllKnownKeys(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 
 	for _, key := range config.KnownKeys {
+		// backend is special-cased: it reports the persisted snapshot identity
+		// and returns typed missing_input without one (covered by
+		// config_cmd_test.go), so it must not expect success in an empty home.
+		if key == "backend" {
+			continue
+		}
 		root := NewRootCommand()
 		buf := new(bytes.Buffer)
 		root.SetOut(buf)
