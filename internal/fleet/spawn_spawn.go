@@ -4,6 +4,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -172,39 +173,40 @@ func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolv
 }
 
 // ResolveDeliveryModeFromBase resolves the effective delivery mode for a home
-// without project context from the typed fleet base surface: the base
-// defaultMode and requireNoMistakes when a base document exists, otherwise the
-// auto-detect path. Used by doctor compatibility and other home-scoped checks.
+// without project context from the typed fleet base surface. The base
+// defaultMode and requireNoMistakes are the single authority. A missing base
+// document is the supported fresh-home state: resolution degrades solely to
+// the runtime capability probe with no typed default. Any other load error
+// (malformed, schema, permission, I/O) fails closed and propagates.
 func ResolveDeliveryModeFromBase(homeDir, explicitMode string) (string, error) {
-	resolvedDefaultMode := ""
-	resolvedRequireNoMistakes := false
-	if base, err := config.LoadFleetBase(homeDir); err == nil {
-		resolvedDefaultMode = normalizeSnapshotDeliveryMode(base.Config.DefaultMode)
-		if base.Config.RequireNoMistakes != nil {
-			resolvedRequireNoMistakes = *base.Config.RequireNoMistakes
+	base, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("resolving fleet base config: %w", err)
 		}
+		// Fresh home with no base document: no typed default authority, so
+		// resolution falls solely to the runtime capability probe.
+		return ResolveDeliveryMode(explicitMode, "", false)
 	}
-	return ResolveDeliveryMode(explicitMode, resolvedDefaultMode, resolvedRequireNoMistakes)
+	resolvedRequireNoMistakes := false
+	if base.Config.RequireNoMistakes != nil {
+		resolvedRequireNoMistakes = *base.Config.RequireNoMistakes
+	}
+	return ResolveDeliveryMode(explicitMode, normalizeSnapshotDeliveryMode(base.Config.DefaultMode), resolvedRequireNoMistakes)
 }
 
 // ResolveDeliveryModeFromProject resolves the effective delivery mode for a
-// project from the typed project/base surface: the resolved project snapshot
-// when the project is registered, otherwise the fleet base defaults. Used by
-// project-scoped callers (e.g. munsu brief) without a composed snapshot.
+// declared project from exactly one immutable project snapshot. Any resolution
+// error (unknown project, malformed base/overlay, registry or I/O failure)
+// returns a typed failure; there is no fallback to the fleet base or to
+// auto-detection. Used by project-scoped callers (e.g. munsu brief).
 func ResolveDeliveryModeFromProject(homeDir, projectName, explicitMode string) (string, error) {
-	resolvedDefaultMode := ""
-	resolvedRequireNoMistakes := false
-	if snap, err := ResolveProjectSnapshot(homeDir, projectName, config.BoundaryOverrides{}); err == nil {
-		resolved := snap.Config()
-		resolvedDefaultMode = normalizeSnapshotDeliveryMode(resolved.DefaultMode)
-		resolvedRequireNoMistakes = resolved.RequireNoMistakes
-	} else if base, baseErr := config.LoadFleetBase(homeDir); baseErr == nil {
-		resolvedDefaultMode = normalizeSnapshotDeliveryMode(base.Config.DefaultMode)
-		if base.Config.RequireNoMistakes != nil {
-			resolvedRequireNoMistakes = *base.Config.RequireNoMistakes
-		}
+	snap, err := ResolveProjectSnapshot(homeDir, projectName, config.BoundaryOverrides{})
+	if err != nil {
+		return "", classifySnapshotError(projectName, err)
 	}
-	return ResolveDeliveryMode(explicitMode, resolvedDefaultMode, resolvedRequireNoMistakes)
+	resolved := snap.Config()
+	return ResolveDeliveryMode(explicitMode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
 }
 
 // noMistakesConfig is the compatibility-relevant subset of global config.
