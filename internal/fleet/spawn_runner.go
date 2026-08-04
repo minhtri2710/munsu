@@ -460,7 +460,7 @@ func (r *Runner) resolveEffectiveIdentity() error {
 				h = sel.Harness
 			} else {
 				var err error
-				h, err = harness.Soldier(r.homeDir)
+				h, err = harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
 				if err != nil {
 					return fmt.Errorf("resolving harness: %w", err)
 				}
@@ -686,9 +686,11 @@ func (r *Runner) preflightHarness() error {
 }
 
 // Phase 9: resolveHarness resolves the soldier harness.
-// Precedence: --harness flag > dispatch profile match on brief > Soldier() chain.
-// When soldier-dispatch.json is active and no --harness is set, prefer
-// ResolveDispatchSelection over the bare DefaultHarness shortcut in Soldier().
+// Precedence: already-resolved (preflight) > project config snapshot >
+// --harness flag > dispatch profile match on brief > snapshot-only fail-closed
+// resolution (ResolveSoldierFromSnapshot). There is no flat-file or Detect
+// fallback: when the snapshot carries no soldier harness identity, resolution
+// fails closed with ErrNoSoldierHarnessInSnapshot.
 func (r *Runner) resolveHarness() error {
 	if r.harness != "" {
 		return nil // already resolved by preflightHarness
@@ -711,7 +713,7 @@ func (r *Runner) resolveHarness() error {
 		r.harness = sel.Harness
 		return nil
 	}
-	h, err := harness.Soldier(r.homeDir)
+	h, err := harness.ResolveSoldierFromSnapshot(r.projectConfig.Frozen.Config())
 	if err != nil {
 		return fmt.Errorf("resolving harness: %w", err)
 	}
