@@ -112,6 +112,16 @@ func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
 			if err := os.Chmod(path, 0000); err != nil {
 				t.Fatal(err)
 			}
+			// Under root/privileged environments the file remains readable and no
+			// read error is produced, so this subcase is not portable. Skip it
+			// rather than falsely failing; the malformed-JSON and EISDIR subcases
+			// already provide deterministic fail-closed read-error evidence and
+			// the permission subcase remains meaningful when running as a normal
+			// user.
+			if f, err := os.Open(path); err == nil {
+				f.Close()
+				t.Skip("environment can still read chmod 0000 file (privileged); skipping permission subcase")
+			}
 		}},
 	}
 
@@ -127,6 +137,28 @@ func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
 				t.Errorf("expected false on error, got true")
 			}
 		})
+	}
+}
+
+func TestIsHardRequiredByConfig_UnsupportedToolSkipsConfigRead(t *testing.T) {
+	// For an unsupported tool the production short-circuit returns (false, nil)
+	// without attempting to read the fleet base config. Prove this by placing a
+	// malformed base document: if the short-circuit were absent, the read error
+	// would propagate.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "config", "base.json"), []byte("{not-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := IsHardRequiredByConfig(home, "git")
+	if err != nil {
+		t.Fatalf("IsHardRequiredByConfig(malformed base, %q) unexpected error: %v", "git", err)
+	}
+	if got {
+		t.Errorf("expected false for unsupported tool, got true")
 	}
 }
 
