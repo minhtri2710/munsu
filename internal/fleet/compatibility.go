@@ -307,7 +307,7 @@ func checkHarnessBinary(homeDir, role string) RequirementResult {
 // checkDeliveryModeCompatible verifies that if the delivery mode requires
 // no-mistakes, the binary is available and compatible.
 func checkDeliveryModeCompatible(homeDir string) RequirementResult {
-	mode, err := ResolveDeliveryMode(homeDir, "", "")
+	mode, err := ResolveDeliveryModeFromBase(homeDir, "")
 	if err != nil {
 		return RequirementResult{
 			Name:      "delivery-mode-compatible",

@@ -367,7 +367,7 @@ func TestRun_InjectFakeEndpointCapabilities(t *testing.T) {
 
 func TestResolveDeliveryMode_AutoNoMistakes(t *testing.T) {
 	// auto picks no-mistakes when on PATH, direct-PR otherwise
-	mode, err := ResolveDeliveryMode(t.TempDir(), "", "")
+	mode, err := ResolveDeliveryMode("", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +377,7 @@ func TestResolveDeliveryMode_AutoNoMistakes(t *testing.T) {
 }
 
 func TestResolveDeliveryMode_ExplicitDirectPR(t *testing.T) {
-	mode, err := ResolveDeliveryMode(t.TempDir(), "direct-PR", "")
+	mode, err := ResolveDeliveryMode("direct-PR", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestResolveDeliveryMode_ExplicitDirectPR(t *testing.T) {
 }
 
 func TestResolveDeliveryMode_ProjectModeHonored(t *testing.T) {
-	mode, err := ResolveDeliveryMode(t.TempDir(), "", "direct-PR")
+	mode, err := ResolveDeliveryMode("", "direct-PR", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestResolveDeliveryMode_ProjectModeHonored(t *testing.T) {
 }
 
 func TestResolveDeliveryMode_ExplicitOverridesProject(t *testing.T) {
-	mode, err := ResolveDeliveryMode(t.TempDir(), "local-only", "no-mistakes")
+	mode, err := ResolveDeliveryMode("local-only", "no-mistakes", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestResolveDeliveryMode_ExplicitOverridesProject(t *testing.T) {
 }
 
 func TestResolveDeliveryMode_InvalidExplicit(t *testing.T) {
-	_, err := ResolveDeliveryMode(t.TempDir(), "bogus", "")
+	_, err := ResolveDeliveryMode("bogus", "", false)
 	if err == nil {
 		t.Fatal("expected error for invalid explicit mode")
 	}
@@ -577,22 +577,14 @@ func TestEffectiveModeForSpawn_ProjectNoMistakesNeverFallsBackToDirectPR(t *test
 	})
 }
 
-// TestEffectiveModeForSpawn_ConfigNoMistakesNeverFallsBackToDirectPR verifies
-// that config/default-mode no-mistakes never returns "direct-PR" on failure.
-func TestEffectiveModeForSpawn_ConfigNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
+// TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR verifies
+// that a typed resolved default mode of no-mistakes never returns "direct-PR"
+// on failure (the flat config/default-mode authority is retired).
+func TestResolveDeliveryMode_TypedNoMistakesNeverFallsBackToDirectPR(t *testing.T) {
 	t.Run("absent binary", func(t *testing.T) {
-		homeDir := t.TempDir()
-		configDir := filepath.Join(homeDir, "config")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("no-mistakes"), 0644); err != nil {
-			t.Fatal(err)
-		}
 		t.Setenv("PATH", t.TempDir())
 
-		// Use ResolveDeliveryMode directly (config/default-mode is step 3)
-		mode, err := ResolveDeliveryMode(homeDir, "", "")
+		mode, err := ResolveDeliveryMode("", "no-mistakes", false)
 		if err == nil {
 			t.Fatalf("expected error, got mode=%q", mode)
 		}
@@ -602,18 +594,10 @@ func TestEffectiveModeForSpawn_ConfigNoMistakesNeverFallsBackToDirectPR(t *testi
 	})
 
 	t.Run("unsupported version", func(t *testing.T) {
-		homeDir := t.TempDir()
-		configDir := filepath.Join(homeDir, "config")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("no-mistakes"), 0644); err != nil {
-			t.Fatal(err)
-		}
 		tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
 		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
-		mode, err := ResolveDeliveryMode(homeDir, "", "")
+		mode, err := ResolveDeliveryMode("", "no-mistakes", false)
 		if err == nil {
 			t.Fatalf("expected error for unsupported version, got mode=%q", mode)
 		}
@@ -629,7 +613,7 @@ func TestResolveDeliveryMode_AutoFallbackOnIncompatible(t *testing.T) {
 	tmpDir := createFakeNoMistakesVersion(t, "0.5.0")
 	t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
 
-	mode, err := ResolveDeliveryMode(t.TempDir(), "", "")
+	mode, err := ResolveDeliveryMode("", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,26 +650,27 @@ func TestEffectiveModeForSpawn_ExplicitOverridesProject(t *testing.T) {
 	}
 }
 
-func TestEffectiveModeForSpawn_ConfigDefaultMode(t *testing.T) {
+func TestEffectiveModeForSpawn_IgnoresFlatConfigDefaultMode(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // ensure auto doesn't pick no-mistakes
 
 	homeDir := t.TempDir()
-	// Write config/default-mode
+	// Legacy flat config/default-mode must no longer be consulted.
 	configDir := filepath.Join(homeDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("direct-PR"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "default-mode"), []byte("no-mistakes"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// No flag, no project mode — should pick up config/default-mode
+	// No flag, no project mode — the flat default-mode authority is retired,
+	// so auto-detect applies and falls back to direct-PR without a hard error.
 	mode, err := effectiveModeForSpawn(homeDir, Args{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode != "direct-PR" {
-		t.Errorf("effectiveModeForSpawn config/default-mode = %q, want %q", mode, "direct-PR")
+		t.Errorf("effectiveModeForSpawn must ignore flat config/default-mode, got %q", mode)
 	}
 }
 

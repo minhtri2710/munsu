@@ -33,13 +33,17 @@ func IsHardRequired(tool string) bool {
 	return false
 }
 
-// IsHardRequiredByConfig returns true when the tool is hard-required by home config.
-// Currently only handles no-mistakes via config/require-no-mistakes.
-// When the config file exists, no-mistakes is treated as hard-required.
+// IsHardRequiredByConfig returns true when the tool is hard-required by the
+// typed fleet base config. Currently only handles no-mistakes via the base
+// requireNoMistakes field. Presence semantics are preserved: a base document
+// that sets requireNoMistakes: true treats no-mistakes as hard-required.
 func IsHardRequiredByConfig(homeDir, tool string) bool {
 	if tool != "no-mistakes" {
 		return false
 	}
-	_, err := config.Get(homeDir, "require-no-mistakes")
-	return err == nil
+	base, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		return false
+	}
+	return base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes
 }

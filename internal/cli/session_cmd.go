@@ -29,15 +29,14 @@ func newBriefCmd() *cobra.Command {
 			id := args[0]
 			repo := args[1]
 
-			// Resolve delivery mode using full auto-detection chain
-			projectMode := ""
+			// Resolve delivery mode from the typed project/base surface (yolo
+			// stays registry-owned; the flat default-mode authority is retired).
 			projYolo := false
-			if m, y, err := fleet.Mode(ctx.Home, repo); err == nil {
-				projectMode = m
+			if _, y, err := fleet.Mode(ctx.Home, repo); err == nil {
 				projYolo = y
 			}
 
-			resolvedMode, err := fleet.ResolveDeliveryMode(ctx.Home, modeFlag, projectMode)
+			resolvedMode, err := fleet.ResolveDeliveryModeFromProject(ctx.Home, repo, modeFlag)
 			if err != nil {
 				return err
 			}

@@ -110,17 +110,23 @@ func EnsureDeliveryModeRunnable(mode string) error {
 	}
 }
 
-// ResolveDeliveryMode resolves the effective delivery mode following this precedence:
+// ResolveDeliveryMode resolves the effective delivery mode following this
+// precedence:
 //  1. explicitMode — non-empty --mode flag value
-//  2. projectMode — mode from project registry (if non-empty)
-//  3. config/default-mode — optional config file under homeDir
-//  4. Auto — no-mistakes on PATH → no-mistakes, else → direct-PR (with message)
+//  2. resolvedDefaultMode — typed base/project/snapshot default mode (if non-empty)
+//  3. Auto — no-mistakes on PATH → no-mistakes, else → direct-PR (with message)
+//
+// Only validation and the runtime capability probe live here: config authority
+// comes exclusively from the resolved values passed in. The typed surface is
+// the single authority for the default mode and require-no-mistakes.
 //
 // Rules:
 //   - An explicit --mode=no-mistakes with missing binary is a hard error.
+//   - A typed default of no-mistakes with missing binary is a hard error.
 //   - An explicit direct-PR/local-only is OK even when no-mistakes binary exists.
-//   - A registry/config/auto no-mistakes with missing binary falls through to direct-PR.
-func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string) (string, error) {
+//   - Auto no-mistakes with missing binary falls through to direct-PR, unless
+//     resolvedRequireNoMistakes is set (refuse, do not silently fall back).
+func ResolveDeliveryMode(explicitMode string, resolvedDefaultMode string, resolvedRequireNoMistakes bool) (string, error) {
 	// 1. Explicit --mode flag
 	if explicitMode != "" {
 		if err := ValidateDeliveryMode(explicitMode); err != nil {
@@ -133,33 +139,19 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 		return explicitMode, nil
 	}
 
-	// 2. Project registry mode
-	if projectMode != "" {
-		if err := ValidateDeliveryMode(projectMode); err != nil {
+	// 2. Typed default mode (resolved base/project/snapshot)
+	if resolvedDefaultMode != "" {
+		if err := ValidateDeliveryMode(resolvedDefaultMode); err != nil {
 			return "", err
 		}
-		// If registry explicitly set no-mistakes and binary is missing → hard error
-		if err := EnsureDeliveryModeRunnable(projectMode); err != nil {
+		// Hard error if the resolved default is no-mistakes and binary is missing
+		if err := EnsureDeliveryModeRunnable(resolvedDefaultMode); err != nil {
 			return "", err
 		}
-		return projectMode, nil
+		return resolvedDefaultMode, nil
 	}
 
-	// 3. config/default-mode (optional)
-	if homeDir != "" {
-		cfg, err := config.Get(homeDir, "default-mode")
-		if err == nil && cfg != "" {
-			if err := ValidateDeliveryMode(cfg); err != nil {
-				return "", err
-			}
-			if err := EnsureDeliveryModeRunnable(cfg); err != nil {
-				return "", err
-			}
-			return cfg, nil
-		}
-	}
-
-	// 4. Auto: no-mistakes on PATH and compatible → no-mistakes, else → direct-PR
+	// 3. Auto: no-mistakes on PATH and compatible → no-mistakes, else → direct-PR
 	if noMistakesAvailable() {
 		return "no-mistakes", nil
 	}
@@ -170,15 +162,49 @@ func ResolveDeliveryMode(homeDir string, explicitMode string, projectMode string
 		return "direct-PR", nil
 	}
 
-	// 5. When require-no-mistakes config is set, refuse fallback
-	if homeDir != "" {
-		if _, err := config.Get(homeDir, "require-no-mistakes"); err == nil {
-			return "", fmt.Errorf("config/require-no-mistakes is set but no-mistakes binary is absent or incompatible on this system")
-		}
+	// 4. Typed require-no-mistakes is set → refuse fallback
+	if resolvedRequireNoMistakes {
+		return "", fmt.Errorf("require-no-mistakes is set but no-mistakes binary is absent or incompatible on this system")
 	}
 
 	fmt.Fprintln(os.Stderr, "warning: no-mistakes not found on PATH; defaulting to direct-PR delivery mode. Install with: go install github.com/kunchenguid/no-mistakes@latest, or run 'munsu doctor'")
 	return "direct-PR", nil
+}
+
+// ResolveDeliveryModeFromBase resolves the effective delivery mode for a home
+// without project context from the typed fleet base surface: the base
+// defaultMode and requireNoMistakes when a base document exists, otherwise the
+// auto-detect path. Used by doctor compatibility and other home-scoped checks.
+func ResolveDeliveryModeFromBase(homeDir, explicitMode string) (string, error) {
+	resolvedDefaultMode := ""
+	resolvedRequireNoMistakes := false
+	if base, err := config.LoadFleetBase(homeDir); err == nil {
+		resolvedDefaultMode = normalizeSnapshotDeliveryMode(base.Config.DefaultMode)
+		if base.Config.RequireNoMistakes != nil {
+			resolvedRequireNoMistakes = *base.Config.RequireNoMistakes
+		}
+	}
+	return ResolveDeliveryMode(explicitMode, resolvedDefaultMode, resolvedRequireNoMistakes)
+}
+
+// ResolveDeliveryModeFromProject resolves the effective delivery mode for a
+// project from the typed project/base surface: the resolved project snapshot
+// when the project is registered, otherwise the fleet base defaults. Used by
+// project-scoped callers (e.g. munsu brief) without a composed snapshot.
+func ResolveDeliveryModeFromProject(homeDir, projectName, explicitMode string) (string, error) {
+	resolvedDefaultMode := ""
+	resolvedRequireNoMistakes := false
+	if snap, err := ResolveProjectSnapshot(homeDir, projectName, config.BoundaryOverrides{}); err == nil {
+		resolved := snap.Config()
+		resolvedDefaultMode = normalizeSnapshotDeliveryMode(resolved.DefaultMode)
+		resolvedRequireNoMistakes = resolved.RequireNoMistakes
+	} else if base, baseErr := config.LoadFleetBase(homeDir); baseErr == nil {
+		resolvedDefaultMode = normalizeSnapshotDeliveryMode(base.Config.DefaultMode)
+		if base.Config.RequireNoMistakes != nil {
+			resolvedRequireNoMistakes = *base.Config.RequireNoMistakes
+		}
+	}
+	return ResolveDeliveryMode(explicitMode, resolvedDefaultMode, resolvedRequireNoMistakes)
 }
 
 // noMistakesConfig is the compatibility-relevant subset of global config.
@@ -382,8 +408,10 @@ func formatPreflightFailures(checks []Check) string {
 	return b.String()
 }
 
-// effectiveModeForSpawn resolves the effective delivery mode for a spawn operation.
-// It falls back to Mode when ProjectMode is not set in args.
+// effectiveModeForSpawn resolves the effective delivery mode for a spawn
+// operation on the legacy (non-typed-config) path. The registry mode is the
+// only default authority here; no typed require-no-mistakes exists to refuse
+// fallback, so the flat competing authority is not consulted.
 func effectiveModeForSpawn(homeDir string, args Args) (string, error) {
 	projectMode := args.ProjectMode
 	if projectMode == "" {
@@ -391,5 +419,5 @@ func effectiveModeForSpawn(homeDir string, args Args) (string, error) {
 			projectMode = m
 		}
 	}
-	return ResolveDeliveryMode(homeDir, args.Mode, projectMode)
+	return ResolveDeliveryMode(args.Mode, projectMode, false)
 }

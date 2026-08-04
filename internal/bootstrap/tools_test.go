@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 func TestIsHardRequired(t *testing.T) {
@@ -27,6 +29,51 @@ func TestIsHardRequired(t *testing.T) {
 		if got != tt.required {
 			t.Errorf("IsHardRequired(%q) = %v, want %v", tt.tool, got, tt.required)
 		}
+	}
+}
+
+func TestIsHardRequiredByConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		tool   string
+		mutate func(string)
+		want   bool
+	}{
+		{name: "non-no-mistakes tool never hard-required by config", tool: "git", want: false},
+		{name: "no base document -> false", tool: "no-mistakes", want: false},
+		{name: "base requireNoMistakes unset -> false", tool: "no-mistakes", mutate: func(home string) {
+			if err := config.StoreFleetBase(home, config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}); err != nil {
+				t.Fatal(err)
+			}
+		}, want: false},
+		{name: "base requireNoMistakes true -> true (presence semantics)", tool: "no-mistakes", mutate: func(home string) {
+			if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+				SchemaVersion: config.FleetBaseSchemaVersion,
+				Config:        config.ProjectOverlay{RequireNoMistakes: &[]bool{true}[0]},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}, want: true},
+		{name: "base requireNoMistakes false -> false", tool: "no-mistakes", mutate: func(home string) {
+			if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+				SchemaVersion: config.FleetBaseSchemaVersion,
+				Config:        config.ProjectOverlay{RequireNoMistakes: &[]bool{false}[0]},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tt.mutate != nil {
+				tt.mutate(home)
+			}
+			if got := IsHardRequiredByConfig(home, tt.tool); got != tt.want {
+				t.Errorf("IsHardRequiredByConfig(%q) = %v, want %v", tt.tool, got, tt.want)
+			}
+		})
 	}
 }
 

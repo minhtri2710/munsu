@@ -262,6 +262,99 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 	}
 }
 
+func TestResolveSpawnProjectConfigConsumesRequireNoMistakes(t *testing.T) {
+	// Base default mode unset + requireNoMistakes=true, no no-mistakes binary
+	// on PATH → resolution must refuse fallback (not silently direct-PR).
+	t.Run("require-no-mistakes absent binary refuses", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		home := t.TempDir()
+		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
+			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+			Config: fleetconfig.ProjectOverlay{
+				SoldierHarness:    "pi",
+				RequireNoMistakes: &[]bool{true}[0],
+			},
+		}, []testProjectRecord{
+			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
+		}, nil)
+
+		_, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+		if err == nil {
+			t.Fatal("expected error when require-no-mistakes is set but binary is absent")
+		}
+		if !strings.Contains(err.Error(), "require-no-mistakes") {
+			t.Errorf("error should mention require-no-mistakes, got: %v", err)
+		}
+	})
+
+	// Base default mode unset + requireNoMistakes=true with a compatible binary
+	// on PATH → mode resolves to no-mistakes.
+	t.Run("require-no-mistakes with binary resolves no-mistakes", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		binPath := filepath.Join(tmpDir, "no-mistakes")
+		content := `#!/bin/sh
+case "$1" in
+  --version)
+    echo "no-mistakes version v1.40.0 (test)"
+    exit 0
+    ;;
+  axi)
+    if [ "$2" = "status" ] && [ "$3" = "--help" ]; then
+      echo "Show the active run in detail"
+      echo "Usage:"
+      echo "  no-mistakes axi status [flags]"
+      exit 0
+    fi
+    ;;
+esac
+exit 0
+`
+		if err := os.WriteFile(binPath, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", tmpDir+":"+os.Getenv("PATH"))
+		home := t.TempDir()
+		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
+			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+			Config: fleetconfig.ProjectOverlay{
+				SoldierHarness:    "pi",
+				RequireNoMistakes: &[]bool{true}[0],
+			},
+		}, []testProjectRecord{
+			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
+		}, nil)
+
+		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Soldier.Mode != "no-mistakes" {
+			t.Errorf("mode = %q, want no-mistakes", resolved.Soldier.Mode)
+		}
+	})
+
+	// Base default mode unset + requireNoMistakes unset, no binary → auto
+	// falls back to direct-PR (unset → direct-PR default semantics preserved).
+	t.Run("unset require-no-mistakes falls back to direct-PR", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		home := t.TempDir()
+		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
+			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+			Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi"},
+		}, []testProjectRecord{
+			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
+		}, nil)
+
+		resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Soldier.Mode != "direct-PR" {
+			t.Errorf("mode = %q, want direct-PR", resolved.Soldier.Mode)
+		}
+	})
+}
+
 func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 	t.Helper()
 	base := fleetconfig.FleetBaseDocument{
