@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -146,14 +147,20 @@ Flags for worktree provisioning:
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "handoff <captain-home> <item-key...>",
-		Short: "Hand off backlog items to a captain",
-		Long: `Hand off queued backlog items from the parent home to a fleet.
-All keys must be in queued state. Uses tasks-axi mv atomically.`,
+		Short: "Transfer queued tasks to a captain",
+		Long: `Transfer queued task generations from the parent home to a captain home
+through the journaled Task Transfer (ADR-0008). Each key must be a queued
+task owned by the source home. The transfer is durable and resumes after
+interruption.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if err := fleet.Handoff(ctx.Home, args[0], args[1:]); err != nil {
 				if ambiguous, ok := fleet.HandoffAmbiguousTaskID(err); ok {
 					return operationError("ambiguous_task_id", strings.Join(handoffCorrectionCommands(args[0], ambiguous), "; "), fmt.Sprintf("Task ID %q is ambiguous", ambiguous.Requested))
+				}
+				var partial *fleet.HandoffPartialError
+				if errors.As(err, &partial) {
+					return operationError("partial_transfer", "", partial.Error())
 				}
 				return err
 			}

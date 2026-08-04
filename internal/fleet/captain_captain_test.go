@@ -1883,6 +1883,9 @@ func TestLaunch_RefusesFromCaptainParentHome(t *testing.T) {
 
 func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
 
@@ -1895,30 +1898,38 @@ func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
 	}
 }
 
-func TestHandoff_RequiresTasksAxi(t *testing.T) {
+// TestHandoff_TransfersToCaptainWithoutTasksAxi replaces the legacy
+// tasks-axi-dependent contract: the journaled Task Transfer needs no tasks-axi
+// binary and moves one queued task's ownership to the captain.
+func TestHandoff_TransfersToCaptainWithoutTasksAxi(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
-	os.MkdirAll(sm, 0755)
-	SeedProvenance(sm, "test-sm")
+	if _, err := home.Init(sm); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedProvenance(sm, "test-sm"); err != nil {
+		t.Fatal(err)
+	}
+	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
 
-	origPath := captainLookPath
-	captainLookPath = func(name string) (string, error) {
-		return "", os.ErrNotExist
+	if err := Handoff(parent, sm, []string{"TASK-1"}); err != nil {
+		t.Fatalf("Handoff: %v", err)
 	}
-	defer func() { captainLookPath = origPath }()
-
-	err := Handoff(parent, sm, []string{"TASK-1"})
-	if err == nil {
-		t.Fatal("expected error for missing tasks-axi")
+	agg := mustTransferOwner(t, sm, "TASK-1")
+	if agg.Definition.Owner != "captain:test-sm" {
+		t.Fatalf("destination owner = %q, want captain:test-sm", agg.Definition.Owner)
 	}
-	if !strings.Contains(err.Error(), "tasks-axi not found") {
-		t.Errorf("error should mention missing tasks-axi, got: %v", err)
-	}
+	mustTransferNoOwner(t, parent, "TASK-1")
 }
 
 func TestHandoff_RefusesSelfParent(t *testing.T) {
 	parent := t.TempDir()
-	os.MkdirAll(parent, 0755)
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	SeedProvenance(parent, "parent-sm")
 
 	err := Handoff(parent, parent, []string{"TASK-1"})
@@ -1930,96 +1941,55 @@ func TestHandoff_RefusesSelfParent(t *testing.T) {
 	}
 }
 
-func TestHandoffPassesQueuedKeysToTasksAxiMv(t *testing.T) {
+// TestHandoff_JournaledTransferOwnershipMovesToCaptain replaces the legacy
+// staged-mv/backlog-copy contract: the durable journaled transfer moves one
+// queued task's ownership to the captain with a single destination generation,
+// and the pending journal is removed on success.
+func TestHandoff_JournaledTransferOwnershipMovesToCaptain(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
-	if err := os.MkdirAll(sm, 0755); err != nil {
+	if _, err := home.Init(sm); err != nil {
 		t.Fatal(err)
 	}
 	if err := SeedProvenance(sm, "test-sm"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"TASK-1", "TASK-2"} {
-		seedHandoffTaskV2Default(t, parent, id)
-	}
+	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
 
-	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] TASK-1\n- [ ] TASK-2\n"), 0644); err != nil {
-		t.Fatal(err)
+	if err := Handoff(parent, sm, []string{"TASK-1"}); err != nil {
+		t.Fatalf("Handoff: %v", err)
 	}
-
-	origPath := captainLookPath
-	origBackend := isTasksAxiBackend
-	defer func() {
-		captainLookPath = origPath
-		isTasksAxiBackend = origBackend
-	}()
-
-	argsPath := filepath.Join(parent, "args.txt")
-	fakeTasksAxi := filepath.Join(parent, "fake-tasks-axi")
-	fakeScript := "#!/bin/sh\nif [ \"$1\" = show ]; then echo 'state: queued'; exit 0; fi\nprintf '%s\\n' \"$@\" > " + shQuote(argsPath) + "\n"
-	if err := os.WriteFile(fakeTasksAxi, []byte(fakeScript), 0755); err != nil {
-		t.Fatal(err)
+	agg := mustTransferOwner(t, sm, "TASK-1")
+	if agg.Generation != 1 || agg.Definition.Owner != "captain:test-sm" {
+		t.Fatalf("destination aggregate = %+v, want generation 1 captain owner", agg)
 	}
-	captainLookPath = func(name string) (string, error) { return fakeTasksAxi, nil }
-	isTasksAxiBackend = func(string) bool { return true }
-
-	if err := Handoff(parent, sm, []string{"TASK-1", "TASK-2"}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := strings.Split(strings.TrimSpace(string(data)), "\n")
-	want := []string{
-		"mv", "TASK-1", "TASK-2",
-	}
-	if len(args) < len(want) {
-		t.Fatalf("args = %#v, want prefix %#v", args, want)
-	}
-	for i := range want {
-		if args[i] != want[i] {
-			t.Fatalf("args[%d] = %q, want %q", i, args[i], want[i])
-		}
-	}
-	// Durable handoff operates on staged backlog copies, not home paths.
-	if !strings.HasSuffix(args[4], "destination-backlog-post") {
-		t.Errorf("args[4] = %q, want suffix destination-backlog-post", args[4])
-	}
-	if !strings.HasSuffix(args[6], "source-backlog-post") {
-		t.Errorf("args[6] = %q, want suffix source-backlog-post", args[6])
+	mustTransferNoOwner(t, parent, "TASK-1")
+	if n := pendingJournalCount(t, parent); n != 0 {
+		t.Fatalf("pending journal remains after transfer: %d", n)
 	}
 }
 
-func TestHandoff_RefusesManualBackend(t *testing.T) {
+// TestHandoff_RefusesNonCanonicalDestination replaces the legacy manual-backend
+// contract: the journaled transfer fails closed when the destination is not a
+// canonical home.
+func TestHandoff_RefusesNonCanonicalDestination(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(sm, 0755)
 	SeedProvenance(sm, "test-sm")
 
-	origPath := captainLookPath
-	origBackend := isTasksAxiBackend
-	defer func() {
-		captainLookPath = origPath
-		isTasksAxiBackend = origBackend
-	}()
-
-	// Override isTasksAxiBackend to return false (manual backend).
-	isTasksAxiBackend = func(string) bool { return false }
-
-	captainLookPath = func(name string) (string, error) {
-		return "/usr/bin/tasks-axi", nil
-	}
-
 	err := Handoff(parent, sm, []string{"TASK-1"})
 	if err == nil {
-		t.Fatal("expected error for manual backend")
+		t.Fatal("expected error for non-canonical destination")
 	}
-	if !strings.Contains(err.Error(), "backlog backend is not set to tasks-axi") {
-		t.Errorf("error should mention backend mismatch, got: %v", err)
+	if !strings.Contains(err.Error(), "munsu home") && !strings.Contains(err.Error(), "home") {
+		t.Errorf("error should mention the canonical-home failure, got: %v", err)
 	}
 }
 
