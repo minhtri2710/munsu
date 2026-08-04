@@ -3,115 +3,78 @@
 package fleet
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
-
-	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
-func TestHandoffTasksAxiFailureIsAtomic(t *testing.T) {
-	path, err := exec.LookPath("tasks-axi")
-	if err != nil {
-		t.Skip("tasks-axi not found")
-	}
+// TestHandoffOrderedInvariantAcrossEveryStage proves the ADR-0008 ordered
+// invariant through the production entry points: durable intent -> source
+// Reserve -> destination Receive (NON-CURRENT) -> scoped verification ->
+// source Commit/supersede -> destination Activate. A crash at every durable
+// stage is recovered by RecoverTaskHandoffs, and no successful state ever
+// exposes both homes as current owners.
+func TestHandoffOrderedInvariantAcrossEveryStage(t *testing.T) {
+	for _, boundary := range []string{"journal", "reserved", "received", "committed", "activated"} {
+		t.Run(boundary, func(t *testing.T) {
+			if os.Getenv("MUNSU_HANDOFF_CRASH_HELPER") == "1" {
+				crashBoundary := os.Getenv("MUNSU_HANDOFF_CRASH_AFTER")
+				handoffCrashHook = func(got string) {
+					if got == crashBoundary {
+						os.Exit(92)
+					}
+				}
+				if err := Handoff(os.Getenv("MUNSU_HANDOFF_SOURCE"), os.Getenv("MUNSU_HANDOFF_DEST"), []string{"TASK-1", "TASK-2"}); err == nil {
+					os.Exit(0)
+				}
+				os.Exit(91)
+			}
 
-	parent := t.TempDir()
-	captainHome := filepath.Join(parent, "captains", "handoff-sm")
-	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(captainHome, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := SeedProvenance(captainHome, "handoff-sm"); err != nil {
-		t.Fatal(err)
-	}
+			parent := t.TempDir()
+			if _, err := home.Init(parent); err != nil {
+				t.Fatal(err)
+			}
+			captain := filepath.Join(parent, "captains", "test-sm")
+			if _, err := home.Init(captain); err != nil {
+				t.Fatal(err)
+			}
+			if err := SeedProvenance(captain, "test-sm"); err != nil {
+				t.Fatal(err)
+			}
+			parentAuth := mustAuthority(t, parent)
+			seedCanonicalQueuedTask(t, parentAuth, "TASK-1", "general")
+			seedCanonicalQueuedTask(t, parentAuth, "TASK-2", "general")
 
-	source := filepath.Join(parent, "data", "backlog.md")
-	destination := filepath.Join(captainHome, "data", "backlog.md")
-	runTasksAxi := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command(path, args...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("tasks-axi %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-	}
-	if err := os.WriteFile(source, []byte("# Backlog\n\n## Queued\n\n## Done\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	runTasksAxi("add", "blocker-a", "Blocker", "--file", source)
-	runTasksAxi("add", "dependent-b", "Dependent", "--blocked-by", "blocker-a", "--file", source)
-	writeIntegrationHandoffAuthority(t, parent, "blocker-a", "Blocker")
-	writeIntegrationHandoffAuthority(t, parent, "dependent-b", "Dependent")
-	if err := os.WriteFile(destination, []byte("# Backlog\n\n## Queued\n\n## Done\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+			cmd := exec.Command(os.Args[0], "-test.run", "^TestHandoffOrderedInvariantAcrossEveryStage$", "--")
+			cmd.Env = append(os.Environ(),
+				"MUNSU_HANDOFF_CRASH_HELPER=1",
+				"MUNSU_HANDOFF_CRASH_AFTER="+boundary,
+				"MUNSU_HANDOFF_SOURCE="+parent,
+				"MUNSU_HANDOFF_DEST="+captain,
+			)
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("expected helper subprocess to crash at %s", boundary)
+			} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
+				t.Fatalf("helper exited at boundary %s: %v\n%s", boundary, err, output)
+			}
 
-	sourceBefore, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	destinationBefore, err := os.ReadFile(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
+			if err := RecoverTaskHandoffs(parent); err != nil {
+				t.Fatalf("boundary %s: RecoverTaskHandoffs: %v", boundary, err)
+			}
 
-	err = Handoff(parent, captainHome, []string{"blocker-a"})
-	if err == nil {
-		t.Fatal("expected dependency-stranding handoff refusal")
-	}
-
-	sourceAfter, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	destinationAfter, err := os.ReadFile(destination)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(sourceAfter, sourceBefore) {
-		t.Fatal("source backlog changed after failed atomic handoff")
-	}
-	if !bytes.Equal(destinationAfter, destinationBefore) {
-		t.Fatal("destination backlog changed after failed atomic handoff")
-	}
-}
-
-func writeIntegrationHandoffAuthority(t *testing.T, homeDir, taskID, description string) {
-	t.Helper()
-	store, err := taskauthorityfs.NewStore(homeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
-		OperationID: "integration-seed-" + taskID,
-		Actor:       taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:      taskID,
-		Owner:       "general",
-		Description: description,
-		Kind:        "ship",
-		Project:     "munsu",
-		Reason:      "seed",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := mhome.WriteMeta(homeDir, taskID, map[string]string{"description": description, "kind": "ship", "project": "munsu", "generation": "1"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := mhome.AppendStatus(homeDir, taskID, "queued: ready"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(Path(homeDir, taskID)), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(Path(homeDir, taskID), []byte("# "+description+"\n"), 0644); err != nil {
-		t.Fatal(err)
+			for _, taskID := range []string{"TASK-1", "TASK-2"} {
+				mustTransferNoOwner(t, parent, taskID)
+				agg := mustTransferOwner(t, captain, taskID)
+				if agg.Generation != 1 || agg.Definition.Owner != "captain:test-sm" {
+					t.Fatalf("boundary %s: %s aggregate = %+v", boundary, taskID, agg)
+				}
+			}
+			if pendingJournalCount(t, parent) != 0 {
+				t.Fatalf("boundary %s: journal not removed after recovery", boundary)
+			}
+		})
 	}
 }

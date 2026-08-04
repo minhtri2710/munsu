@@ -1255,33 +1255,6 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	return nil
 }
 
-// --- Handoff ---
-
-// Handoff moves backlog items from the parent home to a captain atomically.
-// All requested keys must preclassify as queued before the command runs.
-// extractTaskStateFromShow parses the state field from tasks-axi show output.
-// Returns empty string if not found.
-func extractTaskStateFromShow(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "state:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "state:"))
-		}
-	}
-	return ""
-}
-
-// isTasksAxiBackend checks whether config/backlog-backend is set to tasks-axi or unset.
-// Override in tests.
-var isTasksAxiBackend = func(parentHome string) bool {
-	val, err := config.Get(parentHome, "backlog-backend")
-	if err != nil {
-		// Config key not found — default is tasks-axi.
-		return true
-	}
-	return val == "tasks-axi"
-}
-
 func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
 	var ambiguous *mhome.AmbiguousTaskIDError
 	if errors.As(err, &ambiguous) {
