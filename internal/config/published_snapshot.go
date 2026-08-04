@@ -30,6 +30,12 @@ func (d PublishedSnapshotDocument) Validate() error {
 	if d.Config.Digest == "" {
 		return fmt.Errorf("published config snapshot digest is required")
 	}
+	// The requested Backend identity is part of the frozen snapshot. An empty
+	// identity is malformed for a published snapshot: strict decoding fails
+	// closed rather than auto-detecting a backend at load time.
+	if d.Config.Backend == "" {
+		return fmt.Errorf("published config snapshot backend identity is required")
+	}
 	return nil
 }
 
