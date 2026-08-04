@@ -889,9 +889,18 @@ func Unregister(parentHome, id string) error {
 }
 
 // ListCaptains returns all registered captains from the canonical Fleet
-// Registry, including the bound Project for each captain.
+// Registry, including the bound Project for each captain. The listing is
+// read-only: an uninitialized home carries no captains and is never created —
+// read contracts must not mutate home state.
 func ListCaptains(parentHome string) ([]Info, error) {
-	r, err := openRegistry(parentHome)
+	h, err := home.Open(parentHome)
+	if err != nil {
+		if errors.Is(err, home.ErrNotInitialized) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r, err := NewRegistry(h)
 	if err != nil {
 		return nil, err
 	}
