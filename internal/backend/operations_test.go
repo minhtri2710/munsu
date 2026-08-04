@@ -2,6 +2,7 @@ package backend
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -44,15 +45,47 @@ func (*fakeEndpointAdapter) Probe(string) (EndpointObservation, error) {
 }
 func (a *fakeEndpointAdapter) Dispose(handle string) error { a.disposed = handle; return nil }
 
-func TestCreateEndpointMayFallbackOnlyForNewEndpoint(t *testing.T) {
+func TestCreateEndpointFailsClosedOnSingleRequestedIdentity(t *testing.T) {
 	tmux := &fakeEndpointAdapter{}
-	service := NewService(fakeAdapterResolver{adapters: map[string]Adapter{"tmux": tmux}, errors: map[string]error{"herdr": errors.New("down")}})
-	result, err := service.CreateEndpoint(CreateEndpointRequest{PreferredBackend: "herdr", FallbackBackend: "tmux", Name: "worker"})
+	var calls []string
+	service := NewService(fakeAdapterResolver{adapters: map[string]Adapter{"tmux": tmux}, errors: map[string]error{"herdr": errors.New("down")}, calls: &calls})
+
+	result, err := service.CreateEndpoint(CreateEndpointRequest{PreferredBackend: "herdr", Name: "worker"})
+	if err == nil {
+		t.Fatalf("CreateEndpoint must fail CLOSED when the single requested identity fails to resolve: result = %+v", result)
+	}
+	if !strings.Contains(err.Error(), "herdr") {
+		t.Fatalf("error should carry the requested identity: %v", err)
+	}
+	if tmux.created != "" {
+		t.Fatalf("alternate adapter was touched: %+v", tmux)
+	}
+	if len(calls) != 1 || calls[0] != "herdr" {
+		t.Fatalf("Resolve calls = %v, want only the single requested identity", calls)
+	}
+}
+
+func TestCreateEndpointUsesSingleRequestedIdentity(t *testing.T) {
+	tmux := &fakeEndpointAdapter{}
+	service := NewService(fakeAdapterResolver{adapters: map[string]Adapter{"tmux": tmux}})
+	result, err := service.CreateEndpoint(CreateEndpointRequest{PreferredBackend: "tmux", Name: "worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Endpoint.Backend != "tmux" || !result.IsFallback {
+	if result.Endpoint.Backend != "tmux" || result.Endpoint.Handle != "endpoint" {
 		t.Fatalf("result = %+v", result)
+	}
+	if tmux.created != "worker" {
+		t.Fatalf("adapter created %q, want worker", tmux.created)
+	}
+}
+
+func TestCreateEndpointFailsClosedOnResolveErrorWithoutAlternate(t *testing.T) {
+	// Registry with NO adapters: the requested identity is unavailable and there
+	// is no alternate to select — the typed error must come back untouched.
+	service := NewService(fakeAdapterResolver{adapters: map[string]Adapter{}})
+	if _, err := service.CreateEndpoint(CreateEndpointRequest{PreferredBackend: "absent", Name: "worker"}); err == nil {
+		t.Fatal("CreateEndpoint must fail CLOSED when the requested identity is unavailable")
 	}
 }
 

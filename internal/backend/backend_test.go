@@ -30,7 +30,7 @@ func TestFakeSessionBackend(t *testing.T) {
 	}
 }
 
-func TestResolveBackendWithFallback(t *testing.T) {
+func TestResolveExplicitIdentity(t *testing.T) {
 	home := testutil.TempHome(t)
 	testutil.ClearEnv(t)
 
@@ -40,6 +40,16 @@ func TestResolveBackendWithFallback(t *testing.T) {
 	}
 	if bk == nil || name != "tmux" {
 		t.Errorf("expected name=tmux, got name=%s", name)
+	}
+}
+
+func TestResolveEmptyIdentityFailsClosed(t *testing.T) {
+	home := testutil.TempHome(t)
+	testutil.ClearEnv(t)
+
+	bk, name, err := backend.Resolve(home, "")
+	if err == nil {
+		t.Fatalf("expected typed failure for empty requested identity, got %q (%T) — no auto-detect", name, bk)
 	}
 }
 
