@@ -48,12 +48,17 @@ type BackendMetaExtras interface {
 	MetaExtras() map[string]string
 }
 
-// Select verifies the REQUESTED capability health and returns the named
-// backend. Supported: "tmux", "herdr", "zellij", "cmux", "orca" (experimental).
-// The requested binary must be present on PATH (verify-requested-adapter,
-// mirroring ProbeHerdrCapability); an absent or unknown adapter is a typed
-// failure — no alternate selection, no implicit switch.
-func Select(name string) (Backend, error) {
+// constructBackend is the ONE private construction path for session adapters:
+// it verifies the REQUESTED capability health (binary present on PATH) and
+// constructs the matching base adapter. Select, Resolve, and BackendForTask
+// all route through this function, so an absent or unhealthy requested
+// capability FAILS CLOSED at resolution with a typed failure — never deferred
+// to first exec.
+//
+// Supported: "tmux", "herdr", "zellij", "cmux", "orca" (experimental).
+// Distinguishable failures: unknown identity ("unknown session backend: …")
+// and missing binary ("<name>: not found on PATH").
+func constructBackend(name string) (Backend, error) {
 	switch name {
 	case "herdr":
 		if _, err := exec.LookPath("herdr"); err != nil {
@@ -85,10 +90,22 @@ func Select(name string) (Backend, error) {
 	}
 }
 
+// Select verifies the REQUESTED capability health and returns the named
+// backend (shared construction path: see constructBackend). Supported:
+// "tmux", "herdr", "zellij", "cmux", "orca" (experimental). The requested
+// binary must be present on PATH (verify-requested-adapter, mirroring
+// ProbeHerdrCapability); an absent or unknown adapter is a typed failure —
+// no alternate selection, no implicit switch.
+func Select(name string) (Backend, error) {
+	return constructBackend(name)
+}
+
 // Resolve consumes ONE explicitly requested backend identity. The homeDir is
 // used ONLY for workspace labeling (e.g. tmux Hometag), NEVER for selection.
 // An empty requested identity is a typed failure — no config-file read, no
-// env marker, no PATH auto-detect.
+// env marker, no PATH auto-detect. Capability health is verified through the
+// same construction path as Select: an absent binary FAILS CLOSED here
+// instead of deferring to first exec.
 //
 // Returns the backend, its resolved name, and any error.
 // Important: for the "herdr" backend, Session is set to "" (→ HERDR_SESSION or "default"),
@@ -99,34 +116,31 @@ func Resolve(homeDir string, name string) (Backend, string, error) {
 		return nil, "", fmt.Errorf("no session backend identity: %q is not an explicit backend (tmux, herdr, zellij, cmux, orca); no auto-detection", name)
 	}
 
-	tag := Hometag(homeDir)
-	switch name {
-	case "tmux":
-		return &TmuxBackend{Tag: tag}, "tmux", nil
-	case "herdr":
-		// NEVER pass hometag as Herdr session. Hometag is the workspace label,
-		// passed separately by spawn to NewWindow. The Herdr session is the server
-		// name (HERDR_SESSION or "default").
-		return NewHerdrBackend(""), "herdr", nil
-	case "zellij":
-		return NewZellijBackend(""), "zellij", nil
-	case "cmux":
-		return newCmuxBackend(), "cmux", nil
-	case "orca":
-		return NewOrcaBackend(), "orca", nil
-	default:
-		return nil, "", fmt.Errorf("unknown session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", name)
+	bk, err := constructBackend(name)
+	if err != nil {
+		return nil, "", err
 	}
+	// Workspace labeling is layered on AFTER verified construction: homeDir is
+	// a label source for tmux, never a selection input.
+	if tb, ok := bk.(*TmuxBackend); ok {
+		tb.Tag = Hometag(homeDir)
+	}
+	return bk, name, nil
 }
 
 // BackendForTask resolves the session backend durably bound in task metadata.
 // ONLY meta["backend"] is consumed: if the bound identity is MISSING or empty,
 // resolution FAILS CLOSED — it NEVER falls through to Resolve(config/env/PATH).
 //
-// For the "herdr" backend, the session name is resolved from (in order):
+// The bound identity goes through the SAME verified construction path as
+// Select/Resolve: an absent or unhealthy capability FAILS CLOSED at
+// resolution — session binding can never bypass capability verification.
+//
+// For the "herdr" backend, the session name is bound from task metadata
+// AFTER verification, resolved from (in order):
 //  1. meta["herdr_session"]
 //  2. ParseWindow(meta["window"]).session
-//  3. HERDR_SESSION env or "default"
+//  3. HERDR_SESSION env or "default" (from the verified base construction)
 //
 // This is session BINDING from task metadata, not selection. It ensures
 // post-spawn lifecycle (peek/send/teardown) uses the correct session,
@@ -141,24 +155,28 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 	}
 	switch bkName {
 	case "herdr":
-		// Resolve session: meta herdr_session > ParseWindow(window) > env > "default"
-		sess := ""
-		if meta != nil {
-			sess = meta["herdr_session"]
+		// Capability verification FIRST via the shared path; session binding
+		// is layered on AFTER verification and can never bypass it.
+		bk, err := constructBackend("herdr")
+		if err != nil {
+			return nil, "", err
 		}
-		if sess == "" && meta != nil {
-			wsess, _ := ParseWindow(meta["window"])
-			sess = wsess
-		}
-		bk := NewHerdrBackend(sess)
+		hb := bk.(*HerdrBackend)
 		if meta != nil {
+			// Session binding: meta herdr_session > ParseWindow(window).session
+			// > verified base (HERDR_SESSION env or "default").
+			if sess := meta["herdr_session"]; sess != "" {
+				hb.Session = sess
+			} else if wsess, _ := ParseWindow(meta["window"]); wsess != "" {
+				hb.Session = wsess
+			}
 			// Seed durable teardown tab ID from meta
 			if tabID := meta["herdr_tab_id"]; tabID != "" {
-				bk.SeedTeardownTab(tabID)
+				hb.SeedTeardownTab(tabID)
 			}
 			// Seed durable workspace ID from meta for husk cleanup
 			if wsID := meta["herdr_workspace_id"]; wsID != "" {
-				bk.TeardownWorkspaceID = wsID
+				hb.TeardownWorkspaceID = wsID
 			}
 			// Set workspace label for label-safe close. Prefer the task's own home
 			// (captain homes use captain-<id>-<hash>, not the parent primary tag).
@@ -166,20 +184,20 @@ func BackendForTask(homeDir string, meta map[string]string) (Backend, string, er
 			if mh := meta["home"]; mh != "" {
 				labelHome = mh
 			}
-			bk.Hometag = WorkspaceTag(labelHome)
+			hb.Hometag = WorkspaceTag(labelHome)
 		}
 		return bk, "herdr", nil
 	case "tmux":
-		bk, err := Select("tmux")
+		bk, err := constructBackend("tmux")
 		return bk, "tmux", err
 	case "zellij":
-		bk, err := Select("zellij")
+		bk, err := constructBackend("zellij")
 		return bk, "zellij", err
 	case "cmux":
-		bk, err := Select("cmux")
+		bk, err := constructBackend("cmux")
 		return bk, "cmux", err
 	case "orca":
-		bk, err := Select("orca")
+		bk, err := constructBackend("orca")
 		return bk, "orca", err
 	default:
 		return nil, "", fmt.Errorf("unknown bound session backend: %q (supported: tmux, herdr, zellij, cmux, orca)", bkName)

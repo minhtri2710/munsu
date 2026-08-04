@@ -156,6 +156,13 @@ func TestResolve_ExplicitIdentityIgnoresEnvAndConfigFile(t *testing.T) {
 	t.Setenv("TMUX", "/tmp/tmux-xxx")
 	t.Setenv("HERDR_ENV", "1")
 
+	// Controlled PATH: the requested binary must be verifiably present, and
+	// only the explicit identity counts (no real tmux install required).
+	fakeBin := fakeExecutables(t, "tmux")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	bk, name, err := Resolve(tmpDir, "tmux")
 	if err != nil {
 		t.Fatal(err)
@@ -178,6 +185,83 @@ func TestResolve_UnknownExplicitIdentityFailsClosed(t *testing.T) {
 		t.Fatal("expected error for unknown backend name")
 	} else if !strings.Contains(err.Error(), "unknown session backend") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestResolve_FailsClosedWhenRequestedBinaryAbsent verifies the shared
+// verified-construction path: Resolve must FAIL CLOSED at resolution when the
+// requested capability's binary is absent from PATH — no adapter is returned
+// and nothing is deferred to first exec.
+func TestResolve_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
+	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+
+	for _, name := range known {
+		bk, gotName, err := Resolve(t.TempDir(), name)
+		if err == nil {
+			t.Errorf("Resolve(%q) succeeded (%T) with %q absent from PATH — must fail closed", name, bk, name)
+			continue
+		}
+		if bk != nil {
+			t.Errorf("Resolve(%q) returned a backend (%T) for an absent capability — must return nil", name, bk)
+		}
+		if gotName != "" {
+			t.Errorf("Resolve(%q) returned name %q on failure, want empty", name, gotName)
+		}
+		if !strings.Contains(err.Error(), "not found on PATH") {
+			t.Errorf("Resolve(%q) unexpected error: %v", name, err)
+		}
+	}
+}
+
+// TestResolve_SucceedsWithControlledPATH verifies the shared verified-construction
+// path succeeds when the requested binary is present on a controlled PATH, and
+// that the workspace-label binding (tmux Tag) is applied from homeDir — layout
+// layered on the verified base, never selection.
+func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
+	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	fakeBin := fakeExecutables(t, known...)
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
+	for _, name := range known {
+		homeDir := t.TempDir()
+		bk, gotName, err := Resolve(homeDir, name)
+		if err != nil {
+			t.Errorf("Resolve(%q) with %q on PATH: %v", name, name, err)
+			continue
+		}
+		if gotName != name {
+			t.Errorf("Resolve(%q) name = %q, want %q", name, gotName, name)
+		}
+		switch name {
+		case "tmux":
+			tb, ok := bk.(*TmuxBackend)
+			if !ok {
+				t.Errorf("Resolve('tmux') returned %T, want *TmuxBackend", bk)
+			} else if tb.Tag != Hometag(homeDir) {
+				t.Errorf("Resolve('tmux') Tag = %q, want %q (homeDir workspace labeling)", tb.Tag, Hometag(homeDir))
+			}
+		case "herdr":
+			if _, ok := bk.(*HerdrBackend); !ok {
+				t.Errorf("Resolve('herdr') returned %T, want *HerdrBackend", bk)
+			}
+		case "zellij":
+			if _, ok := bk.(*ZellijBackend); !ok {
+				t.Errorf("Resolve('zellij') returned %T, want *ZellijBackend", bk)
+			}
+		case "cmux":
+			if _, ok := bk.(*CmuxBackend); !ok {
+				t.Errorf("Resolve('cmux') returned %T, want *CmuxBackend", bk)
+			}
+		case "orca":
+			if _, ok := bk.(*OrcaBackend); !ok {
+				t.Errorf("Resolve('orca') returned %T, want *OrcaBackend", bk)
+			}
+		}
 	}
 }
 

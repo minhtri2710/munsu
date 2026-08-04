@@ -1,6 +1,8 @@
 package backend_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/backend"
@@ -33,6 +35,16 @@ func TestFakeSessionBackend(t *testing.T) {
 func TestResolveExplicitIdentity(t *testing.T) {
 	home := testutil.TempHome(t)
 	testutil.ClearEnv(t)
+
+	// Controlled PATH: the requested binary must be verifiably present, and
+	// no real tmux install is required (Resolve verifies the capability).
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	bk, name, err := backend.Resolve(home, "tmux")
 	if err != nil {
