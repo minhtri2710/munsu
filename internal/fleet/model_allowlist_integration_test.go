@@ -512,6 +512,7 @@ func TestSpawn_DispatchSelectionResolvedOnce(t *testing.T) {
 		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
 		Config: fleetconfig.ProjectOverlay{
 			DefaultMode: "direct-pr",
+			Backend:     "tmux",
 			DispatchProfiles: []fleetconfig.DispatchProfile{
 				{Name: "quota", Match: []string{"*"}, SelectStrategy: "quota-balanced",
 					Use: []fleetconfig.DispatchCandidate{
