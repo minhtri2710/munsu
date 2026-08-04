@@ -108,9 +108,14 @@ func setupTypedParentHome(t *testing.T, parent string, projectName string) {
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
-	// Create or update fleet base document with empty config.
+	// Create or update fleet base document with the typed Backend identity so
+	// publishResolvedSnapshot (config.ResolveProject) resolves a non-empty
+	// backend: an empty identity is a typed validation failure at HEAD.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			Backend: "tmux",
+		},
 	}
 	if err := config.StoreFleetBase(parent, base); err != nil {
 		t.Fatal(err)

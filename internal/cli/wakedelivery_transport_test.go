@@ -66,7 +66,7 @@ func TestSessionActivationTransportMapsTypedOutcomes(t *testing.T) {
 		bk := &activationPromptBackend{capture: "❯\n", aware: true, status: "idle", result: backend.PromptResult{Status: status}}
 		transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 			return bk, "tmux", nil
-		}}
+		}, identity: func(string) (string, error) { return "tmux", nil }}
 		got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
 		want := status == backend.PromptSubmitted || status == backend.PromptQueuedWhileBusy
 		if got.Acknowledged != want || got.SubmitStatus != string(status) {
@@ -84,7 +84,7 @@ func TestSessionActivationTransportDefersWorkingAgent(t *testing.T) {
 	}
 	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 		return bk, "herdr", nil
-	}}
+	}, identity: func(string) (string, error) { return "herdr", nil }}
 	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
 	if got.Acknowledged || bk.promptCalls != 0 {
 		t.Fatalf("working agent should defer without submission: result=%+v calls=%d", got, bk.promptCalls)
@@ -100,7 +100,7 @@ func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
 	}
 	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 		return bk, "tmux", nil
-	}}
+	}, identity: func(string) (string, error) { return "tmux", nil }}
 	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
 	if !got.Acknowledged || got.SafetyVerdict != "empty" {
 		t.Fatalf("recognized-agent result = %+v", got)
@@ -110,7 +110,7 @@ func TestSessionActivationTransportUsesRecognizedAgentOverride(t *testing.T) {
 func TestSessionActivationTransportQueuesResolutionFailure(t *testing.T) {
 	transport := sessionActivationTransport{resolve: func(string, string) (backend.Backend, string, error) {
 		return nil, "", errors.New("unavailable")
-	}}
+	}, identity: func(string) (string, error) { return "tmux", nil }}
 	got := transport.Attempt("home", orchestrator.TargetResult{Handle: "pane"}, "payload")
 	if got.Acknowledged || got.SafetyError == "" {
 		t.Fatalf("resolution result = %+v", got)

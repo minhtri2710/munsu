@@ -273,6 +273,7 @@ func TestResolveSpawnProjectConfigConsumesRequireNoMistakes(t *testing.T) {
 			Config: fleetconfig.ProjectOverlay{
 				SoldierHarness:    "pi",
 				RequireNoMistakes: &[]bool{true}[0],
+				Backend:           "tmux",
 			},
 		}, []testProjectRecord{
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
@@ -319,6 +320,7 @@ exit 0
 			Config: fleetconfig.ProjectOverlay{
 				SoldierHarness:    "pi",
 				RequireNoMistakes: &[]bool{true}[0],
+				Backend:           "tmux",
 			},
 		}, []testProjectRecord{
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
@@ -340,7 +342,7 @@ exit 0
 		home := t.TempDir()
 		storeTestDocuments(t, home, fleetconfig.FleetBaseDocument{
 			SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
-			Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi"},
+			Config:        fleetconfig.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 		}, []testProjectRecord{
 			{Name: "alpha", Path: filepath.Join(home, "projects", "alpha")},
 		}, nil)
@@ -363,6 +365,7 @@ func writeSpawnSnapshotDocuments(t *testing.T, home string) {
 			SoldierHarness: "pi",
 			Model:          "base-model",
 			DefaultMode:    "direct-pr",
+			Backend:        "tmux",
 		},
 		CaptainProfile: fleetconfig.CaptainProfile{Harness: "pi", Model: "captain-model"},
 	}

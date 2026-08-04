@@ -1084,7 +1084,16 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	if err != nil {
 		return fmt.Errorf("building launch script: %w", err)
 	}
-	launched, err := endpoint.Launch(parentHome, LaunchRequest{WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome})
+	// The backend identity is bound at creation from the captain's PUBLISHED
+	// snapshot (the composed config.ResolveProject output written by
+	// publishResolvedSnapshot during PropagateConfig). A strict roundtrip
+	// enforces a non-empty identity; the endpoint never receives "".
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		return fmt.Errorf("loading captain published snapshot for launch: %w", err)
+	}
+	backendIdentity := snapshot.Config().Backend
+	launched, err := endpoint.Launch(parentHome, LaunchRequest{WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome, Backend: backendIdentity})
 	if err != nil {
 		return fmt.Errorf("launching captain endpoint: %w", err)
 	}

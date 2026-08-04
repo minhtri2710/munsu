@@ -874,7 +874,10 @@ func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
 	}
-	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.args.Backend, TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
+	// The backend identity is the resolved snapshot Backend bound at creation
+	// (fleet.ResolveProjectSnapshot → config.ResolveProject). The raw --backend
+	// flag enters ONLY via the boundary override; it is never consumed here.
+	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.projectConfig.Frozen.Config().Backend, TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
 	if err != nil {
 		return err
 	}
