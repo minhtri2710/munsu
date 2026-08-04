@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -70,8 +72,59 @@ func TestIsHardRequiredByConfig(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(home)
 			}
-			if got := IsHardRequiredByConfig(home, tt.tool); got != tt.want {
+			got, err := IsHardRequiredByConfig(home, tt.tool)
+			if err != nil {
+				t.Fatalf("IsHardRequiredByConfig(%q) unexpected error: %v", tt.tool, err)
+			}
+			if got != tt.want {
 				t.Errorf("IsHardRequiredByConfig(%q) = %v, want %v", tt.tool, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsHardRequiredByConfig_ReturnsReadErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(string)
+	}{
+		{name: "malformed base -> error propagates", setup: func(home string) {
+			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, "config", "base.json"), []byte("{not-json"), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "base path is a directory (EISDIR) -> error propagates", setup: func(home string) {
+			if err := os.MkdirAll(filepath.Join(home, "config", "base.json"), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unreadable base (permission) -> error propagates", setup: func(home string) {
+			if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(home, "config", "base.json")
+			if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, 0000); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			tt.setup(home)
+			got, err := IsHardRequiredByConfig(home, "no-mistakes")
+			if err == nil {
+				t.Fatalf("expected error for %s, got (false, nil)", tt.name)
+			}
+			if got {
+				t.Errorf("expected false on error, got true")
 			}
 		})
 	}
