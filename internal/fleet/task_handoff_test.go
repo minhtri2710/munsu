@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -139,9 +140,27 @@ func seedHandoffPair(t *testing.T) (parent, captain string) {
 	return parent, captain
 }
 
-// pendingJournalCount returns the number of pending transfer journals at a
-// home's state root.
+// pendingJournalCount returns the number of ACTIVE transfer journals at a
+// home's state root, read through the production Home causal path (the
+// bounded handoff index). Completed transfers are removed from the index, so
+// this reflects only resumable (pending) transfers.
 func pendingJournalCount(t *testing.T, homeDir string) int {
+	t.Helper()
+	h, err := mhome.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := readHandoffIndex(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(idx.Active)
+}
+
+// completedJournalCount returns the number of retained terminal journal
+// records (phase=completed) at a home's state root. Field records are never
+// deleted; only their IDs leave the active index.
+func completedJournalCount(t *testing.T, homeDir string) int {
 	t.Helper()
 	root := filepath.Join(homeDir, "state", taskHandoffDirName)
 	entries, err := os.ReadDir(root)
@@ -151,7 +170,24 @@ func pendingJournalCount(t *testing.T, homeDir string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return len(entries)
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "index.json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var j taskHandoffJournal
+		if err := json.Unmarshal(data, &j); err != nil {
+			t.Fatalf("unmarshal journal %s: %v", e.Name(), err)
+		}
+		if j.Phase == handoffPhaseCompleted {
+			count++
+		}
+	}
+	return count
 }
 
 func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
@@ -173,6 +209,10 @@ func TestHandoffTransfersQueuedTaskToCaptain(t *testing.T) {
 	mustTransferNoOwner(t, parent, "TASK-1")
 	if pendingJournalCount(t, parent) != 0 {
 		t.Fatalf("pending journal remains after successful transfer")
+	}
+	// The terminal journal record is retained as durable truth (never deleted).
+	if completedJournalCount(t, parent) != 1 {
+		t.Fatalf("terminal journal record not retained after successful transfer")
 	}
 }
 
@@ -294,7 +334,12 @@ func TestHandoffCrashRecoveryConvergesEveryStage(t *testing.T) {
 				}
 			}
 			if pendingJournalCount(t, parent) != 0 {
-				t.Fatalf("boundary %s: journal not removed after recovery", boundary)
+				t.Fatalf("boundary %s: journal still active after recovery", boundary)
+			}
+			// The terminal journal record is retained (truth, never deleted) and
+			// is never resumed again.
+			if completedJournalCount(t, parent) != 1 {
+				t.Fatalf("boundary %s: terminal journal record not retained after recovery", boundary)
 			}
 		})
 	}
@@ -303,18 +348,35 @@ func TestHandoffCrashRecoveryConvergesEveryStage(t *testing.T) {
 func TestHandoffRecoveryRejectsCorruptJournal(t *testing.T) {
 	parent := t.TempDir()
 	seedCanonicalTransferHome(t, parent)
-	dir := filepath.Join(parent, "state", taskHandoffDirName, "bad-transfer")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	h, err := mhome.Open(parent)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "journal.json"), []byte("not json"), 0600); err != nil {
+	// Fabricate the corrupt state through the production Home causal path: a
+	// valid index referencing one journal whose record bytes are garbage.
+	lk, err := h.Lock(handoffLockScope)
+	if err != nil {
 		t.Fatal(err)
 	}
+	idx := handoffJournalIndex{Version: handoffIndexVersion, HomeRevision: 1, Active: []string{"bad-transfer"}}
+	idxData, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []mhome.ChangeItem{
+		{Root: mhome.RootState, Key: handoffIndexKey, Data: append(idxData, '\n')},
+		{Root: mhome.RootState, Key: handoffJournalKey("bad-transfer"), Data: []byte("not json")},
+	}
+	if _, err := h.Commit(lk, "bad-transfer-create", 0, items); err != nil {
+		t.Fatal(err)
+	}
+	lk.Release()
+
 	if err := RecoverTaskHandoffs(parent); err == nil {
 		t.Fatal("expected corrupt journal to fail closed")
 	}
 	// The corrupt journal is retained for inspection.
-	if _, err := os.Stat(filepath.Join(dir, "journal.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(parent, "state", taskHandoffDirName, "bad-transfer.json")); err != nil {
 		t.Fatalf("corrupt journal removed: %v", err)
 	}
 }
