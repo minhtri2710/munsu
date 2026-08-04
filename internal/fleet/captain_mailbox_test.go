@@ -45,10 +45,13 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 	}
 
 	// Set up typed documents in parent home so ConfigPush works.
+	// The Backend is an explicit fixture literal ("tmux"): ResolveProject
+	// during Seed/ConfigPush fails closed on an empty backend identity.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
+			Backend:        "tmux",
 		},
 	}
 	if err := config.StoreFleetBase(parentHome, base); err != nil {

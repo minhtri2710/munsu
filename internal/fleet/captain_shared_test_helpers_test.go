@@ -85,12 +85,15 @@ func seedCaptainForTest(t *testing.T, parent, id string) string {
 
 // createTestPublishedSnapshot writes a minimal published snapshot to the
 // captain home so ComputeInheritedConfigDigest and related functions work.
+// The Backend is an explicit fixture literal ("tmux") so StorePublishedSnapshot
+// (which fails closed on an empty identity) accepts it.
 func createTestPublishedSnapshot(t *testing.T, captainHome string) {
 	t.Helper()
 	resolved := config.ResolvedProjectConfig{
 		Project:           "test-project",
 		ProjectPath:       captainHome,
 		SoldierHarness:    "pi",
+		Backend:           "tmux",
 		RequireNoMistakes: true,
 		Digest:            "0000000000000000000000000000000000000000000000000000000000000000",
 	}

@@ -203,7 +203,9 @@ func TestPropagateConfig_TypedSnapshotDurableBeforeNotificationAndRetryIsIdempot
 
 func writeTypedPropagationDocuments(t *testing.T, parent, alphaHome, betaHome string) {
 	t.Helper()
-	base := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{SoldierHarness: "pi", Model: "base-model", DefaultMode: "direct-pr"}}
+	// Backend is an explicit fixture literal ("tmux"): ResolveProject during
+	// PropagateConfig fails closed on an empty backend identity.
+	base := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion, Config: config.ProjectOverlay{SoldierHarness: "pi", Model: "base-model", DefaultMode: "direct-pr", Backend: "tmux"}}
 	if err := config.StoreFleetBase(parent, base); err != nil {
 		t.Fatal(err)
 	}
@@ -576,10 +578,13 @@ func TestPropagateConfig_MultipleInheritableProps(t *testing.T) {
 	captainHome := seedCaptainForTest(t, parent, "test-sm")
 
 	// Set up parent with typed config containing inheritable properties.
+	// Backend is an explicit fixture literal ("tmux"): ResolveProject during
+	// PropagateConfig fails closed on an empty backend identity.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
+			Backend:        "tmux",
 			BacklogBackend: "tasks-axi",
 		},
 	}

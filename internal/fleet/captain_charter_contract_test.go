@@ -21,7 +21,18 @@ func TestExistingAGENTSMD_Preservation(t *testing.T) {
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
+	// Typed parent base with explicit Backend so SeedCaptain's config inherit
+	// (ResolveProject) resolves a non-empty session backend identity. The
+	// registration mirrors ensureParentTypedConfig's default-project binding
+	// (which is skipped once the typed base exists).
+	setupTypedParentHome(t, parent, "test-captain")
 	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := os.MkdirAll(homePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-captain", homePath, "", "test-captain"); err != nil {
+		t.Fatal(err)
+	}
 
 	// First seed creates both .captain-charter.md and AGENTS.md.
 	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
@@ -192,7 +203,18 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}
+	// Typed parent base with explicit Backend so SeedCaptain's config inherit
+	// (ResolveProject) resolves a non-empty session backend identity. The
+	// registration mirrors ensureParentTypedConfig's default-project binding
+	// (which is skipped once the typed base exists).
+	setupTypedParentHome(t, parent, "test-captain")
 	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := os.MkdirAll(homePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-captain", homePath, "", "test-captain"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Seed a captain.
 	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
