@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,6 +129,54 @@ func bindWorktreeForSpawnFixture(t *testing.T, auth *taskauthority.Canonical, ta
 	}
 }
 
+// seedLaunchIntent commits a deterministic BeginSpawn launch intent for the
+// task through the canonical surface and adopts it onto the Runner, mirroring
+// the production beginLaunchIntent derivation (same snapshot digest, explicit
+// identities, and one-time reservation fences) so phase tests exercise the
+// intent-fenced launch path.
+func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, taskID string) {
+	t.Helper()
+	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(taskID, 1)
+	req := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID:                auth.HomeID(),
+		TaskID:                mustTaskID(t, taskID),
+		Precondition:          domain.Of(1, 1),
+		SnapshotDigest:        strings.Repeat("a", 64),
+		Backend:               "tmux",
+		Harness:               "pi",
+		Model:                 "gpt-5",
+		Effort:                "high",
+		Mode:                  "direct-PR",
+		Kind:                  "ship",
+		Project:               "test-proj",
+		ParentTaskID:          "general",
+		LaunchID:              fmt.Sprintf("launch-%s-1", taskID),
+		WindowLabel:           fmt.Sprintf("%s-g1", soldierTabLabel("test-proj", taskID)),
+		WorktreeReservationID: wtRes,
+		WorktreeFenceToken:    wtFence,
+		EndpointReservationID: epRes,
+		EndpointFenceToken:    epFence,
+		Reason:                "spawn",
+	}
+	op, err := domain.NewOperation(mustOpID(t, "spawn-begin-"+taskID+"-1"), req)
+	if err != nil {
+		t.Fatalf("NewOperation(begin %s): %v", taskID, err)
+	}
+	if _, err := auth.BeginSpawn(op, req); err != nil {
+		t.Fatalf("BeginSpawn(%s): %v", taskID, err)
+	}
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatalf("Get(%s): %v", taskID, err)
+	}
+	if agg.Launch == nil {
+		t.Fatalf("launch intent missing after BeginSpawn for %s", taskID)
+	}
+	r.launch = agg.Launch
+	r.launchID = agg.Launch.LaunchID
+	r.windowLabel = agg.Launch.WindowLabel
+}
+
 func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T) {
 	homeDir := t.TempDir()
 	auth := mustCanonical(t)
@@ -216,6 +265,7 @@ func TestSpawnBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) 
 	auth := canonicalAtHome(t, homeDir)
 	canonicalCreateTask(t, auth, "bind-wt", "ship", "test-proj")
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-wt", ProjectName: "test-proj", Authority: auth}, projPath: primary, wtPath: worktree}
+	seedLaunchIntent(t, auth, r, "bind-wt")
 	if err := r.bindWorktree(); err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
@@ -229,14 +279,11 @@ func TestSpawnBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) 
 	if agg.Phase == taskauthority.PhaseWorking {
 		t.Fatal("worktree binding alone must not mark task working")
 	}
-	// The lease marker committed atomically with the binding and remains
-	// readable by the legacy lease check on the exact home.
-	if !home.TaskWorktreeLeaseActive(homeDir, "bind-wt", home.TaskWorktreeBinding{
-		TaskGeneration: agg.Generation.String(),
-		LeaseID:        agg.Worktree.LeaseID,
-		FenceToken:     agg.Worktree.FenceToken,
-	}) {
-		t.Fatalf("lease marker not active for binding %+v", agg.Worktree)
+	// The binding carries the launch intent's one-time worktree reservation
+	// fence (never a freshly minted identity) so recovery under the same
+	// Operation ID/generation re-adopts the exact binding.
+	if agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken {
+		t.Fatalf("worktree binding lease/fence %s/%s does not match launch reservation %s/%s", agg.Worktree.LeaseID, agg.Worktree.FenceToken, r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken)
 	}
 }
 

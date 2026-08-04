@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1091,33 +1092,40 @@ func TestAuthorizeSpawnAllowsCaptainPrimaryCheckout(t *testing.T) {
 	}
 }
 
-func TestBootstrapWindowExportsSoldierRole(t *testing.T) {
-	worktreeDir := t.TempDir()
-	var sent string
-	r := &Runner{
-		homeDir:    t.TempDir(),
-		wtPath:     worktreeDir,
-		launchBin:  "pi",
-		launchArgs: []string{"--model", "gpt-5", "--thinking", "high", "test prompt"},
-		windowID:   "win-1",
-		endpoints:  fakeEndpointCapabilities{backend: &fakeBackend{sendKeys: func(windowID, text string) error { sent = text; return nil }}},
-		endpoint:   CreatedEndpoint{Backend: "test", Handle: "win-1"},
+func TestSubmitLaunchExportsSoldierRoleAndGuardsSubmission(t *testing.T) {
+	f := newLaunchFixture(t, "submit-role")
+	// Drive the real launch path through the durable endpoint attach, then
+	// exercise the real submission (submitLaunch writes the deterministic
+	// artifact, records the launch evidence, and submits exactly once).
+	if err := runLaunchPhases(f, "attach-endpoint"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("launch phases: %v", err)
 	}
-	r.bootstrapWindow()
+	if err := f.runner.submitLaunch(); err != nil {
+		t.Fatalf("submitLaunch: %v", err)
+	}
 
-	script, err := os.ReadFile(filepath.Join(worktreeDir, ".soldier-launch.sh"))
+	script, err := os.ReadFile(filepath.Join(f.runner.wtPath, LaunchScriptName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(script), "export MUNSU_ROLE=soldier") {
 		t.Fatalf("launch script missing soldier role:\n%s", script)
 	}
-	if sent == "" {
-		t.Fatal("bootstrapWindow did not send launch command")
+	if !strings.Contains(string(script), "test brief") {
+		t.Fatalf("launch script must contain the prompt (brief) argument:\n%s", script)
 	}
-	// Verify prompt arg is in the script.
-	if !strings.Contains(string(script), "test prompt") {
-		t.Fatalf("launch script must contain prompt argument:\n%s", script)
+	if f.endpoints.submitCount() != 1 {
+		t.Fatalf("submitLaunch did not send the launch command exactly once")
+	}
+
+	// The submission is re-entrant under the exact launch identity: repeating
+	// submitLaunch with the same deterministic artifact skips the submission
+	// (the durable launch evidence is the guard — never a duplicate launch).
+	if err := f.runner.submitLaunch(); err != nil {
+		t.Fatalf("guarded re-submit: %v", err)
+	}
+	if f.endpoints.submitCount() != 1 {
+		t.Fatalf("duplicate launch submission: count=%d, want 1", f.endpoints.submitCount())
 	}
 }
 

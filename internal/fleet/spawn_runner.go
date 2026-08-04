@@ -2,16 +2,20 @@ package fleet
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -53,6 +57,22 @@ type Runner struct {
 	promptEnv  *LaunchEnvelope
 	launchArgs []string
 	launchBin  string
+
+	// launch intent state: the durable pre-acquisition intent committed by
+	// beginLaunchIntent (CanonicalBeginSpawnRequest) plus the deterministic
+	// launch/window identity and one-time worktree/endpoint reservation
+	// fences it owns. On recovery the same identity is re-derived, never a
+	// freshly minted intent.
+	taskID        domain.TaskID
+	launch        *taskauthority.LaunchIntent
+	launchID      string
+	windowLabel   string
+	launchReentry bool // the intent pre-existed this run (recovery, not first attempt)
+
+	// launch submission evidence: the exact endpoint command submitted for
+	// the launch and its sha256 digest, durably recorded before submission.
+	launchCommand       string
+	launchCommandDigest string
 
 	// manifestSHA256 is the SHA-256 digest of the written launch manifest,
 	// persisted to task metadata for external anchoring.
@@ -121,19 +141,31 @@ func (r *Runner) Run() (string, error) {
 	if err := r.preflightHarness(); err != nil {
 		return "", err
 	}
-	if err := r.acquireWorktree(); err != nil {
+	// Durable launch intent is committed BEFORE any worktree, endpoint, or
+	// process acquisition (Task 4.1 / #412): the canonical aggregate carries
+	// the immutable pre-acquisition intent (snapshot digest, explicit
+	// Backend/Harness identities, deterministic launch/window identity, one-time
+	// worktree/endpoint reservation fences) before backend.GetWorktree or
+	// endpoint Create/Submit. Recovery with the same Operation ID/generation
+	// re-adopts the committed intent and never mints a different one.
+	if err := r.beginLaunchIntent(); err != nil {
 		return "", err
 	}
 	success := false
 	if err := r.checkSupervision(); err != nil {
 		return "", err
 	}
-	// Fail-closed: return worktree on any subsequent error (but NOT on success).
+	// Fail-closed worktree return is phase-aware: a worktree the aggregate
+	// durably owns (bound under the launch fence) is never returned to the
+	// pool; only unbound acquisitions are returned on failure.
 	defer func() {
-		if !success && r.wtPath != "" {
+		if !success && r.wtPath != "" && r.worktreeReturnAllowed() {
 			_ = backend.ReturnWorktree(r.homeDir, r.wtPath)
 		}
 	}()
+	if err := r.acquireWorktree(); err != nil {
+		return "", err
+	}
 	if err := r.bindWorktree(); err != nil {
 		return "", err
 	}
@@ -154,9 +186,16 @@ func (r *Runner) Run() (string, error) {
 	if err := r.createSession(); err != nil {
 		return "", err
 	}
-	r.bootstrapWindow()
+	// The acquired endpoint is attached durably (AttachEndpoint) before any
+	// process submission; the launch evidence is recorded durably before the
+	// submission so a crash can never leave an unguarded duplicate launch.
+	if err := r.attachEndpoint(); err != nil {
+		return "", err
+	}
+	if err := r.submitLaunch(); err != nil {
+		return "", err
+	}
 	if err := r.writeLaunchManifest(); err != nil {
-		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
 	}
 	if err := r.waitAndInjectBrief(); err != nil {
@@ -166,12 +205,10 @@ func (r *Runner) Run() (string, error) {
 		return "", err
 	}
 	if err := r.writeTaskMeta(); err != nil {
-		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
 	}
 	spawned, err := r.confirmSpawn()
 	if err != nil {
-		_ = r.endpoints.Dispose(r.endpoint)
 		return "", err
 	}
 	// The accepted capability attestation becomes authoritative evidence
@@ -594,7 +631,11 @@ func (r *Runner) ensureTaskAggregate() error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("lifecycle guard: task authority is not composed for spawn")
 	}
-	if _, err := r.args.Authority.Get(r.args.ID); err != nil {
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("lifecycle guard: task %q has no canonical Task Authority record; register it with 'backlog add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
+	}
+	if _, err := r.args.Authority.Get(taskID); err != nil {
 		return fmt.Errorf("lifecycle guard: task %q has no canonical Task Authority record; register it with 'backlog add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
 	}
 	return nil
@@ -648,14 +689,56 @@ func (r *Runner) preflightNoMistakes() error {
 	return preflight(r.projPath)
 }
 
-// Phase 8: acquireWorktree acquires a leased worktree from the pool.
+// Phase 8: acquireWorktree acquires a leased worktree from the pool. It is
+// re-entrant under the committed launch intent: when the aggregate already
+// holds the durable worktree binding (recovery after a crash), the bound
+// path is adopted and no second acquisition happens; the binding identity is
+// verified at bindWorktree.
 func (r *Runner) acquireWorktree() error {
+	if r.args.Authority != nil {
+		if taskID, err := domain.NewTaskID(r.args.ID); err == nil {
+			if agg, err := r.args.Authority.Get(taskID); err == nil && agg.Worktree != nil {
+				r.wtPath = agg.Worktree.Path
+				return nil
+			}
+		}
+	}
 	wtPath, err := backend.GetWorktree(r.homeDir, r.projPath, true)
 	if err != nil {
 		return fmt.Errorf("acquiring worktree: %w", err)
 	}
-	r.wtPath = wtPath
+	// Canonicalize the acquired path (EvalSymlinks) so the launch artifact and
+	// the durable binding use the SAME identity on every attempt of the
+	// launch: a re-entry adopts the canonical bound path, so a symlinked home
+	// (e.g. /var -> /private/var) must never produce a different artifact.
+	canonical, err := canonicalExistingPath(wtPath)
+	if err != nil {
+		return fmt.Errorf("acquiring worktree: resolving acquired path: %w", err)
+	}
+	r.wtPath = canonical
 	return nil
+}
+
+// worktreeReturnAllowed reports whether the acquired worktree may be returned
+// to the pool on failure. Phase-aware: a worktree the aggregate durably owns
+// (bound under the launch fence) must never be returned; only unbound
+// acquisitions are returned. When no Authority is composed there is no
+// canonical ownership, so the legacy return-on-failure semantics apply.
+func (r *Runner) worktreeReturnAllowed() bool {
+	if r.args.Authority == nil {
+		return true
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return true
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil || agg.Worktree == nil {
+		return true
+	}
+	// The aggregate owns a worktree binding: never return it (whether it is
+	// this worktree or a different one we do not own).
+	return false
 }
 
 // preflightHarness runs harness readiness preflight on the already-resolved
@@ -683,6 +766,240 @@ func (r *Runner) preflightHarness() error {
 		return &harness.PreflightError{Harness: r.harness, Reason: "auth-absent"}
 	}
 	return nil
+}
+
+// beginLaunchIntent resolves the current canonical Task aggregate/Generation
+// and commits the deterministic pre-acquisition launch intent (BeginSpawn)
+// BEFORE any worktree, endpoint, or process acquisition. The intent is
+// constructed from the immutable snapshot digest plus the explicit
+// Backend/Harness/model/effort/mode/kind/project/parent identities and the
+// deterministic launch/window identity and one-time worktree/endpoint
+// reservation fences. A retry of the same launch re-derives the identical
+// intent: a committed intent that matches is re-adopted (never minted
+// anew); a different committed intent, a stale generation, or a non-queued
+// phase fails closed.
+func (r *Runner) beginLaunchIntent() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("launch intent: task authority is not composed for spawn")
+	}
+	if !r.projectConfigLoaded || r.projectConfig.SnapshotDigest == "" {
+		return fmt.Errorf("launch intent: spawn requires the typed project snapshot (snapshot digest); no snapshot identity to bind")
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("launch intent: %w", err)
+	}
+	r.taskID = taskID
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("launch intent: resolving task %s: %w", r.args.ID, err)
+	}
+	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
+	req := r.buildBeginSpawnRequest(prec, agg.Generation)
+	if agg.Launch != nil {
+		if !r.launchIntentMatches(req, *agg.Launch) {
+			return fmt.Errorf("launch intent: task %s generation %s already holds a different launch intent; refuse to re-launch", r.args.ID, agg.Generation)
+		}
+		if agg.Phase != taskauthority.PhaseQueued {
+			if agg.Phase == taskauthority.PhaseWorking && agg.Endpoint != nil && agg.AcquiredEndpoint != nil && agg.LaunchEvidence != nil {
+				// Recovery after the final bind: the launch is complete under
+				// this exact identity; the remaining phases replay idempotently.
+				r.adoptLaunch(*agg.Launch)
+				return nil
+			}
+			return fmt.Errorf("launch intent: task %s generation %s is %s, spawn requires queued; duplicate or stale live spawn refused", r.args.ID, agg.Generation, agg.Phase)
+		}
+		r.launchReentry = true
+		r.adoptLaunch(*agg.Launch)
+		return nil
+	}
+	if agg.Phase != taskauthority.PhaseQueued {
+		return fmt.Errorf("launch intent: task %s generation %s is %s, spawn requires queued; duplicate live spawn refused", r.args.ID, agg.Generation, agg.Phase)
+	}
+	op, err := r.spawnOperation("begin", agg.Generation, req)
+	if err != nil {
+		return fmt.Errorf("launch intent: %w", err)
+	}
+	if _, err := r.args.Authority.BeginSpawn(op, req); err != nil {
+		return fmt.Errorf("launch intent: %w", err)
+	}
+	r.launchReentry = false
+	fresh, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("launch intent: re-reading committed intent: %w", err)
+	}
+	if fresh.Launch == nil {
+		return fmt.Errorf("launch intent: committed launch intent missing after BeginSpawn")
+	}
+	r.adoptLaunch(*fresh.Launch)
+	return nil
+}
+
+// buildBeginSpawnRequest constructs the deterministic BeginSpawn request for
+// the task's current generation from the immutable snapshot digest and the
+// explicit launch identities. Every value is derived deterministically so a
+// retry reproduces the identical intent (same Operation ID and digest).
+func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation) taskauthority.CanonicalBeginSpawnRequest {
+	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(r.args.ID, uint64(gen))
+	return taskauthority.CanonicalBeginSpawnRequest{
+		HomeID:                r.args.Authority.HomeID(),
+		TaskID:                r.taskID,
+		Precondition:          prec,
+		SnapshotDigest:        r.projectConfig.SnapshotDigest,
+		Backend:               r.projectConfig.Frozen.Config().Backend,
+		Harness:               r.harness,
+		Model:                 r.model,
+		Effort:                r.effort,
+		Mode:                  r.effectiveMode,
+		Kind:                  r.args.Kind,
+		Project:               r.projectConfig.ProjectName,
+		ParentTaskID:          r.resolveParentCaptainID(),
+		LaunchID:              fmt.Sprintf("launch-%s-%d", r.args.ID, uint64(gen)),
+		WindowLabel:           fmt.Sprintf("%s-g%d", soldierTabLabel(r.args.ProjectName, r.args.ID), uint64(gen)),
+		WorktreeReservationID: wtRes,
+		WorktreeFenceToken:    wtFence,
+		EndpointReservationID: epRes,
+		EndpointFenceToken:    epFence,
+		Reason:                "spawn",
+	}
+}
+
+// launchIntentMatches reports whether a committed launch intent carries the
+// identical immutable launch identity as the deterministic BeginSpawn request
+// (mirrors the canonical no-op check; record metadata is excluded).
+func (r *Runner) launchIntentMatches(req taskauthority.CanonicalBeginSpawnRequest, l taskauthority.LaunchIntent) bool {
+	return l.SnapshotDigest == req.SnapshotDigest && l.Backend == req.Backend && l.Harness == req.Harness &&
+		l.Model == req.Model && l.Effort == req.Effort && l.Mode == req.Mode && l.Kind == req.Kind &&
+		l.Project == req.Project && l.ParentTaskID == req.ParentTaskID && l.LaunchID == req.LaunchID &&
+		l.WindowLabel == req.WindowLabel && l.WorktreeReservationID == req.WorktreeReservationID &&
+		l.WorktreeFenceToken == req.WorktreeFenceToken && l.EndpointReservationID == req.EndpointReservationID &&
+		l.EndpointFenceToken == req.EndpointFenceToken
+}
+
+// adoptLaunch copies the committed launch intent identities onto the Runner
+// so every later phase consumes the exact committed values (never a fresh
+// derivation).
+func (r *Runner) adoptLaunch(l taskauthority.LaunchIntent) {
+	r.launch = &l
+	r.launchID = l.LaunchID
+	r.windowLabel = l.WindowLabel
+}
+
+// spawnReservationIdentities derives the one-time worktree/endpoint
+// reservation IDs and fence tokens deterministically from the task and
+// generation (distinct salts per identity) so a retry reproduces the exact
+// intent and the fences are never reused across launches.
+func spawnReservationIdentities(taskID string, gen uint64) (worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken string) {
+	return "wtres-" + launchFence("wt-res", taskID, gen),
+		"wtfence-" + launchFence("wt-fence", taskID, gen),
+		"epres-" + launchFence("ep-res", taskID, gen),
+		"epfence-" + launchFence("ep-fence", taskID, gen)
+}
+
+// launchFence returns a deterministic 16-hex-char fence identity for one
+// reservation salt of one task generation.
+func launchFence(salt, taskID string, gen uint64) string {
+	h := sha256.Sum256([]byte("munsu-launch-fence:" + salt + ":" + taskID + ":" + strconv.FormatUint(gen, 10)))
+	return hex.EncodeToString(h[:8])
+}
+
+// bindWorktree binds the acquired worktree under the launch intent's one-time
+// worktree reservation fence. When the aggregate already holds the binding
+// (recovery), the exact identity is verified (intent fence) and the bound path
+// adopted; a mismatch fails closed. Binding an already-bound generation is a
+// canonical conflict, so a stale or reused intent never double-binds.
+func (r *Runner) bindWorktree() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("binding worktree before endpoint launch: task authority is not composed for spawn")
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
+	if agg.Worktree != nil {
+		if r.launch != nil && (agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken) {
+			return fmt.Errorf("binding worktree before endpoint launch: committed worktree binding does not match the launch worktree reservation fence; refuse")
+		}
+		r.wtPath = agg.Worktree.Path
+		return nil
+	}
+	var leaseID, fenceToken string
+	if r.launch != nil {
+		leaseID, fenceToken = r.launch.WorktreeReservationID, r.launch.WorktreeFenceToken
+	} else {
+		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
+	}
+	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, leaseID, fenceToken)
+	if err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	req := taskauthority.CanonicalBindWorktreeRequest{
+		HomeID:       r.args.Authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: prec,
+		Binding:      binding,
+		Reason:       "spawn",
+	}
+	op, err := r.spawnOperation("bindwt", agg.Generation, req)
+	if err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	if _, err := r.args.Authority.BindWorktree(op, req); err != nil {
+		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+	}
+	return nil
+}
+
+// spawnOperation builds the deterministic Operation for one launch phase
+// (same Operation ID and intent digest on retry, so the canonical surface
+// replays the durable outcome instead of duplicating it).
+func (r *Runner) spawnOperation(verb string, gen taskauthority.Generation, intent domain.Intent) (domain.Operation, error) {
+	opID, err := domain.NewOperationID(fmt.Sprintf("spawn-%s-%s-%d", verb, r.args.ID, uint64(gen)))
+	if err != nil {
+		return domain.Operation{}, err
+	}
+	return domain.NewOperation(opID, intent)
+}
+
+func buildTaskWorktreeBinding(primaryPath, worktreePath, leaseID, fenceToken string) (taskauthority.WorktreeBinding, error) {
+	canonicalWorktree, err := canonicalExistingPath(worktreePath)
+	if err != nil {
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
+	}
+	identity, gitDir, commonDir, err := ClassifyIdentity(canonicalWorktree)
+	if err != nil {
+		return taskauthority.WorktreeBinding{}, err
+	}
+	if identity != Worktree {
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
+	}
+	repoIdentity := commonDir
+	if primaryPath != "" {
+		_, _, primaryCommonDir, err := ClassifyIdentity(primaryPath)
+		if err != nil {
+			return taskauthority.WorktreeBinding{}, fmt.Errorf("classifying repository identity: %w", err)
+		}
+		repoIdentity = primaryCommonDir
+	}
+	head, err := gitRevParseForBinding(canonicalWorktree, "HEAD")
+	if err != nil {
+		return taskauthority.WorktreeBinding{}, fmt.Errorf("reading worktree head: %w", err)
+	}
+	return taskauthority.WorktreeBinding{
+		RepositoryIdentity: repoIdentity,
+		Path:               canonicalWorktree,
+		GitDir:             gitDir,
+		CommonDir:          commonDir,
+		Head:               head,
+		LeaseID:            leaseID,
+		FenceToken:         fenceToken,
+		BoundAtUnix:        time.Now().Unix(),
+	}, nil
 }
 
 // Phase 9: resolveHarness resolves the soldier harness.
@@ -871,15 +1188,75 @@ func labelComponent(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// Phase 11: createSession creates a session window for the
+// Phase 11: createSession creates a session window for the launch. It is
+// re-entrant under the committed launch intent: recovery re-adopts the
+// durably recorded acquired endpoint (never a replacement), and creation is
+// reservation-aware — a capability that implements
+// ReentrantEndpointCapabilities finds-or-creates the endpoint under the
+// intent's one-time endpoint reservation fence. When the selected capability
+// cannot prove find-or-create on a re-entry, creation fails closed with a
+// dependency request instead of silently creating a second endpoint.
 func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
 	}
-	// The backend identity is the resolved snapshot Backend bound at creation
-	// (fleet.ResolveProjectSnapshot → config.ResolveProject). The raw --backend
-	// flag enters ONLY via the boundary override; it is never consumed here.
-	ep, err := r.endpoints.Create(CreateRequest{Home: r.homeDir, PreferredBackend: r.projectConfig.Frozen.Config().Backend, TabName: soldierTabLabel(r.args.ProjectName, r.args.ID), Cwd: r.wtPath})
+	// Recovery: adopt the durably recorded acquired endpoint.
+	if acquired := r.recordedAcquiredEndpoint(); acquired != nil {
+		if r.launch != nil && acquired.Backend != r.launch.Backend {
+			return fmt.Errorf("recorded acquired endpoint backend %q does not match launch intent backend %q; refuse recovery", acquired.Backend, r.launch.Backend)
+		}
+		ep := CreatedEndpoint{
+			Backend:      acquired.Backend,
+			Handle:       acquired.Handle,
+			SessionOwner: acquired.SessionOwner,
+			WorkspaceID:  acquired.WorkspaceID,
+			TabID:        acquired.TabID,
+		}
+		status, err := r.endpoints.Probe(ep)
+		if err != nil || (status.State != EndpointAlive && status.State != EndpointStarting) {
+			if err != nil {
+				return fmt.Errorf("verifying recorded pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
+			}
+			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement)", ep.Handle, status.State, ep.Backend)
+		}
+		r.endpoint, r.windowID = ep, ep.Handle
+		return nil
+	}
+	// The backend identity is the launch intent's explicit snapshot Backend
+	// (fleet.ResolveProjectSnapshot → config.ResolveProject); the raw --backend
+	// flag enters ONLY via the boundary override and is never consumed here.
+	backendName := ""
+	if r.launch != nil {
+		backendName = r.launch.Backend
+	}
+	if backendName == "" {
+		backendName = r.projectConfig.Frozen.Config().Backend
+	}
+	tabName := r.windowLabel
+	if tabName == "" {
+		tabName = soldierTabLabel(r.args.ProjectName, r.args.ID)
+	}
+	req := CreateRequest{
+		Home:             r.homeDir,
+		PreferredBackend: backendName,
+		TabName:          tabName,
+		Cwd:              r.wtPath,
+		ReservationID:    r.epReservationID(),
+		FenceToken:       r.epFenceToken(),
+	}
+	var ep CreatedEndpoint
+	var err error
+	if rr, ok := r.endpoints.(ReentrantEndpointCapabilities); ok {
+		ep, err = rr.CreateReserved(req)
+	} else if r.launchReentry {
+		// A prior attempt of this launch may have created an endpoint without
+		// a durable record. The selected capability cannot prove find-or-create
+		// under the reservation, so creating a fresh endpoint would silently
+		// replace it: fail closed instead.
+		return fmt.Errorf("endpoint create: re-entry under launch %s requires reservation-aware find-or-create (ReentrantEndpointCapabilities); the selected endpoint capability cannot prove it — DEPENDENCY_REQUEST", r.launchID)
+	} else {
+		ep, err = r.endpoints.Create(req)
+	}
 	if err != nil {
 		return err
 	}
@@ -893,6 +1270,97 @@ func (r *Runner) createSession() error {
 	}
 	r.endpoint, r.windowID = ep, ep.Handle
 	return nil
+}
+
+// attachEndpoint durably records the exact acquired endpoint identity
+// (AttachEndpoint) under the launch intent's endpoint reservation fence,
+// BEFORE any process submission. It is exact-generation/idempotent: recovery
+// verifies the recorded identity matches the created endpoint and skips; a
+// different recorded endpoint fails closed and can never be overwritten.
+func (r *Runner) attachEndpoint() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("attaching acquired endpoint: task authority is not composed for spawn")
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("attaching acquired endpoint: %w", err)
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("attaching acquired endpoint: %w", err)
+	}
+	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
+	if agg.AcquiredEndpoint != nil {
+		a := *agg.AcquiredEndpoint
+		if a.Backend != r.endpoint.Backend || a.Handle != r.endpoint.Handle ||
+			a.SessionOwner != r.endpoint.SessionOwner || a.WorkspaceID != r.endpoint.WorkspaceID || a.TabID != r.endpoint.TabID {
+			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint %s/%s does not match created endpoint %s/%s; refuse", a.Backend, a.Handle, r.endpoint.Backend, r.endpoint.Handle)
+		}
+		if r.launch != nil && (a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken) {
+			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint does not match the launch endpoint reservation fence; refuse")
+		}
+		return nil
+	}
+	req := taskauthority.CanonicalAttachEndpointRequest{
+		HomeID:       r.args.Authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: prec,
+		Backend:      r.endpoint.Backend,
+		Handle:       r.endpoint.Handle,
+		LeaseID:      r.epReservationID(),
+		FenceToken:   r.epFenceToken(),
+		SessionOwner: r.endpoint.SessionOwner,
+		WorkspaceID:  r.endpoint.WorkspaceID,
+		TabID:        r.endpoint.TabID,
+		Reason:       "spawn",
+	}
+	op, err := r.spawnOperation("attach", agg.Generation, req)
+	if err != nil {
+		return fmt.Errorf("attaching acquired endpoint: %w", err)
+	}
+	if _, err := r.args.Authority.AttachEndpoint(op, req); err != nil {
+		return fmt.Errorf("attaching acquired endpoint: %w", err)
+	}
+	return nil
+}
+
+// endpointDurablyAttached reports whether the aggregate already records the
+// acquired endpoint (or the active endpoint binding) for the task's current
+// generation. When no Authority is composed nothing is durably recorded.
+func (r *Runner) endpointDurablyAttached() bool {
+	if r.args.Authority == nil {
+		return false
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return false
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return false
+	}
+	return agg.AcquiredEndpoint != nil || agg.Endpoint != nil
+}
+
+// recordedAcquiredEndpoint returns the aggregate's recorded acquired endpoint
+// for the task's current generation, or nil.
+func (r *Runner) recordedAcquiredEndpoint() *taskauthority.AcquiredEndpoint {
+	if r.args.Authority == nil {
+		return nil
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return nil
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return nil
+	}
+	if agg.AcquiredEndpoint == nil {
+		return nil
+	}
+	cp := *agg.AcquiredEndpoint
+	return &cp
 }
 
 // Phase 11a: buildSoldierPrompt builds the complete Soldier launch prompt,
@@ -1028,59 +1496,69 @@ func spawnShQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// Phase 12: bootstrapWindow writes a launch script and sends it to the session.
-// Uses the full prompt arguments built by buildSoldierPrompt.
-// Fails closed when prompt args are empty (unsupported harness path).
-func (r *Runner) bootstrapWindow() {
-	if r.launchBin == "" || len(r.launchArgs) == 0 {
-		// BuildLaunchArgs already fail-closed for unsupported harnesses.
-		// If we reach here without prompt args, no fallback — fail closed.
-		fmt.Fprintf(os.Stderr, "error: no soldier launch arguments — harness does not support prompt-arg delivery\n")
-		return
+// Phase 12: submitLaunch builds the deterministic launch artifact, durably
+// records the launch evidence (RecordLaunch) BEFORE the submission, and
+// submits the exact command once. The evidence-first ordering is the
+// re-entrant launch guard: a crash can never leave an "after Submit but before
+// durable RecordLaunch" state, and recovery with the same launch identity and
+// command digest skips the submission instead of re-submitting. An artifact
+// whose content differs from the committed identity fails closed.
+func (r *Runner) submitLaunch() error {
+	if r.args.Authority == nil {
+		return fmt.Errorf("submitting launch: task authority is not composed for spawn")
 	}
-
-	// Build a shell script that sources identity env then execs with full prompt args.
-	var b strings.Builder
-	b.WriteString("#!/usr/bin/env bash\n")
-	b.WriteString("set -euo pipefail\n")
-	b.WriteString("cd ")
-	b.WriteString(spawnShQuote(r.wtPath))
-	b.WriteString("\n")
-	b.WriteString("export MUNSU_HOME=")
-	b.WriteString(spawnShQuote(r.homeDir))
-	b.WriteString("\n")
-	b.WriteString("export MUNSU_ROLE=soldier\n")
-	b.WriteString("export MUNSU_TASK_ID=")
-	b.WriteString(spawnShQuote(r.args.ID))
-	b.WriteString("\n")
-	b.WriteString("export MUNSU_PARENT_STATUS=")
-	b.WriteString(spawnShQuote(r.homeDir))
-	b.WriteString("\n")
+	snapshotDigest := ""
 	if r.projectConfigLoaded {
-		b.WriteString("export MUNSU_CONFIG_SNAPSHOT_DIGEST=")
-		b.WriteString(spawnShQuote(r.projectConfig.SnapshotDigest))
-		b.WriteString("\n")
+		snapshotDigest = r.projectConfig.SnapshotDigest
 	}
-	b.WriteString("exec ")
-	b.WriteString(spawnShQuote(r.launchBin))
-	for _, arg := range r.launchArgs {
-		b.WriteString(" ")
-		b.WriteString(spawnShQuote(arg))
+	artifact, err := buildLaunchArtifact(r.wtPath, r.homeDir, r.args.ID, snapshotDigest, r.launchBin, r.launchArgs)
+	if err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
 	}
-	b.WriteString("\n")
-
-	launchScript := filepath.Join(r.wtPath, ".soldier-launch.sh")
-	if writeErr := os.WriteFile(launchScript, []byte(b.String()), 0755); writeErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: writing launch script: %v\n", writeErr)
+	r.launchCommand = artifact.Command
+	r.launchCommandDigest = artifact.CommandDigest
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
 	}
-	fullCmd := fmt.Sprintf("bash %s", spawnShQuote(launchScript))
-	if sendErr := r.endpoints.Submit(r.endpoint, fullCmd); sendErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: sending harness launch command: %v\n", sendErr)
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
 	}
+	if agg.LaunchEvidence != nil {
+		// Re-entrant guard: the exact same submission is already durably
+		// recorded; skip (never re-submit under the same launch identity).
+		if agg.LaunchEvidence.LaunchID != r.launchID || agg.LaunchEvidence.CommandDigest != r.launchCommandDigest {
+			return fmt.Errorf("submitting launch: recorded launch evidence %s/%s does not match this submission %s/%s; refuse", agg.LaunchEvidence.LaunchID, agg.LaunchEvidence.CommandDigest, r.launchID, r.launchCommandDigest)
+		}
+		return nil
+	}
+	req := taskauthority.CanonicalRecordLaunchRequest{
+		HomeID:        r.args.Authority.HomeID(),
+		TaskID:        taskID,
+		Precondition:  domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		LaunchID:      r.launchID,
+		CommandDigest: r.launchCommandDigest,
+		Reason:        "spawn",
+	}
+	op, err := r.spawnOperation("record", agg.Generation, req)
+	if err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
+	}
+	if _, err := r.args.Authority.RecordLaunch(op, req); err != nil {
+		return fmt.Errorf("submitting launch: recording launch evidence: %w", err)
+	}
+	// Submit exactly once, after the durable evidence. A submission failure
+	// fails the spawn closed: recovery sees the recorded evidence and never
+	// re-submits under this identity.
+	if err := r.endpoints.Submit(r.endpoint, artifact.Command); err != nil {
+		return fmt.Errorf("submitting launch: %w (launch evidence %s is recorded; the launch will not be re-submitted under this identity — owner-clean recovery required)", err, r.launchID)
+	}
+	return nil
 }
 
 // Phase 13b: writeLaunchManifest writes the digest manifest after all launch
-// artifacts exist. The manifest is written after bootstrapWindow creates the
+// artifacts exist. The manifest is written after submitLaunch creates the
 // launch script, so all artifacts are present.
 func (r *Runner) writeLaunchManifest() error {
 	entries := []ManifestEntry{}
@@ -1108,7 +1586,7 @@ func (r *Runner) writeLaunchManifest() error {
 
 // Phase 13c: waitForReady waits for the harness to be ready. No brief injection
 // is needed — the full prompt was already passed as a launch argument.
-// For harnesses that reached bootstrapWindow, the prompt is in context;
+// For harnesses that reached the launch submission, the prompt is in context;
 // this is a pure handshake wait with error handling.
 func (r *Runner) waitAndInjectBrief() error {
 	if len(r.briefData) == 0 {
@@ -1123,11 +1601,16 @@ func (r *Runner) waitAndInjectBrief() error {
 		_ = os.MkdirAll(dataDir, 0755)
 		failContent := fmt.Sprintf("harness=%s\nerror=%v\n\nlast capture:\n%s\n", r.harness, err, capture)
 		_ = os.WriteFile(filepath.Join(dataDir, "ready-fail.txt"), []byte(failContent), 0644)
-		_ = r.endpoints.Dispose(r.endpoint)
+		// Phase-aware disposal: the endpoint is durably recorded by the time
+		// the readiness wait runs, so it is never disposed here; recovery
+		// reuses the recorded endpoint and fails closed instead of replacing it.
+		if !r.endpointDurablyAttached() {
+			_ = r.endpoints.Dispose(r.endpoint)
+		}
 		return fmt.Errorf("harness %q handshake failed: %w", r.harness, err)
 	}
 	// No brief injection needed — the complete prompt was already provided
-	// as a launch argument via bootstrapWindow / BuildLaunchArgs.
+	// as a launch argument via submitLaunch / BuildLaunchArgs.
 	return nil
 }
 
@@ -1182,90 +1665,19 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 func (r *Runner) verifyEndpointReadyBeforePersist() error {
 	status, err := r.endpoints.Probe(r.endpoint)
 	if err != nil || status.State != EndpointAlive {
-		_ = r.endpoints.Dispose(r.endpoint)
+		// Phase-aware disposal: only an endpoint the aggregate does not yet
+		// durably own is disposed on failure. After the durable attach the
+		// endpoint is recorded; disposal would orphan the record, so recovery
+		// fails closed instead.
+		if !r.endpointDurablyAttached() {
+			_ = r.endpoints.Dispose(r.endpoint)
+		}
 		if err != nil {
 			return fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
 		}
 		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state", r.windowID, status.State, r.endpoint.Backend)
 	}
 	return nil
-}
-
-func (r *Runner) bindWorktree() error {
-	if r.args.Authority == nil {
-		return fmt.Errorf("binding worktree before endpoint launch: task authority is not composed for spawn")
-	}
-	agg, err := r.args.Authority.Get(r.args.ID)
-	if err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
-	}
-	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath)
-	if err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
-	}
-	if _, err := r.args.Authority.BindWorktree(taskauthority.BindWorktreeRequest{
-		OperationID:        fmt.Sprintf("spawn-bind-wt-%s-%d", r.args.ID, agg.Generation),
-		Actor:              r.spawnActor(),
-		TaskID:             r.args.ID,
-		ExpectedGeneration: agg.Generation,
-		Binding:            binding,
-		Reason:             "spawn",
-	}); err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
-	}
-	return nil
-}
-
-// spawnActor resolves the authoritative actor identity of the rank running
-// the spawn from the exact home, matching the legacy home fallback: captain
-// identity for captain homes, otherwise the home identity.
-func (r *Runner) spawnActor() taskauthority.Actor {
-	identity, rank, err := home.ReadHomeIdentity(r.homeDir)
-	if err != nil {
-		identity = filepath.Base(r.homeDir)
-		rank = home.RankGeneral
-	}
-	owner := identity
-	if rank == home.RankCaptain {
-		owner = "captain:" + identity
-	}
-	return taskauthority.Actor{ID: owner, Rank: string(rank)}
-}
-
-func buildTaskWorktreeBinding(primaryPath, worktreePath string) (taskauthority.WorktreeBinding, error) {
-	canonicalWorktree, err := canonicalExistingPath(worktreePath)
-	if err != nil {
-		return taskauthority.WorktreeBinding{}, fmt.Errorf("resolving worktree path: %w", err)
-	}
-	identity, gitDir, commonDir, err := ClassifyIdentity(canonicalWorktree)
-	if err != nil {
-		return taskauthority.WorktreeBinding{}, err
-	}
-	if identity != Worktree {
-		return taskauthority.WorktreeBinding{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
-	}
-	repoIdentity := commonDir
-	if primaryPath != "" {
-		_, _, primaryCommonDir, err := ClassifyIdentity(primaryPath)
-		if err != nil {
-			return taskauthority.WorktreeBinding{}, fmt.Errorf("classifying repository identity: %w", err)
-		}
-		repoIdentity = primaryCommonDir
-	}
-	head, err := gitRevParseForBinding(canonicalWorktree, "HEAD")
-	if err != nil {
-		return taskauthority.WorktreeBinding{}, fmt.Errorf("reading worktree head: %w", err)
-	}
-	return taskauthority.WorktreeBinding{
-		RepositoryIdentity: repoIdentity,
-		Path:               canonicalWorktree,
-		GitDir:             gitDir,
-		CommonDir:          commonDir,
-		Head:               head,
-		LeaseID:            newEndpointToken(),
-		FenceToken:         newEndpointToken(),
-		BoundAtUnix:        time.Now().Unix(),
-	}, nil
 }
 
 func gitRevParseForBinding(dir, flag string) (string, error) {
@@ -1289,36 +1701,80 @@ func gitRevParseForBinding(dir, flag string) (string, error) {
 // authoritative outcome of the spawn (the ConfirmSpawn receipt): its
 // Generation is the exact generation the attestation evidence binds to
 // (Task 7.3).
-func (r *Runner) confirmSpawn() (taskauthority.Result, error) {
+// confirmSpawn is the FINAL canonical bind: BindEndpoint commits the exact
+// recorded endpoint identity, the launch intent's endpoint reservation fence,
+// and the recorded launch evidence in ONE atomic operation that transitions
+// queued → working. Only this operation transitions the phase; it requires the
+// bound worktree, the recorded acquired endpoint (AttachEndpoint), the
+// recorded launch evidence (RecordLaunch), and the exact intent fence when a
+// launch intent exists. Recovery after the final bind (task already working
+// under the identical launch) replays idempotently. The returned Outcome is
+// the authoritative spawn receipt: its Generation is the exact generation the
+// attestation evidence binds to.
+func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 	if r.args.Authority == nil {
-		return taskauthority.Result{}, fmt.Errorf("confirming spawn: task authority is not composed for spawn")
+		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: task authority is not composed for spawn")
 	}
-	agg, err := r.args.Authority.Get(r.args.ID)
+	taskID, err := domain.NewTaskID(r.args.ID)
 	if err != nil {
-		return taskauthority.Result{}, fmt.Errorf("confirming spawn: %w", err)
+		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
+	}
+	if agg.Phase == taskauthority.PhaseWorking || agg.Endpoint != nil {
+		if r.launch != nil && (agg.Endpoint == nil || agg.Endpoint.LeaseID != r.launch.EndpointReservationID || agg.Endpoint.FenceToken != r.launch.EndpointFenceToken) {
+			return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: committed endpoint binding does not match the launch endpoint reservation fence; refuse")
+		}
+		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil
+	}
+	leaseID, fenceToken := r.epReservationID(), r.epFenceToken()
+	if r.launch == nil {
+		leaseID, fenceToken = newEndpointToken(), newEndpointToken()
 	}
 	binding := taskauthority.EndpointBinding{
 		Backend:      r.endpoint.Backend,
 		Handle:       r.endpoint.Handle,
-		LeaseID:      newEndpointToken(),
-		FenceToken:   newEndpointToken(),
+		LeaseID:      leaseID,
+		FenceToken:   fenceToken,
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
 		BoundAtUnix:  time.Now().Unix(),
 	}
-	res, err := r.args.Authority.ConfirmSpawn(taskauthority.ConfirmSpawnRequest{
-		OperationID:        fmt.Sprintf("spawn-confirm-%s-%d", r.args.ID, agg.Generation),
-		Actor:              r.spawnActor(),
-		TaskID:             r.args.ID,
-		ExpectedGeneration: agg.Generation,
-		Binding:            binding,
-		Reason:             "spawned",
-	})
-	if err != nil {
-		return taskauthority.Result{}, fmt.Errorf("confirming spawn: %w", err)
+	req := taskauthority.CanonicalBindEndpointRequest{
+		HomeID:       r.args.Authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Binding:      binding,
+		Reason:       "spawned",
 	}
-	return res, nil
+	op, err := r.spawnOperation("confirm", agg.Generation, req)
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
+	}
+	out, err := r.args.Authority.BindEndpoint(op, req)
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("confirming spawn: %w", err)
+	}
+	return out, nil
+}
+
+// epReservationID and epFenceToken return the launch intent's one-time
+// endpoint reservation identities (empty when no intent is committed).
+func (r *Runner) epReservationID() string {
+	if r.launch != nil {
+		return r.launch.EndpointReservationID
+	}
+	return ""
+}
+
+func (r *Runner) epFenceToken() string {
+	if r.launch != nil {
+		return r.launch.EndpointFenceToken
+	}
+	return ""
 }
 
 func newEndpointToken() string {
@@ -1405,25 +1861,40 @@ func (r *Runner) attachAttestation(generation taskauthority.Generation) error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("attaching attestation evidence: task authority is not composed for spawn")
 	}
-	configDigest := ""
-	if r.projectConfigLoaded {
-		configDigest = r.projectConfig.SnapshotDigest
-	}
-	res, err := StoreAttestationEvidence(r.homeDir, r.args.Authority, r.args.ID, generation, r.attestation, configDigest)
-	if err != nil {
+	// The accepted capability attestation is a runtime observation projected
+	// into .meta on the exact confirmed generation; the canonical surface owns
+	// no attestation primitive (the legacy delivery-plan/attestation aggregate
+	// evidence did not survive the canonical cutover). A malformed reference
+	// fails closed before the projection.
+	if err := validateAttestationReference(r.attestation); err != nil {
 		return fmt.Errorf("attaching attestation evidence: %w", err)
 	}
-	if projErr := projectAttestationEvidence(r.homeDir, r.args.ID, r.attestation, res); projErr != nil {
-		return projErr
+	if err := projectAttestationEvidence(r.homeDir, r.args.ID, r.attestation, generation); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateAttestationReference checks the acceptance shape of the capability
+// attestation: the project and home bindings must be present so the projected
+// observation is never a malformed reference.
+func validateAttestationReference(att *CapabilityAttestation) error {
+	if att == nil {
+		return fmt.Errorf("attestation acceptance requires a capability attestation")
+	}
+	if strings.TrimSpace(att.Project) == "" {
+		return fmt.Errorf("attestation acceptance requires a project binding")
+	}
+	if strings.TrimSpace(att.Home) == "" {
+		return fmt.Errorf("attestation acceptance requires a home binding")
 	}
 	return nil
 }
 
 // AttestationProjectionError is the typed partial outcome of an attestation
-// acceptance whose authoritative commit succeeded but whose .meta projection
-// could not be written (ADR-0007 §7). The authoritative state is never
-// rolled back; the projection can be retried independently and replays
-// idempotently.
+// acceptance whose .meta projection could not be written. The authoritative
+// state is never rolled back; the projection can be retried independently and
+// replays idempotently.
 type AttestationProjectionError struct {
 	TaskID        string
 	ProjectionErr error
@@ -1435,14 +1906,14 @@ func (e *AttestationProjectionError) Error() string {
 
 func (e *AttestationProjectionError) Unwrap() error { return e.ProjectionErr }
 
-// projectAttestationEvidence writes the .meta attestation fields as a
-// runtime projection of the authoritative acceptance committed by
-// AttachAttestation (Task 7.3). The projection is one-directional: it
-// mirrors the accepted evidence and never writes into the Authority. A
-// projection failure returns a typed partial error and never rolls back the
-// authoritative commit; the projection is retryable without replaying the
-// authoritative operation.
-func projectAttestationEvidence(homeDir, taskID string, att *CapabilityAttestation, res taskauthority.AttachAttestationResult) error {
+// projectAttestationEvidence writes the .meta attestation fields as a runtime
+// projection of the accepted capability attestation bound to the exact
+// confirmed generation. The projection is one-directional: it mirrors the
+// accepted observation and never writes into the Authority. A projection
+// failure returns a typed partial error and never rolls back the
+// authoritative spawn; the projection is retryable without replaying any
+// canonical operation.
+func projectAttestationEvidence(homeDir, taskID string, att *CapabilityAttestation, generation taskauthority.Generation) error {
 	meta, err := home.ReadMeta(homeDir, taskID)
 	if err != nil {
 		meta = make(map[string]string)
@@ -1457,6 +1928,7 @@ func projectAttestationEvidence(homeDir, taskID string, att *CapabilityAttestati
 	if att.FallbackReason != "" {
 		meta[MetaFallbackReason] = att.FallbackReason
 	}
+	meta["attestation_generation"] = generation.String()
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		return &AttestationProjectionError{TaskID: taskID, ProjectionErr: err}
 	}

@@ -238,6 +238,73 @@ func BuildLaunchArgs(soldierHome, harnessName, model, effort, prompt string) (st
 	return adapter.Name, args, nil
 }
 
+// LaunchArtifact is the deterministic launch artifact of one launch
+// submission: the re-entrant script path and the exact command submitted to
+// the endpoint, with its sha256 digest. It is the re-entrant launch fence the
+// canonical LaunchEvidence binds to (same launch identity + command digest =
+// provably the same submission).
+type LaunchArtifact struct {
+	ScriptPath    string
+	Command       string
+	CommandDigest string
+}
+
+// buildLaunchArtifact writes the deterministic .soldier-launch.sh script into
+// the worktree and returns the exact submission command with its sha256
+// digest. The artifact is re-entrant under the exact launch identity: the same
+// immutable inputs always produce the identical script, an existing script
+// with different content fails closed (identity mismatch, never overwritten),
+// and the command digest binds the durable launch evidence to the exact
+// submission.
+func buildLaunchArtifact(worktreePath, homeDir, taskID, snapshotDigest, launchBin string, launchArgs []string) (LaunchArtifact, error) {
+	if launchBin == "" || len(launchArgs) == 0 {
+		return LaunchArtifact{}, fmt.Errorf("soldier launch: no prompt-arg launch command; harness does not support prompt-arg delivery")
+	}
+	var b strings.Builder
+	b.WriteString("#!/usr/bin/env bash\n")
+	b.WriteString("set -euo pipefail\n")
+	b.WriteString("cd ")
+	b.WriteString(spawnShQuote(worktreePath))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_HOME=")
+	b.WriteString(spawnShQuote(homeDir))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_ROLE=soldier\n")
+	b.WriteString("export MUNSU_TASK_ID=")
+	b.WriteString(spawnShQuote(taskID))
+	b.WriteString("\n")
+	b.WriteString("export MUNSU_PARENT_STATUS=")
+	b.WriteString(spawnShQuote(homeDir))
+	b.WriteString("\n")
+	if snapshotDigest != "" {
+		b.WriteString("export MUNSU_CONFIG_SNAPSHOT_DIGEST=")
+		b.WriteString(spawnShQuote(snapshotDigest))
+		b.WriteString("\n")
+	}
+	b.WriteString("exec ")
+	b.WriteString(spawnShQuote(launchBin))
+	for _, arg := range launchArgs {
+		b.WriteString(" ")
+		b.WriteString(spawnShQuote(arg))
+	}
+	b.WriteString("\n")
+	content := b.String()
+
+	scriptPath := filepath.Join(worktreePath, LaunchScriptName)
+	if existing, err := os.ReadFile(scriptPath); err == nil {
+		if string(existing) != content {
+			return LaunchArtifact{}, fmt.Errorf("launch artifact %s already exists with different content; identity mismatch, refuse to overwrite", scriptPath)
+		}
+	} else if !os.IsNotExist(err) {
+		return LaunchArtifact{}, fmt.Errorf("reading existing launch artifact: %w", err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		return LaunchArtifact{}, fmt.Errorf("writing launch script: %w", err)
+	}
+	command := "bash " + spawnShQuote(scriptPath)
+	return LaunchArtifact{ScriptPath: scriptPath, Command: command, CommandDigest: sha256Content([]byte(command))}, nil
+}
+
 // PersistLaunchFiles writes all durable launch files to the worktree:
 // .soldier-charter.md, .soldier-brief.md, .soldier-envelope.json, and .soldier-prompt.md.
 // Returns an error if any write fails.
