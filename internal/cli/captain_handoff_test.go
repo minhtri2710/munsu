@@ -63,18 +63,6 @@ func TestTaskShowRecoversPendingTransferAndReadsCanonicalState(t *testing.T) {
 	}
 	sourceAuth := seedCLICanonicalHome(t, parent)
 	seedCLICanonicalQueuedTask(t, sourceAuth, "TASK-1", "general")
-	if err := home.WriteMeta(parent, "TASK-1", map[string]string{"description": "CLI recovery"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.AppendStatus(parent, "TASK-1", "queued: ready"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(parent, "data", "TASK-1"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "data", "TASK-1", "brief.md"), []byte("# CLI recovery\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := home.Init(parent); err != nil {
 		t.Fatal(err)
 	}

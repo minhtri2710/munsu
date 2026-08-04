@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -157,10 +156,6 @@ interruption.`,
 			if err := fleet.Handoff(ctx.Home, args[0], args[1:]); err != nil {
 				if ambiguous, ok := fleet.HandoffAmbiguousTaskID(err); ok {
 					return operationError("ambiguous_task_id", strings.Join(handoffCorrectionCommands(args[0], ambiguous), "; "), fmt.Sprintf("Task ID %q is ambiguous", ambiguous.Requested))
-				}
-				var partial *fleet.HandoffPartialError
-				if errors.As(err, &partial) {
-					return operationError("partial_transfer", "", partial.Error())
 				}
 				return err
 			}

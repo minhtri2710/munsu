@@ -47,7 +47,7 @@ func Handoff(parentHome, captainHome string, itemKeys []string) error {
 // SetHandoffCrashHookForTest installs a crash-boundary hook for subprocess
 // tests. Production callers should never set this hook. Boundary names are
 // the durable stages of one Transfer: journal, reserved, received, committed,
-// activated, projections, completed.
+// activated, completed.
 func SetHandoffCrashHookForTest(hook func(string)) func() {
 	previous := handoffCrashHook
 	if hook == nil {
@@ -57,37 +57,6 @@ func SetHandoffCrashHookForTest(hook func(string)) func() {
 	}
 	return func() { handoffCrashHook = previous }
 }
-
-// SetHandoffProjectionFailHookForTest installs a hook that fails one
-// destination-side projection copy during roll-forward, so tests can prove a
-// post-transfer projection failure returns a typed partial result without
-// changing ownership truth. Production callers should never set this hook.
-func SetHandoffProjectionFailHookForTest(hook func(target string) error) func() {
-	previous := handoffProjectionFailHook
-	if hook == nil {
-		handoffProjectionFailHook = func(string) error { return nil }
-	} else {
-		handoffProjectionFailHook = hook
-	}
-	return func() { handoffProjectionFailHook = previous }
-}
-
-// HandoffPartialError is the typed outcome of a transfer whose authoritative
-// ownership moved (destination activated, source superseded) but whose
-// post-transfer projection copies could not complete. Ownership truth is
-// never rolled back and never re-transferred; the pending journal converges
-// on the next recovery, and the destination can reconcile its projections
-// from canonical state.
-type HandoffPartialError struct {
-	Transferred   []string
-	ProjectionErr error
-}
-
-func (e *HandoffPartialError) Error() string {
-	return fmt.Sprintf("transfer moved %s but projection copies failed: %v", strings.Join(e.Transferred, ", "), e.ProjectionErr)
-}
-
-func (e *HandoffPartialError) Unwrap() error { return e.ProjectionErr }
 
 // RecoverTaskHandoffs resumes every pending Fleet-owned Task Transfer journal
 // of a home and of its configured parent home, continuing the SAME Transfer
@@ -162,8 +131,6 @@ type taskHandoffTask struct {
 }
 
 var handoffCrashHook = func(string) {}
-
-var handoffProjectionFailHook = func(string) error { return nil }
 
 func durableTaskHandoff(parentHome, captainHome string, itemKeys []string) error {
 	source, err := canonicalHandoffHome(parentHome)
@@ -565,12 +532,12 @@ func recoverPendingJournal(h *mhome.Home, id string) error {
 }
 
 // resumeTransfer runs one Transfer's idempotent pipeline through the
-// canonical primitives, then the post-transfer projection copies, then
-// removes the journal. Every operation reuses the recorded deterministic
-// Operation IDs, so an interrupted Transfer continues from any durable stage.
-// The ordered invariant is: source Reserve → destination Receive (NON-CURRENT)
-// → scoped verification → source Commit/supersede → destination Activate; no
-// successful state exposes both homes as current owners.
+// canonical primitives, then removes the journal. Every operation reuses the
+// recorded deterministic Operation IDs, so an interrupted Transfer continues
+// from any durable stage. The ordered invariant is: source Reserve →
+// destination Receive (NON-CURRENT) → scoped verification → source
+// Commit/supersede → destination Activate; no successful state exposes both
+// homes as current owners.
 func resumeTransfer(h *mhome.Home, journal *taskHandoffJournal) error {
 	sourceAuth, err := taskauthority.NewCanonical(h)
 	if err != nil {
@@ -701,34 +668,6 @@ func resumeTransfer(h *mhome.Home, journal *taskHandoffJournal) error {
 	}
 	handoffCrashHook("activated")
 
-	// Post-transfer projection copies: any failure here returns a typed
-	// partial result; the authoritative transfer above is never rolled back or
-	// re-transferred, and the pending journal converges on the next recovery.
-	var projectionErr error
-	for i := range journal.Tasks {
-		for _, rel := range taskHandoffProjectionRelPaths(journal.Tasks[i].TaskID) {
-			if err := handoffProjectionFailHook(rel); err != nil {
-				projectionErr = err
-				break
-			}
-			if err := installTransferProjection(journal.SourceHome, journal.DestinationHome, rel); err != nil {
-				projectionErr = err
-				break
-			}
-		}
-		if projectionErr != nil {
-			break
-		}
-	}
-	handoffCrashHook("projections")
-	if projectionErr != nil {
-		transferred := make([]string, 0, len(journal.Tasks))
-		for _, task := range journal.Tasks {
-			transferred = append(transferred, task.TaskID)
-		}
-		return &HandoffPartialError{Transferred: transferred, ProjectionErr: projectionErr}
-	}
-
 	if err := removeHandoffJournal(h, journal.ID); err != nil {
 		return err
 	}
@@ -769,35 +708,6 @@ func verifyTransferReceived(destinationAuth *taskauthority.Canonical, sourceHome
 		ActivationOperationID: activateOp.ID.Value(),
 		ActivationDigest:      activateOp.Digest,
 	}, nil
-}
-
-// installTransferProjection copies one task projection (meta/status/brief)
-// from the source home to the destination after the authoritative transfer.
-// It is idempotent: an already-installed identical destination copy and an
-// already-removed source both count as done.
-func installTransferProjection(source, destination, rel string) error {
-	src := filepath.Join(source, filepath.FromSlash(rel))
-	data, err := os.ReadFile(src)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	dst := filepath.Join(destination, filepath.FromSlash(rel))
-	if existing, err := os.ReadFile(dst); err == nil && string(existing) == string(data) {
-		if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
-		return err
-	}
-	if err := durableHandoffWrite(dst, data, 0600); err != nil {
-		return err
-	}
-	return os.Remove(src)
 }
 
 // --- Journal persistence ---
@@ -861,9 +771,8 @@ func newTaskHandoffID() (string, error) {
 	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), buffer), nil
 }
 
-// durableHandoffWrite writes a fleet-owned journal or projection file with a
-// durable temp+rename+fsync sequence under the home's verified containment
-// path.
+// durableHandoffWrite writes a fleet-owned journal file with a durable
+// temp+rename+fsync sequence under the home's verified containment path.
 func durableHandoffWrite(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err

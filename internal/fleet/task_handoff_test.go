@@ -2,7 +2,6 @@ package fleet
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -298,51 +297,6 @@ func TestHandoffCrashRecoveryConvergesEveryStage(t *testing.T) {
 				t.Fatalf("boundary %s: journal not removed after recovery", boundary)
 			}
 		})
-	}
-}
-
-func TestHandoffProjectionFailureReturnsPartialAndPreservesOwnership(t *testing.T) {
-	parent, captain := seedHandoffPair(t)
-	seedCanonicalQueuedTask(t, mustAuthority(t, parent), "TASK-1", "general")
-	// Seed a source projection that must be copied.
-	if err := mhome.WriteMeta(parent, "TASK-1", map[string]string{"description": "work"}); err != nil {
-		t.Fatal(err)
-	}
-
-	restore := SetHandoffProjectionFailHookForTest(func(target string) error {
-		if strings.Contains(target, ".meta") {
-			return fmt.Errorf("injected projection failure")
-		}
-		return nil
-	})
-	defer restore()
-
-	err := Handoff(parent, captain, []string{"TASK-1"})
-	var partial *HandoffPartialError
-	if !errors.As(err, &partial) {
-		t.Fatalf("Handoff error = %v, want HandoffPartialError", err)
-	}
-
-	// Ownership truth is preserved: destination owns, source does not.
-	mustTransferNoOwner(t, parent, "TASK-1")
-	agg := mustTransferOwner(t, captain, "TASK-1")
-	if agg.Definition.Owner != "captain:test-sm" {
-		t.Fatalf("destination owner = %q", agg.Definition.Owner)
-	}
-	// The journal remains for convergence.
-	if pendingJournalCount(t, parent) != 1 {
-		t.Fatalf("want pending journal retained after partial, got %d", pendingJournalCount(t, parent))
-	}
-
-	// Recovery re-runs the projections and completes.
-	restore()
-	if err := RecoverTaskHandoffs(parent); err != nil {
-		t.Fatalf("recovery after partial: %v", err)
-	}
-	mustTransferNoOwner(t, parent, "TASK-1")
-	mustTransferOwner(t, captain, "TASK-1")
-	if pendingJournalCount(t, parent) != 0 {
-		t.Fatalf("journal not removed after recovery")
 	}
 }
 
