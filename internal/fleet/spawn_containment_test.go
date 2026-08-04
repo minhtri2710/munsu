@@ -69,11 +69,11 @@ func TestEnsureDeliveryModeRunnable_Ready(t *testing.T) {
 }
 
 // TestNoMistakesProbe_AutoFallbackNeverErrors verifies that auto mode
-// (no explicit/project/config selection) never errors — it falls back gracefully.
+// (no explicit/typed selection) never errors — it falls back gracefully.
 func TestNoMistakesProbe_AutoFallbackNeverErrors(t *testing.T) {
 	// Absent binary: should return direct-PR without error
 	t.Setenv("PATH", t.TempDir())
-	mode, err := ResolveDeliveryMode(t.TempDir(), "", "")
+	mode, err := ResolveDeliveryMode("", "", false)
 	if err != nil {
 		t.Fatalf("auto should not error on absent binary, got: %v", err)
 	}

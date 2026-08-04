@@ -52,7 +52,12 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 		return SpawnProjectConfig{}, err
 	}
 
-	mode, err := ResolveDeliveryMode(homeDir, args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode))
+	// Compose the mode decision from the resolved snapshot: the typed default
+	// mode and the resolved require-no-mistakes are the single authority. When
+	// the default mode is unset, ResolveDeliveryMode auto-detects (no-mistakes
+	// on PATH, else direct-PR) and refuses fallback when require-no-mistakes is
+	// set — preserving the unset → direct-PR default semantics.
+	mode, err := ResolveDeliveryMode(args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
 	if err != nil {
 		return SpawnProjectConfig{}, err
 	}

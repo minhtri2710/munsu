@@ -19,8 +19,8 @@ func newConfigCmd() *cobra.Command {
 		Long: `Read, write, and view munsu configuration.
 
 Configuration values are stored as files under $MUNSU_HOME/config/<key>.
-Each value can be overridden at runtime by setting the environment variable
-MUNSU_<KEY>_OVERRIDE (e.g. MUNSU_BACKEND_OVERRIDE=tmux).
+The backend key reports the live-resolved backend (file pin, then active
+TMUX/HERDR_ENV session); other keys report the persisted file value.
 
 Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 `,
@@ -109,16 +109,10 @@ func newConfigShowCmd() *cobra.Command {
 		Use:   "show",
 		Short: "Show resolved configuration values with source",
 		Args:  NoArgs,
-		Long: `Display all well-known configuration values and their sources.
+		Long: `Display all persisted configuration values and their source.
 
-Each value is resolved using the same precedence as the rest of munsu:
-  MUNSU_<KEY>_OVERRIDE environment variable > file at $MUNSU_HOME/config/<key>.
+Each value is read from the config file at $MUNSU_HOME/config/<key>.
 Values that are not set are shown as "<not set>".
-
-Override environment variables:
-  MUNSU_BACKEND_OVERRIDE, MUNSU_SOLDIER_HARNESS_OVERRIDE,
-  MUNSU_CAPTAIN_HARNESS_OVERRIDE, MUNSU_BACKLOG_BACKEND_OVERRIDE,
-  MUNSU_DEFAULT_MODE_OVERRIDE
 `,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			return writeContract(cmd, Response[MessageResult]{
@@ -143,24 +137,12 @@ func showConfig(homeDir string) string {
 	b.WriteString(fmt.Sprintf("%-30s %s\n", "home", homeDir))
 
 	for _, key := range config.KnownKeys {
-		envKey := fmt.Sprintf("MUNSU_%s_OVERRIDE", strings.ToUpper(key))
 		val, err := config.Get(homeDir, key)
 		if err != nil {
-			// Check if env override exists (config.Get returns it, but if
-			// neither file nor env is set, it returns an error).
-			if envVal, ok := os.LookupEnv(envKey); ok {
-				b.WriteString(fmt.Sprintf("%-30s %s (env: %s)\n", key, envVal, envKey))
-			} else {
-				b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))
-			}
+			b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))
 			continue
 		}
-		// Determine source
-		if _, ok := os.LookupEnv(envKey); ok {
-			b.WriteString(fmt.Sprintf("%-30s %s (env: %s)\n", key, val, envKey))
-		} else {
-			b.WriteString(fmt.Sprintf("%-30s %s (file: %s)\n", key, val, config.ConfigDir(homeDir)+"/"+key))
-		}
+		b.WriteString(fmt.Sprintf("%-30s %s (file: %s)\n", key, val, config.ConfigDir(homeDir)+"/"+key))
 	}
 
 	// Show additional keys that happen to exist.
