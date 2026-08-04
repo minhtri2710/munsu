@@ -689,11 +689,16 @@ func (r *Runner) preflightNoMistakes() error {
 	return preflight(r.projPath)
 }
 
-// Phase 8: acquireWorktree acquires a leased worktree from the pool. It is
-// re-entrant under the committed launch intent: when the aggregate already
-// holds the durable worktree binding (recovery after a crash), the bound
-// path is adopted and no second acquisition happens; the binding identity is
-// verified at bindWorktree.
+// Phase 8: acquireWorktree acquires the worktree owned by the launch
+// intent's one-time worktree reservation (GetWorktreeReserved — the FIRST
+// attempt consumes the durable reservation identity). It is re-entrant under
+// the committed launch intent: when the aggregate already holds the durable
+// worktree binding (recovery after a crash), the bound path is adopted and no
+// provider call happens. A recovery of an acquired-but-unbound reservation is
+// passed to the provider, which must return the SAME reservation-owned
+// worktree (git fallback: deterministic reservation-keyed path) or fail
+// closed (treehouse: no reservation-keyed recovery) — never allocate a
+// replacement. The binding identity is verified at bindWorktree.
 func (r *Runner) acquireWorktree() error {
 	if r.args.Authority != nil {
 		if taskID, err := domain.NewTaskID(r.args.ID); err == nil {
@@ -703,8 +708,15 @@ func (r *Runner) acquireWorktree() error {
 			}
 		}
 	}
-	wtPath, err := backend.GetWorktree(r.homeDir, r.projPath, true)
+	reservationID := r.wtReservationID()
+	if reservationID == "" {
+		return fmt.Errorf("acquiring worktree: no launch worktree reservation; reservation-aware acquisition is mandatory for canonical launches")
+	}
+	wtPath, err := backend.GetWorktreeReserved(r.homeDir, r.projPath, true, reservationID, r.launchReentry)
 	if err != nil {
+		if backend.IsWorktreeReservationRecoveryUnsupported(err) {
+			return fmt.Errorf("acquiring worktree: %w — DEPENDENCY_REQUEST (treehouse CLI has no reservation-keyed get/recover)", err)
+		}
 		return fmt.Errorf("acquiring worktree: %w", err)
 	}
 	// Canonicalize the acquired path (EvalSymlinks) so the launch artifact and
@@ -717,6 +729,15 @@ func (r *Runner) acquireWorktree() error {
 	}
 	r.wtPath = canonical
 	return nil
+}
+
+// wtReservationID returns the launch intent's one-time worktree reservation
+// identity (empty when no intent is committed).
+func (r *Runner) wtReservationID() string {
+	if r.launch != nil {
+		return r.launch.WorktreeReservationID
+	}
+	return ""
 }
 
 // worktreeReturnAllowed reports whether the acquired worktree may be returned
@@ -781,6 +802,9 @@ func (r *Runner) preflightHarness() error {
 func (r *Runner) beginLaunchIntent() error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("launch intent: task authority is not composed for spawn")
+	}
+	if r.endpoints == nil {
+		return fmt.Errorf("launch intent: endpoint capabilities are not composed; reservation-aware endpoint create/recover is mandatory and must be present BEFORE acquisition")
 	}
 	if !r.projectConfigLoaded || r.projectConfig.SnapshotDigest == "" {
 		return fmt.Errorf("launch intent: spawn requires the typed project snapshot (snapshot digest); no snapshot identity to bind")
@@ -1191,11 +1215,10 @@ func labelComponent(value string) string {
 // Phase 11: createSession creates a session window for the launch. It is
 // re-entrant under the committed launch intent: recovery re-adopts the
 // durably recorded acquired endpoint (never a replacement), and creation is
-// reservation-aware — a capability that implements
-// ReentrantEndpointCapabilities finds-or-creates the endpoint under the
-// intent's one-time endpoint reservation fence. When the selected capability
-// cannot prove find-or-create on a re-entry, creation fails closed with a
-// dependency request instead of silently creating a second endpoint.
+// reservation-aware from the FIRST attempt — the mandatory
+// CreateReserved contract consumes the intent's exact endpoint reservation
+// fence and find-or-creates the same endpoint, so a crash between create and
+// durable attach is recovered instead of silently replaced.
 func (r *Runner) createSession() error {
 	if r.endpoints == nil {
 		return fmt.Errorf("spawn endpoint capabilities are required")
@@ -1244,19 +1267,11 @@ func (r *Runner) createSession() error {
 		ReservationID:    r.epReservationID(),
 		FenceToken:       r.epFenceToken(),
 	}
-	var ep CreatedEndpoint
-	var err error
-	if rr, ok := r.endpoints.(ReentrantEndpointCapabilities); ok {
-		ep, err = rr.CreateReserved(req)
-	} else if r.launchReentry {
-		// A prior attempt of this launch may have created an endpoint without
-		// a durable record. The selected capability cannot prove find-or-create
-		// under the reservation, so creating a fresh endpoint would silently
-		// replace it: fail closed instead.
-		return fmt.Errorf("endpoint create: re-entry under launch %s requires reservation-aware find-or-create (ReentrantEndpointCapabilities); the selected endpoint capability cannot prove it — DEPENDENCY_REQUEST", r.launchID)
-	} else {
-		ep, err = r.endpoints.Create(req)
-	}
+	// The mandatory reservation-aware create contract find-or-creates the
+	// endpoint under the exact reservation on EVERY call (first attempt AND
+	// recovery): the same reservation returns the same endpoint, so a crash
+	// between create and durable attach is recovered, never replaced.
+	ep, err := r.endpoints.CreateReserved(req)
 	if err != nil {
 		return err
 	}
@@ -1496,27 +1511,19 @@ func spawnShQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// Phase 12: submitLaunch builds the deterministic launch artifact, durably
-// records the launch evidence (RecordLaunch) BEFORE the submission, and
-// submits the exact command once. The evidence-first ordering is the
-// re-entrant launch guard: a crash can never leave an "after Submit but before
-// durable RecordLaunch" state, and recovery with the same launch identity and
-// command digest skips the submission instead of re-submitting. An artifact
-// whose content differs from the committed identity fails closed.
+// Phase 12: submitLaunch builds the deterministic launch artifact, submits
+// the exact command, and ONLY AFTER the submission succeeds durably records
+// the launch evidence (RecordLaunch). A Submit error is NOT recorded as
+// success: no LaunchEvidence is committed, so recovery may re-submit the same
+// command under the same identity. The artifact's persistent guard makes the
+// re-submission re-entrant — a second submission can never start a second
+// Soldier process (same launch identity exits/no-ops; a different identity
+// fails closed), and when the guard exists but readiness cannot be proven,
+// recovery fails closed instead of launching another process.
 func (r *Runner) submitLaunch() error {
 	if r.args.Authority == nil {
 		return fmt.Errorf("submitting launch: task authority is not composed for spawn")
 	}
-	snapshotDigest := ""
-	if r.projectConfigLoaded {
-		snapshotDigest = r.projectConfig.SnapshotDigest
-	}
-	artifact, err := buildLaunchArtifact(r.wtPath, r.homeDir, r.args.ID, snapshotDigest, r.launchBin, r.launchArgs)
-	if err != nil {
-		return fmt.Errorf("submitting launch: %w", err)
-	}
-	r.launchCommand = artifact.Command
-	r.launchCommandDigest = artifact.CommandDigest
 	taskID, err := domain.NewTaskID(r.args.ID)
 	if err != nil {
 		return fmt.Errorf("submitting launch: %w", err)
@@ -1525,14 +1532,43 @@ func (r *Runner) submitLaunch() error {
 	if err != nil {
 		return fmt.Errorf("submitting launch: %w", err)
 	}
+	snapshotDigest := ""
+	if r.projectConfigLoaded {
+		snapshotDigest = r.projectConfig.SnapshotDigest
+	}
+	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
+		WorktreePath:   r.wtPath,
+		HomeDir:        r.homeDir,
+		TaskID:         r.args.ID,
+		SnapshotDigest: snapshotDigest,
+		LaunchBin:      r.launchBin,
+		LaunchArgs:     r.launchArgs,
+		LaunchID:       r.launchID,
+		Generation:     agg.Generation.String(),
+		EndpointFence:  r.epFenceToken(),
+	})
+	if err != nil {
+		return fmt.Errorf("submitting launch: %w", err)
+	}
+	r.launchCommand = artifact.Command
+	r.launchCommandDigest = artifact.CommandDigest
 	if agg.LaunchEvidence != nil {
-		// Re-entrant guard: the exact same submission is already durably
-		// recorded; skip (never re-submit under the same launch identity).
+		// A prior submission already succeeded and was durably recorded:
+		// verify the exact launch identity AND command digest and skip (never
+		// re-submit under the same launch identity; a changed digest is a
+		// different submission and fails closed).
 		if agg.LaunchEvidence.LaunchID != r.launchID || agg.LaunchEvidence.CommandDigest != r.launchCommandDigest {
-			return fmt.Errorf("submitting launch: recorded launch evidence %s/%s does not match this submission %s/%s; refuse", agg.LaunchEvidence.LaunchID, agg.LaunchEvidence.CommandDigest, r.launchID, r.launchCommandDigest)
+			return fmt.Errorf("submitting launch: recorded launch evidence %s/%s does not match this launch %s/%s; refuse", agg.LaunchEvidence.LaunchID, agg.LaunchEvidence.CommandDigest, r.launchID, r.launchCommandDigest)
 		}
 		return nil
 	}
+	// Submit first. A submission error means the launch may not have started;
+	// NO evidence is recorded, so recovery re-submits the same command under
+	// the same identity (the artifact guard bounds the process count).
+	if err := r.endpoints.Submit(r.endpoint, artifact.Command); err != nil {
+		return fmt.Errorf("submitting launch: %w (no launch evidence recorded; recovery may re-submit the same command)", err)
+	}
+	// Only a successful submission is recorded as launch evidence.
 	req := taskauthority.CanonicalRecordLaunchRequest{
 		HomeID:        r.args.Authority.HomeID(),
 		TaskID:        taskID,
@@ -1546,13 +1582,10 @@ func (r *Runner) submitLaunch() error {
 		return fmt.Errorf("submitting launch: %w", err)
 	}
 	if _, err := r.args.Authority.RecordLaunch(op, req); err != nil {
+		// The process launched but the evidence could not be recorded. The
+		// artifact guard prevents a second process on recovery; the re-entry
+		// re-submits the same command and the guard no-ops.
 		return fmt.Errorf("submitting launch: recording launch evidence: %w", err)
-	}
-	// Submit exactly once, after the durable evidence. A submission failure
-	// fails the spawn closed: recovery sees the recorded evidence and never
-	// re-submits under this identity.
-	if err := r.endpoints.Submit(r.endpoint, artifact.Command); err != nil {
-		return fmt.Errorf("submitting launch: %w (launch evidence %s is recorded; the launch will not be re-submitted under this identity — owner-clean recovery required)", err, r.launchID)
 	}
 	return nil
 }

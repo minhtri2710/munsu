@@ -365,10 +365,21 @@ type sequenceEndpointCapabilities struct {
 	probes  []SpawnEndpointObservation
 }
 
-func (s *sequenceEndpointCapabilities) Create(CreateRequest) (CreatedEndpoint, error) {
+func (s *sequenceEndpointCapabilities) CreateReserved(CreateRequest) (CreatedEndpoint, error) {
 	return s.created, nil
 }
 func (s *sequenceEndpointCapabilities) Submit(CreatedEndpoint, string) error { return nil }
+
+// fakeEndpointCapabilities.CreateReserved is the mandatory reservation-aware
+// create for the shared test fake (its Create lives in
+// spawn_shared_test_helpers_test.go, outside the frozen A2 manifest, so the
+// required method is defined here in the package). It delegates to the fake
+// backend's NewWindow; endpoint re-entrancy tests use
+// reentrantEndpointCapabilities instead.
+func (f fakeEndpointCapabilities) CreateReserved(req CreateRequest) (CreatedEndpoint, error) {
+	id, err := f.backend.NewWindow(req.Home, req.TabName)
+	return CreatedEndpoint{Backend: "test", Handle: id}, err
+}
 func (s *sequenceEndpointCapabilities) Probe(CreatedEndpoint) (SpawnEndpointObservation, error) {
 	if len(s.probes) == 0 {
 		return SpawnEndpointObservation{State: EndpointUnknown}, nil

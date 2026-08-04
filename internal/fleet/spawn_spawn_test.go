@@ -1114,13 +1114,18 @@ func TestSubmitLaunchExportsSoldierRoleAndGuardsSubmission(t *testing.T) {
 	if !strings.Contains(string(script), "test brief") {
 		t.Fatalf("launch script must contain the prompt (brief) argument:\n%s", script)
 	}
+	// The real production artifact embeds the persistent re-entrant guard
+	// before the harness exec (same launch identity exits; no second process).
+	if !strings.Contains(string(script), "launch guard identity mismatch") || !strings.Contains(string(script), "exec ") {
+		t.Fatalf("launch script missing the persistent re-entrant guard:\n%s", script)
+	}
 	if f.endpoints.submitCount() != 1 {
 		t.Fatalf("submitLaunch did not send the launch command exactly once")
 	}
 
 	// The submission is re-entrant under the exact launch identity: repeating
-	// submitLaunch with the same deterministic artifact skips the submission
-	// (the durable launch evidence is the guard — never a duplicate launch).
+	// submitLaunch skips the submission once the launch evidence is durably
+	// recorded (never a duplicate launch).
 	if err := f.runner.submitLaunch(); err != nil {
 		t.Fatalf("guarded re-submit: %v", err)
 	}

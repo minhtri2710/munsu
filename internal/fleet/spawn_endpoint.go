@@ -2,11 +2,11 @@ package fleet
 
 // CreateRequest is the typed create request for one Soldier launch endpoint.
 // ReservationID and FenceToken are the one-time endpoint reservation identity
-// the committed launch intent owns (CanonicalBeginSpawnRequest). A capability
-// that supports reservation-aware find-or-create (ReentrantEndpointCapabilities)
-// uses them to reuse the endpoint created by an earlier attempt of the same
-// launch; capabilities without reservation support ignore them and create
-// fresh.
+// the committed launch intent owns (CanonicalBeginSpawnRequest). The
+// reservation-aware create contract is MANDATORY for canonical launch-intent
+// runs from the FIRST attempt: the capability finds-or-creates the endpoint
+// under the exact reservation so recovery of a crash between create and
+// durable attach returns the SAME endpoint, never a replacement.
 type CreateRequest struct {
 	Home, PreferredBackend, TabName, Cwd string
 	ReservationID                        string
@@ -20,22 +20,17 @@ type CreatedEndpoint struct {
 
 type SpawnEndpointObservation = EndpointStatus
 
+// EndpointCapabilities is the single mandatory endpoint lifecycle contract of
+// the canonical launch path. CreateReserved is reservation-aware
+// find-or-create: every call consumes the exact ReservationID/FenceToken of
+// the launch intent and returns the SAME endpoint for the same reservation
+// (created on first use, re-adopted on recovery). There is no unreserved
+// create path — a capability that cannot express the owner-clean contract is
+// not a valid EndpointCapabilities for a canonical launch.
 type EndpointCapabilities interface {
-	Create(CreateRequest) (CreatedEndpoint, error)
+	CreateReserved(CreateRequest) (CreatedEndpoint, error)
 	Submit(CreatedEndpoint, string) error
 	Probe(CreatedEndpoint) (SpawnEndpointObservation, error)
 	Capture(CreatedEndpoint, int) (string, error)
 	Dispose(CreatedEndpoint) error
-}
-
-// ReentrantEndpointCapabilities is the optional reservation-aware endpoint
-// capability. A capability that implements it proves find-or-create under the
-// exact launch reservation: repeated CreateReserved calls with the same
-// reservation identity return the SAME endpoint (the one created by an earlier
-// attempt of the same launch), never a replacement. Capabilities without this
-// contract can still create endpoints on the first attempt, but recovery after
-// a crash between create and durable attach must fail closed (DEPENDENCY_REQUEST)
-// instead of silently creating a replacement.
-type ReentrantEndpointCapabilities interface {
-	CreateReserved(CreateRequest) (CreatedEndpoint, error)
 }

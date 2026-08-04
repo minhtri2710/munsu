@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -40,6 +43,7 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 				t.Fatalf("first run stopped at %q with %v, want simulated crash", b.crashAfter, err)
 			}
 			first := f.aggregate()
+			firstPath := f.runner.wtPath
 
 			// Recovery: re-run the full launch sequence.
 			if err := runLaunchPhases(f, ""); err != nil {
@@ -71,39 +75,112 @@ func TestLaunchRecoveryCrashBoundariesNoDuplicates(t *testing.T) {
 			if first.LaunchEvidence != nil && agg.LaunchEvidence.CommandDigest != first.LaunchEvidence.CommandDigest {
 				t.Fatalf("launch evidence replaced on recovery")
 			}
+			// The reservation-owned worktree is the same path across the crash
+			// (git fallback: deterministic reservation-keyed path), so no
+			// duplicate lease/path is ever created.
+			if b.crashAfter == "acquire" {
+				if firstPath == "" || f.runner.wtPath != firstPath {
+					t.Fatalf("worktree path changed across recovery: %q -> %q (same reservation must return the same worktree)", firstPath, f.runner.wtPath)
+				}
+			}
 		})
 	}
 }
 
-// TestLaunchRecoveryAfterLaunchRecordSkipsSubmission proves the evidence-first
-// launch guard: a failure after the durable launch record but before the
-// submission is delivered never re-submits — recovery skips the submission
-// under the exact launch identity (launch submit <= 1, no at-least-once
-// duplicate launch).
-func TestLaunchRecoveryAfterLaunchRecordSkipsSubmission(t *testing.T) {
-	f := newLaunchFixture(t, "recover-after-record")
-	f.endpoints.submitErr = errors.New("delivery failed after record")
+// TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess proves the
+// reworked evidence ordering: a crash AFTER the submission was delivered but
+// BEFORE the durable launch record may re-submit the exact same command on
+// recovery, but the REAL production launch artifact guard proves exactly ONE
+// Soldier process launch across the boundary, and RecordLaunch commits exactly
+// once. Endpoint command submission count (2) is distinguished from the
+// process-launch count (1).
+func TestLaunchRecoveryPostSubmitPreRecordGuardProvesSingleProcess(t *testing.T) {
+	f := newLaunchFixture(t, "recover-guard")
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":/bin")
+	// The endpoint executes the production artifact in a real shell (the
+	// pane) and reports a crash (error) AFTER the first delivery — the
+	// post-Submit/pre-Record boundary. No LaunchEvidence is committed.
+	exec := &executingEndpointCapabilities{
+		inner:          f.endpoints,
+		runCommand:     scriptRunCommand(),
+		firstSubmitErr: true,
+	}
+	f.runner.endpoints = exec
 	if err := runLaunchPhases(f, "submit"); err == nil {
-		t.Fatal("first run must fail at the submission")
+		t.Fatal("first run must fail at the submission (crash before record)")
 	}
 	agg := f.aggregate()
-	if agg.LaunchEvidence == nil {
-		t.Fatalf("launch evidence must be durably recorded before the submission: %+v", agg)
+	if agg.LaunchEvidence != nil {
+		t.Fatalf("LaunchEvidence must be ABSENT when the submission did not succeed durably: %+v", agg.LaunchEvidence)
 	}
-	// Recovery: the recorded evidence skips the submission entirely.
-	f.endpoints.submitErr = nil
+	if n := harnessLaunchCount(t, counter); n != 1 {
+		t.Fatalf("harness process launches after first delivery = %d, want 1", n)
+	}
+	// Recovery: the same command is re-submitted (submission count 2), the
+	// production guard sees the same launch identity and no-ops, so exactly
+	// one process remains, and RecordLaunch commits once.
 	if err := runLaunchPhases(f, ""); err != nil {
 		t.Fatalf("recovery run failed: %v", err)
 	}
+	if n := harnessLaunchCount(t, counter); n != 1 {
+		t.Fatalf("harness process launches across the boundary = %d, want exactly 1 (no second Soldier process)", n)
+	}
 	final := f.aggregate()
+	if final.LaunchEvidence == nil {
+		t.Fatal("LaunchEvidence must commit exactly once after the successful submission")
+	}
 	if final.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("phase = %q, want working", final.Phase)
 	}
-	if f.endpoints.submitCount() != 1 {
-		t.Fatalf("launch submits = %d, want 1 (submission never re-issued)", f.endpoints.submitCount())
+	if exec.submitCount() != 2 {
+		t.Fatalf("endpoint command submissions = %d, want 2 (re-submission allowed; guard bounds the process)", exec.submitCount())
 	}
-	if final.LaunchEvidence.CommandDigest != agg.LaunchEvidence.CommandDigest {
-		t.Fatalf("launch evidence identity changed on recovery")
+}
+
+// TestLaunchRecoverySubmitErrorBeforeExecutionRetryable proves a Submit error
+// BEFORE the script executed commits no evidence and the same launch retries
+// the submission under the same identity (one process, one record).
+func TestLaunchRecoverySubmitErrorBeforeExecutionRetryable(t *testing.T) {
+	f := newLaunchFixture(t, "recover-submiterr")
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":/bin")
+	// The first Submit fails BEFORE any script execution (delivery failure).
+	exec := &executingEndpointCapabilities{
+		inner:          f.endpoints,
+		runCommand:     scriptRunCommand(),
+		firstSubmitErr: true,
+		skipFirstRun:   true,
+	}
+	f.runner.endpoints = exec
+	if err := runLaunchPhases(f, "submit"); err == nil {
+		t.Fatal("first run must fail at the submission")
+	}
+	if n := harnessLaunchCount(t, counter); n != 0 {
+		t.Fatalf("harness launches before delivery = %d, want 0", n)
+	}
+	if f.aggregate().LaunchEvidence != nil {
+		t.Fatal("no evidence may be recorded for an undelivered submission")
+	}
+	// Recovery retries the same submission: one process, one record.
+	if err := runLaunchPhases(f, ""); err != nil {
+		t.Fatalf("recovery run failed: %v", err)
+	}
+	if n := harnessLaunchCount(t, counter); n != 1 {
+		t.Fatalf("harness process launches = %d, want 1", n)
+	}
+	if f.aggregate().LaunchEvidence == nil {
+		t.Fatal("evidence must commit after the successful retried submission")
 	}
 }
 
@@ -257,55 +334,392 @@ func TestLaunchRecoveryWorktreeIdentitySubstitutionFailsClosed(t *testing.T) {
 
 // TestLaunchRecoveryReentrantEndpointRequiredOnReentry proves the
 // DEPENDENCY_REQUEST fail-closed contract: when recovery needs an endpoint
-// and the selected capability cannot prove reservation-aware find-or-create,
-// creation fails closed instead of silently creating a second endpoint.
-func TestLaunchRecoveryReentrantEndpointRequiredOnReentry(t *testing.T) {
-	f := newLaunchFixture(t, "recover-noreentrant")
-	// A capability WITHOUT reservation support: the first attempt creates
-	// normally; a re-entry (intent pre-existed) must fail closed.
-	f.runner.endpoints = &plainEndpointCapabilities{inner: f.endpoints}
-	if err := runLaunchPhases(f, "create-session"); !errors.Is(err, errCrashSimulated) {
+// TestLaunchIntentFailsClosedWithoutEndpointCapability proves the mandatory
+// reservation-aware endpoint contract is checked BEFORE any acquisition: a
+// launch without a composed endpoint capability fails closed at the intent
+// phase, before any worktree or endpoint allocation.
+func TestLaunchIntentFailsClosedWithoutEndpointCapability(t *testing.T) {
+	f := newLaunchFixture(t, "recover-noendpoints")
+	f.runner.endpoints = nil
+	if err := f.runner.beginLaunchIntent(); err == nil {
+		t.Fatal("missing endpoint capabilities must fail closed before acquisition")
+	} else if !strings.Contains(err.Error(), "endpoint capabilities are not composed") {
+		t.Fatalf("error = %v, want endpoint-composition fail-closed", err)
+	}
+	agg := f.aggregate()
+	if agg.Launch != nil || agg.Worktree != nil || agg.Endpoint != nil {
+		t.Fatalf("no acquisition may happen without the endpoint capability: %+v", agg)
+	}
+}
+
+// TestLaunchRecoveryDeadRecordedEndpointFailsClosedNoReplacement proves a
+// recorded endpoint that cannot prove liveness on recovery fails closed with
+// NO replacement: recovery never silently creates a second endpoint.
+func TestLaunchRecoveryDeadRecordedEndpointFailsClosedNoReplacement(t *testing.T) {
+	f := newLaunchFixture(t, "recover-deadep")
+	if err := runLaunchPhases(f, "attach-endpoint"); !errors.Is(err, errCrashSimulated) {
 		t.Fatalf("first run: %v", err)
 	}
-	// Re-entry: beginLaunchIntent re-adopts the committed intent (re-entry
-	// detection), then endpoint creation cannot prove find-or-create.
+	// The recorded endpoint is dead: recovery must fail closed (no
+	// replacement) instead of creating a second endpoint.
+	f.endpoints.probeAlive = false
+	if err := runLaunchPhases(f, ""); err == nil {
+		t.Fatal("dead recorded endpoint must fail closed on recovery")
+	} else if !strings.Contains(err.Error(), "no replacement") {
+		t.Fatalf("error = %v, want no-replacement fail-closed", err)
+	}
+	if f.endpoints.createCount() != 1 {
+		t.Fatalf("endpoint creates = %d, want 1 (no replacement)", f.endpoints.createCount())
+	}
+}
+
+// TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation proves the FIRST
+// worktree acquisition consumes the durable launch reservation identity: the
+// treehouse provider passes it as the lease holder (--lease-holder), never an
+// unreserved get.
+func TestLaunchWorktreeTreehouseFirstAttemptConsumesReservation(t *testing.T) {
+	f := newLaunchFixture(t, "wt-treehouse")
+	if err := f.runner.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent: %v", err)
+	}
+	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
+	binDir := fakeTreehouseOnPath(t, logPath)
+	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+	if err := f.runner.acquireWorktree(); err != nil {
+		t.Fatalf("acquireWorktree: %v", err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(logData)
+	if !strings.Contains(log, "--lease-holder "+f.runner.wtReservationID()) {
+		t.Fatalf("treehouse get did not consume the launch reservation as lease holder: %q", log)
+	}
+	if !strings.Contains(log, "--lease") {
+		t.Fatalf("treehouse get must lease the reservation-owned worktree: %q", log)
+	}
+}
+
+// TestLaunchWorktreeTreehouseRecoveryFailsClosed proves the treehouse
+// provider fails closed on recovery of an acquired-but-unbound reservation
+// instead of allocating a replacement (the CLI has no reservation-keyed
+// get/recover — DEPENDENCY_REQUEST evidence).
+func TestLaunchWorktreeTreehouseRecoveryFailsClosed(t *testing.T) {
+	f := newLaunchFixture(t, "wt-treehouse-recover")
+	if err := f.runner.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent: %v", err)
+	}
+	// Re-entry (intent pre-existed) is detected by a second begin.
 	if err := f.runner.beginLaunchIntent(); err != nil {
 		t.Fatalf("re-entry beginLaunchIntent: %v", err)
 	}
-	if err := f.runner.createSession(); err == nil {
-		t.Fatal("re-entry without reservation-aware find-or-create must fail closed")
+	logPath := filepath.Join(t.TempDir(), "treehouse-args.log")
+	binDir := fakeTreehouseOnPath(t, logPath)
+	t.Setenv("PATH", binDir+":/usr/bin:/bin")
+	if err := f.runner.acquireWorktree(); err == nil {
+		t.Fatal("treehouse recovery must fail closed, got nil")
 	} else if !strings.Contains(err.Error(), "DEPENDENCY_REQUEST") {
 		t.Fatalf("error = %v, want DEPENDENCY_REQUEST fail-closed", err)
 	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(logData), "get") {
+		t.Fatalf("treehouse recovery must never allocate: %q", string(logData))
+	}
 }
 
-// plainEndpointCapabilities is an EndpointCapabilities WITHOUT
-// ReentrantEndpointCapabilities support (delegates to the inner capability).
-type plainEndpointCapabilities struct {
-	inner *reentrantEndpointCapabilities
+// fakeTreehouseOnPath installs a fake treehouse CLI that records its
+// arguments to logPath and returns a fresh existing directory as the acquired
+// worktree. It returns the directory to prepend to PATH.
+func fakeTreehouseOnPath(t *testing.T, logPath string) string {
+	t.Helper()
+	dir := t.TempDir()
+	content := fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %q\nwt=\"$(mktemp -d /tmp/fake-treehouse-wt.XXXXXX)\"\necho \"$wt\"\n", logPath)
+	if err := os.WriteFile(filepath.Join(dir, "treehouse"), []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
-func (p *plainEndpointCapabilities) Create(req CreateRequest) (CreatedEndpoint, error) {
-	return p.inner.Create(req)
+// TestLaunchArtifactGuardProvesSingleProcessLaunches runs the REAL production
+// artifact twice through a real shell with a real (fake) harness binary and
+// proves the persistent guard allows exactly ONE Soldier process launch; a
+// guard identity mismatch fails closed with no launch.
+func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
+	f := newLaunchFixture(t, "artifact-guard")
+	if err := f.runner.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent: %v", err)
+	}
+	if err := f.runner.acquireWorktree(); err != nil {
+		t.Fatalf("acquireWorktree: %v", err)
+	}
+	if err := f.runner.bindWorktree(); err != nil {
+		t.Fatalf("bindWorktree: %v", err)
+	}
+	if err := f.runner.buildSoldierPrompt(); err != nil {
+		t.Fatalf("buildSoldierPrompt: %v", err)
+	}
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":/bin")
+
+	agg := f.aggregate()
+	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
+		WorktreePath:   f.runner.wtPath,
+		HomeDir:        f.homeDir,
+		TaskID:         f.taskID,
+		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
+		LaunchBin:      f.runner.launchBin,
+		LaunchArgs:     f.runner.launchArgs,
+		LaunchID:       f.runner.launchID,
+		Generation:     agg.Generation.String(),
+		EndpointFence:  f.runner.epFenceToken(),
+	})
+	if err != nil {
+		t.Fatalf("buildLaunchArtifact: %v", err)
+	}
+	// The script must create the persistent guard BEFORE execing the harness.
+	script, err := os.ReadFile(artifact.ScriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), artifact.GuardName) || !strings.Contains(string(script), "exec ") {
+		t.Fatalf("production artifact missing the persistent guard:\n%s", script)
+	}
+	// First submission: the guard is created and the harness execs exactly once.
+	if err := exec.Command("sh", "-c", artifact.Command).Run(); err != nil {
+		t.Fatalf("first artifact run: %v", err)
+	}
+	if n := harnessLaunchCount(t, counter); n != 1 {
+		t.Fatalf("harness launches after first run = %d, want 1", n)
+	}
+	// Re-submission of the SAME launch: the guard no-ops, no second process.
+	if err := exec.Command("sh", "-c", artifact.Command).Run(); err != nil {
+		t.Fatalf("guarded re-run: %v", err)
+	}
+	if n := harnessLaunchCount(t, counter); n != 1 {
+		t.Fatalf("harness launches across re-submission = %d, want exactly 1", n)
+	}
+
+	// A different identity/fence on the SAME guard fails closed with no launch.
+	guardPath := filepath.Join(f.runner.wtPath, artifact.GuardName)
+	if err := os.MkdirAll(guardPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guardPath, "identity"), []byte("launch-other|1|otherfence"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("sh", "-c", artifact.Command).Run(); err == nil {
+		t.Fatal("different identity/fence on the guard must fail closed")
+	}
+	if n := harnessLaunchCount(t, counter); n != 1 {
+		t.Fatalf("identity mismatch launched a second process: count=%d", n)
+	}
 }
-func (p *plainEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error {
-	return p.inner.Submit(ep, text)
+
+// TestLaunchArtifactGuardExistsSkipsProcessOnReEntry proves the guard-exists
+// case: when the guard marker already exists with the exact identity (a prior
+// submission created it), re-running the production artifact exits without
+// launching — recovery never starts a second process from a guarded launch.
+func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
+	f := newLaunchFixture(t, "artifact-guard-exists")
+	if err := f.runner.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent: %v", err)
+	}
+	if err := f.runner.acquireWorktree(); err != nil {
+		t.Fatalf("acquireWorktree: %v", err)
+	}
+	if err := f.runner.bindWorktree(); err != nil {
+		t.Fatalf("bindWorktree: %v", err)
+	}
+	if err := f.runner.buildSoldierPrompt(); err != nil {
+		t.Fatalf("buildSoldierPrompt: %v", err)
+	}
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":/bin")
+
+	agg := f.aggregate()
+	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
+		WorktreePath:   f.runner.wtPath,
+		HomeDir:        f.homeDir,
+		TaskID:         f.taskID,
+		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
+		LaunchBin:      f.runner.launchBin,
+		LaunchArgs:     f.runner.launchArgs,
+		LaunchID:       f.runner.launchID,
+		Generation:     agg.Generation.String(),
+		EndpointFence:  f.runner.epFenceToken(),
+	})
+	if err != nil {
+		t.Fatalf("buildLaunchArtifact: %v", err)
+	}
+	// The guard already exists with the exact identity and the process is not
+	// provably ready: re-running must NOT launch another process.
+	guardPath := filepath.Join(f.runner.wtPath, artifact.GuardName)
+	if err := os.MkdirAll(guardPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guardPath, "identity"), []byte(artifact.GuardIdentity), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("sh", "-c", artifact.Command).Run(); err != nil {
+		t.Fatalf("guarded re-entry run: %v", err)
+	}
+	if n := harnessLaunchCount(t, counter); n != 0 {
+		t.Fatalf("guarded re-entry launched a process: count=%d, want 0 (fail closed via readiness, never a second process)", n)
+	}
 }
-func (p *plainEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointObservation, error) {
-	return p.inner.Probe(ep)
+
+// TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess proves the atomic
+// guard under the concurrent edge case: two SIMULTANEOUS submissions of the
+// same launch produce exactly ONE Soldier process launch (the mkdir guard is
+// atomic — the loser exits and never execs the harness).
+func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
+	f := newLaunchFixture(t, "artifact-guard-concurrent")
+	if err := f.runner.beginLaunchIntent(); err != nil {
+		t.Fatalf("beginLaunchIntent: %v", err)
+	}
+	if err := f.runner.acquireWorktree(); err != nil {
+		t.Fatalf("acquireWorktree: %v", err)
+	}
+	if err := f.runner.bindWorktree(); err != nil {
+		t.Fatalf("bindWorktree: %v", err)
+	}
+	if err := f.runner.buildSoldierPrompt(); err != nil {
+		t.Fatalf("buildSoldierPrompt: %v", err)
+	}
+	counter := filepath.Join(t.TempDir(), "harness-launches.log")
+	harnessDir := fakeHarnessDir(t, "pi", counter)
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	t.Setenv("PATH", harnessDir+":"+filepath.Dir(gitBin)+":/bin")
+	agg := f.aggregate()
+	artifact, err := buildLaunchArtifact(LaunchArtifactInput{
+		WorktreePath:   f.runner.wtPath,
+		HomeDir:        f.homeDir,
+		TaskID:         f.taskID,
+		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
+		LaunchBin:      f.runner.launchBin,
+		LaunchArgs:     f.runner.launchArgs,
+		LaunchID:       f.runner.launchID,
+		Generation:     agg.Generation.String(),
+		EndpointFence:  f.runner.epFenceToken(),
+	})
+	if err != nil {
+		t.Fatalf("buildLaunchArtifact: %v", err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = exec.Command("sh", "-c", artifact.Command).Run()
+		}()
+	}
+	wg.Wait()
+	if n := harnessLaunchCount(t, counter); n != 1 {
+		t.Fatalf("concurrent submissions launched %d processes, want exactly 1", n)
+	}
 }
-func (p *plainEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
-	return p.inner.Capture(ep, n)
+
+// fakeHarnessDir creates a fake harness binary (binName) that appends a
+// marker line to counterPath, so tests can count actual Soldier process
+// launches of the real production artifact.
+func fakeHarnessDir(t *testing.T, binName, counterPath string) string {
+	t.Helper()
+	dir := t.TempDir()
+	content := fmt.Sprintf("#!/bin/sh\necho launch >> %q\n", counterPath)
+	if err := os.WriteFile(filepath.Join(dir, binName), []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
-func (p *plainEndpointCapabilities) Dispose(ep CreatedEndpoint) error {
-	return p.inner.Dispose(ep)
+
+// harnessLaunchCount returns the number of lines in the harness counter file.
+func harnessLaunchCount(t *testing.T, counterPath string) int {
+	t.Helper()
+	data, err := os.ReadFile(counterPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("reading harness counter: %v", err)
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// executingEndpointCapabilities is an EndpointCapabilities whose Submit
+// executes the submitted launch command through a real shell (the pane) and
+// optionally reports a delivery failure (crash) on the first submission.
+// skipFirstRun=true simulates a Submit error BEFORE script execution; the
+// default (run every submission) simulates a crash AFTER delivery.
+type executingEndpointCapabilities struct {
+	inner          *reentrantEndpointCapabilities
+	runCommand     func(cmd string) error
+	firstSubmitErr bool
+	skipFirstRun   bool
+	submits        int
+}
+
+func (f *executingEndpointCapabilities) CreateReserved(req CreateRequest) (CreatedEndpoint, error) {
+	return f.inner.CreateReserved(req)
+}
+func (f *executingEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error {
+	f.submits++
+	run := !(f.skipFirstRun && f.submits == 1)
+	if run && f.runCommand != nil {
+		if err := f.runCommand(text); err != nil {
+			return err
+		}
+	}
+	if f.firstSubmitErr && f.submits == 1 {
+		return errors.New("simulated crash after submission delivery")
+	}
+	return nil
+}
+func (f *executingEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointObservation, error) {
+	return f.inner.Probe(ep)
+}
+func (f *executingEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
+	return f.inner.Capture(ep, n)
+}
+func (f *executingEndpointCapabilities) Dispose(ep CreatedEndpoint) error {
+	return f.inner.Dispose(ep)
+}
+func (f *executingEndpointCapabilities) submitCount() int { return f.submits }
+
+// scriptRunCommand returns a pane executor that runs the submitted command
+// exactly as the pane shell would (sh -c "bash '<script>'").
+func scriptRunCommand() func(cmd string) error {
+	return func(cmd string) error {
+		return exec.Command("sh", "-c", cmd).Run()
+	}
 }
 
 // TestLaunchArtifactReentrantGuardRealPath exercises the REAL production
 // launch artifact path: buildLaunchArtifact produces the identical artifact
-// (same command digest) for the identical immutable inputs, an artifact whose
-// content differs fails closed (identity mismatch, never overwritten), and
-// the guard binds the exact submission digest.
+// (same command digest) for the identical immutable inputs, and an artifact
+// whose content differs fails closed (identity mismatch, never overwritten).
 func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 	f := newLaunchFixture(t, "artifact-real")
 	if err := f.runner.beginLaunchIntent(); err != nil {
@@ -320,13 +734,24 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 	if err := f.runner.buildSoldierPrompt(); err != nil {
 		t.Fatalf("buildSoldierPrompt: %v", err)
 	}
-
-	first, err := buildLaunchArtifact(f.runner.wtPath, f.homeDir, f.taskID, f.runner.projectConfig.SnapshotDigest, f.runner.launchBin, f.runner.launchArgs)
+	agg := f.aggregate()
+	in := LaunchArtifactInput{
+		WorktreePath:   f.runner.wtPath,
+		HomeDir:        f.homeDir,
+		TaskID:         f.taskID,
+		SnapshotDigest: f.runner.projectConfig.SnapshotDigest,
+		LaunchBin:      f.runner.launchBin,
+		LaunchArgs:     f.runner.launchArgs,
+		LaunchID:       f.runner.launchID,
+		Generation:     agg.Generation.String(),
+		EndpointFence:  f.runner.epFenceToken(),
+	}
+	first, err := buildLaunchArtifact(in)
 	if err != nil {
 		t.Fatalf("buildLaunchArtifact: %v", err)
 	}
 	// Identical immutable inputs -> identical artifact and digest.
-	second, err := buildLaunchArtifact(f.runner.wtPath, f.homeDir, f.taskID, f.runner.projectConfig.SnapshotDigest, f.runner.launchBin, f.runner.launchArgs)
+	second, err := buildLaunchArtifact(in)
 	if err != nil {
 		t.Fatalf("second buildLaunchArtifact: %v", err)
 	}
@@ -339,8 +764,9 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 
 	// Different immutable inputs (a different prompt) -> the existing artifact
 	// fails closed instead of being overwritten: identity mismatch.
-	diffArgs := append(append([]string{}, f.runner.launchArgs...), "DIFFERENT PROMPT CONTENT")
-	if _, err := buildLaunchArtifact(f.runner.wtPath, f.homeDir, f.taskID, f.runner.projectConfig.SnapshotDigest, f.runner.launchBin, diffArgs); err == nil {
+	diffIn := in
+	diffIn.LaunchArgs = append(append([]string{}, f.runner.launchArgs...), "DIFFERENT PROMPT CONTENT")
+	if _, err := buildLaunchArtifact(diffIn); err == nil {
 		t.Fatal("changed artifact identity must fail closed")
 	} else if !strings.Contains(err.Error(), "different content") {
 		t.Fatalf("error = %v, want artifact identity mismatch", err)

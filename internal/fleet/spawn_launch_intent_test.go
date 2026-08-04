@@ -36,10 +36,6 @@ func newReentrantEndpoints() *reentrantEndpointCapabilities {
 	return &reentrantEndpointCapabilities{created: map[string]CreatedEndpoint{}, probeAlive: true}
 }
 
-func (f *reentrantEndpointCapabilities) Create(req CreateRequest) (CreatedEndpoint, error) {
-	return f.CreateReserved(req)
-}
-
 func (f *reentrantEndpointCapabilities) CreateReserved(req CreateRequest) (CreatedEndpoint, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
