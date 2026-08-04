@@ -43,16 +43,10 @@ func ConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, "config")
 }
 
-// Get reads a config value. Resolution:
-//  1. MUNSU_<KEY>_OVERRIDE env var
-//  2. File at $MUNSU_HOME/config/<key>
+// Get reads a config value from the flat config file at
+// $MUNSU_HOME/config/<key>. Core Config never reads the process environment;
+// ambient env is translated to typed boundary overrides at CLI composition.
 func Get(homeDir, key string) (string, error) {
-	// Check override env var
-	envKey := fmt.Sprintf("MUNSU_%s_OVERRIDE", strings.ToUpper(key))
-	if val, ok := os.LookupEnv(envKey); ok {
-		return val, nil
-	}
-
 	// Read from file
 	p := filepath.Join(ConfigDir(homeDir), key)
 	data, err := os.ReadFile(p)
