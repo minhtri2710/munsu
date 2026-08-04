@@ -1489,7 +1489,7 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	// the project through the canonical Fleet Registry with a local-only mode.
 	storeTestDocuments(t, homeDir, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
-		Config:        config.ProjectOverlay{SoldierHarness: "pi"},
+		Config:        config.ProjectOverlay{SoldierHarness: "pi", Backend: "tmux"},
 	}, []testProjectRecord{
 		{Name: "test-proj", Path: projectDir, Mode: "local-only"},
 	}, nil)
