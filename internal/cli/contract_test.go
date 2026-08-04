@@ -213,8 +213,24 @@ func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
 		t.Errorf("backend output = %s", backend)
 	}
 
+	// Diagnostics must never probe to choose an adapter: omitting --backend is
+	// a typed missing-input failure, never an auto-select.
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
+	missing, err := runContract(t, []string{"backend", "capabilities"})
+	if err == nil {
+		t.Fatal("backend capabilities without --backend: expected typed missing-input error, got nil")
+	}
+	if !strings.Contains(missing, "error_code: missing_input") {
+		t.Errorf("backend capabilities without --backend must return error_code missing_input, got:\n%s", missing)
+	}
+	if !strings.Contains(missing, "an explicit backend identity is required for backend capabilities") {
+		t.Errorf("backend capabilities without --backend must explain the missing identity, got:\n%s", missing)
+	}
+	if strings.Contains(missing, "kind: backend.capabilities") {
+		t.Errorf("backend capabilities without --backend must never report capabilities, got:\n%s", missing)
+	}
+
 	guard, err := runContract(t, []string{"guard"})
 	if err != nil {
 		t.Fatalf("guard: %v", err)

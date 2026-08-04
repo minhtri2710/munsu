@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/bootstrap"
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/spf13/cobra"
 )
@@ -19,8 +19,9 @@ func newConfigCmd() *cobra.Command {
 		Long: `Read, write, and view munsu configuration.
 
 Configuration values are stored as files under $MUNSU_HOME/config/<key>.
-The backend key reports the live-resolved backend (file pin, then active
-TMUX/HERDR_ENV session); other keys report the persisted file value.
+The backend key reports the persisted snapshot Backend (the published config
+snapshot or the fleet base document's typed Backend); other keys report the
+persisted file value.
 
 Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 `,
@@ -31,12 +32,14 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			key := args[0]
-			// backend is runtime-resolved (env detection), not persisted, so report the live backend.
+			// backend is a persisted snapshot identity (published snapshot or fleet
+			// base document's typed Backend), never a live env/PATH probe. Report
+			// the persisted snapshot Backend, or a typed missing-input when none is
+			// persisted.
 			if key == "backend" {
-				pin, _ := config.Get(ctx.Home, key)
-				resolved, _ := bootstrap.ResolveBackend(pin)
-				if resolved == "" {
-					resolved = "none"
+				resolved, err := fleet.ResolveGeneralHomeBackend(ctx.Home)
+				if err != nil || resolved == "" {
+					return usageError("missing_input", "Set backend in the fleet base config and rerun `munsu config get backend`", "no persisted backend identity is available")
 				}
 				return writeContract(cmd, Response[MessageResult]{
 					SchemaVersion: SchemaVersion,

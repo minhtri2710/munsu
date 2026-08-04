@@ -283,6 +283,26 @@ func TestBinaryBackendCapabilities_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestBinaryBackendCapabilities_EmptyBackendIsTypedMissingInput verifies that
+// omitting --backend fails closed with a typed missing_input error and never
+// auto-selects a backend (diagnostics are not selection roots).
+func TestBinaryBackendCapabilities_EmptyBackendIsTypedMissingInput(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary test in short mode")
+	}
+	home := t.TempDir()
+	out, err := runMunsu(t, home, []string{"backend", "capabilities"})
+	if err == nil {
+		t.Fatal("expected error for empty --backend, got nil")
+	}
+	if !strings.Contains(out, "error_code: missing_input") {
+		t.Errorf("output must contain typed missing_input error_code, got: %s", out)
+	}
+	if strings.Contains(out, "kind: backend.capabilities") {
+		t.Errorf("must not report capabilities without an explicit backend, got: %s", out)
+	}
+}
+
 // TestBinaryWatchEnsure_NoopContract verifies the watch ensure command
 // produces contract output with noop:true when no watcher is running.
 func TestBinaryWatchEnsure_NoopContract(t *testing.T) {
