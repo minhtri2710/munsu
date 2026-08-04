@@ -467,3 +467,217 @@ func TestCanonicalListExcludesSupersededSource(t *testing.T) {
 		t.Fatalf("List after supersession = %+v, want only t2", list)
 	}
 }
+
+// launchPreState drives a launch flow through BindWorktree, AttachEndpoint,
+// and RecordLaunch (fenced to the committed intent) and returns the intent
+// request and the current revision. It is the pre-state from which the
+// binding-fence assertions start.
+func launchPreState(t *testing.T, c *Canonical, taskID string) (CanonicalBeginSpawnRequest, uint64) {
+	t.Helper()
+	mustCreate(t, c, taskID)
+	req, rev := mustBeginSpawn(t, c, taskID, preconditionOf(1, 1))
+
+	bw := CanonicalBindWorktreeRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: preconditionOf(1, rev),
+		Binding:      launchWorktreeBinding(req),
+		Reason:       "bind worktree",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-wt-launch-"+taskID, bw), bw); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	rev++
+
+	attach := attachRequest(c, taskID, preconditionOf(1, rev), req, "handle-1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-launch-"+taskID, attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	rev++
+
+	record := recordLaunchRequest(c, taskID, preconditionOf(1, rev), req)
+	if _, err := c.RecordLaunch(mustOperation(t, "op-record-launch-"+taskID, record), record); err != nil {
+		t.Fatalf("RecordLaunch: %v", err)
+	}
+	rev++
+	return req, rev
+}
+
+// TestCanonicalLaunchFenceRejectsMismatchedWorktreeBinding proves BindWorktree
+// fails closed when the generation carries a launch intent but the binding does
+// not carry the exact worktree reservation fence the intent reserved before
+// acquisition.
+func TestCanonicalLaunchFenceRejectsMismatchedWorktreeBinding(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	_, _ = mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+
+	bw := CanonicalBindWorktreeRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 2),
+		Binding:      worktreeBinding(), // default lease/fence, not the reserved ones
+		Reason:       "bind worktree",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-wt-fence-mismatch", bw), bw); !errors.Is(err, ErrConflict) {
+		t.Fatalf("worktree binding outside the launch fence = %v, want ErrConflict", err)
+	}
+	if _, err := c.Get(mustTaskID(t, "t1")); err != nil {
+		t.Fatalf("intent must survive the refusal: %v", err)
+	}
+}
+
+// TestCanonicalBindEndpointWithLaunchRequiresAcquiredAndEvidence proves the
+// final queued -> working transition requires the recorded acquired endpoint
+// and the recorded launch evidence when the generation carries a launch
+// intent: each missing record fails closed with a typed conflict.
+func TestCanonicalBindEndpointWithLaunchRequiresAcquiredAndEvidence(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+
+	bw := CanonicalBindWorktreeRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, rev),
+		Binding:      launchWorktreeBinding(req),
+		Reason:       "bind worktree",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-wt-1", bw), bw); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	rev++
+
+	// No acquired endpoint yet: BindEndpoint fails closed.
+	be := CanonicalBindEndpointRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, rev),
+		Binding:      launchEndpointBinding(req, "handle-1"),
+		Reason:       "spawn",
+	}
+	if _, err := c.BindEndpoint(mustOperation(t, "op-be-no-acquired", be), be); !errors.Is(err, ErrConflict) {
+		t.Fatalf("bind endpoint without acquired endpoint = %v, want ErrConflict", err)
+	}
+
+	// Acquired endpoint recorded, no launch evidence yet: still fails closed.
+	attach := attachRequest(c, "t1", preconditionOf(1, rev), req, "handle-1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	rev++
+	be.Precondition = preconditionOf(1, rev)
+	if _, err := c.BindEndpoint(mustOperation(t, "op-be-no-evidence", be), be); !errors.Is(err, ErrConflict) {
+		t.Fatalf("bind endpoint without launch evidence = %v, want ErrConflict", err)
+	}
+}
+
+// TestCanonicalLaunchFenceRejectsMismatchedEndpointBinding proves BindEndpoint
+// fails closed when the endpoint binding does not carry the exact endpoint
+// reservation fence the launch intent reserved, even though the acquired
+// endpoint and launch evidence are recorded.
+func TestCanonicalLaunchFenceRejectsMismatchedEndpointBinding(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	_, rev := launchPreState(t, c, "t1")
+
+	be := CanonicalBindEndpointRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, rev),
+		Binding:      endpointBinding(), // default lease/fence, not the reserved ones
+		Reason:       "spawn",
+	}
+	if _, err := c.BindEndpoint(mustOperation(t, "op-be-fence-mismatch", be), be); !errors.Is(err, ErrConflict) {
+		t.Fatalf("endpoint binding outside the launch fence = %v, want ErrConflict", err)
+	}
+}
+
+// TestCanonicalLaunchFenceRejectsSubstitutedEndpoint proves BindEndpoint fails
+// closed when the endpoint binding carries the reserved fence but a different
+// endpoint identity than the recorded acquired endpoint: a different endpoint
+// can never be substituted under the same fence.
+func TestCanonicalLaunchFenceRejectsSubstitutedEndpoint(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	req, rev := launchPreState(t, c, "t1")
+
+	be := CanonicalBindEndpointRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, rev),
+		Binding:      launchEndpointBinding(req, "handle-2"), // reserved fence, different handle
+		Reason:       "spawn",
+	}
+	if _, err := c.BindEndpoint(mustOperation(t, "op-be-substituted", be), be); !errors.Is(err, ErrConflict) {
+		t.Fatalf("substituted endpoint binding = %v, want ErrConflict", err)
+	}
+}
+
+// TestCanonicalLaunchFinalBindingCarriesIntentOwnedFences proves the final
+// working bindings carry exactly the worktree and endpoint reservation/fence
+// identities the launch intent reserved before acquisition, and that the
+// launch records survive beside the active bindings.
+func TestCanonicalLaunchFinalBindingCarriesIntentOwnedFences(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	req, rev := launchPreState(t, c, "t1")
+
+	be := CanonicalBindEndpointRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, rev),
+		Binding:      launchEndpointBinding(req, "handle-1"),
+		Reason:       "spawn",
+	}
+	out, err := c.BindEndpoint(mustOperation(t, "op-be-final", be), be)
+	if err != nil {
+		t.Fatalf("BindEndpoint: %v", err)
+	}
+	if out.Phase != PhaseWorking {
+		t.Fatalf("final bind outcome = %+v, want working", out)
+	}
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Worktree == nil || agg.Endpoint == nil {
+		t.Fatalf("final bindings missing: worktree %+v endpoint %+v", agg.Worktree, agg.Endpoint)
+	}
+	if agg.Worktree.LeaseID != req.WorktreeReservationID || agg.Worktree.FenceToken != req.WorktreeFenceToken {
+		t.Fatalf("final worktree binding = %+v, want intent-owned reservation %q/%q", agg.Worktree, req.WorktreeReservationID, req.WorktreeFenceToken)
+	}
+	if agg.Endpoint.LeaseID != req.EndpointReservationID || agg.Endpoint.FenceToken != req.EndpointFenceToken {
+		t.Fatalf("final endpoint binding = %+v, want intent-owned reservation %q/%q", agg.Endpoint, req.EndpointReservationID, req.EndpointFenceToken)
+	}
+	if agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil {
+		t.Fatalf("launch records lost: acquired %+v evidence %+v", agg.AcquiredEndpoint, agg.LaunchEvidence)
+	}
+}
+
+// TestCanonicalLaunchOpsFencedByTransferInvariants proves the launch
+// operations are ordinary task-scoped mutations: a task reserved for transfer
+// (or a superseded generation) rejects BeginSpawn, AttachEndpoint, and
+// RecordLaunch with the common reservation fence before any launch-specific
+// check, so a launch can never begin on a fenced generation.
+func TestCanonicalLaunchOpsFencedByTransferInvariants(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	mustReserveTransfer(t, c, "t1", preconditionOf(1, 1), "dest-home")
+
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prec := preconditionOf(1, uint64(agg.Revision))
+
+	begin := launchRequest(c, "t1", prec)
+	if _, err := c.BeginSpawn(mustOperation(t, "op-fence-begin", begin), begin); !errors.Is(err, ErrConflict) {
+		t.Fatalf("BeginSpawn on reserved task = %v, want ErrConflict", err)
+	}
+	attach := attachRequest(c, "t1", prec, begin, "handle-1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-fence-attach", attach), attach); !errors.Is(err, ErrConflict) {
+		t.Fatalf("AttachEndpoint on reserved task = %v, want ErrConflict", err)
+	}
+	record := recordLaunchRequest(c, "t1", prec, begin)
+	if _, err := c.RecordLaunch(mustOperation(t, "op-fence-record", record), record); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RecordLaunch on reserved task = %v, want ErrConflict", err)
+	}
+}

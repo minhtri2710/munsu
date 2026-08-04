@@ -32,10 +32,14 @@ func (r CanonicalBindWorktreeRequest) DigestBytes() ([]byte, error) {
 // worktree lease to a task. The mutation is generation-bound and fenced: the
 // request carries the expected Generation/Revision precondition, and the
 // committed worktree binding is stored on the task's current Aggregate.
-// Binding an already-bound generation fails closed with a typed conflict, and
-// a stale precondition fails closed with a typed domain.Conflict. Repeating
-// the same Operation ID with the same digest replays the durable prior
-// outcome; reusing the Operation ID with a different intent conflicts.
+// When the generation carries a committed launch intent (BeginSpawn), the
+// binding must match the intent's worktree reservation fence exactly: the
+// binding's lease ID and fence token must be the reservation identities
+// generated before acquisition. Binding an already-bound generation fails
+// closed with a typed conflict, and a stale precondition fails closed with a
+// typed domain.Conflict. Repeating the same Operation ID with the same
+// digest replays the durable prior outcome; reusing the Operation ID with a
+// different intent conflicts.
 func (c *Canonical) BindWorktree(op domain.Operation, req CanonicalBindWorktreeRequest) (Outcome, error) {
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return Outcome{}, err
@@ -46,6 +50,9 @@ func (c *Canonical) BindWorktree(op domain.Operation, req CanonicalBindWorktreeR
 	return c.mutateTask(op, req.TaskID, req.Precondition, func(cur Aggregate) (Aggregate, error) {
 		if cur.Worktree != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already has a worktree binding", cur.TaskID, cur.Generation)
+		}
+		if cur.Launch != nil && (req.Binding.LeaseID != cur.Launch.WorktreeReservationID || req.Binding.FenceToken != cur.Launch.WorktreeFenceToken) {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s worktree binding does not match the launch worktree reservation fence", cur.TaskID, cur.Generation)
 		}
 		next := cur.clone()
 		next.Worktree = &req.Binding
@@ -81,11 +88,17 @@ func (r CanonicalBindEndpointRequest) DigestBytes() ([]byte, error) {
 // is generation-bound and fenced: the request carries the expected
 // Generation/Revision precondition. The mutation requires a bound worktree,
 // a queued phase, an owner, and no existing endpoint binding, and it evaluates
-// durable Dispatch Holds for the spawn action before committing. A stale
-// precondition fails closed with a typed domain.Conflict; an already-bound
-// endpoint or a non-queued phase fails closed with a typed conflict. Repeating
-// the same Operation ID with the same digest replays the durable prior
-// outcome; reusing the Operation ID with a different intent conflicts.
+// durable Dispatch Holds for the spawn action before committing. When the
+// generation carries a committed launch intent (BeginSpawn), the operation
+// additionally requires the recorded acquired endpoint (AttachEndpoint) and
+// the recorded launch evidence (RecordLaunch), the binding must match the
+// intent's endpoint reservation fence exactly, and the binding must carry the
+// exact identity of the recorded acquired endpoint (a different endpoint can
+// never be substituted under the same fence). A stale precondition fails
+// closed with a typed domain.Conflict; an already-bound endpoint or a
+// non-queued phase fails closed with a typed conflict. Repeating the same
+// Operation ID with the same digest replays the durable prior outcome; reusing
+// the Operation ID with a different intent conflicts.
 func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointRequest) (Outcome, error) {
 	if err := c.prepare(op, req, req.HomeID); err != nil {
 		return Outcome{}, err
@@ -106,6 +119,20 @@ func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointR
 		if cur.Endpoint != nil {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s already has an endpoint binding", cur.TaskID, cur.Generation)
 		}
+		if cur.Launch != nil {
+			if cur.AcquiredEndpoint == nil {
+				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded acquired endpoint; bind endpoint requires the acquired endpoint of the launch", cur.TaskID, cur.Generation)
+			}
+			if cur.LaunchEvidence == nil {
+				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s has no recorded launch evidence; bind endpoint requires launch evidence before working", cur.TaskID, cur.Generation)
+			}
+			if req.Binding.LeaseID != cur.Launch.EndpointReservationID || req.Binding.FenceToken != cur.Launch.EndpointFenceToken {
+				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s endpoint binding does not match the launch endpoint reservation fence", cur.TaskID, cur.Generation)
+			}
+			if !endpointBindingMatchesAcquired(req.Binding, *cur.AcquiredEndpoint) {
+				return Aggregate{}, conflictError(ErrConflict, "task %s generation %s endpoint binding does not match the recorded acquired endpoint", cur.TaskID, cur.Generation)
+			}
+		}
 		holds, err := c.listHolds()
 		if err != nil {
 			return Aggregate{}, err
@@ -120,6 +147,20 @@ func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointR
 		next.Revision++
 		return next, nil
 	})
+}
+
+// endpointBindingMatchesAcquired reports whether a bind-endpoint request's
+// binding carries the exact identity of the committed acquired endpoint
+// (backend, handle, lease, fence, session owner, workspace, tab). BoundAtUnix
+// is bind-time state, not part of the acquired endpoint identity.
+func endpointBindingMatchesAcquired(binding EndpointBinding, acquired AcquiredEndpoint) bool {
+	return binding.Backend == acquired.Backend &&
+		binding.Handle == acquired.Handle &&
+		binding.LeaseID == acquired.LeaseID &&
+		binding.FenceToken == acquired.FenceToken &&
+		binding.SessionOwner == acquired.SessionOwner &&
+		binding.WorkspaceID == acquired.WorkspaceID &&
+		binding.TabID == acquired.TabID
 }
 
 // holdsBlockAction reports whether any committed hold for the given action

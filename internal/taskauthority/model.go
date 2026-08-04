@@ -156,6 +156,73 @@ type TransferActivationInfo struct {
 	ActivationDigest      string     `json:"activation_digest"`
 }
 
+// LaunchIntent is the immutable, pre-acquisition record of one generation-bound
+// Soldier launch. It is committed by BeginSpawn before any worktree, endpoint,
+// or process acquisition, and fences the later binding mutations to the exact
+// identities reserved here. It stores only facts Fleet knows before acquisition
+// — the frozen snapshot digest, the explicit Backend and Harness/adapter
+// identity, model/effort/mode/kind/project/parent identities, the deterministic
+// launch identity/window label, and the one-time worktree/endpoint reservation
+// identities (reservation ID + fence token) — sufficient to bind or recover the
+// same operation. No identity is selected, detected, defaulted, probed, or
+// fallen back here: Fleet supplies every value explicitly.
+//
+// LaunchIntent is not a process record and carries no executable content: it is
+// the durable launch-intent foundation on which #412's Fleet runner later
+// proves re-entrancy under the exact launch fence.
+type LaunchIntent struct {
+	OperationID           string `json:"operation_id"`
+	SnapshotDigest        string `json:"snapshot_digest"`
+	Backend               string `json:"backend"`
+	Harness               string `json:"harness"`
+	Model                 string `json:"model,omitempty"`
+	Effort                string `json:"effort,omitempty"`
+	Mode                  string `json:"mode,omitempty"`
+	Kind                  string `json:"kind,omitempty"`
+	Project               string `json:"project,omitempty"`
+	ParentTaskID          string `json:"parent_task_id,omitempty"`
+	LaunchID              string `json:"launch_id"`
+	WindowLabel           string `json:"window_label,omitempty"`
+	WorktreeReservationID string `json:"worktree_reservation_id"`
+	WorktreeFenceToken    string `json:"worktree_fence_token"`
+	EndpointReservationID string `json:"endpoint_reservation_id"`
+	EndpointFenceToken    string `json:"endpoint_fence_token"`
+	PlannedAt             int64  `json:"planned_at"`
+}
+
+// AcquiredEndpoint is the durable record of the exact endpoint identity Fleet
+// acquired for the launch, committed by AttachEndpoint while the task phase
+// remains queued. It is exact-generation/revision fenced and idempotent: a
+// different acquired endpoint identity can never overwrite the committed
+// record. The record is not an active binding (BindEndpoint makes the
+// acquired endpoint the active Endpoint) and does not transition the phase.
+type AcquiredEndpoint struct {
+	OperationID  string `json:"operation_id"`
+	Backend      string `json:"backend"`
+	Handle       string `json:"handle"`
+	LeaseID      string `json:"lease_id"`
+	FenceToken   string `json:"fence_token"`
+	SessionOwner string `json:"session_owner,omitempty"`
+	WorkspaceID  string `json:"workspace_id,omitempty"`
+	TabID        string `json:"tab_id,omitempty"`
+	AcquiredAt   int64  `json:"acquired_at"`
+}
+
+// LaunchEvidence is the durable record of the successful launch submission
+// for one launch, committed by RecordLaunch after the endpoint is acquired and
+// before the final BindEndpoint transitions the task to working. It pins the
+// deterministic launch identity and the sha256 digest of the submitted launch
+// script/command so the downstream Fleet launch artifact is re-entrant under
+// the exact launch fence: the same launch identity and command digest are
+// provably the same submission, and a duplicate process launch after a crash
+// fails closed instead of re-submitting.
+type LaunchEvidence struct {
+	OperationID   string `json:"operation_id"`
+	LaunchID      string `json:"launch_id"`
+	CommandDigest string `json:"command_digest"`
+	SubmittedAt   int64  `json:"submitted_at"`
+}
+
 // RetirementEvidence is the immutable, generation-bound record of the resource
 // ownership a retired generation released. It preserves the exact endpoint and
 // worktree lease identities (lease IDs, fence tokens, handles/paths, repository
@@ -173,18 +240,21 @@ type RetirementEvidence struct {
 
 // Aggregate is the authoritative record of one Task Generation.
 type Aggregate struct {
-	SchemaVersion string              `json:"schema_version"`
-	TaskID        string              `json:"task_id"`
-	Generation    Generation          `json:"generation"`
-	Revision      Revision            `json:"revision"`
-	Current       bool                `json:"current"`
-	Definition    TaskDefinition      `json:"definition"`
-	Phase         Phase               `json:"phase"`
-	PhaseDetail   string              `json:"phase_detail,omitempty"`
-	Endpoint      *EndpointBinding    `json:"endpoint,omitempty"`
-	Worktree      *WorktreeBinding    `json:"worktree,omitempty"`
-	Transfer      *TransferState      `json:"transfer,omitempty"`
-	Retirement    *RetirementEvidence `json:"retirement,omitempty"`
+	SchemaVersion    string              `json:"schema_version"`
+	TaskID           string              `json:"task_id"`
+	Generation       Generation          `json:"generation"`
+	Revision         Revision            `json:"revision"`
+	Current          bool                `json:"current"`
+	Definition       TaskDefinition      `json:"definition"`
+	Phase            Phase               `json:"phase"`
+	PhaseDetail      string              `json:"phase_detail,omitempty"`
+	Endpoint         *EndpointBinding    `json:"endpoint,omitempty"`
+	Worktree         *WorktreeBinding    `json:"worktree,omitempty"`
+	Launch           *LaunchIntent       `json:"launch,omitempty"`
+	AcquiredEndpoint *AcquiredEndpoint   `json:"acquired_endpoint,omitempty"`
+	LaunchEvidence   *LaunchEvidence     `json:"launch_evidence,omitempty"`
+	Transfer         *TransferState      `json:"transfer,omitempty"`
+	Retirement       *RetirementEvidence `json:"retirement,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -258,6 +328,21 @@ func validateAggregate(agg Aggregate) error {
 			return err
 		}
 	}
+	if agg.Launch != nil {
+		if err := validateLaunchIntent(*agg.Launch); err != nil {
+			return err
+		}
+	}
+	if agg.AcquiredEndpoint != nil {
+		if err := validateAcquiredEndpoint(*agg.AcquiredEndpoint); err != nil {
+			return err
+		}
+	}
+	if agg.LaunchEvidence != nil {
+		if err := validateLaunchEvidence(*agg.LaunchEvidence); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -283,6 +368,113 @@ func validateRetirementEvidence(ev RetirementEvidence) error {
 		if err := validateWorktreeBinding(*ev.Worktree); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateLaunchIdentity checks the launch identity fields shared by a
+// BeginSpawn request and a committed LaunchIntent record: the snapshot digest
+// must be a full sha256 digest, the explicit Backend and Harness identities
+// and the deterministic launch identity must be present and safe, every
+// optional identity must be safe when present, and the one-time worktree and
+// endpoint reservation fences (reservation ID + fence token) must be present
+// and safe. Validation is shape-only: no value is selected, detected,
+// defaulted, probed, or fallen back.
+func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken string) error {
+	if !domain.IsSHA256(snapshotDigest) {
+		return validationError("launch snapshot digest must be a 64-hex sha256 digest")
+	}
+	if strings.TrimSpace(backend) == "" || strings.ContainsAny(backend, `/\\`) {
+		return validationError("launch requires an explicit backend identity")
+	}
+	if strings.TrimSpace(harness) == "" || strings.ContainsAny(harness, `/\\`) {
+		return validationError("launch requires an explicit harness identity")
+	}
+	for _, v := range []string{model, effort, mode, kind, project, parentTaskID, windowLabel} {
+		if strings.ContainsAny(v, `/\\`) {
+			return validationError("launch carries an unsafe identity value")
+		}
+	}
+	if launchID == "" || strings.ContainsAny(launchID, `/\\`) {
+		return validationError("launch requires a deterministic launch identity")
+	}
+	if worktreeReservationID == "" || strings.ContainsAny(worktreeReservationID, `/\\`) {
+		return validationError("launch requires a worktree reservation id")
+	}
+	if worktreeFenceToken == "" || strings.ContainsAny(worktreeFenceToken, `/\\`) {
+		return validationError("launch requires a worktree fence token")
+	}
+	if endpointReservationID == "" || strings.ContainsAny(endpointReservationID, `/\\`) {
+		return validationError("launch requires an endpoint reservation id")
+	}
+	if endpointFenceToken == "" || strings.ContainsAny(endpointFenceToken, `/\\`) {
+		return validationError("launch requires an endpoint fence token")
+	}
+	return nil
+}
+
+// validateLaunchIntent checks the committed launch intent record shape: the
+// shared launch identity plus the committing Operation ID and the planned
+// timestamp.
+func validateLaunchIntent(l LaunchIntent) error {
+	if l.OperationID == "" || strings.ContainsAny(l.OperationID, `/\\`) {
+		return validationError("launch intent missing operation id")
+	}
+	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken); err != nil {
+		return err
+	}
+	if l.PlannedAt <= 0 {
+		return validationError("launch intent missing planned timestamp")
+	}
+	return nil
+}
+
+// validateAcquiredEndpoint checks the committed acquired-endpoint record
+// shape: the acquiring Operation ID, the endpoint identity fields required by
+// an endpoint binding (backend, handle, lease, fence), safe optional identity
+// fields, and the acquisition timestamp.
+func validateAcquiredEndpoint(e AcquiredEndpoint) error {
+	if e.OperationID == "" || strings.ContainsAny(e.OperationID, `/\\`) {
+		return validationError("acquired endpoint missing operation id")
+	}
+	if strings.TrimSpace(e.Backend) == "" {
+		return validationError("acquired endpoint missing backend")
+	}
+	if strings.TrimSpace(e.Handle) == "" {
+		return validationError("acquired endpoint missing handle")
+	}
+	if strings.TrimSpace(e.LeaseID) == "" {
+		return validationError("acquired endpoint missing lease id")
+	}
+	if strings.TrimSpace(e.FenceToken) == "" {
+		return validationError("acquired endpoint missing fence token")
+	}
+	for _, v := range []string{e.SessionOwner, e.WorkspaceID, e.TabID} {
+		if strings.ContainsAny(v, `/\\`) {
+			return validationError("acquired endpoint carries an unsafe identity value")
+		}
+	}
+	if e.AcquiredAt <= 0 {
+		return validationError("acquired endpoint missing acquisition timestamp")
+	}
+	return nil
+}
+
+// validateLaunchEvidence checks the committed launch-evidence record shape:
+// the recording Operation ID, the deterministic launch identity, a full sha256
+// digest of the submitted launch script/command, and the submission timestamp.
+func validateLaunchEvidence(e LaunchEvidence) error {
+	if e.OperationID == "" || strings.ContainsAny(e.OperationID, `/\\`) {
+		return validationError("launch evidence missing operation id")
+	}
+	if e.LaunchID == "" || strings.ContainsAny(e.LaunchID, `/\\`) {
+		return validationError("launch evidence missing launch identity")
+	}
+	if !domain.IsSHA256(e.CommandDigest) {
+		return validationError("launch evidence command digest must be a 64-hex sha256 digest")
+	}
+	if e.SubmittedAt <= 0 {
+		return validationError("launch evidence missing submission timestamp")
 	}
 	return nil
 }
@@ -422,6 +614,18 @@ func (a Aggregate) clone() Aggregate {
 			e.Worktree = &cp
 		}
 		out.Retirement = &e
+	}
+	if a.Launch != nil {
+		l := *a.Launch
+		out.Launch = &l
+	}
+	if a.AcquiredEndpoint != nil {
+		e := *a.AcquiredEndpoint
+		out.AcquiredEndpoint = &e
+	}
+	if a.LaunchEvidence != nil {
+		e := *a.LaunchEvidence
+		out.LaunchEvidence = &e
 	}
 	return out
 }
