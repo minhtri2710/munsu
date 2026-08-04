@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -127,12 +126,6 @@ func TestLaunchEndpointFailureWritesNoMetadata(t *testing.T) {
 	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
 	t.Cleanup(func() { captainLookPath = oldLookPath })
 	parent := t.TempDir()
-	if _, err := mhome.Init(parent); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.Set(parent, "captain-harness", "pi"); err != nil {
-		t.Fatal(err)
-	}
 	home := seedCaptainForTest(t, parent, "failed-launch")
 	writeCanonicalPiIntegration(t, home)
 	endpoint := failingLaunchEndpoint{err: errors.New("launch failed")}

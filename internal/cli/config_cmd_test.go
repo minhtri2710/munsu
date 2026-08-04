@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -130,5 +132,97 @@ func TestConfigGetBackendLegacyPinAloneIsTypedMissingInput(t *testing.T) {
 	out := strings.TrimSpace(buf.String())
 	if !strings.Contains(out, "error_code: missing_input") {
 		t.Errorf("config get backend with only a legacy pin must return typed missing_input, got:\n%s", out)
+	}
+}
+
+// TestConfigSetCaptainHarnessWritesBaseDocumentProfile verifies `config set
+// captain-harness` authors the CaptainProfile into the fleet base document
+// (config/base.json) — the ONLY captain operation source — while keeping the
+// flat file as a diagnostics-only echo.
+func TestConfigSetCaptainHarnessWritesBaseDocumentProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{"config", "set", "captain-harness", "pi cliproxyapi/grok-4.5 low"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("config set captain-harness: %v", err)
+	}
+
+	base, err := config.LoadFleetBase(tmpDir)
+	if err != nil {
+		t.Fatalf("loading fleet base after set: %v", err)
+	}
+	if base.CaptainProfile.Harness != "pi" || base.CaptainProfile.Model != "cliproxyapi/grok-4.5" || base.CaptainProfile.Effort != "low" {
+		t.Fatalf("base captainProfile = %+v, want pi/cliproxyapi/grok-4.5/low", base.CaptainProfile)
+	}
+	// The flat file remains a diagnostics-only echo.
+	if got, err := config.Get(tmpDir, "captain-harness"); err != nil || got != "pi cliproxyapi/grok-4.5 low" {
+		t.Fatalf("flat captain-harness echo = %q, %v", got, err)
+	}
+}
+
+// TestConfigSetCaptainHarnessPreservesExistingBaseDocument verifies authored
+// base fields (e.g. Backend) survive a captain-harness set.
+func TestConfigSetCaptainHarnessPreservesExistingBaseDocument(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{"config", "set", "captain-harness", "claude"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("config set captain-harness: %v", err)
+	}
+
+	base, err := config.LoadFleetBase(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.Config.Backend != "tmux" {
+		t.Fatalf("backend lost after set: %+v", base)
+	}
+	if base.CaptainProfile.Harness != "claude" {
+		t.Fatalf("captainProfile = %+v, want claude", base.CaptainProfile)
+	}
+}
+
+// TestConfigSetCaptainHarnessMalformedBaseFailsClosed verifies a malformed
+// existing base.json is never self-repaired by config set.
+func TestConfigSetCaptainHarnessMalformedBaseFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	if err := os.MkdirAll(filepath.Join(tmpDir, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, config.BaseDocumentPath), []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	root.SetArgs([]string{"config", "set", "captain-harness", "pi"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected failure for malformed base.json")
+	}
+	if !strings.Contains(err.Error(), "fleet base document") {
+		t.Fatalf("error = %v, want fleet base document failure", err)
 	}
 }

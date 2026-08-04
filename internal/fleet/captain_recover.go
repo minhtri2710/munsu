@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
@@ -70,7 +71,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	configOk := b.State == StepOk
 
 	// Step c: integration status
-	integration := tx.stepIntegrationStatus(parentHome, sm)
+	integration := tx.stepIntegrationStatus(sm)
 	res.Steps = append(res.Steps, integration)
 	integrationAllowsRelaunch := integration.State != StepFailed
 
@@ -164,9 +165,14 @@ func (tx *RecoverTransaction) stepConfigValidation(parentHome string, sm Info) S
 	}
 }
 
-func (tx *RecoverTransaction) stepIntegrationStatus(parentHome string, sm Info) StepResult {
-	h, err := harness.Captain(parentHome)
-	if err != nil || h == "" {
+func (tx *RecoverTransaction) stepIntegrationStatus(sm Info) StepResult {
+	snapshot, err := config.LoadPublishedSnapshot(sm.Home)
+	if err != nil {
+		return StepResult{Name: "integration-status", State: StepFailed,
+			Detail: fmt.Sprintf("cannot load captain published snapshot: %v", err)}
+	}
+	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
+	if err != nil {
 		return StepResult{Name: "integration-status", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
 	}
@@ -229,16 +235,14 @@ func (tx *RecoverTransaction) stepConfigPush(parentHome string, sm Info, configO
 }
 
 func (tx *RecoverTransaction) stepLaunchReadiness(parentHome string, sm Info) StepResult {
-	profile, err := harness.CaptainProfileFromHome(parentHome)
+	snapshot, err := config.LoadPublishedSnapshot(sm.Home)
 	if err != nil {
 		return StepResult{Name: "launch-readiness", State: StepFailed,
-			Detail: fmt.Sprintf("cannot resolve captain profile: %v", err)}
+			Detail: fmt.Sprintf("cannot load captain published snapshot: %v", err)}
 	}
-	h := profile.Harness
-	if h == "" {
-		h, err = harness.Captain(sm.Home)
-	}
-	if err != nil || h == "" {
+	profile := snapshot.Config().CaptainProfile
+	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
+	if err != nil {
 		return StepResult{Name: "launch-readiness", State: StepFailed,
 			Detail: fmt.Sprintf("cannot resolve harness: %v", err)}
 	}

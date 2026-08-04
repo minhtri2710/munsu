@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/harness"
 )
 
 // captureOutput runs fn with os.Stdout/os.Stderr redirected.
@@ -181,5 +184,44 @@ func TestInitEnvOverride(t *testing.T) {
 
 	if !strings.Contains(stdout, "Skipping skill install.") {
 		t.Errorf("expected 'Skipping skill install.' with MUNSU_INIT_SKILL=skip, got: %s", stdout)
+	}
+}
+
+// TestInitWritesFleetBaseDocument verifies init authors config/base.json with
+// the detected SoldierHarness and the fixed captain default so init'd homes
+// resolve a captain harness (fail-closed-able). The flat soldier-harness pin
+// remains for diagnostics compatibility.
+func TestInitWritesFleetBaseDocument(t *testing.T) {
+	savedChoice := skillChoice
+	skillChoice = ""
+	t.Cleanup(func() { skillChoice = savedChoice })
+	t.Setenv("MUNSU_INIT_SKILL", "skip")
+
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	captureOutput(func() {
+		root := NewRootCommand()
+		root.SetArgs([]string{"init"})
+		if err := root.Execute(); err != nil {
+			t.Errorf("init failed: %v", err)
+		}
+	})
+	if t.Failed() {
+		t.Fatalf("init execution error (see above)")
+	}
+
+	base, err := config.LoadFleetBase(tmpDir)
+	if err != nil {
+		t.Fatalf("loading fleet base after init: %v", err)
+	}
+	if base.CaptainProfile.Harness != harness.Pi {
+		t.Fatalf("base captainProfile = %+v, want fixed default %q", base.CaptainProfile, harness.Pi)
+	}
+	// SoldierHarness mirrors the flat pin (or stays empty when Detect found none).
+	if got, err := config.Get(tmpDir, "soldier-harness"); err == nil {
+		if base.Config.SoldierHarness != got {
+			t.Fatalf("base SoldierHarness = %q, flat pin = %q", base.Config.SoldierHarness, got)
+		}
 	}
 }

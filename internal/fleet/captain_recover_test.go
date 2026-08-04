@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // --- RecoverTransaction tests ---
@@ -78,7 +80,7 @@ func TestRecoverTransaction_EmptyStepsString(t *testing.T) {
 
 func TestRecoverIntegrationStatus_MissingCanonicalIntegrationFailsClosed(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "absent", Message: "no integration manifest found — not installed"}}}}
-	step := tx.stepIntegrationStatus(captainHomeWithHarness(t, "pi"), Info{})
+	step := tx.stepIntegrationStatus(Info{Home: captainHomeWithHarness(t, "pi")})
 	if step.State != StepFailed {
 		t.Fatalf("state = %s, want %s", step.State, StepFailed)
 	}
@@ -91,12 +93,6 @@ func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "healthy-integration")
 	writeCanonicalPiIntegration(t, home)
-	if err := os.MkdirAll(filepath.Join(parent, "config"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "config", "captain-harness"), []byte("pi\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	writeCaptainMeta(t, parent, "healthy-integration", home, "dead-window")
 	launch := &countingLaunchEndpoint{}
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
@@ -138,7 +134,7 @@ func TestRecoverIntegrationStatus_MissingCanonicalIntegrationDoesNotRelaunch(t *
 
 func TestRecoverIntegrationStatus_DigestInvalidCanonicalIntegrationFailsClosed(t *testing.T) {
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "drifted", Message: "one or more integration artifacts are missing or modified"}}}}
-	step := tx.stepIntegrationStatus(captainHomeWithHarness(t, "pi"), Info{})
+	step := tx.stepIntegrationStatus(Info{Home: captainHomeWithHarness(t, "pi")})
 	if step.State != StepFailed {
 		t.Fatalf("state = %s, want %s", step.State, StepFailed)
 	}
@@ -168,16 +164,12 @@ func TestRecoverIntegrationStatus_DriftedCanonicalIntegrationDoesNotRelaunch(t *
 	}
 }
 
+// captainHomeWithHarness creates a captain home whose published snapshot
+// carries the given CaptainProfile harness. The snapshot is the ONLY captain
+// harness identity source for recovery operations; no flat pins are consulted.
 func captainHomeWithHarness(t *testing.T, name string) string {
 	t.Helper()
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "config", "captain-harness"), []byte(name+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	return home
+	return captainHomeWithSnapshot(t, config.CaptainProfile{Harness: name})
 }
 
 type staticIntegrationPort struct{ status IntegrationStatus }
