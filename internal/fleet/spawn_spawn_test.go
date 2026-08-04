@@ -700,11 +700,31 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_ROLE", "general")
 
-	// Explicitly configure manual backend — this test spawns against a manually
-	// written backlog and expects native parser behavior.
+	// Explicitly author the current-v1 snapshot identities. The test spawns
+	// against a manually written backlog and expects native parser behavior;
+	// soldier operation resolution is snapshot-only.
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			SoldierHarness: "pi",
+			Backend:        "tmux",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(tmpDir, "test-project", filepath.Join(tmpDir, "project"), "", false); err != nil {
+		t.Fatal(err)
+	}
 	configDir := filepath.Join(tmpDir, "config")
-	os.MkdirAll(configDir, 0755)
-	os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create brief file so preflightBrief passes
 	briefDir := filepath.Join(tmpDir, "data", "test-task")
