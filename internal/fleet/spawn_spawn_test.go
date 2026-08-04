@@ -832,18 +832,12 @@ func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
 	}
 }
 
-// seedSpawnAuthority composes an in-memory Authority that owns one task, so
-// checkBacklogAuthority's canonical aggregate query finds it (Task 7.8).
-func seedSpawnAuthority(t *testing.T, taskID string) *taskauthority.Authority {
+// seedSpawnAuthority composes a canonical Task Authority that owns one task,
+// so checkBacklogAuthority's canonical aggregate query finds it (Task 7.8).
+func seedSpawnAuthority(t *testing.T, taskID string) *taskauthority.Canonical {
 	t.Helper()
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: taskID, Owner: "general", Description: "Ready", Kind: "ship",
-		Reason: "test",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, taskID, "ship", "")
 	return auth
 }
 
@@ -1532,15 +1526,11 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	}
 
 	// The spawn cutover (Task 4.1) routes the worktree binding through the
-	// composed Task Authority: inject an in-memory-backed Authority that
-	// already owns the task so bindWorktree runs against canonical state.
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-reconcile", Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: "reconcile-task", Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	// composed canonical Task Authority: inject a canonical home-backed
+	// Authority that already owns the task so bindWorktree runs against
+	// canonical state.
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, "reconcile-task", "ship", "test-proj")
 
 	args := Args{
 		ID:          "reconcile-task",
@@ -1651,13 +1641,8 @@ func TestRegression_ResolveSkillsWithoutSrcwalk(t *testing.T) {
 func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "side-file-authoritative"
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID, Actor: taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID: taskID, Owner: "general", Description: "Ready", Kind: "ship", Project: "test-proj",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	auth := mustCanonical(t)
+	canonicalCreateTask(t, auth, taskID, "ship", "test-proj")
 	r := &Runner{
 		homeDir:       homeDir,
 		args:          Args{ID: taskID, ProjectName: "test-proj", Kind: "scout", Authority: auth},
@@ -1712,6 +1697,12 @@ func TestWriteTaskMetaNeverWritesAuthoritativeFields(t *testing.T) {
 // closed otherwise without writing any v1 aggregate state.
 func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	homeDir := t.TempDir()
+	// The canonical home must be initialized before the projection is written
+	// so the composed canonical Authority is bound to the same home the
+	// projection reads.
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	// Backlog has the task, but the Authority has no record: the old shim
 	// would create a legacy aggregate; the Authority query must fail closed.
 	if err := home.WriteMeta(homeDir, "no-agg", map[string]string{"kind": "ship"}); err != nil {
@@ -1723,11 +1714,15 @@ func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [ ] no-agg: work\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := &Runner{
 		homeDir: homeDir,
-		args:    Args{ID: "no-agg", Authority: taskauthority.New(taskauthority.NewMemStore())},
+		args:    Args{ID: "no-agg", Authority: auth},
 	}
-	err := r.checkBacklogAuthority()
+	err = r.checkBacklogAuthority()
 	if err == nil {
 		t.Fatal("expected error when the task has no canonical aggregate")
 	}

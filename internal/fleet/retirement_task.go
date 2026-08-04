@@ -59,40 +59,68 @@ func taskRetireOperationID(taskID string, generation taskauthority.Generation) s
 }
 
 // retireTaskAuthoritatively commits the retired phase transition through the
-// composed Task Authority (Task 7.7). RequireVerifiedDelivery is derived from
-// the task meta's delivery identity: an identity-bearing task is only
-// retired-eligible with provider-verified merged/delivered evidence in its
-// authoritative state (the calling flow's safety checks already verified the
-// eligibility gates); a task without a delivery identity retires under the
-// baseline prerequisite (exact generation, not already retired). The
-// Operation identity is stable per task generation, so a retry after a
-// committed receipt replays it idempotently. Production callers always
-// supply the Authority; nil fails closed.
-func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *taskauthority.Authority) (taskauthority.Result, error) {
+// composed canonical Task Authority (Task 7.7). It is exact-generation and
+// idempotent: the request carries the expected Generation/Revision
+// precondition read from the current aggregate, and the Operation identity is
+// stable per task generation, so a retry after a committed receipt observes
+// the already-retired generation and resumes cleanup without re-committing
+// (a reopened generation retires under its own identity). The verified-
+// delivery prerequisite is derived from the task meta's delivery identity: an
+// identity-bearing task is only retired-eligible with provider-verified
+// merged evidence in its delivery projection (the calling flow's safety
+// checks verified the provider evidence and recorded delivery_state=merged
+// via the merge flow or the merged-poll MarkMerged path); a task without a
+// delivery identity retires under the baseline prerequisite (exact
+// generation, not already retired). Production callers always supply the
+// canonical Authority; nil fails closed.
+func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *taskauthority.Canonical) (taskauthority.Outcome, error) {
 	if authority == nil {
-		return taskauthority.Result{}, fmt.Errorf("retirement requires a composed task authority")
+		return taskauthority.Outcome{}, fmt.Errorf("retirement requires a composed task authority")
 	}
-	agg, err := authority.Get(opts.ID)
+	taskID, err := domain.NewTaskID(opts.ID)
 	if err != nil {
-		return taskauthority.Result{}, fmt.Errorf("resolving task generation: %w", err)
+		return taskauthority.Outcome{}, fmt.Errorf("resolving task identity: %w", err)
 	}
-	requireVerifiedDelivery := false
-	if ident, err := domain.IdentityFromMeta(meta); err == nil && ident != nil {
-		requireVerifiedDelivery = true
+	agg, err := authority.Get(taskID)
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("resolving task generation: %w", err)
 	}
-	return authority.Retire(taskauthority.RetireRequest{
-		OperationID:             taskRetireOperationID(opts.ID, agg.Generation),
-		Actor:                   deliveryActor(opts.HomeDir),
-		TaskID:                  opts.ID,
-		ExpectedGeneration:      agg.Generation,
-		RequireVerifiedDelivery: requireVerifiedDelivery,
-		Reason:                  "retirement",
-	})
+	// A retry after a committed receipt observes the retired generation: the
+	// canonical receipt replays the original outcome, so the committed state
+	// is reported (Replayed=true) and cleanup resumes without re-committing.
+	if agg.Phase == taskauthority.PhaseRetired {
+		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil
+	}
+	// An identity-bearing task is only retired-eligible with provider-verified
+	// merged evidence in its delivery projection; otherwise the operation fails
+	// closed with a typed precondition error (mirrors the deleted legacy
+	// RequireVerifiedDelivery gate, now enforced at the caller against the
+	// delivery_state projection).
+	if ident, identErr := domain.IdentityFromMeta(meta); identErr == nil && ident != nil {
+		if meta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
+			return taskauthority.Outcome{}, fmt.Errorf("task %s has no provider-verified merged evidence (delivery_state=%q); retirement requires delivery_state=merged", opts.ID, meta[domain.MetaDeliveryState])
+		}
+	}
+	req := taskauthority.CanonicalRetireRequest{
+		HomeID:       authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       "retirement",
+	}
+	opID, err := domain.NewOperationID(taskRetireOperationID(opts.ID, agg.Generation))
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("retirement operation identity: %w", err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("retirement operation: %w", err)
+	}
+	return authority.Retire(op, req)
 }
 
 // Run fails closed because teardown requires a task-bound endpoint capability.
 // Production callers must compose that capability through RunWithBackend.
-func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Authority) (*TeardownResult, error) {
+func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
@@ -140,14 +168,16 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
-	// The authoritative retirement transition commits via the composed Task
-	// Authority BEFORE saga-side cleanup (Task 7.7): the durable receipt pins
-	// the retired phase + typed audit, and cleanup runs strictly after it and
-	// never re-runs merge/reconciliation. A retry after a committed receipt
-	// replays the receipt idempotently and resumes cleanup. An identity-bearing
-	// task is only retired-eligible with provider-verified merged/delivered
-	// evidence in its authoritative state; otherwise the operation fails
-	// closed with a typed precondition error. nil fails closed.
+	// The authoritative retirement transition commits via the composed
+	// canonical Task Authority BEFORE saga-side cleanup (Task 7.7): the
+	// durable receipt pins the retired phase + preserved retirement evidence,
+	// and cleanup runs strictly after it and never re-runs
+	// merge/reconciliation. A retry after a committed receipt observes the
+	// retired generation (Replayed outcome) and resumes cleanup without
+	// re-committing. An identity-bearing task is only retired-eligible with
+	// provider-verified merged evidence in its delivery projection; otherwise
+	// the operation fails closed with a typed precondition error. nil fails
+	// closed.
 	committed, err := retireTaskAuthoritatively(opts, meta, authority)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)

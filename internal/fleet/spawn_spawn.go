@@ -37,13 +37,15 @@ type Args struct {
 	Reopen              bool                       // allow spawning a done/blocked/already-live task
 	ArmFunc             func(homeDir string) error // injectable arm function; nil = no auto-arm
 	NoMistakesPreflight func(repoPath string) error
-	// Authority is the composed Task Authority targeting the exact home the
-	// Runner resolves (the CLI composition root supplies it from
-	// Ctx.TaskAuthority(); tests inject an in-memory-backed Authority). It is
-	// required for the worktree binding cutover (Task 4.1): bindWorktree
-	// fails closed when it is nil. Construction stays side-effect free; no
-	// package global carries it.
-	Authority *taskauthority.Authority
+	// Authority is the composed canonical Task Authority targeting the exact
+	// home the Runner resolves (the CLI composition root supplies it from
+	// Ctx.TaskAuthority(); tests inject a canonical home-backed Authority). It
+	// owns the canonical spawn preconditions — readiness, the generation-
+	// scoped worktree/endpoint bindings, and the durable Dispatch Holds that
+	// gate the spawn action. It is required for the worktree binding cutover
+	// (Task 4.1): bindWorktree fails closed when it is nil. Construction stays
+	// side-effect free; no package global carries it.
+	Authority *taskauthority.Canonical
 }
 
 // Run executes the full spawn orchestration sequence by delegating to Runner.
