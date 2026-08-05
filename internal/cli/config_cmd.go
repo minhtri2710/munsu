@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
@@ -19,10 +21,13 @@ func newConfigCmd() *cobra.Command {
 		Short: "Read, write, and view munsu configuration",
 		Long: `Read, write, and view munsu configuration.
 
-Configuration values are stored as files under $MUNSU_HOME/config/<key>.
-The backend key reports the persisted snapshot Backend (the published config
-snapshot or the fleet base document's typed Backend); other keys report the
-persisted file value.
+Configuration values are stored as files under $MUNSU_HOME/config/<key>,
+except the typed operational keys (backend, default-mode,
+require-no-mistakes), which are authored in the fleet base document
+(config/base.json), the single operational authority. backend reports the
+persisted snapshot Backend (the published config snapshot or the fleet base
+document's typed Backend); the remaining keys report the persisted flat file
+value.
 
 Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 `,
@@ -37,7 +42,8 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 			// base document's typed Backend), never a live env/PATH probe. Report
 			// the persisted snapshot Backend, or a typed missing-input when none is
 			// persisted.
-			if key == "backend" {
+			switch key {
+			case "backend":
 				resolved, err := fleet.ResolveGeneralHomeBackend(ctx.Home)
 				if err != nil || resolved == "" {
 					return usageError("missing_input", "Set backend in the fleet base config and rerun `munsu config get backend`", "no persisted backend identity is available")
@@ -47,6 +53,24 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 					Kind:          "message",
 					Status:        "success",
 					Data:          MessageResult{Message: resolved},
+				})
+			case "default-mode", "require-no-mistakes":
+				// The fleet base document is the single operational authority for
+				// the delivery-mode contract; report the persisted typed value.
+				// A known-unset key reports empty success (the flat known-unset
+				// contract); a malformed document fails closed.
+				val, ok, err := readBaseConfigField(ctx.Home, key)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return nil
+				}
+				return writeContract(cmd, Response[MessageResult]{
+					SchemaVersion: SchemaVersion,
+					Kind:          "message",
+					Status:        "success",
+					Data:          MessageResult{Message: val},
 				})
 			}
 			val, err := config.Get(ctx.Home, key)
@@ -106,6 +130,25 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 				if err := harness.ValidateModelAllowlist(value); err != nil {
 					return fmt.Errorf("config set %s: %w", key, err)
 				}
+			case "default-mode":
+				if err := fleet.ValidateDeliveryMode(value); err != nil {
+					return fmt.Errorf("config set default-mode: %w", err)
+				}
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.DefaultMode = value })
+			case "require-no-mistakes":
+				parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+				if err != nil {
+					return fmt.Errorf("config set require-no-mistakes: want true or false, got %q", value)
+				}
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) {
+					v := parsed
+					b.Config.RequireNoMistakes = &v
+				})
+			case "backend":
+				if strings.TrimSpace(value) == "" {
+					return fmt.Errorf("config set backend: backend identity must not be empty")
+				}
+				return setBaseConfigField(ctx.Home, func(b *config.FleetBaseDocument) { b.Config.Backend = value })
 			}
 			return config.Set(ctx.Home, key, value)
 		}),
@@ -137,6 +180,54 @@ func setCaptainProfileInBase(homeDir string, prof config.CaptainProfile) error {
 		return fmt.Errorf("config set captain-harness: writing fleet base captainProfile: %w", err)
 	}
 	return nil
+}
+
+// setBaseConfigField applies one typed Config overlay field to the fleet base
+// document (config/base.json), creating the document when absent and
+// preserving all other fields. The base document is the single operational
+// authority for the typed config surface; a malformed/invalid existing
+// document fails closed (no self-repair).
+func setBaseConfigField(homeDir string, mutate func(*config.FleetBaseDocument)) error {
+	baseDoc, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		if _, statErr := os.Stat(filepath.Join(homeDir, config.BaseDocumentPath)); statErr == nil {
+			return fmt.Errorf("loading fleet base document: %w", err)
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+		baseDoc = config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
+	}
+	mutate(&baseDoc)
+	if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
+		return fmt.Errorf("writing fleet base document: %w", err)
+	}
+	return nil
+}
+
+// readBaseConfigField reads one typed fleet base config field (default-mode,
+// require-no-mistakes, backend). ok is false when the field is unset or the
+// base document is absent (known-unset); a malformed/invalid document fails
+// closed.
+func readBaseConfigField(homeDir, key string) (val string, ok bool, err error) {
+	base, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	switch key {
+	case "default-mode":
+		return base.Config.DefaultMode, base.Config.DefaultMode != "", nil
+	case "require-no-mistakes":
+		if base.Config.RequireNoMistakes == nil {
+			return "", false, nil
+		}
+		return strconv.FormatBool(*base.Config.RequireNoMistakes), true, nil
+	case "backend":
+		return base.Config.Backend, base.Config.Backend != "", nil
+	}
+	return "", false, nil
 }
 
 func newConfigShowCmd() *cobra.Command {
@@ -172,6 +263,27 @@ func showConfig(homeDir string) string {
 	b.WriteString(fmt.Sprintf("%-30s %s\n", "home", homeDir))
 
 	for _, key := range config.KnownKeys {
+		// Typed operational keys live in the fleet base document (or the
+		// published snapshot for backend), the single operational authority;
+		// the legacy flat files are debris and are never read.
+		switch key {
+		case "backend":
+			val, err := fleet.ResolveGeneralHomeBackend(homeDir)
+			if err != nil || val == "" {
+				b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))
+			} else {
+				b.WriteString(fmt.Sprintf("%-30s %s (typed config)\n", key, val))
+			}
+			continue
+		case "default-mode", "require-no-mistakes":
+			val, ok, err := readBaseConfigField(homeDir, key)
+			if err != nil || !ok {
+				b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))
+			} else {
+				b.WriteString(fmt.Sprintf("%-30s %s (typed config)\n", key, val))
+			}
+			continue
+		}
 		val, err := config.Get(homeDir, key)
 		if err != nil {
 			b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))

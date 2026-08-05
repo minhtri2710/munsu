@@ -227,13 +227,17 @@ func TestConfigGetAllKnownKeys(t *testing.T) {
 	}
 }
 
-// TestConfigGetReadsPersistedValue verifies config get reports the value
-// persisted in the home config file (persisted-truth behavior).
+// TestConfigGetReadsPersistedValue verifies config get reports the typed
+// fleet base value for the delivery-mode contract keys (persisted-truth
+// behavior: the base document is the single operational authority).
 func TestConfigGetReadsPersistedValue(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	if err := config.Set(tmpDir, "default-mode", "aggressive"); err != nil {
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{DefaultMode: "direct-PR"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,7 +253,7 @@ func TestConfigGetReadsPersistedValue(t *testing.T) {
 	}
 
 	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
-	if got != "aggressive" {
-		t.Errorf("config get default-mode = %q, want %q", got, "aggressive")
+	if got != "direct-PR" {
+		t.Errorf("config get default-mode = %q, want %q", got, "direct-PR")
 	}
 }

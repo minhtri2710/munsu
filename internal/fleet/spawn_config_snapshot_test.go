@@ -262,6 +262,38 @@ func TestResolveSpawnProjectConfigFailsClosedWithTypedRemediation(t *testing.T) 
 	}
 }
 
+// TestYoloDoesNotRelaxRequireNoMistakes pins the accepted +yolo contract:
+// yolo is a Fleet lifecycle flag (pre-flight tangle bypass) and never lowers
+// the typed require-no-mistakes gate, which resolves solely from the fleet
+// base document and project overlay.
+func TestYoloDoesNotRelaxRequireNoMistakes(t *testing.T) {
+	home := t.TempDir()
+	if _, err := homepkg.Init(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleetconfig.StoreFleetBase(home, fleetconfig.FleetBaseDocument{
+		SchemaVersion: fleetconfig.FleetBaseSchemaVersion,
+		Config: fleetconfig.ProjectOverlay{
+			SoldierHarness:    "pi",
+			RequireNoMistakes: &[]bool{true}[0],
+			Backend:           "tmux",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(home, "alpha", filepath.Join(home, "projects", "alpha"), "", true); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := ResolveProjectSnapshot(home, "alpha", fleetconfig.BoundaryOverrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snap.Config().RequireNoMistakes {
+		t.Fatalf("resolved requireNoMistakes = false for a +yolo project, want true (yolo must not relax the typed gate)")
+	}
+}
+
 func TestResolveSpawnProjectConfigConsumesRequireNoMistakes(t *testing.T) {
 	// Base default mode unset + requireNoMistakes=true, no no-mistakes binary
 	// on PATH → resolution must refuse fallback (not silently direct-PR).

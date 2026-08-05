@@ -120,9 +120,9 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", len(base.Config.DispatchProfiles))})
 	}
 
-	// 4b. Check require-no-mistakes config
-	requireNoMistakesPath := filepath.Join(home, "config", "require-no-mistakes")
-	if _, err := os.Stat(requireNoMistakesPath); err == nil {
+	// 4b. Check require-no-mistakes from the typed fleet base document (the
+	// single operational authority; the legacy flat file is never read).
+	if baseErr == nil && base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "REQUIRE_NO_MISTAKES", Value: "strict"})
 	}
 

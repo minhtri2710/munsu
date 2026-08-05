@@ -226,3 +226,228 @@ func TestConfigSetCaptainHarnessMalformedBaseFailsClosed(t *testing.T) {
 		t.Fatalf("error = %v, want fleet base document failure", err)
 	}
 }
+
+func runConfigSet(t *testing.T, args ...string) error {
+	t.Helper()
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs(args)
+	return root.Execute()
+}
+
+// TestConfigSetDefaultModeAuthorsFleetBase verifies `config set default-mode`
+// authors the typed DefaultMode into the fleet base document (the single
+// operational authority) and writes no flat config file.
+func TestConfigSetDefaultModeAuthorsFleetBase(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	if err := runConfigSet(t, "config", "set", "default-mode", "direct-PR"); err != nil {
+		t.Fatalf("config set default-mode: %v", err)
+	}
+
+	base, err := config.LoadFleetBase(tmpDir)
+	if err != nil {
+		t.Fatalf("loading fleet base after set: %v", err)
+	}
+	if base.Config.DefaultMode != "direct-PR" {
+		t.Fatalf("base defaultMode = %q, want direct-PR", base.Config.DefaultMode)
+	}
+	if _, err := config.Get(tmpDir, "default-mode"); err == nil {
+		t.Fatal("flat config/default-mode must not be written")
+	}
+}
+
+// TestConfigSetRequireNoMistakesAuthorsFleetBase verifies `config set
+// require-no-mistakes true` actually turns on the typed gate in the fleet base
+// document (fail-closed behavior is preserved) with no flat file echo.
+func TestConfigSetRequireNoMistakesAuthorsFleetBase(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	if err := runConfigSet(t, "config", "set", "require-no-mistakes", "true"); err != nil {
+		t.Fatalf("config set require-no-mistakes: %v", err)
+	}
+
+	base, err := config.LoadFleetBase(tmpDir)
+	if err != nil {
+		t.Fatalf("loading fleet base after set: %v", err)
+	}
+	if base.Config.RequireNoMistakes == nil || !*base.Config.RequireNoMistakes {
+		t.Fatalf("base requireNoMistakes = %v, want true", base.Config.RequireNoMistakes)
+	}
+	if _, err := config.Get(tmpDir, "require-no-mistakes"); err == nil {
+		t.Fatal("flat config/require-no-mistakes must not be written")
+	}
+}
+
+// TestConfigSetBackendAuthorsFleetBase verifies `config set backend` authors
+// the typed Backend into the fleet base document and `config get backend`
+// reports it (the persisted snapshot identity).
+func TestConfigSetBackendAuthorsFleetBase(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+
+	if err := runConfigSet(t, "config", "set", "backend", "tmux"); err != nil {
+		t.Fatalf("config set backend: %v", err)
+	}
+
+	base, err := config.LoadFleetBase(tmpDir)
+	if err != nil {
+		t.Fatalf("loading fleet base after set: %v", err)
+	}
+	if base.Config.Backend != "tmux" {
+		t.Fatalf("base backend = %q, want tmux", base.Config.Backend)
+	}
+	if _, err := config.Get(tmpDir, "backend"); err == nil {
+		t.Fatal("flat config/backend must not be written")
+	}
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"config", "get", "backend"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("config get backend: %v", err)
+	}
+	if got := extractConfigValueFromTOON(strings.TrimSpace(buf.String())); got != "tmux" {
+		t.Errorf("config get backend = %q, want tmux", got)
+	}
+}
+
+// TestConfigSetTypedKeysPreserveExistingBaseFields verifies authored base
+// fields survive a typed-key set (no clobbering).
+func TestConfigSetTypedKeysPreserveExistingBaseFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config: config.ProjectOverlay{
+			Backend:           "herdr",
+			RequireNoMistakes: &[]bool{true}[0],
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runConfigSet(t, "config", "set", "default-mode", "direct-PR"); err != nil {
+		t.Fatalf("config set default-mode: %v", err)
+	}
+
+	base, err := config.LoadFleetBase(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.Config.Backend != "herdr" {
+		t.Fatalf("backend lost after set: %+v", base.Config)
+	}
+	if base.Config.RequireNoMistakes == nil || !*base.Config.RequireNoMistakes {
+		t.Fatalf("requireNoMistakes lost after set: %+v", base.Config)
+	}
+	if base.Config.DefaultMode != "direct-PR" {
+		t.Fatalf("defaultMode = %q, want direct-PR", base.Config.DefaultMode)
+	}
+}
+
+// TestConfigSetTypedKeysValidateInput verifies typed-key set validates its
+// input: invalid delivery mode, non-boolean require-no-mistakes, and empty
+// backend identity are rejected.
+func TestConfigSetTypedKeysValidateInput(t *testing.T) {
+	cases := []struct {
+		key   string
+		value string
+	}{
+		{"default-mode", "aggressive"},
+		{"require-no-mistakes", "maybe"},
+		{"backend", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", tmpDir)
+			if err := runConfigSet(t, "config", "set", tc.key, tc.value); err == nil {
+				t.Fatalf("config set %s %q: expected validation error", tc.key, tc.value)
+			}
+		})
+	}
+}
+
+// TestConfigSetTypedKeyMalformedBaseFailsClosed verifies a malformed existing
+// base.json is never self-repaired by a typed-key set.
+func TestConfigSetTypedKeyMalformedBaseFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmpDir)
+	if err := os.MkdirAll(filepath.Join(tmpDir, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, config.BaseDocumentPath), []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runConfigSet(t, "config", "set", "backend", "tmux"); err == nil {
+		t.Fatal("expected failure for malformed base.json")
+	}
+}
+
+// TestConfigGetTypedKeysKnownUnset verifies config get default-mode and
+// require-no-mistakes report empty success on a fresh home (known-unset),
+// matching the flat known-unset contract.
+func TestConfigGetTypedKeysKnownUnset(t *testing.T) {
+	for _, key := range []string{"default-mode", "require-no-mistakes"} {
+		t.Run(key, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", tmpDir)
+
+			root := NewRootCommand()
+			buf := new(bytes.Buffer)
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs([]string{"config", "get", key})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("config get %s known-unset: expected success, got error: %v", key, err)
+			}
+			if got := strings.TrimSpace(buf.String()); got != "" {
+				t.Errorf("config get %s known-unset: expected empty output, got %q", key, got)
+			}
+		})
+	}
+}
+
+// TestConfigGetRequireNoMistakesReportsTypedValue verifies config get
+// require-no-mistakes reports the persisted typed value, including an
+// explicitly authored false.
+func TestConfigGetRequireNoMistakesReportsTypedValue(t *testing.T) {
+	for _, tc := range []struct {
+		set  bool
+		want string
+	}{
+		{true, "true"},
+		{false, "false"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("MUNSU_HOME", tmpDir)
+			if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+				SchemaVersion: config.FleetBaseSchemaVersion,
+				Config:        config.ProjectOverlay{RequireNoMistakes: &tc.set},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			root := NewRootCommand()
+			buf := new(bytes.Buffer)
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs([]string{"config", "get", "require-no-mistakes"})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("config get require-no-mistakes: %v", err)
+			}
+			if got := extractConfigValueFromTOON(strings.TrimSpace(buf.String())); got != tc.want {
+				t.Errorf("config get require-no-mistakes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

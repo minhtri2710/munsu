@@ -355,10 +355,10 @@ func boolPtr(v bool) *bool {
 	return &v
 }
 
-// TestRegistryFileFormat proves that List round-trips every registry field from
-// the canonical Fleet Registry, including the +yolo flag expressed as
-// requireNoMistakes=false. Legacy projects.md parsing is covered by the
-// ParseEntry/FormatEntry round-trip tests above.
+// TestRegistryFileFormat proves that List round-trips every registry field
+// from the canonical Fleet Registry, including the +yolo lifecycle flag.
+// Legacy projects.md parsing is covered by the ParseEntry/FormatEntry
+// round-trip tests above.
 func TestRegistryFileFormat(t *testing.T) {
 	tmp := t.TempDir()
 

@@ -2,12 +2,14 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -344,9 +346,18 @@ func checkWorktreeState(homeDir string) StatusEntry {
 }
 
 func checkPipelineReadiness(homeDir string) StatusEntry {
-	// Check if require-no-mistakes config is set
-	requireNoMistakesPath := filepath.Join(homeDir, "config", "require-no-mistakes")
-	if _, err := os.Stat(requireNoMistakesPath); err == nil {
+	// require-no-mistakes is a typed fleet base document field; the legacy flat
+	// config file is never read. A malformed document is surfaced (fail
+	// closed) rather than silently reported as direct-PR.
+	base, err := config.LoadFleetBase(homeDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return StatusEntry{
+			Subsystem: "pipeline_readiness",
+			Status:    StatusStale,
+			Detail:    fmt.Sprintf("cannot read fleet base config: %v", err),
+		}
+	}
+	if err == nil && base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes {
 		if _, err := exec.LookPath("no-mistakes"); err != nil {
 			return StatusEntry{
 				Subsystem: "pipeline_readiness",

@@ -185,10 +185,14 @@ resuming retirement only after a completed canonical delivery outcome.`,
 					return err
 				}
 				fmt.Print(result.Render())
-				if result.Status == taskauthority.DeliveryOutcomeCompleted {
-					if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
-						return &LifecyclePartialError{TaskID: id, State: "delivered", Cause: perr}
-					}
+				// Every non-completed outcome is a non-zero exit for script
+				// chaining; the rendered partial-state report is printed first so
+				// retryable/partial/remote-unknown detail stays visible.
+				if result.IsError() {
+					return fmt.Errorf("pr-merge %s: delivery did not complete (status %s)", id, result.Status)
+				}
+				if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
+					return &LifecyclePartialError{TaskID: id, State: "delivered", Cause: perr}
 				}
 				return nil
 			}
