@@ -1,6 +1,7 @@
 package taskauthority
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -457,5 +458,203 @@ func TestCanonicalLaunchOperationReceiptsSurviveReopen(t *testing.T) {
 	}
 	if agg.Phase != PhaseWorking || agg.Launch == nil || agg.AcquiredEndpoint == nil || agg.LaunchEvidence == nil {
 		t.Fatalf("recovered launch state = %+v", agg)
+	}
+}
+
+// TestCanonicalDeliveryAuthorizationAndOutcomeSurviveReopen proves the
+// committed delivery authorization, the committed outcome, and the operation
+// receipts survive a real Home reopen: a fresh Canonical over the reopened
+// home re-reads the same records and replays the original committed outcomes
+// idempotently.
+func TestCanonicalDeliveryAuthorizationAndOutcomeSurviveReopen(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+
+	authReq := authorizeRequest(c, "t1", preconditionOf(1, 3))
+	authOp := mustOperation(t, "op-auth-persist", authReq)
+	authRes, err := c.AuthorizeDelivery(authOp, authReq)
+	if err != nil {
+		t.Fatalf("AuthorizeDelivery: %v", err)
+	}
+
+	outReq := CanonicalDeliveryOutcomeRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 4),
+		AuthorizationOperationID: authRes.Authorization.OperationID,
+		Status:                   DeliveryOutcomeCompleted,
+		Detail:                   "merged and verified",
+		MergedSHA:                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+	}
+	outOp := mustOperation(t, "op-outcome-persist", outReq)
+	outRes, err := c.CommitDeliveryOutcome(outOp, outReq)
+	if err != nil {
+		t.Fatalf("CommitDeliveryOutcome: %v", err)
+	}
+
+	// Reopen the home and re-read canonical state through a fresh Canonical.
+	h2, err := home.Open(root)
+	if err != nil {
+		t.Fatalf("home.Open: %v", err)
+	}
+	c2, err := NewCanonical(h2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	auth, err := c2.DeliveryAuthorization(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("DeliveryAuthorization after reopen: %v", err)
+	}
+	if auth.OperationID != authRes.Authorization.OperationID || auth.Revision != 4 || auth.Identity != deliveryIdentity() {
+		t.Fatalf("reopened authorization = %+v, want the committed record", auth)
+	}
+	if auth.BindingDigest != authRes.Authorization.BindingDigest || auth.HoldsDigest != authRes.Authorization.HoldsDigest {
+		t.Fatalf("reopened digests changed: %+v", auth)
+	}
+
+	out, err := c2.DeliveryOutcome(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("DeliveryOutcome after reopen: %v", err)
+	}
+	if out.OperationID != outRes.Outcome.OperationID || out.Status != DeliveryOutcomeCompleted || out.MergedSHA != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
+		t.Fatalf("reopened outcome = %+v", out)
+	}
+
+	// The operation receipts replay the original outcomes after reopen, and
+	// the currency read reports the consumed authorization truthfully: the
+	// committed outcome advanced the revision, so the authorization is no
+	// longer current (revision-mismatch).
+	replayed, err := c2.AuthorizeDelivery(authOp, authReq)
+	if err != nil {
+		t.Fatalf("authorization replay after reopen: %v", err)
+	}
+	if !replayed.Replayed || replayed.Authorization.OperationID != authRes.Authorization.OperationID {
+		t.Fatalf("authorization replay after reopen = %+v", replayed)
+	}
+
+	outReplayed, err := c2.CommitDeliveryOutcome(outOp, outReq)
+	if err != nil {
+		t.Fatalf("outcome replay after reopen: %v", err)
+	}
+	if !outReplayed.Replayed || outReplayed.Outcome.OperationID != outRes.Outcome.OperationID {
+		t.Fatalf("outcome replay after reopen = %+v", outReplayed)
+	}
+
+	cur2, err := c2.DeliveryCurrency(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur2.Valid || !hasCurrencyReason(cur2, DeliveryCurrencyRevision) {
+		t.Fatalf("currency after outcome = %+v, want revision-mismatch", cur2)
+	}
+}
+
+// TestCanonicalDeliveryRevocationEvidenceSurvivesReopen proves the revocation
+// evidence bound to a prior authorization survives a Home reopen and the
+// prior record stays identified by its operation identity.
+func TestCanonicalDeliveryRevocationEvidenceSurvivesReopen(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+
+	auth1 := mustAuthorize(t, c, "t1", 3, "op-auth-persist-revoke")
+	revokeReq := CanonicalRevokeDeliveryRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 4),
+		AuthorizationOperationID: auth1.OperationID,
+		Reason:                   "abandoned before execution",
+	}
+	revokeOp := mustOperation(t, "op-revoke-persist", revokeReq)
+	if _, err := c.RevokeDeliveryAuthorization(revokeOp, revokeReq); err != nil {
+		t.Fatalf("RevokeDeliveryAuthorization: %v", err)
+	}
+
+	h2, err := home.Open(root)
+	if err != nil {
+		t.Fatalf("home.Open: %v", err)
+	}
+	c2, err := NewCanonical(h2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := c2.DeliveryAuthorizationByOperation(mustTaskID(t, "t1"), auth1.OperationID)
+	if err != nil {
+		t.Fatalf("identified authorization after reopen: %v", err)
+	}
+	if prior.OperationID != auth1.OperationID || prior.Revision != 4 {
+		t.Fatalf("reopened issuance evidence = %+v", prior)
+	}
+	// The immutable revocation evidence survives and stays identified by its
+	// exact operation identity, bound to the revoked authorization.
+	revocation, err := c2.DeliveryRevocationByOperation(mustTaskID(t, "t1"), "op-revoke-persist")
+	if err != nil {
+		t.Fatalf("identified revocation after reopen: %v", err)
+	}
+	if revocation.AuthorizationOperationID != auth1.OperationID || revocation.OperationID != "op-revoke-persist" || revocation.Reason != "abandoned before execution" {
+		t.Fatalf("reopened revocation evidence = %+v", revocation)
+	}
+	replayed, err := c2.RevokeDeliveryAuthorization(revokeOp, revokeReq)
+	if err != nil {
+		t.Fatalf("revoke replay after reopen: %v", err)
+	}
+	if !replayed.Replayed || replayed.Revocation.OperationID != "op-revoke-persist" || replayed.Revocation.AuthorizationOperationID != auth1.OperationID {
+		t.Fatalf("revoke replay after reopen = %+v", replayed)
+	}
+}
+
+// TestCanonicalDeliveryCurrencyReadSurvivesReopen proves the narrow currency
+// read is a pure read across a Home reopen: no receipt is created and the
+// recomputed facts are identical.
+func TestCanonicalDeliveryCurrencyReadSurvivesReopen(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+	mustAuthorize(t, c, "t1", 3, "op-auth-currency-persist")
+
+	h2, err := home.Open(root)
+	if err != nil {
+		t.Fatalf("home.Open: %v", err)
+	}
+	c2, err := NewCanonical(h2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, err := c2.DeliveryCurrency(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cur.Valid || cur.Revision != 4 || cur.HoldsDigest == "" || cur.BindingDigest == "" {
+		t.Fatalf("reopened currency = %+v", cur)
+	}
+	if cur.Authorization == nil || cur.Authorization.Revision != 4 {
+		t.Fatalf("reopened currency authorization = %+v", cur.Authorization)
+	}
+
+	// Currency read creates no receipt and never mutates the bounded index.
+	idxBefore, ok, err := readDocForTest(h2, deliveryCurrentKey("t1"))
+	if err != nil || !ok {
+		t.Fatalf("read index before: ok=%v err=%v", ok, err)
+	}
+	if _, err := c2.DeliveryCurrency(mustTaskID(t, "t1")); err != nil {
+		t.Fatal(err)
+	}
+	idxAfter, ok, err := readDocForTest(h2, deliveryCurrentKey("t1"))
+	if err != nil || !ok {
+		t.Fatalf("read index after: ok=%v err=%v", ok, err)
+	}
+	if !bytes.Equal(idxBefore, idxAfter) {
+		t.Fatalf("currency read mutated the delivery index")
+	}
+}
+
+// TestCanonicalDeliveryWrongHomeFailsClosed proves delivery operations bind to
+// the canonical home identity and reject requests targeting another home.
+func TestCanonicalDeliveryWrongHomeFailsClosed(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+	otherHome, err := domain.NewHomeID("other-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := authorizeRequest(c, "t1", preconditionOf(1, 3))
+	req.HomeID = otherHome
+	if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-wrong-home", req), req); !errors.Is(err, ErrConflict) {
+		t.Fatalf("authorize with wrong home = %v, want ErrConflict", err)
 	}
 }
