@@ -1,7 +1,7 @@
 # Task Authority Deep-Module Implementation Plan
 
 * **Date:** 2026-08-01
-* **Status:** Implementation in progress; Checkpoint 3 complete
+* **Status:** Superseded by the [owner-clean cutover program](2026-08-03-owner-clean-cutover-program.md) (ADR-0008); retained as history. The taskauthorityfs Store adapter and v1→v2 migration this plan built were deleted by the owner-clean reset.
 * **Source:** [ADR-0007](../adr/0007-task-authority-deep-module-and-transactional-store.md)
 * **Related:** [ADR-0002](../adr/0002-deep-module-clean-break-and-durable-lifecycle.md), [ADR-0004](../adr/0004-authoritative-task-lifecycle-delivery-and-projections.md), [ADR-0005](../adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md), [ADR-0006](../adr/0006-state-migration-build-provenance-and-compatibility-gates.md), [incident remediation master plan](2026-07-30-incident-remediation-master-plan.md)
 * **Delivery mode:** no-mistakes; test-first; vertical slices; no dual mutation authority

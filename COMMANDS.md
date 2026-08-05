@@ -61,7 +61,7 @@ The recommended workflow for running a soldier task end-to-end:
    Mark the item complete in the backlog (separate operator step after teardown).
 
 > **Note:** Add tasks queued, then use `backlog start <id>` after readiness checks; the backlog links brief → spawn → teardown → closure.
-> `task add` registers runtime meta only and bypasses the lifecycle chain.
+> `task add` creates the canonical task directly without a backlog row, so it stays outside the backlog → spawn → teardown chain; use `backlog add` to register the task in the backlog.
 
 See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 

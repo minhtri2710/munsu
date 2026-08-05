@@ -56,9 +56,10 @@ those criteria plus the ADR-0008 invariants.
   Start/Block/Unblock/Complete/Reopen/Readiness/AddHold/ReleaseHold/ListHolds) backed by
   `internal/home` durable mechanics and typed `domain` identities/operations/preconditions.
   `TaskAuthoritySchema` hard-cut to `munsu.task-authority/v1` (ADR-0008 §11); legacy
-  `taskauthorityfs`/`storecontract` aligned to the same v1 contract and staged for deletion
-  in #417. Re-review PASS on `de48a6ea`; full suite green after integration. Legacy CLI
-  wiring and `taskauthorityfs` deletion deferred to #416/#417.
+  `taskauthorityfs`/`storecontract` were aligned to the same v1 contract and deleted in the
+  final owner-clean hard cut (this closeout), along with `internal/configmigration` and the
+  `munsu migrate task-authority`/`migrate config` commands. Re-review PASS on `de48a6ea`;
+  full suite green after integration. Issues #416–#418 remain unstarted.
 - Mirror parity repair (pre-existing) — resolved, integrated `49841760`.
 
 ## Staffing / integration policy
