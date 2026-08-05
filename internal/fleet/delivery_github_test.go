@@ -90,62 +90,73 @@ func TestGhAxiClient_CaptureIdentity_NonGithubURL(t *testing.T) {
 	}
 }
 
-// --- ViewPRState tests ---
+// --- ObservePR / gh-axi api observation tests ---
 
-func TestParseGhAxiState_Merged(t *testing.T) {
-	output := `pull_request:
-  number: 24
-  title: "test title"
-  state: merged
-  author: testuser
+func TestParseGhAxiKeyValues(t *testing.T) {
+	output := `state: closed
+headSha: 6b52a27d68fdf6034cc2defc79420882440e87ef
+mergedSha: 38a1a401bfa3b272ee4ee99e7cef7920461d9e10
+merged: true
 `
-	state := parseGhAxiState(output)
-	if state != "MERGED" {
-		t.Errorf("expected MERGED, got %q", state)
+	values := parseGhAxiKeyValues(output)
+	if values["state"] != "closed" {
+		t.Errorf("state = %q, want closed", values["state"])
+	}
+	if values["headSha"] != "6b52a27d68fdf6034cc2defc79420882440e87ef" {
+		t.Errorf("headSha = %q", values["headSha"])
+	}
+	if values["mergedSha"] != "38a1a401bfa3b272ee4ee99e7cef7920461d9e10" {
+		t.Errorf("mergedSha = %q", values["mergedSha"])
+	}
+	if values["merged"] != "true" {
+		t.Errorf("merged = %q, want true", values["merged"])
 	}
 }
 
-func TestParseGhAxiState_Open(t *testing.T) {
-	output := `pull_request:
-  number: 42
-  title: "test"
-  state: open
-  author: testuser
-`
-	state := parseGhAxiState(output)
-	if state != "OPEN" {
-		t.Errorf("expected OPEN, got %q", state)
+// observePRFromOutput exercises the REST classification directly through the
+// production classifier.
+func observePRFromOutput(output string) (DeliveryProviderObservation, error) {
+	return classifyGitHubObservation(parseGhAxiKeyValues(output))
+}
+
+func TestObservePR_ClassifiesMergedByEvidence(t *testing.T) {
+	// REST reports merged PRs as state=closed with merged=true and a
+	// non-empty merge_commit_sha.
+	obs, err := observePRFromOutput("state: closed\nheadSha: abc\nmergedSha: def\nmerged: true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.State != "MERGED" {
+		t.Errorf("state = %q, want MERGED", obs.State)
+	}
+	if obs.HeadSHA != "abc" || obs.MergedSHA != "def" {
+		t.Errorf("obs = %+v", obs)
 	}
 }
 
-func TestParseGhAxiState_Closed(t *testing.T) {
-	output := `pull_request:
-  number: 99
-  title: "closed pr"
-  state: closed
-  author: testuser
-`
-	state := parseGhAxiState(output)
-	if state != "CLOSED" {
-		t.Errorf("expected CLOSED, got %q", state)
+func TestObservePR_ClassifiesOpen(t *testing.T) {
+	obs, err := observePRFromOutput("state: open\nheadSha: abc\nmergedSha: \nmerged: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.State != "OPEN" {
+		t.Errorf("state = %q, want OPEN", obs.State)
 	}
 }
 
-func TestParseGhAxiState_EmptyOutput(t *testing.T) {
-	state := parseGhAxiState("")
-	if state != "" {
-		t.Errorf("expected empty state, got %q", state)
+func TestObservePR_ClassifiesClosedUnmerged(t *testing.T) {
+	obs, err := observePRFromOutput("state: closed\nheadSha: abc\nmergedSha: \nmerged: false\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.State != "CLOSED" {
+		t.Errorf("state = %q, want CLOSED", obs.State)
 	}
 }
 
-func TestParseGhAxiState_NoStateField(t *testing.T) {
-	output := `pull_request:
-  number: 1
-  title: "no state"
-`
-	state := parseGhAxiState(output)
-	if state != "" {
-		t.Errorf("expected empty state, got %q", state)
+func TestObservePR_EmptyOutputFailsClosed(t *testing.T) {
+	if _, err := observePRFromOutput(""); err == nil {
+		t.Fatal("expected error for empty output")
 	}
 }
 

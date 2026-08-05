@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -333,8 +334,10 @@ func ValidateCheckWithLstat(path string) error {
 //  2. Query provider merge status via QueryDeliveryMergeStatus.
 //  3. Require Merged == true, nonempty provider head, provider-head == stored HeadSHA.
 //  4. Persist the pending retirement record BEFORE publication.
-//  5. Route the delivery_state=merged transition through the composed
-//     canonical Task Authority via MarkMerged (Task 7.6; no raw CAS remains).
+//  5. Derive merged truth from the canonical committed delivery outcome:
+//     a committed completed outcome is required; the .meta delivery_state
+//     projection never authorizes merged truth and no parallel delivery
+//     state is written here.
 //  6. Durably publish one deterministic keyed status line.
 //  7. Remove the exact poll artifact (with digest revalidation).
 //  8. Remove the pending retirement record.
@@ -420,15 +423,14 @@ func RetireMergedPoll(homeDir, taskID, checkPath string, auth *taskauthority.Can
 		return fmt.Errorf("persisting retirement record: %w", err)
 	}
 
-	// Step 5: Route the delivery_state=merged transition through the composed
-	// canonical Task Authority (Task 7.6): the verified merge evidence
-	// (identity/head) drives the merged outcome and the delivery_state
-	// projection. This ensures teardown accepts without --force after external
-	// merge. Fail-closed: if the transition fails, the retirement record stays
-	// pending and the next cycle retries via recovery. The publication and poll
-	// removal below do NOT proceed until meta is consistent.
-	if err := MarkMerged(homeDir, taskID, ident, auth); err != nil {
-		return fmt.Errorf("delivery_state merged transition failed (pending record exists): %w", err)
+	// Step 5: Derive merged truth from the canonical committed delivery
+	// outcome. A committed completed outcome is required before publication
+	// and poll removal; the .meta delivery_state projection never authorizes
+	// merged truth and no parallel delivery state is written here. Fail
+	// closed: if the canonical outcome is missing or not completed, the
+	// retirement record stays pending and the poll is preserved.
+	if err := requireCanonicalCompletedOutcome(auth, taskID); err != nil {
+		return fmt.Errorf("canonical merged truth required (pending record exists): %w", err)
 	}
 
 	// Step 6: Durable publication. Only appends if exact evidence is absent.
@@ -518,19 +520,29 @@ func requireRetirementIdentity(homeDir, id string) (*domain.DeliveryIdentity, er
 	return ident, nil
 }
 
-// recordToIdentity builds a DeliveryIdentity from a PollRetirementRecord for
-// use in the recovery path's MarkMerged call.
-func recordToIdentity(rec *PollRetirementRecord) *domain.DeliveryIdentity {
-	return &domain.DeliveryIdentity{
-		Provider: rec.Provider,
-		Owner:    rec.Owner,
-		Repo:     rec.Repo,
-		Number:   rec.Number,
-		URL:      rec.URL,
-		BaseRef:  rec.BaseRef,
-		HeadRef:  rec.HeadRef,
-		HeadSHA:  rec.HeadSHA,
+// requireCanonicalCompletedOutcome fails closed unless the task's canonical
+// committed delivery outcome is completed. It is the single merged-truth
+// derivation for poll retirement: no .meta delivery_state projection
+// authorizes merged truth.
+func requireCanonicalCompletedOutcome(auth *taskauthority.Canonical, taskID string) error {
+	if auth == nil {
+		return fmt.Errorf("canonical merged truth requires a composed task authority")
 	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return err
+	}
+	out, err := auth.DeliveryOutcome(tid)
+	if err != nil {
+		if errors.Is(err, taskauthority.ErrNotFound) {
+			return fmt.Errorf("task %s has no canonical delivery outcome; a committed completed outcome is required", taskID)
+		}
+		return fmt.Errorf("resolving canonical delivery outcome: %w", err)
+	}
+	if out.Status != taskauthority.DeliveryOutcomeCompleted {
+		return fmt.Errorf("task %s canonical delivery outcome is %q; a committed completed outcome is required", taskID, out.Status)
+	}
+	return nil
 }
 
 // RecoverPendingRetirement completes a crashed retirement sequence for one
@@ -581,14 +593,13 @@ func RecoverPendingRetirement(homeDir, taskID string, auth *taskauthority.Canoni
 			return false, fmt.Errorf("stale retirement: current head SHA=%q, record head SHA=%q", currentHead, rec.HeadSHA)
 		}
 
-		// Route the delivery_state=merged transition through the composed
-		// canonical Task Authority (Task 7.6). This heals orphaned retirement
-		// records and is idempotent (no-op if already merged). Fail-closed:
-		// preserves record and poll for the next recovery cycle.
-		if currentMeta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-			if err := MarkMerged(homeDir, taskID, recordToIdentity(rec), auth); err != nil {
-				return false, fmt.Errorf("recovery: delivery_state merged transition failed: %w", err)
-			}
+		// Derive merged truth from the canonical committed delivery outcome:
+		// a committed completed outcome is required before any poll artifact
+		// is removed. The .meta delivery_state projection never authorizes
+		// merged truth and no parallel delivery state is written here.
+		// Fail-closed: preserves record and poll for the next recovery cycle.
+		if err := requireCanonicalCompletedOutcome(auth, taskID); err != nil {
+			return false, fmt.Errorf("recovery: canonical merged truth required: %w", err)
 		}
 	}
 

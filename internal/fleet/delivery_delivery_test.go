@@ -82,26 +82,6 @@ func TestGitDefaultBranch_NoRemote(t *testing.T) {
 	}
 }
 
-func TestHasRemote(t *testing.T) {
-	tmp := t.TempDir()
-	initGitRepo(t, tmp, "")
-
-	if hasRemote(tmp) {
-		t.Error("expected no remotes for fresh repo")
-	}
-
-	// Add a remote
-	cmd := exec.Command("git", "remote", "add", "origin", "https://github.com/test/test.git")
-	cmd.Dir = tmp
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git remote add: %s", out)
-	}
-
-	if !hasRemote(tmp) {
-		t.Error("expected remote to be detected")
-	}
-}
-
 func TestCheckDefaultBranchStale_NoRemote(t *testing.T) {
 	tmp := t.TempDir()
 	initGitRepo(t, tmp, "")
@@ -176,13 +156,6 @@ func TestGitDiffSummary_WithDiff(t *testing.T) {
 	}
 	if !strings.Contains(summary, "Insertions") {
 		t.Errorf("expected summary to mention Insertions, got: %s", summary)
-	}
-}
-
-func TestMergeLocal_NoWorktree(t *testing.T) {
-	err := MergeLocal(t.TempDir(), "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
 	}
 }
 

@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 // Observation must expose one coherent authoritative state and never report
@@ -18,14 +18,14 @@ type fixedProbe struct{ alive bool }
 
 func (p fixedProbe) Probe(string, map[string]string) (bool, error) { return p.alive, nil }
 
-// setupObservationHome seeds a home with a canonical v2 Task Authority record
-// (via the filesystem Store, so the canonical read finds it), meta, and (for
-// working states) an in-flight backlog line. The legacy v1 aggregate fixtures
-// were re-expressed through the Authority at Task 7.8: observation reads the
-// canonical record as state truth and the meta/status projections as display.
+// setupObservationHome seeds a canonical home with a task authority record
+// (via the real Home-backed canonical Task Authority), meta, and (for
+// working states) an in-flight backlog line. Observation reads the canonical
+// record as state truth and the meta/status projections as display.
 func setupObservationHome(t *testing.T, homeDir, state string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0700); err != nil {
+	h, err := home.Init(homeDir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0700); err != nil {
@@ -34,40 +34,38 @@ func setupObservationHome(t *testing.T, homeDir, state string) {
 	if err := home.WriteMeta(homeDir, "task", map[string]string{"window": "w1:p1", "backend": "tmux"}); err != nil {
 		t.Fatal(err)
 	}
-	store, err := taskauthorityfs.NewStore(homeDir)
+	c, err := taskauthority.NewCanonical(h)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := taskauthority.New(store)
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID: "task", Owner: "owner", Description: "work", Kind: "ship",
-		Reason: "test",
-	}); err != nil {
+	taskID, err := domain.NewTaskID("task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := taskauthority.CanonicalCreateRequest{
+		HomeID: c.HomeID(), TaskID: taskID, Owner: "owner", Description: "work",
+		Kind: "ship", Reason: "test",
+	}
+	if _, err := c.Create(mustFleetOperation(t, "op-create-task", create), create); err != nil {
+		t.Fatal(err)
+	}
+	start := taskauthority.CanonicalStartRequest{
+		HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(1, 1), Reason: "spawned",
+	}
+	if _, err := c.Start(mustFleetOperation(t, "op-start-task", start), start); err != nil {
 		t.Fatal(err)
 	}
 	if state == "working" {
-		if _, err := auth.Start(taskauthority.StartRequest{
-			OperationID: "op-start-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-			TaskID: "task", ExpectedGeneration: 1, Reason: "spawned",
-		}); err != nil {
-			t.Fatal(err)
-		}
 		if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("# Backlog\n\n- [-] task: in flight\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	if _, err := auth.Start(taskauthority.StartRequest{
-		OperationID: "op-start-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID: "task", ExpectedGeneration: 1, Reason: "spawned",
-	}); err != nil {
-		t.Fatal(err)
+	complete := taskauthority.CanonicalCompleteRequest{
+		HomeID: c.HomeID(), TaskID: taskID, Precondition: domain.Of(1, 2),
+		To: taskauthority.PhaseDone, Reason: "done",
 	}
-	if _, err := auth.Complete(taskauthority.CompleteRequest{
-		OperationID: "op-complete-task", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID: "task", ExpectedGeneration: 1, To: taskauthority.PhaseDone, Reason: "done",
-	}); err != nil {
+	if _, err := c.Complete(mustFleetOperation(t, "op-complete-task", complete), complete); err != nil {
 		t.Fatal(err)
 	}
 }

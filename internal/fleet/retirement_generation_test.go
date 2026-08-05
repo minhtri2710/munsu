@@ -99,6 +99,136 @@ func seedEndpointEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, h
 	}
 }
 
+// mergeTestAuth seeds one canonical ship task with bound worktree and
+// endpoint evidence (working) and returns the canonical Authority. It is the
+// canonical replacement for the deleted in-memory merge test authority; the
+// worktree binding path is <homeDir>/worktree so backend tests that write
+// that path into meta exercise the evidence-pinned return.
+func mergeTestAuth(t *testing.T, homeDir, taskID string) *taskauthority.Canonical {
+	t.Helper()
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktree")
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
+	return auth
+}
+
+// seedMergedDelivery seeds a canonical completed provider-merge delivery
+// outcome: bound worktree/endpoint (working), a provider-merge delivery
+// authorization, and a committed completed outcome under the task's own
+// identity. It is the canonical merged truth the retirement path requires;
+// no .meta delivery_state projection is involved.
+func seedMergedDelivery(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string) {
+	t.Helper()
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-merged", "fence-wt-merged")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-merged", "fence-ep-merged")
+
+	ident := deliveryFixtureIdentity()
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Kind:         taskauthority.DeliveryAuthorizationProviderMerge,
+		Identity:     ident,
+		Preconditions: []taskauthority.DeliveryPrecondition{
+			taskauthority.DeliveryPreconditionPRMergeable,
+			taskauthority.DeliveryPreconditionPRHeadCurrent,
+		},
+	}
+	if _, err := auth.AuthorizeDelivery(mustFleetOperation(t, "op-del-auth-"+taskID, authReq), authReq); err != nil {
+		t.Fatalf("AuthorizeDelivery(%s): %v", taskID, err)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outReq := taskauthority.CanonicalDeliveryOutcomeRequest{
+		HomeID:                   auth.HomeID(),
+		TaskID:                   mustTaskID(t, taskID),
+		Precondition:             domain.Of(uint64(agg2.Generation), uint64(agg2.Revision)),
+		AuthorizationOperationID: "op-del-auth-" + taskID,
+		Status:                   taskauthority.DeliveryOutcomeCompleted,
+		Detail:                   "provider confirms merged",
+		HeadSHA:                  ident.HeadSHA,
+		MergedSHA:                strings.Repeat("b", 40),
+	}
+	if _, err := auth.CommitDeliveryOutcome(mustFleetOperation(t, "op-del-out-"+taskID, outReq), outReq); err != nil {
+		t.Fatalf("CommitDeliveryOutcome(%s): %v", taskID, err)
+	}
+}
+
+// deliveryFixtureIdentity is the canonical delivery identity whose head
+// matches the seeded worktree binding head.
+func deliveryFixtureIdentity() domain.DeliveryIdentity {
+	return domain.DeliveryIdentity{
+		Provider:   "github",
+		Owner:      "testowner",
+		Repo:       "testrepo",
+		Number:     42,
+		URL:        "https://github.com/testowner/testrepo/pull/42",
+		BaseRef:    "main",
+		HeadRef:    "feature",
+		HeadSHA:    strings.Repeat("a", 40),
+		CapturedAt: "2024-01-01T00:00:00Z",
+	}
+}
+
+// seedCanonicalOutcome seeds a canonical delivery outcome of the given
+// status under the task's own identity (bind worktree + endpoint, authorize,
+// commit outcome). It returns the canonical authority.
+func seedCanonicalOutcome(t *testing.T, homeDir, taskID string, status taskauthority.DeliveryOutcomeStatus) *taskauthority.Canonical {
+	t.Helper()
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-out", "fence-wt-out")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-out", "fence-ep-out")
+
+	ident := deliveryFixtureIdentity()
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Kind:         taskauthority.DeliveryAuthorizationProviderMerge,
+		Identity:     ident,
+		Preconditions: []taskauthority.DeliveryPrecondition{
+			taskauthority.DeliveryPreconditionPRMergeable,
+			taskauthority.DeliveryPreconditionPRHeadCurrent,
+		},
+	}
+	if _, err := auth.AuthorizeDelivery(mustFleetOperation(t, "op-del-auth-out-"+taskID, authReq), authReq); err != nil {
+		t.Fatalf("AuthorizeDelivery(%s): %v", taskID, err)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outReq := taskauthority.CanonicalDeliveryOutcomeRequest{
+		HomeID:                   auth.HomeID(),
+		TaskID:                   mustTaskID(t, taskID),
+		Precondition:             domain.Of(uint64(agg2.Generation), uint64(agg2.Revision)),
+		AuthorizationOperationID: "op-del-auth-out-" + taskID,
+		Status:                   status,
+		Detail:                   "canonical outcome fixture",
+		HeadSHA:                  ident.HeadSHA,
+	}
+	if _, err := auth.CommitDeliveryOutcome(mustFleetOperation(t, "op-del-out-out-"+taskID, outReq), outReq); err != nil {
+		t.Fatalf("CommitDeliveryOutcome(%s): %v", taskID, err)
+	}
+	return auth
+}
+
 // writeRetireMeta writes a minimal task meta projection (no delivery
 // identity, so the baseline retirement prerequisite applies).
 func writeRetireMeta(t *testing.T, homeDir, taskID, window, worktree string) {
@@ -107,34 +237,6 @@ func writeRetireMeta(t *testing.T, homeDir, taskID, window, worktree string) {
 		"kind":    "ship",
 		"backend": "tmux",
 		"window":  window,
-	}
-	if worktree != "" {
-		meta["worktree"] = worktree
-	}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// writeMergedRetireMeta writes a merged ship meta projection with a full
-// delivery identity so the verified-delivery retirement prerequisite applies.
-func writeMergedRetireMeta(t *testing.T, homeDir, taskID, window, worktree string) {
-	t.Helper()
-	meta := map[string]string{
-		"kind":                 "ship",
-		"backend":              "tmux",
-		"window":               window,
-		"delivery_state":       string(domain.DeliveryStateMerged),
-		"pr_provider":          "github",
-		"pr_owner":             "testowner",
-		"pr_repo":              "testrepo",
-		"pr_number":            "42",
-		"pr_url":               "https://github.com/testowner/testrepo/pull/42",
-		"pr_base_ref":          "main",
-		"pr_head_ref":          "feature",
-		"pr_head_sha":          strings.Repeat("a", 40),
-		"pr_timestamp":         "2024-01-01T00:00:00Z",
-		"pr_identity_revision": "1",
 	}
 	if worktree != "" {
 		meta["worktree"] = worktree
@@ -355,15 +457,15 @@ func TestRetirementCleanupFailurePreservesCanonicalEvidenceAndMergedTruth(t *tes
 	homeDir := t.TempDir()
 	taskID := "evidence-preserved"
 	auth := canonicalMergeTestAuth(t, homeDir, taskID)
-	wtDir := filepath.Join(homeDir, "worktrees", taskID)
-	os.MkdirAll(wtDir, 0755)
-	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
-	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
-	writeMergedRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	// The identity-bearing retirement prerequisite is the canonical completed
+	// delivery outcome (#414 B hard cut), not the .meta delivery_state
+	// projection; seedMergedDelivery also binds the worktree/endpoint.
+	seedMergedDelivery(t, auth, homeDir, taskID)
+	writeRetireMeta(t, homeDir, taskID, "@1", filepath.Join(homeDir, "worktrees", taskID))
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 
 	// First attempt fails at the worktree return; the canonical evidence and
-	// the merged truth projection must both survive.
+	// the canonical completed delivery outcome must both survive.
 	first := &recordingTeardown{alive: true, returnErr: errors.New("pool full")}
 	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err == nil {
 		t.Fatal("expected pending cleanup")
@@ -375,12 +477,9 @@ func TestRetirementCleanupFailurePreservesCanonicalEvidenceAndMergedTruth(t *tes
 	if agg.Retirement == nil || agg.Retirement.Endpoint == nil || agg.Retirement.Worktree == nil {
 		t.Fatalf("canonical evidence lost on cleanup failure: %+v", agg.Retirement)
 	}
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-		t.Fatalf("merged truth lost on cleanup failure: delivery_state=%q", meta[domain.MetaDeliveryState])
+	outcome, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
+	if err != nil || outcome.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("canonical completed delivery outcome lost on cleanup failure: %v %+v", err, outcome)
 	}
 
 	// Retry completes the cleanup; the canonical retirement evidence must

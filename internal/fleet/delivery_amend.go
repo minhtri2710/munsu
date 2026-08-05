@@ -3,18 +3,23 @@ package fleet
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// DeliveryState represents the lifecycle state of a
+// This file retains the read-only delivery vocabulary and provider snapshot
+// helpers. The amendment mutation lifecycle was removed with the legacy
+// delivery path (Packet #414 B); delivery execution now runs exclusively
+// through the journaled Deliver operation. No delivery mutation semantics
+// remain here.
+
+// DeliveryState represents the lifecycle state of a delivery projection.
+// The projection is display-only; canonical delivery truth lives in the
+// Task Authority delivery authorization/outcome evidence.
 type DeliveryState string
 
 const (
@@ -28,14 +33,13 @@ const (
 	// the same mutation attempt must never be repeated. Operator attention required.
 	DeliveryStateRemoteUnknown DeliveryState = "remote-unknown"
 	// DeliveryStateDelivered: parent-verified delivery complete.
-	// Set by PrepareDelivery after verifying provider identity, immutable head,
-	// and terminal green required checks. This is the terminal lifecycle state.
 	DeliveryStateDelivered DeliveryState = "delivered"
 )
 
 // ProviderSnapshot captures a single point-in-time view of a PR/MR from the
-// provider. It is the single-query seam used by both amendment verification
-// and reconciliation, eliminating races between separate capture/status queries.
+// provider. It is the read-only snapshot seam used by the retained helper
+// reads; the journaled delivery path uses the typed DeliveryProvider
+// observation instead.
 type ProviderSnapshot struct {
 	Provider   string `json:"provider"`
 	Owner      string `json:"owner"`
@@ -62,19 +66,22 @@ type AmendRecord struct {
 	Reason           string `json:"reason"` // e.g. "amendment", "reconciliation"
 }
 
-// Meta field keys for amendment lifecycle.
+// Meta field keys for the delivery lifecycle projection.
 const (
 	MetaDeliveryState     = "delivery_state"
 	MetaIdentityRevision  = "pr_identity_revision"
 	MetaAmendExpectedHead = "amend_expected_head"
 	MetaAmendStartedAt    = "amend_started_at"
 	MetaAmendHistory      = "amendment_history"
+	// MetaLegacyMergeAuth is the legacy .meta projection key of the
+	// retired merge authorization record. The canonical read path treats a
+	// meta-only value as legacy evidence that never authorizes delivery.
+	MetaLegacyMergeAuth = "merge_authorization"
 )
 
 // FetchProviderSnapshot queries the provider for a point-in-time snapshot of a
-// PR/MR. This is the single-query seam that replaces separate CaptureIdentity
-// and QueryDeliveryMergeStatus calls, eliminating race conditions.
-// Fail-closed on provider absence or ambiguous state.
+// PR/MR through the typed provider clients. Read-only; fail-closed on
+// provider absence or ambiguous state.
 var FetchProviderSnapshot = fetchProviderSnapshotImpl
 
 func fetchProviderSnapshotImpl(prURL string) (*ProviderSnapshot, error) {
@@ -215,344 +222,7 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 	return snap, nil
 }
 
-// --- Amendment lifecycle ---
-
-// BeginAmendment transitions a delivery from review-ready to amending. The
-// amendment context is an authoritative generation-bound record (Task 7.4):
-// it routes through the composed Task Authority, and the amending intent is
-// a post-commit projection (delivery_state=amending plus the amendment
-// fields, Task 7.6). A projection failure warns and never rolls back the
-// authoritative commit; an authority error fails closed.
-//
-// Returns the updated meta on success. Fail-closed if state is not review-ready
-// or if the stored identity is incomplete.
-func BeginAmendment(homeDir, taskID string, auth *taskauthority.Authority) (map[string]string, error) {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return nil, fmt.Errorf("begin amendment: reading meta: %w", err)
-	}
-
-	currentState := meta[MetaDeliveryState]
-	if currentState != "" && currentState != string(DeliveryStateReviewReady) {
-		return nil, fmt.Errorf("begin amendment: cannot amend from state %q (expected %q)", currentState, DeliveryStateReviewReady)
-	}
-
-	// Build the stored identity from meta
-	ident, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		return nil, fmt.Errorf("begin amendment: reading delivery identity: %w", err)
-	}
-	if ident == nil {
-		return nil, fmt.Errorf("begin amendment: no delivery identity in meta")
-	}
-	if err := domain.ValidateIdentity(ident); err != nil {
-		return nil, fmt.Errorf("begin amendment: incomplete identity: %w", err)
-	}
-
-	// Route the git authorization context through the composed Authority
-	// (Task 7.4) before the amending projection so a failure leaves the
-	// amendment unstarted.
-	if _, err := StoreGitAuthContext(homeDir, auth, taskID, "amendment"); err != nil {
-		var projErr *AuthorizationProjectionError
-		if errors.As(err, &projErr) {
-			fmt.Fprintf(os.Stderr, "Warning: git authorization context projection failed: %v\n", projErr)
-		} else {
-			return nil, fmt.Errorf("begin amendment: git authorization context: %w", err)
-		}
-	}
-
-	// The delivery_state=amending transition is a post-commit projection of
-	// the authoritative amendment context (Task 7.6); the raw CAS is gone.
-	return projectAmendmentBeginMeta(homeDir, taskID, ident)
-}
-
-// AcceptAmendment transitions from amending to review-ready after verifying
-// the provider snapshot. It verifies:
-//   - The stored identity matches (provider, repo, PR, base, head ref)
-//   - The expected old head equals the currently stored head
-//   - The provider snapshot reports a new head SHA
-//   - The old head is an ancestor of the new head in the retained worktree
-//   - No force-push, rewritten ancestry, or branch replacement
-//
-// The git authorization context clear is an authoritative generation-bound
-// record (Task 7.4): it routes through the composed Task Authority. The
-// amended identity rebinds the generation-bound delivery preparation at the
-// new head (Task 7.5 op: the committed prior prepared head is acknowledged
-// explicitly, never silently reused) and the delivery_state=review-ready
-// transition plus amendment history are reconciled as post-commit
-// projections (Task 7.6); the raw CAS is gone.
-//
-// On success, atomically updates the identity and appends an audit record.
-// Returns the updated identity and audit record.
-func AcceptAmendment(homeDir, taskID, worktreePath string, auth *taskauthority.Authority) (*domain.DeliveryIdentity, *AmendRecord, error) {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("accept amendment: reading meta: %w", err)
-	}
-
-	if meta[MetaDeliveryState] != string(DeliveryStateAmending) {
-		return nil, nil, fmt.Errorf("accept amendment: expected state %q but got %q", DeliveryStateAmending, meta[MetaDeliveryState])
-	}
-
-	expectedHead := meta[MetaAmendExpectedHead]
-	if expectedHead == "" {
-		return nil, nil, fmt.Errorf("accept amendment: no amend_expected_head in meta")
-	}
-
-	// Read stored identity
-	stored, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		return nil, nil, fmt.Errorf("accept amendment: reading stored identity: %w", err)
-	}
-	if stored == nil {
-		return nil, nil, fmt.Errorf("accept amendment: no stored identity")
-	}
-
-	// Verify expected head equals stored head
-	if stored.HeadSHA != expectedHead {
-		return nil, nil, fmt.Errorf("accept amendment: expected head SHA %q does not match stored head %q (stale CAS check)", expectedHead, stored.HeadSHA)
-	}
-
-	// The amendment rebinds the generation-bound delivery preparation: the
-	// authoritative prepared head must equal the amendment expected head
-	// (force-with-lease; a changed head is never silently reused).
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("accept amendment: resolving task generation: %w", err)
-	}
-	if agg.DeliveryPrepare == nil {
-		return nil, nil, fmt.Errorf("accept amendment: no delivery preparation in the authoritative record; run pr-check first")
-	}
-	if agg.DeliveryPrepare.HeadSHA != expectedHead {
-		return nil, nil, fmt.Errorf("accept amendment: authoritative prepared head %q does not match amendment expected head %q", agg.DeliveryPrepare.HeadSHA, expectedHead)
-	}
-
-	// Fetch provider snapshot
-	snap, err := FetchProviderSnapshot(stored.URL)
-	if err != nil {
-		return nil, nil, fmt.Errorf("accept amendment: provider snapshot: %w", err)
-	}
-
-	// Verify same provider, repo, PR, base, head ref
-	if err := verifySnapshotIdentity(stored, snap); err != nil {
-		return nil, nil, fmt.Errorf("accept amendment: %w", err)
-	}
-
-	// Verify provider reports a new head
-	if snap.HeadSHA == "" {
-		return nil, nil, fmt.Errorf("accept amendment: provider returned empty head SHA")
-	}
-	if snap.HeadSHA == stored.HeadSHA {
-		return nil, nil, fmt.Errorf("accept amendment: head SHA unchanged (%s), no amendment needed", stored.HeadSHA)
-	}
-
-	// Verify old head is ancestor of new head (no force-push)
-	if err := verifyAncestry(worktreePath, expectedHead, snap.HeadSHA); err != nil {
-		return nil, nil, fmt.Errorf("accept amendment: ancestry check: %w", err)
-	}
-
-	// Build new identity
-	newIdent := &domain.DeliveryIdentity{
-		Provider:   stored.Provider,
-		Owner:      stored.Owner,
-		Repo:       stored.Repo,
-		Number:     stored.Number,
-		URL:        stored.URL,
-		BaseRef:    snap.BaseRef,
-		HeadRef:    snap.HeadRef,
-		HeadSHA:    snap.HeadSHA,
-		CapturedAt: snap.ObservedAt,
-	}
-
-	// Build audit record
-	record := &AmendRecord{
-		OldHeadSHA:       expectedHead,
-		NewHeadSHA:       snap.HeadSHA,
-		PRIdentity:       fmt.Sprintf("%s/%s/%s#%d", stored.Provider, stored.Owner, stored.Repo, stored.Number),
-		ProviderEvidence: fmt.Sprintf("provider %s state=%s head=%s", snap.Provider, snap.State, snap.HeadSHA),
-		Timestamp:        time.Now().UTC().Format(time.RFC3339),
-		Reason:           "amendment",
-	}
-
-	// Route the git authorization context clear through the composed Authority
-	// (Task 7.4) before the delivery rebind so a failure leaves the amendment
-	// state untouched.
-	if _, err := StoreGitAuthContext(homeDir, auth, taskID, ""); err != nil {
-		var projErr *AuthorizationProjectionError
-		if errors.As(err, &projErr) {
-			fmt.Fprintf(os.Stderr, "Warning: git authorization context projection failed: %v\n", projErr)
-		} else {
-			return nil, nil, fmt.Errorf("accept amendment: git authorization context: %w", err)
-		}
-	}
-
-	// Rebind the generation-bound delivery preparation at the amended head
-	// (Task 7.5 op; the prior prepared head is acknowledged explicitly).
-	if _, err := prepareDeliveryRebind(homeDir, auth, taskID, newIdent); err != nil {
-		return nil, nil, fmt.Errorf("accept amendment: delivery rebind: %w", err)
-	}
-
-	// The delivery_state=review-ready transition plus the amendment history
-	// are reconciled as post-commit projections (Task 7.6); the raw CAS is
-	// gone.
-	if perr := projectAmendResultMeta(homeDir, taskID, newIdent, string(DeliveryStateReviewReady), record); perr != nil {
-		return nil, nil, perr
-	}
-
-	return newIdent, record, nil
-}
-
-// --- Reconciliation ---
-
-// ReconcileIdentity performs provider-aware reconciliation of stale delivery
-// metadata. It queries the provider for the current state and, if the stored
-// head differs, routes the updated identity through the composed Task
-// Authority when the identity is still valid (same provider/repo/PR/base/
-// head-ref) and the old head is an ancestor of the new head.
-//
-// Supports both open and merged PRs. For merged PRs, commits a generation-
-// bound merged merge outcome and projects delivery_state=merged. For open PRs
-// with advanced heads, rebinds the delivery preparation at the new head and
-// projects delivery_state=review-ready. All delivery_state transitions are
-// post-commit projections (Task 7.6); the raw CAS is gone.
-//
-// This is the recovery route for PR #339 and similar cases. It requires only
-// the stored identity and provider access — no manual meta edits or --force.
-func ReconcileIdentity(homeDir, taskID, worktreePath string, auth *taskauthority.Authority) (*domain.DeliveryIdentity, *AmendRecord, error) {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reconcile: reading meta: %w", err)
-	}
-
-	stored, err := domain.IdentityFromMeta(meta)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reconcile: reading stored identity: %w", err)
-	}
-	if stored == nil {
-		return nil, nil, fmt.Errorf("reconcile: no delivery identity in meta")
-	}
-
-	// The reconcile rebinds the generation-bound delivery preparation: the
-	// authoritative prepared head must be acknowledged explicitly (a changed
-	// head is never silently reused). A committed remote-unknown outcome
-	// forbids further provider-mutating attempts (Task 7.6): the reconcile
-	// fails closed and only read reconciliation is permitted.
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reconcile: resolving task generation: %w", err)
-	}
-	if agg.MergeAttempt != nil && agg.MergeAttempt.Outcome == taskauthority.MergeOutcomeRemoteUnknown {
-		return nil, nil, fmt.Errorf("reconcile: remote-unknown merge outcome committed; read reconciliation only (same mutation is never repeated)")
-	}
-	if agg.DeliveryPrepare == nil {
-		return nil, nil, fmt.Errorf("reconcile: no delivery preparation in the authoritative record; run pr-check first")
-	}
-
-	// Fetch provider snapshot
-	snap, err := FetchProviderSnapshot(stored.URL)
-	if err != nil {
-		return nil, nil, fmt.Errorf("reconcile: provider snapshot: %w", err)
-	}
-
-	// Verify same provider, repo, PR, base, head ref
-	if err := verifySnapshotIdentity(stored, snap); err != nil {
-		return nil, nil, fmt.Errorf("reconcile: identity mismatch: %w", err)
-	}
-
-	// If stored and provider heads match, nothing to do
-	if stored.HeadSHA == snap.HeadSHA {
-		return stored, nil, nil
-	}
-
-	// Verify old head is ancestor of new head (rejects force-push)
-	if err := verifyAncestry(worktreePath, stored.HeadSHA, snap.HeadSHA); err != nil {
-		return nil, nil, fmt.Errorf("reconcile: ancestry check: %w", err)
-	}
-
-	// Build new identity
-	newIdent := &domain.DeliveryIdentity{
-		Provider:   stored.Provider,
-		Owner:      stored.Owner,
-		Repo:       stored.Repo,
-		Number:     stored.Number,
-		URL:        stored.URL,
-		BaseRef:    snap.BaseRef,
-		HeadRef:    snap.HeadRef,
-		HeadSHA:    snap.HeadSHA,
-		CapturedAt: snap.ObservedAt,
-	}
-
-	// Determine new delivery state
-	newState := string(DeliveryStateReviewReady)
-	if snap.Merged {
-		newState = string(DeliveryStateMerged)
-	}
-
-	// Build audit record
-	record := &AmendRecord{
-		OldHeadSHA:       stored.HeadSHA,
-		NewHeadSHA:       snap.HeadSHA,
-		PRIdentity:       fmt.Sprintf("%s/%s/%s#%d", stored.Provider, stored.Owner, stored.Repo, stored.Number),
-		ProviderEvidence: fmt.Sprintf("provider %s state=%s head=%s mergedSHA=%s", snap.Provider, snap.State, snap.HeadSHA, snap.MergedSHA),
-		Timestamp:        time.Now().UTC().Format(time.RFC3339),
-		Reason:           "reconciliation",
-	}
-
-	// Route the git authorization context clear through the composed Authority
-	// (Task 7.4) before the delivery rebind so a failure leaves the
-	// reconciliation state untouched.
-	if _, err := StoreGitAuthContext(homeDir, auth, taskID, ""); err != nil {
-		var projErr *AuthorizationProjectionError
-		if errors.As(err, &projErr) {
-			fmt.Fprintf(os.Stderr, "Warning: git authorization context projection failed: %v\n", projErr)
-		} else {
-			return nil, nil, fmt.Errorf("reconcile: git authorization context: %w", err)
-		}
-	}
-
-	// Rebind the generation-bound delivery preparation at the reconciled head
-	// (Task 7.5 op; the prior prepared head is acknowledged explicitly).
-	if _, err := prepareDeliveryRebind(homeDir, auth, taskID, newIdent); err != nil {
-		return nil, nil, fmt.Errorf("reconcile: delivery rebind: %w", err)
-	}
-
-	// For a merged PR, commit the generation-bound merged merge outcome
-	// (Task 7.6): verified merge evidence (identity/head/merged SHA) drives
-	// the merged transition; the raw CAS is gone.
-	if snap.Merged {
-		agg2, err := auth.Get(taskID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("reconcile: resolving task generation: %w", err)
-		}
-		if _, err := auth.RecordMergeAttempt(taskauthority.RecordMergeAttemptRequest{
-			OperationID:        mustDeliveryOperationID("merge-attempt-" + taskID),
-			Actor:              deliveryActor(homeDir),
-			TaskID:             taskID,
-			ExpectedGeneration: agg2.Generation,
-			Outcome:            taskauthority.MergeOutcomeMerged,
-			HeadSHA:            newIdent.HeadSHA,
-			MergedSHA:          snap.MergedSHA,
-			Identity:           snapshotFromIdentity(newIdent),
-			ProviderState:      snap.State,
-			Detail:             "reconciliation: provider confirms merged",
-			Reason:             "delivery reconcile",
-		}); err != nil {
-			return nil, nil, fmt.Errorf("reconcile: merge outcome: %w", err)
-		}
-	}
-
-	// The delivery_state transition plus the amendment history are reconciled
-	// as post-commit projections (Task 7.6); the raw CAS is gone.
-	if perr := projectAmendResultMeta(homeDir, taskID, newIdent, newState, record); perr != nil {
-		return nil, nil, perr
-	}
-
-	return newIdent, record, nil
-}
-
-// --- Helpers ---
-
-// verifySnapshotIdentity checks that the stored identity matches the provider
+// verifySnapshotIdentity checks that a stored identity matches the provider
 // snapshot on all critical fields: provider, owner, repo, number, base ref,
 // and head ref. Branch replacement is rejected.
 func verifySnapshotIdentity(stored *domain.DeliveryIdentity, snap *ProviderSnapshot) error {
@@ -625,8 +295,8 @@ func appendAmendHistory(existing string, record *AmendRecord) string {
 	return string(data)
 }
 
-// incrementRevision increments a revision string. The revision is a non-negative
-// integer. Returns "1" if the input is empty or invalid.
+// incrementRevision increments a revision string. The revision is a
+// non-negative integer. Returns "1" if the input is empty or invalid.
 func incrementRevision(rev string) string {
 	var n int
 	for _, c := range rev {
@@ -637,89 +307,4 @@ func incrementRevision(rev string) string {
 		}
 	}
 	return fmt.Sprintf("%d", n+1)
-}
-
-// prepareDeliveryRebind routes the amended delivery identity rebind through
-// the composed Task Authority (Task 7.5 op): the generation-bound delivery
-// preparation is re-prepared at the amended head, acknowledging the committed
-// prior prepared head (force-with-lease; a changed head is never silently
-// reused). No projection runs here — the amendment caller owns the single
-// delivery_state + identity projection for the whole amendment, so a partial
-// failure leaves the authoritative record retryable (ADR-0007 §7).
-func prepareDeliveryRebind(homeDir string, auth *taskauthority.Authority, taskID string, ident *domain.DeliveryIdentity) (taskauthority.DeliveryResult, error) {
-	if auth == nil {
-		return taskauthority.DeliveryResult{}, fmt.Errorf("amendment delivery rebind requires a composed task authority")
-	}
-	if err := domain.ValidateIdentity(ident); err != nil {
-		return taskauthority.DeliveryResult{}, fmt.Errorf("amendment delivery rebind: invalid identity: %w", err)
-	}
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		return taskauthority.DeliveryResult{}, fmt.Errorf("amendment delivery rebind: resolving task generation: %w", err)
-	}
-	priorHead := ""
-	if agg.DeliveryPrepare != nil {
-		priorHead = agg.DeliveryPrepare.HeadSHA
-	}
-	return auth.PrepareDelivery(taskauthority.PrepareDeliveryRequest{
-		OperationID:        mustDeliveryOperationID("delivery-amend-" + taskID),
-		Actor:              deliveryActor(homeDir),
-		TaskID:             taskID,
-		ExpectedGeneration: agg.Generation,
-		State:              taskauthority.DeliveryPrepareStateReviewReady,
-		HeadSHA:            ident.HeadSHA,
-		Identity:           snapshotFromIdentity(ident),
-		ExpectedPriorHead:  priorHead,
-		Reason:             "delivery amendment",
-	})
-}
-
-// projectAmendmentBeginMeta reconciles the .meta amendment-intent projection
-// after the authoritative amendment context commit (Task 7.6): the
-// delivery_state=amending transition plus the amendment intent fields,
-// mirroring the legacy CAS. A projection failure returns a typed partial
-// error and never rolls back the authoritative commit.
-func projectAmendmentBeginMeta(homeDir, taskID string, ident *domain.DeliveryIdentity) (map[string]string, error) {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	meta[MetaDeliveryState] = string(DeliveryStateAmending)
-	meta[MetaAmendExpectedHead] = ident.HeadSHA
-	meta[MetaAmendStartedAt] = time.Now().UTC().Format(time.RFC3339)
-	meta[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		return nil, &DeliveryProjectionError{TaskID: taskID, ProjectionErr: err}
-	}
-	return meta, nil
-}
-
-// projectAmendResultMeta reconciles the .meta amendment result projection
-// after the authoritative amended delivery rebind and, for a merged PR, the
-// committed merged merge outcome (Task 7.6): the amended identity keys, the
-// delivery_state transition (review-ready or merged), the appended amendment
-// history, and the cleared amendment-intent fields, mirroring the legacy
-// CAS. A projection failure returns a typed partial error and never rolls
-// back the authoritative commit.
-func projectAmendResultMeta(homeDir, taskID string, ident *domain.DeliveryIdentity, newState string, record *AmendRecord) error {
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	for k, v := range ident.ToMeta() {
-		meta[k] = v
-	}
-	meta["pr"] = ident.URL
-	meta["pr_head"] = ident.HeadSHA
-	meta[MetaDeliveryState] = newState
-	meta[MetaAmendExpectedHead] = ""
-	meta[MetaAmendStartedAt] = ""
-	meta[MetaIdentityRevision] = incrementRevision(meta[MetaIdentityRevision])
-	if record != nil {
-		meta[MetaAmendHistory] = appendAmendHistory(meta[MetaAmendHistory], record)
-	}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		return &DeliveryProjectionError{TaskID: taskID, ProjectionErr: err}
-	}
-	return nil
 }

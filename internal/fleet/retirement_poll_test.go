@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
@@ -397,10 +398,11 @@ func installMockMergeStatus(t *testing.T, merged bool, headSHA, mergedSHA string
 }
 
 // retirementPollAuthFor seeds one ship task per ID in a canonical home-backed
-// Authority for the merged poll retirement path (Task 7.6): the
-// delivery_state=merged transition routes through the composed canonical
-// Authority, so the task must exist in the Authority for the generation fence
-// to hold. The home must already be initialized (home.Init) by the caller.
+// Authority for the merged poll retirement path (#414 B hard cut): the poll
+// path derives merged truth from the canonical committed completed delivery
+// outcome, so every task gets a canonical completed outcome under its meta
+// identity head. The home must already be initialized (home.Init) by the
+// caller.
 func retirementPollAuthFor(t *testing.T, homeDir string, taskIDs ...string) *taskauthority.Canonical {
 	t.Helper()
 	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
@@ -409,8 +411,111 @@ func retirementPollAuthFor(t *testing.T, homeDir string, taskIDs ...string) *tas
 	}
 	for _, taskID := range taskIDs {
 		canonicalCreateTask(t, auth, taskID, "ship", "")
+		// Seed the canonical completed outcome only once per task: repeated
+		// recovery cycles reuse the already committed evidence.
+		if out, err := auth.DeliveryOutcome(mustTaskID(t, taskID)); err == nil && out.Status == taskauthority.DeliveryOutcomeCompleted {
+			continue
+		}
+		seedPollCompletedOutcome(t, auth, homeDir, taskID)
 	}
 	return auth
+}
+
+// seedPollCompletedOutcome binds worktree/endpoint and commits a canonical
+// completed provider-merge delivery outcome for the task, under the identity
+// head stored in the task meta projection. Operation IDs carry a random
+// suffix so repeated seeding for the same task never collides.
+func seedPollCompletedOutcome(t *testing.T, auth *taskauthority.Canonical, homeDir, taskID string) {
+	t.Helper()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	meta, err := mhome.ReadMeta(homeDir, taskID)
+	if err != nil {
+		t.Fatalf("ReadMeta(%s): %v", taskID, err)
+	}
+	ident, err := domain.IdentityFromMeta(meta)
+	if err != nil {
+		t.Fatalf("IdentityFromMeta(%s): %v", taskID, err)
+	}
+	if ident == nil {
+		t.Fatalf("task %s has no delivery identity for the canonical outcome fixture", taskID)
+	}
+
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidenceAtHead(t, auth, taskID, wtDir, "lease-wt-poll", "fence-wt-poll", ident.HeadSHA)
+	seedEndpointEvidence(t, auth, taskID, "@test-window", "lease-ep-poll", "fence-ep-poll")
+
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authReq := taskauthority.CanonicalDeliveryAuthorizationRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Kind:         taskauthority.DeliveryAuthorizationProviderMerge,
+		Identity:     *ident,
+		Preconditions: []taskauthority.DeliveryPrecondition{
+			taskauthority.DeliveryPreconditionPRMergeable,
+			taskauthority.DeliveryPreconditionPRHeadCurrent,
+		},
+	}
+	authOpID := "op-poll-auth-" + taskID + "-" + suffix
+	if _, err := auth.AuthorizeDelivery(mustFleetOperation(t, authOpID, authReq), authReq); err != nil {
+		t.Fatalf("AuthorizeDelivery(%s): %v", taskID, err)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outReq := taskauthority.CanonicalDeliveryOutcomeRequest{
+		HomeID:                   auth.HomeID(),
+		TaskID:                   mustTaskID(t, taskID),
+		Precondition:             domain.Of(uint64(agg2.Generation), uint64(agg2.Revision)),
+		AuthorizationOperationID: authOpID,
+		Status:                   taskauthority.DeliveryOutcomeCompleted,
+		Detail:                   "provider confirms merged",
+		HeadSHA:                  ident.HeadSHA,
+		MergedSHA:                "aaaabbbbccccddddeeeeffff0000111122223333",
+	}
+	if _, err := auth.CommitDeliveryOutcome(mustFleetOperation(t, "op-poll-out-"+taskID+"-"+suffix, outReq), outReq); err != nil {
+		t.Fatalf("CommitDeliveryOutcome(%s): %v", taskID, err)
+	}
+}
+
+// seedWorktreeEvidenceAtHead binds a worktree whose head matches the delivery
+// identity head so the canonical authorization gate holds. The operation ID
+// carries a random suffix so repeated seeding for the same task never
+// collides.
+func seedWorktreeEvidenceAtHead(t *testing.T, auth *taskauthority.Canonical, taskID, path, lease, fence, head string) {
+	t.Helper()
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalBindWorktreeRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Binding: taskauthority.WorktreeBinding{
+			RepositoryIdentity: "repo-" + taskID,
+			Path:               path,
+			GitDir:             filepath.Join(path, ".git"),
+			CommonDir:          filepath.Join(filepath.Dir(path), ".git"),
+			Head:               head,
+			LeaseID:            lease,
+			FenceToken:         fence,
+			BoundAtUnix:        time.Now().Unix(),
+		},
+		Reason: "spawn",
+	}
+	op, err := domain.NewOperation(mustOpID(t, fmt.Sprintf("op-bind-wt-poll-%s-%d", taskID, time.Now().UnixNano())), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.BindWorktree(op, req); err != nil {
+		t.Fatalf("BindWorktree(%s): %v", taskID, err)
+	}
 }
 
 // retirementPollAuth seeds one ship task in a canonical home-backed Authority.
@@ -1329,7 +1434,14 @@ func TestRecoverAllPendingRetirements_Empty(t *testing.T) {
 	if _, err := mhome.Init(home); err != nil {
 		t.Fatal(err)
 	}
-	resolved, errs := RecoverAllPendingRetirements(home, retirementPollAuthFor(t, home, "task-one", "task-two"))
+	// No pending records: recovery resolves nothing; the canonical seeding
+	// helper only touches tasks that carry a delivery identity meta.
+	auth, err := taskauthority.NewCanonical(mustHome(t, home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalCreateTask(t, auth, "task-one", "ship", "")
+	resolved, errs := RecoverAllPendingRetirements(home, auth)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -1531,75 +1643,63 @@ func TestValidateCheck_LstatRejectsSymlink(t *testing.T) {
 
 // --- DeliveryState merge transition tests ---
 
-func TestRetireMergedPoll_SetsDeliveryStateMerged(t *testing.T) {
+func TestRetireMergedPoll_RequiresCanonicalCompletedOutcome(t *testing.T) {
+	// A bare task authority without a canonical completed outcome refuses
+	// poll retirement: the poll path derives merged truth from the canonical
+	// committed completed delivery outcome and never writes the .meta
+	// delivery_state projection.
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
 	defer restore()
 
-	if err := RetireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID)); err != nil {
-		t.Fatalf("RetireMergedPoll: %v", err)
+	auth := canonicalMergeTestAuth(t, home, taskID)
+	if err := RetireMergedPoll(home, taskID, checkPath, auth); err == nil || !strings.Contains(err.Error(), "canonical delivery outcome") {
+		t.Fatalf("RetireMergedPoll err = %v, want canonical-outcome refusal", err)
+	}
+	if _, err := os.Stat(checkPath); err != nil {
+		t.Fatalf("poll removed without canonical merged truth: %v", err)
 	}
 
-	// Verify delivery_state is merged in meta.
+	// With the canonical completed outcome seeded, retirement proceeds and
+	// the canonical outcome is the merged truth.
+	seedPollCompletedOutcome(t, auth, home, taskID)
+	if err := RetireMergedPoll(home, taskID, checkPath, auth); err != nil {
+		t.Fatalf("RetireMergedPoll: %v", err)
+	}
+	outcome, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatalf("canonical delivery outcome: %v", err)
+	}
+	if outcome.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("canonical delivery outcome = %q, want completed", outcome.Status)
+	}
+
+	// Verify other meta is preserved and no .meta delivery_state was written.
 	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if meta[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", domain.DeliveryStateMerged, meta[domain.MetaDeliveryState])
-	}
-
-	// Verify other meta is preserved.
 	if meta["kind"] != "ship" {
 		t.Fatal("meta kind should be preserved")
 	}
-}
-
-func TestRetireMergedPoll_SetsDeliveryStateMergedFromReviewReady(t *testing.T) {
-	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
-	defer cleanup()
-	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
-	defer restore()
-
-	// Add delivery_state=review-ready to meta.
-	meta, err := mhome.ReadMeta(home, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	meta[domain.MetaDeliveryState] = string(domain.DeliveryStateReviewReady)
-	if err := mhome.WriteMeta(home, taskID, meta); err != nil {
-		t.Fatalf("WriteMeta: %v", err)
-	}
-
-	if err := RetireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID)); err != nil {
-		t.Fatalf("RetireMergedPoll: %v", err)
-	}
-
-	result, err := mhome.ReadMeta(home, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if result[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", domain.DeliveryStateMerged, result[domain.MetaDeliveryState])
+	if meta[domain.MetaDeliveryState] != "" {
+		t.Fatalf("poll retirement must never write .meta delivery_state; got %q", meta[domain.MetaDeliveryState])
 	}
 }
 
-func TestRecoverPendingRetirement_SetsDeliveryStateMerged(t *testing.T) {
+func TestRecoverPendingRetirement_RequiresCanonicalCompletedOutcome(t *testing.T) {
 	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
 	defer cleanup()
 
-	// Install mock so CAS in recovery also uses it (not needed for CAS, but
-	// for identity consistency). Using the same mock as the main path.
 	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
 	defer restore()
 
-	// Simulate crash after record write but before CAS.
+	// Simulate crash after record write but before publication.
 	digest, err := pollContentDigest(checkPath)
 	if err != nil {
 		t.Fatalf("pollContentDigest: %v", err)
 	}
-
 	rec := &PollRetirementRecord{
 		SchemaVersion:   1,
 		TaskID:          taskID,
@@ -1623,21 +1723,59 @@ func TestRecoverPendingRetirement_SetsDeliveryStateMerged(t *testing.T) {
 		t.Fatalf("WriteRetirementRecord: %v", err)
 	}
 
-	// Recovery should set delivery_state to merged.
-	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
+	// Recovery requires the canonical completed outcome; it never writes the
+	// .meta delivery_state projection.
+	auth := retirementPollAuthFor(t, home, taskID)
+	resolved, err := RecoverPendingRetirement(home, taskID, auth)
 	if err != nil {
 		t.Fatalf("RecoverPendingRetirement: %v", err)
 	}
 	if !resolved {
 		t.Fatal("expected resolved=true")
 	}
-
-	result, err := mhome.ReadMeta(home, taskID)
+	outcome, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
+	if err != nil || outcome.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("canonical delivery outcome = %v %+v, want completed", err, outcome)
+	}
+	meta, err := mhome.ReadMeta(home, taskID)
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
-	if result[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", domain.DeliveryStateMerged, result[domain.MetaDeliveryState])
+	if meta[domain.MetaDeliveryState] != "" {
+		t.Fatalf("recovery must never write .meta delivery_state; got %q", meta[domain.MetaDeliveryState])
+	}
+}
+
+func TestRecoverPendingRetirement_IdempotentWithCanonicalTruth(t *testing.T) {
+	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
+	defer cleanup()
+	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
+	defer restore()
+
+	// Successful full retirement.
+	auth := retirementPollAuthFor(t, home, taskID)
+	if err := RetireMergedPoll(home, taskID, checkPath, auth); err != nil {
+		t.Fatalf("RetireMergedPoll: %v", err)
+	}
+
+	// The canonical outcome is the merged truth.
+	outcome, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
+	if err != nil || outcome.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("canonical delivery outcome = %v %+v, want completed", err, outcome)
+	}
+
+	// Recovery with nothing pending should be idempotent.
+	resolved, err := RecoverPendingRetirement(home, taskID, auth)
+	if err != nil {
+		t.Fatalf("RecoverPendingRetirement: %v", err)
+	}
+	if !resolved {
+		t.Fatal("expected resolved=true")
+	}
+	// The canonical outcome remains completed.
+	outcome2, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
+	if err != nil || outcome2.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("canonical delivery outcome after recovery = %v %+v, want completed", err, outcome2)
 	}
 }
 
@@ -1688,44 +1826,5 @@ func TestRecoverPendingRetirement_PreservesRecordWhenPollDigestChanges(t *testin
 	}
 	if _, err := os.Stat(checkPath); err != nil {
 		t.Fatalf("poll was removed after digest mismatch: %v", err)
-	}
-}
-
-func TestRecoverPendingRetirement_IdempotentDeliveryState(t *testing.T) {
-	home, taskID, checkPath, cleanup := setupMergedPollTest(t, "0000111122223333444455556666777788889999", "main")
-	defer cleanup()
-	restore := installMockMergeStatus(t, true, "0000111122223333444455556666777788889999", "aaaabbbbccccddddeeeeffff0000111122223333")
-	defer restore()
-
-	// Successful full retirement.
-	if err := RetireMergedPoll(home, taskID, checkPath, retirementPollAuth(t, home, taskID)); err != nil {
-		t.Fatalf("RetireMergedPoll: %v", err)
-	}
-
-	// Check delivery_state is merged.
-	result, err := mhome.ReadMeta(home, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if result[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state=%q, got %q", domain.DeliveryStateMerged, result[domain.MetaDeliveryState])
-	}
-
-	// Recovery with nothing pending should be idempotent.
-	resolved, err := RecoverPendingRetirement(home, taskID, retirementPollAuth(t, home, taskID))
-	if err != nil {
-		t.Fatalf("RecoverPendingRetirement: %v", err)
-	}
-	if !resolved {
-		t.Fatal("expected resolved=true")
-	}
-
-	// delivery_state should still be merged.
-	result2, err := mhome.ReadMeta(home, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	if result2[domain.MetaDeliveryState] != string(domain.DeliveryStateMerged) {
-		t.Fatalf("expected delivery_state to remain %q", domain.DeliveryStateMerged)
 	}
 }

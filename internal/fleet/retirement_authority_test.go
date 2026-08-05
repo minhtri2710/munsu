@@ -9,30 +9,33 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// mergedShipFixture seeds one ship task in the retired-eligible authoritative
-// state the fleet retirement path requires (Task 7.7): a canonical Task
-// Authority record plus matching .meta (delivery identity +
-// delivery_state=merged). The canonical cutover removed the legacy
-// merge-attempt aggregate evidence — the verified merged truth is carried by
-// the delivery_state=merged projection — so the fixture seeds the canonical
-// task and the projection, with no merge-attempt record. Returns the canonical
-// Authority that owns the task.
+// mergedShipFixture seeds one ship task in the retired-eligible state the
+// fleet retirement path requires (#414 B hard cut): a canonical Task
+// Authority record with a committed completed delivery outcome (authorize +
+// outcome under the task's own identity) plus matching identity .meta. The
+// .meta delivery_state projection never authorizes merged truth. Returns the
+// canonical Authority that owns the task.
 func mergedShipFixture(t *testing.T, homeDir, taskID string) *taskauthority.Canonical {
 	t.Helper()
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
-	head := "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"
+	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalCreateTask(t, auth, taskID, "ship", "")
+	seedMergedDelivery(t, auth, homeDir, taskID)
+
+	head := strings.Repeat("a", 40)
 	meta := map[string]string{
 		"kind":                 "ship",
 		"backend":              "tmux",
 		"window":               "@1",
-		"delivery_state":       string(DeliveryStateMerged),
 		"pr_provider":          "github",
 		"pr_owner":             "testowner",
 		"pr_repo":              "testrepo",
@@ -47,62 +50,24 @@ func mergedShipFixture(t *testing.T, homeDir, taskID string) *taskauthority.Cano
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatal(err)
 	}
-	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonicalCreateTask(t, auth, taskID, "ship", "")
 	return auth
-}
-
-// mergedShipFixtureWithEndpoint seeds the same merged ship task with the
-// canonical endpoint/worktree lease evidence the saga cleanup must release:
-// a bound worktree (create+bind=revision 2) and a bound endpoint (revision
-// 3), so the authoritative retirement commits at revision 4 preserving both
-// evidence records.
-func mergedShipFixtureWithEndpoint(t *testing.T, homeDir, taskID string) *taskauthority.Canonical {
-	t.Helper()
-	auth := mergedShipFixture(t, homeDir, taskID)
-	wtDir := filepath.Join(homeDir, "worktrees", taskID)
-	os.MkdirAll(wtDir, 0755)
-	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-"+taskID, "fence-wt-"+taskID)
-	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-"+taskID, "fence-ep-"+taskID)
-	return auth
-}
-
-// mergedTruth reads the committed delivery_state=merged projection of one
-// task. The canonical cutover removed the legacy merge-attempt aggregate
-// evidence; the verified merged truth is the delivery_state=merged projection
-// (written by the merge flow / MarkMerged), which survives until the retiring
-// cleanup removes the .meta projection.
-func mergedTruth(t *testing.T, homeDir, taskID string) bool {
-	t.Helper()
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		t.Fatalf("ReadMeta: %v", err)
-	}
-	return meta[domain.MetaDeliveryState] == string(domain.DeliveryStateMerged)
 }
 
 func TestMergeAndRetireNilAuthorityFailsClosed(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-nil-auth"
-	stateDir := filepath.Join(homeDir, "state")
-	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte("kind=scout\nbackend=tmux\nwindow=@1\ndelivery_state=merged\n"), 0644)
 
-	// A missing composed canonical Authority fails closed: the retirement
-	// transition never commits without one.
+	// A missing composed canonical Authority fails closed: no retirement
+	// transition ever commits without one.
 	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, nil)
-	if result == nil || result.TeardownError == nil {
-		t.Fatal("expected teardown error when the authority is nil")
+	if result == nil || !result.IsError() {
+		t.Fatal("expected an error result when the authority is nil")
 	}
-	if !strings.Contains(result.TeardownError.Error(), "composed task authority") {
-		t.Fatalf("error = %v, want composed-authority failure", result.TeardownError)
+	if !strings.Contains(result.MergeDetail, "composed task authority") {
+		t.Fatalf("detail = %v, want composed-authority failure", result.MergeDetail)
 	}
-	metaPath := filepath.Join(stateDir, taskID+".meta")
-	if _, err := os.Stat(metaPath); err != nil {
-		t.Fatalf("meta removed on nil-authority failure: %v", err)
+	if result.TeardownResult != nil {
+		t.Fatal("teardown must not run without an authority")
 	}
 }
 
@@ -115,21 +80,22 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
-	if result.MergeOutcome != MergeOutcomeAlreadyMerged {
-		t.Fatalf("merge outcome = %q, want already-merged (skip)", result.MergeOutcome)
+	if result.MergeOutcome != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("merge outcome = %q, want completed (canonical outcome skip)", result.MergeOutcome)
 	}
 	if result.TeardownError != nil {
 		t.Fatalf("unexpected teardown error: %v", result.TeardownError)
 	}
 
 	// The authoritative retirement transition committed through the canonical
-	// Authority: phase retired at revision 2 (create + retire).
+	// Authority: phase retired (create + bind wt + bind ep + authorize +
+	// outcome + retire).
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 2 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 2", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 6 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 6", agg.Phase, agg.Revision)
 	}
 
 	// Saga-side cleanup removed the task meta.
@@ -142,10 +108,10 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 	}
 }
 
-func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
+func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-cleanup-failure"
-	auth := mergedShipFixtureWithEndpoint(t, homeDir, taskID)
+	auth := mergedShipFixture(t, homeDir, taskID)
 
 	metaPath := filepath.Join(homeDir, "state", taskID+".meta")
 	before, err := os.ReadFile(metaPath)
@@ -171,22 +137,25 @@ func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
 	}
 
 	// The committed retirement stands and the .meta projection is untouched
-	// (cleanup only removes it later): the delivery_state=merged truth is
-	// preserved.
+	// (cleanup only removes it later); the canonical completed delivery
+	// outcome is preserved.
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// create(1) + bind worktree(2) + bind endpoint(3) + retire(4)
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 4 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 4", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 6 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 6", agg.Phase, agg.Revision)
 	}
 	// The exact ownership evidence is preserved durably.
 	if agg.Retirement == nil || agg.Retirement.Endpoint == nil || agg.Retirement.Worktree == nil {
 		t.Fatalf("retirement evidence missing: %+v", agg.Retirement)
 	}
-	if !mergedTruth(t, homeDir, taskID) {
-		t.Fatal("delivery_state=merged truth lost")
+	outcome, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatalf("canonical delivery outcome lost: %v", err)
+	}
+	if outcome.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("canonical delivery outcome = %q, want completed", outcome.Status)
 	}
 	after, err := os.ReadFile(metaPath)
 	if err != nil {
@@ -196,15 +165,15 @@ func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
 		t.Fatalf("retirement transition mutated .meta: before=%q after=%q", before, after)
 	}
 
-	// Retry: merge is never rerun (already-merged skip), the retired phase is
-	// observed (no double transition, revision stays 4), and the cleanup
-	// resumes to completion.
+	// Retry: delivery is never rerun (canonical completed outcome skips),
+	// the retired phase is observed (no double transition, revision stays 6),
+	// and the cleanup resumes to completion.
 	second := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
 		t.Fatal("expected non-nil retry result")
 	}
-	if second.MergeOutcome != MergeOutcomeAlreadyMerged {
-		t.Fatalf("retry reran merge: outcome = %q, want already-merged", second.MergeOutcome)
+	if second.MergeOutcome != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("retry reran delivery: outcome = %q, want completed", second.MergeOutcome)
 	}
 	if second.TeardownError != nil {
 		t.Fatalf("retry teardown error: %v", second.TeardownError)
@@ -213,8 +182,8 @@ func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 4 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 4", agg.Revision)
+	if agg.Revision != 6 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 6", agg.Revision)
 	}
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("retry should complete the cleanup and remove meta")
@@ -252,11 +221,12 @@ func TestMergeAndRetireCrossHomeRetirement(t *testing.T) {
 func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-receipt-resume"
-	auth := mergedShipFixtureWithEndpoint(t, homeDir, taskID)
+	auth := mergedShipFixture(t, homeDir, taskID)
 
 	// Direct teardown path: the canonical Retire op commits first, then the
 	// cleanup fails — the typed partial result carries the committed state and
-	// the partial steps, and the delivery_state=merged truth stays intact.
+	// the partial steps, and the canonical completed delivery outcome stays
+	// intact.
 	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
 	result, err := RetireTask(opts, fakeTeardown{alive: true, disposeErr: errors.New("window busy")}, fakeRetirementJournals{}, auth)
 	if err == nil {
@@ -269,8 +239,9 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected a partial teardown result alongside the typed error")
 	}
-	if !mergedTruth(t, homeDir, taskID) {
-		t.Fatal("delivery_state=merged truth lost on cleanup failure")
+	outcome, err := auth.DeliveryOutcome(mustTaskID(t, taskID))
+	if err != nil || outcome.Status != taskauthority.DeliveryOutcomeCompleted {
+		t.Fatalf("canonical completed delivery outcome lost on cleanup failure: %v %+v", err, outcome)
 	}
 
 	// Resume: the retired phase is observed (same stable Operation identity
@@ -281,7 +252,7 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 		t.Fatalf("resume failed: %v", err)
 	}
 	agg, _ := auth.Get(mustTaskID(t, taskID))
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 4 {
-		t.Fatalf("aggregate after resume = %+v, want retired revision 4", agg)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 6 {
+		t.Fatalf("aggregate after resume = %+v, want retired revision 6", agg)
 	}
 }
