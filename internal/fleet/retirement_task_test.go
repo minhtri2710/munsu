@@ -156,7 +156,7 @@ func TestShipSafetyCheck_CleanWithRemote(t *testing.T) {
 		"kind":                   "ship",
 		"launch_manifest_sha256": md,
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass for clean branch: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestShipSafetyCheck_OnlyKnownLaunchArtifactsDirty(t *testing.T) {
 		"kind":                   "ship",
 		"launch_manifest_sha256": md,
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only known launch artifacts are dirty: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestShipSafetyCheck_UnknownUntrackedFileDirty(t *testing.T) {
 		"kind":                   "ship",
 		"launch_manifest_sha256": md,
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file exists alongside known artifacts")
 	}
@@ -282,7 +282,7 @@ func TestShipSafetyCheck_MixedKnownAndUnknownDirty(t *testing.T) {
 		"kind":                   "ship",
 		"launch_manifest_sha256": md,
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail when unknown untracked file coexists with known artifacts")
 	}
@@ -345,7 +345,7 @@ func TestShipSafetyCheck_OnlyLaunchScriptDirty(t *testing.T) {
 		"kind":                   "ship",
 		"launch_manifest_sha256": md,
 	}
-	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{})
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
 	if err != nil {
 		t.Fatalf("shipSafetyCheck should pass when only launch artifacts are dirty: %v", err)
 	}
@@ -361,14 +361,14 @@ func TestShipSafetyCheck_NoRemoteBranch(t *testing.T) {
 		"worktree": wt,
 		"kind":     "ship",
 	}
-	_, err := shipSafetyCheck(Options{}, meta, fakeTeardown{})
+	_, err := shipSafetyCheck(Options{}, meta, fakeTeardown{}, nil)
 	if err == nil {
 		t.Fatal("shipSafetyCheck should fail without remote")
 	}
 }
 
 func TestShipSafetyCheck_NoWorktreeInMeta(t *testing.T) {
-	_, err := shipSafetyCheck(Options{ID: "test"}, map[string]string{}, fakeTeardown{})
+	_, err := shipSafetyCheck(Options{ID: "test"}, map[string]string{}, fakeTeardown{}, nil)
 	if err == nil {
 		t.Fatal("should fail when no worktree in meta")
 	}

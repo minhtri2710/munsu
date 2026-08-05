@@ -4,13 +4,18 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/testutil"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestFleetSnapshotEmpty(t *testing.T) {
-	home := testutil.TempHome(t)
+	// Snapshot reads canonical Task Authority state, which requires an
+	// initialized canonical v1 home.
+	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatalf("home.Init: %v", err)
+	}
 
-	snap, err := fleet.Snapshot(home)
+	snap, err := fleet.Snapshot(homeDir)
 	if err != nil {
 		t.Fatalf("Snapshot failed: %v", err)
 	}

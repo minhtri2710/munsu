@@ -1,9 +1,9 @@
-// Package delivery implements delivery operations: review-diff, pr-check,
-// pr-merge, merge-local, and no-mistakes pipeline integration.
+// Package delivery implements delivery operations: the journaled Fleet
+// delivery execution path, review-diff, pr status reads, and no-mistakes
+// pipeline integration.
 package fleet
 
 import (
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -13,31 +13,38 @@ import (
 	"github.com/minhtri2710/munsu/internal/domain"
 )
 
-// GitHubClient defines the GitHub operations used by delivery surfaces.
-// All operations go through the consolidated authority path backed by gh-axi.
-// When the GitHub capability is Absent or Failed, callers must fail closed.
+// GitHubClient defines the typed GitHub capability used by the delivery
+// surfaces. Delivery execution (Deliver) uses only MergePR (irreversible
+// mutation) and ObservePR (read-only observation) through the gh-axi
+// capability; the capability must be Ready and no raw gh fallback or
+// alternate execution route exists on the delivery path. Read-only status
+// and identity helpers (ViewPRJSON, ViewIssueState, CaptureIdentity) back
+// the retained provider-neutral seams and route through gh-axi.
 type GitHubClient interface {
-	// MergePR merges a pull request via gh-axi.
+	// MergePR merges a pull request via gh-axi. It is the irreversible
+	// provider mutation of the delivery execution path, called at most once
+	// per delivery journal.
 	MergePR(owner, repo string, number int, method string) error
 
-	// ViewPRState returns the PR state (OPEN, MERGED, CLOSED) via gh-axi.
-	ViewPRState(owner, repo string, number int) (string, error)
+	// ObservePR reads the current provider state of a pull request via
+	// gh-axi, returning the exact observation (OPEN/MERGED/CLOSED plus head
+	// and merged SHAs) needed to reconcile after a mutation.
+	ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error)
 
-	// ViewPRJSON fetches PR metadata as JSON bytes for the requested fields.
-	// Uses gh CLI through the consolidated adapter when gh-axi is Ready.
+	// ViewPRJSON fetches PR metadata as JSON bytes via gh CLI. It backs the
+	// retained provider-neutral read-only status seam; the delivery
+	// execution path never uses it.
 	ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error)
 
-	// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL.
+	// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL
+	// via gh-axi.
 	CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error)
 
-	// ViewIssueState returns the issue state (OPEN, CLOSED) via gh CLI.
+	// ViewIssueState returns the issue state (OPEN, CLOSED) via gh-axi.
 	ViewIssueState(owner, repo string, number int) (string, error)
 }
 
 // ghAxiClient implements GitHubClient backed by gh-axi.
-// When gh-axi is Ready, merge and view operations route through gh-axi.
-// JSON queries fall through to gh CLI via the consolidated adapter path,
-// never at the call site.
 type ghAxiClient struct{}
 
 // compile-time check
@@ -61,7 +68,8 @@ var ghAxiLookPath = func() (string, error) {
 	return exec.LookPath("gh-axi")
 }
 
-// ghCLI is a variable for testing — replaces the gh binary path lookup.
+// ghCLILookPath is a variable for testing — replaces the gh binary path
+// lookup for the retained read-only ViewPRJSON seam.
 var ghCLILookPath = func() (string, error) {
 	return exec.LookPath("gh")
 }
@@ -91,6 +99,31 @@ func defaultGitHubClientImpl() (GitHubClient, error) {
 	return GitHubClientForState(ProbeGitHubCapability())
 }
 
+// githubDeliveryProvider adapts the typed GitHub capability (gh-axi only) to
+// the narrow delivery capability consumed by Deliver.
+type githubDeliveryProvider struct {
+	client GitHubClient
+}
+
+// compile-time check
+var _ DeliveryProvider = (*githubDeliveryProvider)(nil)
+
+// Merge executes the irreversible provider merge under the exact identity.
+func (p *githubDeliveryProvider) Merge(ident domain.DeliveryIdentity, method string) error {
+	if p.client == nil {
+		return fmt.Errorf("GitHub delivery capability is not composed")
+	}
+	return p.client.MergePR(ident.Owner, ident.Repo, ident.Number, method)
+}
+
+// Observe reads the current provider state under the exact identity.
+func (p *githubDeliveryProvider) Observe(ident domain.DeliveryIdentity) (DeliveryProviderObservation, error) {
+	if p.client == nil {
+		return DeliveryProviderObservation{}, fmt.Errorf("GitHub delivery capability is not composed")
+	}
+	return p.client.ObservePR(ident.Owner, ident.Repo, ident.Number)
+}
+
 // MergePR merges a PR via gh-axi CLI. Stdout/stderr pass through to the caller.
 func (c *ghAxiClient) MergePR(owner, repo string, number int, method string) error {
 	ghAxiPath, err := ghAxiLookPath()
@@ -107,51 +140,85 @@ func (c *ghAxiClient) MergePR(owner, repo string, number int, method string) err
 	return cmd.Run()
 }
 
-// ViewPRState returns the PR state (OPEN, MERGED, CLOSED) via gh-axi.
-// Parses the gh-axi structured output for the "state" field.
-func (c *ghAxiClient) ViewPRState(owner, repo string, number int) (string, error) {
+// ghAxiAPI runs one gh-axi api invocation and returns stdout. All typed
+// GitHub observation routes through gh-axi; there is no raw gh fallback.
+func ghAxiAPI(args ...string) ([]byte, error) {
 	ghAxiPath, err := ghAxiLookPath()
 	if err != nil {
-		return "", fmt.Errorf("gh-axi not found on PATH: %w", err)
+		return nil, fmt.Errorf("gh-axi not found on PATH: %w", err)
 	}
-	args := []string{
-		"pr", "view",
-		fmt.Sprintf("%d", number),
-		"--repo", fmt.Sprintf("%s/%s", owner, repo),
-	}
-	out, err := exec.Command(ghAxiPath, args...).Output()
+	cmd := exec.Command(ghAxiPath, append([]string{"api"}, args...)...)
+	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("gh-axi pr view: %s", strings.TrimSpace(string(ee.Stderr)))
+			return nil, fmt.Errorf("gh-axi api: %s", strings.TrimSpace(string(ee.Stderr)))
 		}
-		return "", fmt.Errorf("gh-axi pr view: %w", err)
+		return nil, fmt.Errorf("gh-axi api: %w", err)
 	}
-
-	state := parseGhAxiState(string(out))
-	if state == "" {
-		return "", fmt.Errorf("gh-axi pr view: could not determine PR state from output")
-	}
-	return state, nil
+	return out, nil
 }
 
-// parseGhAxiState extracts the "state" field from gh-axi's YAML-like output.
-// Example input line: "  state: merged"
-func parseGhAxiState(output string) string {
+// parseGhAxiKeyValues parses gh-axi's "key: value" line output into a map.
+func parseGhAxiKeyValues(output string) map[string]string {
+	values := make(map[string]string)
 	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "state:") {
-			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "state:"))
-			val = strings.Trim(val, `"`)
-			return strings.ToUpper(val)
+		idx := strings.Index(line, ":")
+		if idx <= 0 {
+			continue
 		}
+		key := strings.TrimSpace(line[:idx])
+		value := strings.TrimSpace(line[idx+1:])
+		value = strings.Trim(value, `"`)
+		values[key] = value
 	}
-	return ""
+	return values
 }
 
-// ViewPRJSON fetches PR metadata as JSON via gh CLI.
-// This is used when gh-axi does not expose the raw JSON fields needed
-// (headRefOid, headRefName, baseRefName, mergeCommit). The call goes
-// through the consolidated adapter — never at the call site directly.
+// ObservePR reads the current pull request state via gh-axi api and returns
+// the exact observation needed to reconcile after a mutation. GitHub REST
+// reports merged PRs as state=closed with merged=true and a non-empty
+// merge_commit_sha, so the merged classification never trusts state alone.
+func (c *ghAxiClient) ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error) {
+	out, err := ghAxiAPI(
+		fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number),
+		"--jq", `{state: .state, headSha: .head.sha, mergedSha: (.merge_commit_sha // ""), merged: (.merged // false)}`,
+	)
+	if err != nil {
+		return DeliveryProviderObservation{}, err
+	}
+	return classifyGitHubObservation(parseGhAxiKeyValues(string(out)))
+}
+
+// classifyGitHubObservation is the pure GitHub REST observation classifier:
+// merged evidence (merged=true or a non-empty merge_commit_sha) wins over
+// the closed state GitHub reports for merged PRs; otherwise open/closed map
+// directly. Unknown or empty state fails closed.
+func classifyGitHubObservation(values map[string]string) (DeliveryProviderObservation, error) {
+	state := strings.ToUpper(strings.TrimSpace(values["state"]))
+	obs := DeliveryProviderObservation{
+		State:     state,
+		HeadSHA:   values["headSha"],
+		MergedSHA: values["mergedSha"],
+	}
+	switch {
+	case strings.EqualFold(values["merged"], "true") || obs.MergedSHA != "":
+		obs.State = "MERGED"
+	case state == "OPEN":
+		obs.State = "OPEN"
+	case state == "CLOSED":
+		obs.State = "CLOSED"
+	default:
+		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: could not determine pull request state")
+	}
+	if obs.State == "" {
+		return DeliveryProviderObservation{}, fmt.Errorf("gh-axi api: could not determine pull request state")
+	}
+	return obs, nil
+}
+
+// ViewPRJSON fetches PR metadata as JSON via gh CLI. This backs the retained
+// provider-neutral read-only status seam (QueryPRMergeStatus); the delivery
+// execution path never uses it.
 func (c *ghAxiClient) ViewPRJSON(owner, repo string, number int, fields string) ([]byte, error) {
 	ghPath, err := ghCLILookPath()
 	if err != nil {
@@ -174,31 +241,24 @@ func (c *ghAxiClient) ViewPRJSON(owner, repo string, number int, fields string) 
 	return out, nil
 }
 
-// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL.
-// Uses gh CLI through the consolidated adapter for JSON fields that
-// gh-axi does not expose (headRefOid, headRefName, baseRefName).
+// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL via
+// gh-axi api (no raw gh fallback).
 func (c *ghAxiClient) CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error) {
 	ghURL, err := domain.ParseGHURL(prURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid PR URL: %w", err)
 	}
 
-	data, err := c.ViewPRJSON(ghURL.Owner, ghURL.Repo, ghURL.Num, "headRefOid,headRefName,baseRefName")
+	out, err := ghAxiAPI(
+		fmt.Sprintf("/repos/%s/%s/pulls/%d", ghURL.Owner, ghURL.Repo, ghURL.Num),
+		"--jq", `{headRefOid: .head.sha, headRefName: .head.ref, baseRefName: .base.ref}`,
+	)
 	if err != nil {
 		return nil, err
 	}
-
-	var result struct {
-		HeadRefOid  string `json:"headRefOid"`
-		HeadRefName string `json:"headRefName"`
-		BaseRefName string `json:"baseRefName"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
-	}
-
-	if result.HeadRefOid == "" {
-		return nil, fmt.Errorf("gh pr view returned empty headRefOid")
+	values := parseGhAxiKeyValues(string(out))
+	if values["headRefOid"] == "" {
+		return nil, fmt.Errorf("gh-axi api returned empty headRefOid")
 	}
 
 	return &domain.DeliveryIdentity{
@@ -207,39 +267,27 @@ func (c *ghAxiClient) CaptureIdentity(prURL string) (*domain.DeliveryIdentity, e
 		Repo:       ghURL.Repo,
 		Number:     ghURL.Num,
 		URL:        prURL,
-		BaseRef:    result.BaseRefName,
-		HeadRef:    result.HeadRefName,
-		HeadSHA:    result.HeadRefOid,
+		BaseRef:    values["baseRefName"],
+		HeadRef:    values["headRefName"],
+		HeadSHA:    values["headRefOid"],
 		CapturedAt: time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
 
-// ViewIssueState returns the issue state (OPEN, CLOSED) via gh CLI.
-// Uses `gh issue view <number> --json state` to check the current state.
+// ViewIssueState returns the issue state (OPEN, CLOSED) via gh-axi api.
 func (c *ghAxiClient) ViewIssueState(owner, repo string, number int) (string, error) {
-	ghPath, err := ghCLILookPath()
+	out, err := ghAxiAPI(
+		fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, number),
+		"--jq", `.state`,
+	)
 	if err != nil {
-		return "", fmt.Errorf("gh not found on PATH: %w", err)
+		return "", err
 	}
-	args := []string{
-		"issue", "view",
-		fmt.Sprintf("%d", number),
-		"--repo", fmt.Sprintf("%s/%s", owner, repo),
-		"--json", "state",
-		"--jq", ".state",
-	}
-	out, err := exec.Command(ghPath, args...).Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("gh issue view: %s", strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("gh issue view: %w", err)
-	}
-	state := strings.TrimSpace(string(out))
+	state := strings.ToUpper(strings.TrimSpace(string(out)))
 	switch state {
 	case "OPEN", "CLOSED":
 		return state, nil
 	default:
-		return "", fmt.Errorf("gh issue view: unexpected state %q", state)
+		return "", fmt.Errorf("gh-axi api: unexpected issue state %q", strings.TrimSpace(string(out)))
 	}
 }

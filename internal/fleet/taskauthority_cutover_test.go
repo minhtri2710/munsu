@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
@@ -28,6 +29,9 @@ func canonicalHomeAuthority(t *testing.T, homeDir string) *taskauthority.Canonic
 	}
 	return c
 }
+
+// taPrecondition is domain.Of.
+func taPrecondition(gen, rev uint64) domain.Precondition { return domain.Of(gen, rev) }
 
 // seedCanonicalShipTask creates one ship task through the canonical surface
 // and advances it to the requested phase.
@@ -218,14 +222,16 @@ func TestReadWithProbeFailsClosedOnLegacyMergeAuthorization(t *testing.T) {
 
 // TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence proves the
 // fleet-level --force derivation path fails closed: an identity-bearing task
-// under --force with no authoritative merged/delivered evidence is refused
-// and never retired (Task 7.7 adjudication, swept into Task 7.8). The
-// retirement contract and its test helper are migrated by the delivery stage;
-// this test pins the read-side fail-closed posture only.
+// under --force with no committed canonical completed delivery outcome is
+// refused and never retired (#414 B hard cut: the .meta delivery_state
+// projection never authorizes merged truth).
 func TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "force-no-evidence"
 	head := "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	meta := map[string]string{
 		"kind":                 "ship",
 		"backend":              "tmux",
@@ -244,21 +250,21 @@ func TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence(t *testing.T) {
 	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
 		t.Fatal(err)
 	}
-	auth := mergeTestAuth(t, taskID) // created only; no merged/delivered evidence
+	auth := mergeTestAuth(t, homeDir, taskID) // created + bound; no canonical delivery outcome
 
 	result, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if err == nil {
-		t.Fatalf("RetireTask --force without evidence succeeded: %+v", result)
+		t.Fatalf("RetireTask --force without canonical outcome succeeded: %+v", result)
 	}
-	if !errors.Is(err, taskauthority.ErrPrecondition) {
-		t.Fatalf("error = %v, want ErrPrecondition (verified delivery evidence required regardless of --force)", err)
+	if !strings.Contains(err.Error(), "canonical delivery outcome") {
+		t.Fatalf("error = %v, want canonical delivery outcome refusal (no .meta merged truth)", err)
 	}
-	agg, aggErr := auth.Get(taskID)
+	agg, aggErr := auth.Get(mustTaskID(t, taskID))
 	if aggErr != nil {
 		t.Fatal(aggErr)
 	}
 	if agg.Phase == taskauthority.PhaseRetired {
-		t.Fatal("task was retired without authoritative evidence")
+		t.Fatal("task was retired without canonical merged truth")
 	}
 	// The meta is never removed on a refused retirement.
 	if _, statErr := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); statErr != nil {

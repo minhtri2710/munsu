@@ -43,8 +43,8 @@ func legacyDeliveryClaim(meta map[string]string) string {
 	switch {
 	case meta[MetaDeliveryState] == string(DeliveryStateMerged):
 		return MetaDeliveryState + "=merged"
-	case meta[MetaMergeAuthorization] != "":
-		return MetaMergeAuthorization
+	case meta[MetaLegacyMergeAuth] != "":
+		return MetaLegacyMergeAuth
 	default:
 		return ""
 	}
