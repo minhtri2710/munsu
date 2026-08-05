@@ -59,6 +59,7 @@ func TestBacklogAddWithNonDefaultHomeUsesRuntimeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := filepath.Join(t.TempDir(), "isolated-home")
+	initCLITestHome(t, home)
 
 	oldCwd, err := os.Getwd()
 	if err != nil {

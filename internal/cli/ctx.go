@@ -5,7 +5,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -13,40 +12,47 @@ import (
 type Ctx struct {
 	Home string
 
-	// taskAuthority is the concrete Authority composed once for this command
-	// context (ADR-0007 §9). It is nil until first requested; commands that
-	// never request Task Authority never construct it. Tests inject an
-	// Authority backed by an in-memory Store by pre-setting this field.
-	taskAuthority *taskauthority.Authority
+	// taskAuthority is the canonical Task Authority composed once for this
+	// command context over the resolved owning Home (ADR-0008 §2). It is nil
+	// until first requested; commands that never request Task Authority never
+	// construct it. Tests inject a canonical home-backed Authority by
+	// pre-setting this field. It is cached only for Ctx.Home.
+	taskAuthority *taskauthority.Canonical
 }
 
-// TaskAuthority returns the concrete Authority for this command context,
-// composing the filesystem Store adapter and the Authority once on first
-// use. Store construction is side-effect free: it performs no migration and
-// no mutation. An injected Authority is returned unchanged.
-func (c *Ctx) TaskAuthority() (*taskauthority.Authority, error) {
+// TaskAuthority returns the canonical Task Authority for this command
+// context, opening the resolved owning Home through the real home API and
+// composing the canonical authority once on first use. Ordinary reads fail
+// closed for an uninitialized Home rather than silently initializing state;
+// only command semantics that explicitly create a Home initialize one. An
+// injected Authority is returned unchanged.
+func (c *Ctx) TaskAuthority() (*taskauthority.Canonical, error) {
 	if c.taskAuthority != nil {
 		return c.taskAuthority, nil
 	}
-	store, err := taskauthorityfs.NewStore(c.Home)
+	h, err := home.Open(c.Home)
+	if err != nil {
+		return nil, fmt.Errorf("opening task authority home %s: %w", c.Home, err)
+	}
+	auth, err := taskauthority.NewCanonical(h)
 	if err != nil {
 		return nil, err
 	}
-	c.taskAuthority = taskauthority.New(store)
-	return c.taskAuthority, nil
+	c.taskAuthority = auth
+	return auth, nil
 }
 
-// TaskAuthorityFor returns the concrete Authority composed over an explicit
-// home directory. Cross-home delivery resolves the task home (which may be a
+// TaskAuthorityFor returns a canonical authority for the exact resolved
+// owning Home. Cross-home delivery resolves the task home (which may be a
 // captain home after handoff) before composing, so the Authority always
-// targets the home that owns the task. Store construction is side-effect
-// free: it performs no migration and no mutation.
-func (c *Ctx) TaskAuthorityFor(homeDir string) (*taskauthority.Authority, error) {
-	store, err := taskauthorityfs.NewStore(homeDir)
+// targets the home that owns the task. The requested home is opened through
+// the real home API; an uninitialized Home fails closed.
+func (c *Ctx) TaskAuthorityFor(homeDir string) (*taskauthority.Canonical, error) {
+	h, err := home.Open(homeDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening task authority home %s: %w", homeDir, err)
 	}
-	return taskauthority.New(store), nil
+	return taskauthority.NewCanonical(h)
 }
 
 // withHome wraps a cobra RunE so the handler receives a resolved Ctx instead

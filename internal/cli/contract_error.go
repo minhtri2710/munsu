@@ -10,25 +10,6 @@ import (
 // WriteContractError writes a structured contract error and returns its exit code.
 // Non-contract errors are automatically wrapped as generic operation errors.
 func WriteContractError(writer io.Writer, err error, args []string) int {
-	var partialProjection *ProjectionPartialError
-	if errors.As(err, &partialProjection) {
-		contractErr := &contractError{
-			status: exitOperation,
-			value: ErrorResponse{
-				SchemaVersion: SchemaVersion,
-				Kind:          "error",
-				Status:        "error",
-				Error: ErrorEnvelope{
-					ErrorCode: "projection_failed",
-					Retryable: true,
-					Action:    "Retry the projection reconciliation; authoritative task revision and generation are unchanged",
-					Message:   partialProjection.Error(),
-				},
-			},
-		}
-		return writeContractError(writer, contractErr, args)
-	}
-
 	var partial *LifecyclePartialError
 	if errors.As(err, &partial) {
 		contractErr := &contractError{

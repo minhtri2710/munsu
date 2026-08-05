@@ -17,7 +17,9 @@ Resolution order: --home flag > MUNSU_HOME env > ~/.munsu.
 With --mkdir, create the home directory tree {state,data,config,projects}.`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			if mkdir {
-				if err := home.EnsureDirTree(ctx.Home); err != nil {
+				// --mkdir initializes a canonical Home (identity + layout), not
+				// only directories, so canonical commands work immediately.
+				if _, err := home.Init(ctx.Home); err != nil {
 					return err
 				}
 			}

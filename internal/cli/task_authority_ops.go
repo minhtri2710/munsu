@@ -6,25 +6,24 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// resolveTaskActor resolves the authoritative owner and actor identity for a
-// CLI task mutation from the exact home, matching the legacy home fallback:
-// captain identity for captain homes, otherwise the home identity (basename
-// for a general home).
-func resolveTaskActor(homeDir string) (string, taskauthority.Actor) {
+// resolveTaskOwner resolves the authoritative owner identity for a CLI task
+// mutation from the exact home, matching the legacy home fallback: captain
+// identity for captain homes, otherwise the home identity (basename for a
+// general home).
+func resolveTaskOwner(homeDir string) string {
 	identity, rank, err := home.ReadHomeIdentity(homeDir)
 	if err != nil {
 		identity = filepath.Base(homeDir)
 		rank = home.RankGeneral
 	}
-	owner := identity
 	if rank == home.RankCaptain {
-		owner = "captain:" + identity
+		return "captain:" + identity
 	}
-	return owner, taskauthority.Actor{ID: owner, Rank: string(rank)}
+	return identity
 }
 
 // newTaskAuthorityOperationID supplies a fresh invocation identity for one
@@ -37,6 +36,17 @@ func newTaskAuthorityOperationID(verb string) string {
 		return fmt.Sprintf("%s-%d", verb, time.Now().UnixNano())
 	}
 	return fmt.Sprintf("%s-%x", verb, buf[:])
+}
+
+// newCanonicalOperation builds one typed canonical mutation Operation from a
+// fresh invocation identity and the typed request intent. The digest is
+// derived from the intent, never from a generic payload seam.
+func newCanonicalOperation(verb string, intent domain.Intent) (domain.Operation, error) {
+	opID, err := domain.NewOperationID(newTaskAuthorityOperationID(verb))
+	if err != nil {
+		return domain.Operation{}, err
+	}
+	return domain.NewOperation(opID, intent)
 }
 
 // authoritativeMetaField reports whether a .meta projection key duplicates an

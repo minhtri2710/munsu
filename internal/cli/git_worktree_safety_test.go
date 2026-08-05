@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -11,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -83,7 +81,7 @@ func TestSafetyCheckGitMutationRequiresExactWorktreeBindingAndAllowsAlternateTar
 	}
 }
 
-func TestSafetyCheckGitMutationRefusesPrimaryWrongRepoStaleGenerationLeaseAndHead(t *testing.T) {
+func TestSafetyCheckGitMutationRefusesPrimaryWrongRepoStaleGenerationAndHead(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
 	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
@@ -116,76 +114,65 @@ func TestSafetyCheckGitMutationRefusesPrimaryWrongRepoStaleGenerationLeaseAndHea
 	auth := testAuthorityFor(t, homeDir)
 	// Stale generation: complete then reopen creates generation 2 (current,
 	// no binding) while generation 1 keeps the worktree binding, so the gate
-	// refuses mutations with "stale generation" (Task 8.2 re-expression of
-	// the v1 aggregate rewrite).
-	if _, err := auth.Complete(taskauthority.CompleteRequest{
-		OperationID:        "safety-complete-ship-2",
-		Actor:              taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:             "ship-2",
-		ExpectedGeneration: 1,
-		To:                 taskauthority.PhaseDone,
-		Reason:             "safety test",
-	}); err != nil {
+	// refuses mutations on current-truth absence of a binding.
+	agg1, err := auth.Get(mustTaskIDFor(t, "ship-2"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.Reopen(taskauthority.ReopenRequest{
-		OperationID:        "safety-reopen-ship-2",
-		Actor:              taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:             "ship-2",
-		ExpectedGeneration: 1,
-		Reason:             "safety test",
-	}); err != nil {
+	completeReq := taskauthority.CanonicalCompleteRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "ship-2"),
+		Precondition: domain.Of(uint64(agg1.Generation), uint64(agg1.Revision)),
+		To:           taskauthority.PhaseDone,
+		Reason:       "safety test",
+	}
+	if _, err := auth.Complete(mustCanonicalOp(t, "safety-complete-ship-2", completeReq), completeReq); err != nil {
+		t.Fatal(err)
+	}
+	reopenedAgg, err := auth.Get(mustTaskIDFor(t, "ship-2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopenReq := taskauthority.CanonicalReopenRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "ship-2"),
+		Precondition: domain.Of(uint64(reopenedAgg.Generation), uint64(reopenedAgg.Revision)),
+		Reason:       "safety test",
+	}
+	if _, err := auth.Reopen(mustCanonicalOp(t, "safety-reopen-ship-2", reopenReq), reopenReq); err != nil {
 		t.Fatal(err)
 	}
 	block, reason := runPiSafetyForGit(t, worktree, "git add file.txt")
-	if !block || !strings.Contains(reason, "stale generation") {
+	if !block || !strings.Contains(reason, "requires active worktree binding") {
 		t.Fatalf("stale generation block=%v reason=%q", block, reason)
 	}
 
-	// Bind the reopened generation so the binding and lease checks are
-	// reached, and move the worktree onto the task branch so the branch
-	// check does not mask them.
-	agg, err := auth.Get("ship-2")
+	// Bind the reopened generation so the binding checks are reached, and
+	// move the worktree onto the task branch so the branch check does not
+	// mask them.
+	agg, err := auth.Get(mustTaskIDFor(t, "ship-2"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-2")
-	recycled := safetyWorktreeBinding(t, primary, worktree, "recycled-lease", "recycled-fence")
-	if _, err := auth.BindWorktree(taskauthority.BindWorktreeRequest{
-		OperationID:        "safety-rebind-ship-2",
-		Actor:              taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:             "ship-2",
-		ExpectedGeneration: agg.Generation,
-		Binding:            recycled,
-		Reason:             "safety test",
-	}); err != nil {
+	reopened := safetyWorktreeBinding(t, primary, worktree, "reopened-lease", "reopened-fence")
+	bindReq := taskauthority.CanonicalBindWorktreeRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "ship-2"),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Binding:      reopened,
+		Reason:       "safety test",
+	}
+	if _, err := auth.BindWorktree(mustCanonicalOp(t, "safety-rebind-ship-2", bindReq), bindReq); err != nil {
 		t.Fatal(err)
 	}
 	if block, reason := runPiSafetyForGit(t, worktree, "git add file.txt"); block {
 		t.Fatalf("bound reopened generation blocked: %s", reason)
 	}
 
-	// Recycled lease: tamper the reopened generation's lease marker so the
-	// lease read no longer matches the binding (the v2 aggregate is
-	// authoritative; the marker is the home-compatible lease artifact).
-	writeSafetyLeaseMarker(t, homeDir, "ship-2", agg.Generation.String(), home.TaskWorktreeBinding{
-		TaskGeneration: agg.Generation.String(),
-		LeaseID:        recycled.LeaseID,
-		FenceToken:     "stale-fence",
-	})
-	block, reason = runPiSafetyForGit(t, worktree, "git add file.txt")
-	if !block || !strings.Contains(reason, "recycled lease") {
-		t.Fatalf("recycled lease block=%v reason=%q", block, reason)
-	}
-
-	// Restore the marker, then move the recorded head off the actual HEAD:
-	// from a detached worktree, checkout of the task branch must fail closed
-	// on the recorded base HEAD mismatch (the v2 binding head check).
-	writeSafetyLeaseMarker(t, homeDir, "ship-2", agg.Generation.String(), home.TaskWorktreeBinding{
-		TaskGeneration: agg.Generation.String(),
-		LeaseID:        recycled.LeaseID,
-		FenceToken:     recycled.FenceToken,
-	})
+	// Move the recorded head off the actual HEAD: from a detached worktree,
+	// checkout of the task branch must fail closed on the recorded base HEAD
+	// mismatch (the canonical binding head check).
 	setSafetyWorktreeHead(t, homeDir, "ship-2", strings.Repeat("f", 40))
 	runGitForSafety(t, worktree, "checkout", "--detach")
 	block, reason = runPiSafetyForGit(t, worktree, "git checkout -b mu/ship-2")
@@ -219,30 +206,12 @@ func TestSafetyCheckDefaultShipAuthorityGitAllowlist(t *testing.T) {
 	}
 }
 
-// TestSafetyCheckForceWithLeaseDeniedWithoutAuth verifies that --force-with-lease
-// is denied when no git mutation authorization exists.
-func TestSafetyCheckForceWithLeaseDeniedWithoutAuth(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-fwl-deny", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-fwl-deny")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fwl-deny")
-
-	block, reason := runPiSafetyForGit(t, worktree, "git push --force-with-lease origin HEAD:refs/heads/mu/ship-fwl-deny")
-	if !block || reason == "" {
-		t.Fatalf("force-with-lease without auth block=%v reason=%q, want deny", block, reason)
-	}
-	if !strings.Contains(reason, "not authorized") {
-		t.Errorf("expected 'not authorized' in reason, got: %q", reason)
-	}
-}
-
-// TestSafetyCheckUnrestrictedForceAlwaysDenied verifies that --force and -f
-// are always denied regardless of authorization.
-func TestSafetyCheckUnrestrictedForceAlwaysDenied(t *testing.T) {
+// TestSafetyCheckForceDeniedWithoutAuthorization proves unrestricted force,
+// force-with-lease, branch deletion, rewrites, and push --delete are all
+// unconditionally denied: the git authorization layer (amendment/retirement
+// context tiers, force-with-lease authorization) was removed with the legacy
+// delivery path, so no context can authorize them.
+func TestSafetyCheckForceDeniedWithoutAuthorization(t *testing.T) {
 	primary := initGitRepoForSafety(t, t.TempDir())
 	worktree := filepath.Join(t.TempDir(), "wt")
 	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
@@ -255,52 +224,9 @@ func TestSafetyCheckUnrestrictedForceAlwaysDenied(t *testing.T) {
 	for _, command := range []string{
 		"git push --force origin HEAD:refs/heads/mu/ship-force",
 		"git push -f origin HEAD:refs/heads/mu/ship-force",
-	} {
-		block, reason := runPiSafetyForGit(t, worktree, command)
-		if !block || reason == "" {
-			t.Fatalf("%q block=%v reason=%q, want deny", command, block, reason)
-		}
-		if !strings.Contains(reason, "unrestricted force push") {
-			t.Errorf("expected 'unrestricted force push' in reason, got: %q", reason)
-		}
-	}
-}
-
-// TestSafetyCheckBranchDeletionDeniedWithoutContext verifies that branch
-// deletion is denied without retirement context.
-func TestSafetyCheckBranchDeletionDeniedWithoutContext(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-bdel", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-bdel")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-bdel")
-
-	// git branch -d should be denied without retirement context
-	block, reason := runPiSafetyForGit(t, worktree, "git branch -d mu/ship-bdel")
-	if !block || reason == "" {
-		t.Fatalf("branch -d without context block=%v reason=%q, want deny", block, reason)
-	}
-	if !strings.Contains(reason, "cleanup authority") {
-		t.Errorf("expected 'cleanup authority' in reason, got: %q", reason)
-	}
-}
-
-// TestSafetyCheckRewriteDeniedWithoutContext verifies that rewrite operations
-// (rebase, reset, merge) are denied without amendment context.
-func TestSafetyCheckRewriteDeniedWithoutContext(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-rewrite", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-rewrite")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-rewrite")
-
-	for _, command := range []string{
+		"git push --force-with-lease origin HEAD:refs/heads/mu/ship-force",
+		"git push --delete origin mu/ship-force",
+		"git branch -d mu/ship-force",
 		"git rebase main",
 		"git reset --hard HEAD~1",
 		"git merge main",
@@ -311,191 +237,46 @@ func TestSafetyCheckRewriteDeniedWithoutContext(t *testing.T) {
 		if !block || reason == "" {
 			t.Fatalf("%q block=%v reason=%q, want deny", command, block, reason)
 		}
-		if !strings.Contains(reason, "rewrite operations") {
-			t.Errorf("expected 'rewrite operations' in reason, got: %q", reason)
-		}
-	}
-}
-
-// TestSafetyCheckPushDeleteDeniedWithoutContext verifies that push --delete
-// is denied without retirement context.
-func TestSafetyCheckPushDeleteDeniedWithoutContext(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-pdel", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-pdel")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-pdel")
-
-	// git push --delete should be denied without retirement context
-	block, reason := runPiSafetyForGit(t, worktree, "git push --delete origin mu/ship-pdel")
-	if !block || reason == "" {
-		t.Fatalf("push --delete without context block=%v reason=%q, want deny", block, reason)
-	}
-	if !strings.Contains(reason, "cleanup authority") {
-		t.Errorf("expected 'cleanup authority' in reason, got: %q", reason)
-	}
-}
-
-// TestSafetyCheckForceWithLeaseAuthorizedWithContext verifies that force-with-lease
-// is allowed when authorized via git mutation authorization.
-func TestSafetyCheckForceWithLeaseAuthorizedWithContext(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-fwl-auth", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-fwl-auth")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-fwl-auth")
-
-	// Seed the .meta projections of the authoritative git authorization
-	// records (Task 7.4): the safety read path reads these projections, which
-	// production reconciles after each Authority commit.
-	seedGitAuthMeta(t, homeDir, "ship-fwl-auth", "rewrite", "amendment", map[string]any{
-		"operation": "force-with-lease",
-		"expected_state": map[string]string{
-			"ref":     "refs/heads/mu/ship-fwl-auth",
-			"old_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"new_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		},
-		"authorizer": "amendment",
-		"context":    "amendment",
-	})
-
-	// Force-with-lease should be allowed
-	block, reason := runPiSafetyForGit(t, worktree, "git push --force-with-lease origin HEAD:refs/heads/mu/ship-fwl-auth")
-	if block {
-		t.Fatalf("force-with-lease with auth blocked=%v reason=%q, want allow", block, reason)
-	}
-}
-
-// TestSafetyCheckBranchDeletionAllowedWithRetirementContext verifies that branch
-// deletion is allowed with retirement context and cleanup tier.
-func TestSafetyCheckBranchDeletionAllowedWithRetirementContext(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-bdel-ok", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-bdel-ok")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-bdel-ok")
-
-	// Seed the .meta projections of the authoritative git authorization
-	// records (Task 7.4).
-	seedGitAuthMeta(t, homeDir, "ship-bdel-ok", "cleanup", "retirement", nil)
-
-	// Branch deletion should be allowed in retirement context
-	block, reason := runPiSafetyForGit(t, worktree, "git branch -d mu/ship-bdel-ok")
-	if block {
-		t.Fatalf("branch -d in retirement blocked=%v reason=%q, want allow", block, reason)
-	}
-}
-
-// TestSafetyCheckRewriteAllowedWithAmendmentContext verifies that rewrite
-// operations are allowed with amendment context and rewrite tier.
-func TestSafetyCheckRewriteAllowedWithAmendmentContext(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-rewrite-ok", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-rewrite-ok")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-rewrite-ok")
-
-	// Seed the .meta projections of the authoritative git authorization
-	// records (Task 7.4).
-	seedGitAuthMeta(t, homeDir, "ship-rewrite-ok", "rewrite", "amendment", nil)
-
-	// Rebase should be allowed in amendment context
-	block, reason := runPiSafetyForGit(t, worktree, "git rebase main")
-	if block {
-		t.Fatalf("rebase in amendment blocked=%v reason=%q, want allow", block, reason)
-	}
-}
-
-// TestSafetyCheckPushDeleteAllowedWithRetirementContext verifies that push --delete
-// is allowed with retirement context and cleanup tier.
-func TestSafetyCheckPushDeleteAllowedWithRetirementContext(t *testing.T) {
-	primary := initGitRepoForSafety(t, t.TempDir())
-	worktree := filepath.Join(t.TempDir(), "wt")
-	runGitForSafety(t, primary, "worktree", "add", "--detach", worktree)
-	homeDir := bindSafetyWorktree(t, "ship-pdel-ok", primary, worktree)
-	t.Setenv("MUNSU_HOME", homeDir)
-	t.Setenv("MUNSU_TASK_ID", "ship-pdel-ok")
-
-	runGitForSafety(t, worktree, "checkout", "-b", "mu/ship-pdel-ok")
-
-	// Seed the .meta projections of the authoritative git authorization
-	// records (Task 7.4).
-	seedGitAuthMeta(t, homeDir, "ship-pdel-ok", "cleanup", "retirement", nil)
-
-	// Push --delete should be allowed in retirement context
-	block, reason := runPiSafetyForGit(t, worktree, "git push --delete origin mu/ship-pdel-ok")
-	if block {
-		t.Fatalf("push --delete in retirement blocked=%v reason=%q, want allow", block, reason)
-	}
-}
-
-// seedGitAuthMeta seeds the .meta projections of the authoritative git
-// authorization records that production reconciles after each Authority
-// commit (Task 7.4). The git mutation safety read path consumes these
-// projections; mutationAuth, when non-nil, is the JSON of the
-// git_mutation_authorization record.
-func seedGitAuthMeta(t *testing.T, homeDir, taskID, tier, context string, mutationAuth map[string]any) {
-	t.Helper()
-	meta, err := home.ReadMeta(homeDir, taskID)
-	if err != nil {
-		meta = make(map[string]string)
-	}
-	meta["git_capability_tier"] = tier
-	meta["git_auth_context"] = context
-	if mutationAuth != nil {
-		data, err := json.Marshal(mutationAuth)
-		if err != nil {
-			t.Fatal(err)
-		}
-		meta["git_mutation_authorization"] = string(data)
-	}
-	if err := home.WriteMeta(homeDir, taskID, meta); err != nil {
-		t.Fatal(err)
 	}
 }
 
 func bindSafetyWorktree(t *testing.T, taskID, primary, worktree string) string {
 	t.Helper()
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "safety-create-" + taskID,
-		Actor:       taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:      taskID,
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createReq := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
 		Owner:       "general",
 		Description: "test task",
 		Kind:        "ship",
-		Project:     "repo",
 		Reason:      "safety test",
-	}); err != nil {
+	}
+	if pid, err := domain.NewProjectID("repo"); err == nil {
+		createReq.Project = pid
+	}
+	if _, err := auth.Create(mustCanonicalOp(t, "safety-create-"+taskID, createReq), createReq); err != nil {
 		t.Fatal(err)
 	}
-	agg, err := auth.Get(taskID)
+	agg, err := auth.Get(tid)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	binding := safetyWorktreeBinding(t, primary, worktree, "worktree-lease", "worktree-fence")
-	if _, err := auth.BindWorktree(taskauthority.BindWorktreeRequest{
-		OperationID:        "safety-bind-" + taskID,
-		Actor:              taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:             taskID,
-		ExpectedGeneration: agg.Generation,
-		Binding:            binding,
-		Reason:             "safety test",
-	}); err != nil {
+	bindReq := taskauthority.CanonicalBindWorktreeRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       tid,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Binding:      binding,
+		Reason:       "safety test",
+	}
+	if _, err := auth.BindWorktree(mustCanonicalOp(t, "safety-bind-"+taskID, bindReq), bindReq); err != nil {
 		t.Fatal(err)
 	}
 	return homeDir
@@ -526,70 +307,34 @@ func safetyWorktreeBinding(t *testing.T, primary, worktree, leaseID, fenceToken 
 }
 
 // setSafetyWorktreeHead rewrites the current canonical aggregate's worktree
-// binding head through one raw Store transaction, mirroring how the v1 test
-// rewrote the aggregate document.
+// binding head by editing the committed task document directly, mirroring how
+// the pre-canonical fixture rewrote the aggregate document. The canonical
+// read path observes the tampered head on the next Get.
 func setSafetyWorktreeHead(t *testing.T, homeDir, taskID, head string) {
 	t.Helper()
-	store, err := taskauthorityfs.NewStore(homeDir)
+	currentPath := filepath.Join(homeDir, "state", "task-authority", "tasks", taskID, "current.json")
+	data, err := os.ReadFile(currentPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	op := taskauthority.Operation{
-		ID:     "safety-set-head-" + taskID,
-		Digest: strings.Repeat("a", 64),
-		Actor:  taskauthority.Actor{ID: "general", Rank: "general"},
+	var doc struct {
+		HomeRevision uint64                  `json:"home_revision"`
+		Aggregate    taskauthority.Aggregate `json:"aggregate"`
 	}
-	if _, err := store.Update(op, func(tx *taskauthority.Tx) error {
-		cur, ok := tx.Current(taskID)
-		if !ok {
-			return fmt.Errorf("task %s not found", taskID)
-		}
-		if cur.Worktree == nil {
-			return fmt.Errorf("task %s has no worktree binding", taskID)
-		}
-		updated := cur
-		updated.Revision++
-		updated.Worktree = &taskauthority.WorktreeBinding{
-			RepositoryIdentity: cur.Worktree.RepositoryIdentity,
-			Path:               cur.Worktree.Path,
-			GitDir:             cur.Worktree.GitDir,
-			CommonDir:          cur.Worktree.CommonDir,
-			Head:               head,
-			LeaseID:            cur.Worktree.LeaseID,
-			FenceToken:         cur.Worktree.FenceToken,
-			BoundAtUnix:        cur.Worktree.BoundAtUnix,
-		}
-		return tx.PutAggregate(updated)
-	}); err != nil {
+	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// writeSafetyLeaseMarker writes one worktree lease marker in the versioned
-// v2 namespace using the home-compatible bare format, mirroring what the
-// task-authority BindWorktree transaction commits.
-func writeSafetyLeaseMarker(t *testing.T, homeDir, taskID, generation string, binding home.TaskWorktreeBinding) {
-	t.Helper()
-	rel := filepath.Join(homeDir, "state", ".task-authority", "v1", "worktree-leases", taskID, generation, binding.LeaseID+".json")
-	if err := os.MkdirAll(filepath.Dir(rel), 0700); err != nil {
-		t.Fatal(err)
+	if doc.Aggregate.Worktree == nil {
+		t.Fatalf("task %s has no worktree binding", taskID)
 	}
-	marker := struct {
-		TaskID         string `json:"task_id"`
-		TaskGeneration string `json:"task_generation"`
-		LeaseID        string `json:"lease_id"`
-		FenceToken     string `json:"fence_token"`
-	}{
-		TaskID:         taskID,
-		TaskGeneration: generation,
-		LeaseID:        binding.LeaseID,
-		FenceToken:     binding.FenceToken,
-	}
-	data, err := json.MarshalIndent(marker, "", "  ")
+	w := *doc.Aggregate.Worktree
+	w.Head = head
+	doc.Aggregate.Worktree = &w
+	out, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(rel, append(data, '\n'), 0600); err != nil {
+	if err := os.WriteFile(currentPath, out, 0600); err != nil {
 		t.Fatal(err)
 	}
 }

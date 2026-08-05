@@ -52,6 +52,9 @@ func TestTaskShowRecoversPendingTransferAndReadsCanonicalState(t *testing.T) {
 
 	parent := t.TempDir()
 	captain := filepath.Join(parent, "captains", "api")
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := home.Init(captain); err != nil {
 		t.Fatal(err)
 	}
@@ -63,9 +66,6 @@ func TestTaskShowRecoversPendingTransferAndReadsCanonicalState(t *testing.T) {
 	}
 	sourceAuth := seedCLICanonicalHome(t, parent)
 	seedCLICanonicalQueuedTask(t, sourceAuth, "TASK-1", "general")
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
-	}
 
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestTaskShowRecoversPendingTransferAndReadsCanonicalState$", "--")
 	cmd.Env = append(os.Environ(), "MUNSU_CLI_HANDOFF_HELPER=1", "MUNSU_CLI_HANDOFF_SOURCE="+parent, "MUNSU_CLI_HANDOFF_DEST="+captain)
@@ -171,13 +171,13 @@ func TestCaptainHandoffAmbiguousIDCorrectionsPreserveDestinationAndSourceHome(t 
 	parent := t.TempDir()
 	captain := filepath.Join(parent, "captains", "api")
 	other := filepath.Join(parent, "captains", "other")
-	for _, scoped := range []string{parent, captain, other} {
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	for _, scoped := range []string{captain, other} {
 		if err := os.MkdirAll(scoped, 0755); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if _, err := home.Init(parent); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := home.Init(captain); err != nil {
 		t.Fatal(err)

@@ -25,6 +25,9 @@ func TestCountQueuedWakes_UsesLifecycleQueuePath(t *testing.T) {
 
 func TestWatchRun_UsesRunCycleDedup(t *testing.T) {
 	home := t.TempDir()
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("MUNSU_HOME", home)
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
 	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
@@ -221,7 +222,17 @@ func newWatchRunCmd() *cobra.Command {
 			}
 
 			wakesBefore := countQueuedWakes(ctx.Home)
-			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Authority, error) { return ctx.TaskAuthorityFor(h) }}
+
+			// Delivery recovery gate: converge any pending Fleet-owned delivery
+			// journals at the watcher cycle boundary so an interrupted delivery
+			// completes first and the cycle observes truthful state. Exactly one
+			// command boundary owns this recovery; Deliver also converges
+			// pending journals before creating a new one.
+			if err := fleet.RecoverDeliveryJournals(ctx.Home); err != nil {
+				return err
+			}
+
+			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) { return ctx.TaskAuthorityFor(h) }}
 			emitted, err := orchestrator.RunCycleWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, runtimeTaskStatePort{})
 			if err != nil {
 				return err
