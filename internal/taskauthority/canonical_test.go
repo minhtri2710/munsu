@@ -410,6 +410,94 @@ func TestCanonicalReopen(t *testing.T) {
 	}
 }
 
+// TestCanonicalReopenPreservesHistoricalRetirementEvidence proves the
+// superseded generation document written by Reopen uses the same taskDoc
+// envelope as every other generation-document writer, so GetGeneration can
+// reread the retired generation's preserved retirement evidence (exact
+// generation, retirement Operation ID, lease/fence identities) after reopen,
+// while current-truth Get returns the new generation. Without the envelope
+// the historical read fails closed with a malformed-state error (#412 A3
+// DEPENDENCY ruling).
+func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+
+	// Bind the generation's resource leases (revision 2 worktree, 3 endpoint).
+	wt := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
+	if _, err := c.BindWorktree(mustOperation(t, "op-reopen-hist-wt", wt), wt); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	ep := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
+	if _, err := c.BindEndpoint(mustOperation(t, "op-reopen-hist-ep", ep), ep); err != nil {
+		t.Fatalf("BindEndpoint: %v", err)
+	}
+
+	// Retire generation 1 (revision 4), preserving the ownership evidence.
+	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
+	if _, err := c.Retire(mustOperation(t, "op-reopen-hist-retire", req), req); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+
+	// Reopen into generation 2.
+	reopen := CanonicalReopenRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 4),
+		Reason:       "reopen",
+	}
+	if _, err := c.Reopen(mustOperation(t, "op-reopen-hist-reopen", reopen), reopen); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+
+	// The historical read returns the exact retired generation with its
+	// preserved evidence — never confused with current truth.
+	hist, err := c.GetGeneration(mustTaskID(t, "t1"), Generation(1))
+	if err != nil {
+		t.Fatalf("GetGeneration(1) after reopen: %v", err)
+	}
+	if hist.Current {
+		t.Fatalf("historical read reports current truth: %+v", hist)
+	}
+	if hist.Generation != 1 || hist.Phase != PhaseRetired || hist.Revision != 5 {
+		// Reopen marks the superseded record with one more revision (the
+		// supersession bump, mirroring the transfer path); the retired phase
+		// and evidence are what the historical read must preserve.
+		t.Fatalf("historical aggregate = gen %s phase %q revision %d, want gen 1 retired revision 5", hist.Generation, hist.Phase, hist.Revision)
+	}
+	if hist.Retirement == nil {
+		t.Fatalf("historical retirement evidence missing")
+	}
+	if hist.Retirement.Generation != 1 || hist.Retirement.OperationID != "op-reopen-hist-retire" {
+		t.Fatalf("retirement evidence = %+v, want generation 1 operation op-reopen-hist-retire", hist.Retirement)
+	}
+	if hist.Retirement.Worktree == nil || hist.Retirement.Worktree.LeaseID != "lease-wt" || hist.Retirement.Worktree.FenceToken != "fence-wt" {
+		t.Fatalf("worktree evidence = %+v", hist.Retirement.Worktree)
+	}
+	if hist.Retirement.Endpoint == nil || hist.Retirement.Endpoint.LeaseID != "lease-ep" || hist.Retirement.Endpoint.FenceToken != "fence-ep" {
+		t.Fatalf("endpoint evidence = %+v", hist.Retirement.Endpoint)
+	}
+
+	// Current truth is the reopened generation: Get returns generation 2 with
+	// no retirement evidence, and the historical read stays distinct.
+	cur, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cur.Generation != 2 || cur.Phase != PhaseQueued || !cur.Current {
+		t.Fatalf("current aggregate = %+v, want generation 2 queued current", cur)
+	}
+	if cur.Retirement != nil || cur.Endpoint != nil || cur.Worktree != nil {
+		t.Fatalf("reopened generation leaked retirement/binding evidence: %+v", cur)
+	}
+	hist2, err := c.GetGeneration(mustTaskID(t, "t1"), Generation(1))
+	if err != nil {
+		t.Fatalf("re-reading historical generation: %v", err)
+	}
+	if hist2.Retirement == nil || hist2.Retirement.OperationID != "op-reopen-hist-retire" {
+		t.Fatalf("historical read changed after current read: %+v", hist2.Retirement)
+	}
+}
+
 func TestCanonicalMalformedCurrentStateFailsClosed(t *testing.T) {
 	c, h, _ := newTestCanonical(t)
 	mustCreate(t, c, "t1")

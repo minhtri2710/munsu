@@ -55,6 +55,21 @@ func mergedShipFixture(t *testing.T, homeDir, taskID string) *taskauthority.Cano
 	return auth
 }
 
+// mergedShipFixtureWithEndpoint seeds the same merged ship task with the
+// canonical endpoint/worktree lease evidence the saga cleanup must release:
+// a bound worktree (create+bind=revision 2) and a bound endpoint (revision
+// 3), so the authoritative retirement commits at revision 4 preserving both
+// evidence records.
+func mergedShipFixtureWithEndpoint(t *testing.T, homeDir, taskID string) *taskauthority.Canonical {
+	t.Helper()
+	auth := mergedShipFixture(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-"+taskID, "fence-wt-"+taskID)
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-"+taskID, "fence-ep-"+taskID)
+	return auth
+}
+
 // mergedTruth reads the committed delivery_state=merged projection of one
 // task. The canonical cutover removed the legacy merge-attempt aggregate
 // evidence; the verified merged truth is the delivery_state=merged projection
@@ -130,7 +145,7 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-cleanup-failure"
-	auth := mergedShipFixture(t, homeDir, taskID)
+	auth := mergedShipFixtureWithEndpoint(t, homeDir, taskID)
 
 	metaPath := filepath.Join(homeDir, "state", taskID+".meta")
 	before, err := os.ReadFile(metaPath)
@@ -162,8 +177,13 @@ func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 2 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 2", agg.Phase, agg.Revision)
+	// create(1) + bind worktree(2) + bind endpoint(3) + retire(4)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 4 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 4", agg.Phase, agg.Revision)
+	}
+	// The exact ownership evidence is preserved durably.
+	if agg.Retirement == nil || agg.Retirement.Endpoint == nil || agg.Retirement.Worktree == nil {
+		t.Fatalf("retirement evidence missing: %+v", agg.Retirement)
 	}
 	if !mergedTruth(t, homeDir, taskID) {
 		t.Fatal("delivery_state=merged truth lost")
@@ -177,7 +197,7 @@ func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
 	}
 
 	// Retry: merge is never rerun (already-merged skip), the retired phase is
-	// observed (no double transition, revision stays 2), and the cleanup
+	// observed (no double transition, revision stays 4), and the cleanup
 	// resumes to completion.
 	second := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
@@ -193,8 +213,8 @@ func TestMergeAndRetireCleanupFailurePreservesMergedTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 2 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 2", agg.Revision)
+	if agg.Revision != 4 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 4", agg.Revision)
 	}
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("retry should complete the cleanup and remove meta")
@@ -232,7 +252,7 @@ func TestMergeAndRetireCrossHomeRetirement(t *testing.T) {
 func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-receipt-resume"
-	auth := mergedShipFixture(t, homeDir, taskID)
+	auth := mergedShipFixtureWithEndpoint(t, homeDir, taskID)
 
 	// Direct teardown path: the canonical Retire op commits first, then the
 	// cleanup fails — the typed partial result carries the committed state and
@@ -261,7 +281,7 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 		t.Fatalf("resume failed: %v", err)
 	}
 	agg, _ := auth.Get(mustTaskID(t, taskID))
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 2 {
-		t.Fatalf("aggregate after resume = %+v, want retired revision 2", agg)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 4 {
+		t.Fatalf("aggregate after resume = %+v, want retired revision 4", agg)
 	}
 }

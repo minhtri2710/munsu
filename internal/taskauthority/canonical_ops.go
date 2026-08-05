@@ -379,7 +379,12 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	newDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: newGen}
 	rec := receiptFor(op, newGen)
 	rec.Reopened = true
-	histData, err := json.Marshal(historical)
+	// The superseded generation is preserved in the same taskDoc envelope as
+	// every other generation document (the transfer path and readGenDoc), so
+	// GetGeneration can reread its historical evidence (retirement/transfer)
+	// after reopen.
+	histDoc := taskDoc{HomeRevision: doc.HomeRevision + 1, Aggregate: historical}
+	histData, err := json.Marshal(histDoc)
 	if err != nil {
 		return Outcome{}, err
 	}
