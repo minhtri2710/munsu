@@ -9,8 +9,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -294,76 +292,6 @@ func newSoldierStateCmd() *cobra.Command {
 					StatusLogSuperseded: state.StatusLogSuperseded,
 				},
 				Help: []string{"Run `munsu task observe " + id + " --fields description,branch` for expanded fields"},
-			})
-		}),
-	}
-	configureContractCommand(cmd)
-	return cmd
-}
-
-func newPromoteCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "promote <id>",
-		Short: "Promote a scout task to ship",
-		Args:  ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
-			}
-			id := args[0]
-
-			auth, err := ctx.TaskAuthority()
-			if err != nil {
-				return err
-			}
-			// Canonical preflight (Task 7.8): the kind is an authoritative
-			// TaskDefinition field; the projection can never be the preflight
-			// source or override the canonical record.
-			agg, err := auth.Get(id)
-			if err != nil {
-				return fmt.Errorf("promote %s: %w", id, err)
-			}
-			if agg.Definition.Kind != "scout" {
-				return fmt.Errorf("task %s has kind=%q, can only promote kind=scout", id, agg.Definition.Kind)
-			}
-
-			// Preflight: require report.md to exist
-			if !fleet.ReportExists(ctx.Home, id) {
-				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, fleet.ReportPath(ctx.Home, id))
-			}
-
-			// The promotion is a named Authority operation (Task 7.8): it flips
-			// the generation-bound kind scout → ship with the phase prerequisite
-			// enforced inside the Store transaction (done or resolved). A stale
-			// .status projection can never authorize or block the transition.
-			_, actor := resolveTaskActor(ctx.Home)
-			if _, err := auth.Promote(taskauthority.PromoteRequest{
-				OperationID:        newTaskAuthorityOperationID("promote"),
-				Actor:              actor,
-				TaskID:             id,
-				ExpectedGeneration: agg.Generation,
-				Reason:             "cli promote",
-			}); err != nil {
-				return err
-			}
-
-			// .meta kind is a post-commit projection (ADR-0007 §7): reconcile
-			// the authoritative fields from the canonical aggregate. A
-			// projection failure is a typed partial error and never rolls back
-			// the committed promotion.
-			store, err := taskauthorityfs.NewStore(ctx.Home)
-			if err != nil {
-				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
-			}
-			if _, err := store.ReconcileTaskProjections(id); err != nil {
-				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
-			}
-
-			return writeContract(cmd, Response[MessageResult]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "promote",
-				Status:        "success",
-				Data:          MessageResult{Message: fmt.Sprintf("Task %s promoted from scout to ship", id)},
 			})
 		}),
 	}

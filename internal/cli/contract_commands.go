@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -109,7 +110,9 @@ func newTaskObserveCmd() *cobra.Command {
 			if err != nil {
 				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to read task authority")
 			}
-			if _, err := auth.Get(args[0]); err != nil {
+			tid, tidErr := domain.NewTaskID(args[0])
+			_, authErr := auth.Get(tid)
+			if tidErr != nil || authErr != nil {
 				if _, metaErr := home.ReadMeta(ctx.Home, args[0]); metaErr != nil {
 					return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
 				}

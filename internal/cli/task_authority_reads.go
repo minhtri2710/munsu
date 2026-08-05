@@ -1,41 +1,45 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // currentTaskGeneration returns the current canonical generation of one task
-// from the task-authority Store view, falling back to the caller-provided
-// value when the task has no canonical record. It re-expresses the legacy
-// home.CurrentTaskGeneration over the v2 authority (Task 8.2): a v1 home
-// fails closed with the typed migration-required error instead of reading
-// the deleted v1 aggregate store.
+// from the home's Task Authority, falling back to the caller-provided value
+// when the task has no canonical record. It re-expresses the legacy
+// home.CurrentTaskGeneration over the canonical authority: an uninitialized
+// home fails closed instead of silently initializing state.
 func currentTaskGeneration(homeDir, taskID, fallback string) (string, error) {
-	store, err := taskauthorityfs.NewStore(homeDir)
+	auth, err := taskAuthorityForRead(homeDir)
 	if err != nil {
 		return "", err
 	}
-	view, err := store.View()
+	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
 		return "", err
 	}
-	if agg, ok := view.Current(taskID); ok {
-		return agg.Generation.String(), nil
+	agg, err := auth.Get(tid)
+	if errors.Is(err, taskauthority.ErrNotFound) {
+		return fallback, nil
 	}
-	return fallback, nil
+	if err != nil {
+		return "", err
+	}
+	return agg.Generation.String(), nil
 }
 
 // resolveCurrentTaskID resolves one requested task ID against canonical
 // current ownership across the primary home and every captain sub-home
-// (Task 8.2 re-expression of the legacy home.ResolveCurrentTaskID over the
-// v2 authority). Multiple canonical owners make the ID ambiguous and the
-// caller surfaces correction commands; a v1 home fails closed through the
-// Store view.
+// (re-expression of the legacy home.ResolveCurrentTaskID over the canonical
+// authority). Multiple canonical owners make the ID ambiguous and the caller
+// surfaces correction commands; an uninitialized home fails closed.
 func resolveCurrentTaskID(homeDir, taskID string) (string, error) {
 	owners, err := currentTaskOwnerHomes(homeDir, taskID)
 	if err != nil {
@@ -48,20 +52,22 @@ func resolveCurrentTaskID(homeDir, taskID string) (string, error) {
 }
 
 // currentTaskOwnerHomes collects every home (primary plus captains) whose
-// canonical authority view names taskID as a current generation.
+// canonical authority names taskID as a current generation.
 func currentTaskOwnerHomes(homeDir, taskID string) ([]string, error) {
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return nil, err
+	}
 	var owners []string
 	add := func(dir string) error {
-		store, err := taskauthorityfs.NewStore(dir)
+		auth, err := taskAuthorityForRead(dir)
 		if err != nil {
 			return err
 		}
-		view, err := store.View()
-		if err != nil {
-			return err
-		}
-		if _, ok := view.Current(taskID); ok {
+		if _, err := auth.Get(tid); err == nil {
 			owners = append(owners, dir)
+		} else if !errors.Is(err, taskauthority.ErrNotFound) {
+			return err
 		}
 		return nil
 	}
@@ -88,18 +94,35 @@ func currentTaskOwnerHomes(homeDir, taskID string) ([]string, error) {
 }
 
 // currentTaskExists reports whether one task has a current canonical record
-// in the home's authority view. It re-expresses the legacy
-// home.ReadCurrentTaskAggregate presence check over the v2 authority (Task
-// 8.2); v1 homes fail closed.
+// in the home's authority. It re-expresses the legacy
+// home.ReadCurrentTaskAggregate presence check over the canonical authority;
+// uninitialized homes fail closed.
 func currentTaskExists(homeDir, taskID string) (bool, error) {
-	store, err := taskauthorityfs.NewStore(homeDir)
+	auth, err := taskAuthorityForRead(homeDir)
 	if err != nil {
 		return false, fmt.Errorf("composing task authority: %w", err)
 	}
-	view, err := store.View()
+	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
 		return false, err
 	}
-	_, ok := view.Current(taskID)
-	return ok, nil
+	_, err = auth.Get(tid)
+	if errors.Is(err, taskauthority.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// taskAuthorityForRead composes the canonical Task Authority over an opened
+// home for one read-only authority query. Ordinary reads fail closed for an
+// uninitialized Home rather than silently initializing state.
+func taskAuthorityForRead(homeDir string) (*taskauthority.Canonical, error) {
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return nil, fmt.Errorf("opening task authority home %s: %w", homeDir, err)
+	}
+	return taskauthority.NewCanonical(h)
 }

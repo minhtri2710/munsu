@@ -9,18 +9,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 func TestBacklogAddCreatesQueuedAggregate(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir}); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	agg, err := testAuthorityFor(t, homeDir).Get("task")
+	agg, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "task"))
 	if err != nil {
 		t.Fatalf("authority Get: %v", err)
 	}
@@ -31,40 +32,42 @@ func TestBacklogAddCreatesQueuedAggregate(t *testing.T) {
 
 func TestDuplicateBacklogAddPreservesExistingState(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "original", "--home", homeDir}); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "1.json"))
-	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "current"))
+	beforeCurrent := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "task", "current.json"))
 	beforeBacklog := readFileForTest(t, filepath.Join(homeDir, "data", "md"))
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "changed", "--home", homeDir}); err == nil {
 		t.Fatalf("duplicate add succeeded: %s", out)
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "1.json")); got != beforeAggregate {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "task", "current.json")); got != beforeCurrent {
 		t.Fatal("duplicate add changed aggregate")
-	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "task", "current")); got != beforePointer {
-		t.Fatal("duplicate add changed current pointer")
 	}
 	if got := readFileForTest(t, filepath.Join(homeDir, "data", "md")); got != beforeBacklog {
 		t.Fatal("duplicate add changed backlog")
 	}
 }
 
-// seedAuthorityTask creates one queued task through the concrete Authority so
-// lifecycle tests drive canonical Task Authority records (ADR-0007), never
-// legacy v1 aggregates.
-func seedAuthorityTask(t *testing.T, auth *taskauthority.Authority, id string) {
+// seedAuthorityTask creates one queued task through the concrete canonical
+// Authority so lifecycle tests drive canonical Task Authority records
+// (ADR-0008), never legacy v1 aggregates.
+func seedAuthorityTask(t *testing.T, auth *taskauthority.Canonical, id string) {
 	t.Helper()
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: newTaskAuthorityOperationID("seed-" + id),
-		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:      id,
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
 		Owner:       "owner",
 		Description: "work",
 		Kind:        "ship",
 		Reason:      "test seed",
-	}); err != nil {
+	}
+	op := mustCanonicalOp(t, "op-create-seed-"+id, req)
+	if _, err := auth.Create(op, req); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -75,6 +78,7 @@ func seedAuthorityTask(t *testing.T, auth *taskauthority.Authority, id string) {
 // command advances the canonical aggregate before the backlog projection.
 func TestBacklogStartAndUnblockUseDistinctLifecycleOperations(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 	seedBacklogFileForTest(t, homeDir, "- [ ] task: work\n")
@@ -82,27 +86,27 @@ func TestBacklogStartAndUnblockUseDistinctLifecycleOperations(t *testing.T) {
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "start", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("start: %v\n%s", err, out)
 	}
-	agg, err := auth.Get("task")
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("aggregate after start = %+v err=%v", agg, err)
 	}
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "start", "task", "--home", homeDir}); err == nil || !strings.Contains(out, "start requires queued task") {
 		t.Fatalf("second start correction = %v\n%s", err, out)
 	}
-	if _, err := auth.Block(taskauthority.BlockRequest{
-		OperationID:        newTaskAuthorityOperationID("seed-block"),
-		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:             "task",
-		ExpectedGeneration: agg.Generation,
-		Detail:             "dependency",
-		Reason:             "seed",
-	}); err != nil {
+	blockReq := taskauthority.CanonicalBlockRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "task"),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Detail:       "dependency",
+		Reason:       "seed",
+	}
+	if _, err := auth.Block(mustCanonicalOp(t, "seed-block", blockReq), blockReq); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "unblock", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("unblock: %v\n%s", err, out)
 	}
-	if agg, err = auth.Get("task"); err != nil || agg.Phase != taskauthority.PhaseQueued {
+	if agg, err = auth.Get(mustTaskIDFor(t, "task")); err != nil || agg.Phase != taskauthority.PhaseQueued {
 		t.Fatalf("aggregate after unblock = %+v err=%v", agg, err)
 	}
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "unblock", "task", "--home", homeDir}); err == nil || !strings.Contains(out, "unblock requires blocked task") {
@@ -117,37 +121,30 @@ func TestBacklogStartAndUnblockUseDistinctLifecycleOperations(t *testing.T) {
 // commit.
 func TestBacklogReopenSynchronizesAggregateAndProjection(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
-	if _, err := auth.Complete(taskauthority.CompleteRequest{
-		OperationID:        newTaskAuthorityOperationID("seed-done"),
-		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:             "task",
-		ExpectedGeneration: 1,
-		To:                 taskauthority.PhaseDone,
-		Reason:             "seed",
-	}); err != nil {
+	completeReq := taskauthority.CanonicalCompleteRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "task"),
+		Precondition: domain.Of(1, 1),
+		To:           taskauthority.PhaseDone,
+		Reason:       "seed",
+	}
+	if _, err := auth.Complete(mustCanonicalOp(t, "seed-done", completeReq), completeReq); err != nil {
 		t.Fatal(err)
 	}
 	seedBacklogFileForTest(t, homeDir, "- [x] task: work\n")
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "reopen", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("reopen: %v\n%s", err, out)
 	}
-	agg, err := auth.Get("task")
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Generation != 2 || agg.Phase != taskauthority.PhaseQueued || agg.Revision != taskauthority.FirstRevision {
 		t.Fatalf("current aggregate = %+v err=%v", agg, err)
 	}
-	store, err := taskauthorityfs.NewStore(homeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	view, err := store.View()
-	if err != nil {
-		t.Fatal(err)
-	}
-	old, ok := view.Aggregate("task", 1)
-	if !ok || old.Current || old.Phase != taskauthority.PhaseDone {
-		t.Fatalf("historical aggregate = %+v ok=%v, want immutable done generation 1", old, ok)
+	old, err := auth.GetGeneration(mustTaskIDFor(t, "task"), 1)
+	if err != nil || old.Current || old.Phase != taskauthority.PhaseDone {
+		t.Fatalf("historical aggregate = %+v err=%v, want immutable done generation 1", old, err)
 	}
 	backlog, err := os.ReadFile(filepath.Join(homeDir, "data", "md"))
 	if err != nil || !strings.Contains(string(backlog), "[ ] task") {
@@ -161,6 +158,7 @@ func TestBacklogReopenSynchronizesAggregateAndProjection(t *testing.T) {
 // criterion 1).
 func TestBacklogDoneCallsAuthorityComplete(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 	seedBacklogFileForTest(t, homeDir, "- [ ] task: work\n")
@@ -168,7 +166,7 @@ func TestBacklogDoneCallsAuthorityComplete(t *testing.T) {
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "done", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("done: %v\n%s", err, out)
 	}
-	agg, err := auth.Get("task")
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Phase != taskauthority.PhaseDone {
 		t.Fatalf("aggregate after done = %+v err=%v", agg, err)
 	}
@@ -187,6 +185,7 @@ func TestBacklogDoneCallsAuthorityComplete(t *testing.T) {
 // projection (Task 3.3 criteria 1 and 2).
 func TestBacklogBlockCallsAuthorityBlock(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 	seedBacklogFileForTest(t, homeDir, "- [ ] task: work\n")
@@ -194,7 +193,7 @@ func TestBacklogBlockCallsAuthorityBlock(t *testing.T) {
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "block", "task", "--by", "dep-1", "--home", homeDir}); err != nil {
 		t.Fatalf("block: %v\n%s", err, out)
 	}
-	agg, err := auth.Get("task")
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Phase != taskauthority.PhaseBlocked || agg.PhaseDetail != "backlog: blocked by dep-1" {
 		t.Fatalf("aggregate after block = %+v err=%v", agg, err)
 	}
@@ -219,15 +218,16 @@ func TestBacklogBlockCallsAuthorityBlock(t *testing.T) {
 // authoritative record untouched (Task 3.3 criteria 2 and 3).
 func TestBacklogLifecycleProjectionFailureReturnsTypedPartialWithoutReplay(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 	seedBacklogFileForTest(t, homeDir, "- [ ] task: work\n")
 
 	// Break the projection so the post-commit projection write fails.
-	if err := os.RemoveAll(filepath.Join(homeDir, "data")); err != nil {
+	if err := os.RemoveAll(filepath.Join(homeDir, "data", "md")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, "data"), []byte("not a dir"), 0600); err != nil {
+	if err := os.MkdirAll(filepath.Join(homeDir, "data", "md"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	_, err := runBacklogLifecycleCommand(t, []string{"backlog", "start", "task", "--home", homeDir})
@@ -235,7 +235,7 @@ func TestBacklogLifecycleProjectionFailureReturnsTypedPartialWithoutReplay(t *te
 	if !errors.As(err, &partial) || partial.TaskID != "task" || partial.State != "working" {
 		t.Fatalf("error = %T %v, want typed partial result", err, err)
 	}
-	agg, err := auth.Get("task")
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("authoritative commit must survive projection failure: %+v err=%v", agg, err)
 	}
@@ -250,14 +250,14 @@ func TestBacklogLifecycleProjectionFailureReturnsTypedPartialWithoutReplay(t *te
 	// Repair the projection and retry only the projection verb: no
 	// authoritative operation is replayed and the committed record is
 	// untouched.
-	if err := os.Remove(filepath.Join(homeDir, "data")); err != nil {
+	if err := os.RemoveAll(filepath.Join(homeDir, "data", "md")); err != nil {
 		t.Fatal(err)
 	}
 	seedBacklogFileForTest(t, homeDir, "- [ ] task: work\n")
 	if err := fleet.Run(homeDir, false, "start", []string{"task"}); err != nil {
 		t.Fatalf("projection retry: %v", err)
 	}
-	after, err := auth.Get("task")
+	after, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || after.Phase != taskauthority.PhaseWorking || after.Revision != revisionAfterPartial {
 		t.Fatalf("projection retry replayed authority: %+v err=%v", after, err)
 	}
@@ -350,43 +350,36 @@ func runBacklogLifecycleCommand(t *testing.T, args []string) (string, error) {
 }
 
 // TestBacklogRetrySupersedesTerminalGeneration proves `backlog retry` drives
-// the named Authority Supersede operation (Task 5.3): the terminal generation
-// stays immutable historical state, a new queued Generation starts at
-// Revision one, and the backlog projection updates after the authoritative
+// the canonical Reopen operation (the supersede semantics): the terminal
+// generation stays immutable historical state, a new queued Generation starts
+// at Revision one, and the backlog projection updates after the authoritative
 // commit.
 func TestBacklogRetrySupersedesTerminalGeneration(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
-	if _, err := auth.Complete(taskauthority.CompleteRequest{
-		OperationID:        newTaskAuthorityOperationID("seed-done"),
-		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:             "task",
-		ExpectedGeneration: 1,
-		To:                 taskauthority.PhaseDone,
-		Reason:             "seed",
-	}); err != nil {
+	completeReq := taskauthority.CanonicalCompleteRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "task"),
+		Precondition: domain.Of(1, 1),
+		To:           taskauthority.PhaseDone,
+		Reason:       "seed",
+	}
+	if _, err := auth.Complete(mustCanonicalOp(t, "seed-done", completeReq), completeReq); err != nil {
 		t.Fatal(err)
 	}
 	seedBacklogFileForTest(t, homeDir, "- [x] task: work\n")
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err != nil {
 		t.Fatalf("retry: %v\n%s", err, out)
 	}
-	agg, err := auth.Get("task")
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Generation != 2 || agg.Phase != taskauthority.PhaseQueued || agg.Revision != taskauthority.FirstRevision {
 		t.Fatalf("current aggregate after retry = %+v err=%v", agg, err)
 	}
-	store, err := taskauthorityfs.NewStore(homeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	view, err := store.View()
-	if err != nil {
-		t.Fatal(err)
-	}
-	old, ok := view.Aggregate("task", 1)
-	if !ok || old.Current || old.Phase != taskauthority.PhaseDone {
-		t.Fatalf("historical aggregate = %+v ok=%v, want immutable done generation 1", old, ok)
+	old, err := auth.GetGeneration(mustTaskIDFor(t, "task"), 1)
+	if err != nil || old.Current || old.Phase != taskauthority.PhaseDone {
+		t.Fatalf("historical aggregate = %+v err=%v, want immutable done generation 1", old, err)
 	}
 	backlog, err := os.ReadFile(filepath.Join(homeDir, "data", "md"))
 	if err != nil || !strings.Contains(string(backlog), "[ ] task") {
@@ -400,6 +393,7 @@ func TestBacklogRetrySupersedesTerminalGeneration(t *testing.T) {
 // ErrUnhealthyWatcher and leaves the queued task phase untouched.
 func TestBacklogStartFailsClosedOnDegradedSupervision(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 
@@ -412,7 +406,7 @@ func TestBacklogStartFailsClosedOnDegradedSupervision(t *testing.T) {
 	if err == nil || !errors.Is(err, home.ErrUnhealthyWatcher) {
 		t.Fatalf("start err = %v\n%s, want ErrUnhealthyWatcher", err, out)
 	}
-	agg, err := auth.Get("task")
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
 	if err != nil || agg.Phase != taskauthority.PhaseQueued || agg.Revision != taskauthority.FirstRevision {
 		t.Fatalf("aggregate after failed start = %+v err=%v, want untouched queued seed", agg, err)
 	}
@@ -432,24 +426,25 @@ func seedBacklogFileForTest(t *testing.T, homeDir, body string) {
 }
 
 // TestBacklogRetryRefusesLiveGeneration proves `backlog retry` fails closed
-// on a generation that still owns live work: the Authority Supersede
+// on a generation that still owns live work: the canonical Reopen
 // precondition fires before the backlog projection is touched.
 func TestBacklogRetryRefusesLiveGeneration(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
-	if _, err := auth.Block(taskauthority.BlockRequest{
-		OperationID:        newTaskAuthorityOperationID("seed-block"),
-		Actor:              taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:             "task",
-		ExpectedGeneration: 1,
-		Detail:             "dependency",
-		Reason:             "seed",
-	}); err != nil {
+	blockReq := taskauthority.CanonicalBlockRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "task"),
+		Precondition: domain.Of(1, 1),
+		Detail:       "dependency",
+		Reason:       "seed",
+	}
+	if _, err := auth.Block(mustCanonicalOp(t, "seed-block", blockReq), blockReq); err != nil {
 		t.Fatal(err)
 	}
 	seedBacklogFileForTest(t, homeDir, "[!] task: work\n")
-	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err == nil || !strings.Contains(out, "supersede requires terminal task") {
-		t.Fatalf("retry of blocked generation = %v\n%s, want supersede precondition", err, out)
+	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "retry", "task", "--home", homeDir}); err == nil || !strings.Contains(out, "reopen requires terminal task") {
+		t.Fatalf("retry of blocked generation = %v\n%s, want reopen precondition", err, out)
 	}
 }

@@ -9,11 +9,11 @@ import (
 
 // fleetRetirementPort adapts the orchestrator RetirementPort to the fleet
 // implementation. The merged delivery_state transition routes through the
-// composed Task Authority (Task 7.6): the compose function builds the
-// Authority over the exact home the watcher is servicing, mirroring the
-// delivery command composition root.
+// composed canonical Task Authority: the compose function builds the
+// canonical authority over the exact home the watcher is servicing, mirroring
+// the delivery command composition root.
 type fleetRetirementPort struct {
-	compose func(homeDir string) (*taskauthority.Authority, error)
+	compose func(homeDir string) (*taskauthority.Canonical, error)
 }
 
 func (p fleetRetirementPort) RecoverPendingRetirements(homeDir string) (int, []error) {

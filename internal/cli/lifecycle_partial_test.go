@@ -11,6 +11,7 @@ import (
 
 func TestLifecyclePartialErrorPreservesAuthoritativeState(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "task")
 	root := NewRootCommand()
@@ -20,7 +21,7 @@ func TestLifecyclePartialErrorPreservesAuthoritativeState(t *testing.T) {
 	if !errors.As(err, &partial) || partial.TaskID != "task" || partial.State != "working" {
 		t.Fatalf("partial = %T %v", err, err)
 	}
-	current, getErr := auth.Get("task")
+	current, getErr := auth.Get(mustTaskIDFor(t, "task"))
 	if getErr != nil || current.Phase != taskauthority.PhaseWorking {
 		t.Fatalf("authoritative aggregate = %+v err=%v", current, getErr)
 	}

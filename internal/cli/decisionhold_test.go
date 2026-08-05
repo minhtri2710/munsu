@@ -12,7 +12,7 @@ import (
 
 // decisionHoldAuthority composes the command-context Authority over the given
 // home, mirroring what the decision-hold commands do.
-func decisionHoldAuthority(t *testing.T, homeDir string) *taskauthority.Authority {
+func decisionHoldAuthority(t *testing.T, homeDir string) *taskauthority.Canonical {
 	t.Helper()
 	ctx := Ctx{Home: homeDir}
 	auth, err := ctx.TaskAuthority()
@@ -37,6 +37,7 @@ func containsAction(actions []taskauthority.DispatchAction, action taskauthority
 // list` reads unresolved holds back from the Authority (Task 5.2 criterion 3).
 func TestDecisionHoldHoldAndListRouteThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 
 	out, err := runRoot(t, "decision-hold", "hold", "approach",
 		"--reason", "Pick the UI framework", "--from", "scout-r2",
@@ -100,6 +101,7 @@ func TestDecisionHoldHoldAndListRouteThroughAuthority(t *testing.T) {
 // the typed contract stable.
 func TestDecisionHoldHoldIsIdempotent(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	args := []string{"decision-hold", "hold", "approach",
 		"--reason", "Pick the UI framework", "--from", "scout-r2",
 		"--home", homeDir, "--output", "json"}
@@ -130,6 +132,7 @@ func TestDecisionHoldHoldIsIdempotent(t *testing.T) {
 // path.
 func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runRoot(t, "decision-hold", "hold", "approach",
 		"--reason", "Pick the UI framework", "--from", "scout-r2",
 		"--home", homeDir, "--output", "json"); err != nil {
@@ -193,6 +196,7 @@ func TestDecisionHoldResolveRoutesThroughAuthority(t *testing.T) {
 // typed contract output stable.
 func TestDecisionHoldCompleteRoutesThroughAuthority(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	for _, key := range []string{"approach", "db-schema"} {
 		if out, err := runRoot(t, "decision-hold", "hold", key,
 			"--reason", "pick "+key, "--from", "scout-r2",
@@ -229,6 +233,7 @@ func TestDecisionHoldCompleteRoutesThroughAuthority(t *testing.T) {
 // unresolved decisions once every Authority hold is released.
 func TestDecisionHoldVerifyClean(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runRoot(t, "decision-hold", "hold", "approach",
 		"--reason", "Pick the UI framework", "--from", "scout-r2",
 		"--home", homeDir, "--output", "json"); err != nil {
@@ -255,6 +260,7 @@ func TestDecisionHoldVerifyClean(t *testing.T) {
 // the resolve path, so verify sees no stale needs-decision line.
 func TestDecisionHoldCompleteAppendsResolvedProjection(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runRoot(t, "decision-hold", "hold", "approach",
 		"--reason", "Pick the UI framework", "--from", "scout-r2",
 		"--home", homeDir, "--output", "json"); err != nil {
@@ -304,26 +310,19 @@ func TestDecisionHoldCompleteAppendsResolvedProjection(t *testing.T) {
 	}
 }
 
-// TestDecisionHoldFailsClosedOnLegacyV1Home proves decision-hold commands on
-// a legacy v1 home fail closed with the typed migration-required error
-// surfaced to the operator instead of bypassing the Authority.
-func TestDecisionHoldFailsClosedOnLegacyV1Home(t *testing.T) {
+// TestDecisionHoldFailsClosedOnUninitializedHome proves decision-hold
+// commands on an uninitialized home fail closed instead of silently
+// initializing state.
+func TestDecisionHoldFailsClosedOnUninitializedHome(t *testing.T) {
 	homeDir := t.TempDir()
-	v1Hold := filepath.Join(homeDir, "state", ".dispatch", "holds")
-	if err := os.MkdirAll(v1Hold, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(v1Hold, "pause.json"), []byte(`{"schema_version":"munsu.dispatch-control/v1"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
 
 	_, err := runRoot(t, "decision-hold", "list", "scout-r2", "--home", homeDir, "--output", "json")
-	if err == nil || !strings.Contains(err.Error(), "migration") {
-		t.Fatalf("list on v1 home err = %v, want migration-required surfaced", err)
+	if err == nil {
+		t.Fatal("list on uninitialized home succeeded")
 	}
 	_, err = runRoot(t, "decision-hold", "hold", "approach",
 		"--reason", "pick", "--from", "scout-r2", "--home", homeDir, "--output", "json")
-	if err == nil || !strings.Contains(err.Error(), "migration") {
-		t.Fatalf("hold on v1 home err = %v, want migration-required surfaced", err)
+	if err == nil {
+		t.Fatal("hold on uninitialized home succeeded")
 	}
 }

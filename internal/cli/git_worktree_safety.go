@@ -6,10 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
-	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 type gitCommandSafety struct {
@@ -51,34 +49,27 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 		if homeDir == "" || taskID == "" {
 			return true, "git mutation requires active munsu task worktree binding"
 		}
-		// The worktree binding is read from the canonical v2 task-authority
-		// view (Task 8.2): the v1 aggregate store is gone, and a v1 home
-		// fails closed with the typed migration-required error.
-		store, err := taskauthorityfs.NewStore(homeDir)
+		// The worktree binding is read from the canonical Task Authority
+		// (current-truth only): the v1 aggregate store is gone, and an
+		// uninitialized home fails closed. Current truth never carries a
+		// stale generation's binding, so a mutation target on a superseded
+		// generation is refused by the binding checks below.
+		auth, err := taskAuthorityForRead(homeDir)
 		if err != nil {
 			return true, "git mutation worktree binding unavailable: " + err.Error()
 		}
-		view, err := store.View()
+		tid, err := domain.NewTaskID(taskID)
 		if err != nil {
 			return true, "git mutation worktree binding unavailable: " + err.Error()
 		}
-		agg, ok := view.Current(taskID)
-		if !ok || agg.Worktree == nil {
-			if staleBindingExists(view, taskID) {
-				return true, "stale generation: worktree binding is not on current task generation"
-			}
+		agg, err := auth.Get(tid)
+		if err != nil {
+			return true, "git mutation worktree binding unavailable: " + err.Error()
+		}
+		if agg.Worktree == nil {
 			return true, "git mutation requires active worktree binding"
 		}
 		binding := agg.Worktree
-		// The lease marker is a v2-namespace compatibility artifact read by
-		// the home lease check; the binding's generation is the aggregate's.
-		if !home.TaskWorktreeLeaseActive(homeDir, taskID, home.TaskWorktreeBinding{
-			TaskGeneration: agg.Generation.String(),
-			LeaseID:        binding.LeaseID,
-			FenceToken:     binding.FenceToken,
-		}) {
-			return true, "recycled lease: worktree binding lease no longer matches active task"
-		}
 		if reason := validateGitTargetBinding(parsed, binding); reason != "" {
 			return true, reason
 		}
@@ -89,19 +80,12 @@ func evaluateGitMutationSafety(checkPath, command string) (bool, string) {
 	return false, ""
 }
 
-func staleBindingExists(view taskauthority.View, taskID string) bool {
-	currentGeneration := taskauthority.Generation(0)
-	if agg, ok := view.Current(taskID); ok {
-		currentGeneration = agg.Generation
-	}
-	for _, agg := range view.Aggregates {
-		if agg.TaskID == taskID && agg.Generation != currentGeneration && agg.Worktree != nil {
-			return true
-		}
-	}
-	return false
-}
-
+// validateGitMutationAuthority enforces the default Ship authority allowlist:
+// task-local branch, add, commit, and normal push. The git authorization
+// layer (amendment/retirement context tiers, force-with-lease authorization)
+// was removed with the legacy delivery path (#414 B); unrestricted force,
+// branch deletion, rewrite operations, and push --delete are unconditionally
+// denied.
 func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, binding *taskauthority.WorktreeBinding) string {
 	taskBranch := "mu/" + taskID
 	currentBranch, err := gitSafetyOutput(binding.Path, "rev-parse", "--abbrev-ref", "HEAD")
@@ -128,25 +112,12 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		return "unexpected head: bound worktree is not on the task-local branch"
 	}
 
-	// Resolve the git capability tier from meta (defaults to write if not set).
-	tier, _ := fleet.ResolveGitCapabilityTier(homeDir, taskID)
-
-	// Read git auth context (amendment, retirement, or empty).
-	ctx, _ := fleet.ReadGitAuthContext(homeDir, taskID)
-
 	switch g.verb {
 	case "add", "commit":
 		return ""
 	case "branch":
 		if branchOpAllowed(taskBranch, g.args) {
 			return ""
-		}
-		// Branch deletion requires cleanup tier and retirement context.
-		if isBranchDelete(g.args) {
-			if ctx == "retirement" && fleet.TierEnough(tier, taskauthority.GitTierCleanup) {
-				return ""
-			}
-			return "branch deletion requires cleanup authority (retirement context)"
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "checkout", "switch":
@@ -155,24 +126,6 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	case "push":
-		// Unrestricted force (--force, -f) is always denied.
-		if fleet.UnrestrictedForceDenied(g.args) {
-			return "unrestricted force push is not allowed; use --force-with-lease with authorization instead"
-		}
-		// Force-with-lease requires authorization with expected-state comparison.
-		if fleet.ForceWithLeaseRequested(g.args) {
-			if _, err := fleet.CheckGitMutationAuthorization(homeDir, taskID, taskauthority.GitOpForceWithLease, ""); err != nil {
-				return "force-with-lease is not authorized: " + err.Error()
-			}
-			return ""
-		}
-		// Push --delete requires cleanup tier and retirement context.
-		if fleet.PushDeleteRequested(g.args, g.pushRefspec) {
-			if ctx == "retirement" && fleet.TierEnough(tier, taskauthority.GitTierCleanup) {
-				return ""
-			}
-			return "push --delete requires cleanup authority (retirement context)"
-		}
 		if len(g.args) == 0 || g.args[0] != "origin" {
 			return "default Ship authority permits only task-local branch, add, commit, and normal push"
 		}
@@ -180,12 +133,6 @@ func validateGitMutationAuthority(homeDir, taskID string, g gitCommandSafety, bi
 			return ""
 		}
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
-	case "rebase", "reset", "merge", "cherry-pick", "revert":
-		// Rewrite operations require amendment context and rewrite tier.
-		if ctx == "amendment" && fleet.TierEnough(tier, taskauthority.GitTierRewrite) {
-			return ""
-		}
-		return "rewrite operations require amendment context and rewrite authority"
 	default:
 		return "default Ship authority permits only task-local branch, add, commit, and normal push"
 	}
@@ -363,37 +310,6 @@ func validateGitTargetBinding(g gitCommandSafety, binding *taskauthority.Worktre
 	return ""
 }
 
-func shipGitCommandAllowed(taskID string, g gitCommandSafety) bool {
-	taskBranch := "mu/" + taskID
-	switch g.verb {
-	case "add", "commit":
-		return true
-	case "branch":
-		return branchOpAllowed(taskBranch, g.args)
-	case "checkout", "switch":
-		return createsBranch(g.args) && g.branchName == taskBranch
-	case "push":
-		// Unrestricted force is always denied.
-		if fleet.UnrestrictedForceDenied(g.args) {
-			return false
-		}
-		// Force-with-lease is not allowed without authorization.
-		if fleet.ForceWithLeaseRequested(g.args) {
-			return false
-		}
-		// Push --delete is not allowed without context.
-		if fleet.PushDeleteRequested(g.args, g.pushRefspec) {
-			return false
-		}
-		if len(g.args) == 0 || g.args[0] != "origin" {
-			return false
-		}
-		return g.pushRefspec == taskBranch || g.pushRefspec == "HEAD:refs/heads/"+taskBranch || g.pushRefspec == "HEAD:"+taskBranch || g.pushRefspec == "HEAD"
-	default:
-		return false
-	}
-}
-
 func branchCommandWrites(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -429,15 +345,6 @@ func branchOpAllowed(taskBranch string, args []string) bool {
 func createsBranch(args []string) bool {
 	for _, arg := range args {
 		if arg == "-b" || arg == "-B" || arg == "-c" || arg == "-C" {
-			return true
-		}
-	}
-	return false
-}
-
-func isBranchDelete(args []string) bool {
-	for _, arg := range args {
-		if arg == "-d" || arg == "-D" {
 			return true
 		}
 	}

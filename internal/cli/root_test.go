@@ -34,7 +34,6 @@ var canonicalCommands = []struct {
 	{name: "notify", use: "notify <state> <msg>"},
 	{name: "peek", use: "peek <id>"},
 	{name: "soldier-state", use: "soldier-state <id>"},
-	{name: "promote", use: "promote <id>"},
 	{name: "teardown", use: "teardown <id>"},
 	{name: "delivery", use: "delivery"},
 	{name: "fleet", use: "fleet"},

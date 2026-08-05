@@ -198,7 +198,6 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newNotifyCmd())
 	root.AddCommand(newPeekCmd())
 	root.AddCommand(newSoldierStateCmd())
-	root.AddCommand(newPromoteCmd())
 	root.AddCommand(newTeardownCmd())
 	root.AddCommand(newSoldierFlushCmd())
 	root.AddCommand(newDeliveryCmd())

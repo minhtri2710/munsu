@@ -2,21 +2,27 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
 // TestTaskAuthorityComposition proves the command context exposes the
-// concrete Authority composed over the filesystem Store adapter once per
-// command context (ADR-0007 §9) without package globals. Store construction
-// performs no migration and no mutation: composing the Authority must leave
-// the resolved home untouched, and so must a canonical read on a fresh home,
-// which returns an empty committed view without creating state/ or
-// state/.dispatch.lock.
+// concrete canonical Authority composed over the opened owning Home once per
+// command context without package globals. Composition opens the Home through
+// the real home API and performs no mutation: composing the Authority and a
+// canonical read on a fresh initialized Home must leave no task-authority
+// state behind.
 func TestTaskAuthorityComposition(t *testing.T) {
 	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatalf("home.Init: %v", err)
+	}
 	ctx := Ctx{Home: homeDir}
 
 	auth, err := ctx.TaskAuthority()
@@ -32,7 +38,7 @@ func TestTaskAuthorityComposition(t *testing.T) {
 		t.Fatal("TaskAuthority() composed a new Authority on repeat; composition must happen once per command context")
 	}
 
-	assertEmptyHome(t, homeDir, "after composition")
+	assertNoTaskAuthorityState(t, homeDir, "after composition")
 
 	tasks, err := auth.List()
 	if err != nil {
@@ -41,16 +47,50 @@ func TestTaskAuthorityComposition(t *testing.T) {
 	if len(tasks) != 0 {
 		t.Fatalf("fresh home should list no tasks, got %d", len(tasks))
 	}
-	assertEmptyHome(t, homeDir, "after canonical read on a fresh home")
+	assertNoTaskAuthorityState(t, homeDir, "after canonical read on a fresh home")
 }
 
-// TestTaskAuthorityInjection proves tests can inject an Authority backed by
-// an in-memory Store into the command context. The injected Authority is
-// returned unchanged and remains fully functional; the filesystem Store
-// adapter is never constructed for the context.
+// TestTaskAuthorityFailsClosedOnUninitializedHome proves ordinary authority
+// reads fail closed for an uninitialized Home rather than silently
+// initializing state: only command semantics that explicitly create a Home
+// initialize one.
+func TestTaskAuthorityFailsClosedOnUninitializedHome(t *testing.T) {
+	homeDir := t.TempDir()
+	ctx := Ctx{Home: homeDir}
+
+	if auth, err := ctx.TaskAuthority(); err == nil {
+		t.Fatalf("TaskAuthority() on uninitialized home succeeded: %v", auth)
+	}
+	if _, err := ctx.TaskAuthorityFor(homeDir); err == nil {
+		t.Fatal("TaskAuthorityFor() on uninitialized home succeeded")
+	}
+	entries, err := os.ReadDir(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("fail-closed composition initialized the home: %v", names)
+	}
+}
+
+// TestTaskAuthorityInjection proves tests can inject a canonical Authority
+// over an initialized Home into the command context. The injected Authority
+// is returned unchanged and remains fully functional; no second composition
+// happens for the context.
 func TestTaskAuthorityInjection(t *testing.T) {
 	homeDir := t.TempDir()
-	injected := taskauthority.New(taskauthority.NewMemStore())
+	h, err := home.Init(homeDir)
+	if err != nil {
+		t.Fatalf("home.Init: %v", err)
+	}
+	injected, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatalf("NewCanonical: %v", err)
+	}
 	ctx := Ctx{Home: homeDir, taskAuthority: injected}
 
 	auth, err := ctx.TaskAuthority()
@@ -61,29 +101,67 @@ func TestTaskAuthorityInjection(t *testing.T) {
 		t.Fatal("TaskAuthority() did not return the injected Authority")
 	}
 
-	res, err := injected.Create(taskauthority.CreateRequest{
-		OperationID: "cli-inject-op-1",
-		Actor:       taskauthority.Actor{ID: "cli-test", Rank: "soldier"},
-		TaskID:      "ship-injected",
+	tid, err := domain.NewTaskID("ship-injected")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID:      injected.HomeID(),
+		TaskID:      tid,
 		Owner:       "cli-test",
-		Description: "task created through the injected in-memory Authority",
+		Description: "task created through the injected canonical Authority",
 		Kind:        "ship",
-	})
+		Reason:      "test",
+	}
+	opID, err := domain.NewOperationID("cli-inject-op-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := injected.Create(op, req)
 	if err != nil {
 		t.Fatalf("injected Authority Create: %v", err)
 	}
 	if res.Phase != taskauthority.PhaseQueued || res.Generation != 1 {
 		t.Fatalf("injected Authority Create result = %+v", res)
 	}
-	agg, err := injected.Get("ship-injected")
+	agg, err := injected.Get(tid)
 	if err != nil {
 		t.Fatalf("injected Authority Get: %v", err)
 	}
-	if agg.Definition.Owner != "cli-test" || agg.Definition.Description != "task created through the injected in-memory Authority" {
-		t.Fatalf("injected Authority aggregate = %+v", agg)
+	if agg.Definition.Owner != "cli-test" || agg.Definition.Description != "task created through the injected canonical Authority" {
+		t.Fatalf("injected Authority aggregate = %+v", agg.Definition)
 	}
+}
 
-	assertEmptyHome(t, homeDir, "with injected Authority")
+// TestTaskAuthorityForExactHome proves TaskAuthorityFor composes the canonical
+// authority over the exact requested owning Home and never caches it on the
+// context for a different Home.
+func TestTaskAuthorityForExactHome(t *testing.T) {
+	homeDir := t.TempDir()
+	captainHome := filepath.Join(homeDir, "captains", "c1")
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := home.Init(captainHome); err != nil {
+		t.Fatal(err)
+	}
+	ctx := Ctx{Home: homeDir}
+
+	primary, err := ctx.TaskAuthorityFor(homeDir)
+	if err != nil {
+		t.Fatalf("TaskAuthorityFor(primary): %v", err)
+	}
+	captain, err := ctx.TaskAuthorityFor(captainHome)
+	if err != nil {
+		t.Fatalf("TaskAuthorityFor(captain): %v", err)
+	}
+	if primary.HomeID() == captain.HomeID() {
+		t.Fatal("TaskAuthorityFor composed the same authority for different homes")
+	}
 }
 
 // TestWithHomeDoesNotComposeTaskAuthority proves commands that do not need
@@ -107,6 +185,24 @@ func TestWithHomeDoesNotComposeTaskAuthority(t *testing.T) {
 		t.Fatal("withHome did not invoke the handler")
 	}
 	assertEmptyHome(t, homeDir, "after non-authority command")
+}
+
+// assertNoTaskAuthorityState fails when the home carries any canonical
+// task-authority storage under the state root.
+func assertNoTaskAuthorityState(t *testing.T, homeDir, stage string) {
+	t.Helper()
+	root := filepath.Join(homeDir, "state", "task-authority")
+	entries, err := os.ReadDir(root)
+	if err == nil {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("task-authority state created %s: %v", stage, names)
+	}
+	if !os.IsNotExist(err) && !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("reading task-authority state at %s: %v", stage, err)
+	}
 }
 
 // assertEmptyHome fails when homeDir contains any entry at all.

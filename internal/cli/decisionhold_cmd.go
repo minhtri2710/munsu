@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -50,7 +49,7 @@ var holdActionSet = []taskauthority.DispatchAction{
 }
 
 // authorityHold returns the committed hold with the given ID, if any.
-func authorityHold(auth *taskauthority.Authority, id string) (taskauthority.DispatchHold, bool, error) {
+func authorityHold(auth *taskauthority.Canonical, id string) (taskauthority.DispatchHold, bool, error) {
 	holds, err := auth.ListHolds()
 	if err != nil {
 		return taskauthority.DispatchHold{}, false, err
@@ -94,7 +93,7 @@ func decisionKeyFromHold(originID string, hold taskauthority.DispatchHold) strin
 
 // unresolvedDecisionHolds returns the active (unreleased) Authority holds
 // scoped to the origin task, sorted by ID.
-func unresolvedDecisionHolds(auth *taskauthority.Authority, originID string) ([]taskauthority.DispatchHold, error) {
+func unresolvedDecisionHolds(auth *taskauthority.Canonical, originID string) ([]taskauthority.DispatchHold, error) {
 	holds, err := auth.ListHolds()
 	if err != nil {
 		return nil, err
@@ -112,27 +111,23 @@ func unresolvedDecisionHolds(auth *taskauthority.Authority, originID string) ([]
 	return unresolved, nil
 }
 
-// resolveDecisionHold resolves one decision hold through the Authority:
-// ResolveDecision for a decision-backed hold (resolving the Dispatch Decision
-// and releasing its matching hold atomically), falling back to ReleaseHold
-// for the plain pause holds this command creates. Both paths are idempotent.
-func resolveDecisionHold(ctx Ctx, auth *taskauthority.Authority, originID, decisionKey, answer string) error {
+// resolveDecisionHold releases one decision hold through the canonical
+// Authority: every hold this CLI creates is a durable DispatchHold released
+// by the idempotent ReleaseHold operation. The legacy decision record path
+// (ResolveDecision) was removed with the interpretation layer; there is no
+// decision store on the canonical surface.
+func resolveDecisionHold(ctx Ctx, auth *taskauthority.Canonical, originID, decisionKey, answer string) error {
 	hid := decisionHoldID(originID, decisionKey)
-	_, actor := resolveTaskActor(ctx.Home)
-	_, err := auth.ResolveDecision(taskauthority.ResolveDecisionRequest{
-		OperationID: newTaskAuthorityOperationID("decision-hold-resolve"),
-		Actor:       actor,
-		Key:         hid,
-		Answer:      answer,
-	})
-	if errors.Is(err, taskauthority.ErrDecisionNotFound) {
-		_, err = auth.ReleaseHold(taskauthority.ReleaseHoldRequest{
-			OperationID: newTaskAuthorityOperationID("decision-hold-release"),
-			Actor:       actor,
-			ID:          hid,
-			Reason:      "decision resolved",
-		})
+	req := taskauthority.CanonicalReleaseHoldRequest{
+		HomeID: auth.HomeID(),
+		HoldID: hid,
+		Reason: "decision resolved: " + answer,
 	}
+	op, err := newCanonicalOperation("decision-hold-release", req)
+	if err != nil {
+		return err
+	}
+	_, err = auth.ReleaseHold(op, req)
 	return err
 }
 
@@ -176,15 +171,18 @@ Example:
 			} else if exists {
 				created = false
 			} else {
-				_, actor := resolveTaskActor(ctx.Home)
-				if _, err := auth.CreateHold(taskauthority.CreateHoldRequest{
-					OperationID: newTaskAuthorityOperationID("decision-hold"),
-					Actor:       actor,
-					ID:          hid,
-					Scope:       taskauthority.DispatchHoldScope{TaskIDs: []string{from}},
-					Actions:     holdActionSet,
-					Reason:      reason,
-				}); err != nil {
+				req := taskauthority.CanonicalAddHoldRequest{
+					HomeID:  auth.HomeID(),
+					HoldID:  hid,
+					Scope:   taskauthority.DispatchHoldScope{TaskIDs: []string{from}},
+					Actions: holdActionSet,
+					Reason:  reason,
+				}
+				op, err := newCanonicalOperation("decision-hold", req)
+				if err != nil {
+					return fmt.Errorf("creating hold: %w", err)
+				}
+				if _, err := auth.AddHold(op, req); err != nil {
 					return fmt.Errorf("creating hold: %w", err)
 				}
 			}
@@ -293,7 +291,7 @@ Examples:
 // verifyDecisionHolds computes the unresolved decision keys for an origin
 // task: active Authority holds scoped to the task, plus stale
 // needs-decision status lines whose key has no resolved counterpart.
-func verifyDecisionHolds(ctx Ctx, auth *taskauthority.Authority, originID string, keys []string) ([]string, error) {
+func verifyDecisionHolds(ctx Ctx, auth *taskauthority.Canonical, originID string, keys []string) ([]string, error) {
 	unresolved := map[string]bool{}
 	check := map[string]bool{}
 	for _, key := range keys {

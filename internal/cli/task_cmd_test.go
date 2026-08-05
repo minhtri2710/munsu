@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,42 +14,24 @@ import (
 
 // TestTaskStatusCannotMutateAuthoritativePhase proves `task status` is
 // audit-only: appending a status line must never change the authoritative
-// Task Aggregate phase, even when a legacy v1 aggregate is still on disk
-// (Task 3.4 criterion 1). Authoritative transitions belong to named
-// operations owned by the parent rank, not to arbitrary status text. The
-// v1 aggregate store writer is deleted (Task 8.2), so the fixture writes
-// the v1 document shape directly and asserts it stays byte-identical.
+// Task Aggregate phase (Task 3.4 criterion 1). Authoritative transitions
+// belong to named operations owned by the parent rank, not to arbitrary
+// status text.
 func TestTaskStatusCannotMutateAuthoritativePhase(t *testing.T) {
 	homeDir := t.TempDir()
-	// Seed a legacy v1 aggregate exactly as pre-migration state exists so the
-	// old generic state-setter would have a target to mutate.
-	v1Path := filepath.Join(homeDir, "state", ".task-authority", "aggregates", "legacy", "1.json")
-	v1Doc := `{
-  "schema_version": "munsu.task-aggregate/v1",
-  "task_id": "legacy",
-  "generation": "1",
-  "current": true,
-  "owner": "general",
-  "definition": "work",
-  "state": "queued",
-  "kind": "ship"
-}
-`
-	if err := os.MkdirAll(filepath.Dir(v1Path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(v1Path, []byte(v1Doc), 0600); err != nil {
-		t.Fatal(err)
-	}
+	initCLITestHome(t, homeDir)
+	auth := testAuthorityFor(t, homeDir)
+	seedAuthorityTask(t, auth, "legacy")
+
 	if _, err := runTaskCommand(t, []string{"task", "status", "legacy", "done", "completed", "--home", homeDir}); err != nil {
 		t.Fatalf("task status: %v", err)
 	}
-	data, err := os.ReadFile(v1Path)
+	agg, err := auth.Get(mustTaskIDFor(t, "legacy"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != v1Doc {
-		t.Fatalf("task status mutated the v1 aggregate document:\n%s", data)
+	if agg.Phase != taskauthority.PhaseQueued || agg.Revision != taskauthority.FirstRevision {
+		t.Fatalf("task status mutated the authoritative aggregate: %+v", agg)
 	}
 	statusLines, err := home.ReadStatus(homeDir, "legacy")
 	if err != nil || len(statusLines) != 1 || statusLines[0] != "done: completed" {
@@ -62,6 +45,7 @@ func TestTaskStatusCannotMutateAuthoritativePhase(t *testing.T) {
 // authoritative Phase and Revision untouched (Task 3.4 criteria 1 and 2).
 func TestTaskStatusAppendsAuditInputWithoutPhaseChange(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
@@ -69,7 +53,7 @@ func TestTaskStatusAppendsAuditInputWithoutPhaseChange(t *testing.T) {
 		t.Fatalf("task status: %v\n%s", err, out)
 	}
 
-	agg, err := testAuthorityFor(t, homeDir).Get("beta")
+	agg, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "beta"))
 	if err != nil {
 		t.Fatalf("authority Get: %v", err)
 	}
@@ -78,7 +62,7 @@ func TestTaskStatusAppendsAuditInputWithoutPhaseChange(t *testing.T) {
 	}
 
 	statusLines, err := home.ReadStatus(homeDir, "beta")
-	if err != nil || len(statusLines) != 1 || statusLines[0] != "working: building the thing [key=build-1]" {
+	if err != nil || len(statusLines) != 2 || statusLines[1] != "working: building the thing [key=build-1]" {
 		t.Fatalf("status projection = %v err=%v", statusLines, err)
 	}
 
@@ -107,6 +91,7 @@ func TestTaskStatusHelpIsAuditOnly(t *testing.T) {
 		t.Fatalf("task status help must describe audit-only semantics:\n%s", out)
 	}
 
+	initCLITestHome(t, homeDir)
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
@@ -124,12 +109,16 @@ func TestTaskStatusHelpIsAuditOnly(t *testing.T) {
 // creates an authoritative record; it only appends projection/audit input.
 func TestTaskStatusMissingTaskStillAuditOnly(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runTaskCommand(t, []string{"task", "status", "ghost", "working", "note", "--home", homeDir}); err != nil {
 		t.Fatalf("task status on missing task: %v\n%s", err, out)
 	}
 	// No authoritative aggregate may appear as a side effect.
-	if _, err := os.Stat(filepath.Join(homeDir, "state", ".task-authority", "v1", "aggregates", "ghost")); !os.IsNotExist(err) {
+	if _, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "ghost")); !errors.Is(err, taskauthority.ErrNotFound) {
 		t.Fatalf("task status created an authoritative record for a missing task")
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "state", "task-authority", "tasks", "ghost")); !os.IsNotExist(err) {
+		t.Fatalf("task status created authoritative state for a missing task")
 	}
 	lines, err := home.ReadStatus(homeDir, "ghost")
 	if err != nil || len(lines) != 1 {
