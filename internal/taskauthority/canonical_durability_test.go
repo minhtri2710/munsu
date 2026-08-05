@@ -1,6 +1,7 @@
 package taskauthority
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -577,14 +578,23 @@ func TestCanonicalDeliveryRevocationEvidenceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identified authorization after reopen: %v", err)
 	}
-	if prior.Revoked == nil || prior.Revoked.OperationID != "op-revoke-persist" || prior.Revoked.Reason != "abandoned before execution" {
-		t.Fatalf("reopened revocation evidence = %+v", prior.Revoked)
+	if prior.OperationID != auth1.OperationID || prior.Revision != 4 {
+		t.Fatalf("reopened issuance evidence = %+v", prior)
+	}
+	// The immutable revocation evidence survives and stays identified by its
+	// exact operation identity, bound to the revoked authorization.
+	revocation, err := c2.DeliveryRevocationByOperation(mustTaskID(t, "t1"), "op-revoke-persist")
+	if err != nil {
+		t.Fatalf("identified revocation after reopen: %v", err)
+	}
+	if revocation.AuthorizationOperationID != auth1.OperationID || revocation.OperationID != "op-revoke-persist" || revocation.Reason != "abandoned before execution" {
+		t.Fatalf("reopened revocation evidence = %+v", revocation)
 	}
 	replayed, err := c2.RevokeDeliveryAuthorization(revokeOp, revokeReq)
 	if err != nil {
 		t.Fatalf("revoke replay after reopen: %v", err)
 	}
-	if !replayed.Replayed || replayed.Authorization.Revoked == nil {
+	if !replayed.Replayed || replayed.Revocation.OperationID != "op-revoke-persist" || replayed.Revocation.AuthorizationOperationID != auth1.OperationID {
 		t.Fatalf("revoke replay after reopen = %+v", replayed)
 	}
 }
@@ -616,16 +626,20 @@ func TestCanonicalDeliveryCurrencyReadSurvivesReopen(t *testing.T) {
 		t.Fatalf("reopened currency authorization = %+v", cur.Authorization)
 	}
 
-	// Currency read creates no receipt and never mutates the ledger.
+	// Currency read creates no receipt and never mutates the bounded index.
+	idxBefore, ok, err := readDocForTest(h2, deliveryCurrentKey("t1"))
+	if err != nil || !ok {
+		t.Fatalf("read index before: ok=%v err=%v", ok, err)
+	}
 	if _, err := c2.DeliveryCurrency(mustTaskID(t, "t1")); err != nil {
 		t.Fatal(err)
 	}
-	rec, exists, err := c2.readDeliveryRecord("t1")
-	if err != nil {
-		t.Fatal(err)
+	idxAfter, ok, err := readDocForTest(h2, deliveryCurrentKey("t1"))
+	if err != nil || !ok {
+		t.Fatalf("read index after: ok=%v err=%v", ok, err)
 	}
-	if !exists || len(rec.Authorizations) != 1 || len(rec.Outcomes) != 0 {
-		t.Fatalf("currency read mutated the delivery record: %+v", rec)
+	if !bytes.Equal(idxBefore, idxAfter) {
+		t.Fatalf("currency read mutated the delivery index")
 	}
 }
 

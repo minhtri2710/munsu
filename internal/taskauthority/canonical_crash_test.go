@@ -323,6 +323,7 @@ func TestCanonicalDeliveryAuthorizationInterruptedCommitRecovers(t *testing.T) {
 	next := agg.clone()
 	next.Revision++
 	auth := DeliveryAuthorization{
+		SchemaVersion: TaskAuthoritySchema,
 		TaskID:        next.TaskID,
 		Generation:    next.Generation,
 		Revision:      next.Revision,
@@ -340,17 +341,19 @@ func TestCanonicalDeliveryAuthorizationInterruptedCommitRecovers(t *testing.T) {
 	if err := validateDeliveryAuthorization(auth); err != nil {
 		t.Fatal(err)
 	}
-	rec := DeliveryRecord{SchemaVersion: TaskAuthoritySchema, TaskID: "t1", Authorizations: []DeliveryAuthorization{auth}}
-	if err := validateDeliveryRecord(rec); err != nil {
+	index := DeliveryIndex{SchemaVersion: TaskAuthoritySchema, TaskID: "t1", AuthorizationOpID: op.ID.Value()}
+	if err := validateDeliveryIndex(index); err != nil {
 		t.Fatal(err)
 	}
 
+	authData, _ := json.Marshal(auth)
+	indexData, _ := json.Marshal(index)
 	docData, _ := json.Marshal(taskDoc{HomeRevision: 4, Aggregate: next})
-	recData, _ := json.Marshal(rec)
 	receiptData, _ := json.Marshal(receipt{OperationID: op.ID.Value(), Digest: op.Digest, TaskID: "t1", Generation: 1, Revision: 4, Phase: string(PhaseWorking)})
 	plantInterruptedJournal(t, root, taskScope("t1"), op.ID.Value(), 3, 4, []home.ChangeItem{
 		{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
-		{Root: home.RootState, Key: deliveryKey("t1"), Data: recData},
+		{Root: home.RootState, Key: deliveryAuthorizationKey("t1", op.ID.Value()), Data: authData},
+		{Root: home.RootState, Key: deliveryCurrentKey("t1"), Data: indexData},
 		{Root: home.RootState, Key: receiptKey(op.ID.Value()), Data: receiptData},
 	})
 
@@ -407,6 +410,7 @@ func TestCanonicalDeliveryOutcomeInterruptedCommitRecovers(t *testing.T) {
 	next := agg.clone()
 	next.Revision++
 	outcome := DeliveryOutcome{
+		SchemaVersion:            TaskAuthoritySchema,
 		TaskID:                   next.TaskID,
 		Generation:               next.Generation,
 		AuthorizationOperationID: auth.OperationID,
@@ -420,17 +424,19 @@ func TestCanonicalDeliveryOutcomeInterruptedCommitRecovers(t *testing.T) {
 	if err := validateDeliveryOutcome(outcome); err != nil {
 		t.Fatal(err)
 	}
-	rec := DeliveryRecord{SchemaVersion: TaskAuthoritySchema, TaskID: "t1", Authorizations: []DeliveryAuthorization{auth}, Outcomes: []DeliveryOutcome{outcome}}
-	if err := validateDeliveryRecord(rec); err != nil {
+	index := DeliveryIndex{SchemaVersion: TaskAuthoritySchema, TaskID: "t1", AuthorizationOpID: auth.OperationID, OutcomeOpID: op.ID.Value(), Terminal: true}
+	if err := validateDeliveryIndex(index); err != nil {
 		t.Fatal(err)
 	}
 
+	outcomeData, _ := json.Marshal(outcome)
+	indexData, _ := json.Marshal(index)
 	docData, _ := json.Marshal(taskDoc{HomeRevision: 5, Aggregate: next})
-	recData, _ := json.Marshal(rec)
 	receiptData, _ := json.Marshal(receipt{OperationID: op.ID.Value(), Digest: op.Digest, TaskID: "t1", Generation: 1, Revision: 5, Phase: string(PhaseWorking)})
 	plantInterruptedJournal(t, root, taskScope("t1"), op.ID.Value(), 4, 5, []home.ChangeItem{
 		{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
-		{Root: home.RootState, Key: deliveryKey("t1"), Data: recData},
+		{Root: home.RootState, Key: deliveryOutcomeKey("t1", op.ID.Value()), Data: outcomeData},
+		{Root: home.RootState, Key: deliveryCurrentKey("t1"), Data: indexData},
 		{Root: home.RootState, Key: receiptKey(op.ID.Value()), Data: receiptData},
 	})
 
