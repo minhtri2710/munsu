@@ -143,6 +143,9 @@ func TestPrintDataFile_TruncatesLongFiles(t *testing.T) {
 // TestPrintFleetState tests the printFleetState helper.
 func TestPrintFleetState_NoTasks(t *testing.T) {
 	tmpDir := t.TempDir()
+	if _, err := mhome.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmpDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
@@ -159,6 +162,9 @@ func TestPrintFleetState_NoTasks(t *testing.T) {
 
 func TestPrintFleetState_NoStateDir(t *testing.T) {
 	tmpDir := t.TempDir()
+	if _, err := mhome.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 
 	output := captureStdout(func() {
 		printFleetState(os.Stdout, tmpDir)
@@ -171,6 +177,9 @@ func TestPrintFleetState_NoStateDir(t *testing.T) {
 
 func TestPrintFleetState_ShowsTasks(t *testing.T) {
 	tmpDir := t.TempDir()
+	if _, err := mhome.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmpDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
@@ -205,6 +214,9 @@ func TestPrintFleetState_ShowsTasks(t *testing.T) {
 
 func TestPrintFleetState_IgnoresNonMetaFiles(t *testing.T) {
 	tmpDir := t.TempDir()
+	if _, err := mhome.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmpDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
@@ -231,6 +243,9 @@ func TestPrintFleetState_IgnoresNonMetaFiles(t *testing.T) {
 // TestPrintFleetState_TaskNoStatus tests that printFleetState shows a task with empty status.
 func TestPrintFleetState_TaskNoStatus(t *testing.T) {
 	tmpDir := t.TempDir()
+	if _, err := mhome.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmpDir, "state")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
@@ -342,6 +357,9 @@ func TestSupervisionMode_Unknown(t *testing.T) {
 
 func TestEnsureWatcherForSession_StartsOnlyForOwnedInFlightFleet(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := mhome.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=ship\n"), 0644)
@@ -367,6 +385,9 @@ func TestEnsureWatcherForSession_StartsOnlyForOwnedInFlightFleet(t *testing.T) {
 
 func TestEnsureWatcherForSession_IdleFleetDoesNotStart(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := mhome.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	calls := 0
 	result := ensureWatcherForSession(tmp, true, func(home string) WatchEnsureResult {
 		calls++
@@ -379,6 +400,9 @@ func TestEnsureWatcherForSession_IdleFleetDoesNotStart(t *testing.T) {
 
 func TestEnsureWatcherForSession_HealthyWatcherIsReported(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := mhome.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=scout\n"), 0644)

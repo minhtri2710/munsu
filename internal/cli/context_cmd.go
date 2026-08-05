@@ -13,9 +13,11 @@ import (
 
 // syncOrchestratorManual writes the embedded orchestrator manual to
 // <home>/AGENTS.md when missing or when it differs from the binary seed.
-// Returns the path and whether a write occurred.
+// Returns the path and whether a write occurred. The context command is a
+// Home-creation boundary (it ensures the home exists), so it initializes a
+// canonical Home.
 func syncOrchestratorManual(homeDir string) (path string, wrote bool, err error) {
-	if err := home.EnsureDirTree(homeDir); err != nil {
+	if _, err := home.Init(homeDir); err != nil {
 		return "", false, fmt.Errorf("ensuring home tree: %w", err)
 	}
 	path = filepath.Join(homeDir, "AGENTS.md")

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/spf13/cobra"
 )
 
@@ -239,7 +240,11 @@ func TestGrokGuardBlindTurn(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	// Make tmpDir a git repo so scope classifies it as Primary
+	// Initialize a canonical home so fleet state reads (fleet.Snapshot) work,
+	// then make tmpDir a git repo so scope classifies it as Primary.
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	runGit(t, tmpDir, "init")
 
 	// Create in-flight task meta
