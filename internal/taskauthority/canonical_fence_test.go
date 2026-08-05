@@ -681,3 +681,79 @@ func TestCanonicalLaunchOpsFencedByTransferInvariants(t *testing.T) {
 		t.Fatalf("RecordLaunch on reserved task = %v, want ErrConflict", err)
 	}
 }
+
+// TestCanonicalDeliveryOpsFencedByTransferReservation proves the delivery
+// authorization, revocation, and outcome operations are ordinary task-scoped
+// mutations: a task reserved for transfer rejects every delivery mutation
+// with the common reservation fence before any delivery-specific check.
+func TestCanonicalDeliveryOpsFencedByTransferReservation(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+	mustReserveTransfer(t, c, "t1", preconditionOf(1, 3), "dest-home")
+
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prec := preconditionOf(uint64(agg.Generation), uint64(agg.Revision))
+
+	ar := authorizeRequest(c, "t1", prec)
+	if _, err := c.AuthorizeDelivery(mustOperation(t, "op-fence-auth", ar), ar); !errors.Is(err, ErrConflict) {
+		t.Fatalf("AuthorizeDelivery on reserved task = %v, want ErrConflict", err)
+	}
+	rr := CanonicalRevokeDeliveryRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, AuthorizationOperationID: "op-any", Reason: "x"}
+	if _, err := c.RevokeDeliveryAuthorization(mustOperation(t, "op-fence-revoke", rr), rr); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RevokeDeliveryAuthorization on reserved task = %v, want ErrConflict", err)
+	}
+	or := CanonicalDeliveryOutcomeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, AuthorizationOperationID: "op-any", Status: DeliveryOutcomeCompleted, Detail: "x"}
+	if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-fence-outcome", or), or); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CommitDeliveryOutcome on reserved task = %v, want ErrConflict", err)
+	}
+}
+
+// TestCanonicalDeliveryOpsFencedBySupersession proves delivery mutations
+// fail closed on a superseded source generation (after CommitTransfer) with
+// the common currentness gate, even against the latest persisted revision.
+func TestCanonicalDeliveryOpsFencedBySupersession(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+	mustReserveTransfer(t, c, "t1", preconditionOf(1, 3), "dest-home")
+
+	commit := commitTransferRequest(t, c, "t1", preconditionOf(1, 4), "res-t1", "dest-home")
+	if _, err := c.CommitTransfer(mustOperation(t, "op-commit-sup-delivery", commit), commit); err != nil {
+		t.Fatalf("CommitTransfer: %v", err)
+	}
+
+	hist, err := c.GetGeneration(mustTaskID(t, "t1"), Generation(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prec := preconditionOf(uint64(hist.Generation), uint64(hist.Revision))
+
+	ar := authorizeRequest(c, "t1", prec)
+	if _, err := c.AuthorizeDelivery(mustOperation(t, "op-sup-auth", ar), ar); !errors.Is(err, ErrConflict) {
+		t.Fatalf("AuthorizeDelivery on superseded source = %v, want ErrConflict", err)
+	}
+	or := CanonicalDeliveryOutcomeRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, AuthorizationOperationID: "op-any", Status: DeliveryOutcomeCompleted, Detail: "x"}
+	if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-sup-outcome", or), or); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CommitDeliveryOutcome on superseded source = %v, want ErrConflict", err)
+	}
+	rr := CanonicalRevokeDeliveryRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, AuthorizationOperationID: "op-any", Reason: "x"}
+	if _, err := c.RevokeDeliveryAuthorization(mustOperation(t, "op-sup-revoke", rr), rr); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RevokeDeliveryAuthorization on superseded source = %v, want ErrConflict", err)
+	}
+
+	// The same rejection holds after reopen.
+	c2 := reopenCanonical(t, rootOf(t, c))
+	ar2 := authorizeRequest(c2, "t1", prec)
+	if _, err := c2.AuthorizeDelivery(mustOperation(t, "op-sup-auth2", ar2), ar2); !errors.Is(err, ErrConflict) {
+		t.Fatalf("AuthorizeDelivery on superseded source after reopen = %v, want ErrConflict", err)
+	}
+}
+
+// rootOf returns the home root of the canonical's home (test helper for the
+// supersession reopen assertion).
+func rootOf(t *testing.T, c *Canonical) string {
+	t.Helper()
+	return c.h.Root()
+}

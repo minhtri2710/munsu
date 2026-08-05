@@ -298,3 +298,162 @@ func TestCanonicalRetireInterruptedCommitRecovers(t *testing.T) {
 		t.Fatalf("recovered retirement evidence = %+v", agg.Retirement)
 	}
 }
+
+// TestCanonicalDeliveryAuthorizationInterruptedCommitRecovers proves an
+// interrupted delivery authorization commit is recovered mechanically exactly
+// once: the advanced task document, the delivery ledger, and the operation
+// receipt all replay from the write-ahead journal, and the recovered
+// authorization is current and re-readable.
+func TestCanonicalDeliveryAuthorizationInterruptedCommitRecovers(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+
+	// The interrupted issuance: expectedRevision 3 -> 4 (post-issuance).
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	holds, err := c.listHolds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := authorizeRequest(c, "t1", preconditionOf(1, 3))
+	op := mustOperation(t, "op-interrupted-auth", req)
+
+	next := agg.clone()
+	next.Revision++
+	auth := DeliveryAuthorization{
+		TaskID:        next.TaskID,
+		Generation:    next.Generation,
+		Revision:      next.Revision,
+		Phase:         next.Phase,
+		Owner:         next.Definition.Owner,
+		Kind:          req.Kind,
+		Identity:      req.Identity,
+		BindingDigest: deliveryBindingDigest(*next.Endpoint, *next.Worktree),
+		HoldsDigest:   deliveryHoldsDigest(holds, next),
+		Preconditions: uniqueDeliveryPreconditions(req.Preconditions),
+		OperationID:   op.ID.Value(),
+		Digest:        op.Digest,
+		IssuedAt:      1000,
+	}
+	if err := validateDeliveryAuthorization(auth); err != nil {
+		t.Fatal(err)
+	}
+	rec := DeliveryRecord{SchemaVersion: TaskAuthoritySchema, TaskID: "t1", Authorizations: []DeliveryAuthorization{auth}}
+	if err := validateDeliveryRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	docData, _ := json.Marshal(taskDoc{HomeRevision: 4, Aggregate: next})
+	recData, _ := json.Marshal(rec)
+	receiptData, _ := json.Marshal(receipt{OperationID: op.ID.Value(), Digest: op.Digest, TaskID: "t1", Generation: 1, Revision: 4, Phase: string(PhaseWorking)})
+	plantInterruptedJournal(t, root, taskScope("t1"), op.ID.Value(), 3, 4, []home.ChangeItem{
+		{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
+		{Root: home.RootState, Key: deliveryKey("t1"), Data: recData},
+		{Root: home.RootState, Key: receiptKey(op.ID.Value()), Data: receiptData},
+	})
+
+	c2 := reopenCanonical(t, root)
+	recovered, err := c2.DeliveryAuthorization(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("read recovered authorization: %v", err)
+	}
+	if recovered.OperationID != op.ID.Value() || recovered.Revision != 4 || recovered.Identity != deliveryIdentity() {
+		t.Fatalf("recovered authorization = %+v", recovered)
+	}
+
+	// The recovered authorization is current and the task revision advanced
+	// exactly once.
+	cur, err := c2.DeliveryCurrency(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cur.Valid || cur.Revision != 4 {
+		t.Fatalf("recovered currency = %+v", cur)
+	}
+
+	// The recovered operation replays exactly once.
+	replayed, err := c2.AuthorizeDelivery(op, req)
+	if err != nil {
+		t.Fatalf("replay of recovered authorization: %v", err)
+	}
+	if !replayed.Replayed || replayed.Authorization.Revision != 4 {
+		t.Fatalf("recovered replay = %+v", replayed)
+	}
+}
+
+// TestCanonicalDeliveryOutcomeInterruptedCommitRecovers proves an interrupted
+// outcome commit is recovered mechanically exactly once: the terminal outcome
+// is present, the ledger stays bounded, and the operation replays.
+func TestCanonicalDeliveryOutcomeInterruptedCommitRecovers(t *testing.T) {
+	c, _, root := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1")
+	auth := mustAuthorize(t, c, "t1", 3, "op-auth-crash-outcome")
+
+	outReq := CanonicalDeliveryOutcomeRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 4),
+		AuthorizationOperationID: auth.OperationID,
+		Status:                   DeliveryOutcomeCompleted,
+		Detail:                   "merge confirmed",
+		MergedSHA:                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+	}
+	op := mustOperation(t, "op-interrupted-outcome", outReq)
+
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := agg.clone()
+	next.Revision++
+	outcome := DeliveryOutcome{
+		TaskID:                   next.TaskID,
+		Generation:               next.Generation,
+		AuthorizationOperationID: auth.OperationID,
+		OperationID:              op.ID.Value(),
+		Digest:                   op.Digest,
+		Status:                   outReq.Status,
+		Detail:                   outReq.Detail,
+		MergedSHA:                outReq.MergedSHA,
+		CommittedAt:              1000,
+	}
+	if err := validateDeliveryOutcome(outcome); err != nil {
+		t.Fatal(err)
+	}
+	rec := DeliveryRecord{SchemaVersion: TaskAuthoritySchema, TaskID: "t1", Authorizations: []DeliveryAuthorization{auth}, Outcomes: []DeliveryOutcome{outcome}}
+	if err := validateDeliveryRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	docData, _ := json.Marshal(taskDoc{HomeRevision: 5, Aggregate: next})
+	recData, _ := json.Marshal(rec)
+	receiptData, _ := json.Marshal(receipt{OperationID: op.ID.Value(), Digest: op.Digest, TaskID: "t1", Generation: 1, Revision: 5, Phase: string(PhaseWorking)})
+	plantInterruptedJournal(t, root, taskScope("t1"), op.ID.Value(), 4, 5, []home.ChangeItem{
+		{Root: home.RootState, Key: taskCurrentKey("t1"), Data: docData},
+		{Root: home.RootState, Key: deliveryKey("t1"), Data: recData},
+		{Root: home.RootState, Key: receiptKey(op.ID.Value()), Data: receiptData},
+	})
+
+	c2 := reopenCanonical(t, root)
+	recovered, err := c2.DeliveryOutcome(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("read recovered outcome: %v", err)
+	}
+	if recovered.OperationID != op.ID.Value() || recovered.Status != DeliveryOutcomeCompleted {
+		t.Fatalf("recovered outcome = %+v", recovered)
+	}
+	replayed, err := c2.CommitDeliveryOutcome(op, outReq)
+	if err != nil {
+		t.Fatalf("replay of recovered outcome: %v", err)
+	}
+	if !replayed.Replayed || replayed.Outcome.OperationID != op.ID.Value() {
+		t.Fatalf("recovered outcome replay = %+v", replayed)
+	}
+	// A distinct incompatible outcome still conflicts after recovery.
+	distinct := outReq
+	distinct.Precondition = preconditionOf(1, 5)
+	distinct.Status = DeliveryOutcomeRetryable
+	if _, err := c2.CommitDeliveryOutcome(mustOperation(t, "op-after-recovered", distinct), distinct); !errors.Is(err, ErrConflict) {
+		t.Fatalf("distinct outcome after recovered terminal = %v, want ErrConflict", err)
+	}
+}

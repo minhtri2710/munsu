@@ -8,15 +8,16 @@ import (
 type DispatchAction string
 
 const (
-	DispatchActionHandoff DispatchAction = "handoff"
-	DispatchActionStart   DispatchAction = "start"
-	DispatchActionSpawn   DispatchAction = "spawn"
+	DispatchActionHandoff  DispatchAction = "handoff"
+	DispatchActionStart    DispatchAction = "start"
+	DispatchActionSpawn    DispatchAction = "spawn"
+	DispatchActionDelivery DispatchAction = "delivery"
 )
 
 // Valid reports whether the action is a known dispatch action.
 func (a DispatchAction) Valid() bool {
 	switch a {
-	case DispatchActionHandoff, DispatchActionStart, DispatchActionSpawn:
+	case DispatchActionHandoff, DispatchActionStart, DispatchActionSpawn, DispatchActionDelivery:
 		return true
 	}
 	return false
