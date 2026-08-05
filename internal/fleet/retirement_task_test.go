@@ -402,7 +402,7 @@ func TestRun_NoMeta(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "nonexistent"))
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent"}, fakeTeardown{}, fakeRetirementJournals{}, canonicalMergeTestAuth(t, tmp, "nonexistent"))
 	if err == nil {
 		t.Fatal("should fail for nonexistent task")
 	}
@@ -413,6 +413,10 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
+	// Compose the canonical Authority and task before the projection write so
+	// the home is initialized first.
+	auth := canonicalMergeTestAuth(t, tmp, "nonexistent")
+
 	// Create a minimal meta file
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
@@ -420,7 +424,7 @@ func TestRun_ForceSkipsSafety(t *testing.T) {
 	os.WriteFile(filepath.Join(stateDir, "nonexistent.meta"), []byte(metaContent), 0644)
 
 	// With --force, it should try to proceed (will fail at session/return steps but not at safety)
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "nonexistent"))
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "nonexistent", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("with --force should not fail at safety: %v", err)
 	}
@@ -434,19 +438,21 @@ func TestRun_ForceScoutWithoutReport(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
+	auth := canonicalMergeTestAuth(t, tmp, "scout-test")
+
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
 	os.WriteFile(filepath.Join(stateDir, "scout-test.meta"), []byte(metaContent), 0644)
 
 	// Without --force, should fail
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err == nil {
 		t.Fatal("should fail for scout without report without --force")
 	}
 
 	// With --force, should proceed
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}
@@ -459,6 +465,8 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	tmp := t.TempDir()
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
+
+	auth := canonicalMergeTestAuth(t, tmp, "test-residual")
 
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
@@ -481,7 +489,7 @@ func TestRun_RemovesResidualArtifacts(t *testing.T) {
 	}
 
 	// Run teardown with --force to skip safety
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "test-residual"))
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "test-residual", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -512,6 +520,8 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
+	auth := canonicalMergeTestAuth(t, tmp, "legacy-test")
+
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
@@ -541,7 +551,7 @@ func TestRun_BackwardCompatLegacyNames(t *testing.T) {
 	}
 
 	// Run teardown with --force
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "legacy-test"))
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "legacy-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("teardown should not fail: %v", err)
 	}
@@ -624,6 +634,8 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	os.Setenv("MUNSU_HOME", tmp)
 	defer os.Unsetenv("MUNSU_HOME")
 
+	auth := canonicalMergeTestAuth(t, tmp, "scout-test")
+
 	// Create meta file for a scout task.
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
@@ -640,7 +652,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 
 	// Without --force, should fail due to unresolved holds.
-	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
+	_, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: false}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err == nil {
 		t.Fatal("should fail for scout with unresolved holds without --force")
 	}
@@ -649,7 +661,7 @@ func TestRun_ForceSkipsDecisionHoldCheck(t *testing.T) {
 	}
 
 	// With --force, should proceed past safety checks.
-	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, "scout-test"))
+	result, err := RetireTask(Options{HomeDir: tmp, ID: "scout-test", Force: true}, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("with --force should proceed: %v", err)
 	}

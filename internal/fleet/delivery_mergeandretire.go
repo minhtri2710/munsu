@@ -60,11 +60,11 @@ func (r *MergeAndRetireResult) IsError() bool {
 // Returns a typed composite result. Callers check IsError() to determine the
 // overall outcome. A merged-but-not-retired result is non-zero; retry resumes
 // retirement only.
-// authority is the composed Task Authority targeting the exact resolved task
-// home (cross-home delivery); it is threaded into PRMerge for the post-merge
-// issue link reconciliation, unused when the merge phase is skipped, and
-// required by the retirement transition (nil fails closed).
-func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Authority) *MergeAndRetireResult {
+// authority is the composed canonical Task Authority targeting the exact
+// resolved task home (cross-home delivery); it is threaded into PRMerge for
+// the post-merge issue link reconciliation, unused when the merge phase is
+// skipped, and required by the retirement transition (nil fails closed).
+func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) *MergeAndRetireResult {
 	// Phase 1: Check if already merged (idempotent resume).
 	meta, err := home.ReadMeta(homeDir, id)
 	if err != nil {

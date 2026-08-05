@@ -14,13 +14,12 @@ import (
 func TestMergeAndRetire_AlreadyMergedSkipsMerge(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-already-merged"
-	stateDir := filepath.Join(homeDir, "state")
-	os.MkdirAll(stateDir, 0755)
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 
 	// Write meta with delivery_state=merged (scout kind, no worktree so
 	// retirement can proceed without a real backend).
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\ndelivery_state=merged\n"
-	os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644)
+	os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte(metaContent), 0644)
 
 	// Create report.md so scout safety check passes when Force=false.
 	reportDir := filepath.Join(homeDir, "data", taskID)
@@ -28,7 +27,7 @@ func TestMergeAndRetire_AlreadyMergedSkipsMerge(t *testing.T) {
 	os.WriteFile(filepath.Join(reportDir, "report.md"), []byte("findings"), 0644)
 
 	// Call MergeAndRetire with already-merged state.
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -52,7 +51,7 @@ func TestMergeAndRetire_AlreadyMergedSkipsMerge(t *testing.T) {
 	}
 
 	// Meta should be removed after successful retirement.
-	metaPath := filepath.Join(stateDir, taskID+".meta")
+	metaPath := filepath.Join(homeDir, "state", taskID+".meta")
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Error("meta should have been removed after successful retirement")
 	}
@@ -66,15 +65,17 @@ func TestMergeAndRetire_AlreadyMergedSkipsMerge(t *testing.T) {
 func TestMergeAndRetire_AlreadyMergedPartialCleanupRetry(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-partial-retry"
-	stateDir := filepath.Join(homeDir, "state")
-	os.MkdirAll(stateDir, 0755)
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 
-	// Phase 1: Setup meta with delivery_state=merged and a worktree path.
+	// Seed the canonical endpoint/worktree evidence the saga cleanup must
+	// release (the compose path binds worktree then endpoint).
 	wtDir := filepath.Join(homeDir, "worktrees", taskID)
 	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-retry", "fence-wt-retry")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-retry", "fence-ep-retry")
 
 	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\ndelivery_state=merged\nworktree=" + wtDir + "\n"
-	os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644)
+	os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte(metaContent), 0644)
 
 	// Create residual artifacts.
 	residuals := []string{
@@ -83,7 +84,7 @@ func TestMergeAndRetire_AlreadyMergedPartialCleanupRetry(t *testing.T) {
 		taskID + ".turnend",
 	}
 	for _, name := range residuals {
-		os.WriteFile(filepath.Join(stateDir, name), []byte("stale"), 0644)
+		os.WriteFile(filepath.Join(homeDir, "state", name), []byte("stale"), 0644)
 	}
 
 	// Phase 2: First retirement attempt — return worktree successfully but
@@ -92,7 +93,6 @@ func TestMergeAndRetire_AlreadyMergedPartialCleanupRetry(t *testing.T) {
 	// We use a fakeTeardown that returns an error on Dispose, which causes
 	// RetireTask to fail before removing meta. One Authority spans both
 	// attempts so the retry replays the durable retirement receipt.
-	auth := mergeTestAuth(t, taskID)
 	firstResult := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true, disposeErr: os.ErrPermission}, fakeRetirementJournals{}, auth)
 	if firstResult == nil {
 		t.Fatal("expected non-nil first result")
@@ -112,7 +112,7 @@ func TestMergeAndRetire_AlreadyMergedPartialCleanupRetry(t *testing.T) {
 	}
 
 	// Meta should still exist (preserved for retry).
-	metaPath := filepath.Join(stateDir, taskID+".meta")
+	metaPath := filepath.Join(homeDir, "state", taskID+".meta")
 	if _, err := os.Stat(metaPath); err != nil {
 		t.Fatalf("meta should be preserved for retry, but got: %v", err)
 	}
@@ -163,18 +163,20 @@ func TestMergeAndRetire_AlreadyMergedPartialCleanupRetry(t *testing.T) {
 func TestMergeAndRetire_AlreadyMergedWorktreeGone(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-worktree-gone"
-	stateDir := filepath.Join(homeDir, "state")
-	os.MkdirAll(stateDir, 0755)
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 
-	// Setup meta with delivery_state=merged and a worktree path that no longer exists.
+	// Seed the canonical worktree evidence at a path that no longer exists so
+	// the saga reports it gracefully instead of attempting a release.
+	seedWorktreeEvidence(t, auth, taskID, "/nonexistent/worktree", "lease-wt-gone", "fence-wt-gone")
+
 	metaContent := "kind=ship\nbackend=tmux\nwindow=@1\ndelivery_state=merged\nworktree=/nonexistent/worktree\n"
-	os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644)
+	os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte(metaContent), 0644)
 
 	// Call MergeAndRetire with already-merged state.
 	// The worktree path doesn't exist, but Force=true (due to alreadyMerged)
 	// skips the worktree-based safety checks. RetireTask handles the missing
 	// worktree path gracefully ("worktree path no longer exists").
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -209,15 +211,14 @@ func TestMergeAndRetire_AlreadyMergedWorktreeGone(t *testing.T) {
 func TestMergeAndRetire_MergeFailed(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-merge-failed"
-	stateDir := filepath.Join(homeDir, "state")
-	os.MkdirAll(stateDir, 0755)
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 
 	// Write meta without delivery_state=merged, so PRMerge would be called.
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\n"
-	os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644)
+	os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte(metaContent), 0644)
 
 	// Call MergeAndRetire with a malformed PR URL so PRMerge fails.
-	result := MergeAndRetire(homeDir, taskID, "not-a-valid-url", nil, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
+	result := MergeAndRetire(homeDir, taskID, "not-a-valid-url", nil, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -253,9 +254,10 @@ func TestMergeAndRetire_NilResultIsError(t *testing.T) {
 func TestMergeAndRetire_NilMeta(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-nonexistent"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 
 	// No meta file exists — PRMerge won't be called because ReadMeta fails first.
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{}, fakeRetirementJournals{}, auth)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -270,12 +272,11 @@ func TestMergeAndRetire_NilMeta(t *testing.T) {
 func TestMergeAndRetire_AlreadyMergedResidualArtifacts(t *testing.T) {
 	homeDir := t.TempDir()
 	taskID := "test-residual-retry"
-	stateDir := filepath.Join(homeDir, "state")
-	os.MkdirAll(stateDir, 0755)
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
 
 	// Setup meta with delivery_state=merged and a scout kind (no worktree).
 	metaContent := "kind=scout\nbackend=tmux\nwindow=@1\ndelivery_state=merged\n"
-	os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644)
+	os.WriteFile(filepath.Join(homeDir, "state", taskID+".meta"), []byte(metaContent), 0644)
 
 	// Create report.md for scout.
 	reportDir := filepath.Join(homeDir, "data", taskID)
@@ -289,11 +290,11 @@ func TestMergeAndRetire_AlreadyMergedResidualArtifacts(t *testing.T) {
 		taskID + ".turnend",
 	}
 	for _, name := range residuals {
-		os.WriteFile(filepath.Join(stateDir, name), []byte("stale"), 0644)
+		os.WriteFile(filepath.Join(homeDir, "state", name), []byte("stale"), 0644)
 	}
 
 	// First attempt: success (all artifacts cleaned).
-	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, mergeTestAuth(t, taskID))
+	result := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -303,7 +304,7 @@ func TestMergeAndRetire_AlreadyMergedResidualArtifacts(t *testing.T) {
 
 	// Verify residual artifacts were removed.
 	for _, name := range residuals {
-		path := filepath.Join(stateDir, name)
+		path := filepath.Join(homeDir, "state", name)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("residual %s should have been removed, but still exists", name)
 		}
