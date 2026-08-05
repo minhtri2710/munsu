@@ -140,7 +140,11 @@ Use --role for role-specific integration matrix:
 					break
 				}
 				// Config-driven hard-required (e.g. require-no-mistakes)
-				if bootstrap.IsHardRequiredByConfig(ctx.Home, tool) {
+				requiredByConfig, err := bootstrap.IsHardRequiredByConfig(ctx.Home, tool)
+				if err != nil {
+					return fmt.Errorf("doctor: %w", err)
+				}
+				if requiredByConfig {
 					missingRequired = true
 					break
 				}

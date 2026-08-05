@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/configmigration"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
@@ -97,18 +96,6 @@ func TestFleetRehearsal_LegacyFleet(t *testing.T) {
 			t.Error("migration must include legacy-config-exists requirement")
 		}
 	}
-
-	// Phase 2.2: Migration plan works on legacy config
-	plan, err := configmigration.PlanConfigMigration(homeDir)
-	if err != nil {
-		t.Fatalf("migration PlanConfigMigration: %v", err)
-	}
-	if plan == nil {
-		t.Fatal("migration Plan returned nil")
-	}
-	if len(plan.LegacyFiles) == 0 {
-		t.Log("no legacy files found in plan (expected when typed docs already exist)")
-	}
 }
 
 // TestFleetRehearsal_PartiallyMigratedFleet proves that a partially migrated
@@ -120,14 +107,9 @@ func TestFleetRehearsal_PartiallyMigratedFleet(t *testing.T) {
 	os.MkdirAll(filepath.Join(homeDir, "config"), 0755)
 	os.MkdirAll(filepath.Join(homeDir, "state"), 0755)
 
-	// Write typed project registry (already migrated)
-	projects := config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "migrated-project", Path: "/path/to/project", Mode: "no-mistakes"},
-		},
-	}
-	if err := config.StoreProjectRegistry(homeDir, projects); err != nil {
+	// Write a base document (already migrated) and a legacy captain registry.
+	base := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
+	if err := config.StoreFleetBase(homeDir, base); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,14 +127,6 @@ func TestFleetRehearsal_PartiallyMigratedFleet(t *testing.T) {
 	}
 	if !result.IsCompatible() {
 		t.Logf("Partial migration check: %s", result.FormatErrors())
-	}
-
-	// Phase 3.2: Migration system detects partial state
-	needed, cmd := configmigration.NeedsConfigMigration(homeDir)
-	if needed {
-		t.Logf("partial migration detected — needs: %s", cmd)
-	} else {
-		t.Log("partial migration fully migrated (both typed and legacy detected as complete)")
 	}
 }
 

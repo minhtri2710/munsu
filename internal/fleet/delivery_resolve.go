@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -90,4 +91,30 @@ func RequireShipMeta(homeDir, id string) (taskHome string, meta map[string]strin
 		return "", nil, fmt.Errorf("task %s has kind=%q, delivery requires kind=ship (promote scout tasks first)", id, meta["kind"])
 	}
 	return taskHome, meta, nil
+}
+
+// RequireIdentity resolves a complete, valid delivery identity from the task
+// meta projection. It is the read-only identity resolution used by the
+// retained provider-neutral status seam; delivery execution itself never
+// derives identity truth from .meta (the journal pins the exact typed
+// identity and the canonical authorization binds it).
+func RequireIdentity(homeDir, id string) (*domain.DeliveryIdentity, error) {
+	meta, err := home.ReadMeta(homeDir, id)
+	if err != nil {
+		return nil, fmt.Errorf("reading task meta for identity: %w", err)
+	}
+
+	ident, err := domain.IdentityFromMeta(meta)
+	if err != nil {
+		return nil, fmt.Errorf("parsing delivery identity: %w", err)
+	}
+	if ident == nil {
+		return nil, fmt.Errorf("no delivery identity found for task %s: PR URL not set in meta; use pr-check to capture identity before destructive actions", id)
+	}
+
+	if err := domain.ValidateIdentity(ident); err != nil {
+		return nil, fmt.Errorf("incomplete delivery identity for task %s: %w; re-run pr-check to recapture", id, err)
+	}
+
+	return ident, nil
 }

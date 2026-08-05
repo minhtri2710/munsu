@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // assertConfigContains fails t if result.Configs does not contain a ConfigDiagnostic
@@ -26,8 +28,10 @@ func assertConfigContains(t *testing.T, configs []ConfigDiagnostic, want string)
 	t.Errorf("expected %q in Configs, got %v", want, got)
 }
 
-func TestRun_BackendDiagnostics_AutoWithActiveTMUX(t *testing.T) {
+func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveTMUX(t *testing.T) {
 	home := t.TempDir()
+	// An active TMUX env must NOT resolve a backend for diagnostics: no
+	// persisted snapshot identity exists, so the report is typed missing-input.
 	t.Setenv("TMUX", "/tmp/tmux-xxx/default")
 	t.Setenv("HERDR_ENV", "")
 
@@ -37,11 +41,12 @@ func TestRun_BackendDiagnostics_AutoWithActiveTMUX(t *testing.T) {
 	}
 
 	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: active TMUX)")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
-func TestRun_BackendDiagnostics_AutoWithActiveHERDRENV(t *testing.T) {
+func TestRun_BackendDiagnostics_NoPersistedIdentityWithActiveHERDRENV(t *testing.T) {
 	home := t.TempDir()
+	// An active HERDR_ENV must NOT resolve a backend for diagnostics.
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "1")
 
@@ -51,15 +56,16 @@ func TestRun_BackendDiagnostics_AutoWithActiveHERDRENV(t *testing.T) {
 	}
 
 	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: active HERDR_ENV)")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
-func TestRun_BackendDiagnostics_ColdStart(t *testing.T) {
+func TestRun_BackendDiagnostics_NoPersistedIdentityWithTmuxOnPATH(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("TMUX", "")
 	t.Setenv("HERDR_ENV", "")
 
-	// Create a fake tmux on a temporary PATH to guarantee cold-start detection
+	// A fake tmux on PATH must NOT be treated as a backend selection: PATH
+	// probing is not a selection contract for diagnostics.
 	fakeBin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fakeBin, "tmux"), []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
 		t.Fatal(err)
@@ -73,10 +79,13 @@ func TestRun_BackendDiagnostics_ColdStart(t *testing.T) {
 	}
 
 	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: cold-start)")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
-func TestRun_BackendDiagnostics_ExplicitConfigHerdr(t *testing.T) {
+func TestRun_BackendDiagnostics_LegacyPinAloneIsNotAnIdentity(t *testing.T) {
+	// A legacy config file pin is not a typed snapshot identity: without a
+	// fleet base document or published snapshot, BACKEND_RESOLVED is typed
+	// missing-input rather than the pin value.
 	home := t.TempDir()
 	configDir := filepath.Join(home, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -92,16 +101,45 @@ func TestRun_BackendDiagnostics_ExplicitConfigHerdr(t *testing.T) {
 	}
 
 	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: herdr")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: config pin)")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
-func TestRun_BackendDiagnostics_ExplicitConfigTmux(t *testing.T) {
+func TestRun_BackendDiagnostics_PersistedFleetBaseBackend(t *testing.T) {
 	home := t.TempDir()
-	configDir := filepath.Join(home, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux"},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("tmux\n"), 0644); err != nil {
+	// Env must not shadow the persisted typed Backend.
+	t.Setenv("HERDR_ENV", "1")
+
+	result, err := Run(home, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: fleet base document)")
+}
+
+func TestRun_BackendDiagnostics_PersistedPublishedSnapshotWins(t *testing.T) {
+	home := t.TempDir()
+	// The published snapshot is the composed typed truth and wins over the
+	// fleet base document backend.
+	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.StorePublishedSnapshot(home, config.ResolvedProjectConfig{
+		Project:     "sample",
+		ProjectPath: "/tmp/sample",
+		Digest:      "abc",
+		Backend:     "herdr",
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,8 +148,8 @@ func TestRun_BackendDiagnostics_ExplicitConfigTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: tmux")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: tmux (source: config pin)")
+	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: herdr (source: published snapshot)")
 }
 
 func TestRun_BackendDiagnostics_UnrelatedOutputStable(t *testing.T) {
@@ -158,7 +196,7 @@ func TestRun_BackendDiagnostics_AutoConfigFileWithNothingAvailable(t *testing.T)
 	}
 
 	assertConfigContains(t, result.Configs, "BACKEND_CONFIG: auto")
-	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no backend available)")
+	assertConfigContains(t, result.Configs, "BACKEND_RESOLVED: none (source: no persisted backend identity (set backend in the fleet base config))")
 }
 
 func setDirMtime(t *testing.T, dir string, age time.Duration) {
@@ -167,6 +205,47 @@ func setDirMtime(t *testing.T, dir string, age time.Duration) {
 	if err := os.Chtimes(dir, at, at); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestRun_RequireNoMistakesDiagnosticFromTypedBase verifies the bootstrap
+// REQUIRE_NO_MISTAKES diagnostic reads the typed fleet base document, and that
+// a legacy flat config file alone does not produce it.
+func TestRun_RequireNoMistakesDiagnosticFromTypedBase(t *testing.T) {
+	t.Run("typed base requireNoMistakes=true", func(t *testing.T) {
+		home := t.TempDir()
+		if err := config.StoreFleetBase(home, config.FleetBaseDocument{
+			SchemaVersion: config.FleetBaseSchemaVersion,
+			Config:        config.ProjectOverlay{RequireNoMistakes: &[]bool{true}[0]},
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := Run(home, false, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertConfigContains(t, result.Configs, "REQUIRE_NO_MISTAKES: strict")
+	})
+
+	t.Run("legacy flat file alone does not gate", func(t *testing.T) {
+		home := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(home, "config"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, "config", "require-no-mistakes"), []byte("true\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := Run(home, false, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range result.Configs {
+			if c.Key == "REQUIRE_NO_MISTAKES" {
+				t.Fatalf("legacy flat file produced REQUIRE_NO_MISTAKES diagnostic: %+v", c)
+			}
+		}
+	})
 }
 
 func TestGCOrphanDataDirs_EmptyDirOlderThanGrace(t *testing.T) {

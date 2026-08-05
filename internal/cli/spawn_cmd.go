@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -316,10 +316,14 @@ func newPromoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Canonical preflight (Task 7.8): the kind is an authoritative
-			// TaskDefinition field; the projection can never be the preflight
-			// source or override the canonical record.
-			agg, err := auth.Get(id)
+			tid, err := domain.NewTaskID(id)
+			if err != nil {
+				return err
+			}
+			// Canonical preflight: the kind is an authoritative TaskDefinition
+			// field; the projection can never be the preflight source or
+			// override the canonical record.
+			agg, err := auth.Get(tid)
 			if err != nil {
 				return fmt.Errorf("promote %s: %w", id, err)
 			}
@@ -332,31 +336,37 @@ func newPromoteCmd() *cobra.Command {
 				return fmt.Errorf("no report found for scout task %s: write report at %s before promoting", id, fleet.ReportPath(ctx.Home, id))
 			}
 
-			// The promotion is a named Authority operation (Task 7.8): it flips
-			// the generation-bound kind scout → ship with the phase prerequisite
-			// enforced inside the Store transaction (done or resolved). A stale
+			// The promotion is a named canonical operation: it flips the
+			// generation-bound kind scout → ship with the exact generation/
+			// revision precondition and the phase prerequisite (done or
+			// resolved) enforced inside one atomic transaction. A stale
 			// .status projection can never authorize or block the transition.
-			_, actor := resolveTaskActor(ctx.Home)
-			if _, err := auth.Promote(taskauthority.PromoteRequest{
-				OperationID:        newTaskAuthorityOperationID("promote"),
-				Actor:              actor,
-				TaskID:             id,
-				ExpectedGeneration: agg.Generation,
-				Reason:             "cli promote",
-			}); err != nil {
+			req := taskauthority.CanonicalPromoteRequest{
+				HomeID:       auth.HomeID(),
+				TaskID:       tid,
+				Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+				CurrentKind:  "scout",
+				TargetKind:   "ship",
+				Reason:       "cli promote",
+			}
+			op, err := newCanonicalOperation("promote", req)
+			if err != nil {
+				return err
+			}
+			if _, err := auth.Promote(op, req); err != nil {
 				return err
 			}
 
-			// .meta kind is a post-commit projection (ADR-0007 §7): reconcile
-			// the authoritative fields from the canonical aggregate. A
-			// projection failure is a typed partial error and never rolls back
-			// the committed promotion.
-			store, err := taskauthorityfs.NewStore(ctx.Home)
+			// .meta kind is a post-commit projection (ADR-0007 §7): derive the
+			// authoritative fields from the canonical aggregate after the
+			// receipt. A projection failure is a typed partial error and never
+			// rolls back the committed promotion.
+			after, err := auth.Get(tid)
 			if err != nil {
 				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
 			}
-			if _, err := store.ReconcileTaskProjections(id); err != nil {
-				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: err}
+			if perr := projectTaskMeta(ctx.Home, after, nil); perr != nil {
+				return &LifecyclePartialError{TaskID: id, State: string(agg.Phase), Cause: perr}
 			}
 
 			return writeContract(cmd, Response[MessageResult]{

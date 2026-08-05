@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -31,12 +30,16 @@ func extractConfigValueFromTOON(output string) string {
 }
 
 // TestConfigGetKnownSet verifies config get returns the exact value for a
-// known key that has been set.
+// known key that has been persisted. Backend is a typed snapshot identity: the
+// persisted truth comes from the fleet base document, not the legacy flat pin.
 func TestConfigGetKnownSet(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
 
-	if err := config.Set(tmpDir, "backend", "tmux"); err != nil {
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{Backend: "tmux"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,30 +80,6 @@ func TestConfigGetKnownUnset(t *testing.T) {
 	got := strings.TrimSpace(buf.String())
 	if got != "" {
 		t.Errorf("config get known-unset: expected empty output, got %q", got)
-	}
-}
-
-// TestConfigGetBackendResolvesLive verifies `config get backend` reports the
-// live runtime backend (env detection), not an empty stored value -- the init
-// hint "config get backend → Check detected backend" must be truthful.
-func TestConfigGetBackendResolvesLive(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("TMUX", "") // cleared so HERDR_ENV precedence wins
-	t.Setenv("HERDR_ENV", "1")
-
-	root := NewRootCommand()
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	root.SetArgs([]string{"config", "get", "backend"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("config get backend: %v", err)
-	}
-
-	if got := strings.TrimSpace(buf.String()); !strings.Contains(got, "herdr") {
-		t.Errorf("config get backend: expected resolved 'herdr', got %q", got)
 	}
 }
 
@@ -145,26 +124,31 @@ func TestConfigGetCaseSensitive(t *testing.T) {
 	}
 }
 
-// TestConfigGetOverrideEnv verifies env override still works.
-func TestConfigGetOverrideEnv(t *testing.T) {
+// TestConfigGetIgnoresEnvOverride verifies the CLI reports the persisted file
+// value and does not honor the obsolete MUNSU_<KEY>_OVERRIDE ambient env.
+func TestConfigGetIgnoresEnvOverride(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmpDir)
-	t.Setenv("MUNSU_BACKEND_OVERRIDE", "docker")
+	t.Setenv("MUNSU_MODEL_OVERRIDE", "environment-model")
+
+	if err := config.Set(tmpDir, "model", "claude"); err != nil {
+		t.Fatal(err)
+	}
 
 	root := NewRootCommand()
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	root.SetArgs([]string{"config", "get", "backend"})
+	root.SetArgs([]string{"config", "get", "model"})
 	err := root.Execute()
 	if err != nil {
-		t.Fatalf("config get with override: unexpected error: %v", err)
+		t.Fatalf("config get model: unexpected error: %v", err)
 	}
 
 	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
-	if got != "docker" {
-		t.Errorf("config get with override = %q, want %q", got, "docker")
+	if got != "claude" {
+		t.Errorf("config get model = %q, want %q (persisted file value; env override must be ignored)", got, "claude")
 	}
 }
 
@@ -224,6 +208,12 @@ func TestConfigGetAllKnownKeys(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 
 	for _, key := range config.KnownKeys {
+		// backend is special-cased: it reports the persisted snapshot identity
+		// and returns typed missing_input without one (covered by
+		// config_cmd_test.go), so it must not expect success in an empty home.
+		if key == "backend" {
+			continue
+		}
 		root := NewRootCommand()
 		buf := new(bytes.Buffer)
 		root.SetOut(buf)
@@ -237,12 +227,17 @@ func TestConfigGetAllKnownKeys(t *testing.T) {
 	}
 }
 
-func TestConfigGetWithHomeOverride(t *testing.T) {
+// TestConfigGetReadsPersistedValue verifies config get reports the typed
+// fleet base value for the delivery-mode contract keys (persisted-truth
+// behavior: the base document is the single operational authority).
+func TestConfigGetReadsPersistedValue(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.RemoveAll(tmpDir)
+	t.Setenv("MUNSU_HOME", tmpDir)
 
-	// Set a value in the tmp home
-	if err := config.Set(tmpDir, "default-mode", "aggressive"); err != nil {
+	if err := config.StoreFleetBase(tmpDir, config.FleetBaseDocument{
+		SchemaVersion: config.FleetBaseSchemaVersion,
+		Config:        config.ProjectOverlay{DefaultMode: "direct-PR"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,8 +246,6 @@ func TestConfigGetWithHomeOverride(t *testing.T) {
 	root.SetOut(buf)
 	root.SetErr(buf)
 
-	t.Setenv("MUNSU_HOME", tmpDir)
-
 	root.SetArgs([]string{"config", "get", "default-mode"})
 	err := root.Execute()
 	if err != nil {
@@ -260,7 +253,7 @@ func TestConfigGetWithHomeOverride(t *testing.T) {
 	}
 
 	got := extractConfigValueFromTOON(strings.TrimSpace(buf.String()))
-	if got != "aggressive" {
-		t.Errorf("config get default-mode = %q, want %q", got, "aggressive")
+	if got != "direct-PR" {
+		t.Errorf("config get default-mode = %q, want %q", got, "direct-PR")
 	}
 }

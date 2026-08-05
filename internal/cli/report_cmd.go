@@ -10,8 +10,6 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -97,37 +95,10 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
-			// 0. For soldier material states with a PR URL in the message:
-			// capture and persist delivery identity before any terminal report
-			// success. Provider/identity failure fails closed: no status, receipt,
-			// ack reset, event, or wake is produced. Retry is idempotent.
-			//
-			// Only "done" gates on provider confirmation. Blocked/failed/needs-decision
-			// reports skip identity capture — they are intermediate/error states, not terminal.
-			if role == "soldier" && materialStates[state] {
-				if state == "done" {
-					if err := fleet.VerifyDoneIdentity(targetHome, taskID, msg); err != nil {
-						return fmt.Errorf("report: %w", err)
-					}
-					// The done terminal transition routes through the composed
-					// Task Authority over the exact resolved task home (Task
-					// 7.5): the generation-bound terminal evidence record
-					// (identity + immutable head SHA + PR metadata) commits
-					// with the delivered/done transition; the identity meta
-					// keys are a post-commit projection.
-					store, err := taskauthorityfs.NewStore(targetHome)
-					if err != nil {
-						return fmt.Errorf("report: composing task authority: %w", err)
-					}
-					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg, taskauthority.New(store)); err != nil {
-						return fmt.Errorf("report: %w", err)
-					}
-				} else if state != "blocked" && state != "failed" && state != "needs-decision" {
-					if err := fleet.CaptureTerminalIdentity(targetHome, taskID, msg, nil); err != nil {
-						return fmt.Errorf("report: %w", err)
-					}
-				}
-			}
+			// Delivery truth is never captured or committed through the terminal
+			// report path: terminal reports and retirement consume canonical
+			// delivery authorization/outcome truth, and delivery execution runs
+			// exclusively through the Fleet journaled Deliver operation.
 
 			var receipt *orchestrator.WakeReceipt
 			var uplinkResult *orchestrator.ReportResult

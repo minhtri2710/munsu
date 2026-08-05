@@ -8,12 +8,11 @@ type ResolvedSnapshot struct {
 	config   ResolvedProjectConfig
 }
 
-func LoadResolvedSnapshot(home, project string, overrides BoundaryOverrides) (ResolvedSnapshot, error) {
-	base, captains, projects, err := LoadDocuments(home)
-	if err != nil {
-		return ResolvedSnapshot{}, err
-	}
-	resolved, err := ResolveProject(base, captains, projects, project, overrides)
+// NewResolvedSnapshot resolves one Project's overlay from Fleet-owned scoped
+// facts and the base overlay, freezing the result for an operation. Config
+// owns no registry and cannot read or mutate Project/Captain lifecycle.
+func NewResolvedSnapshot(base FleetBaseDocument, facts ProjectFacts, overrides BoundaryOverrides) (ResolvedSnapshot, error) {
+	resolved, err := ResolveProject(base, facts, overrides)
 	if err != nil {
 		return ResolvedSnapshot{}, err
 	}

@@ -2,6 +2,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,40 +60,186 @@ func taskRetireOperationID(taskID string, generation taskauthority.Generation) s
 }
 
 // retireTaskAuthoritatively commits the retired phase transition through the
-// composed Task Authority (Task 7.7). RequireVerifiedDelivery is derived from
-// the task meta's delivery identity: an identity-bearing task is only
-// retired-eligible with provider-verified merged/delivered evidence in its
-// authoritative state (the calling flow's safety checks already verified the
-// eligibility gates); a task without a delivery identity retires under the
-// baseline prerequisite (exact generation, not already retired). The
-// Operation identity is stable per task generation, so a retry after a
-// committed receipt replays it idempotently. Production callers always
-// supply the Authority; nil fails closed.
-func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *taskauthority.Authority) (taskauthority.Result, error) {
+// composed canonical Task Authority (Task 7.7). It is exact-generation and
+// idempotent: the request carries the expected Generation/Revision
+// precondition read from the current aggregate, and the Operation identity is
+// stable per task generation, so a retry after a committed receipt observes
+// the already-retired generation and resumes cleanup without re-committing.
+// When the task reopened to a newer generation while a prior generation's
+// retirement cleanup was pending, recovery resumes that SAME retirement (the
+// committed evidence of the exact prior generation) and never retires the
+// reopened generation. The verified-delivery prerequisite is derived from the
+// task meta's delivery identity: an identity-bearing task is only
+// retired-eligible with provider-verified merged evidence in its delivery
+// projection (the calling flow's safety checks verified the provider evidence
+// and recorded delivery_state=merged via the merge flow or the merged-poll
+// MarkMerged path); a task without a delivery identity retires under the
+// baseline prerequisite (exact generation, not already retired). Production
+// callers always supply the canonical Authority; nil fails closed.
+func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *taskauthority.Canonical) (taskauthority.Outcome, error) {
 	if authority == nil {
-		return taskauthority.Result{}, fmt.Errorf("retirement requires a composed task authority")
+		return taskauthority.Outcome{}, fmt.Errorf("retirement requires a composed task authority")
 	}
-	agg, err := authority.Get(opts.ID)
+	taskID, err := domain.NewTaskID(opts.ID)
 	if err != nil {
-		return taskauthority.Result{}, fmt.Errorf("resolving task generation: %w", err)
+		return taskauthority.Outcome{}, fmt.Errorf("resolving task identity: %w", err)
 	}
-	requireVerifiedDelivery := false
-	if ident, err := domain.IdentityFromMeta(meta); err == nil && ident != nil {
-		requireVerifiedDelivery = true
+	agg, err := authority.Get(taskID)
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("resolving task generation: %w", err)
 	}
-	return authority.Retire(taskauthority.RetireRequest{
-		OperationID:             taskRetireOperationID(opts.ID, agg.Generation),
-		Actor:                   deliveryActor(opts.HomeDir),
-		TaskID:                  opts.ID,
-		ExpectedGeneration:      agg.Generation,
-		RequireVerifiedDelivery: requireVerifiedDelivery,
-		Reason:                  "retirement",
-	})
+	// A retry after a committed receipt observes the retired generation: the
+	// canonical receipt replays the original outcome, so the committed state
+	// is reported (Replayed=true) and cleanup resumes without re-committing.
+	if agg.Phase == taskauthority.PhaseRetired {
+		return taskauthority.Outcome{TaskID: taskID, Generation: agg.Generation, Revision: agg.Revision, Phase: agg.Phase, Replayed: true}, nil
+	}
+	// The task reopened to a newer generation while a prior generation's
+	// retirement cleanup was pending: recovery resumes that same retirement
+	// (its committed evidence pins the only resources it may release) and must
+	// not retire the reopened generation. Only an evidence-bearing prior
+	// retirement is resumed; without preserved resource evidence there is
+	// nothing to resume and a fresh retirement commits for the current
+	// generation.
+	if prior, ok, err := priorRetiredGeneration(authority, taskID, agg.Generation); err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("resolving prior retirement: %w", err)
+	} else if ok {
+		return prior, nil
+	}
+	// An identity-bearing task is only retired-eligible with a committed
+	// canonical completed delivery outcome; otherwise the operation fails
+	// closed (the .meta delivery_state projection never authorizes merged
+	// truth). A retry after a committed receipt observes the retired
+	// generation before this gate.
+	if ident, identErr := domain.IdentityFromMeta(meta); identErr == nil && ident != nil {
+		out, oerr := authority.DeliveryOutcome(taskID)
+		if oerr != nil {
+			if errors.Is(oerr, taskauthority.ErrNotFound) {
+				return taskauthority.Outcome{}, fmt.Errorf("task %s has no canonical delivery outcome; retirement requires a committed completed delivery outcome", opts.ID)
+			}
+			return taskauthority.Outcome{}, fmt.Errorf("resolving canonical delivery outcome for %s: %w", opts.ID, oerr)
+		}
+		if out.Status != taskauthority.DeliveryOutcomeCompleted {
+			return taskauthority.Outcome{}, fmt.Errorf("task %s has canonical delivery outcome %q; retirement requires a committed completed delivery outcome", opts.ID, out.Status)
+		}
+	}
+	req := taskauthority.CanonicalRetireRequest{
+		HomeID:       authority.HomeID(),
+		TaskID:       taskID,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       "retirement",
+	}
+	opID, err := domain.NewOperationID(taskRetireOperationID(opts.ID, agg.Generation))
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("retirement operation identity: %w", err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return taskauthority.Outcome{}, fmt.Errorf("retirement operation: %w", err)
+	}
+	return authority.Retire(op, req)
+}
+
+// priorRetiredGeneration scans the generations before the current one for the
+// most recent retirement that committed with preserved resource evidence. A
+// teardown retry after the task reopened resumes that retirement's cleanup
+// (Replayed=true outcome pinned to the exact prior generation) instead of
+// retiring the reopened generation: the committed retirement evidence of the
+// exact prior generation is the only authority for which resources may be
+// released.
+func priorRetiredGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, currentGen taskauthority.Generation) (taskauthority.Outcome, bool, error) {
+	for gen := uint64(currentGen) - 1; gen >= 1; gen-- {
+		agg, err := authority.GetGeneration(taskID, taskauthority.Generation(gen))
+		if err != nil {
+			if errors.Is(err, taskauthority.ErrNotFound) {
+				continue
+			}
+			return taskauthority.Outcome{}, false, err
+		}
+		if agg.Phase != taskauthority.PhaseRetired || agg.Retirement == nil {
+			continue
+		}
+		return taskauthority.Outcome{
+			TaskID:     taskID,
+			Generation: agg.Generation,
+			Revision:   agg.Revision,
+			Phase:      agg.Phase,
+			Replayed:   true,
+		}, true, nil
+	}
+	return taskauthority.Outcome{}, false, nil
+}
+
+// retiredCleanupEvidence is the authoritative cleanup authority for one
+// committed retirement: the preserved retirement evidence of the exact
+// retired generation plus the current task aggregate (which may be a newer
+// generation after reopen). Projection state (.meta) is never consulted to
+// authorize a release.
+type retiredCleanupEvidence struct {
+	evidence         *taskauthority.RetirementEvidence
+	current          *taskauthority.Aggregate
+	currentIsRetired bool
+}
+
+// resolveRetiredCleanupEvidence resolves the authoritative cleanup identity
+// from the committed canonical retirement evidence of the exact retired
+// generation, never from mutable .meta values. The evidence is pinned to the
+// retired generation and its stable retirement Operation identity; missing or
+// unpinned evidence fails closed so nothing is ever released on a stale or
+// substituted basis. The current aggregate reports whether the task reopened
+// to a newer generation whose resources must not be touched.
+func resolveRetiredCleanupEvidence(authority *taskauthority.Canonical, taskID domain.TaskID, retiredGen taskauthority.Generation) (*retiredCleanupEvidence, error) {
+	cur, err := authority.Get(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving current task state: %w", err)
+	}
+	out := &retiredCleanupEvidence{current: &cur, currentIsRetired: cur.Generation == retiredGen}
+	if out.currentIsRetired {
+		out.evidence = cur.Retirement
+	} else {
+		retired, err := authority.GetGeneration(taskID, retiredGen)
+		if err != nil {
+			return nil, fmt.Errorf("retired generation %s is unavailable: %w", retiredGen, err)
+		}
+		if retired.Retirement == nil {
+			return nil, fmt.Errorf("retired generation %s has no preserved retirement evidence", retiredGen)
+		}
+		out.evidence = retired.Retirement
+	}
+	if out.evidence != nil {
+		if out.evidence.Generation != retiredGen {
+			return nil, fmt.Errorf("retirement evidence generation %s does not match retired generation %s", out.evidence.Generation, retiredGen)
+		}
+		if out.evidence.OperationID != taskRetireOperationID(taskID.Value(), retiredGen) {
+			return nil, fmt.Errorf("retirement evidence operation %q does not match the stable retirement identity for generation %s", out.evidence.OperationID, retiredGen)
+		}
+	}
+	return out, nil
+}
+
+// currentOwnershipConflict fails closed when the CURRENT (newer) generation
+// still owns a resource with the same identity the retired generation's
+// evidence preserves: releasing it would dispose/return a resource now owned
+// by the reopened generation. When the current generation differs, cleanup
+// may complete only evidence-pinned releases with no identity overlap.
+func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthority.RetirementEvidence) error {
+	if current == nil || ev == nil || current.Generation == ev.Generation {
+		return nil
+	}
+	if ev.Endpoint != nil && current.Endpoint != nil &&
+		(current.Endpoint.LeaseID == ev.Endpoint.LeaseID || current.Endpoint.Handle == ev.Endpoint.Handle) {
+		return fmt.Errorf("task %s generation %s still owns endpoint %q (lease %q); refusing to release a resource owned by the reopened generation", current.TaskID, current.Generation, current.Endpoint.Handle, current.Endpoint.LeaseID)
+	}
+	if ev.Worktree != nil && current.Worktree != nil &&
+		(current.Worktree.LeaseID == ev.Worktree.LeaseID || current.Worktree.Path == ev.Worktree.Path) {
+		return fmt.Errorf("task %s generation %s still owns worktree %q (lease %q); refusing to release a resource owned by the reopened generation", current.TaskID, current.Generation, current.Worktree.Path, current.Worktree.LeaseID)
+	}
+	return nil
 }
 
 // Run fails closed because teardown requires a task-bound endpoint capability.
 // Production callers must compose that capability through RunWithBackend.
-func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Authority) (*TeardownResult, error) {
+func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) (*TeardownResult, error) {
 	result := &TeardownResult{}
 
 	// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.
@@ -112,7 +259,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	}
 
 	if !opts.Force {
-		proofs, err := safetyCheck(opts, meta, kind, backend)
+		proofs, err := safetyCheck(opts, meta, kind, backend, authority)
 		if err != nil {
 			return nil, fmt.Errorf("teardown %s: safety check failed: %w", opts.ID, err)
 		}
@@ -140,17 +287,24 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
-	// The authoritative retirement transition commits via the composed Task
-	// Authority BEFORE saga-side cleanup (Task 7.7): the durable receipt pins
-	// the retired phase + typed audit, and cleanup runs strictly after it and
-	// never re-runs merge/reconciliation. A retry after a committed receipt
-	// replays the receipt idempotently and resumes cleanup. An identity-bearing
-	// task is only retired-eligible with provider-verified merged/delivered
-	// evidence in its authoritative state; otherwise the operation fails
-	// closed with a typed precondition error. nil fails closed.
+	// The authoritative retirement transition commits via the composed
+	// canonical Task Authority BEFORE saga-side cleanup (Task 7.7): the
+	// durable receipt pins the retired phase + preserved retirement evidence,
+	// and cleanup runs strictly after it and never re-runs
+	// merge/reconciliation. A retry after a committed receipt observes the
+	// retired generation (Replayed outcome) and resumes cleanup without
+	// re-committing. An identity-bearing task is only retired-eligible with
+	// provider-verified merged evidence in its delivery projection; otherwise
+	// the operation fails closed with a typed precondition error. nil fails
+	// closed.
 	committed, err := retireTaskAuthoritatively(opts, meta, authority)
 	if err != nil {
 		return nil, fmt.Errorf("teardown %s: %w", opts.ID, err)
+	}
+
+	taskID, err := domain.NewTaskID(opts.ID)
+	if err != nil {
+		return nil, fmt.Errorf("teardown %s: resolving task identity: %w", opts.ID, err)
 	}
 
 	// cleanupPending wraps a saga-side cleanup failure after the durable
@@ -166,40 +320,65 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
-	// 1. Kill session window
-	var wtPath string
-	if windowID, ok := meta["window"]; ok && windowID != "" {
+	// Resolve the authoritative cleanup identity from the committed canonical
+	// retirement evidence of the exact retired generation — never from the
+	// mutable .meta projection. The evidence pins the endpoint/worktree lease
+	// identities the retired generation released, and the current aggregate
+	// reveals whether the task reopened to a newer generation whose resources
+	// and projections must not be touched. Missing or unpinned evidence fails
+	// closed without releasing anything.
+	evidence, err := resolveRetiredCleanupEvidence(authority, taskID, committed.Generation)
+	if err != nil {
+		return cleanupPending(fmt.Errorf("teardown %s: resolving retirement evidence: %w", opts.ID, err))
+	}
+	ev := evidence.evidence
+	fullCleanup := evidence.currentIsRetired
+	if !fullCleanup {
+		result.Steps = append(result.Steps, fmt.Sprintf("resuming retirement of generation %s (current generation %s untouched)", committed.Generation, evidence.current.Generation))
+	}
+
+	// 1. Kill session window — the request identity comes ONLY from the
+	// committed evidence: the preserved endpoint lease of the retired
+	// generation (backend, handle, session owner, workspace, tab). A window
+	// named in .meta without preserved evidence is never disposed.
+	if ev != nil && ev.Endpoint != nil {
+		if err := currentOwnershipConflict(evidence.current, ev); err != nil {
+			return cleanupPending(err)
+		}
+		ep := ev.Endpoint
 		status, err := backend.Probe(opts.HomeDir, meta)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
 		if !status.Alive {
-			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", windowID))
+			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", ep.Handle))
 		} else {
-			request := DisposeRequest{Backend: meta["backend"], Handle: windowID, SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: opts.HomeDir, TaskID: opts.ID}
+			request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
 			if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
 				request.DenyWorkspaceClose = true
 			}
 			if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
 			}
-			result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", windowID))
+			result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", ep.Handle))
 		}
 	}
 
 	// 1.5. Kill any remaining processes on the worktree path
-	// (orphaned node/agy processes that survive window kill)
-	wtPath, _ = meta["worktree"]
-	if wtPath != "" {
+	// (orphaned node/agy processes that survive window kill). The path comes
+	// from the committed evidence only.
+	// 2. Return worktree to pool — fail-closed: if return fails, abort
+	// teardown so the lease is not falsely claimed as released.
+	if ev != nil && ev.Worktree != nil {
+		if err := currentOwnershipConflict(evidence.current, ev); err != nil {
+			return cleanupPending(err)
+		}
+		wtPath := ev.Worktree.Path
 		if killed := killProcessesOnPath(wtPath); killed > 0 {
 			result.Steps = append(result.Steps, fmt.Sprintf("killed %d residual process(es) on worktree", killed))
 		}
 		reapWorktreeHolders(wtPath)
-	}
 
-	// 2. Return worktree to pool — fail-closed: if return fails, abort teardown
-	//    so the lease is not falsely claimed as released.
-	if wtPath != "" {
 		if fi, err := os.Stat(wtPath); err == nil && fi.IsDir() {
 			// Recheck launch artifacts immediately before destructive cleanup,
 			// closing the mutation window between the initial safety check
@@ -219,83 +398,91 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
-	// 3. Remove task meta file
-	metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
-	if err == nil {
-		if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
-			result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
-		} else {
-			result.Steps = append(result.Steps, "task meta removed")
-		}
-	}
-
-	// 3.5. Terminal event: close any open keyed phases before removing the status file.
-	// This ensures the append-only log has proper terminal events for each
-	// open keyed phase (working/paused), preventing stale working/blocked status
-	// from appearing as the current reconciled state after
-	// Appending to both the status file (before cleanup) and the typed event log
-	// (for permanent durability) follows the current-state precedence pattern.
-	journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
-	if err != nil {
-		return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
-	}
-	result.Steps = append(result.Steps, journalSteps...)
-
-	// 4. Remove residual state artifacts
-	stateDir := filepath.Join(opts.HomeDir, "state")
-	munsuArtifacts := []string{
-		// Munsu-native: canonical names (item-5 rename)
-		opts.ID + ".status",
-		opts.ID + ".check",   // new canonical name
-		opts.ID + ".turnend", // new canonical name
-		// Legacy names (dual-read, remove next release)
-		opts.ID + ".check.sh",   // legacy name (deprecated)
-		opts.ID + ".turn-ended", // legacy name (deprecated)
-	}
-	harnessArtifacts := harness.StateArtifactsForHarness(meta["harness"])
-	for _, suffix := range harnessArtifacts {
-		munsuArtifacts = append(munsuArtifacts, opts.ID+"."+suffix)
-	}
-	for _, name := range munsuArtifacts {
-		p := filepath.Join(stateDir, name)
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", name, err))
-		} else {
-			result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", name))
-		}
-	}
-
-	// 5. Clean up data directory
-	// Policy: --force always removes the data dir (GC orphan briefs).
-	// Normal teardown keeps the data dir if report.md or brief.md exist.
-	dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
-	if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
-		if opts.Force {
-			if err := os.RemoveAll(dataDir); err != nil {
-				result.Steps = append(result.Steps, fmt.Sprintf("remove data dir: %v", err))
+	// 3.-5. Projection/artifact removal runs only when the retired generation
+	// is still the current generation: the .meta/.status/data projections
+	// describe the CURRENT task, and a resumed old-generation cleanup must
+	// never destroy the reopened generation's projections. The canonical
+	// retirement evidence is never removed here: projection removal must not
+	// erase the durable retirement evidence.
+	if fullCleanup {
+		// 3. Remove task meta file
+		metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
+		if err == nil {
+			if err := os.Remove(metaFilePath); err != nil && !os.IsNotExist(err) {
+				result.Steps = append(result.Steps, fmt.Sprintf("remove meta: %v", err))
 			} else {
-				result.Steps = append(result.Steps, "data dir removed (--force)")
+				result.Steps = append(result.Steps, "task meta removed")
 			}
-		} else {
-			reportPath := filepath.Join(dataDir, "report.md")
-			briefPath := filepath.Join(dataDir, "brief.md")
-			briefInfo, briefErr := os.Stat(briefPath)
-			_, reportErr := os.Stat(reportPath)
+		}
 
-			if os.IsNotExist(reportErr) {
-				// No report.md — safe to remove orphan brief/data dir
-				// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
-				if briefErr == nil && briefInfo.Size() < 256 {
-					if err := os.RemoveAll(dataDir); err != nil {
-						result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
-					} else {
-						result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
-					}
+		// 3.5. Terminal event: close any open keyed phases before removing the status file.
+		// This ensures the append-only log has proper terminal events for each
+		// open keyed phase (working/paused), preventing stale working/blocked status
+		// from appearing as the current reconciled state after
+		// Appending to both the status file (before cleanup) and the typed event log
+		// (for permanent durability) follows the current-state precedence pattern.
+		journalSteps, err := journals.FinalizeRetirementJournals(opts.HomeDir, opts.ID)
+		if err != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: finalizing journals: %w", opts.ID, err))
+		}
+		result.Steps = append(result.Steps, journalSteps...)
+
+		// 4. Remove residual state artifacts
+		stateDir := filepath.Join(opts.HomeDir, "state")
+		munsuArtifacts := []string{
+			// Munsu-native: canonical names (item-5 rename)
+			opts.ID + ".status",
+			opts.ID + ".check",   // new canonical name
+			opts.ID + ".turnend", // new canonical name
+			// Legacy names (dual-read, remove next release)
+			opts.ID + ".check.sh",   // legacy name (deprecated)
+			opts.ID + ".turn-ended", // legacy name (deprecated)
+		}
+		harnessArtifacts := harness.StateArtifactsForHarness(meta["harness"])
+		for _, suffix := range harnessArtifacts {
+			munsuArtifacts = append(munsuArtifacts, opts.ID+"."+suffix)
+		}
+		for _, name := range munsuArtifacts {
+			p := filepath.Join(stateDir, name)
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				result.Steps = append(result.Steps, fmt.Sprintf("remove residual %s: %v", name, err))
+			} else {
+				result.Steps = append(result.Steps, fmt.Sprintf("residual %s removed", name))
+			}
+		}
+
+		// 5. Clean up data directory
+		// Policy: --force always removes the data dir (GC orphan briefs).
+		// Normal teardown keeps the data dir if report.md or brief.md exist.
+		dataDir := filepath.Join(opts.HomeDir, "data", opts.ID)
+		if fi, err := os.Stat(dataDir); err == nil && fi.IsDir() {
+			if opts.Force {
+				if err := os.RemoveAll(dataDir); err != nil {
+					result.Steps = append(result.Steps, fmt.Sprintf("remove data dir: %v", err))
 				} else {
-					result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
+					result.Steps = append(result.Steps, "data dir removed (--force)")
 				}
 			} else {
-				result.Steps = append(result.Steps, "data dir kept (report.md present)")
+				reportPath := filepath.Join(dataDir, "report.md")
+				briefPath := filepath.Join(dataDir, "brief.md")
+				briefInfo, briefErr := os.Stat(briefPath)
+				_, reportErr := os.Stat(reportPath)
+
+				if os.IsNotExist(reportErr) {
+					// No report.md — safe to remove orphan brief/data dir
+					// Also remove if brief.md is tiny (< 256 bytes, likely a stub)
+					if briefErr == nil && briefInfo.Size() < 256 {
+						if err := os.RemoveAll(dataDir); err != nil {
+							result.Steps = append(result.Steps, fmt.Sprintf("remove small brief data dir: %v", err))
+						} else {
+							result.Steps = append(result.Steps, "data dir removed (small brief, no report)")
+						}
+					} else {
+						result.Steps = append(result.Steps, "data dir kept (brief present, no report)")
+					}
+				} else {
+					result.Steps = append(result.Steps, "data dir kept (report.md present)")
+				}
 			}
 		}
 	}
@@ -305,7 +492,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 
 // safetyCheck verifies that work is landed before allowing
 // Returns proof strings alongside any error. Proofs are only populated on success.
-func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown) ([]string, error) {
+func safetyCheck(opts Options, meta map[string]string, kind string, backend BoundTeardown, authority *taskauthority.Canonical) ([]string, error) {
 	switch kind {
 	case "scout":
 		if err := scoutSafetyCheck(opts, meta); err != nil {
@@ -313,7 +500,7 @@ func safetyCheck(opts Options, meta map[string]string, kind string, backend Boun
 		}
 		return nil, nil
 	default:
-		return shipSafetyCheck(opts, meta, backend)
+		return shipSafetyCheck(opts, meta, backend, authority)
 	}
 }
 
@@ -385,7 +572,7 @@ func unresolvedDecisionKeysFromStatus(homeDir, taskID string) ([]string, error) 
 // It separates cleanliness checks (dirty worktree) from merge-proof checks
 // (topology-aware PR merge verification using delivery identity).
 // Returns proof strings emitted during merge-proof checks.
-func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown) ([]string, error) {
+func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown, authority *taskauthority.Canonical) ([]string, error) {
 	wtPath, ok := meta["worktree"]
 	if !ok || wtPath == "" {
 		return nil, fmt.Errorf("no worktree path in meta for %s", opts.ID)
@@ -493,7 +680,7 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 			return nil, fmt.Errorf("invalid delivery identity (fail-closed, no legacy fallback): %w", err)
 		}
 
-		proof, err := topologyAwareMergeCheck(opts, meta, wtPath, ident, backend)
+		proof, err := topologyAwareMergeCheck(opts, meta, wtPath, ident, backend, authority)
 		if err != nil {
 			return nil, err
 		}
@@ -524,10 +711,18 @@ func identityFromMeta(meta map[string]string) (*domain.DeliveryIdentity, error) 
 //   - Unknown/unverifiable: refuses teardown
 //
 // Returns the proof string on success.
-func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown) (string, error) {
-	// Check lifecycle state if set: require merged state for landed delivery.
-	if ds := meta[domain.MetaDeliveryState]; ds != "" && ds != string(domain.DeliveryStateMerged) {
-		return "", fmt.Errorf("delivery lifecycle is in state %q, expected %q (use --force to override)", ds, domain.DeliveryStateMerged)
+func topologyAwareMergeCheck(opts Options, meta map[string]string, wtPath string, ident *domain.DeliveryIdentity, backend BoundTeardown, authority *taskauthority.Canonical) (string, error) {
+	// The merged prerequisite is derived from the canonical committed
+	// delivery outcome when one exists: a non-completed canonical outcome
+	// fails the safety check before any provider query. The .meta
+	// delivery_state projection never authorizes or blocks merged truth.
+	if authority != nil {
+		taskID, err := domain.NewTaskID(opts.ID)
+		if err == nil {
+			if out, oerr := authority.DeliveryOutcome(taskID); oerr == nil && out.Status != taskauthority.DeliveryOutcomeCompleted {
+				return "", fmt.Errorf("canonical delivery outcome is %q, expected completed (use --force to override)", out.Status)
+			}
+		}
 	}
 
 	// Query the provider for the current PR/MR merge status using the

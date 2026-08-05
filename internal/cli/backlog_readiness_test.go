@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestBacklogReadyReportsDistinctReasonsAndIsPure(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
 	seedAuthorityTask(t, auth, "queued")
 	for _, tc := range []struct {
@@ -24,26 +26,33 @@ func TestBacklogReadyReportsDistinctReasonsAndIsPure(t *testing.T) {
 	} {
 		seedAuthorityTask(t, auth, tc.id)
 	}
-	if _, err := auth.Block(taskauthority.BlockRequest{
-		OperationID: newTaskAuthorityOperationID("seed-block"),
-		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:      "blocked", ExpectedGeneration: 1,
-		Detail: "dependency", Reason: "seed",
-	}); err != nil {
+	blockReq := taskauthority.CanonicalBlockRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "blocked"),
+		Precondition: domain.Of(1, 1),
+		Detail:       "dependency",
+		Reason:       "seed",
+	}
+	if _, err := auth.Block(mustCanonicalOp(t, "seed-block", blockReq), blockReq); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.Start(taskauthority.StartRequest{
-		OperationID: newTaskAuthorityOperationID("seed-start"),
-		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:      "working", ExpectedGeneration: 1, Reason: "seed",
-	}); err != nil {
+	startReq := taskauthority.CanonicalStartRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "working"),
+		Precondition: domain.Of(1, 1),
+		Reason:       "seed",
+	}
+	if _, err := auth.Start(mustCanonicalOp(t, "seed-start", startReq), startReq); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.Complete(taskauthority.CompleteRequest{
-		OperationID: newTaskAuthorityOperationID("seed-done"),
-		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:      "done", ExpectedGeneration: 1, To: taskauthority.PhaseDone, Reason: "seed",
-	}); err != nil {
+	doneReq := taskauthority.CanonicalCompleteRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "done"),
+		Precondition: domain.Of(1, 1),
+		To:           taskauthority.PhaseDone,
+		Reason:       "seed",
+	}
+	if _, err := auth.Complete(mustCanonicalOp(t, "seed-done", doneReq), doneReq); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0700); err != nil {
@@ -110,8 +119,7 @@ func snapshotReadinessFiles(t *testing.T, homeDir string) string {
 	}
 	for _, id := range []string{"queued", "blocked", "working", "done"} {
 		paths = append(paths,
-			filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", id, "1.json"),
-			filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", id, "current"),
+			filepath.Join(homeDir, "state", "task-authority", "tasks", id, "current.json"),
 		)
 	}
 	for _, path := range paths {

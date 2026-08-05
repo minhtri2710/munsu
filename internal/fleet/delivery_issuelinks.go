@@ -2,12 +2,9 @@ package fleet
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // CheckIssueStateFn is an injectable function that checks whether an issue
@@ -157,53 +154,7 @@ func ReconcileIssueLinks(links []domain.IssueLink, checkFn CheckIssueStateFn) []
 // preserves the original provider evidence. Returns the reconciliation
 // results. The caller reconciles the .meta projection after the authoritative
 // commit; a projection failure never rolls back the authoritative state.
-func ReconcileAndStoreIssueLinks(homeDir string, auth *taskauthority.Authority, taskID string, links []domain.IssueLink, checkFn CheckIssueStateFn) ([]domain.IssueLinkReconciliationResult, error) {
-	if auth == nil {
-		return nil, fmt.Errorf("issue link reconciliation requires a composed task authority")
-	}
-	if checkFn == nil {
-		checkFn = defaultCheckIssueState
-	}
-
-	agg, err := auth.Get(taskID)
-	if err != nil {
-		return nil, fmt.Errorf("resolving task generation: %w", err)
-	}
-
-	results := ReconcileIssueLinks(links, checkFn)
-
-	res, err := auth.ReconcileIssueLinks(taskauthority.ReconcileIssueLinksRequest{
-		OperationID:        fmt.Sprintf("issue-links-reconcile-%s-%s", taskID, agg.Generation),
-		Actor:              deliveryActor(homeDir),
-		TaskID:             taskID,
-		ExpectedGeneration: agg.Generation,
-		Links:              links,
-		Results:            results,
-		Reason:             "post-merge reconciliation",
-	})
-	if err != nil {
-		return nil, err
-	}
-	return res.Results, nil
-}
-
-// deliveryActor resolves the authoritative actor identity of the rank running
-// the delivery from the exact task home, matching the legacy home fallback:
-// captain identity for captain homes, otherwise the home identity.
-func deliveryActor(homeDir string) taskauthority.Actor {
-	identity, rank, err := home.ReadHomeIdentity(homeDir)
-	if err != nil {
-		identity = filepath.Base(homeDir)
-		rank = home.RankGeneral
-	}
-	owner := identity
-	if rank == home.RankCaptain {
-		owner = "captain:" + identity
-	}
-	return taskauthority.Actor{ID: owner, Rank: string(rank)}
-}
-
-// PrepareDeliveryIssueLinks verifies issue links during PrepareDelivery.
+// PrepareDeliveryIssueLinks verifies issue links during delivery preparation.
 // It checks that all auto-close implementation issues have valid closing
 // references, and that related/parent links are not misconfigured with
 // auto-close policy.

@@ -14,6 +14,16 @@ import (
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
+// mustOpenHome opens an already-initialized home for e2e fixtures.
+func mustOpenHome(t *testing.T, homeDir string) *home.Home {
+	t.Helper()
+	h, err := home.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
 type e2eTeardown struct{}
 
 func (e2eTeardown) RefuseGate() error { return nil }
@@ -28,6 +38,9 @@ func (e2eTeardown) QueryMergeStatus(*domain.DeliveryIdentity) (*domain.PRMergeSt
 
 func TestRetirementTerminalUplinkContinuity(t *testing.T) {
 	homeDir, taskID, key := t.TempDir(), "task-e2e", "terminal"
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -43,18 +56,33 @@ func TestRetirementTerminalUplinkContinuity(t *testing.T) {
 	if err := orchestrator.WriteReceipt(homeDir, taskID, key, "done", "complete"); err != nil {
 		t.Fatal(err)
 	}
-	// The composed Task Authority (Task 7.7) records the task and carries the
-	// durable retirement receipt; the teardown flow commits the Retire op
-	// before saga-side cleanup.
-	auth := taskauthority.New(taskauthority.NewMemStore())
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID,
-		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:      taskID,
-		Owner:       "owner",
-		Kind:        "scout",
-		Reason:      "create",
-	}); err != nil {
+	// The composed canonical Task Authority (Task 7.7) records the task and
+	// carries the durable retirement receipt; the teardown flow commits the
+	// Retire op before saga-side cleanup.
+	auth, err := taskauthority.NewCanonical(mustOpenHome(t, homeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID: auth.HomeID(),
+		TaskID: tid,
+		Owner:  "owner",
+		Kind:   "scout",
+		Reason: "create",
+	}
+	opID, err := domain.NewOperationID("op-create-" + taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Create(op, req); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fleet.RetireTask(fleet.Options{HomeDir: homeDir, ID: taskID}, e2eTeardown{}, orchestratorRetirementJournals{}, auth); err == nil {

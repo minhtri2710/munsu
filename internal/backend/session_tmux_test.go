@@ -15,6 +15,20 @@ func hasTmux() bool {
 	return err == nil
 }
 
+// fakeExecutables writes an executable stub for each name into a temp dir and
+// returns that dir, for PATH-controlled capability-verification tests.
+func fakeExecutables(t *testing.T, names ...string) string {
+	t.Helper()
+	fakeBin := t.TempDir()
+	for _, name := range names {
+		path := filepath.Join(fakeBin, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return fakeBin
+}
+
 func TestTmuxBin_Found(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not on PATH")
@@ -45,56 +59,19 @@ func TestTmuxBin_NotFound(t *testing.T) {
 	}
 }
 
-func TestDefault_ReturnsTmux(t *testing.T) {
-	t.Setenv("HERDR_ENV", "")
-	t.Setenv("TMUX", "/tmp/tmux-test")
-	b := Default()
-	if _, ok := b.(*TmuxBackend); !ok {
-		t.Errorf("Default() with $TMUX set returned %T, want *TmuxBackend", b)
-	}
-}
-
-func TestDefault_ReturnsHerdr(t *testing.T) {
-	// No TMUX, but HERDR_ENV set
-	t.Setenv("TMUX", "")
-	t.Setenv("HERDR_ENV", "1")
-	b := Default()
-	if _, ok := b.(*HerdrBackend); !ok {
-		t.Errorf("Default() with $HERDR_ENV set returned %T, want *HerdrBackend", b)
-	}
-}
-
-func TestDefault_ReturnsNilWhenNoBackend(t *testing.T) {
-	t.Setenv("HERDR_ENV", "")
-	t.Setenv("TMUX", "")
+func TestDefault_IsDeletedFromOperationPath(t *testing.T) {
+	// Default() is removed from the operation path — no auto-detection exists.
+	// Resolve with an empty requested identity must fail closed even when every
+	// adapter is present.
+	fakeBin := fakeExecutables(t, "tmux", "herdr")
 	oldPath := os.Getenv("PATH")
 	defer os.Setenv("PATH", oldPath)
-	os.Setenv("PATH", "/dev/null")
-	b := Default()
-	if b != nil {
-		t.Errorf("Default() returned %T, want nil when no backend available", b)
-	}
-}
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+	t.Setenv("TMUX", "/tmp/tmux-socket")
+	t.Setenv("HERDR_ENV", "1")
 
-func TestDefault_ColdStartPrefersTmux(t *testing.T) {
-	t.Setenv("TMUX", "")
-	t.Setenv("HERDR_ENV", "")
-
-	// Create a temp directory with fake tmux and herdr binaries on PATH
-	fakeBin := t.TempDir()
-	for _, name := range []string{"tmux", "herdr"} {
-		path := filepath.Join(fakeBin, name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
-
-	b := Default()
-	if _, ok := b.(*TmuxBackend); !ok {
-		t.Errorf("Default() with both binaries on PATH but no env returned %T, want *TmuxBackend", b)
+	if _, _, err := Resolve(t.TempDir(), ""); err == nil {
+		t.Fatal("Resolve('') must fail CLOSED — no auto-detection (Default() is gone)")
 	}
 }
 
@@ -109,12 +86,17 @@ func TestSelect_RejectsUnknownNames(t *testing.T) {
 		}
 	}
 }
-func TestSelect_ReturnsKnownBackends(t *testing.T) {
+func TestSelect_ReturnsKnownBackendsWhenRequestedBinaryPresent(t *testing.T) {
 	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	fakeBin := fakeExecutables(t, known...)
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	for _, name := range known {
 		bk, err := Select(name)
 		if err != nil {
-			t.Errorf("Select(%q) unexpected error: %v", name, err)
+			t.Errorf("Select(%q) with %q on PATH: %v", name, name, err)
 		}
 		if bk == nil {
 			t.Errorf("Select(%q) returned nil backend", name)
@@ -122,173 +104,165 @@ func TestSelect_ReturnsKnownBackends(t *testing.T) {
 	}
 }
 
-func TestResolve_ErrorsOnUnknownBackendConfig(t *testing.T) {
+func TestSelect_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
+	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+
+	for _, name := range known {
+		bk, err := Select(name)
+		if err == nil {
+			t.Errorf("Select(%q) succeeded (%T) with %q absent from PATH — must fail closed", name, bk, name)
+		}
+		if !strings.Contains(err.Error(), "not found on PATH") {
+			t.Errorf("Select(%q) unexpected error: %v", name, err)
+		}
+	}
+}
+
+func TestResolve_EmptyIdentityFailsClosed(t *testing.T) {
 	tmpDir := t.TempDir()
+	// Even with env markers set, an empty requested identity must NOT auto-detect.
+	t.Setenv("TMUX", "/tmp/tmux-socket")
+	t.Setenv("HERDR_ENV", "1")
+	if _, _, err := Resolve(tmpDir, ""); err == nil {
+		t.Fatal("Resolve with empty identity must fail CLOSED, never auto-detect from env/PATH")
+	} else if !strings.Contains(err.Error(), "no session backend identity") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestResolve_AutoIdentityFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	if _, _, err := Resolve(tmpDir, "auto"); err == nil {
+		t.Fatal("Resolve('auto') must fail CLOSED (auto-detection is gone)")
+	} else if !strings.Contains(err.Error(), "no session backend identity") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestResolve_ExplicitIdentityIgnoresEnvAndConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	// A config/backend file must NOT be read by Resolve (composition translates
+	// config once into the typed snapshot before operation start).
 	configDir := filepath.Join(tmpDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("nonexistent\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("TMUX", "/tmp/tmux-xxx")
+	t.Setenv("HERDR_ENV", "1")
 
-	_, _, err := Resolve(tmpDir, "")
-	if err == nil {
-		t.Fatal("expected error for unknown backend name in config")
+	// Controlled PATH: the requested binary must be verifiably present, and
+	// only the explicit identity counts (no real tmux install required).
+	fakeBin := fakeExecutables(t, "tmux")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
+	bk, name, err := Resolve(tmpDir, "tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "tmux" {
+		t.Errorf("name = %q, want tmux (only the explicit identity counts)", name)
+	}
+	tkb, ok := bk.(*TmuxBackend)
+	if !ok {
+		t.Fatalf("Resolve('tmux') returned %T, want *TmuxBackend", bk)
+	}
+	if tkb.Tag == "" {
+		t.Error("tmux backend tag should be set from homeDir workspace labeling")
+	}
+}
+
+func TestResolve_UnknownExplicitIdentityFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	if _, _, err := Resolve(tmpDir, "nonexistent"); err == nil {
+		t.Fatal("expected error for unknown backend name")
 	} else if !strings.Contains(err.Error(), "unknown session backend") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
-func TestResolve_Precedence(t *testing.T) {
-	t.Run("override beats config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		configDir := filepath.Join(tmpDir, "config")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			t.Fatal(err)
+// TestResolve_FailsClosedWhenRequestedBinaryAbsent verifies the shared
+// verified-construction path: Resolve must FAIL CLOSED at resolution when the
+// requested capability's binary is absent from PATH — no adapter is returned
+// and nothing is deferred to first exec.
+func TestResolve_FailsClosedWhenRequestedBinaryAbsent(t *testing.T) {
+	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+
+	for _, name := range known {
+		bk, gotName, err := Resolve(t.TempDir(), name)
+		if err == nil {
+			t.Errorf("Resolve(%q) succeeded (%T) with %q absent from PATH — must fail closed", name, bk, name)
+			continue
 		}
-		// Write config saying "herdr" but override says "tmux"
-		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-			t.Fatal(err)
+		if bk != nil {
+			t.Errorf("Resolve(%q) returned a backend (%T) for an absent capability — must return nil", name, bk)
 		}
-		bk, name, err := Resolve(tmpDir, "tmux")
+		if gotName != "" {
+			t.Errorf("Resolve(%q) returned name %q on failure, want empty", name, gotName)
+		}
+		if !strings.Contains(err.Error(), "not found on PATH") {
+			t.Errorf("Resolve(%q) unexpected error: %v", name, err)
+		}
+	}
+}
+
+// TestResolve_SucceedsWithControlledPATH verifies the shared verified-construction
+// path succeeds when the requested binary is present on a controlled PATH, and
+// that the workspace-label binding (tmux Tag) is applied from homeDir — layout
+// layered on the verified base, never selection.
+func TestResolve_SucceedsWithControlledPATH(t *testing.T) {
+	known := []string{"tmux", "herdr", "zellij", "cmux", "orca"}
+	fakeBin := fakeExecutables(t, known...)
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
+	for _, name := range known {
+		homeDir := t.TempDir()
+		bk, gotName, err := Resolve(homeDir, name)
 		if err != nil {
-			t.Fatal(err)
+			t.Errorf("Resolve(%q) with %q on PATH: %v", name, name, err)
+			continue
 		}
-		if name != "tmux" {
-			t.Errorf("Resolve with override 'tmux' returned name %q, want 'tmux'", name)
+		if gotName != name {
+			t.Errorf("Resolve(%q) name = %q, want %q", name, gotName, name)
 		}
-		if _, ok := bk.(*TmuxBackend); !ok {
-			t.Errorf("Resolve with override 'tmux' returned %T, want *TmuxBackend", bk)
+		switch name {
+		case "tmux":
+			tb, ok := bk.(*TmuxBackend)
+			if !ok {
+				t.Errorf("Resolve('tmux') returned %T, want *TmuxBackend", bk)
+			} else if tb.Tag != Hometag(homeDir) {
+				t.Errorf("Resolve('tmux') Tag = %q, want %q (homeDir workspace labeling)", tb.Tag, Hometag(homeDir))
+			}
+		case "herdr":
+			if _, ok := bk.(*HerdrBackend); !ok {
+				t.Errorf("Resolve('herdr') returned %T, want *HerdrBackend", bk)
+			}
+		case "zellij":
+			if _, ok := bk.(*ZellijBackend); !ok {
+				t.Errorf("Resolve('zellij') returned %T, want *ZellijBackend", bk)
+			}
+		case "cmux":
+			if _, ok := bk.(*CmuxBackend); !ok {
+				t.Errorf("Resolve('cmux') returned %T, want *CmuxBackend", bk)
+			}
+		case "orca":
+			if _, ok := bk.(*OrcaBackend); !ok {
+				t.Errorf("Resolve('orca') returned %T, want *OrcaBackend", bk)
+			}
 		}
-	})
-
-	t.Run("config beats default", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		configDir := filepath.Join(tmpDir, "config")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		// Write config saying "herdr" with no override
-		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		bk, name, err := Resolve(tmpDir, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name != "herdr" {
-			t.Errorf("Resolve with config 'herdr' returned name %q, want 'herdr'", name)
-		}
-		if _, ok := bk.(*HerdrBackend); !ok {
-			t.Errorf("Resolve with config 'herdr' returned %T, want *HerdrBackend", bk)
-		}
-	})
-
-	t.Run("default is tmux when TMUX env set", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Setenv("TMUX", "/tmp/tmux-xxx/default")
-		t.Setenv("HERDR_ENV", "")
-		bk, name, err := Resolve(tmpDir, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name != "tmux" {
-			t.Errorf("Resolve with $TMUX returned name %q, want 'tmux'", name)
-		}
-		if _, ok := bk.(*TmuxBackend); !ok {
-			t.Errorf("Resolve with $TMUX returned %T, want *TmuxBackend", bk)
-		}
-	})
-
-	t.Run("HERDR_ENV selects herdr when no override and no config", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Setenv("HERDR_ENV", "1")
-		bk, name, err := Resolve(tmpDir, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name != "herdr" {
-			t.Errorf("Resolve with HERDR_ENV returned name %q, want 'herdr'", name)
-		}
-		if _, ok := bk.(*HerdrBackend); !ok {
-			t.Errorf("Resolve with HERDR_ENV returned %T, want *HerdrBackend", bk)
-		}
-	})
-
-	t.Run("config pin beats active TMUX", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		configDir := filepath.Join(tmpDir, "config")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		// Write config saying "herdr" but set active TMUX
-		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("TMUX", "/tmp/tmux-xxx")
-		t.Setenv("HERDR_ENV", "")
-
-		bk, name, err := Resolve(tmpDir, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name != "herdr" {
-			t.Errorf("Resolve with config 'herdr' and active $TMUX returned name %q, want 'herdr'", name)
-		}
-		if _, ok := bk.(*HerdrBackend); !ok {
-			t.Errorf("Resolve with config 'herdr' and active $TMUX returned %T, want *HerdrBackend", bk)
-		}
-	})
-
-	t.Run("config pin beats active HERDR_ENV", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		configDir := filepath.Join(tmpDir, "config")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		// Write config saying "tmux" but set active HERDR_ENV
-		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("tmux\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("HERDR_ENV", "1")
-
-		bk, name, err := Resolve(tmpDir, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name != "tmux" {
-			t.Errorf("Resolve with config 'tmux' and active $HERDR_ENV returned name %q, want 'tmux'", name)
-		}
-		if _, ok := bk.(*TmuxBackend); !ok {
-			t.Errorf("Resolve with config 'tmux' and active $HERDR_ENV returned %T, want *TmuxBackend", bk)
-		}
-	})
-
-	t.Run("override beats config and context", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		configDir := filepath.Join(tmpDir, "config")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		// Write config saying "herdr" and set active TMUX
-		if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("TMUX", "/tmp/tmux-xxx")
-
-		// Override (--backend flag) beats both config and context
-		bk, name, err := Resolve(tmpDir, "tmux")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if name != "tmux" {
-			t.Errorf("Resolve with override 'tmux' returned name %q, want 'tmux'", name)
-		}
-		if _, ok := bk.(*TmuxBackend); !ok {
-			t.Errorf("Resolve with override 'tmux' returned %T, want *TmuxBackend", bk)
-		}
-	})
+	}
 }
 
 func TestTmuxWindowNameUsesCompleteCallerLabel(t *testing.T) {
@@ -547,7 +521,13 @@ func TestFakeBackend_CustomSendKeysFn(t *testing.T) {
 }
 
 func TestFakeBackend_BackendSelectStaysSame(t *testing.T) {
-	// Verify that Select returns the expected types for known backends
+	// Verify that Select verifies and returns the expected adapter types for
+	// explicitly requested backends when their binaries are on PATH.
+	fakeBin := fakeExecutables(t, "tmux", "herdr", "zellij")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	bk, err := Select("tmux")
 	if err != nil {
 		t.Fatal(err)

@@ -5,19 +5,28 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
 type sessionActivationTransport struct {
-	resolve func(string, string) (backend.Backend, string, error)
+	resolve  func(string, string) (backend.Backend, string, error)
+	identity func(string) (string, error)
 }
 
 func newSessionActivationTransport() orchestrator.ActivationTransport {
-	return sessionActivationTransport{resolve: backend.Resolve}
+	return sessionActivationTransport{resolve: backend.Resolve, identity: fleet.ResolveGeneralHomeBackend}
 }
 
 func (t sessionActivationTransport) Attempt(home string, target orchestrator.TargetResult, payload string) orchestrator.ActivationAttempt {
-	bk, _, err := t.resolve(home, "")
+	if t.identity == nil {
+		return orchestrator.ActivationAttempt{SafetyError: "no backend identity resolver available"}
+	}
+	backendName, err := t.identity(home)
+	if err != nil {
+		return orchestrator.ActivationAttempt{SafetyError: err.Error()}
+	}
+	bk, _, err := t.resolve(home, backendName)
 	if err != nil {
 		return orchestrator.ActivationAttempt{SafetyError: err.Error()}
 	}

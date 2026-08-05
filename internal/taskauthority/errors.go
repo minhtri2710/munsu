@@ -1,6 +1,9 @@
 // Package taskauthority owns task lifecycle, readiness, and durable dispatch
-// control as one deep module. Callers use named semantic operations; the
-// implementation seam below the business rules is the transactional Store.
+// control as one deep module. Callers use named semantic operations. The
+// canonical surface (Canonical) is backed by the canonical home's durable
+// mechanics: every mutation is an atomic journaled home.Commit under the
+// smallest scoped fenced lock, and every read observes the committed Task
+// documents. There is no Store abstraction or in-memory adapter.
 package taskauthority
 
 import (
@@ -11,7 +14,7 @@ import (
 )
 
 // Sentinel errors reachable through errors.Is on every typed error returned
-// by the Authority and the Store adapters.
+// by the canonical Task Authority.
 var (
 	// ErrNotFound means no current task generation exists for the task ID.
 	ErrNotFound = errors.New("task not found")
@@ -23,8 +26,6 @@ var (
 	ErrDispatchHeld = errors.New("dispatch is held")
 	// ErrHoldNotFound means the named dispatch hold does not exist.
 	ErrHoldNotFound = errors.New("dispatch hold not found")
-	// ErrDecisionNotFound means the named dispatch decision does not exist.
-	ErrDecisionNotFound = errors.New("dispatch decision not found")
 	// ErrOperationConflict means an operation ID was reused with a different
 	// request digest (non-retryable identity conflict).
 	ErrOperationConflict = errors.New("operation identity reused with different intent")
@@ -33,10 +34,6 @@ var (
 	ErrInvalidGeneration = errors.New("invalid task generation")
 	// ErrInvalidInput means a request field or record violates validation.
 	ErrInvalidInput = errors.New("invalid input")
-	// ErrMergeMutationRefused means a remote-unknown merge outcome is
-	// committed and the Authority refuses further provider-mutating merge
-	// attempts; only read reconciliation is permitted (Task 7.6).
-	ErrMergeMutationRefused = errors.New("merge mutation refused: remote-unknown outcome permits read reconciliation only")
 )
 
 // conflictError wraps a sentinel cause in a typed domain error so callers can
@@ -51,4 +48,8 @@ func validationError(format string, args ...any) error {
 
 func internalError(format string, args ...any) error {
 	return domain.NewError(domain.ErrorInternal, fmt.Sprintf(format, args...), domain.RetryNever, nil)
+}
+
+func preconditionError(format string, args ...any) error {
+	return conflictError(ErrPrecondition, format, args...)
 }

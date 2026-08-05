@@ -2,6 +2,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/harness"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Role identifies which role the doctor scan targets.
@@ -195,8 +198,8 @@ func scanCaptain(homeDir string) []StatusEntry {
 	// Config directory structure
 	entries = append(entries, checkCaptainConfig(homeDir))
 
-	// Captain home structure — registered captains exist and are valid
-	entries = append(entries, checkCaptainHomes(homeDir))
+	// Captain registry — captains registered in the canonical Fleet registry
+	entries = append(entries, checkCaptainRegistry(homeDir))
 
 	// Converge readiness — captain converge lock and marker state
 	entries = append(entries, checkConvergeReadiness(homeDir))
@@ -245,36 +248,37 @@ func checkCaptainConfig(homeDir string) StatusEntry {
 	}
 }
 
-func checkCaptainHomes(homeDir string) StatusEntry {
-	registry, err := config.LoadCaptainRegistry(homeDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return StatusEntry{
-				Subsystem: "captain_homes",
-				Status:    StatusAbsent,
-				Detail:    "no captain registry found",
-				RepairCmd: "munsu migrate config plan --plan-out <plan.json> && munsu migrate config apply --plan <plan.json>",
-			}
-		}
-		return StatusEntry{
-			Subsystem: "captain_homes",
-			Status:    StatusStale,
-			Detail:    fmt.Sprintf("registry read error: %v", err),
-		}
-	}
-	registered := len(registry.Captains)
-	if registered == 0 {
+func checkCaptainRegistry(homeDir string) StatusEntry {
+	// Fleet state lives in the canonical home. home.Init would create a home
+	// for an empty or missing directory, so only query the Fleet registry
+	// when the home is already initialized to keep doctor read-only.
+	if _, err := os.Stat(filepath.Join(homeDir, home.IdentityFileName)); err != nil {
 		return StatusEntry{
 			Subsystem: "captain_homes",
 			Status:    StatusAbsent,
-			Detail:    "registry exists but no captains registered",
+			Detail:    "no initialized munsu home found — Fleet registry unavailable",
+		}
+	}
+	captains, err := fleet.ListCaptains(homeDir)
+	if err != nil {
+		return StatusEntry{
+			Subsystem: "captain_homes",
+			Status:    StatusStale,
+			Detail:    fmt.Sprintf("Fleet registry read error: %v", err),
+		}
+	}
+	if len(captains) == 0 {
+		return StatusEntry{
+			Subsystem: "captain_homes",
+			Status:    StatusAbsent,
+			Detail:    "no captains registered in Fleet registry",
 			RepairCmd: "munsu captain seed <id> <home>",
 		}
 	}
 	return StatusEntry{
 		Subsystem: "captain_homes",
 		Status:    StatusCurrent,
-		Detail:    fmt.Sprintf("%d captain(s) registered", registered),
+		Detail:    fmt.Sprintf("%d captain(s) registered", len(captains)),
 	}
 }
 
@@ -342,9 +346,18 @@ func checkWorktreeState(homeDir string) StatusEntry {
 }
 
 func checkPipelineReadiness(homeDir string) StatusEntry {
-	// Check if require-no-mistakes config is set
-	requireNoMistakesPath := filepath.Join(homeDir, "config", "require-no-mistakes")
-	if _, err := os.Stat(requireNoMistakesPath); err == nil {
+	// require-no-mistakes is a typed fleet base document field; the legacy flat
+	// config file is never read. A malformed document is surfaced (fail
+	// closed) rather than silently reported as direct-PR.
+	base, err := config.LoadFleetBase(homeDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return StatusEntry{
+			Subsystem: "pipeline_readiness",
+			Status:    StatusStale,
+			Detail:    fmt.Sprintf("cannot read fleet base config: %v", err),
+		}
+	}
+	if err == nil && base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes {
 		if _, err := exec.LookPath("no-mistakes"); err != nil {
 			return StatusEntry{
 				Subsystem: "pipeline_readiness",

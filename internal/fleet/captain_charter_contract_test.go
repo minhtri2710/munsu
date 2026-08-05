@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // =============================================================================
@@ -16,7 +18,21 @@ import (
 // an existing AGENTS.md file with a pointer — user/project-owned content is preserved.
 func TestExistingAGENTSMD_Preservation(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	// Typed parent base with explicit Backend so SeedCaptain's config inherit
+	// (ResolveProject) resolves a non-empty session backend identity. The
+	// registration mirrors ensureParentTypedConfig's default-project binding
+	// (which is skipped once the typed base exists).
+	setupTypedParentHome(t, parent, "test-captain")
 	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := os.MkdirAll(homePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-captain", homePath, "", "test-captain"); err != nil {
+		t.Fatal(err)
+	}
 
 	// First seed creates both .captain-charter.md and AGENTS.md.
 	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
@@ -184,7 +200,21 @@ func TestCharter_RelaySemantics(t *testing.T) {
 // .captain-charter.md with the current version.
 func TestCharter_ConfigPushRefresh(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	// Typed parent base with explicit Backend so SeedCaptain's config inherit
+	// (ResolveProject) resolves a non-empty session backend identity. The
+	// registration mirrors ensureParentTypedConfig's default-project binding
+	// (which is skipped once the typed base exists).
+	setupTypedParentHome(t, parent, "test-captain")
 	homePath := filepath.Join(parent, "captains", "test-captain")
+	if err := os.MkdirAll(homePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(parent, "test-captain", homePath, "", "test-captain"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Seed a captain.
 	if err := SeedCaptain(CaptainSeedOptions{ID: "test-captain", Home: homePath, ParentHome: parent, Integration: fakeIntegrationPort{}}); err != nil {
@@ -233,7 +263,12 @@ func TestCharter_ConfigPushRefresh(t *testing.T) {
 //   - .captain-charter.md exists with current charter
 func TestManagedWorktree_CharterUntracked(t *testing.T) {
 	parent := t.TempDir()
-	// Parent must be a git repo with an origin for remote validation.
+	// The parent is both a munsu home (canonical) and a git repo with an
+	// origin for remote validation. Initialize the home first so the Fleet
+	// Registry can operate on it.
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	initTestRepo(t, parent, "https://github.com/test/repo.git")
 
 	repo := t.TempDir()

@@ -1,6 +1,10 @@
 package bootstrap
 
 import (
+	"errors"
+	"fmt"
+	"os"
+
 	"github.com/minhtri2710/munsu/internal/config"
 )
 
@@ -33,13 +37,27 @@ func IsHardRequired(tool string) bool {
 	return false
 }
 
-// IsHardRequiredByConfig returns true when the tool is hard-required by home config.
-// Currently only handles no-mistakes via config/require-no-mistakes.
-// When the config file exists, no-mistakes is treated as hard-required.
-func IsHardRequiredByConfig(homeDir, tool string) bool {
+// IsHardRequiredByConfig reports whether the tool is hard-required by the
+// typed fleet base config, and an error only when the operational config read
+// fails. Currently only handles no-mistakes via the base requireNoMistakes
+// field. Presence semantics are preserved: a base document that sets
+// requireNoMistakes: true treats no-mistakes as hard-required.
+//
+// Unsupported tools are never hard-required by config and return false, nil
+// without reading any config. An absent base document (fresh home) is treated
+// as not required (false, nil). Any other failure to read the base config is
+// returned as an error so callers fail closed rather than silently treating
+// the tool as optional.
+func IsHardRequiredByConfig(homeDir, tool string) (bool, error) {
 	if tool != "no-mistakes" {
-		return false
+		return false, nil
 	}
-	_, err := config.Get(homeDir, "require-no-mistakes")
-	return err == nil
+	base, err := config.LoadFleetBase(homeDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading fleet base config: %w", err)
+	}
+	return base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes, nil
 }

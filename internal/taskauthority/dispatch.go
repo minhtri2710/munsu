@@ -8,15 +8,16 @@ import (
 type DispatchAction string
 
 const (
-	DispatchActionHandoff DispatchAction = "handoff"
-	DispatchActionStart   DispatchAction = "start"
-	DispatchActionSpawn   DispatchAction = "spawn"
+	DispatchActionHandoff  DispatchAction = "handoff"
+	DispatchActionStart    DispatchAction = "start"
+	DispatchActionSpawn    DispatchAction = "spawn"
+	DispatchActionDelivery DispatchAction = "delivery"
 )
 
 // Valid reports whether the action is a known dispatch action.
 func (a DispatchAction) Valid() bool {
 	switch a {
-	case DispatchActionHandoff, DispatchActionStart, DispatchActionSpawn:
+	case DispatchActionHandoff, DispatchActionStart, DispatchActionSpawn, DispatchActionDelivery:
 		return true
 	}
 	return false
@@ -53,7 +54,7 @@ type DispatchHold struct {
 	ReleasedAt    int64             `json:"released_at,omitempty"`
 }
 
-// validate stale-copies hold slices and returns a validated copy.
+// clone stale-copies hold slices and returns a validated copy.
 func (h DispatchHold) clone() DispatchHold {
 	out := h
 	out.Scope = h.Scope.clone()
@@ -61,7 +62,7 @@ func (h DispatchHold) clone() DispatchHold {
 	return out
 }
 
-// validate checks the record shape of a dispatch hold.
+// validateHold checks the record shape of a dispatch hold.
 func validateHold(h DispatchHold) error {
 	if h.SchemaVersion != TaskAuthoritySchema {
 		return validationError("invalid dispatch hold schema %q", h.SchemaVersion)
@@ -106,74 +107,6 @@ func (h DispatchHold) Matches(action DispatchAction, taskID, projectID, generati
 		return false
 	}
 	return true
-}
-
-// DispatchInterpretation is the durable outcome of one dispatch
-// interpretation. Interpretation rule evaluation is migrated in a later slice;
-// this file owns the record shape and validation.
-type DispatchInterpretation struct {
-	SchemaVersion            string              `json:"schema_version"`
-	ID                       string              `json:"id"`
-	RequestedOrder           []string            `json:"requested_order"`
-	ComputedReadiness        []DispatchReadiness `json:"computed_readiness,omitempty"`
-	SelectedTasks            []string            `json:"selected_tasks"`
-	Evidence                 []DispatchEvidence  `json:"evidence,omitempty"`
-	DependencySnapshotDigest string              `json:"dependency_snapshot_digest"`
-	ParentInterpretationID   string              `json:"parent_interpretation_id,omitempty"`
-	Outcome                  string              `json:"outcome"`
-	DecisionKey              string              `json:"decision_key,omitempty"`
-	CreatedAt                int64               `json:"created_at"`
-}
-
-// DispatchReadiness is one task's readiness contribution to an interpretation.
-type DispatchReadiness struct {
-	TaskID          string   `json:"task_id"`
-	Generation      string   `json:"generation,omitempty"`
-	Ready           bool     `json:"ready"`
-	BlockingReasons []string `json:"blocking_reasons,omitempty"`
-}
-
-// DispatchEvidence records where a readiness or interpretation fact came from.
-type DispatchEvidence struct {
-	Source string `json:"source"`
-	Path   string `json:"path,omitempty"`
-	Field  string `json:"field,omitempty"`
-	Value  string `json:"value,omitempty"`
-}
-
-// DispatchInterpretation outcomes.
-const (
-	DispatchInterpretationAccepted         = "accepted"
-	DispatchInterpretationReinterpreted    = "reinterpreted"
-	DispatchInterpretationDecisionRequired = "decision-required"
-)
-
-// DispatchDecision is a durable general decision attached to an interpretation.
-type DispatchDecision struct {
-	SchemaVersion    string `json:"schema_version"`
-	Key              string `json:"key"`
-	InterpretationID string `json:"interpretation_id"`
-	Reason           string `json:"reason"`
-	CreatedAt        int64  `json:"created_at"`
-	ResolvedAt       int64  `json:"resolved_at,omitempty"`
-	Answer           string `json:"answer,omitempty"`
-}
-
-// validate checks the record shape of a dispatch decision.
-func validateDecision(d DispatchDecision) error {
-	if d.SchemaVersion != TaskAuthoritySchema {
-		return validationError("invalid dispatch decision schema %q", d.SchemaVersion)
-	}
-	if d.Key == "" {
-		return validationError("dispatch decision missing key")
-	}
-	if d.InterpretationID == "" {
-		return validationError("dispatch decision missing interpretation id")
-	}
-	if d.CreatedAt <= 0 {
-		return validationError("dispatch decision missing created timestamp")
-	}
-	return nil
 }
 
 func containsAction(actions []DispatchAction, action DispatchAction) bool {

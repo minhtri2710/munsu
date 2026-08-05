@@ -188,7 +188,7 @@ func TestSessionLaunchEndpointDerivesContainerLabel(t *testing.T) {
 		c := &labelCaptureBackend{}
 		ep := makeEndpoint(c)
 		workingDir := t.TempDir()
-		if _, err := ep.Launch("home", fleet.LaunchRequest{WindowName: "mu-captain-x", Command: "echo", WorkingDir: workingDir}); err != nil {
+		if _, err := ep.Launch("home", fleet.LaunchRequest{Backend: "tmux", WindowName: "mu-captain-x", Command: "echo", WorkingDir: workingDir}); err != nil {
 			t.Fatal(err)
 		}
 		if want := backend.WorkspaceTag(workingDir); c.gotLabel != want {
@@ -205,7 +205,7 @@ func TestSessionLaunchEndpointDerivesContainerLabel(t *testing.T) {
 		os.WriteFile(filepath.Join(captainHome, ".munsu-captain-home"), []byte("munsu-v2\ncaptain-one\ntag\n"), 0600)
 		c := &labelCaptureBackend{}
 		ep := makeEndpoint(c)
-		if _, err := ep.Launch("home", fleet.LaunchRequest{WindowName: "mu-captain-x", Command: "echo", WorkingDir: captainHome}); err != nil {
+		if _, err := ep.Launch("home", fleet.LaunchRequest{Backend: "tmux", WindowName: "mu-captain-x", Command: "echo", WorkingDir: captainHome}); err != nil {
 			t.Fatal(err)
 		}
 		if want := backend.WorkspaceTag(captainHome); c.gotLabel != want {

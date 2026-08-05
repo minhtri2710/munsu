@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/minhtri2710/munsu/internal/config"
 )
 
 // PruneOptions controls the prune operation.
@@ -21,6 +19,11 @@ type PruneOptions struct {
 	Apply bool
 	// HomeDir is the resolved munsu home directory used for hometag and live-task scanning.
 	HomeDir string
+	// CaptainHomes are candidate captain home paths whose workspace labels are
+	// also owned (and therefore prunable) by this home. The caller supplies and
+	// validates these from the canonical Fleet Registry; Backend only derives
+	// workspace labels from them and never reads registry state itself.
+	CaptainHomes []string
 }
 
 // PruneWorkspace describes one workspace and the action taken.
@@ -153,9 +156,9 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 	// Step 1: Labels owned by this home (primary tag and WorkspaceTag for captains).
 	primaryTag := Hometag(opts.HomeDir)
 	ownedLabels := map[string]bool{primaryTag: true, WorkspaceTag(opts.HomeDir): true}
-	// When pruning from the general home, also own registered captain workspace labels.
-	for _, smHome := range listCaptainHomes(opts.HomeDir) {
-		ownedLabels[WorkspaceTag(smHome)] = true
+	// Also own the workspace labels of the caller-supplied candidate captain homes.
+	for _, captainHome := range opts.CaptainHomes {
+		ownedLabels[WorkspaceTag(captainHome)] = true
 	}
 
 	// Step 2: List herdr workspaces.
@@ -242,19 +245,4 @@ func RunPrune(opts PruneOptions) (*PruneResult, error) {
 		result.Workspaces = append(result.Workspaces, pw)
 	}
 	return result, nil
-}
-
-// listCaptainHomes returns registered captain home paths under parentHome.
-func listCaptainHomes(parentHome string) []string {
-	registry, err := config.LoadCaptainRegistry(parentHome)
-	if err != nil {
-		return nil
-	}
-	var homes []string
-	for _, c := range registry.Captains {
-		if c.Home != "" {
-			homes = append(homes, c.Home)
-		}
-	}
-	return homes
 }

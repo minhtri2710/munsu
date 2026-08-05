@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 // TestSendCmd_UsesMetaBackend verifies that send reads the backend from task meta
@@ -57,56 +57,14 @@ func TestSendCmd_UsesMetaBackend(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error (tmux not on PATH), got nil")
 	}
-	// TestSendCmd_UsesMetaBackend — verifies send uses backend from task meta
-	// instead of global config. With typed prompt submission, TmuxBackend returns
-	// unsupported (no PromptSubmitter). The error should reference the backend
-	// that was actually used (TmuxBackend), not the config default (herdr).
-	if !strings.Contains(err.Error(), "TmuxBackend") && !strings.Contains(err.Error(), "unsupported") {
-		t.Errorf("expected error mentioning TmuxBackend/unsupported (from meta backend), got: %v", err)
+	// send resolves the session backend from task meta (backend=tmux, not the
+	// global config herdr). The shared constructBackend fails closed when tmux
+	// is absent on PATH with a typed "<name>: not found on PATH" error.
+	if !strings.Contains(err.Error(), "tmux: not found on PATH") {
+		t.Errorf("expected error mentioning 'tmux: not found on PATH' (from meta backend), got: %v", err)
 	}
-}
-
-// TestSendCmd_UsesConfigBackendWhenMetaHasNone verifies that send falls back to
-// global config when task meta does not specify a backend.
-func TestSendCmd_UsesConfigBackendWhenMetaHasNone(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Write global config saying "herdr"
-	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write task meta with NO backend field (uses global config)
-	stateDir := filepath.Join(tmpDir, "state")
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	metaContent := "window=@0\nkind=ship\n" // no backend field
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	statusContent := "working: spawned\n"
-	if err := os.WriteFile(filepath.Join(stateDir, "test-task.status"), []byte(statusContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	oldPath := os.Getenv("PATH")
-	os.Setenv("PATH", "/dev/null")
-	defer os.Setenv("PATH", oldPath)
-
-	root := NewRootCommand()
-	root.SetArgs([]string{"send", "test-task", "echo hello", "--home", tmpDir})
-	err := root.Execute()
-
-	if err == nil {
-		t.Fatal("expected error (herdr not on PATH), got nil")
-	}
-	if !strings.Contains(err.Error(), "not alive") {
-		t.Errorf("expected error mentioning 'not alive' (herdr resolved from config but not executable), got: %v", err)
+	if strings.Contains(err.Error(), "herdr") {
+		t.Errorf("send must use the meta backend (tmux), not the global config (herdr), got: %v", err)
 	}
 }
 
@@ -426,26 +384,27 @@ func TestTeardownCmd_GateNormalNoMarker(t *testing.T) {
 	}
 }
 
-// seedRetireAuthority seeds the task in the filesystem-backed Task Authority
-// over homeDir, mirroring production spawn (tasks are created via the
-// Authority at launch). The teardown command composes the Authority over the
-// resolved task home (Task 7.7), and the retirement transition fails closed
-// without the authoritative record.
+// seedRetireAuthority seeds the task in the canonical Task Authority over
+// homeDir, mirroring production spawn (tasks are created via the Authority at
+// launch). The teardown command composes the Authority over the resolved task
+// home (Task 7.7), and the retirement transition fails closed without the
+// authoritative record.
 func seedRetireAuthority(t *testing.T, homeDir, taskID string) {
 	t.Helper()
-	store, err := taskauthorityfs.NewStore(homeDir)
+	initCLITestHome(t, homeDir)
+	auth := testAuthorityFor(t, homeDir)
+	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := taskauthority.New(store)
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-" + taskID,
-		Actor:       taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID:      taskID,
-		Owner:       "owner",
-		Kind:        "scout",
-		Reason:      "create",
-	}); err != nil {
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID: auth.HomeID(),
+		TaskID: tid,
+		Owner:  "owner",
+		Kind:   "scout",
+		Reason: "create",
+	}
+	if _, err := auth.Create(mustCanonicalOp(t, "op-create-"+taskID, req), req); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -678,58 +637,76 @@ func TestTeardownCmd_WrongKeyAckDoesNotSatisfyGating(t *testing.T) {
 	}
 }
 
-// TestPromoteRoutesThroughTaskAuthority proves `promote` commits the scout →
-// ship kind change through the composed Task Authority and reconciles the
-// .meta kind projection from the canonical aggregate (Task 7.8): the legacy
-// home.UpdateCurrentTaskAggregateKind / home.PromoteMeta reach-through is
-// gone, and a stale or tampered projection can never override the canonical
-// record.
-func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
-	homeDir := t.TempDir()
-	// Seed a done scout task through the Authority (fs store), matching the
-	// canonical preflight promote requires.
+// seedDoneScoutForPromote seeds one done scout task through the canonical
+// Authority and writes the .meta projection + report.md the promote preflight
+// requires.
+func seedDoneScoutForPromote(t *testing.T, homeDir, taskID, project string) *taskauthority.Canonical {
+	t.Helper()
 	auth := testAuthorityFor(t, homeDir)
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-scout", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID: "scout-a", Owner: "owner", Description: "explore", Kind: "scout", Project: "proj-x",
-		Reason: "test",
-	}); err != nil {
+	tid := mustTaskIDFor(t, taskID)
+	createReq := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
+		Owner:       "owner",
+		Description: "explore",
+		Kind:        "scout",
+		Reason:      "test",
+	}
+	if pid, err := domain.NewProjectID(project); err == nil {
+		createReq.Project = pid
+	}
+	if _, err := auth.Create(mustCanonicalOp(t, "op-create-scout-"+taskID, createReq), createReq); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.Complete(taskauthority.CompleteRequest{
-		OperationID: "op-complete-scout", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID: "scout-a", ExpectedGeneration: 1, To: taskauthority.PhaseDone, Reason: "explored",
-	}); err != nil {
+	completeReq := taskauthority.CanonicalCompleteRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       tid,
+		Precondition: domain.Of(1, 1),
+		To:           taskauthority.PhaseDone,
+		Reason:       "explored",
+	}
+	if _, err := auth.Complete(mustCanonicalOp(t, "op-complete-scout-"+taskID, completeReq), completeReq); err != nil {
 		t.Fatal(err)
 	}
-	// Projection: task add equivalent through the projection layer.
-	store, err := taskauthorityfs.NewStore(homeDir)
+	agg, err := auth.Get(tid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ProjectTaskAdd("scout-a", map[string]string{"repo": "proj-x"}); err != nil {
+	if err := projectTaskMeta(homeDir, agg, map[string]string{"repo": project}); err != nil {
 		t.Fatal(err)
 	}
-	// Report required by promote preflight.
-	dataDir := filepath.Join(homeDir, "data", "scout-a")
+	dataDir := filepath.Join(homeDir, "data", taskID)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# findings"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	return auth
+}
+
+// TestPromoteRoutesThroughTaskAuthority proves `promote` commits the scout →
+// ship kind change through the composed canonical Task Authority and derives
+// the .meta kind projection from the canonical aggregate after the receipt
+// (Task 7.8): a stale or tampered projection can never override the
+// canonical record, and a projection failure never rolls back the committed
+// promotion.
+func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	auth := seedDoneScoutForPromote(t, homeDir, "scout-a", "proj-x")
 
 	if out, err := runTaskCommand(t, []string{"promote", "scout-a", "--home", homeDir}); err != nil {
 		t.Fatalf("promote: %v\n%s", err, out)
 	}
-	agg, err := auth.Get("scout-a")
+	agg, err := auth.Get(mustTaskIDFor(t, "scout-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if agg.Definition.Kind != "ship" {
 		t.Fatalf("canonical kind = %q, want ship", agg.Definition.Kind)
 	}
-	// .meta kind projection reconciled from the canonical aggregate.
+	// .meta kind projection derived from the canonical aggregate.
 	meta, err := home.ReadMeta(homeDir, "scout-a")
 	if err != nil {
 		t.Fatal(err)
@@ -747,18 +724,24 @@ func TestPromoteRoutesThroughTaskAuthority(t *testing.T) {
 // the canonical record is never mutated.
 func TestPromoteRefusesNonTerminalScout(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-scout", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID: "scout-b", Owner: "owner", Description: "explore", Kind: "scout",
-		Reason: "test",
-	}); err != nil {
+	tid := mustTaskIDFor(t, "scout-b")
+	createReq := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
+		Owner:       "owner",
+		Description: "explore",
+		Kind:        "scout",
+		Reason:      "test",
+	}
+	if _, err := auth.Create(mustCanonicalOp(t, "op-create-scout-b", createReq), createReq); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := runTaskCommand(t, []string{"promote", "scout-b", "--home", homeDir}); err == nil {
 		t.Fatalf("promote queued scout succeeded:\n%s", out)
 	}
-	agg, err := auth.Get("scout-b")
+	agg, err := auth.Get(tid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -769,10 +752,10 @@ func TestPromoteRefusesNonTerminalScout(t *testing.T) {
 
 // TestPromoteRefusesAbsentTask proves `promote` fails closed on a task with
 // no canonical record: the CLI preflight reads the Authority and the typed
-// ErrNotFound invariant is surfaced without creating or mutating anything
-// (Task 8.2 sweep closing the 8.1 coverage gap).
+// ErrNotFound invariant is surfaced without creating or mutating anything.
 func TestPromoteRefusesAbsentTask(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	out, err := runTaskCommand(t, []string{"promote", "scout-absent", "--home", homeDir})
 	if err == nil {
 		t.Fatalf("promote absent task succeeded:\n%s", out)
@@ -782,7 +765,7 @@ func TestPromoteRefusesAbsentTask(t *testing.T) {
 	}
 	// Nothing was created: the canonical view stays empty and no projections
 	// were written.
-	if _, err := testAuthorityFor(t, homeDir).Get("scout-absent"); !errors.Is(err, taskauthority.ErrNotFound) {
+	if _, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "scout-absent")); !errors.Is(err, taskauthority.ErrNotFound) {
 		t.Fatalf("absent task appears after failed promote: %v", err)
 	}
 	if _, err := home.ReadMeta(homeDir, "scout-absent"); !errors.Is(err, os.ErrNotExist) {

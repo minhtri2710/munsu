@@ -9,15 +9,13 @@ type EndpointRef struct {
 
 type CreateEndpointRequest struct {
 	PreferredBackend string
-	FallbackBackend  string
 	Container        string
 	Name             string
 	WorkingDirectory string
 }
 
 type CreateEndpointResult struct {
-	Endpoint   EndpointRef
-	IsFallback bool
+	Endpoint EndpointRef
 }
 
 type SubmitPromptRequest struct {
@@ -55,24 +53,14 @@ func newService(registry AdapterRegistry) Service { return NewService(registry) 
 
 func (s Service) CreateEndpoint(request CreateEndpointRequest) (CreateEndpointResult, error) {
 	adapter, err := s.adapters.Resolve(request.PreferredBackend)
-	resolved := request.PreferredBackend
-	fallback := false
 	if err != nil {
-		if request.FallbackBackend == "" || request.FallbackBackend == request.PreferredBackend {
-			return CreateEndpointResult{}, fmt.Errorf("resolving backend %q: %w", request.PreferredBackend, err)
-		}
-		adapter, err = s.adapters.Resolve(request.FallbackBackend)
-		if err != nil {
-			return CreateEndpointResult{}, fmt.Errorf("resolving fallback backend %q: %w", request.FallbackBackend, err)
-		}
-		resolved = request.FallbackBackend
-		fallback = true
+		return CreateEndpointResult{}, fmt.Errorf("resolving backend %q: %w", request.PreferredBackend, err)
 	}
 	handle, err := adapter.Create(request.Container, request.Name, request.WorkingDirectory)
 	if err != nil {
 		return CreateEndpointResult{}, err
 	}
-	return CreateEndpointResult{Endpoint: EndpointRef{Backend: resolved, Handle: handle}, IsFallback: fallback}, nil
+	return CreateEndpointResult{Endpoint: EndpointRef{Backend: request.PreferredBackend, Handle: handle}}, nil
 }
 
 func (s Service) SubmitPrompt(request SubmitPromptRequest) (SubmitPromptResult, error) {

@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/minhtri2710/munsu/internal/backend"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +28,8 @@ func newHerdrPruneCmd() *cobra.Command {
 		Use:   "prune",
 		Short: "List or close empty munsu-created herdr workspaces",
 		Long: `List or close herdr workspaces whose label matches the current munsu home
-hometag and have zero live tabs. Dry-run by default; use --apply to close.
+hometag or a registered captain workspace label, and have zero live tabs.
+Dry-run by default; use --apply to close.
 
 Safety invariants (always enforced):
   - Never closes workspaces whose label does not match a known munsu hometag.
@@ -35,10 +39,23 @@ Safety invariants (always enforced):
   - --apply with no matching workspaces is a no-op (not an error).`,
 		Args: NoArgs,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			// Captain facts come from the canonical Fleet Registry; Backend owns
+			// capability (label derivation) but never reads registry state.
+			captains, err := fleet.ListCaptains(ctx.Home)
+			if err != nil {
+				return fmt.Errorf("listing registered captains: %w", err)
+			}
+			captainHomes := make([]string, 0, len(captains))
+			for _, c := range captains {
+				if c.Home != "" {
+					captainHomes = append(captainHomes, c.Home)
+				}
+			}
 			result, err := backend.RunPrune(backend.PruneOptions{
-				Session: session,
-				Apply:   apply,
-				HomeDir: ctx.Home,
+				Session:      session,
+				Apply:        apply,
+				HomeDir:      ctx.Home,
+				CaptainHomes: captainHomes,
 			})
 			if err != nil {
 				return err

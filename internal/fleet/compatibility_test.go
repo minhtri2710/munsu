@@ -633,8 +633,9 @@ func TestLegacyConfigExists_TypedDocumentsPresent(t *testing.T) {
 	os.WriteFile(filepath.Join(homeDir, "data", "captains.md"), []byte("- id: test\n  home: /tmp\n"), 0644)
 	os.MkdirAll(filepath.Dir(filepath.Join(homeDir, config.BaseDocumentPath)), 0755)
 	os.WriteFile(filepath.Join(homeDir, config.BaseDocumentPath), []byte(`{"schema_version":"v1"}`), 0644)
-	os.WriteFile(filepath.Join(homeDir, config.CaptainDocumentPath), []byte(`{"schema_version":"v1"}`), 0644)
-	os.WriteFile(filepath.Join(homeDir, config.ProjectDocumentPath), []byte(`{"schema_version":"v1"}`), 0644)
+	os.MkdirAll(filepath.Join(homeDir, "state", "fleet-registry"), 0755)
+	os.WriteFile(filepath.Join(homeDir, "state", "fleet-registry", "captains.json"), []byte(`{"schema_version":"v1"}`), 0644)
+	os.WriteFile(filepath.Join(homeDir, "state", "fleet-registry", "projects.json"), []byte(`{"schema_version":"v1"}`), 0644)
 
 	r := checkLegacyConfigExists(homeDir)
 	if !r.Satisfied {

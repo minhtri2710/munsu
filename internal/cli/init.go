@@ -44,7 +44,7 @@ Also installs the munsu skills so coding-agent harnesses can discover them.
 
 Use --reconfigure to re-run auto-detection and overwrite existing config files and the orchestrator operating manual (AGENTS.md).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if err := home.EnsureDirTree(ctx.Home); err != nil {
+			if _, err := home.Init(ctx.Home); err != nil {
 				return fmt.Errorf("creating home tree: %w", err)
 			}
 
@@ -109,9 +109,11 @@ func autoDetectConfig(homeDir string) error {
 	// Note: backend is runtime context and is NOT persisted at init time.
 
 	// 1. Auto-detect soldier harness
+	detectedHarness := ""
 	if reconfigure || !configFileExists(homeDir, "soldier-harness") {
 		harnessName, err := harness.Detect()
 		if err == nil && harnessName != "" {
+			detectedHarness = harnessName
 			if err := config.Set(homeDir, "soldier-harness", harnessName); err != nil {
 				return fmt.Errorf("setting soldier-harness: %w", err)
 			}
@@ -120,6 +122,43 @@ func autoDetectConfig(homeDir string) error {
 	} else {
 		fmt.Println("config/soldier-harness already exists (skipped; use --reconfigure to overwrite)")
 	}
+
+	// 1b. Typed fleet base document (config/base.json). Init is an explicit
+	// authoring boundary: a created base.json mirrors SoldierHarness and seeds
+	// the fixed captain default so init'd homes resolve a captain harness
+	// (fail-closed-able). This never reads or translates legacy flat pins, and
+	// re-init on an existing authored base preserves its CaptainProfile.
+	basePath := filepath.Join(homeDir, config.BaseDocumentPath)
+	_, statErr := os.Stat(basePath)
+	switch {
+	case statErr != nil && !os.IsNotExist(statErr):
+		return statErr
+	case os.IsNotExist(statErr):
+		baseDoc := config.FleetBaseDocument{SchemaVersion: config.FleetBaseSchemaVersion}
+		if detectedHarness != "" {
+			baseDoc.Config.SoldierHarness = detectedHarness
+		}
+		baseDoc.CaptainProfile = config.CaptainProfile{Harness: harness.Pi}
+		if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
+			return fmt.Errorf("writing fleet base document: %w", err)
+		}
+	case reconfigure:
+		baseDoc, err := config.LoadFleetBase(homeDir)
+		if err != nil {
+			// Fail closed: never self-repair a malformed/invalid document.
+			return fmt.Errorf("loading fleet base document: %w", err)
+		}
+		if detectedHarness != "" {
+			baseDoc.Config.SoldierHarness = detectedHarness
+		}
+		if baseDoc.CaptainProfile.Harness == "" {
+			baseDoc.CaptainProfile = config.CaptainProfile{Harness: harness.Pi}
+		}
+		if err := config.StoreFleetBase(homeDir, baseDoc); err != nil {
+			return fmt.Errorf("writing fleet base document: %w", err)
+		}
+	}
+	// Existing base.json without --reconfigure stays untouched (idempotent).
 
 	// 2. Auto-detect backlog backend
 	if reconfigure || !configFileExists(homeDir, "backlog-backend") {

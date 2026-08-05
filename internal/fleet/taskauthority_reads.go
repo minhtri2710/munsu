@@ -4,18 +4,19 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
+	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/home"
+	tauth "github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // This file owns the canonical-read preference for snapshot and observation
 // (Task 7.8, ADR-0007 §7): authoritative Task Authority records are the
 // preferred source for kind, project, and lifecycle phase; the .meta and
 // .status projections are display fallback only and can never override a
-// newer authoritative lifecycle transition. A home with legacy v1 task
-// authority state fails closed (migration is explicit and never automatic);
-// a home with no authority state at all serves the empty view without
-// creating anything.
+// newer authoritative lifecycle transition. A home that is not a canonical
+// v1 home fails closed (migration is explicit and never automatic); a
+// canonical home with no authority state at all serves the empty view
+// without creating anything.
 
 // LegacyDeliveryEvidenceError is the typed fail-closed outcome of a snapshot
 // or observation read over a task whose .meta carries delivery evidence
@@ -42,58 +43,72 @@ func legacyDeliveryClaim(meta map[string]string) string {
 	switch {
 	case meta[MetaDeliveryState] == string(DeliveryStateMerged):
 		return MetaDeliveryState + "=merged"
-	case meta[MetaMergeAuthorization] != "":
-		return MetaMergeAuthorization
+	case meta[MetaLegacyMergeAuth] != "":
+		return MetaLegacyMergeAuth
 	default:
 		return ""
 	}
 }
 
+// canonicalAuthority opens the canonical home and constructs the canonical
+// Task Authority over it. A directory that is not an initialized canonical
+// v1 home (no verified identity/layout) fails closed; a canonical home with
+// no task-authority state serves an empty view.
+func canonicalAuthority(homeDir string) (*tauth.Canonical, error) {
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return tauth.NewCanonical(h)
+}
+
 // canonicalAggregates loads the current authoritative aggregates for one
-// home, keyed by task ID. A home with no authority state returns an empty
-// map; a home with legacy v1 records or corrupt/recovery-required state
-// fails closed.
-func canonicalAggregates(homeDir string) (map[string]taskauthority.Aggregate, error) {
-	store, err := taskauthorityfs.NewStore(homeDir)
+// home, keyed by task ID. A canonical home with no authority state returns an
+// empty map; a non-canonical home or corrupt/recovery-required state fails
+// closed.
+func canonicalAggregates(homeDir string) (map[string]tauth.Aggregate, error) {
+	c, err := canonicalAuthority(homeDir)
 	if err != nil {
 		return nil, err
 	}
-	view, err := store.View()
+	aggs, err := c.List()
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]taskauthority.Aggregate, len(view.Aggregates))
-	for _, agg := range view.Aggregates {
-		if agg.Current {
-			out[agg.TaskID] = agg
-		}
+	out := make(map[string]tauth.Aggregate, len(aggs))
+	for _, agg := range aggs {
+		out[agg.TaskID] = agg
 	}
 	return out, nil
 }
 
 // currentCanonical reads one task's current authoritative aggregate. A
 // missing record is ErrNotFound (the caller falls back to the projection and
-// display tiers); v1 migration, corruption, and recovery-required homes fail
-// closed.
-func currentCanonical(homeDir, id string) (taskauthority.Aggregate, error) {
-	store, err := taskauthorityfs.NewStore(homeDir)
+// display tiers); a non-canonical home and corrupt/recovery-required homes
+// fail closed.
+func currentCanonical(homeDir, id string) (tauth.Aggregate, error) {
+	taskID, err := domain.NewTaskID(id)
 	if err != nil {
-		return taskauthority.Aggregate{}, err
+		return tauth.Aggregate{}, err
 	}
-	return taskauthority.New(store).Get(id)
+	c, err := canonicalAuthority(homeDir)
+	if err != nil {
+		return tauth.Aggregate{}, err
+	}
+	return c.Get(taskID)
 }
 
 // currentCanonicalAggregate reads one task's current authoritative aggregate,
 // reporting whether the task has a canonical record. A missing record is not
-// an error (the caller falls back to the projection and display tiers); v1
-// migration, corruption, and recovery-required homes fail closed.
-func currentCanonicalAggregate(homeDir, id string) (taskauthority.Aggregate, bool, error) {
+// an error (the caller falls back to the projection and display tiers);
+// non-canonical homes and corrupt state fail closed.
+func currentCanonicalAggregate(homeDir, id string) (tauth.Aggregate, bool, error) {
 	agg, err := currentCanonical(homeDir, id)
 	if err != nil {
-		if errors.Is(err, taskauthority.ErrNotFound) {
-			return taskauthority.Aggregate{}, false, nil
+		if errors.Is(err, tauth.ErrNotFound) {
+			return tauth.Aggregate{}, false, nil
 		}
-		return taskauthority.Aggregate{}, false, err
+		return tauth.Aggregate{}, false, err
 	}
 	return agg, true, nil
 }

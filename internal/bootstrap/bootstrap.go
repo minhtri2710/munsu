@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
 // ToolStatus represents whether a tool was found during bootstrap.
@@ -119,33 +120,40 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "SOLDIER_DISPATCH", Value: fmt.Sprintf("active (%d rules)", len(base.Config.DispatchProfiles))})
 	}
 
-	// 4b. Check require-no-mistakes config
-	requireNoMistakesPath := filepath.Join(home, "config", "require-no-mistakes")
-	if _, err := os.Stat(requireNoMistakesPath); err == nil {
+	// 4b. Check require-no-mistakes from the typed fleet base document (the
+	// single operational authority; the legacy flat file is never read).
+	if baseErr == nil && base.Config.RequireNoMistakes != nil && *base.Config.RequireNoMistakes {
 		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "REQUIRE_NO_MISTAKES", Value: "strict"})
 	}
 
-	// 5. Check session backend preference — distinguish config pin from runtime resolution
+	// 5. Check session backend preference — distinguish the legacy config file
+	// pin from the persisted typed snapshot identity.
 	configBackendPath := filepath.Join(home, "config", "backend")
 	var configuredPin string
 	if data, err := os.ReadFile(configBackendPath); err == nil {
 		configuredPin = strings.TrimSpace(string(data))
 	}
 
-	// BACKEND_CONFIG: shows what is pinned/configured (auto or explicit name)
+	// BACKEND_CONFIG: shows the legacy config file pin (auto or explicit name).
 	configDisplay := "auto"
 	if configuredPin != "" && configuredPin != "auto" {
 		configDisplay = configuredPin
 	}
 	res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_CONFIG", Value: configDisplay})
 
-	// BACKEND_RESOLVED: shows the currently resolved runtime backend and its source
-	resolved, source := ResolveBackend(configuredPin)
-
-	if resolved != "" {
-		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: resolved, Source: source})
+	// BACKEND_RESOLVED: reports the persisted typed snapshot Backend (the
+	// published config snapshot or the fleet base document's typed Backend) —
+	// never an env/PATH probe. An absent identity is reported as typed
+	// missing-input, never auto-selected.
+	backendIdentity, err := fleet.ResolveGeneralHomeBackend(home)
+	if err == nil && backendIdentity != "" {
+		backendSource := "fleet base document"
+		if config.PublishedSnapshotAvailable(home) {
+			backendSource = "published snapshot"
+		}
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: backendIdentity, Source: backendSource})
 	} else {
-		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: "none", Source: "no backend available"})
+		res.Configs = append(res.Configs, ConfigDiagnostic{Key: "BACKEND_RESOLVED", Value: "none", Source: "no persisted backend identity (set backend in the fleet base config)"})
 	}
 
 	// 6. Install tools if requested and lock held
@@ -174,26 +182,6 @@ func runWithRuntimeIdentity(home string, lockHeld bool, installTools []string, r
 // ghAuth checks whether gh is authenticated.
 // Uses exit code only: gh auth status exits 0 when authenticated,
 // regardless of whether it prints to stdout or stderr.
-// ResolveBackend resolves the active runtime backend given a configured pin.
-// Precedence: explicit pin (non-"auto") > active TMUX env > active HERDR_ENV env
-// > tmux on PATH (cold-start). Returns ("", "") if nothing resolves. Extracted
-// from Diagnostics so `config get backend` can report the live backend.
-func ResolveBackend(configuredPin string) (resolved, source string) {
-	if configuredPin != "" && configuredPin != "auto" {
-		return configuredPin, "config pin"
-	}
-	if tmuxEnv := os.Getenv("TMUX"); tmuxEnv != "" {
-		return "tmux", "active TMUX"
-	}
-	if herdrEnv := os.Getenv("HERDR_ENV"); herdrEnv != "" {
-		return "herdr", "active HERDR_ENV"
-	}
-	if _, err := exec.LookPath("tmux"); err == nil {
-		return "tmux", "cold-start"
-	}
-	return "", ""
-}
-
 func ghAuth() bool {
 	cmd := exec.Command("gh", "auth", "status")
 	// Capture both stdout and stderr to suppress output

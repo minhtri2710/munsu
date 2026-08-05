@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -77,17 +78,30 @@ Example:
 			if err != nil {
 				return err
 			}
-			owner, actor := resolveTaskActor(ctx.Home)
-			if _, err := auth.Create(taskauthority.CreateRequest{
-				OperationID: newTaskAuthorityOperationID("backlog-add"),
-				Actor:       actor,
-				TaskID:      id,
-				Owner:       owner,
+			tid, err := domain.NewTaskID(id)
+			if err != nil {
+				return err
+			}
+			req := taskauthority.CanonicalCreateRequest{
+				HomeID:      auth.HomeID(),
+				TaskID:      tid,
+				Owner:       resolveTaskOwner(ctx.Home),
 				Description: desc,
 				Kind:        kind,
-				Project:     repo,
 				Reason:      "cli backlog add",
-			}); err != nil {
+			}
+			if repo != "" {
+				pid, err := domain.NewProjectID(repo)
+				if err != nil {
+					return err
+				}
+				req.Project = pid
+			}
+			op, err := newCanonicalOperation("backlog-add", req)
+			if err != nil {
+				return err
+			}
+			if _, err := auth.Create(op, req); err != nil {
 				return err
 			}
 			// The backlog file is a post-commit projection: a projection
@@ -147,14 +161,18 @@ func newBacklogStartCmd() *cobra.Command {
 			if err := fleet.CheckSupervisionForDispatch(ctx.Home, home.DispatchActionStart); err != nil {
 				return err
 			}
-			return runAuthorityLifecycleTransition(ctx, "start", args, "working", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
-				_, err := auth.Start(taskauthority.StartRequest{
-					OperationID:        newTaskAuthorityOperationID("backlog-start"),
-					Actor:              actor,
-					TaskID:             agg.TaskID,
-					ExpectedGeneration: agg.Generation,
-					Reason:             "backlog: start",
-				})
+			return runAuthorityLifecycleTransition(ctx, "start", args, "working", func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalStartRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "backlog: start",
+				}
+				op, err := newCanonicalOperation("backlog-start", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Start(op, req)
 				return err
 			})
 		}),
@@ -167,15 +185,19 @@ func newBacklogDoneCmd() *cobra.Command {
 		Short: "Mark a backlog item as done",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return runAuthorityLifecycleTransition(ctx, "done", args, "done", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
-				_, err := auth.Complete(taskauthority.CompleteRequest{
-					OperationID:        newTaskAuthorityOperationID("backlog-done"),
-					Actor:              actor,
-					TaskID:             agg.TaskID,
-					ExpectedGeneration: agg.Generation,
-					To:                 taskauthority.PhaseDone,
-					Reason:             "backlog: done",
-				})
+			return runAuthorityLifecycleTransition(ctx, "done", args, "done", func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalCompleteRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					To:           taskauthority.PhaseDone,
+					Reason:       "backlog: done",
+				}
+				op, err := newCanonicalOperation("backlog-done", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Complete(op, req)
 				return err
 			})
 		}),
@@ -197,15 +219,19 @@ When --by is omitted, falls back to manual backend.`,
 				detail += " by " + by
 				args = append(args, "--by", by)
 			}
-			return runAuthorityLifecycleTransition(ctx, "block", args, "blocked", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
-				_, err := auth.Block(taskauthority.BlockRequest{
-					OperationID:        newTaskAuthorityOperationID("backlog-block"),
-					Actor:              actor,
-					TaskID:             agg.TaskID,
-					ExpectedGeneration: agg.Generation,
-					Detail:             detail,
-					Reason:             "backlog: block",
-				})
+			return runAuthorityLifecycleTransition(ctx, "block", args, "blocked", func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalBlockRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Detail:       detail,
+					Reason:       "backlog: block",
+				}
+				op, err := newCanonicalOperation("backlog-block", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Block(op, req)
 				return err
 			})
 		}),
@@ -233,7 +259,11 @@ func newBacklogReadyCmd() *cobra.Command {
 			}
 			rows := make([]BacklogReadinessRow, 0, len(aggs))
 			for _, agg := range aggs {
-				readiness, err := auth.Readiness(agg.TaskID)
+				tid, err := domain.NewTaskID(agg.TaskID)
+				if err != nil {
+					return err
+				}
+				readiness, err := auth.Readiness(tid)
 				if err != nil {
 					return err
 				}
@@ -260,14 +290,18 @@ func newBacklogUnblockCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return runAuthorityLifecycleTransition(ctx, "unblock", args, "queued", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
-				_, err := auth.Unblock(taskauthority.UnblockRequest{
-					OperationID:        newTaskAuthorityOperationID("backlog-unblock"),
-					Actor:              actor,
-					TaskID:             agg.TaskID,
-					ExpectedGeneration: agg.Generation,
-					Reason:             "backlog: unblock",
-				})
+			return runAuthorityLifecycleTransition(ctx, "unblock", args, "queued", func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalUnblockRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "backlog: unblock",
+				}
+				op, err := newCanonicalOperation("backlog-unblock", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Unblock(op, req)
 				return err
 			})
 		}),
@@ -283,14 +317,18 @@ func newBacklogReopenCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return runAuthorityLifecycleTransition(ctx, "reopen", args, "queued", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
-				_, err := auth.Reopen(taskauthority.ReopenRequest{
-					OperationID:        newTaskAuthorityOperationID("backlog-reopen"),
-					Actor:              actor,
-					TaskID:             agg.TaskID,
-					ExpectedGeneration: agg.Generation,
-					Reason:             "backlog: reopen",
-				})
+			return runAuthorityLifecycleTransition(ctx, "reopen", args, "queued", func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalReopenRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "backlog: reopen",
+				}
+				op, err := newCanonicalOperation("backlog-reopen", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Reopen(op, req)
 				return err
 			})
 		}),
@@ -306,14 +344,22 @@ func newBacklogRetryCmd() *cobra.Command {
 			if err := refuseCaptainBacklogMutation(); err != nil {
 				return err
 			}
-			return runAuthorityLifecycleTransition(ctx, "retry", args, "queued", func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error {
-				_, err := auth.Supersede(taskauthority.SupersedeRequest{
-					OperationID:        newTaskAuthorityOperationID("backlog-retry"),
-					Actor:              actor,
-					TaskID:             agg.TaskID,
-					ExpectedGeneration: agg.Generation,
-					Reason:             "backlog: retry",
-				})
+			return runAuthorityLifecycleTransition(ctx, "retry", args, "queued", func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				// Retry is the canonical Reopen operation: a terminal generation
+				// is superseded as a fresh queued Generation at Revision one and
+				// the prior generation is preserved as historical state. Live
+				// generations are refused so a retry never claims running work.
+				req := taskauthority.CanonicalReopenRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "backlog: retry",
+				}
+				op, err := newCanonicalOperation("backlog-retry", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Reopen(op, req)
 				return err
 			})
 		}),
@@ -354,18 +400,21 @@ func refuseCaptainBacklogMutation() error {
 	return nil
 }
 
-func runAuthorityLifecycleTransition(ctx Ctx, verb string, args []string, projectionState string, op func(auth *taskauthority.Authority, agg taskauthority.Aggregate, actor taskauthority.Actor) error) error {
+func runAuthorityLifecycleTransition(ctx Ctx, verb string, args []string, projectionState string, op func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error) error {
 	taskID := args[0]
 	auth, err := ctx.TaskAuthority()
 	if err != nil {
 		return err
 	}
-	agg, err := auth.Get(taskID)
+	tid, err := domain.NewTaskID(taskID)
 	if err != nil {
 		return err
 	}
-	_, actor := resolveTaskActor(ctx.Home)
-	if err := op(auth, agg, actor); err != nil {
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return err
+	}
+	if err := op(auth, tid, agg); err != nil {
 		return err
 	}
 	// The backlog file is a post-commit projection: a projection failure must

@@ -1,10 +1,53 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestDoctor_ConfigReadFailureSurfaces(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmp)
+
+	// Provide git and tmux stubs so the hard-required scan does not
+	// short-circuit before the config-driven no-mistakes check runs.
+	bin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"git", "tmux"} {
+		stub := filepath.Join(bin, name)
+		if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+
+	// Malformed base config: unreadable JSON must not be treated as
+	// "not required" by the doctor.
+	if err := os.MkdirAll(filepath.Join(tmp, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "config", "base.json"), []byte("{not-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"doctor"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatalf("expected doctor to fail on unreadable base config, got nil:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "fleet base config") {
+		t.Fatalf("expected config-read error in command seam, got: %v", err)
+	}
+}
 
 func TestCheckInstructions_ValidCommands(t *testing.T) {
 	tmpDir := t.TempDir()

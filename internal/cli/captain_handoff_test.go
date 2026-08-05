@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 func TestTaskShowFailsClosedOnMalformedParentHomeDuringRecovery(t *testing.T) {
@@ -28,10 +28,16 @@ func TestTaskShowFailsClosedOnMalformedParentHomeDuringRecovery(t *testing.T) {
 	}
 }
 
-func TestTaskShowRecoversPendingHandoffAndReadsCanonicalState(t *testing.T) {
+// TestTaskShowRecoversPendingTransferAndReadsCanonicalState proves the public
+// task-show entry point converges an interrupted journaled Task Transfer
+// (RecoverTaskHandoffs) and then serves the canonical record: a crash after
+// the durable journal intent leaves the source owning the task; task show at
+// the captain resumes the SAME transfer and serves the received/activated
+// canonical record.
+func TestTaskShowRecoversPendingTransferAndReadsCanonicalState(t *testing.T) {
 	if os.Getenv("MUNSU_CLI_HANDOFF_HELPER") == "1" {
 		restore := fleet.SetHandoffCrashHookForTest(func(boundary string) {
-			if boundary == "prepared" {
+			if boundary == "journal" {
 				os.Exit(92)
 			}
 		})
@@ -46,7 +52,10 @@ func TestTaskShowRecoversPendingHandoffAndReadsCanonicalState(t *testing.T) {
 
 	parent := t.TempDir()
 	captain := filepath.Join(parent, "captains", "api")
-	if err := os.MkdirAll(captain, 0755); err != nil {
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := home.Init(captain); err != nil {
 		t.Fatal(err)
 	}
 	if err := fleet.SeedProvenance(captain, "api"); err != nil {
@@ -55,112 +64,126 @@ func TestTaskShowRecoversPendingHandoffAndReadsCanonicalState(t *testing.T) {
 	if err := config.Set(captain, "parent-home", parent); err != nil {
 		t.Fatal(err)
 	}
-	// The Task 6.2 saga operates on v2 homes: seed the source's canonical
-	// authority state instead of the legacy v1 aggregate.
-	store, err := taskauthorityfs.NewStore(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
-		OperationID: "cli-handoff-seed",
-		Actor:       taskauthority.Actor{ID: "general", Rank: "general"},
-		TaskID:      "TASK-1",
-		Owner:       "general",
-		Description: "CLI recovery",
-		Kind:        "ship",
-		Reason:      "test seed",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.WriteMeta(parent, "TASK-1", map[string]string{"description": "CLI recovery", "generation": "1"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := home.AppendStatus(parent, "TASK-1", "queued: ready"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(parent, "data", "TASK-1"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "data", "TASK-1", "brief.md"), []byte("# CLI recovery\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(parent, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(captain, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(parent, "data", "backlog.md"), []byte("# Backlog\n\n- [ ] TASK-1 - CLI recovery\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(captain, "data", "backlog.md"), []byte("# Backlog\n\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	fake := filepath.Join(parent, "tasks-axi")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = show ]; then echo 'state: queued'; exit 0; fi\nif [ \"$1\" = mv ]; then\n  to=\"\"; file=\"\"; shift\n  while [ \"$#\" -gt 0 ]; do case \"$1\" in --to) to=\"$2\"; shift 2;; --file) file=\"$2\"; shift 2;; *) shift;; esac; done\n  printf '# Backlog\\n\\n' > \"$file\"; exit 0\nfi\nexit 2\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(os.Args[0], "-test.run", "^TestTaskShowRecoversPendingHandoffAndReadsCanonicalState$", "--")
-	cmd.Env = append(os.Environ(), "MUNSU_CLI_HANDOFF_HELPER=1", "MUNSU_CLI_HANDOFF_SOURCE="+parent, "MUNSU_CLI_HANDOFF_DEST="+captain, "PATH="+filepath.Dir(fake)+":"+os.Getenv("PATH"))
+	sourceAuth := seedCLICanonicalHome(t, parent)
+	seedCLICanonicalQueuedTask(t, sourceAuth, "TASK-1", "general")
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestTaskShowRecoversPendingTransferAndReadsCanonicalState$", "--")
+	cmd.Env = append(os.Environ(), "MUNSU_CLI_HANDOFF_HELPER=1", "MUNSU_CLI_HANDOFF_SOURCE="+parent, "MUNSU_CLI_HANDOFF_DEST="+captain)
 	if output, err := cmd.CombinedOutput(); err == nil {
 		t.Fatal("expected helper crash")
 	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 92 {
 		t.Fatalf("helper exit = %v\n%s", err, output)
 	}
-	// Seed the captain home's canonical v2 Authority with the transferred task
-	// (Task 6.2 makes the handoff saga install this atomically). task show then
-	// triggers handoff recovery of the pending journal and serves the
-	// canonical record.
-	store, err = taskauthorityfs.NewStore(captain)
+
+	// task show at the captain recovers the pending transfer (the journal
+	// lives at the configured parent) and serves the canonical record.
+	out, err := runMigrateCommand([]string{"--home", captain, "task", "show", "TASK-1"})
+	if err != nil {
+		t.Fatalf("task show recovery err=%v out=%s", err, out)
+	}
+	if !strings.Contains(out, "owner: captain:api") || !strings.Contains(out, "description: CLI recovery") {
+		t.Fatalf("task show recovery output missing canonical record: %s", out)
+	}
+	// The source no longer owns the task after recovery.
+	captainC, err := cliCanonical(t, parent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
-		OperationID: "cli-handoff-recovery-seed",
-		Actor:       taskauthority.Actor{ID: "captain:api", Rank: "captain"},
-		TaskID:      "TASK-1",
-		Owner:       "captain:api",
-		Description: "CLI recovery",
-		Kind:        "ship",
-		Reason:      "test seed",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	out, err := runMigrateCommand([]string{"--home", captain, "task", "show", "TASK-1"})
-	if err != nil || !strings.Contains(out, "owner: captain:api") || !strings.Contains(out, "description: CLI recovery") {
-		t.Fatalf("task show recovery err=%v out=%s", err, out)
+	if _, err := captainC.Get(mustCLITaskID(t, "TASK-1")); err == nil {
+		t.Fatal("source still owns task after recovery")
 	}
 }
 
-// seedCLIHandoffTaskV2 creates a canonical v2 task at a home for CLI handoff
-// resolution tests.
-func seedCLIHandoffTaskV2(t *testing.T, homeDir, taskID, owner, description string) {
+// seedCLICanonicalHome initializes a canonical home and returns its authority.
+func seedCLICanonicalHome(t *testing.T, homeDir string) *taskauthority.Canonical {
 	t.Helper()
-	store, err := taskauthorityfs.NewStore(homeDir)
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	h, err := home.Open(homeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := taskauthority.New(store).Create(taskauthority.CreateRequest{
-		OperationID: "cli-seed-" + taskID + "-" + owner,
-		Actor:       taskauthority.Actor{ID: owner, Rank: "general"},
-		TaskID:      taskID,
-		Owner:       owner,
-		Description: description,
-		Kind:        "ship",
-		Reason:      "test seed",
-	}); err != nil {
+	c, err := taskauthority.NewCanonical(h)
+	if err != nil {
 		t.Fatal(err)
 	}
+	return c
+}
+
+func seedCLICanonicalQueuedTask(t *testing.T, c *taskauthority.Canonical, taskID, owner string) {
+	t.Helper()
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID:      c.HomeID(),
+		TaskID:      mustCLITaskID(t, taskID),
+		Owner:       owner,
+		Description: "CLI recovery",
+		Kind:        "ship",
+		Project:     mustCLIProjectID(t, "munsu"),
+		Reason:      "test seed",
+	}
+	if _, err := c.Create(mustCLIOp(t, "cli-seed-"+taskID, req), req); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func cliCanonical(t *testing.T, homeDir string) (*taskauthority.Canonical, error) {
+	t.Helper()
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return nil, err
+	}
+	return taskauthority.NewCanonical(h)
+}
+
+func mustCLITaskID(t *testing.T, value string) domain.TaskID {
+	t.Helper()
+	id, err := domain.NewTaskID(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func mustCLIProjectID(t *testing.T, value string) domain.ProjectID {
+	t.Helper()
+	id, err := domain.NewProjectID(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func mustCLIOp(t *testing.T, id string, intent domain.Intent) domain.Operation {
+	t.Helper()
+	opID, err := domain.NewOperationID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := domain.NewOperation(opID, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return op
 }
 
 func TestCaptainHandoffAmbiguousIDCorrectionsPreserveDestinationAndSourceHome(t *testing.T) {
 	parent := t.TempDir()
 	captain := filepath.Join(parent, "captains", "api")
 	other := filepath.Join(parent, "captains", "other")
-	for _, scoped := range []string{parent, captain, other} {
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
+	for _, scoped := range []string{captain, other} {
 		if err := os.MkdirAll(scoped, 0755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := home.Init(captain); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := home.Init(other); err != nil {
+		t.Fatal(err)
 	}
 	canonicalCaptain, err := filepath.EvalSymlinks(captain)
 	if err != nil {
@@ -169,9 +192,9 @@ func TestCaptainHandoffAmbiguousIDCorrectionsPreserveDestinationAndSourceHome(t 
 	if err := os.WriteFile(filepath.Join(captain, ".munsu-captain-home"), []byte("munsu-v2\napi\n"+canonicalCaptain+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	seedCLIHandoffTaskV2(t, parent, "TASK-1", "general", "source")
-	seedCLIHandoffTaskV2(t, captain, "TASK-1", "captain:api", "captain")
-	seedCLIHandoffTaskV2(t, other, "TASK-1", "captain:other", "other")
+	seedCLICanonicalQueuedTask(t, seedCLICanonicalHome(t, parent), "TASK-1", "general")
+	seedCLICanonicalQueuedTask(t, seedCLICanonicalHome(t, captain), "TASK-1", "captain:api")
+	seedCLICanonicalQueuedTask(t, seedCLICanonicalHome(t, other), "TASK-1", "captain:other")
 	canonicalParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		t.Fatal(err)

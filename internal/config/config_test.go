@@ -41,7 +41,7 @@ func TestGetNotFound(t *testing.T) {
 	}
 }
 
-func TestGetOverrideEnv(t *testing.T) {
+func TestGetIgnoresEnvironment(t *testing.T) {
 	tmp := t.TempDir()
 
 	// Write a value to file
@@ -49,25 +49,27 @@ func TestGetOverrideEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Override via env var
-	os.Setenv("MUNSU_BACKEND_OVERRIDE", "docker")
-	defer os.Unsetenv("MUNSU_BACKEND_OVERRIDE")
+	// Core Config never reads the process environment; ambient env is
+	// translated to typed boundary overrides at CLI composition.
+	t.Setenv("MUNSU_BACKEND_OVERRIDE", "docker")
 
 	val, err := Get(tmp, "backend")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if val != "docker" {
-		t.Errorf("Get() = %q, want %q", val, "docker")
+	if val != "tmux" {
+		t.Errorf("Get() = %q, want %q (core config must not read process environment)", val, "tmux")
 	}
 }
 
-func TestGetOverrideEnvOnly(t *testing.T) {
-	// Config only from env override, no file
-	os.Setenv("MUNSU_FOO_OVERRIDE", "bar")
-	defer os.Unsetenv("MUNSU_FOO_OVERRIDE")
+func TestGetFromFileOnly(t *testing.T) {
+	// Config only from the flat file, no environment involvement.
+	tmp := t.TempDir()
+	if err := Set(tmp, "foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
 
-	val, err := Get(t.TempDir(), "foo")
+	val, err := Get(tmp, "foo")
 	if err != nil {
 		t.Fatal(err)
 	}

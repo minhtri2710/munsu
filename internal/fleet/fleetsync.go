@@ -8,9 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/configmigration"
 )
 
 // SyncResult holds the result of a fleet-sync operation.
@@ -63,20 +60,19 @@ func Sync(home string, projectName string) (*SyncResult, error) {
 // Uses the typed project registry to find both cloned repos (in projects/<name>)
 // and local-path registrations (where Path is an absolute existing path).
 func readProjectDirs(homeDir, projectsDir string) (dirs []string, localDirs []string, _ error) {
-	// Check for legacy config before reading typed registry.
-	if needed, _ := configmigration.NeedsConfigMigration(homeDir); needed {
-		return nil, nil, configmigration.LegacyConfigCheckError(homeDir)
-	}
-
-	registry, err := config.LoadProjectRegistry(homeDir)
+	r, err := openRegistry(homeDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	projects, err := r.ListProjects()
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
 			return nil, nil, nil
 		}
 		return nil, nil, err
 	}
 
-	for _, p := range registry.Projects {
+	for _, p := range projects {
 		// 1. Check if Path is an absolute existing path (local path registration)
 		if filepath.IsAbs(p.Path) {
 			if fi, statErr := os.Stat(p.Path); statErr == nil && fi.IsDir() {

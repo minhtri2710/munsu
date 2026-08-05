@@ -87,6 +87,11 @@ type GitLabClient interface {
 
 	// ViewMRJSON fetches MR metadata as JSON via glab --output json.
 	ViewMRJSON(host, owner, project string, iid int) ([]byte, error)
+
+	// MergeMR merges a merge request via glab. It is the irreversible
+	// provider mutation of the delivery execution path, called at most once
+	// per delivery journal.
+	MergeMR(host, owner, project string, iid int, method string) error
 }
 
 // glabClient implements GitLabClient backed by glab CLI via GlabRunner.
@@ -152,6 +157,77 @@ func GitLabClientForState(s backend.State) (GitLabClient, error) {
 // if glab is Ready, or an error if it is Absent/Failed/Unsupported.
 func DefaultGitLabClient() (GitLabClient, error) {
 	return GitLabClientForState(ProbeGitLabCapability())
+}
+
+// gitlabDeliveryProvider adapts the typed GitLab capability (glab only) to
+// the narrow delivery capability consumed by Deliver.
+type gitlabDeliveryProvider struct {
+	client GitLabClient
+}
+
+// compile-time check
+var _ DeliveryProvider = (*gitlabDeliveryProvider)(nil)
+
+// Merge executes the irreversible provider merge under the exact identity.
+func (p *gitlabDeliveryProvider) Merge(ident domain.DeliveryIdentity, method string) error {
+	if p.client == nil {
+		return fmt.Errorf("GitLab delivery capability is not composed")
+	}
+	glURL, err := domain.ParseMRURL(ident.URL)
+	if err != nil {
+		return fmt.Errorf("invalid MR URL in identity: %w", err)
+	}
+	return p.client.MergeMR(glURL.Host, glURL.Owner, glURL.Project, glURL.IID, method)
+}
+
+// Observe reads the current provider state under the exact identity.
+func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (DeliveryProviderObservation, error) {
+	if p.client == nil {
+		return DeliveryProviderObservation{}, fmt.Errorf("GitLab delivery capability is not composed")
+	}
+	glURL, err := domain.ParseMRURL(ident.URL)
+	if err != nil {
+		return DeliveryProviderObservation{}, fmt.Errorf("invalid MR URL in identity: %w", err)
+	}
+	data, err := p.client.ViewMRJSON(glURL.Host, glURL.Owner, glURL.Project, glURL.IID)
+	if err != nil {
+		return DeliveryProviderObservation{}, err
+	}
+	status, err := parseGLMergeStatus(data)
+	if err != nil {
+		return DeliveryProviderObservation{}, err
+	}
+	return DeliveryProviderObservation{
+		State:     status.State,
+		HeadSHA:   status.HeadSHA,
+		MergedSHA: status.MergedSHA,
+	}, nil
+}
+
+// MergeMR merges a merge request via glab with the given method: squash,
+// merge (default merge commit), or rebase.
+func (c *glabClient) MergeMR(host, owner, project string, iid int, method string) error {
+	args := []string{
+		"mr", "merge",
+		fmt.Sprintf("%s/%s!%d", owner, project, iid),
+	}
+	if host != "" && host != "gitlab.com" {
+		args = append(args, "--hostname", host)
+	}
+	switch method {
+	case "squash":
+		args = append(args, "--squash")
+	case "rebase":
+		args = append(args, "--rebase")
+	case "merge":
+		// glab default: merge commit
+	default:
+		return fmt.Errorf("unsupported GitLab merge method %q", method)
+	}
+	if _, err := c.runner.Run(args...); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ViewMRState returns the MR state (OPEN, MERGED, CLOSED) via glab.

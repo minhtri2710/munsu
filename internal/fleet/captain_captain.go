@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/config"
-	"github.com/minhtri2710/munsu/internal/configmigration"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
@@ -483,9 +483,10 @@ func SeedWithParent(id, homePath, parentHome, charter string) error {
 	return fmt.Errorf("captain integration capability is required")
 }
 
-// ensureParentTypedConfig creates minimal typed config documents in the parent
-// home if they do not already exist. This allows SeedCaptain and configPush to
-// work without requiring the operator to set up typed config first.
+// ensureParentTypedConfig creates a minimal fleet base document and registers
+// the default project and captain in the canonical Fleet Registry. This allows
+// SeedCaptain and configPush to work without requiring the operator to set up
+// typed config first.
 func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 	// Check if fleet base already exists.
 	if _, err := os.Stat(filepath.Join(parentHome, config.BaseDocumentPath)); err == nil {
@@ -503,17 +504,6 @@ func ensureParentTypedConfig(parentHome, captainHome, captainID string) error {
 	}
 	if err := config.StoreFleetBase(parentHome, base); err != nil {
 		return fmt.Errorf("creating fleet base: %w", err)
-	}
-
-	// Create project registry with a default project matching the captain ID.
-	projects := config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: captainID, Path: captainHome, Mode: "no-mistakes"},
-		},
-	}
-	if err := config.StoreProjectRegistry(parentHome, projects); err != nil {
-		return fmt.Errorf("creating project registry: %w", err)
 	}
 
 	// Register the captain with the default project so publishResolvedSnapshot works.
@@ -755,7 +745,10 @@ func Migrate(homePath, id string) error {
 
 // --- Registry ---
 
-// Register appends a captain to the typed captain registry if not already present.
+// Register registers (or re-registers) a captain in the canonical Fleet
+// Registry and binds it to the given Project when provided. The Fleet Registry
+// is the sole Project/Captain lifecycle authority; Config no longer stores
+// lifecycle registries.
 func Register(parentHome, id, homePath, scope, project string) error {
 	if id == "" || homePath == "" {
 		return fmt.Errorf("register requires id and home path")
@@ -765,106 +758,163 @@ func Register(parentHome, id, homePath, scope, project string) error {
 		return err
 	}
 
-	// Check for legacy config before writing.
-	if needed, _ := configmigration.NeedsConfigMigration(parentHome); needed {
-		return configmigration.LegacyConfigCheckError(parentHome)
-	}
-
-	// Load or initialize typed captain registry.
-	registry, err := config.LoadCaptainRegistry(parentHome)
+	r, err := openRegistry(parentHome)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			registry = config.CaptainRegistryDocument{
-				SchemaVersion: config.CaptainRegistrySchemaVersion,
+		return err
+	}
+	captainID, err := domain.NewCaptainID(id)
+	if err != nil {
+		return fmt.Errorf("register captain %q: %w", id, err)
+	}
+
+	capRev, err := r.CaptainRevision()
+	if err != nil {
+		return fmt.Errorf("reading captain registry: %w", err)
+	}
+	reg := RegisterCaptainRequest{
+		HomeID:       r.HomeID(),
+		CaptainID:    captainID,
+		Home:         canon,
+		Scope:        scope,
+		Precondition: preconditionOf(capRev),
+		Reason:       "register",
+	}
+	op, err := mustOpFor(reg)
+	if err != nil {
+		return err
+	}
+	// Register is idempotent: if the captain already exists, do not re-register
+	// (a different definition would conflict). Only the binding is reconciled.
+	if _, err := r.GetCaptain(captainID); errors.Is(err, ErrNotFound) {
+		if _, err := r.RegisterCaptain(op, reg); err != nil {
+			return fmt.Errorf("registering captain %s: %w", id, err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("reading captain registry: %w", err)
+	}
+
+	if project != "" {
+		projectID, err := domain.NewProjectID(project)
+		if err != nil {
+			return fmt.Errorf("register captain %q: %w", id, err)
+		}
+		// Ensure the project exists so the binding is valid.
+		if _, err := r.GetProject(projectID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				projRev, perr := r.ProjectRevision()
+				if perr != nil {
+					return perr
+				}
+				projReq := RegisterProjectRequest{
+					HomeID:       r.HomeID(),
+					ProjectID:    projectID,
+					Name:         project,
+					Path:         parentHome,
+					Precondition: preconditionOf(projRev),
+					Reason:       "register captain binding",
+				}
+				opP, err := mustOpFor(projReq)
+				if err != nil {
+					return err
+				}
+				if _, err := r.RegisterProject(opP, projReq); err != nil {
+					return fmt.Errorf("registering project %s: %w", project, err)
+				}
+			} else {
+				return err
 			}
-		} else {
-			return fmt.Errorf("reading captain registry: %w", err)
 		}
-	}
-
-	// Check if already registered.
-	for _, c := range registry.Captains {
-		if c.ID == id {
-			return nil
+		bindRev, err := r.BindingRevision()
+		if err != nil {
+			return err
 		}
-	}
-
-	registry.Captains = append(registry.Captains, config.CaptainRecord{
-		ID:      id,
-		Home:    canon,
-		Project: project,
-	})
-
-	if err := config.StoreCaptainRegistry(parentHome, registry); err != nil {
-		return fmt.Errorf("writing captain registry: %w", err)
+		bind := BindCaptainRequest{
+			HomeID:       r.HomeID(),
+			CaptainID:    captainID,
+			ProjectID:    projectID,
+			Precondition: preconditionOf(bindRev),
+			Reason:       "register",
+		}
+		opB, err := mustOpFor(bind)
+		if err != nil {
+			return err
+		}
+		if _, err := r.BindCaptain(opB, bind); err != nil {
+			return fmt.Errorf("binding captain %s to project %s: %w", id, project, err)
+		}
 	}
 
 	return nil
 }
 
-// Unregister removes a captain id from the typed captain registry.
+// Unregister removes a captain id from the canonical Fleet Registry.
 // Missing registry or missing id is a no-op (idempotent cleanup).
 func Unregister(parentHome, id string) error {
 	if id == "" {
 		return fmt.Errorf("unregister requires id")
 	}
 
-	// Check for legacy config before writing.
-	if needed, _ := configmigration.NeedsConfigMigration(parentHome); needed {
-		return configmigration.LegacyConfigCheckError(parentHome)
-	}
-
-	registry, err := config.LoadCaptainRegistry(parentHome)
+	r, err := openRegistry(parentHome)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	captainID, err := domain.NewCaptainID(id)
+	if err != nil {
+		return fmt.Errorf("unregister captain %q: %w", id, err)
+	}
+	if _, err := r.GetCaptain(captainID); err != nil {
+		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return fmt.Errorf("reading captain registry: %w", err)
 	}
-
-	found := false
-	var kept []config.CaptainRecord
-	for _, c := range registry.Captains {
-		if c.ID == id {
-			found = true
-			continue
-		}
-		kept = append(kept, c)
+	capRev, err := r.CaptainRevision()
+	if err != nil {
+		return fmt.Errorf("reading captain registry: %w", err)
 	}
-	if !found {
-		return nil
+	ret := RetireCaptainRequest{
+		HomeID:       r.HomeID(),
+		CaptainID:    captainID,
+		Precondition: preconditionOf(capRev),
+		Reason:       "unregister",
 	}
-
-	registry.Captains = kept
-	if err := config.StoreCaptainRegistry(parentHome, registry); err != nil {
-		return fmt.Errorf("writing captain registry: %w", err)
+	opR, err := mustOpFor(ret)
+	if err != nil {
+		return err
 	}
-
+	if _, err := r.RetireCaptain(opR, ret); err != nil {
+		return fmt.Errorf("unregistering captain %s: %w", id, err)
+	}
 	return nil
 }
 
-// ListCaptains returns all registered captains by reading the typed captain registry.
+// ListCaptains returns all registered captains from the canonical Fleet
+// Registry, including the bound Project for each captain. The listing is
+// read-only: an uninitialized home carries no captains and is never created —
+// read contracts must not mutate home state.
 func ListCaptains(parentHome string) ([]Info, error) {
-	// Check for legacy config.
-	if needed, _ := configmigration.NeedsConfigMigration(parentHome); needed {
-		return nil, configmigration.LegacyConfigCheckError(parentHome)
-	}
-
-	registry, err := config.LoadCaptainRegistry(parentHome)
+	h, err := home.Open(parentHome)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, home.ErrNotInitialized) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	r, err := NewRegistry(h)
+	if err != nil {
+		return nil, err
+	}
+	captains, err := r.ListCaptains()
+	if err != nil {
 		return nil, fmt.Errorf("reading captain registry: %w", err)
 	}
-
 	var result []Info
-	for _, c := range registry.Captains {
-		result = append(result, Info{
-			ID:      c.ID,
-			Home:    c.Home,
-			Project: c.Project,
-		})
+	for _, c := range captains {
+		info := Info{ID: c.ID.Value(), Home: c.Home, Scope: c.Scope}
+		if projectID, err := r.ProjectOf(c.ID); err == nil && projectID != (domain.ProjectID{}) {
+			info.Project = projectID.Value()
+		}
+		result = append(result, info)
 	}
 	return result, nil
 }
@@ -887,7 +937,9 @@ Do not inspect mailbox files directly.
 
 // buildLaunchArgs returns the harness binary name and argument list for a captain launch.
 // Pi receives the charter as system context without an initial user turn.
-func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error) {
+// prof is the captain's published-snapshot CaptainProfile (harness model/effort);
+// allowlistHome is the General home whose optional model allowlist is enforced.
+func buildLaunchArgs(captainHome, h string, prof config.CaptainProfile, allowlistHome string) (string, []string, error) {
 	adapter, ok := harness.GetAdapter(h)
 	if !ok {
 		return "", nil, fmt.Errorf("captain launch: harness %q is not a verified harness", h)
@@ -918,12 +970,12 @@ func buildLaunchArgs(captainHome, h, parentHome string) (string, []string, error
 		}
 	}
 
-	// Model/effort: config/captain-harness multi-token line, then config/model.
-	prof, _ := harness.CaptainProfileFromHome(parentHome)
+	// Model/effort come only from the published-snapshot CaptainProfile. No
+	// flat-file or legacy config pin is consulted at launch.
 	// Enforce the optional munsu model allowlist before any launch side effects.
 	// CheckModelAllowed fails closed when a policy is present but the identity
 	// is unresolved (empty model), so a runtime default cannot bypass the policy.
-	if err := harness.CheckModelAllowed(parentHome, h, prof.Model); err != nil {
+	if err := harness.CheckModelAllowed(allowlistHome, h, prof.Model); err != nil {
 		return "", nil, fmt.Errorf("captain launch: %w", err)
 	}
 	args := []string{}
@@ -1012,12 +1064,21 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 		}
 	}
 
-	h, err := harness.Captain(parentHome)
+	// The captain's harness identity and launch profile are bound from the
+	// captain's PUBLISHED snapshot (the composed config.ResolveProject output
+	// written by publishResolvedSnapshot during PropagateConfig). Resolution
+	// fails closed: an empty CaptainProfile is a typed launch failure, never
+	// a fallback to flat files or Detect.
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		return fmt.Errorf("loading captain published snapshot for launch: %w", err)
+	}
+	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
 	if err != nil {
 		return fmt.Errorf("resolving captain harness: %w", err)
 	}
 
-	binName, args, err := buildLaunchArgs(captainHome, h, parentHome)
+	binName, args, err := buildLaunchArgs(captainHome, h, snapshot.Config().CaptainProfile, parentHome)
 	if err != nil {
 		return err
 	}
@@ -1043,7 +1104,12 @@ func Launch(captainHome, parentHome string, endpoint LaunchEndpoint) error {
 	if err != nil {
 		return fmt.Errorf("building launch script: %w", err)
 	}
-	launched, err := endpoint.Launch(parentHome, LaunchRequest{WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome})
+	// The backend identity is bound at creation from the captain's PUBLISHED
+	// snapshot (the composed config.ResolveProject output written by
+	// publishResolvedSnapshot during PropagateConfig). A strict roundtrip
+	// enforces a non-empty identity; the endpoint never receives "".
+	backendIdentity := snapshot.Config().Backend
+	launched, err := endpoint.Launch(parentHome, LaunchRequest{WindowName: "mu-captain-" + markerID, Command: cmdLine, WorkingDir: canonicalCaptainHome, Backend: backendIdentity})
 	if err != nil {
 		return fmt.Errorf("launching captain endpoint: %w", err)
 	}
@@ -1187,33 +1253,6 @@ func Retire(captainHome, parentHome string, removeHome, force bool, endpoint Ret
 	}
 
 	return nil
-}
-
-// --- Handoff ---
-
-// Handoff moves backlog items from the parent home to a captain atomically.
-// All requested keys must preclassify as queued before the command runs.
-// extractTaskStateFromShow parses the state field from tasks-axi show output.
-// Returns empty string if not found.
-func extractTaskStateFromShow(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "state:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "state:"))
-		}
-	}
-	return ""
-}
-
-// isTasksAxiBackend checks whether config/backlog-backend is set to tasks-axi or unset.
-// Override in tests.
-var isTasksAxiBackend = func(parentHome string) bool {
-	val, err := config.Get(parentHome, "backlog-backend")
-	if err != nil {
-		// Config key not found — default is tasks-axi.
-		return true
-	}
-	return val == "tasks-axi"
 }
 
 func HandoffAmbiguousTaskID(err error) (*mhome.AmbiguousTaskIDError, bool) {
@@ -1376,19 +1415,11 @@ func configPush(parentHome, captainHome string) error {
 }
 
 func typedConfigMode(parentHome string) (bool, error) {
-	present := 0
-	for _, path := range []string{config.BaseDocumentPath, config.CaptainDocumentPath, config.ProjectDocumentPath} {
-		if _, err := os.Stat(filepath.Join(parentHome, path)); err == nil {
-			present++
-		} else if !os.IsNotExist(err) {
-			return false, err
+	if _, err := os.Stat(filepath.Join(parentHome, config.BaseDocumentPath)); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
 		}
-	}
-	if present == 0 {
-		return false, nil
-	}
-	if present != 3 {
-		return false, fmt.Errorf("typed config is incomplete; migrate fleet base, Captain registry, and project registry before propagation")
+		return false, err
 	}
 	return true, nil
 }
@@ -1398,32 +1429,56 @@ func publishResolvedSnapshot(parentHome, captainHome string) error {
 	if err != nil {
 		return err
 	}
-	base, captains, projects, err := config.LoadDocuments(parentHome)
+	base, err := config.LoadFleetBase(parentHome)
 	if err != nil {
 		return err
+	}
+	r, err := openRegistry(parentHome)
+	if err != nil {
+		return err
+	}
+	id, err := domain.NewCaptainID(captainID)
+	if err != nil {
+		return err
+	}
+	captain, err := r.GetCaptain(id)
+	if err != nil {
+		return fmt.Errorf("Captain %q is not registered in the Fleet registry", captainID)
 	}
 	canonCaptain, err := canonicalCaptainHome(captainHome)
 	if err != nil {
 		return err
 	}
-	var project string
-	for _, captain := range captains.Captains {
-		if captain.ID == captainID {
-			canonRegistered, canonErr := canonicalCaptainHome(captain.Home)
-			if canonErr != nil {
-				return canonErr
-			}
-			if canonRegistered != canonCaptain {
-				return fmt.Errorf("Captain %q home %q does not match %q", captainID, canonRegistered, canonCaptain)
-			}
-			project = captain.Project
-			break
-		}
+	canonRegistered, canonErr := canonicalCaptainHome(captain.Home)
+	if canonErr != nil {
+		return canonErr
 	}
-	if project == "" {
-		return fmt.Errorf("Captain %q is not registered in typed Captain registry", captainID)
+	if canonRegistered != canonCaptain {
+		return fmt.Errorf("Captain %q home %q does not match %q", captainID, canonRegistered, canonCaptain)
 	}
-	resolved, err := config.ResolveProject(base, captains, projects, project, config.BoundaryOverrides{})
+	projectID, err := r.ProjectOf(id)
+	if err != nil {
+		return err
+	}
+	if projectID == (domain.ProjectID{}) {
+		return fmt.Errorf("Captain %q is not bound to a project in the Fleet registry", captainID)
+	}
+	project, err := r.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+	facts := config.ProjectFacts{
+		Name:           project.Name,
+		Path:           project.Path,
+		Mode:           project.Mode,
+		CaptainProfile: config.CaptainProfile{},
+	}
+	projectOverlay, err := config.LoadProjectOverlay(parentHome, project.Name)
+	if err != nil {
+		return err
+	}
+	facts.Overlay = projectOverlay
+	resolved, err := config.ResolveProject(base, facts, config.BoundaryOverrides{})
 	if err != nil {
 		return err
 	}
@@ -2053,7 +2108,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
 			if launched {
 				// Launched-but-dead: verify the canonical Pi integration before recovery.
-				if integrationErr := requireHealthyPiIntegration(parentHome, sm.Home, caps.Integration); integrationErr != nil {
+				if integrationErr := requireHealthyPiIntegration(sm.Home, caps.Integration); integrationErr != nil {
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
 					errs = append(errs, fmt.Sprintf("%s: auto-recover blocked: %v", sm.ID, integrationErr))
 					continue
@@ -2206,10 +2261,14 @@ func (r *RecoverResult) StepsString() string {
 // recorded on the entry) and continues with the remaining captains. Seeded-but-never-
 // launched captains are reported but not launched. The sweep holds the converge lock so
 // it does not race with an in-flight converge.
-func requireHealthyPiIntegration(parentHome, captainHome string, integration IntegrationPort) error {
-	h, err := harness.Captain(parentHome)
-	if err != nil || h == "" {
-		return fmt.Errorf("resolving captain harness: %v", err)
+func requireHealthyPiIntegration(captainHome string, integration IntegrationPort) error {
+	snapshot, err := config.LoadPublishedSnapshot(captainHome)
+	if err != nil {
+		return fmt.Errorf("loading captain published snapshot for integration check: %w", err)
+	}
+	h, err := harness.ResolveCaptainFromSnapshot(snapshot.Config())
+	if err != nil {
+		return fmt.Errorf("resolving captain harness: %w", err)
 	}
 	if h != harness.Pi {
 		return nil
@@ -2296,7 +2355,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 		}
 
 		// Launched-but-dead: verify the bound harness integration before relaunch.
-		if integrationErr := requireHealthyPiIntegration(parentHome, sm.Home, capabilities.Integration); integrationErr != nil {
+		if integrationErr := requireHealthyPiIntegration(sm.Home, capabilities.Integration); integrationErr != nil {
 			entry.Outcome = RecoverFailed
 			entry.Error = integrationErr.Error()
 			res.Failed++

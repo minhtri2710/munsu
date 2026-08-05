@@ -9,7 +9,6 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/home"
-	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // Meta field keys for capability attestation.
@@ -277,50 +276,6 @@ func HandleLateCapabilityLoss(att *CapabilityAttestation) *LateCapabilityLossRes
 		CanProceed:  false,
 		BlockReason: fmt.Sprintf("late capability loss: %s; requires pre-authorization or a parent Decision to transition", detail),
 	}
-}
-
-// StoreAttestationEvidence commits the accepted capability attestation as
-// authoritative evidence through the Task Authority (Task 7.3). The bounded
-// delivery plan (requested → effective mode with fallback reason) and the
-// capability-attestation reference (project, home, config snapshot digest)
-// commit as generation-bound definition records in ONE Store transaction,
-// fenced to the exact generation the spawn confirmed (the ConfirmSpawn
-// receipt supplies it). The runtime capability observation data itself stays
-// outside the Aggregate: only the accepted reference becomes evidence. The
-// composed Authority must target the exact resolved task home (cross-home
-// delivery). Repeating the same operation (same Task Generation and intent)
-// replays idempotently; a changed intent under the same operation conflicts
-// non-retryably; re-attachment on an already-bound generation fails closed.
-// The caller projects the acceptance into .meta afterwards; a projection
-// failure never rolls back the authoritative commit.
-func StoreAttestationEvidence(homeDir string, auth *taskauthority.Authority, taskID string, generation taskauthority.Generation, att *CapabilityAttestation, configDigest string) (taskauthority.AttachAttestationResult, error) {
-	if auth == nil {
-		return taskauthority.AttachAttestationResult{}, fmt.Errorf("attestation acceptance requires a composed task authority")
-	}
-	if att == nil {
-		return taskauthority.AttachAttestationResult{}, fmt.Errorf("attestation acceptance requires a capability attestation")
-	}
-	res, err := auth.AttachAttestation(taskauthority.AttachAttestationRequest{
-		OperationID:        fmt.Sprintf("spawn-attest-%s-%s", taskID, generation),
-		Actor:              deliveryActor(homeDir),
-		TaskID:             taskID,
-		ExpectedGeneration: generation,
-		DeliveryPlan: taskauthority.DeliveryPlan{
-			RequestedMode:  att.RequestedMode,
-			EffectiveMode:  att.EffectiveMode,
-			FallbackReason: att.FallbackReason,
-		},
-		Attestation: taskauthority.CapabilityAttestation{
-			Project:      att.Project,
-			Home:         att.Home,
-			ConfigDigest: configDigest,
-		},
-		Reason: "spawn acceptance",
-	})
-	if err != nil {
-		return taskauthority.AttachAttestationResult{}, err
-	}
-	return res, nil
 }
 
 // ReadAttestationFromMeta reads a capability attestation from task meta.

@@ -46,7 +46,26 @@ func TestCmuxBin_NotFound(t *testing.T) {
 	}
 }
 
-func TestSelect_CmuxAvailable(t *testing.T) {
+func TestSelect_CmuxFailsClosedWhenAbsent(t *testing.T) {
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+
+	bk, err := Select("cmux")
+	if err == nil {
+		t.Fatalf("Select('cmux') must fail CLOSED when cmux is absent from PATH, got %T", bk)
+	}
+	if !strings.Contains(err.Error(), "not found on PATH") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSelect_CmuxWhenRequestedBinaryPresent(t *testing.T) {
+	fakeBin := fakeExecutables(t, "cmux")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	bk, err := Select("cmux")
 	if err != nil {
 		t.Fatal(err)
@@ -174,8 +193,14 @@ func TestSelect_CmuxUnknownBackend(t *testing.T) {
 }
 
 // TestCmuxBackend_SelectRoundTrip verifies that Select("cmux") returns a backend
-// that can be type-asserted and used without panic.
+// that can be type-asserted and used without panic when the requested binary
+// is present on PATH.
 func TestCmuxBackend_SelectRoundTrip(t *testing.T) {
+	fakeBin := fakeExecutables(t, "cmux")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	bk, err := Select("cmux")
 	if err != nil {
 		t.Fatal(err)

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 	"github.com/spf13/cobra"
 )
 
@@ -41,34 +41,50 @@ func newTaskCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			owner, actor := resolveTaskActor(ctx.Home)
-			if _, err := auth.Create(taskauthority.CreateRequest{
-				OperationID: newTaskAuthorityOperationID("task-add"),
-				Actor:       actor,
-				TaskID:      id,
-				Owner:       owner,
-				Description: desc,
-				Kind:        kind,
-				Project:     project,
-				Reason:      "cli task add",
-			}); err != nil {
-				return err
-			}
-			// .meta is a post-commit projection (ADR-0007 §7): the authoritative
-			// fields are derived from the canonical aggregate by the projection
-			// layer and the runtime-only repo field is preserved. The direct
-			// home.WriteMeta reach-through is gone (Task 7.8); a projection
-			// failure must not roll back the authoritative Task Generation.
-			store, err := taskauthorityfs.NewStore(ctx.Home)
+			tid, err := domain.NewTaskID(id)
 			if err != nil {
 				return err
+			}
+			req := taskauthority.CanonicalCreateRequest{
+				HomeID:      auth.HomeID(),
+				TaskID:      tid,
+				Owner:       resolveTaskOwner(ctx.Home),
+				Description: desc,
+				Kind:        kind,
+				Project:     domain.ProjectID{},
+				Reason:      "cli task add",
+			}
+			if project != "" {
+				pid, err := domain.NewProjectID(project)
+				if err != nil {
+					return err
+				}
+				req.Project = pid
+			}
+			op, err := newCanonicalOperation("task-add", req)
+			if err != nil {
+				return err
+			}
+			if _, err := auth.Create(op, req); err != nil {
+				return err
+			}
+			// .meta and .status are post-commit projections (ADR-0007 §7):
+			// the authoritative fields are derived from the canonical
+			// aggregate; a projection failure must not roll back the
+			// authoritative Task Generation.
+			agg, err := auth.Get(tid)
+			if err != nil {
+				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
 			}
 			runtimeFields := map[string]string{}
 			if repo != "" {
 				runtimeFields["repo"] = repo
 			}
-			if _, err := store.ProjectTaskAdd(id, runtimeFields); err != nil {
-				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: err}
+			if perr := projectTaskMeta(ctx.Home, agg, runtimeFields); perr != nil {
+				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: perr}
+			}
+			if perr := home.AppendStatus(ctx.Home, id, "queued: cli task add"); perr != nil {
+				return &LifecyclePartialError{TaskID: id, State: "queued", Cause: perr}
 			}
 			return writeContract(cmd, Response[MessageResult]{
 				SchemaVersion: SchemaVersion,
@@ -161,7 +177,11 @@ func newTaskCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			agg, err := auth.Get(id)
+			tid, err := domain.NewTaskID(id)
+			if err != nil {
+				return err
+			}
+			agg, err := auth.Get(tid)
 			hasAggregate := err == nil
 			if err != nil && !errors.Is(err, taskauthority.ErrNotFound) {
 				return err
@@ -252,70 +272,42 @@ rank (munsu backlog start|done|block|unblock|reopen).`,
 	}
 	configureContractCommand(statusCmd)
 
-	reconcileCmd := &cobra.Command{
-		Use:   "reconcile [id]",
-		Short: "Reconcile .meta and .status projections from canonical Task Authority records",
-		Long: `Reconcile the .meta and .status projections from canonical Task
-Authority records. .meta authoritative fields are rewritten from the current
-Task Generation (runtime-only projection fields are preserved); .status lines
-are derived from the typed audit history and appended when missing.
-
-Reconciliation is one-directional: it never changes the authoritative task
-revision or generation, is idempotent, and reports a typed partial outcome
-when a projection cannot be repaired. Without an id it reconciles every
-current task.`,
-		Args: MaximumNArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			store, err := taskauthorityfs.NewStore(ctx.Home)
-			if err != nil {
-				return err
-			}
-			var outcomes []taskauthorityfs.TaskProjection
-			if len(args) == 1 {
-				out, err := store.ReconcileTaskProjections(args[0])
-				if err != nil {
-					return err
-				}
-				outcomes = []taskauthorityfs.TaskProjection{out}
-			} else {
-				outcomes, err = store.ReconcileProjections()
-				if err != nil {
-					return err
-				}
-			}
-			rows := make([]TaskProjectionRow, 0, len(outcomes))
-			var failed []taskauthorityfs.TaskProjection
-			for _, out := range outcomes {
-				rows = append(rows, TaskProjectionRow{
-					TaskID:     out.TaskID,
-					Generation: out.Generation.String(),
-					Revision:   uint64(out.Revision),
-					Meta:       string(out.Meta),
-					Status:     string(out.Status),
-				})
-				if out.Err != "" {
-					failed = append(failed, out)
-				}
-			}
-			if len(failed) > 0 {
-				return &ProjectionPartialError{Failed: failed}
-			}
-			return writeContract(cmd, Response[[]TaskProjectionRow]{
-				SchemaVersion: SchemaVersion,
-				Kind:          "task.reconcile",
-				Status:        "success",
-				Data:          rows,
-				Help:          []string{fmt.Sprintf("Reconciled %d task(s); projection reconciliation never changes authoritative revision or generation", len(rows))},
-			})
-		}),
-	}
-	configureContractCommand(reconcileCmd)
-
 	cmd.AddCommand(addCmd)
 	cmd.AddCommand(listCmd)
 	cmd.AddCommand(showCmd)
 	cmd.AddCommand(statusCmd)
-	cmd.AddCommand(reconcileCmd)
 	cmd.AddCommand(newTaskObserveCmd())
 	return cmd
+}
+
+// projectTaskMeta overlays the canonical aggregate fields onto the task .meta
+// projection, preserving runtime-only projection fields. Empty canonical
+// values remove stale keys. It is the post-commit projection write (ADR-0007
+// §7): the authoritative Task Generation is never written here.
+func projectTaskMeta(homeDir string, agg taskauthority.Aggregate, runtime map[string]string) error {
+	existing, err := home.ReadMeta(homeDir, agg.TaskID)
+	if err != nil {
+		existing = map[string]string{}
+	}
+	derived := make(map[string]string, len(existing)+len(runtime)+6)
+	for k, v := range existing {
+		derived[k] = v
+	}
+	for k, v := range runtime {
+		derived[k] = v
+	}
+	put := func(k, v string) {
+		if v == "" {
+			delete(derived, k)
+			return
+		}
+		derived[k] = v
+	}
+	put("owner", agg.Definition.Owner)
+	put("description", agg.Definition.Description)
+	put("kind", agg.Definition.Kind)
+	put("project", agg.Definition.Project)
+	put("generation", agg.Generation.String())
+	put("state", string(agg.Phase))
+	return home.WriteMeta(homeDir, agg.TaskID, derived)
 }

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -504,5 +505,69 @@ func TestCaptainProfileFromHome_ModelFileFallback(t *testing.T) {
 	}
 	if prof.Harness != "pi" || prof.Model != "opencode-go/deepseek-v4-flash" || prof.Effort != "" {
 		t.Errorf("profile = %+v", prof)
+	}
+}
+
+func TestResolveSoldierFromSnapshot(t *testing.T) {
+	t.Run("non-empty identity resolves", func(t *testing.T) {
+		cfg := config.ResolvedProjectConfig{Project: "acme", SoldierHarness: "codex"}
+		got, err := ResolveSoldierFromSnapshot(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "codex" {
+			t.Errorf("ResolveSoldierFromSnapshot = %q, want codex", got)
+		}
+	})
+	t.Run("empty identity fails closed", func(t *testing.T) {
+		cfg := config.ResolvedProjectConfig{Project: "acme"}
+		_, err := ResolveSoldierFromSnapshot(cfg)
+		if !errors.Is(err, ErrNoSoldierHarnessInSnapshot) {
+			t.Fatalf("empty identity error = %v, want %v", err, ErrNoSoldierHarnessInSnapshot)
+		}
+	})
+	t.Run("unknown harness rejected via ValidateHarness", func(t *testing.T) {
+		cfg := config.ResolvedProjectConfig{Project: "acme", SoldierHarness: "copilot"}
+		if _, err := ResolveSoldierFromSnapshot(cfg); err == nil {
+			t.Fatal("unknown harness must be rejected by ValidateHarness")
+		}
+	})
+}
+
+func TestResolveCaptainFromSnapshot(t *testing.T) {
+	t.Run("non-empty identity resolves", func(t *testing.T) {
+		cfg := config.ResolvedProjectConfig{Project: "acme", CaptainProfile: config.CaptainProfile{Harness: "pi", Model: "sonnet"}}
+		got, err := ResolveCaptainFromSnapshot(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "pi" {
+			t.Errorf("ResolveCaptainFromSnapshot = %q, want pi", got)
+		}
+	})
+	t.Run("empty identity fails closed", func(t *testing.T) {
+		cfg := config.ResolvedProjectConfig{Project: "acme"}
+		_, err := ResolveCaptainFromSnapshot(cfg)
+		if !errors.Is(err, ErrNoCaptainHarnessInSnapshot) {
+			t.Fatalf("empty identity error = %v, want %v", err, ErrNoCaptainHarnessInSnapshot)
+		}
+	})
+	t.Run("unknown harness rejected via ValidateHarness", func(t *testing.T) {
+		cfg := config.ResolvedProjectConfig{Project: "acme", CaptainProfile: config.CaptainProfile{Harness: "vim"}}
+		if _, err := ResolveCaptainFromSnapshot(cfg); err == nil {
+			t.Fatal("unknown harness must be rejected by ValidateHarness")
+		}
+	})
+}
+
+func TestPreflightBinaryName(t *testing.T) {
+	for _, h := range KnownHarnesses {
+		binary, ok := PreflightBinaryName(h)
+		if !ok || binary == "" {
+			t.Errorf("PreflightBinaryName(%q) = (%q, %v), want known binary", h, binary, ok)
+		}
+	}
+	if _, ok := PreflightBinaryName("unknown"); ok {
+		t.Error("PreflightBinaryName('unknown') should report not found")
 	}
 }

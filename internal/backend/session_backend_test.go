@@ -3,21 +3,27 @@ package backend
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestBackendForTask_MetaBackendPrecedence verifies that a backend specified
-// in task metadata takes precedence over the config file.
-func TestBackendForTask_MetaBackendPrecedence(t *testing.T) {
+// TestBackendForTask_BoundIdentityUsed verifies that BackendForTask resolves the
+// identity durably bound in meta["backend"], independent of any config file.
+// Core Backend never reads config directly — composition translates config once
+// into the typed snapshot before operation start.
+func TestBackendForTask_BoundIdentityUsed(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Write global config saying "herdr"
+	// Write a config file saying "herdr" — BackendForTask must NOT consult it.
 	configDir := filepath.Join(tmpDir, "config")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
 		t.Fatal(err)
+	}
+	if !hasTmux() {
+		t.Skip("tmux not on PATH (Select verifies the requested capability)")
 	}
 
 	meta := map[string]string{"backend": "tmux", "window": "@test"}
@@ -33,9 +39,10 @@ func TestBackendForTask_MetaBackendPrecedence(t *testing.T) {
 	}
 }
 
-// TestBackendForTask_MissingMetaWithConfigPin verifies that when task metadata
-// has no "backend" field, the config file (homeDir/config/backend) is respected.
-func TestBackendForTask_MissingMetaWithConfigPin(t *testing.T) {
+// TestBackendForTask_MissingIdentityFailsClosed verifies that a task whose
+// metadata has no "backend" identity FAILS CLOSED — config pins and env/PATH
+// markers must NOT fall through.
+func TestBackendForTask_MissingIdentityFailsClosed(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Write global config saying "herdr"
@@ -46,48 +53,18 @@ func TestBackendForTask_MissingMetaWithConfigPin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "backend"), []byte("herdr\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
-	// No backend in meta
-	meta := map[string]string{"window": "@test"}
-	bk, name, err := BackendForTask(tmpDir, meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "herdr" {
-		t.Errorf("name = %q, want herdr", name)
-	}
-	if _, ok := bk.(*HerdrBackend); !ok {
-		t.Errorf("expected HerdrBackend, got %T", bk)
-	}
-}
-
-// TestBackendForTask_MissingMetaWithRuntimeAuto verifies that when task metadata
-// has no "backend" field and no config file exists, runtime auto-detection
-// (based on environment variables and PATH) is used.
-func TestBackendForTask_MissingMetaWithRuntimeAuto(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// No config file — rely on auto-detection.
-	// Set TMUX to trigger tmux backend detection.
 	t.Setenv("TMUX", "/tmp/tmux-socket")
 	t.Setenv("HERDR_ENV", "")
 
 	meta := map[string]string{"window": "@test"}
-	bk, name, err := BackendForTask(tmpDir, meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "tmux" {
-		t.Errorf("name = %q, want tmux", name)
-	}
-	if _, ok := bk.(*TmuxBackend); !ok {
-		t.Errorf("expected TmuxBackend, got %T", bk)
+	if _, _, err := BackendForTask(tmpDir, meta); err == nil {
+		t.Fatal("missing bound backend identity must fail CLOSED (no config/env/PATH fallthrough)")
 	}
 }
 
-// TestBackendForTask_EmptyMetaBackend verifies that an empty backend field in
-// meta (backend=) is treated the same as missing — falls through to Resolve.
-func TestBackendForTask_EmptyMetaBackend(t *testing.T) {
+// TestBackendForTask_EmptyMetaBackendFailsClosed verifies that an explicitly
+// empty bound identity is treated the same as missing — fail closed.
+func TestBackendForTask_EmptyMetaBackendFailsClosed(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Write global config saying "herdr"
@@ -100,15 +77,19 @@ func TestBackendForTask_EmptyMetaBackend(t *testing.T) {
 	}
 
 	meta := map[string]string{"backend": "", "window": "@test"}
-	bk, name, err := BackendForTask(tmpDir, meta)
-	if err != nil {
-		t.Fatal(err)
+	if _, _, err := BackendForTask(tmpDir, meta); err == nil {
+		t.Fatal("empty bound backend identity must fail CLOSED")
 	}
-	if name != "herdr" {
-		t.Errorf("name = %q, want herdr", name)
-	}
-	if _, ok := bk.(*HerdrBackend); !ok {
-		t.Errorf("expected HerdrBackend, got %T", bk)
+}
+
+// TestBackendForTask_NilMetaFailsClosed verifies that a nil meta map fails
+// closed — no auto-detection fallback.
+func TestBackendForTask_NilMetaFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("TMUX", "/tmp/tmux-socket")
+
+	if _, _, err := BackendForTask(tmpDir, nil); err == nil {
+		t.Fatal("nil meta must fail CLOSED (no backend identity, no auto-detect)")
 	}
 }
 
@@ -130,21 +111,108 @@ func TestBackendForTask_UnknownMetaBackendFailsClosed(t *testing.T) {
 	}
 }
 
-// TestBackendForTask_NilMeta verifies that a nil meta map is handled gracefully.
-func TestBackendForTask_NilMeta(t *testing.T) {
+// TestBackendForTask_BoundHerdrSessionBinding verifies that the herdr branch
+// keeps session BINDING from task metadata (session binding is not selection).
+// The bound binary is provided on a controlled PATH so the test is
+// deterministic — verification precedes binding.
+func TestBackendForTask_BoundHerdrSessionBinding(t *testing.T) {
+	fakeBin := fakeExecutables(t, "herdr")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	tmpDir := t.TempDir()
-
-	// Set TMUX to trigger auto-detection.
-	t.Setenv("TMUX", "/tmp/tmux-socket")
-
-	bk, name, err := BackendForTask(tmpDir, nil)
+	meta := map[string]string{
+		"backend":       "herdr",
+		"herdr_session": "my-lab-session",
+		"window":        "w1",
+	}
+	bk, name, err := BackendForTask(tmpDir, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "tmux" {
-		t.Errorf("name = %q, want tmux", name)
+	if name != "herdr" {
+		t.Errorf("name = %q, want herdr", name)
 	}
-	if _, ok := bk.(*TmuxBackend); !ok {
-		t.Errorf("expected TmuxBackend, got %T", bk)
+	hb, ok := bk.(*HerdrBackend)
+	if !ok {
+		t.Fatalf("expected *HerdrBackend, got %T", bk)
+	}
+	if hb.Session != "my-lab-session" {
+		t.Errorf("Session = %q, want my-lab-session (bound from meta)", hb.Session)
+	}
+}
+
+// TestBackendForTask_HerdrFailsClosedWhenAbsent verifies the REWORK ruling:
+// the herdr branch of BackendForTask verifies capability health BEFORE session
+// binding — herdr absent from PATH FAILS CLOSED at resolution, and no
+// session-bind metadata can mask the failure.
+func TestBackendForTask_HerdrFailsClosedWhenAbsent(t *testing.T) {
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+
+	tmpDir := t.TempDir()
+	meta := map[string]string{
+		"backend":       "herdr",
+		"herdr_session": "bound-session",
+		"window":        "w1",
+	}
+	bk, name, err := BackendForTask(tmpDir, meta)
+	if err == nil {
+		t.Fatalf("BackendForTask(herdr) succeeded (%T) with herdr absent from PATH — must fail closed", bk)
+	}
+	if bk != nil {
+		t.Errorf("BackendForTask returned a backend (%T) for an absent capability — must return nil", bk)
+	}
+	if name != "" {
+		t.Errorf("name = %q on failure, want empty", name)
+	}
+	if !strings.Contains(err.Error(), "herdr: not found on PATH") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestBackendForTask_HerdrVerifiesBeforeSessionBinding verifies that with the
+// herdr binary verifiably present (controlled PATH), the same verified
+// construction path is used and session binding from meta is applied AFTER
+// verification — including durable teardown seeds and the hometag.
+func TestBackendForTask_HerdrVerifiesBeforeSessionBinding(t *testing.T) {
+	fakeBin := fakeExecutables(t, "herdr")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
+	tmpDir := t.TempDir()
+	meta := map[string]string{
+		"backend":            "herdr",
+		"herdr_session":      "bound-session",
+		"window":             "w1",
+		"herdr_tab_id":       "tab-1",
+		"herdr_workspace_id": "ws-1",
+		"home":               tmpDir,
+	}
+	bk, name, err := BackendForTask(tmpDir, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "herdr" {
+		t.Errorf("name = %q, want herdr", name)
+	}
+	hb, ok := bk.(*HerdrBackend)
+	if !ok {
+		t.Fatalf("expected *HerdrBackend, got %T", bk)
+	}
+	if hb.Session != "bound-session" {
+		t.Errorf("Session = %q, want bound-session (meta herdr_session binds AFTER verification)", hb.Session)
+	}
+	if hb.TeardownTabID != "tab-1" {
+		t.Errorf("TeardownTabID = %q, want tab-1 (durable meta seed)", hb.TeardownTabID)
+	}
+	if hb.TeardownWorkspaceID != "ws-1" {
+		t.Errorf("TeardownWorkspaceID = %q, want ws-1 (durable meta seed)", hb.TeardownWorkspaceID)
+	}
+	if hb.Hometag != WorkspaceTag(tmpDir) {
+		t.Errorf("Hometag = %q, want %q (home binding)", hb.Hometag, WorkspaceTag(tmpDir))
 	}
 }

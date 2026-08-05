@@ -34,6 +34,9 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 	if err := os.MkdirAll(parentHome, 0755); err != nil {
 		t.Fatalf("mkdir parent: %v", err)
 	}
+	if _, err := home.Init(parentHome); err != nil {
+		t.Fatalf("init parent home: %v", err)
+	}
 
 	captainID = "test-captain"
 	captainHome = filepath.Join(t.TempDir(), captainID)
@@ -42,23 +45,17 @@ func setupTestHomes(t *testing.T) (parentHome, captainHome, captainID string) {
 	}
 
 	// Set up typed documents in parent home so ConfigPush works.
+	// The Backend is an explicit fixture literal ("tmux"): ResolveProject
+	// during Seed/ConfigPush fails closed on an empty backend identity.
 	base := config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
+			Backend:        "tmux",
 		},
 	}
 	if err := config.StoreFleetBase(parentHome, base); err != nil {
 		t.Fatalf("StoreFleetBase: %v", err)
-	}
-	projects := config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "test-project", Path: captainHome, Mode: "no-mistakes"},
-		},
-	}
-	if err := config.StoreProjectRegistry(parentHome, projects); err != nil {
-		t.Fatalf("StoreProjectRegistry: %v", err)
 	}
 	// Register captain with a project BEFORE seeding, so ConfigPush inside
 	// SeedCaptain can resolve the project for the published snapshot.

@@ -35,7 +35,7 @@ func TestPackageTopology(t *testing.T) {
 		packages[p.ImportPath] = p
 	}
 	const root = "github.com/minhtri2710/munsu/internal/"
-	allowed := map[string]bool{"domain": true, "backend": true, "orchestrator": true, "fleet": true, "config": true, "configmigration": true, "home": true, "harness": true, "bootstrap": true, "testutil": true, "cli": true, "taskauthority": true, "taskauthority/storecontract": true, "taskauthorityfs": true}
+	allowed := map[string]bool{"domain": true, "backend": true, "orchestrator": true, "fleet": true, "config": true, "home": true, "harness": true, "bootstrap": true, "testutil": true, "cli": true, "taskauthority": true}
 	for path, p := range packages {
 		if strings.HasPrefix(path, root) && !allowed[strings.TrimPrefix(path, root)] {
 			t.Errorf("unexpected internal package %s", path)
@@ -43,6 +43,9 @@ func TestPackageTopology(t *testing.T) {
 		for _, imp := range p.Imports {
 			if strings.HasPrefix(imp, root) && !allowed[strings.TrimPrefix(imp, root)] {
 				t.Errorf("%s imports package outside final topology: %s", path, imp)
+			}
+			if imp == root+"taskauthorityfs" {
+				t.Errorf("%s imports deleted package taskauthorityfs", path)
 			}
 			if path == root+"fleet" && imp == root+"orchestrator" {
 				t.Errorf("fleet imports orchestrator")
@@ -53,8 +56,8 @@ func TestPackageTopology(t *testing.T) {
 			if path == root+"domain" && strings.HasPrefix(imp, root) {
 				t.Errorf("domain imports core package %s", imp)
 			}
-			if path == root+"taskauthority" && imp != root+"domain" && strings.HasPrefix(imp, root) {
-				t.Errorf("taskauthority imports core package %s; it must stay pure (domain only)", imp)
+			if path == root+"taskauthority" && imp != root+"domain" && imp != root+"home" && strings.HasPrefix(imp, root) {
+				t.Errorf("taskauthority imports core package %s; it must stay pure (domain, home only)", imp)
 			}
 		}
 	}

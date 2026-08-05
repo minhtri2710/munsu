@@ -64,7 +64,7 @@ One idempotent authoritative mutation identified by a stable Operation ID and re
 
 ## Task Authority
 
-The single authority that evaluates task lifecycle, readiness, and durable dispatch-control intent against the latest Authoritative Task Aggregate. It owns semantic transitions and audit outcomes; persistence and projections do not independently decide task state. See [ADR-0007](docs/adr/0007-task-authority-deep-module-and-transactional-store.md).
+The single authority that evaluates task lifecycle, readiness, and durable dispatch-control intent against the latest Authoritative Task Aggregate. It owns semantic transitions and audit outcomes; persistence and projections do not independently decide task state. See [ADR-0008](docs/adr/0008-owner-clean-architecture-and-pre-public-v1-reset.md) §2 (extending ADR-0007).
 
 ## Resource Lease
 
@@ -88,7 +88,7 @@ The 1:1 domain rule that a Captain supervises exactly one project and a project 
 
 ## Authoritative Task Aggregate
 
-The single current-state authority for a task, identified by Task ID and Task Generation and owned by exactly one rank/home. Definition and lifecycle are authoritative; backlog Markdown, `.meta`, `.status`, briefs, inbox summaries, and fleet snapshots are projections or audit records. Handoff transfers the same generation atomically. See [ADR-0004](docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md).
+The single current-state authority for a task, identified by Task ID and Task Generation and owned by exactly one rank/home. Definition and lifecycle are authoritative; backlog Markdown, `.meta`, `.status`, briefs, inbox summaries, and fleet snapshots are projections or audit records. Handoff transfers the same generation atomically. See [ADR-0008](docs/adr/0008-owner-clean-architecture-and-pre-public-v1-reset.md) §2 and §8 (replacing ADR-0004 where conflicting).
 
 ## Delivery Transaction
 

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -212,8 +213,24 @@ func TestBackendCapabilitiesAndGuardContract(t *testing.T) {
 		t.Errorf("backend output = %s", backend)
 	}
 
+	// Diagnostics must never probe to choose an adapter: omitting --backend is
+	// a typed missing-input failure, never an auto-select.
 	home := t.TempDir()
 	t.Setenv("MUNSU_HOME", home)
+	missing, err := runContract(t, []string{"backend", "capabilities"})
+	if err == nil {
+		t.Fatal("backend capabilities without --backend: expected typed missing-input error, got nil")
+	}
+	if !strings.Contains(missing, "error_code: missing_input") {
+		t.Errorf("backend capabilities without --backend must return error_code missing_input, got:\n%s", missing)
+	}
+	if !strings.Contains(missing, "an explicit backend identity is required for backend capabilities") {
+		t.Errorf("backend capabilities without --backend must explain the missing identity, got:\n%s", missing)
+	}
+	if strings.Contains(missing, "kind: backend.capabilities") {
+		t.Errorf("backend capabilities without --backend must never report capabilities, got:\n%s", missing)
+	}
+
 	guard, err := runContract(t, []string{"guard"})
 	if err != nil {
 		t.Fatalf("guard: %v", err)
@@ -470,6 +487,9 @@ func TestFleetSnapshotV2CaptainGuidanceJSON(t *testing.T) {
 
 func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	home := t.TempDir()
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
 	captainHome := filepath.Join(home, "captains", "domain-alpha")
 	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
 	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
@@ -478,26 +498,17 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	// Idle captain home (no active children).
 	os.WriteFile(filepath.Join(captainHome, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] hold: external\n"), 0644)
 	// Typed fleet documents replace the legacy captains.md registry: the
-	// captain is registered with a project binding in data/captains.json.
+	// captain is registered with a project binding through the canonical
+	// Fleet Registry (the sole lifecycle authority).
 	if err := config.StoreFleetBase(home, config.FleetBaseDocument{
 		SchemaVersion: config.FleetBaseSchemaVersion,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := config.StoreProjectRegistry(home, config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "sample", Path: captainHome, Mode: "no-mistakes"},
-		},
-	}); err != nil {
+	if err := fleet.Add(home, "sample", captainHome, "no-mistakes", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := config.StoreCaptainRegistry(home, config.CaptainRegistryDocument{
-		SchemaVersion: config.CaptainRegistrySchemaVersion,
-		Captains: []config.CaptainRecord{
-			{ID: "domain-alpha", Home: captainHome, Project: "sample"},
-		},
-	}); err != nil {
+	if err := fleet.Register(home, "domain-alpha", captainHome, "", "sample"); err != nil {
 		t.Fatal(err)
 	}
 	// Launched captain meta makes the supervisor visible in the raw task snapshot.

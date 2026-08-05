@@ -88,8 +88,8 @@ func TestConfigFileExists(t *testing.T) {
 func TestAutoDetectConfig_InitHome(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Ensure home dir tree
-	if err := home.EnsureDirTree(tmpDir); err != nil {
+	// Initialize the canonical home tree
+	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,7 +114,7 @@ func TestAutoDetectConfig_InitHome(t *testing.T) {
 func TestAutoDetectConfig_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := home.EnsureDirTree(tmpDir); err != nil {
+	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,12 +145,13 @@ func TestPrintNextSteps(t *testing.T) {
 	printNextSteps(tmpDir)
 }
 
-// TestEnsureDirTreeConfigFiles verifies ensureDirTree + autoDetectConfig create proper files.
+// TestEnsureDirTreeConfigFiles verifies the initialized home tree plus
+// autoDetectConfig create proper files.
 func TestEnsureDirTreeConfigFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Only ensure the tree, don't run autoDetectConfig
-	if err := home.EnsureDirTree(tmpDir); err != nil {
+	// Initialize the canonical home, don't run autoDetectConfig
+	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
 

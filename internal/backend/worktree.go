@@ -26,6 +26,7 @@ package backend
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,8 +40,21 @@ import (
 // implements it via bare git worktree commands.
 type Provider interface {
 	Get(repoPath string, lease bool) (string, error)
+	GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error)
 	Return(path string) error
 	Status() (string, error)
+}
+
+// ErrWorktreeReservationRecoveryUnsupported is the typed fail-closed outcome
+// when a worktree provider cannot recover a worktree by its durable launch
+// reservation identity: a recovery must never silently allocate a
+// replacement, and the provider reports the limitation instead.
+var ErrWorktreeReservationRecoveryUnsupported = errors.New("worktree: reservation recovery unsupported by provider")
+
+// IsWorktreeReservationRecoveryUnsupported reports whether the error
+// indicates a provider that cannot recover a reservation-owned worktree.
+func IsWorktreeReservationRecoveryUnsupported(err error) bool {
+	return errors.Is(err, ErrWorktreeReservationRecoveryUnsupported)
 }
 
 var printFallbackNote sync.Once
@@ -61,7 +75,7 @@ func selectProvider(homeDir string) (Provider, error) {
 	return &gitWorktreeProvider{homeDir: homeDir}, nil
 }
 
-// Get acquires a worktree for the given repo path within the given munsu home.
+// GetWorktree acquires a worktree for the given repo path within the given munsu home.
 // If lease is true and treehouse is the active provider, the --lease flag is
 // passed for a durable hold.
 func GetWorktree(homeDir, repoPath string, lease bool) (string, error) {
@@ -70,6 +84,37 @@ func GetWorktree(homeDir, repoPath string, lease bool) (string, error) {
 		return "", err
 	}
 	return p.Get(repoPath, lease)
+}
+
+// GetWorktreeReserved acquires the worktree owned by ONE durable launch
+// reservation identity (the launch intent's WorktreeReservationID). Every
+// canonical launch acquisition consumes the reservation from the FIRST
+// attempt; recovery passes recovery=true so the provider must either return
+// the SAME reservation-owned worktree or fail closed with
+// ErrWorktreeReservationRecoveryUnsupported — it never allocates a
+// replacement for an already-attempted reservation.
+//
+// git fallback: the worktree path is derived deterministically from the
+// reservation (stableHash(repoPath + reservation)), so the same reservation
+// always returns/recreates the SAME worktree — recovery is idempotent and
+// never duplicates a lease or path.
+//
+// treehouse: the first acquisition passes `get --lease --lease-holder
+// <reservationID>` (the reservation is recorded as the lease holder), but the
+// treehouse CLI cannot recover a worktree by holder (`get` always allocates
+// from the pool, `status` has no holder query, `return` is by path), so a
+// recovery fails closed instead of allocating a replacement (DEPENDENCY_REQUEST
+// evidence; owner-clean alternative is operator reconciliation of the orphan
+// lease before re-running the launch).
+func GetWorktreeReserved(homeDir, repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
+	if strings.TrimSpace(reservationID) == "" {
+		return "", fmt.Errorf("worktree: reservation-aware acquisition requires a reservation identity")
+	}
+	p, err := selectProvider(homeDir)
+	if err != nil {
+		return "", err
+	}
+	return p.GetReserved(repoPath, lease, reservationID, recovery)
 }
 
 // Return returns a worktree path within the given munsu home.
@@ -96,6 +141,46 @@ func WorktreeStatus(homeDir string) (string, error) {
 // --- treehouse provider ---
 
 type treehouseProvider struct{}
+
+// GetReserved acquires a worktree owned by one launch reservation. On the
+// FIRST acquisition the reservation is passed as the treehouse lease holder
+// (--lease-holder <reservationID>) so the lease is durably labeled. The
+// treehouse CLI cannot recover a worktree by holder — `get` always allocates
+// from the pool, `status` exposes no holder query, and `return` is by path —
+// so a recovery fails closed with ErrWorktreeReservationRecoveryUnsupported
+// instead of allocating a replacement (DEPENDENCY_REQUEST evidence).
+func (p *treehouseProvider) GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
+	if recovery {
+		return "", fmt.Errorf("%w: treehouse CLI has no reservation-keyed get/recover (get allocates from the pool; status has no holder query; return is by path); the launch reservation %q cannot be recovered without allocating a replacement — owner-clean recovery requires operator reconciliation of the orphan lease", ErrWorktreeReservationRecoveryUnsupported, reservationID)
+	}
+	bin, err := treehouseBin()
+	if err != nil {
+		return "", err
+	}
+	absRepo, absErr := filepath.Abs(repoPath)
+	if absErr != nil {
+		return "", fmt.Errorf("resolving repo path: %w", absErr)
+	}
+	args := []string{"get", absRepo}
+	if lease {
+		args = append(args, "--lease")
+	}
+	args = append(args, "--lease-holder", reservationID)
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = absRepo
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("treehouse get: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", fmt.Errorf("treehouse get: %w", err)
+	}
+	wtPath := strings.TrimSpace(string(out))
+	if wtPath == "" {
+		return "", fmt.Errorf("treehouse get returned empty path: use --lease for a durable worktree (non-lease is interactive-only)")
+	}
+	return wtPath, nil
+}
 
 func (p *treehouseProvider) Get(repoPath string, lease bool) (string, error) {
 	bin, err := treehouseBin()
@@ -197,6 +282,38 @@ type gitWorktreeProvider struct {
 // Always <homeDir>/.worktrees — no env fallback.
 func (p *gitWorktreeProvider) getWorktreeBase() string {
 	return filepath.Join(p.homeDir, ".worktrees")
+}
+
+// GetReserved acquires the worktree owned by one launch reservation. The
+// path is derived deterministically from the repository AND the reservation
+// identity (stableHash(repoPath + reservation)), so the same reservation
+// always returns the SAME worktree: a first acquisition creates it and a
+// recovery re-adopts the identical path — never a duplicate lease or path.
+// recovery is therefore idempotent and needs no provider-side distinction.
+func (p *gitWorktreeProvider) GetReserved(repoPath string, lease bool, reservationID string, recovery bool) (string, error) {
+	hash := stableHash(repoPath + "\x00" + reservationID)
+	base := p.getWorktreeBase()
+	wtDir := filepath.Join(base, hash)
+
+	// Ensure base directory exists.
+	if err := os.MkdirAll(base, 0755); err != nil {
+		return "", fmt.Errorf("creating worktree base: %w", err)
+	}
+
+	// If worktree already exists, return it (idempotent; recovery re-adopts
+	// the reservation-owned path).
+	if fi, err := os.Stat(wtDir); err == nil && fi.IsDir() {
+		return wtDir, nil
+	}
+
+	// Create new worktree with --detach.
+	cmd := exec.Command("git", "worktree", "add", "--detach", wtDir)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git worktree add: %s", strings.TrimSpace(string(out)))
+	}
+	return wtDir, nil
 }
 
 func (p *gitWorktreeProvider) Get(repoPath string, lease bool) (string, error) {

@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,7 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 	if rank == "captain" {
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
 	} else {
-		snapshot, err = fleetconfig.LoadResolvedSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
+		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{Backend: args.Backend})
 	}
 	if err != nil {
 		return SpawnProjectConfig{}, classifySnapshotError(args.ProjectName, err)
@@ -51,7 +52,12 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 		return SpawnProjectConfig{}, err
 	}
 
-	mode, err := ResolveDeliveryMode(homeDir, args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode))
+	// Compose the mode decision from the resolved snapshot: the typed default
+	// mode and the resolved require-no-mistakes are the single authority. When
+	// the default mode is unset, ResolveDeliveryMode auto-detects (no-mistakes
+	// on PATH, else direct-PR) and refuses fallback when require-no-mistakes is
+	// set — preserving the unset → direct-PR default semantics.
+	mode, err := ResolveDeliveryMode(args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
 	if err != nil {
 		return SpawnProjectConfig{}, err
 	}
@@ -99,24 +105,50 @@ func TypedConfigAvailable(homeDir string) bool {
 	if fleetconfig.PublishedSnapshotAvailable(homeDir) {
 		return true
 	}
-	for _, path := range []string{fleetconfig.BaseDocumentPath, fleetconfig.CaptainDocumentPath, fleetconfig.ProjectDocumentPath} {
-		if _, err := os.Stat(filepath.Join(homeDir, path)); err == nil {
-			return true
-		}
+	if _, err := os.Stat(filepath.Join(homeDir, fleetconfig.BaseDocumentPath)); err == nil {
+		return true
 	}
 	return false
+}
+
+// ResolveGeneralHomeBackend resolves the session backend identity for a home
+// without task context from the typed snapshot surface, mirroring the
+// ResolveSpawnProjectConfig rank precedence:
+//   - captain context: the published config snapshot (the composed
+//     config.ResolveProject output; its Backend is required non-empty by
+//     strict snapshot validation).
+//   - general context: the fleet base document's typed Backend.
+//
+// There is no auto-detection and no fallback identity: an empty identity is a
+// typed failure, never a device/PATH/env choice.
+func ResolveGeneralHomeBackend(homeDir string) (string, error) {
+	if fleetconfig.PublishedSnapshotAvailable(homeDir) {
+		snapshot, err := fleetconfig.LoadPublishedSnapshot(homeDir)
+		if err != nil {
+			return "", err
+		}
+		return snapshot.Config().Backend, nil
+	}
+	base, err := fleetconfig.LoadFleetBase(homeDir)
+	if err != nil {
+		return "", err
+	}
+	if base.Config.Backend == "" {
+		return "", fmt.Errorf("general home %q resolved no session backend identity: set backend in the fleet base config", homeDir)
+	}
+	return base.Config.Backend, nil
 }
 
 func classifySnapshotError(projectName string, err error) error {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "unknown project"):
+	case errors.Is(err, ErrNotFound), strings.Contains(msg, "not found"), strings.Contains(msg, "unknown project"):
 		return fleetconfig.Remediate(
 			fleetconfig.RemediateUnknownProject,
-			fmt.Sprintf("register project %q in data/projects.json", projectName),
+			fmt.Sprintf("register project %q in the Fleet project registry", projectName),
 			err,
 		)
-	case strings.Contains(msg, "schemaVersion"), strings.Contains(msg, "reading typed config document"):
+	case strings.Contains(msg, "schema"), strings.Contains(msg, "schemaVersion"), strings.Contains(msg, "reading typed config document"):
 		return fleetconfig.Remediate(
 			fleetconfig.RemediateIncompatibleSnapshot,
 			"migrate typed config documents to the supported schema versions",

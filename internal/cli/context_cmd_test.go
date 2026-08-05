@@ -7,12 +7,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 )
 
 func TestContextCmd_SyncsAndPrintsManual(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("MUNSU_HOME", tmp)
+	// Initialize a canonical home so the Fleet Registry can operate on it.
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	// Stale home AGENTS must be overwritten by seed.
 	if err := os.MkdirAll(filepath.Join(tmp, "data"), 0755); err != nil {
 		t.Fatal(err)
@@ -21,14 +26,9 @@ func TestContextCmd_SyncsAndPrintsManual(t *testing.T) {
 	if err := os.WriteFile(stale, []byte("# stale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Create typed project registry instead of legacy projects.md.
-	projects := config.ProjectRegistryDocument{
-		SchemaVersion: config.ProjectRegistrySchemaVersion,
-		Projects: []config.ProjectRecord{
-			{Name: "demo", Path: "/tmp/demo", Mode: "no-mistakes"},
-		},
-	}
-	if err := config.StoreProjectRegistry(tmp, projects); err != nil {
+	// Register a project through the Fleet Registry (the sole lifecycle
+	// authority).
+	if err := fleet.Add(tmp, "demo", "/tmp/demo", "no-mistakes", false); err != nil {
 		t.Fatal(err)
 	}
 

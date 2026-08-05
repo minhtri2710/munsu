@@ -29,15 +29,14 @@ func newBriefCmd() *cobra.Command {
 			id := args[0]
 			repo := args[1]
 
-			// Resolve delivery mode using full auto-detection chain
-			projectMode := ""
+			// Resolve delivery mode from the typed project/base surface (yolo
+			// stays registry-owned; the flat default-mode authority is retired).
 			projYolo := false
-			if m, y, err := fleet.Mode(ctx.Home, repo); err == nil {
-				projectMode = m
+			if _, y, err := fleet.Mode(ctx.Home, repo); err == nil {
 				projYolo = y
 			}
 
-			resolvedMode, err := fleet.ResolveDeliveryMode(ctx.Home, modeFlag, projectMode)
+			resolvedMode, err := fleet.ResolveDeliveryModeFromProject(ctx.Home, repo, modeFlag)
 			if err != nil {
 				return err
 			}
@@ -310,7 +309,7 @@ func newWatchCmd() *cobra.Command {
 		Short: "Run the persistent watcher daemon",
 		Long:  `Run the persistent watcher daemon. Actionable conditions are durably queued while the watcher keeps polling until SIGTERM or SIGINT. Use 'munsu watch run' for one diagnostic cycle. Singleton-safe (home-scoped lock).`,
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Authority, error) { return ctx.TaskAuthorityFor(h) }}
+			retirementPort := fleetRetirementPort{compose: func(h string) (*taskauthority.Canonical, error) { return ctx.TaskAuthorityFor(h) }}
 			reason, err := orchestrator.RunWithProbeAndSender(ctx.Home, runtimeTaskEndpointProbe(), newSessionMailboxSender(), watcherHooks(), retirementPort, runtimeTaskStatePort{})
 			if err != nil {
 				return err

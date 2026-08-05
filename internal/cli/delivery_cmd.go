@@ -3,9 +3,12 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -14,16 +17,11 @@ func newDeliveryCmd() *cobra.Command {
 		Use:   "delivery",
 		Short: "Manage delivery operations",
 		Long: `Manage delivery operations: review diffs, check PR status,
-merge PRs, amend PR identities, reconcile stale metadata,
-and merge branches locally.`,
+and merge PRs through the journaled delivery execution.`,
 	}
 	cmd.AddCommand(newReviewDiffCmd())
-	cmd.AddCommand(newPRCheckCmd())
-	cmd.AddCommand(newPRMergeCmd())
-	cmd.AddCommand(newMergeLocalCmd())
 	cmd.AddCommand(newMergeStatusCmd())
-	cmd.AddCommand(newPRAmendCmd())
-	cmd.AddCommand(newReconcileCmd())
+	cmd.AddCommand(newPRMergeCmd())
 	return cmd
 }
 
@@ -64,68 +62,103 @@ Warns if local default branch is stale vs origin.`,
 	}
 }
 
-func newPRCheckCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "pr-check <id> <pr-url>",
-		Short: "Record PR/MR URL and arm merge poll",
-		Long: `Parse a full GitHub PR URL or GitLab MR URL, record the PR/MR and
-head SHA in task meta, and write a check.sh script to poll the merge status.
-
-Routing: GitHub PRs poll via gh CLI (existing behavior); GitLab MRs poll via
-the provider-neutral 'delivery merge-status' seam. Unsupported URLs fail closed.
-
-PR URL format: https://github.com/<owner>/<repo>/pull/<n>
-MR URL format: https://gitlab.com/<owner>/<repo>/-/merge_requests/<n>
-
-Task meta is resolved from the current home first, then each registered
-captain home (so general can arm checks after captain handoff + spawn).`,
-		Args: ExactArgs(2),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpDelivery, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("delivery compatibility check failed: %s", result.FormatErrors())
-			}
-			id := args[0]
-			prURL := args[1]
-
-			taskHome, _, err := fleet.RequireShipMeta(ctx.Home, id)
-			if err != nil {
-				return fmt.Errorf("pr-check %s: %w", id, err)
-			}
-
-			// The delivery preparation routes through the composed Task
-			// Authority over the exact resolved task home (Task 7.5): the
-			// generation-bound prepare record (provider identity, head,
-			// review-ready state) is authoritative; the identity meta keys
-			// are a post-commit projection.
-			auth, err := ctx.TaskAuthorityFor(taskHome)
-			if err != nil {
-				return fmt.Errorf("pr-check %s: composing task authority: %w", id, err)
-			}
-
-			return fleet.RoutePRCheck(taskHome, id, prURL, auth)
-		}),
+// buildDeliverRequest builds the typed journaled delivery intent for one
+// `pr-merge` invocation from the explicit CLI args (PR/MR URL and merge
+// method) and the canonical task identity/bindings. The identity head comes
+// from the retained read-only provider snapshot seam; the canonical
+// authorization gates it against the bound worktree head, so a stale
+// identity fails closed before any mutation.
+func buildDeliverRequest(auth *taskauthority.Canonical, taskID, prURL string, extra []string) (fleet.DeliverRequest, error) {
+	provider, owner, repo, num, _, err := domain.ParseProviderURL(prURL)
+	if err != nil {
+		return fleet.DeliverRequest{}, err
 	}
+	snap, err := fleet.FetchProviderSnapshot(prURL)
+	if err != nil {
+		return fleet.DeliverRequest{}, fmt.Errorf("capturing delivery identity: %w", err)
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return fleet.DeliverRequest{}, err
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return fleet.DeliverRequest{}, fmt.Errorf("resolving task %s: %w", taskID, err)
+	}
+	if agg.Worktree == nil {
+		return fleet.DeliverRequest{}, fmt.Errorf("task %s has no bound worktree; spawn it before delivery", taskID)
+	}
+	ident := &domain.DeliveryIdentity{
+		Provider:   provider,
+		Owner:      owner,
+		Repo:       repo,
+		Number:     num,
+		URL:        prURL,
+		BaseRef:    snap.BaseRef,
+		HeadRef:    snap.HeadRef,
+		HeadSHA:    snap.HeadSHA,
+		CapturedAt: snap.ObservedAt,
+	}
+	method := "squash"
+	for _, arg := range extra {
+		switch strings.TrimSpace(arg) {
+		case "--merge":
+			method = "merge"
+		case "--rebase":
+			method = "rebase"
+		case "--squash":
+			method = "squash"
+		}
+	}
+	return fleet.DeliverRequest{
+		Kind:     taskauthority.DeliveryAuthorizationProviderMerge,
+		Identity: *ident,
+		Method:   method,
+		Preconditions: []taskauthority.DeliveryPrecondition{
+			taskauthority.DeliveryPreconditionPRMergeable,
+			taskauthority.DeliveryPreconditionPRHeadCurrent,
+		},
+	}, nil
+}
+
+// projectDeliveryIdentity overlays one captured delivery identity onto the
+// task .meta projection (pr_* keys). It is a post-commit projection for the
+// read-only seams (merge-status, retirement poll, soldier state); the
+// canonical delivery authorization/outcome remains the delivery truth and is
+// never derived from these keys.
+func projectDeliveryIdentity(homeDir, taskID string, ident domain.DeliveryIdentity) error {
+	meta, err := home.ReadMeta(homeDir, taskID)
+	if err != nil {
+		meta = map[string]string{}
+	}
+	for k, v := range ident.ToMeta() {
+		meta[k] = v
+	}
+	return home.WriteMeta(homeDir, taskID, meta)
 }
 
 func newPRMergeCmd() *cobra.Command {
 	var doTeardown bool
 	cmd := &cobra.Command{
 		Use:   "pr-merge <id> <pr-url> [-- --merge|--rebase]",
-		Short: "Merge a PR via gh-axi",
-		Long: `Merge a PR via gh-axi CLI. Repository is derived from the PR URL.
-Default merge method is squash.
+		Short: "Merge a PR via the journaled delivery execution",
+		Long: `Merge a PR/MR through the journaled delivery execution (fleet.Deliver):
+durable journal intent precedes the irreversible provider mutation, the
+canonical delivery authorization gates the exact identity against the bound
+worktree head, and the truthful closed-set outcome commits canonically.
 
-Use -- --merge or -- --rebase to override the merge method.
+Default merge method is squash. Use -- --merge or -- --rebase to override.
 The --repo/-R flag is not allowed (repository comes from the URL).
 
 PR URL format: https://github.com/<owner>/<repo>/pull/<n>
+MR URL format: https://gitlab.com/<owner>/<repo>/-/merge_requests/<n>
 
 Task meta is resolved from the current home first, then each registered
 captain home (so general can merge after captain handoff + spawn).
 
 Merge does not remove soldier panes or worktrees. Pass --teardown to run
-munsu teardown on the task home after a successful merge (landed cleanup).
-Without --teardown, the command prints the exact teardown invocation to run next.`,
+munsu teardown on the task home after a successful merge (landed cleanup),
+resuming retirement only after a completed canonical delivery outcome.`,
 		Args: MinimumNArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
 			id := args[0]
@@ -143,17 +176,40 @@ Without --teardown, the command prints the exact teardown invocation to run next
 			}
 
 			if !doTeardown {
-				// Without --teardown: run PRMerge only (no retirement).
-				// On retry, if already merged, PRMerge will fail closed —
-				// the user should retry with --teardown to resume retirement.
-				if err := fleet.PRMerge(taskHome, id, prURL, extra, auth); err != nil {
+				req, err := buildDeliverRequest(auth, id, prURL, extra)
+				if err != nil {
+					return fmt.Errorf("pr-merge %s: %w", id, err)
+				}
+				result, err := fleet.Deliver(taskHome, id, req)
+				if err != nil {
 					return err
+				}
+				fmt.Print(result.Render())
+				// Every non-completed outcome is a non-zero exit for script
+				// chaining; the rendered partial-state report is printed first so
+				// retryable/partial/remote-unknown detail stays visible.
+				if result.IsError() {
+					return fmt.Errorf("pr-merge %s: delivery did not complete (status %s)", id, result.Status)
+				}
+				if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
+					return &LifecyclePartialError{TaskID: id, State: "delivered", Cause: perr}
 				}
 				return nil
 			}
-			// With --teardown: use MergeAndRetire which handles both the
-			// merge delivery and retirement. On retry after partial cleanup,
-			// it detects delivery_state=merged and resumes retirement only.
+
+			// --teardown: the delivery preparation projection pins the identity
+			// for the B thin MergeAndRetire continuation (mirroring the retired
+			// pr-check preparation); the canonical authorization remains the
+			// delivery truth. MergeAndRetire runs the journaled delivery (or
+			// resumes retirement when the outcome is already committed) and
+			// retires only after a completed outcome.
+			req, err := buildDeliverRequest(auth, id, prURL, extra)
+			if err != nil {
+				return fmt.Errorf("pr-merge %s: %w", id, err)
+			}
+			if perr := projectDeliveryIdentity(taskHome, id, req.Identity); perr != nil {
+				return fmt.Errorf("pr-merge %s: writing delivery identity projection: %w", id, perr)
+			}
 			fmt.Printf("Running merge-and-retire for %s in %s...\n", id, taskHome)
 			mars := fleet.MergeAndRetire(taskHome, id, prURL, extra, newSessionBoundTeardown(), orchestratorRetirementJournals{}, auth)
 			if mars.TeardownResult != nil {
@@ -172,143 +228,4 @@ Without --teardown, the command prints the exact teardown invocation to run next
 	}
 	cmd.Flags().BoolVar(&doTeardown, "teardown", false, "after successful merge, teardown the soldier (pane+worktree+meta) in the task home")
 	return cmd
-}
-
-func newMergeLocalCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "merge-local <id>",
-		Short: "Fast-forward merge to local default branch",
-		Long: `Fast-forward merge the soldier branch into the local default branch.
-Only works for local-only mode projects (no remote).
-Refuses if the merge is not a clean fast-forward.`,
-		Args: ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.MergeLocal(ctx.Home, args[0])
-		}),
-	}
-}
-
-func newPRAmendCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "pr-amend <id>",
-		Short: "Amend delivery identity after new push (atomic CAS)",
-		Long: `Begin an amendment and immediately accept it, transitioning the
-delivery lifecycle through amending -> review-ready.
-
-The stored identity is CAS-checked against the current meta. The provider
-is queried for the new head SHA. If the old head is an ancestor of the new
-head (no force-push), the identity is updated atomically.
-
-Use 'delivery reconcile' to recover from already-stale metadata.`,
-		Args: ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			id := args[0]
-
-			// Read worktree from meta
-			wtPath, err := resolveWorktree(ctx.Home, id)
-			if err != nil {
-				return fmt.Errorf("pr-amend: %w", err)
-			}
-
-			// The git authorization context routes through the composed Task
-			// Authority over the same home that owns the task meta (Task 7.4).
-			auth, err := ctx.TaskAuthorityFor(ctx.Home)
-			if err != nil {
-				return fmt.Errorf("pr-amend: composing task authority: %w", err)
-			}
-
-			// Begin amendment (CAS review-ready -> amending) — idempotent: if already
-			// in amending state (e.g. retry after partial failure), skip begin.
-			currentMeta, err := home.ReadMeta(ctx.Home, id)
-			if err != nil {
-				return fmt.Errorf("pr-amend: reading meta: %w", err)
-			}
-
-			if currentMeta[fleet.MetaDeliveryState] != string(fleet.DeliveryStateAmending) {
-				if _, err := fleet.BeginAmendment(ctx.Home, id, auth); err != nil {
-					return fmt.Errorf("pr-amend: begin: %w", err)
-				}
-			}
-
-			// Accept amendment (verify provider, CAS update identity)
-			newIdent, record, err := fleet.AcceptAmendment(ctx.Home, id, wtPath, auth)
-			if err != nil {
-				return fmt.Errorf("pr-amend: accept: %w", err)
-			}
-
-			fmt.Printf("PR identity amended:\n")
-			fmt.Printf("  PR:   %s/%s#%d\n", newIdent.Owner, newIdent.Repo, newIdent.Number)
-			fmt.Printf("  Old:  %s\n", record.OldHeadSHA)
-			fmt.Printf("  New:  %s\n", record.NewHeadSHA)
-			fmt.Printf("  Reason: %s\n", record.Reason)
-			return nil
-		}),
-	}
-}
-
-func newReconcileCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "reconcile <id>",
-		Short: "Reconcile stale delivery metadata from provider",
-		Long: `Query the provider for the current PR/MR state and update the stored
-identity if the PR advanced without a proper amendment cycle.
-
-Requires only the stored identity and provider access. No manual meta
-editing or --force needed.
-
-Supports both open and merged PRs. For merged PRs, sets delivery_state=merged.
-For open PRs with advanced heads, updates the identity and sets state=review-ready.
-
-Rejects force-push, rewritten ancestry, branch replacement, and ambiguous
-state. Use 'pr-check' to recapture from scratch after such events.`,
-		Args: ExactArgs(1),
-		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			id := args[0]
-
-			// Read worktree from meta
-			wtPath, err := resolveWorktree(ctx.Home, id)
-			if err != nil {
-				return fmt.Errorf("reconcile: %w", err)
-			}
-
-			// The git authorization context routes through the composed Task
-			// Authority over the same home that owns the task meta (Task 7.4).
-			auth, err := ctx.TaskAuthorityFor(ctx.Home)
-			if err != nil {
-				return fmt.Errorf("reconcile: composing task authority: %w", err)
-			}
-
-			newIdent, record, err := fleet.ReconcileIdentity(ctx.Home, id, wtPath, auth)
-			if err != nil {
-				return fmt.Errorf("reconcile: %w", err)
-			}
-
-			if record == nil {
-				fmt.Printf("Identity already up to date: %s/%s#%d (head=%s)\n",
-					newIdent.Owner, newIdent.Repo, newIdent.Number, newIdent.HeadSHA)
-				return nil
-			}
-
-			fmt.Printf("Identity reconciled:\n")
-			fmt.Printf("  PR:   %s/%s#%d\n", newIdent.Owner, newIdent.Repo, newIdent.Number)
-			fmt.Printf("  Old:  %s\n", record.OldHeadSHA)
-			fmt.Printf("  New:  %s\n", record.NewHeadSHA)
-			fmt.Printf("  Reason: %s\n", record.Reason)
-			return nil
-		}),
-	}
-}
-
-// resolveWorktree reads the worktree path from task meta for a given task.
-// Returns an error if the worktree is not set in meta.
-func resolveWorktree(homeDir, id string) (string, error) {
-	meta, err := home.ReadMeta(homeDir, id)
-	if err != nil {
-		return "", fmt.Errorf("reading meta: %w", err)
-	}
-	wtPath, ok := meta["worktree"]
-	if !ok || wtPath == "" {
-		return "", fmt.Errorf("no worktree path in meta for task %s", id)
-	}
-	return wtPath, nil
 }

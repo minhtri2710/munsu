@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
-	"github.com/minhtri2710/munsu/internal/taskauthorityfs"
 )
 
 // runTaskCommand executes one CLI command and returns the serialized output
@@ -30,16 +30,46 @@ func runTaskCommand(t *testing.T, args []string) (string, error) {
 	return out.String(), err
 }
 
-// testAuthorityFor composes the concrete Authority over the filesystem Store
-// for the given home so tests read canonical records through the public
-// interface, never through private file layout.
-func testAuthorityFor(t *testing.T, homeDir string) *taskauthority.Authority {
+// initCLITestHome initializes a fresh canonical home for CLI fixtures.
+func initCLITestHome(t *testing.T, homeDir string) {
 	t.Helper()
-	store, err := taskauthorityfs.NewStore(homeDir)
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// testAuthorityFor composes the concrete canonical Authority over the opened
+// home for the given home so tests read canonical records through the public
+// interface, never through private file layout. The home is initialized when
+// needed.
+func testAuthorityFor(t *testing.T, homeDir string) *taskauthority.Canonical {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(homeDir, home.IdentityFileName)); err != nil {
+		initCLITestHome(t, homeDir)
+	}
+	h, err := home.Open(homeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return taskauthority.New(store)
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return auth
+}
+
+// mustCanonicalOp builds one typed canonical operation for test fixtures.
+func mustCanonicalOp(t *testing.T, id string, intent domain.Intent) domain.Operation {
+	t.Helper()
+	opID, err := domain.NewOperationID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := domain.NewOperation(opID, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return op
 }
 
 // TestTaskAddCreatesCanonicalQueuedGeneration proves one `task add` produces
@@ -48,10 +78,11 @@ func testAuthorityFor(t *testing.T, homeDir string) *taskauthority.Authority {
 // projection (ADR-0007 §7).
 func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "ship beta", "--kind", "ship", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
-	agg, err := testAuthorityFor(t, homeDir).Get("beta")
+	agg, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "beta"))
 	if err != nil {
 		t.Fatalf("authority Get: %v", err)
 	}
@@ -75,12 +106,12 @@ func TestTaskAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 // no additional authoritative record (ADR-0007 §6, Task 3.2 criterion 2).
 func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "original", "--home", homeDir}); err != nil {
 		t.Fatalf("first add: %v\n%s", err, out)
 	}
 	beforeMeta := readFileForTest(t, filepath.Join(homeDir, "state", "beta.meta"))
-	beforeAggregate := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "1.json"))
-	beforePointer := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "current"))
+	beforeCurrent := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "beta", "current.json"))
 	if _, err := runTaskCommand(t, []string{"task", "add", "beta", "changed", "--home", homeDir}); err == nil {
 		t.Fatal("duplicate task add succeeded")
 	} else if !errors.Is(err, taskauthority.ErrConflict) {
@@ -89,11 +120,8 @@ func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 	if got := readFileForTest(t, filepath.Join(homeDir, "state", "beta.meta")); got != beforeMeta {
 		t.Fatal("duplicate add rewrote meta projection")
 	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "1.json")); got != beforeAggregate {
+	if got := readFileForTest(t, filepath.Join(homeDir, "state", "task-authority", "tasks", "beta", "current.json")); got != beforeCurrent {
 		t.Fatal("duplicate add changed authoritative aggregate")
-	}
-	if got := readFileForTest(t, filepath.Join(homeDir, "state", ".task-authority", "v2", "aggregates", "beta", "current")); got != beforePointer {
-		t.Fatal("duplicate add changed current pointer")
 	}
 }
 
@@ -102,6 +130,7 @@ func TestTaskAddDuplicateReturnsTypedConflictWithoutProjection(t *testing.T) {
 // cannot override kind, project, or phase (Task 3.2 criterion 3).
 func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	for _, args := range [][]string{
 		{"task", "add", "alpha", "first", "--kind", "scout", "--repo", "proj-a", "--home", homeDir},
 		{"task", "add", "beta", "second", "--kind", "ship", "--home", homeDir},
@@ -149,6 +178,7 @@ func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 // fields (Task 3.2 criterion 3).
 func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runTaskCommand(t, []string{"task", "add", "beta", "canonical description", "--kind", "ship", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("task add: %v\n%s", err, out)
 	}
@@ -179,10 +209,11 @@ func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 // one queued Task Generation and then appends the backlog projection.
 func TestBacklogAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--kind", "ship", "--repo", "munsu", "--home", homeDir}); err != nil {
 		t.Fatalf("add: %v\n%s", err, out)
 	}
-	agg, err := testAuthorityFor(t, homeDir).Get("task")
+	agg, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "task"))
 	if err != nil {
 		t.Fatalf("authority Get: %v", err)
 	}
@@ -203,11 +234,12 @@ func TestBacklogAddCreatesCanonicalQueuedGeneration(t *testing.T) {
 
 // TestBacklogAddProjectionFailureReturnsTypedPartial proves backlog add's
 // projection failure surfaces a typed partial result while the authoritative
-// Task Generation survives. A regular file at data/ forces the projection to
-// fail.
+// Task Generation survives. A directory at the backlog file path forces the
+// projection to fail.
 func TestBacklogAddProjectionFailureReturnsTypedPartial(t *testing.T) {
 	homeDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(homeDir, "data"), []byte("not a dir"), 0600); err != nil {
+	initCLITestHome(t, homeDir)
+	if err := os.MkdirAll(filepath.Join(homeDir, "data", "md"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	_, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir})
@@ -215,7 +247,7 @@ func TestBacklogAddProjectionFailureReturnsTypedPartial(t *testing.T) {
 	if !errors.As(err, &partial) || partial.TaskID != "task" || partial.State != "queued" {
 		t.Fatalf("error = %T %v, want typed partial result", err, err)
 	}
-	agg, getErr := testAuthorityFor(t, homeDir).Get("task")
+	agg, getErr := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "task"))
 	if getErr != nil {
 		t.Fatalf("authoritative commit must survive projection failure: %v", getErr)
 	}
@@ -230,12 +262,22 @@ func TestBacklogAddProjectionFailureReturnsTypedPartial(t *testing.T) {
 // fallback, never the existence gate.
 func TestTaskObserveCanonicalTaskWithoutMeta(t *testing.T) {
 	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
 	auth := testAuthorityFor(t, homeDir)
-	if _, err := auth.Create(taskauthority.CreateRequest{
-		OperationID: "op-create-obs", Actor: taskauthority.Actor{ID: "owner", Rank: "general"},
-		TaskID: "obs", Owner: "owner", Description: "observe me", Kind: "ship",
-		Reason: "test",
-	}); err != nil {
+	tid, err := domain.NewTaskID("obs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
+		Owner:       "owner",
+		Description: "observe me",
+		Kind:        "ship",
+		Reason:      "test",
+	}
+	op := mustCanonicalOp(t, "op-create-obs", req)
+	if _, err := auth.Create(op, req); err != nil {
 		t.Fatal(err)
 	}
 	out, err := runTaskCommand(t, []string{"task", "observe", "obs", "--home", homeDir})
@@ -245,4 +287,14 @@ func TestTaskObserveCanonicalTaskWithoutMeta(t *testing.T) {
 	if !strings.Contains(out, "task_id: obs") {
 		t.Fatalf("task observe did not resolve the canonical task:\n%s", out)
 	}
+}
+
+// mustTaskIDFor converts a test task ID into a typed identity.
+func mustTaskIDFor(t *testing.T, value string) domain.TaskID {
+	t.Helper()
+	tid, err := domain.NewTaskID(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tid
 }

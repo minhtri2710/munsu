@@ -11,15 +11,13 @@ internal/
   cli/                  Composition root, Cobra commands, self-update, stow, AGENTS.md helpers
   fleet/                Captain, spawn, backlog, delivery, soldier state, project registry
   orchestrator/         Watcher, AFK, wake delivery, lifecycle and turn-end coordination
-  home/                 Home resolution plus durable filesystem and storage mechanics
-  taskauthority/        Authoritative task lifecycle, dispatch, binding and delivery-invariant rules
-  taskauthorityfs/      Filesystem Store adapter: transactional records, projections, migration
+  home/                 Canonical home resolution plus domain-neutral durable mechanics (identity, journaled commit, locks, leases)
+  taskauthority/        Canonical Task documents: lifecycle, dispatch, binding, delivery and transfer rules
   backend/              Session adapters, endpoint observation, worktree and home-tag mechanics
-  domain/               Pure business rules and value types, including delivery acceptance
+  domain/               Typed identities, operations/preconditions and shared business rules
   harness/              Harness detection, verified adapters and dispatch profiles
   bootstrap/            Toolchain diagnostics and native harness integration
-  config/               Flat key-file configuration
-  configmigration/      Configuration migration mechanics
+  config/               Typed settings, Project Overlays and resolved Config Snapshots
   testutil/             Shared test helpers
 ```
 
@@ -34,15 +32,13 @@ in their authoritative module rather than in command wiring.
 | `cli` | Wire Cobra commands to modules; own CLI-local self-update, stow, AGENTS.md and output helpers |
 | `fleet` | Orchestrate Captain lifecycle, Soldier spawn/state, backlog, project registry and delivery operations |
 | `orchestrator` | Coordinate supervision, AFK, wakes, turn-end obligations and cross-process lifecycle |
-| `home` | Resolve the munsu home and retain generic filesystem/storage mechanics (mailbox, wake and watcher leases, activation/generation, `.meta`/`.status` primitives) |
-| `taskauthority` | Own the authoritative Task Aggregate and lifecycle, dispatch, binding, delivery-invariant and handoff-receipt rules as named operations (ADR-0007) |
-| `taskauthorityfs` | Implement the transactional `taskauthority.Store` on disk: locking, recoverable transactions, `.meta`/`.status` projection reconcile and v1 migration |
+| `home` | Resolve the munsu home and own domain-neutral durable mechanics: verified identity/roots, containment, scoped fenced locks and leases, atomic journaled change-set commits; retains generic `.meta`/`.status` primitives and the durable mailbox |
+| `taskauthority` | Own canonical Task documents — Aggregate, Generation/Revision, lifecycle, Dispatch Holds, delivery authorization/outcomes, transfer reservations, launch and retirement evidence — as named operations on one `Canonical` surface (ADR-0008 §2) |
 | `backend` | Provide tmux/herdr/zellij/cmux/orca adapters, endpoint observation, worktree and home-tag mechanics |
 | `domain` | Own pure business rules and value types such as `PR.CanMerge` and `Review.IsApproving` |
 | `harness` | Detect and verify harnesses; resolve launch templates and dispatch profiles |
 | `bootstrap` | Diagnose toolchain readiness and install, repair or inspect native harness integration |
-| `config` | Read and write flat config files with environment override fallback |
-| `configmigration` | Plan and apply configuration schema migration |
+| `config` | Own typed settings, defaults, validation, Project Overlays and immutable resolved Config Snapshots (ADR-0008 §6) |
 
 The command-to-module mapping is maintained in
 [`docs/port-mapping.md`](port-mapping.md).
@@ -53,7 +49,8 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` or `--home`).
 
 ```text
 ~/.munsu/
-  state/                   Task state, projections, locks, wakes and receipts
+  state/                   Task state, canonical Task Authority documents, locks, wakes and receipts
+    task-authority/        Canonical Task Authority documents (tasks/, holds/, receipts/)
     <id>.meta              Task metadata projection
     <id>.status            Append-only status/event projection
   data/
@@ -68,28 +65,31 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` or `--home`).
 
 ### Task state
 
-Authoritative task state — the Task Aggregate, its Generation/Revision, dispatch
-holds and decisions, typed audit events and idempotency receipts — is owned by
-`internal/taskauthority` and persisted through the transactional Store adapter
-`internal/taskauthorityfs`. `.meta` and `.status` are durable projections
-reconciled by that adapter after every authoritative commit (ADR-0007 §7);
-`.status` is append-only and is not the sole current-state authority: consumers
-fold the stream and combine it with canonical task, run-step and endpoint
-evidence.
+Authoritative task state — the Task Aggregate (`munsu.task-authority/v1`), its
+Generation/Revision, Dispatch Holds, delivery authorization and outcomes,
+transfer reservations and retirement evidence — is owned by
+`internal/taskauthority` and persisted as Task documents under
+`state/task-authority/` (`tasks/<id>/current.json` plus per-generation records,
+`holds/`, `receipts/`). Every write goes through `internal/home` durable
+mechanics as an atomic journaled change-set under the smallest scoped fenced
+lock (ADR-0008 §2, §5); there is no Store interface, in-memory fake, adapter or
+projection seam. `.meta` and `.status` remain `internal/home` primitives written
+by fleet/CLI projection writers after authoritative commits (ADR-0007 §7); they
+are never authoritative and do not decide lifecycle.
 
-Unmigrated v1 homes fail closed: soldier-facing commands (ready, consume-ready,
-report, brief, task show, git-safety, snapshot/observe) return
-`ErrMigrationRequired`. The heal path is `munsu migrate task-authority`
-(plan/apply). Raw `.meta`/backlog-only tasks that never produced v1 aggregates
-are not migrated and present an empty authority view; recreate them through the
-Authority.
+Only fresh initialization into an empty home, or operation on a home already
+matching the current `v1` schema, is supported. Old development homes carry no
+compatibility promise and are discarded externally and initialized again
+(ADR-0008 §11); there are no schema migrate, upgrade, or reset commands.
 
 ### Configuration
 
-Flat key files live under `config/`. `internal/config` resolves values in this
-order: explicit flag, environment override, config file, default. Dispatch
-profiles live in `config/soldier-dispatch.json` and are interpreted by
-`internal/harness` and the spawn orchestration in `internal/fleet`.
+Flat key files live under `config/`. `internal/config` owns typed settings,
+defaults, validation, Project Overlays and immutable resolved Config Snapshots
+(ADR-0008 §6); `internal/cli` translates process environment and flags into
+typed boundary overrides. Dispatch profiles live in `config/soldier-dispatch.json`
+and are interpreted by `internal/harness` and the spawn orchestration in
+`internal/fleet`.
 
 ## Key interfaces and seams
 
@@ -108,19 +108,23 @@ provider interaction, identity capture and delivery orchestration;
 delivery-invariant and git-authorization operations execute as
 `internal/taskauthority` named operations.
 
-### Task Authority (`internal/taskauthority` / `internal/taskauthorityfs`)
+### Task Authority (`internal/taskauthority`)
 
-`internal/taskauthority` is the deep module owning the Authoritative Task
-Aggregate and every lifecycle, dispatch, binding, delivery-invariant and
-handoff-receipt rule as named semantic operations (ADR-0007), each fenced by the
-expected Task Generation inside one `Store.Update` transaction. The package has
-no filesystem imports: `internal/taskauthorityfs` implements the transactional
-`Store` seam — locking (`.dispatch.lock` then per-task), recoverable write-ahead
-transactions, the projection layer that reconciles `.meta`/`.status` after
-authoritative commits, and v1 migration (`munsu migrate task-authority`).
-`internal/fleet` and `internal/cli` consume the Authority and retain
-orchestration; `internal/home` no longer owns task lifecycle, dispatch or
-binding authority.
+`internal/taskauthority` is the deep module owning the canonical Task documents
+— Aggregate, Generation/Revision, lifecycle phases, Dispatch Holds, delivery
+authorization and outcomes, transfer reservations, and launch/retirement
+evidence — exposed as named semantic operations on one `Canonical` surface
+(ADR-0008 §2, extending ADR-0007). Every mutation takes a `domain.Operation`
+(stable Operation ID + typed intent digest) and a `domain.Precondition`
+(expected Home/Task identity, generation/revision) and commits as an atomic
+journaled change-set through `internal/home` durable mechanics under the
+smallest scoped fenced lock; replayed operations with the same digest are
+idempotent, and changed digests or stale preconditions fail closed as typed
+conflicts. There is no Store interface, adapter, projection layer, or migration
+seam. `internal/fleet` and `internal/cli` consume the Authority and retain
+orchestration (Task Transfer is a Fleet-owned journaled operation over two
+local Authority surfaces); `internal/home` no longer owns task lifecycle,
+dispatch or binding authority.
 
 ### Captain lifecycle (`internal/fleet`)
 
@@ -141,7 +145,7 @@ and adjacent orchestrator lifecycle files.
 
 | Phase | Command | Authoritative module |
 |---|---|---|
-| Create / backlog | `munsu task add`, `munsu backlog` | `internal/taskauthority`, `internal/taskauthorityfs`, `internal/fleet` |
+| Create / backlog | `munsu task add`, `munsu backlog` | `internal/taskauthority`, `internal/fleet` |
 | Brief | `munsu brief` | `internal/fleet` |
 | Spawn | `munsu spawn` | `internal/fleet`, composed by `internal/cli` |
 | Supervise | `munsu watch`, `munsu watch-arm`, `munsu afk` | `internal/orchestrator` |

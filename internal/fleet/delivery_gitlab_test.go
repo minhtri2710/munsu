@@ -832,24 +832,95 @@ func TestExistingGitHubTestsStillPass(t *testing.T) {
 	}
 }
 
-// --- CaptureIdentity provider routing ---
+// --- CaptureIdentity provider routing (dispatcher removed with the legacy
+// delivery path; the typed clients own identity capture) ---
 
-func TestCaptureIdentity_RoutesGitHub(t *testing.T) {
-	// Should not fail with "unrecognized" — it's a valid GitHub URL
-	_, err := CaptureIdentity("https://github.com/minhtri2710/munsu/pull/24")
-	if err != nil && strings.Contains(err.Error(), "unrecognized") {
-		t.Errorf("error should be from GitHub path, not unrecognized: %v", err)
+// --- MergeMR typed mutation tests ---
+
+func TestMergeMR_SquashExactArgs(t *testing.T) {
+	var got []string
+	client := &glabClient{runner: &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			got = args
+			return []byte("merged"), nil
+		},
+	}}
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "squash"); err != nil {
+		t.Fatalf("MergeMR: %v", err)
+	}
+	want := []string{"mr", "merge", "owner/project!7", "--squash"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("args = %v, want %v", got, want)
 	}
 }
 
-func TestCaptureIdentity_RoutesGitLab(t *testing.T) {
-	// Without glab on PATH, will fail with capability absent
-	_, err := CaptureIdentity("https://gitlab.com/owner/project/-/merge_requests/1")
-	if err == nil {
-		t.Fatal("expected error (glab not available)")
+func TestMergeMR_SelfHostedExactArgs(t *testing.T) {
+	var got []string
+	client := &glabClient{runner: &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			got = args
+			return []byte("merged"), nil
+		},
+	}}
+	if err := client.MergeMR("git.example.com", "owner", "project", 7, "rebase"); err != nil {
+		t.Fatalf("MergeMR: %v", err)
 	}
-	if !strings.Contains(err.Error(), "GitLab provider not available") &&
-		!strings.Contains(err.Error(), "invalid MR URL") {
-		t.Errorf("error should be about GitLab provider or invalid URL, got: %v", err)
+	want := []string{"mr", "merge", "owner/project!7", "--hostname", "git.example.com", "--rebase"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+}
+
+func TestMergeMR_MergeMethodDefaultsToMergeCommit(t *testing.T) {
+	var got []string
+	client := &glabClient{runner: &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			got = args
+			return []byte("merged"), nil
+		},
+	}}
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "merge"); err != nil {
+		t.Fatalf("MergeMR: %v", err)
+	}
+	want := []string{"mr", "merge", "owner/project!7"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+}
+
+func TestMergeMR_UnsupportedMethodFailsClosed(t *testing.T) {
+	client := &glabClient{runner: &fakeGlabRunner{}}
+	if err := client.MergeMR("gitlab.com", "owner", "project", 7, "explode"); err == nil {
+		t.Fatal("expected error for unsupported merge method")
+	}
+}
+
+// TestGitlabDeliveryProvider_UsesTypedCapabilityOnly proves the GitLab
+// delivery adapter routes the irreversible mutation and observation through
+// the typed GitLabClient methods only.
+func TestGitlabDeliveryProvider_UsesTypedCapabilityOnly(t *testing.T) {
+	client := &glabClient{runner: &fakeGlabRunner{
+		runFn: func(args ...string) ([]byte, error) {
+			if len(args) >= 2 && args[0] == "mr" && args[1] == "view" {
+				return []byte(`{"sha": "abc123def456abc123def456abc123def456abc1", "source_branch": "feature", "target_branch": "main", "state": "opened", "merge_commit_sha": null}`), nil
+			}
+			return []byte("merged"), nil
+		},
+	}}
+	provider := &gitlabDeliveryProvider{client: client}
+	ident := domain.DeliveryIdentity{
+		Provider: "gitlab", Owner: "glowner", Repo: "glrepo", Number: 7,
+		URL:     "https://gitlab.com/glowner/glrepo/-/merge_requests/7",
+		BaseRef: "main", HeadRef: "feature", HeadSHA: "abc123def456abc123def456abc123def456abc1",
+	}
+	obs, err := provider.Observe(ident)
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if obs.State != "OPEN" || obs.HeadSHA != "abc123def456abc123def456abc123def456abc1" {
+		t.Fatalf("observation = %+v", obs)
+	}
+	if err := provider.Merge(ident, "squash"); err != nil {
+		t.Fatalf("Merge: %v", err)
 	}
 }

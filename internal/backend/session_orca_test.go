@@ -46,7 +46,26 @@ func TestOrcaBin_NotFound(t *testing.T) {
 	}
 }
 
-func TestSelect_OrcaAvailable(t *testing.T) {
+func TestSelect_OrcaFailsClosedWhenAbsent(t *testing.T) {
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+
+	bk, err := Select("orca")
+	if err == nil {
+		t.Fatalf("Select('orca') must fail CLOSED when orca is absent from PATH, got %T", bk)
+	}
+	if !strings.Contains(err.Error(), "not found on PATH") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSelect_OrcaWhenRequestedBinaryPresent(t *testing.T) {
+	fakeBin := fakeExecutables(t, "orca")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	bk, err := Select("orca")
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +73,6 @@ func TestSelect_OrcaAvailable(t *testing.T) {
 	if _, ok := bk.(*OrcaBackend); !ok {
 		t.Errorf("Select('orca') returned %T, want *OrcaBackend", bk)
 	}
-
 }
 
 func TestParseOrcaWindow(t *testing.T) {
@@ -162,8 +180,14 @@ func TestSelect_OrcaUnknownBackend(t *testing.T) {
 }
 
 // TestOrcaBackend_SelectRoundTrip verifies that Select("orca") returns a backend
-// that can be type-asserted and used without panic.
+// that can be type-asserted and used without panic when the requested binary
+// is present on PATH.
 func TestOrcaBackend_SelectRoundTrip(t *testing.T) {
+	fakeBin := fakeExecutables(t, "orca")
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+
 	bk, err := Select("orca")
 	if err != nil {
 		t.Fatal(err)
@@ -177,35 +201,37 @@ func TestOrcaBackend_SelectRoundTrip(t *testing.T) {
 	}
 }
 
-// TestOrcaBackend_NoAutoDetect verifies that orca never appears in Default().
+// TestOrcaBackend_NoAutoDetect verifies that auto-detection is gone: an empty
+// requested identity FAILS CLOSED even when orca and tmux binaries are on PATH.
 func TestOrcaBackend_NoAutoDetect(t *testing.T) {
-	// Set up a fake PATH with an orca binary.
-	fakeBin := t.TempDir()
-	if err := os.WriteFile(fakeBin+"/orca", []byte("#!/bin/sh\necho fake"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Also add tmux so Default() has something to return.
-	if err := os.WriteFile(fakeBin+"/tmux", []byte("#!/bin/sh\necho fake"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
+	// Set up a fake PATH with an orca binary (and tmux).
+	fakeBin := fakeExecutables(t, "orca", "tmux")
 	oldPath := os.Getenv("PATH")
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
+	t.Setenv("TMUX", "")
+	t.Setenv("HERDR_ENV", "")
 
-	// Default() should NOT return orca — even with orca on PATH.
-	b := Default()
-	if b == nil {
-		t.Fatal("Default() returned nil when tmux is on PATH")
-	}
-	if _, ok := b.(*OrcaBackend); ok {
-		t.Error("Default() returned OrcaBackend — orca must never auto-detect")
+	homeDir := t.TempDir()
+	if _, _, err := Resolve(homeDir, ""); err == nil {
+		t.Fatal("Resolve('') must fail closed — no env/PATH auto-selection (orca never auto-detects)")
 	}
 }
 
-// TestOrcaBackend_SelectOnly verifies that orca is selectable by name but
-// not auto-detected by Default().
+// TestOrcaBackend_SelectOnly verifies that orca is selectable ONLY by explicit
+// name, failing closed when the requested binary is absent.
 func TestOrcaBackend_SelectOnly(t *testing.T) {
-	// Select must work.
+	// Select must fail CLOSED when orca is absent.
+	oldPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", oldPath)
+	os.Setenv("PATH", "/dev/null")
+	if _, err := Select("orca"); err == nil {
+		t.Fatal("Select('orca') must fail closed when orca is absent from PATH")
+	}
+
+	// Select succeeds when a fake orca binary is on PATH.
+	fakeBin := fakeExecutables(t, "orca")
+	os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 	bk, err := Select("orca")
 	if err != nil {
 		t.Fatalf("Select('orca') failed: %v", err)
@@ -214,14 +240,9 @@ func TestOrcaBackend_SelectOnly(t *testing.T) {
 		t.Fatalf("Select('orca') returned %T, want *OrcaBackend", bk)
 	}
 
-	// But must not be returned by Default() — even with an empty PATH
-	// where no other backend is available.
-	t.Setenv("PATH", "/dev/null")
-	t.Setenv("TMUX", "")
-	t.Setenv("HERDR_ENV", "")
-
-	b := Default()
-	if b != nil {
-		t.Error("Default() returned a backend when PATH is empty and no env is set — expected nil")
+	// Empty identity never resolves — even with orca on PATH.
+	homeDir := t.TempDir()
+	if _, _, err := Resolve(homeDir, ""); err == nil {
+		t.Error("Resolve('') must fail closed — no implicit orca selection")
 	}
 }

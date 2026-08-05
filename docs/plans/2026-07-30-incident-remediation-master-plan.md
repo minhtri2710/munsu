@@ -1,7 +1,7 @@
 # Incident Remediation Master Implementation Plan
 
 * **Date:** 2026-07-30
-* **Status:** Approved design; implementation not started
+* **Status:** Superseded by the [owner-clean cutover program](2026-08-03-owner-clean-cutover-program.md) (ADR-0008); retained as history. Its ADR-0003–0006 migration/compatibility targets conflict with the pre-public v1 reset.
 * **Sources:** incident report, [ADR-0003](../adr/0003-config-deepening-typed-documents-and-project-overlay.md), [ADR-0004](../adr/0004-authoritative-task-lifecycle-delivery-and-projections.md), [ADR-0005](../adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md), [ADR-0006](../adr/0006-state-migration-build-provenance-and-compatibility-gates.md)
 * **Delivery mode:** no-mistakes; dependency-first with immediate outage containment
 
