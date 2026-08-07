@@ -748,7 +748,7 @@ func TestBuildLaunchArgs_PiUsesTemplateDefaults(t *testing.T) {
 // =============================================================================
 
 func TestTerminalReport_ExactCommand(t *testing.T) {
-	reminder := terminalReportReminder("test-task-42", "captain-alpha")
+	reminder := terminalReportReminder("test-task-42", "ship", "captain-alpha")
 	// Must contain exact command without literal brackets.
 	if !strings.Contains(reminder, `munsu report done "PR {url}" --key test-task-42`) {
 		t.Errorf("terminal report must contain exact command, got:\n%s", reminder)
@@ -769,10 +769,42 @@ func TestTerminalReport_ExactCommand(t *testing.T) {
 
 func TestTerminalReport_ExactBytes(t *testing.T) {
 	// Verify exact byte output for the terminal report command.
-	note := terminalReportReminder("x-task", "x-captain")
+	note := terminalReportReminder("x-task", "ship", "x-captain")
 	expected := `munsu report done "PR {url}" --key x-task`
 	if !strings.Contains(note, expected) {
 		t.Errorf("terminal report must contain exact bytes:\nwant: %s\ngot:  %s", expected, note)
+	}
+}
+
+func TestTerminalReport_ScoutUsesFindingsSummary(t *testing.T) {
+	note := terminalReportReminder("scout-task", "scout", "general")
+	if !strings.Contains(note, `munsu report done "summary of findings location" --key scout-task`) {
+		t.Errorf("scout terminal report must use findings summary, got:\n%s", note)
+	}
+	if strings.Contains(note, "scout-taskgeneral") || strings.Contains(note, "PR {url}") {
+		t.Errorf("scout terminal report contains ship-only or concatenated content:\n%s", note)
+	}
+}
+
+func TestBuildLaunchPrompt_ScoutContainsFindingsReportCommand(t *testing.T) {
+	prompt, _, err := BuildLaunchPrompt(LaunchPromptInput{
+		TaskID:          "scout-report-test",
+		TaskKind:        "scout",
+		ParentCaptainID: "captain-alpha",
+		ParentHome:      "/tmp/parent",
+		WorktreePath:    t.TempDir(),
+		HomeDir:         "/tmp/home",
+		BriefContent:    []byte("# Scout brief\n\nInvestigate.\n"),
+		HarnessName:     "pi",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, `munsu report done "summary of findings location" --key scout-report-test`) {
+		t.Errorf("scout prompt must contain findings report command, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "PR {url}") || strings.Contains(prompt, "scout-report-testcaptain-alpha") {
+		t.Errorf("scout prompt contains ship-only or concatenated report content:\n%s", prompt)
 	}
 }
 
@@ -794,6 +826,9 @@ func TestBuildLaunchPrompt_ContainsExactReportCommand(t *testing.T) {
 	}
 	if !strings.Contains(prompt, `munsu report done "PR {url}" --key report-test`) {
 		t.Error("prompt must contain exact 'munsu report done \"PR {url}\" --key report-test'")
+	}
+	if strings.Contains(prompt, "report-testcaptain-alpha") {
+		t.Error("prompt must not concatenate the parent captain ID into --key")
 	}
 	if env.ParentCaptainID != "captain-alpha" {
 		t.Errorf("env ParentCaptainID = %q, want 'captain-alpha'", env.ParentCaptainID)

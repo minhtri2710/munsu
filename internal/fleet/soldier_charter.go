@@ -52,6 +52,12 @@ func LaunchArtifactNames() []string {
 // The charter is embedded in the launch prompt and written to .soldier-charter.md.
 func DefaultCharter(taskID, taskKind, deliveryMode string) string {
 	bt := "`"
+	doneMessage := "PR {url}"
+	doneDescription := "committed, pushed, and PR open (no merge)"
+	if taskKind == "scout" {
+		doneMessage = "summary of findings location"
+		doneDescription = "scout report complete"
+	}
 	return fmt.Sprintf(`# Soldier Charter
 
 **Version: %[1]s**
@@ -103,7 +109,7 @@ You MUST NOT:
   - States: working, needs-decision, blocked, paused, done, failed, resolved.
   - Use %[5]smunsu report blocked "{why}"%[5]s after the second encounter of the same obstacle.
   - Use %[5]smunsu report needs-decision "{summary}"%[5]s when a human decision is required.
-  - No-merge rule: %[5]smunsu report done "PR {url}"%[5]s — never merge.
+  - Terminal report: %[5]smunsu report done "%[6]s"%[5]s — %[7]s.
 
 ## Durable Files
 
@@ -129,11 +135,11 @@ contains integrity metadata for deterministic verification.
 The task is complete only when:
 1. Committed on your branch.
 2. Pushed and a PR is open (where delivery mode requires it).
-3. %[5]smunsu report done "PR {url}"%[5]s has been executed.
+3. %[5]smunsu report done "%[6]s"%[5]s has been executed.
 
 Do not merge the PR.
 
-`, CharterVersion, taskID, taskKind, deliveryMode, bt)
+`, CharterVersion, taskID, taskKind, deliveryMode, bt, doneMessage, doneDescription)
 }
 
 // writeCharter writes the charter to .soldier-charter.md (runtime-owned, untracked).
