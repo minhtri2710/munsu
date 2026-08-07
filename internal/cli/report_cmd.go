@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -95,6 +98,16 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 				}
 			}
 
+			// A soldier's terminal scout report is also the authoritative lifecycle
+			// signal for the generation owned by its parent Captain. Commit that
+			// transition before sending the uplink so teardown can observe the
+			// canonical terminal phase without requiring --force.
+			if role == "soldier" && state == "done" {
+				if err := completeScoutReport(parentHome, taskID); err != nil {
+					return fmt.Errorf("report: completing scout lifecycle: %w", err)
+				}
+			}
+
 			// Delivery truth is never captured or committed through the terminal
 			// report path: terminal reports and retirement consume canonical
 			// delivery authorization/outcome truth, and delivery execution runs
@@ -102,7 +115,16 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 
 			var receipt *orchestrator.WakeReceipt
 			var uplinkResult *orchestrator.ReportResult
-			if materialStates[state] && (role == "soldier" || role == "captain") {
+			if role == "soldier" && state == "done" && isScoutTask(parentHome, taskID) {
+				var err error
+				receipt, err = orchestrator.DeliverWake(orchestrator.DeliverRequest{
+					HomeDir: homeDir, ParentHome: parentHome, TaskID: taskID,
+					State: state, Message: msg, Key: key, Role: role,
+				})
+				if err != nil {
+					return fmt.Errorf("report: delivering scout terminal wake: %w", err)
+				}
+			} else if materialStates[state] && (role == "soldier" || role == "captain") {
 				senderIdentity := strings.NewReplacer(":", "_", "/", "_", "\\", "_").Replace(taskID)
 				senderRank := orchestrator.Rank(role)
 				if role == "captain" {
@@ -216,6 +238,71 @@ func newNotifyCmd() *cobra.Command {
 	}
 	notifyCmd.Flags().AddFlagSet(reportCmd.Flags())
 	return notifyCmd
+}
+
+func isScoutTask(homeDir, taskID string) bool {
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return false
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		return false
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return false
+	}
+	agg, err := auth.Get(tid)
+	return err == nil && agg.Definition.Kind == "scout"
+}
+
+func completeScoutReport(homeDir, taskID string) error {
+	h, err := home.Open(homeDir)
+	if errors.Is(err, home.ErrNotInitialized) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		return err
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return err
+	}
+	agg, err := auth.Get(tid)
+	if errors.Is(err, taskauthority.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if agg.Definition.Kind != "scout" || agg.Phase == taskauthority.PhaseDone || agg.Phase == taskauthority.PhaseResolved || agg.Phase == taskauthority.PhaseRetired {
+		return nil
+	}
+	req := taskauthority.CanonicalCompleteRequest{
+		HomeID: auth.HomeID(), TaskID: tid,
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		To:           taskauthority.PhaseDone, Reason: "report: scout done",
+	}
+	op, err := newCanonicalOperation("report-scout-done", req)
+	if err != nil {
+		return err
+	}
+	if _, err := auth.Complete(op, req); err != nil {
+		return err
+	}
+	updated, err := auth.Get(tid)
+	if err != nil {
+		return err
+	}
+	if err := projectTaskMeta(homeDir, updated, nil); err != nil {
+		return err
+	}
+	return home.AppendStatus(homeDir, taskID, "done: report scout done")
 }
 
 func senderHomeForRole(role, homeDir, parentHome string) string {
