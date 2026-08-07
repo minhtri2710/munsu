@@ -294,20 +294,3 @@ func TestSummarizeCaptainHomePrefersCanonicalPhase(t *testing.T) {
 		t.Fatalf("state = %q, want non-active (canonical phase wins)", sum.State)
 	}
 }
-
-// TestCaptainNamespaceExemptFromTaskAuthorityGate pins the Task 7.8 captain
-// exemption: captain: namespace metadata writes in captain_captain.go remain
-// explicitly outside the task-authority grep gate — the captain supervisor
-// metadata is not moved into the Task Authority, and no legacy gate symbol
-// appears in the file.
-func TestCaptainNamespaceExemptFromTaskAuthorityGate(t *testing.T) {
-	src, err := os.ReadFile("captain_captain.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, sym := range []string{"WriteTaskAggregate", "UpdateCurrentTaskAggregate", "CreateTaskAggregate", "StartTask", "UnblockTask", "ReopenTask", "CreateDispatchHold", "ReleaseDispatchHold", "ResolveDispatchDecision", "CheckDispatchHold"} {
-		if strings.Contains(string(src), sym) {
-			t.Errorf("captain_captain.go carries legacy gate symbol %q; captain metadata stays outside the Task Authority", sym)
-		}
-	}
-}

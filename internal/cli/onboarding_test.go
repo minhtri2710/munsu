@@ -106,7 +106,6 @@ func TestAutoDetectConfig_InitHome(t *testing.T) {
 
 	// Should write soldier-harness only if harness.Detect() succeeds
 	// (may or may not detect in test env — that's OK)
-	// backlog-backend should be written if tasks-axi is on PATH
 }
 
 // TestAutoDetectConfig_Idempotent verifies re-running without --reconfigure
