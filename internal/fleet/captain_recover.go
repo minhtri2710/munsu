@@ -100,11 +100,7 @@ func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult
 	// Step g: stale legacy transport guard — only when config is OK
 	res.Steps = append(res.Steps, tx.stepLegacyGuard(parentHome, sm, configOk))
 
-	// Step h: terminal receipt reconciliation — relay pending soldier
-	// terminal reports to General. Runs only when config is OK.
-	res.Steps = append(res.Steps, tx.stepTerminalReconcile(parentHome, sm, configOk))
-
-	// Step i: nudge retry — only when config is OK
+	// Step h: nudge retry — only when config is OK
 	res.Steps = append(res.Steps, tx.stepNudgeRetry(parentHome, sm, configOk))
 
 	return res
@@ -351,23 +347,6 @@ func (tx *RecoverTransaction) stepLegacyGuard(parentHome string, sm Info, config
 			Detail: err.Error()}
 	}
 	return StepResult{Name: "legacy-guard", State: StepOk, Detail: "no stale legacy records"}
-}
-
-func (tx *RecoverTransaction) stepTerminalReconcile(parentHome string, sm Info, configOk bool) StepResult {
-	if !configOk {
-		return StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "skipped: config validation failed"}
-	}
-	if tx.Capabilities.Continuity == nil {
-		return StepResult{Name: "terminal-reconcile", State: StepFailed, Detail: "captain continuity capability is required"}
-	}
-	result, err := tx.Capabilities.Continuity.ReconcileTerminal(parentHome, CaptainEndpoint{ID: sm.ID, Home: sm.Home, Scope: sm.Scope, Project: sm.Project})
-	if err != nil {
-		return StepResult{Name: "terminal-reconcile", State: StepFailed, Detail: err.Error()}
-	}
-	if result.Relayed > 0 {
-		return StepResult{Name: "terminal-reconcile", State: StepOk, Detail: fmt.Sprintf("relayed %d receipt(s) to General", result.Relayed)}
-	}
-	return StepResult{Name: "terminal-reconcile", State: StepSkipped, Detail: "no pending receipts"}
 }
 
 func (tx *RecoverTransaction) stepNudgeRetry(parentHome string, sm Info, configOk bool) StepResult {

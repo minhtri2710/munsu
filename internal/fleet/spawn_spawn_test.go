@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
@@ -695,15 +696,14 @@ func TestRun_ValidatesModeFromArgsOnly(t *testing.T) {
 	}
 }
 
-func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
+func TestRun_LifecycleGuardRefusesAbsentTask(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_ROLE", "general")
 
-	// Explicitly author the current-v1 snapshot identities. The test spawns
-	// against a manually written backlog and expects native parser behavior;
-	// soldier operation resolution is snapshot-only.
+	// Explicitly author the current-v1 snapshot identities; the task has no
+	// canonical Task Authority record, so the lifecycle guard fails closed.
 	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
@@ -717,13 +717,6 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := Add(tmpDir, "test-project", filepath.Join(tmpDir, "project"), "", false); err != nil {
-		t.Fatal(err)
-	}
-	configDir := filepath.Join(tmpDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -740,96 +733,15 @@ func TestRun_LifecycleGuardRefusesAbsentBacklogTask(t *testing.T) {
 		ID:          "test-task",
 		ProjectName: "test-project",
 		HomeDir:     tmpDir,
+		Authority:   canonicalAtHome(t, tmpDir),
 		Endpoints:   fakeEndpointCapabilities{backend: &fakeBackend{}},
 	})
 
 	if err == nil {
-		t.Fatal("expected error from lifecycle guard for absent backlog task, got nil")
+		t.Fatal("expected error from lifecycle guard for absent canonical task, got nil")
 	}
-	if !strings.Contains(err.Error(), "not found in backlog") {
-		t.Errorf("error should mention backlog absence\n got: %v", err)
-	}
-}
-
-// setupManualHome creates a minimal home directory with an explicit manual
-// backlog-backend config. Tests that write directly to backlog.md must use
-// this to avoid routing reads through tasks-axi in ModeAuto.
-func setupManualHome(t *testing.T) string {
-	t.Helper()
-	homeDir := t.TempDir()
-	configDir := filepath.Join(homeDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	return homeDir
-}
-
-func TestCheckBacklogAuthority_RefusesBlockedTask(t *testing.T) {
-	tmpDir := setupManualHome(t)
-	t.Chdir(tmpDir)
-
-	// Create backlog with a blocked item
-	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [!] lifecycle-e2e: End-to-end lifecycle test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	r := &Runner{args: Args{ID: "lifecycle-e2e"}, homeDir: tmpDir}
-	err := r.checkBacklogAuthority()
-	if err == nil {
-		t.Fatal("expected error for blocked task, got nil")
-	}
-	if !strings.Contains(err.Error(), "blocked") {
-		t.Errorf("error should mention blocked state\n got: %v", err)
-	}
-}
-
-func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
-	tmpDir := setupManualHome(t)
-	t.Chdir(tmpDir)
-
-	// Create backlog with a done item
-	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [x] done-task: This task is done\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	r := &Runner{args: Args{ID: "done-task"}, homeDir: tmpDir}
-	err := r.checkBacklogAuthority()
-	if err == nil {
-		t.Fatal("expected error for done task, got nil")
-	}
-	if !strings.Contains(err.Error(), "done") {
-		t.Errorf("error should mention done state\n got: %v", err)
-	}
-}
-
-func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
-	tmpDir := setupManualHome(t)
-	t.Chdir(tmpDir)
-
-	// Create backlog with a done item
-	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [x] done-task: This task is done\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	r := &Runner{args: Args{ID: "done-task", Reopen: true, Authority: seedSpawnAuthority(t, "done-task")}, homeDir: tmpDir}
-	err := r.checkBacklogAuthority()
-	if err != nil {
-		t.Fatalf("expected no error with --reopen for done task, got: %v", err)
+	if !strings.Contains(err.Error(), "no canonical Task Authority record") {
+		t.Errorf("error should mention canonical record absence\n got: %v", err)
 	}
 }
 
@@ -842,41 +754,87 @@ func seedSpawnAuthority(t *testing.T, taskID string) *taskauthority.Canonical {
 	return auth
 }
 
+// seedSpawnAuthorityPhase composes a canonical Task Authority that owns one
+// task at the given authoritative phase (Task 7.8).
+func seedSpawnAuthorityPhase(t *testing.T, taskID string, phase taskauthority.Phase) *taskauthority.Canonical {
+	t.Helper()
+	auth := seedSpawnAuthority(t, taskID)
+	tid := mustTaskID(t, taskID)
+	switch phase {
+	case taskauthority.PhaseBlocked:
+		req := taskauthority.CanonicalBlockRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), Detail: "dep", Reason: "test"}
+		op, err := domain.NewOperation(mustOpID(t, "op-block-"+taskID), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := auth.Block(op, req); err != nil {
+			t.Fatal(err)
+		}
+	case taskauthority.PhaseWorking:
+		req := taskauthority.CanonicalStartRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), Reason: "test"}
+		op, err := domain.NewOperation(mustOpID(t, "op-start-"+taskID), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := auth.Start(op, req); err != nil {
+			t.Fatal(err)
+		}
+	case taskauthority.PhaseDone:
+		req := taskauthority.CanonicalCompleteRequest{HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), To: taskauthority.PhaseDone, Reason: "test"}
+		op, err := domain.NewOperation(mustOpID(t, "op-done-"+taskID), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := auth.Complete(op, req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return auth
+}
+
+func TestCheckBacklogAuthority_RefusesBlockedTask(t *testing.T) {
+	r := &Runner{args: Args{ID: "lifecycle-e2e", Authority: seedSpawnAuthorityPhase(t, "lifecycle-e2e", taskauthority.PhaseBlocked)}, homeDir: t.TempDir()}
+	err := r.checkBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for blocked task, got nil")
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("error should mention blocked state\n got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_RefusesDoneTask(t *testing.T) {
+	r := &Runner{args: Args{ID: "done-task", Authority: seedSpawnAuthorityPhase(t, "done-task", taskauthority.PhaseDone)}, homeDir: t.TempDir()}
+	err := r.checkBacklogAuthority()
+	if err == nil {
+		t.Fatal("expected error for done task, got nil")
+	}
+	if !strings.Contains(err.Error(), "done") {
+		t.Errorf("error should mention done state\n got: %v", err)
+	}
+}
+
+func TestCheckBacklogAuthority_ReopenBypassesDone(t *testing.T) {
+	r := &Runner{args: Args{ID: "done-task", Reopen: true, Authority: seedSpawnAuthorityPhase(t, "done-task", taskauthority.PhaseDone)}, homeDir: t.TempDir()}
+	if err := r.checkBacklogAuthority(); err != nil {
+		t.Fatalf("expected no error with --reopen for done task, got: %v", err)
+	}
+}
+
 func TestCheckBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
-	tmpDir := setupManualHome(t)
-	t.Chdir(tmpDir)
-
-	// Create backlog with an in-flight item and no meta/window (tasks-axi start before spawn).
-	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [-] live-task: Currently in-flight\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthority(t, "live-task")}, homeDir: tmpDir}
+	// Working without live meta/window (task start before spawn) must ALLOW spawn.
+	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthorityPhase(t, "live-task", taskauthority.PhaseWorking)}, homeDir: t.TempDir()}
 	if err := r.checkBacklogAuthority(); err != nil {
 		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)
 	}
 }
 
 func TestCheckBacklogAuthority_RefusesInFlightWithLiveMeta(t *testing.T) {
-	tmpDir := setupManualHome(t)
-	t.Chdir(tmpDir)
-
-	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [-] live-task: Currently in-flight\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	tmpDir := t.TempDir()
 	if err := home.WriteMeta(tmpDir, "live-task", map[string]string{"window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
-
-	r := &Runner{args: Args{ID: "live-task"}, homeDir: tmpDir}
+	r := &Runner{args: Args{ID: "live-task", Authority: seedSpawnAuthorityPhase(t, "live-task", taskauthority.PhaseWorking)}, homeDir: tmpDir}
 	err := r.checkBacklogAuthority()
 	if err == nil {
 		t.Fatal("expected error for in-flight with live meta, got nil")
@@ -887,24 +845,12 @@ func TestCheckBacklogAuthority_RefusesInFlightWithLiveMeta(t *testing.T) {
 }
 
 func TestCheckBacklogAuthority_RefusesAlreadyLiveMeta(t *testing.T) {
-	tmpDir := setupManualHome(t)
-	t.Chdir(tmpDir)
-
-	// Create backlog with a queued item
-	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [ ] queued-task: Ready to go\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
+	tmpDir := t.TempDir()
 	// Create meta file simulating already-live soldier session
 	if err := home.WriteMeta(tmpDir, "queued-task", map[string]string{"window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
-
-	r := &Runner{args: Args{ID: "queued-task"}, homeDir: tmpDir}
+	r := &Runner{args: Args{ID: "queued-task", Authority: seedSpawnAuthority(t, "queued-task")}, homeDir: tmpDir}
 	err := r.checkBacklogAuthority()
 	if err == nil {
 		t.Fatal("expected error for already-live task, got nil")
@@ -914,27 +860,25 @@ func TestCheckBacklogAuthority_RefusesAlreadyLiveMeta(t *testing.T) {
 	}
 }
 
-func TestCheckBacklogAuthority_RefusesDuplicateID(t *testing.T) {
-	tmpDir := setupManualHome(t)
-	t.Chdir(tmpDir)
-
-	// Create backlog with duplicate IDs
-	backlogPath := filepath.Join(tmpDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
+// TestCheckBacklogAuthority_DuplicateUniquenessStructural proves duplicate
+// task entries are impossible: the canonical Task Authority enforces one
+// record per task ID, so a re-created task conflicts instead of spawning.
+func TestCheckBacklogAuthority_DuplicateUniquenessStructural(t *testing.T) {
+	auth := seedSpawnAuthority(t, "dup-task")
+	r := &Runner{args: Args{ID: "dup-task", Authority: auth}, homeDir: t.TempDir()}
+	if err := r.checkBacklogAuthority(); err != nil {
+		t.Fatalf("single canonical record must allow dispatch, got: %v", err)
+	}
+	// A second create under a fresh operation conflicts (no duplicate rows).
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID: auth.HomeID(), TaskID: mustTaskID(t, "dup-task"), Owner: "general", Description: "dup", Kind: "ship", Reason: "test",
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-dup-create"), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	data := "# Backlog\n\n## 2025-01-01\n- [ ] dup-task: First entry\n- [ ] dup-task: Duplicate entry\n"
-	if err := os.WriteFile(backlogPath, []byte(data), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	r := &Runner{args: Args{ID: "dup-task"}, homeDir: tmpDir}
-	err := r.checkBacklogAuthority()
-	if err == nil {
-		t.Fatal("expected error for duplicate ID, got nil")
-	}
-	if !strings.Contains(err.Error(), "duplicate") {
-		t.Errorf("error should mention duplicate entries\n got: %v", err)
+	if _, err := auth.Create(op, req); err == nil {
+		t.Fatal("duplicate canonical create must conflict")
 	}
 }
 
@@ -1270,7 +1214,7 @@ func TestWaitAndInjectBrief_FailurePatternTearsDown(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_SkippedWhenForceSet(t *testing.T) {
+func TestCheckCaptainTaskAuthority_SkippedWhenForceSet(t *testing.T) {
 	r := &Runner{
 		args:      Args{Force: true},
 		spawnRole: "captain",
@@ -1280,7 +1224,7 @@ func TestCheckCaptainBacklogAuthority_SkippedWhenForceSet(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_SkippedWhenNotCaptain(t *testing.T) {
+func TestCheckCaptainTaskAuthority_SkippedWhenNotCaptain(t *testing.T) {
 	r := &Runner{
 		args:      Args{},
 		spawnRole: "general",
@@ -1290,12 +1234,11 @@ func TestCheckCaptainBacklogAuthority_SkippedWhenNotCaptain(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_RefusesAbsentTask(t *testing.T) {
+func TestCheckCaptainTaskAuthority_RefusesAbsentTask(t *testing.T) {
 	homeDir := t.TempDir()
-	restore := mockReadBacklogTaskState("", "", false, nil)
-	defer restore()
+	auth := mustCanonical(t) // empty authority: no canonical record
 	r := &Runner{
-		args:      Args{ID: "absent-task"},
+		args:      Args{ID: "absent-task", Authority: auth},
 		spawnRole: "captain",
 		homeDir:   homeDir,
 	}
@@ -1303,32 +1246,28 @@ func TestCheckCaptainBacklogAuthority_RefusesAbsentTask(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for absent task, got nil")
 	}
-	if !strings.Contains(err.Error(), "not found in backlog") {
-		t.Errorf("error should mention not found, got: %v", err)
+	if !strings.Contains(err.Error(), "no canonical Task Authority record") {
+		t.Errorf("error should mention canonical record absence, got: %v", err)
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_RefusesBlockedTask(t *testing.T) {
-	restore := mockReadBacklogTaskState("queued", "some-dependency", true, nil)
-	defer restore()
+func TestCheckCaptainTaskAuthority_RefusesBlockedTask(t *testing.T) {
 	r := &Runner{
-		args:      Args{ID: "blocked-task"},
+		args:      Args{ID: "blocked-task", Authority: seedSpawnAuthorityPhase(t, "blocked-task", taskauthority.PhaseBlocked)},
 		spawnRole: "captain",
 	}
 	err := r.checkCaptainBacklogAuthority()
 	if err == nil {
 		t.Fatal("expected error for blocked task, got nil")
 	}
-	if !strings.Contains(err.Error(), "blocked-by") {
-		t.Errorf("error should mention blocked-by, got: %v", err)
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("error should mention blocked, got: %v", err)
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_RefusesDoneTask(t *testing.T) {
-	restore := mockReadBacklogTaskState("done", "", true, nil)
-	defer restore()
+func TestCheckCaptainTaskAuthority_RefusesDoneTask(t *testing.T) {
 	r := &Runner{
-		args:      Args{ID: "done-task"},
+		args:      Args{ID: "done-task", Authority: seedSpawnAuthorityPhase(t, "done-task", taskauthority.PhaseDone)},
 		spawnRole: "captain",
 	}
 	err := r.checkCaptainBacklogAuthority()
@@ -1340,11 +1279,11 @@ func TestCheckCaptainBacklogAuthority_RefusesDoneTask(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_RefusesLiveSessionWithWindow(t *testing.T) {
+func TestCheckCaptainTaskAuthority_RefusesLiveSessionWithWindow(t *testing.T) {
 	homeDir := t.TempDir()
 	_ = home.WriteMeta(homeDir, "live-task", map[string]string{"kind": "ship", "window": "default:w1:p1"})
 	r := &Runner{
-		args:      Args{ID: "live-task"},
+		args:      Args{ID: "live-task", Authority: seedSpawnAuthority(t, "live-task")},
 		spawnRole: "captain",
 		homeDir:   homeDir,
 	}
@@ -1357,13 +1296,11 @@ func TestCheckCaptainBacklogAuthority_RefusesLiveSessionWithWindow(t *testing.T)
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T) {
+func TestCheckCaptainTaskAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing.T) {
 	homeDir := t.TempDir()
 	_ = home.WriteMeta(homeDir, "pre-spawn", map[string]string{"kind": "ship"})
-	restore := mockReadBacklogTaskState("in_flight", "", true, nil)
-	defer restore()
 	r := &Runner{
-		args:      Args{ID: "pre-spawn"},
+		args:      Args{ID: "pre-spawn", Authority: seedSpawnAuthorityPhase(t, "pre-spawn", taskauthority.PhaseWorking)},
 		spawnRole: "captain",
 		homeDir:   homeDir,
 	}
@@ -1372,11 +1309,9 @@ func TestCheckCaptainBacklogAuthority_AllowsKindOnlyMetaWithoutWindow(t *testing
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_AllowsReadyTask(t *testing.T) {
-	restore := mockReadBacklogTaskState("queued", "", true, nil)
-	defer restore()
+func TestCheckCaptainTaskAuthority_AllowsReadyTask(t *testing.T) {
 	r := &Runner{
-		args:      Args{ID: "ready-task"},
+		args:      Args{ID: "ready-task", Authority: seedSpawnAuthority(t, "ready-task")},
 		spawnRole: "captain",
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
@@ -1384,43 +1319,16 @@ func TestCheckCaptainBacklogAuthority_AllowsReadyTask(t *testing.T) {
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
-	restore := mockReadBacklogTaskState("in-flight", "", true, nil)
-	defer restore()
+func TestCheckCaptainTaskAuthority_AllowsInFlightWithoutLiveMeta(t *testing.T) {
 	r := &Runner{
-		args:      Args{ID: "in-flight-task"},
+		args:      Args{ID: "in-flight-task", Authority: seedSpawnAuthorityPhase(t, "in-flight-task", taskauthority.PhaseWorking)},
 		spawnRole: "captain",
 	}
 	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("in-flight backlog without live meta must ALLOW spawn, got: %v", err)
+		t.Fatalf("in-flight without live meta must ALLOW spawn, got: %v", err)
 	}
 }
 
-func TestCheckCaptainBacklogAuthority_AllowsTasksAxiInFlightUnderscore(t *testing.T) {
-	restore := mockReadBacklogTaskState("in_flight", "", true, nil)
-	defer restore()
-	r := &Runner{
-		args:      Args{ID: "started-task"},
-		spawnRole: "captain",
-	}
-	if err := r.checkCaptainBacklogAuthority(); err != nil {
-		t.Fatalf("tasks-axi in_flight without live meta must ALLOW spawn, got: %v", err)
-	}
-}
-
-// mockReadBacklogTaskState replaces readBacklogTaskState for testing
-// and returns a restore function.
-func mockReadBacklogTaskState(state, blocked string, found bool, err error) func() {
-	original := readBacklogTaskState
-	readBacklogTaskState = func(homeDir, id string) (string, string, bool, error) {
-		return state, blocked, found, err
-	}
-	return func() { readBacklogTaskState = original }
-}
-
-// createFakeNoMistakes writes a fake no-mistakes binary to a temp directory
-// and returns that directory. The binary handles --version and axi status --help
-// when the corresponding flags are true.
 func createFakeNoMistakes(t *testing.T, respondVersion, respondAxi bool) string {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -1477,22 +1385,6 @@ func TestSpawn_PostCreateVerificationFailure_NoMetaNoSpawnedStatus(t *testing.T)
 	}
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 	t.Setenv("GEMINI_API_KEY", "test-key")
-
-	configDir := filepath.Join(homeDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	backlogPath := filepath.Join(homeDir, "data", "backlog.md")
-	if err := os.MkdirAll(filepath.Dir(backlogPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(backlogPath, []byte("# Backlog\n\n## 2025-01-01\n- [ ] reconcile-task: Ready\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	projectDir := filepath.Join(homeDir, "projects", "test-proj")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -1716,15 +1608,9 @@ func TestCheckBacklogAuthorityRequiresCanonicalAggregate(t *testing.T) {
 	if _, err := home.Init(homeDir); err != nil {
 		t.Fatal(err)
 	}
-	// Backlog has the task, but the Authority has no record: the old shim
-	// would create a legacy aggregate; the Authority query must fail closed.
+	// Meta exists, but the Authority has no record: the query must fail
+	// closed on the absent canonical aggregate (no legacy fallback).
 	if err := home.WriteMeta(homeDir, "no-agg", map[string]string{"kind": "ship"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("# Backlog\n\n## 2026-01-01\n- [ ] no-agg: work\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	auth, err := taskauthority.NewCanonical(mustHome(t, homeDir))

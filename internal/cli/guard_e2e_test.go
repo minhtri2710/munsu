@@ -13,6 +13,7 @@ import (
 
 func TestGuardE2E_StaleBeatWarns(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
@@ -30,6 +31,7 @@ func TestGuardE2E_StaleBeatWarns(t *testing.T) {
 
 func TestGuardE2E_MissingBeatWarns(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "test-task", "scout")
 	stderr := captureStderr(guardWarnWatcher)
@@ -43,6 +45,7 @@ func TestGuardE2E_MissingBeatWarns(t *testing.T) {
 
 func TestGuardE2E_FreshBeatSilent(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeBeat(t, tmpDir)
@@ -54,6 +57,7 @@ func TestGuardE2E_FreshBeatSilent(t *testing.T) {
 
 func TestGuardE2E_SkipEnvSilent(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_GUARD_SKIP", "1")
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
@@ -66,6 +70,7 @@ func TestGuardE2E_SkipEnvSilent(t *testing.T) {
 
 func TestGuardE2E_NoTasksSilent(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	stderr := captureStderr(guardWarnWatcher)
 	if strings.Contains(stderr, "WARNING:") {
@@ -75,6 +80,7 @@ func TestGuardE2E_NoTasksSilent(t *testing.T) {
 
 func TestGuardE2E_NoInFlightTasksSilent(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	meta := "kind=done\nwindow=test\n"
 	writeMeta(t, tmpDir, "register-task", meta)
@@ -87,6 +93,7 @@ func TestGuardE2E_NoInFlightTasksSilent(t *testing.T) {
 
 func TestGuardE2E_MultipleInFlightWarns(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "ship-task", "ship")
 	writeTaskMeta(t, tmpDir, "scout-task", "scout")
@@ -102,6 +109,7 @@ func TestGuardE2E_MultipleInFlightWarns(t *testing.T) {
 
 func TestGuardE2E_MixedTasksWarnsWithCorrectCount(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "ship-task", "ship")
 	writeTaskMeta(t, tmpDir, "done-task", "done")
@@ -118,6 +126,7 @@ func TestGuardE2E_MixedTasksWarnsWithCorrectCount(t *testing.T) {
 
 func TestGuardE2E_FreshBeatMultiTaskSilent(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "ship-task", "ship")
 	writeTaskMeta(t, tmpDir, "scout-task", "scout")
@@ -133,6 +142,7 @@ func TestGuardE2E_CooldownSuppressesIdenticalState(t *testing.T) {
 	guardCooldown = 5 * time.Minute
 	defer func() { guardCooldown = original }()
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
@@ -151,6 +161,7 @@ func TestGuardE2E_CooldownExpiredReWarns(t *testing.T) {
 	guardCooldown = 5 * time.Minute
 	defer func() { guardCooldown = original }()
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)
@@ -172,6 +183,7 @@ func TestGuardE2E_CooldownStateChangeReWarns(t *testing.T) {
 	guardCooldown = 5 * time.Minute
 	defer func() { guardCooldown = original }()
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "task-a", "ship")
 	writeStaleBeat(t, tmpDir)
@@ -194,6 +206,7 @@ func TestGuardE2E_HealthyTransitionClearsCooldown(t *testing.T) {
 	guardCooldown = 5 * time.Minute
 	defer func() { guardCooldown = original }()
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
 	writeStaleBeat(t, tmpDir)

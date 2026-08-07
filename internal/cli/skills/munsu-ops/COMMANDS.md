@@ -59,7 +59,7 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | `munsu watch stop` | Stop the watcher idempotently. |
 | `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. |
 | `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
-| `munsu wake drain` / `munsu wake-drain` | Drain all pending wakes (legacy, no lease management). |
+| `munsu wake claim --consumer <id>` | Claim queued wakes under a lease. |
 | `munsu guard` | Report fleet guard conditions, or act as a harness Stop-hook guard. |
 
 ## Captain
@@ -69,21 +69,21 @@ Command names match `munsu --help` output verbatim. All commands accept `--home`
 | `munsu captain list` | List registered captains. |
 | `munsu captain seed|launch|retire|list` | Manage the core Captain lifecycle. |
 | `munsu captain converge` | Reconcile mailbox pending records, terminal receipts, nudges, and inherited config. |
-| `munsu captain handoff|config-push` | Hand off backlog work or push inherited config. |
+| `munsu captain handoff|config-push` | Hand off queued tasks or push inherited config. |
 | `munsu captain migrate|recover|update|validate` | Migrate, recover, fast-forward, or validate Captain homes. |
 
 ## Task / Brief / Backlog
 
 | Command | Description |
 |---------|-------------|
-| `munsu backlog add <id> "<desc>" [--kind ship\|scout\|task] [--repo <name>]` | Register a queued task. |
-| `munsu backlog list` | List all backlog entries. |
-| `munsu backlog show <id>` | Show a backlog entry. |
-| `munsu backlog block <id>` | Block a task on a dependency. |
-| `munsu backlog ready` | Query readiness and blocking reasons without mutation. |
-| `munsu backlog unblock <id>` | Mark a blocked task queued again. |
-| `munsu backlog paths` | Show separate development and runtime backlog paths. |
-| `munsu backlog done <id>` | Mark a task as done in backlog. |
+| `munsu task add <id> "<desc>" [--kind ship\|scout] [--repo <name>]` | Register a queued task. |
+| `munsu task list` | List tasks from the canonical Task Authority. |
+| `munsu task show <id>` | Show a task. |
+| `munsu task start <id>` | Start a task (mark in-flight). |
+| `munsu task block <id>` | Block a task on a dependency. |
+| `munsu task unblock <id>` | Mark a blocked task queued again. |
+| `munsu task done <id>` | Mark a task as done. |
+| `munsu task reopen <id>` | Reopen a terminal task as a new generation. |
 | `munsu task observe <id> [--fields description,branch,pane_alive,no_mistakes_step]` | Observe one task using the orchestration contract. |
 | `munsu brief <id> <repo> [--scout]` | Scaffold a task brief. |
 | `munsu soldier-state <id>` | Read soldier current state. |

@@ -12,6 +12,5 @@
 | `FLEET_SYNC:` | Review any stuck fleet sync entries. |
 | `SECOND_SYNC:` | Captain homes were fast-forwarded. |
 | `SECOND_LIVENESS:` | Relaunch dead Captain endpoints with `munsu captain recover` or `munsu session-start --recover`. |
-| `TASKS_AXI: available` | Use tasks-axi-backed backlog operations. |
 
 If no diagnostic lines appear, proceed normally.

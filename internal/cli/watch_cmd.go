@@ -440,7 +440,7 @@ func evaluateWatcherStatus(homeDir string) Response[WatchStatus] {
 		diagnostics = append(diagnostics, "Watcher beat stale — run 'munsu watch ensure --restart'")
 	}
 	if queuedWakes > 0 {
-		diagnostics = append(diagnostics, fmt.Sprintf("Queued wakes: %d — drain with 'munsu wake-drain'", queuedWakes))
+		diagnostics = append(diagnostics, fmt.Sprintf("Queued wakes: %d — claim with 'munsu wake claim'", queuedWakes))
 		if materialAge != "" {
 			diagnostics = append(diagnostics, fmt.Sprintf("Oldest material wake age: %s", materialAge))
 		}

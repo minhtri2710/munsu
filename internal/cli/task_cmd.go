@@ -21,12 +21,9 @@ func newTaskCmd() *cobra.Command {
 
 	addCmd := &cobra.Command{
 		Use:   "add <id> <description>",
-		Short: "Add a new task to the backlog",
+		Short: "Add a new task",
 		Args:  ExactArgs(2),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
-			}
 			id := args[0]
 			desc := args[1]
 			kind, _ := cmd.Flags().GetString("kind")
@@ -241,12 +238,9 @@ func newTaskCmd() *cobra.Command {
 		Long: `Append a status line to the task .status projection and typed event
 log. This is audit input only: it never changes the authoritative task
 phase. Authoritative transitions are named operations owned by the parent
-rank (munsu backlog start|done|block|unblock|reopen).`,
+rank (munsu task start|done|block|unblock|reopen).`,
 		Args: ExactArgs(3),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
-			}
 			id := args[0]
 			state := args[1]
 			msg := args[2]
@@ -276,8 +270,204 @@ rank (munsu backlog start|done|block|unblock|reopen).`,
 	cmd.AddCommand(listCmd)
 	cmd.AddCommand(showCmd)
 	cmd.AddCommand(statusCmd)
+	cmd.AddCommand(newTaskStartCmd())
+	cmd.AddCommand(newTaskDoneCmd())
+	cmd.AddCommand(newTaskBlockCmd())
+	cmd.AddCommand(newTaskUnblockCmd())
+	cmd.AddCommand(newTaskReopenCmd())
+	cmd.AddCommand(newTaskRetryCmd())
 	cmd.AddCommand(newTaskObserveCmd())
 	return cmd
+}
+
+func newTaskStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "start <id>",
+		Short: "Start a task (mark in-flight)",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			// Supervision gate: start fails closed when the watcher lease is
+			// degraded, before any Task Authority call (Task 4.3, ADR-0007 §8).
+			if err := fleet.CheckSupervisionForDispatch(ctx.Home, home.DispatchActionStart); err != nil {
+				return err
+			}
+			return runTaskLifecycleTransition(ctx, "start", "working", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalStartRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "task: start",
+				}
+				op, err := newCanonicalOperation("task-start", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Start(op, req)
+				return err
+			})
+		}),
+	}
+}
+
+func newTaskDoneCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "done <id>",
+		Short: "Mark a task as done",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return runTaskLifecycleTransition(ctx, "done", "done", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalCompleteRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					To:           taskauthority.PhaseDone,
+					Reason:       "task: done",
+				}
+				op, err := newCanonicalOperation("task-done", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Complete(op, req)
+				return err
+			})
+		}),
+	}
+}
+
+func newTaskBlockCmd() *cobra.Command {
+	var by string
+	cmd := &cobra.Command{
+		Use:   "block <id> [--by <dependency-id>]",
+		Short: "Block a task",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			detail := "task: blocked"
+			if by != "" {
+				detail += " by " + by
+			}
+			return runTaskLifecycleTransition(ctx, "block", "blocked", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalBlockRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Detail:       detail,
+					Reason:       "task: block",
+				}
+				op, err := newCanonicalOperation("task-block", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Block(op, req)
+				return err
+			})
+		}),
+	}
+	cmd.Flags().StringVar(&by, "by", "", "Dependency that blocks this task")
+	return cmd
+}
+
+func newTaskUnblockCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unblock <id>",
+		Short: "Unblock a blocked task",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return runTaskLifecycleTransition(ctx, "unblock", "queued", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalUnblockRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "task: unblock",
+				}
+				op, err := newCanonicalOperation("task-unblock", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Unblock(op, req)
+				return err
+			})
+		}),
+	}
+}
+
+func newTaskReopenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reopen <id>",
+		Short: "Reopen a terminal task as a new generation",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return runTaskLifecycleTransition(ctx, "reopen", "queued", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				req := taskauthority.CanonicalReopenRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "task: reopen",
+				}
+				op, err := newCanonicalOperation("task-reopen", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Reopen(op, req)
+				return err
+			})
+		}),
+	}
+}
+
+func newTaskRetryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "retry <id>",
+		Short: "Supersede a failed/terminal generation as a new queued generation",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			return runTaskLifecycleTransition(ctx, "retry", "queued", args, func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error {
+				// Retry is the canonical Reopen operation: a terminal generation
+				// is superseded as a fresh queued Generation at Revision one and
+				// the prior generation is preserved as historical state. Live
+				// generations are refused so a retry never claims running work.
+				req := taskauthority.CanonicalReopenRequest{
+					HomeID:       auth.HomeID(),
+					TaskID:       tid,
+					Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+					Reason:       "task: retry",
+				}
+				op, err := newCanonicalOperation("task-retry", req)
+				if err != nil {
+					return err
+				}
+				_, err = auth.Reopen(op, req)
+				return err
+			})
+		}),
+	}
+}
+
+// runTaskLifecycleTransition runs one authoritative Task Authority lifecycle
+// transition and appends the .status post-commit projection (ADR-0007 §7): a
+// projection failure must not roll back the authoritative transition; the
+// projection can be retried independently and the authoritative operation is
+// never replayed.
+func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []string, op func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error) error {
+	taskID := args[0]
+	auth, err := ctx.TaskAuthority()
+	if err != nil {
+		return err
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return err
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return err
+	}
+	if err := op(auth, tid, agg); err != nil {
+		return err
+	}
+	if perr := home.AppendStatus(ctx.Home, taskID, projectionState+": cli task "+verb); perr != nil {
+		return &LifecyclePartialError{TaskID: taskID, State: projectionState, Cause: perr}
+	}
+	return nil
 }
 
 // projectTaskMeta overlays the canonical aggregate fields onto the task .meta

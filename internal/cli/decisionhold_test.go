@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +10,22 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
+
+// runRoot executes one CLI command and returns the serialized output plus the
+// raw error.
+func runRoot(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs(args)
+	err := root.Execute()
+	if err != nil {
+		WriteContractError(&out, err, args)
+	}
+	return out.String(), err
+}
 
 // decisionHoldAuthority composes the command-context Authority over the given
 // home, mirroring what the decision-hold commands do.

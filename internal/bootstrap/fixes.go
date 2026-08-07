@@ -12,8 +12,6 @@ func FixCommand(tool string) string {
 		return "go install github.com/kunchenguid/treehouse@latest"
 	case "no-mistakes":
 		return "go install github.com/kunchenguid/no-mistakes@latest"
-	case "tasks-axi":
-		return "npm install -g tasks-axi"
 	case "gh-axi":
 		return "npm install -g gh-axi"
 	case "gh":

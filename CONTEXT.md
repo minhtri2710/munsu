@@ -46,10 +46,6 @@ The lease is renewable and carries an owner identity and fencing token. Expiry p
 
 The delivery lifecycle for one sender's Uplink Reports under a Task ID and key. Each generation is superseded only by a newer generation and closes when the exact report receives a Processing Ack.
 
-## Activation Record
-
-The durable verdict that authorizes a migrated fleet to resume mutation. It binds an evidence digest, build identity, schema version, quarantine summary, and General approval.
-
 ## Task Generation
 
 A monotonically increasing identity for one incarnation of a task lifecycle. Delivery evidence, reports, and resources must bind the exact generation they affect.
@@ -110,10 +106,6 @@ The immutable Task-Generation-bound worktree lease, repository identity, Git dir
 
 The typed per-home identity and heartbeat for the only watcher authorized to mutate that home's lifecycle. General supervises Captain watcher leases without directly processing Captain-owned task state. See [ADR-0005](docs/adr/0005-runtime-bindings-supervision-recovery-and-mutation-fencing.md).
 
-## Migration Plan
-
-An immutable read-only plan listing exact homes, source schemas/digests, target schemas, ordering, and tool provenance. Apply revalidates each home and runs independent explicit migrations; runtime load paths never permanently dual-read legacy state. See [ADR-0006](docs/adr/0006-state-migration-build-provenance-and-compatibility-gates.md).
-
 ## Runtime Identity
 
-The running executable's canonical path and digest plus embedded build provenance, contract version, and integration digest. Compatibility gates are operation-specific: diagnostics remain available while incompatible mutations fail closed. See [ADR-0006](docs/adr/0006-state-migration-build-provenance-and-compatibility-gates.md).
+The running executable's canonical path and digest plus embedded build provenance, contract version, and integration digest.

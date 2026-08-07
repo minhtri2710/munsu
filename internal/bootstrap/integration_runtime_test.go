@@ -53,11 +53,6 @@ func TestPiExtensionRuntime(t *testing.T) {
 		t.Fatal("template must use agent_settled event for wake follow-up (Pi may still auto-retry/compact/continue after agent_end)")
 	}
 
-	// Template must not use wake-drain (destructive)
-	if strings.Contains(tmpl, "wake-drain") || strings.Contains(tmpl, "wake_drain") {
-		t.Fatal("template must not use destructive wake-drain")
-	}
-
 	// Template must use wake claim --consumer for lease-based claiming
 	if !strings.Contains(tmpl, `"wake", "claim", "--consumer"`) && !strings.Contains(tmpl, `"wake","claim","--consumer"`) {
 		t.Fatal("template must use wake claim --consumer for lease-based claiming")

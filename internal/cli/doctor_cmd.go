@@ -23,7 +23,7 @@ Hard-required tools (doctor exits non-zero if missing):
   (pi, claude, agy, etc.) if soldier-harness detection fails.
 
 Optional tools get warnings but do not fail the exit code:
-  treehouse, no-mistakes, tasks-axi, gh-axi, gh, and GitHub auth.
+  treehouse, no-mistakes, gh-axi, gh, and GitHub auth.
 
 Use --role for role-specific integration matrix:
   --role general   Harness adapter, session backend, gh auth, go toolchain

@@ -3,11 +3,10 @@
 //  1. Canonical Task Authority record, when present (Task 7.8): the
 //     authoritative phase is state truth; .meta/.status are display fallback
 //     and can never override a newer authoritative lifecycle transition
-//  2. Backlog state projection (legacy fallback only)
-//  3. Task meta/status projection (legacy fallback only)
-//  4. Provider state (GitHub PR merged/closed/open)
-//  5. Typed event log (keyed open/close transitions)
-//  6. Status file fallback (append-only .status lines)
+//  2. Task meta/status projection (display fallback only)
+//  3. Provider state (GitHub PR merged/closed/open)
+//  4. Typed event log (keyed open/close transitions)
+//  5. Status file fallback (append-only .status lines)
 //
 // Pane prose is diagnostic only — never derived as current-state truth.
 package fleet
@@ -45,9 +44,6 @@ type State struct {
 	// (working/paused open; done/failed/resolved/etc. close). Evidence only —
 	// Status is the current-state authority.
 	OpenActivities []domain.Activity
-
-	// BacklogState is the task state from the backlog file when available.
-	BacklogState string `json:"backlog_state,omitempty"`
 }
 
 type StateEndpointProbe interface {
@@ -57,7 +53,7 @@ type StateEndpointProbe interface {
 // coerceCoherentState guarantees the observation invariant: never report
 // working with pane_alive=false plus status_log_superseded=true. A dead or
 // unverifiable pane cannot be working; when a higher-precedence source
-// (aggregate/backlog) supersedes the status log, the live claim must be
+// (aggregate) supersedes the status log, the live claim must be
 // downgraded to a coherent state.
 func coerceCoherentState(s *State, probeConsulted bool) {
 	if s.Status != "working" || s.PaneAlive || !s.StatusLogSuperseded {
@@ -143,9 +139,6 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 		// The canonical record is the top-precedence source: the status log is
 		// always superseded display, never state truth.
 		s.StatusLogSuperseded = true
-		if backlogState, ok := readBacklogState(homeDir, id); ok {
-			s.BacklogState = backlogState.String()
-		}
 		probeConsulted := false
 		if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {
 			alive, err := probe.Probe(homeDir, meta)
@@ -164,31 +157,6 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 		if step, outcome, ok := checkNoMistakesRun(wtPath, currentBranch); ok {
 			s.NoMistakesRunStep = step
 			s.applyNoMistakesStep(step, outcome)
-		}
-	}
-
-	// --- TIER 2: Backlog state projection (legacy fallback) ---
-	if backlogState, ok := readBacklogState(homeDir, id); ok {
-		s.BacklogState = backlogState.String()
-		switch backlogState {
-		case StateDone:
-			s.Status = "done"
-			s.Description = "backlog: done"
-			s.StatusLogSuperseded = true
-			return s, nil
-		case StateBlocked:
-			s.Status = "blocked"
-			s.Description = "backlog: blocked"
-			s.StatusLogSuperseded = true
-			return s, nil
-		case StateQueued:
-			// Queued means not yet started — report as-is when no higher work state.
-			if s.Status == "unknown" {
-				s.Status = "queued"
-				s.Description = "backlog: queued"
-			}
-		case StateInFlight:
-			// In-flight — continue to lower tiers for detail.
 		}
 	}
 
@@ -266,15 +234,6 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	}
 
 	return s, nil
-}
-
-// readBacklogState reads the task's state from the selected backlog authority.
-func readBacklogState(homeDir, id string) (TaskState, bool) {
-	item, found, err := GetItem(homeDir, id)
-	if err != nil || !found {
-		return StateQueued, false
-	}
-	return item.State, true
 }
 
 // readPRState checks the GitHub PR provider state for a task.

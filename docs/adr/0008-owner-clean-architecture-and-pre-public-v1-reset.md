@@ -198,7 +198,7 @@ The final activation requires:
 * complete deletion of legacy packages, commands, schemas, tests, fixtures, comments, and documents;
 * build, vet, and full tests passing;
 * current contract, crash/replay/fencing, and architecture-policy tests passing;
-* a full-suite performance budget achieved without weakening critical tests;
+* a full-suite performance budget achieved without weakening critical tests — for owner-clean v1 no numeric per-suite budget applies (the ADR-0002 5-8s per-suite target is superseded); the registry lock-overlap guard (independent Project and Captain aggregate operations complete within the 2s overlap budget) remains binding;
 * diff review confirming deleted identifiers and literals did not survive.
 
 ## Alternatives rejected

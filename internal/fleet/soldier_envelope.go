@@ -27,12 +27,10 @@ var SoldierSkillDenied = map[string]bool{
 	"munsu-ops":              true,
 	"stuck-soldier-recovery": true,
 	"no-mistakes":            true,
-	"tasks-axi":              true, // backlog mutation is captain-only
 	"bootstrap-diagnostics":  true,
 	"harness-adapters":       true, // spawn authority
 
 	// Delivery and supervision skills.
-	"backlog-mutation":   true,
 	"merge-authority":    true,
 	"teardown-authority": true,
 	"supervision":        true,

@@ -407,6 +407,7 @@ func TestBinaryTaskObserve_DefinitiveEmpty(t *testing.T) {
 		t.Skip("skipping binary test in short mode")
 	}
 	home := t.TempDir()
+	initCLITestHome(t, home)
 
 	// Create a task meta so the task exists but has no status.
 	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {
@@ -432,6 +433,7 @@ func TestBinaryFleetSnapshot_DefinitiveEmpty(t *testing.T) {
 		t.Skip("skipping binary test in short mode")
 	}
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 

@@ -3,7 +3,6 @@
 package fleet
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -71,96 +70,6 @@ func setupFakeBins() (string, func()) {
 	}
 
 	return dir, func() { os.RemoveAll(dir) }
-}
-
-// --- Legacy registry / config-inheritance helpers ---
-//
-// ParseRegistry, RegistryPath, and getInheritableList were removed from the
-// fleet package during the legacy-config hard cut and the configmigration
-// package was deleted. These test-local ports preserve the legacy-format
-// registry parsing semantics so legacy-format registry tests keep compiling.
-
-// ParseRegistry parses a legacy captains.md registry file and returns Info
-// entries. Test-local port of the former fleet ParseRegistry.
-func ParseRegistry(registryPath string) ([]Info, error) {
-	f, err := os.Open(registryPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("opening registry %s: %w", registryPath, err)
-	}
-	defer f.Close()
-
-	var mates []Info
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !strings.HasPrefix(line, "- ") {
-			continue
-		}
-		rest := strings.TrimPrefix(line, "- ")
-		parts := strings.SplitN(rest, " - ", 2)
-		if len(parts) < 1 {
-			continue
-		}
-		id := strings.TrimSpace(parts[0])
-		if id == "" {
-			continue
-		}
-		entry := Info{ID: id}
-
-		if len(parts) >= 2 {
-			metaPart := parts[1]
-			if idx := strings.LastIndex(metaPart, "("); idx >= 0 {
-				meta := metaPart[idx+1:]
-				if endIdx := strings.LastIndex(meta, ")"); endIdx >= 0 {
-					meta = meta[:endIdx]
-				}
-				entry.Home = extractMetaValue(meta, "home:")
-				entry.Scope = extractMetaValue(meta, "scope:")
-				entry.Project = extractMetaValue(meta, "projects:")
-				entry.Added = extractMetaValue(meta, "added:")
-			}
-		}
-
-		mates = append(mates, entry)
-	}
-	return mates, scanner.Err()
-}
-
-// extractMetaValue pulls the value for key out of a legacy captains.md
-// meta block (key: value; ...). Test-local port of the former fleet parser.
-func extractMetaValue(meta, key string) string {
-	parts := strings.Split(meta, ";")
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if strings.HasPrefix(p, key) {
-			v := strings.TrimSpace(strings.TrimPrefix(p, key))
-			return v
-		}
-	}
-	return ""
-}
-
-// RegistryPath returns the path to the legacy projects.md registry file.
-// Test-local port of the former fleet parser.
-func RegistryPath(homeDir string) string {
-	return filepath.Join(homeDir, "data", "projects.md")
-}
-
-// getInheritableList returns the list of inheritable config file names.
-// Test-local port of the former fleet parser.
-func getInheritableList() []string {
-	env := os.Getenv("MUNSU_INHERITABLE_CONFIG")
-	if env != "" {
-		return strings.Split(env, ":")
-	}
-	return []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
 }
 
 // --- BuildLaunchArgs tests (preserved from PR1) ---
@@ -983,48 +892,6 @@ func TestListCaptains_WithRegistryFile(t *testing.T) {
 	}
 }
 
-func TestParseRegistry_FullEntry(t *testing.T) {
-	tmp := t.TempDir()
-	registryPath := filepath.Join(tmp, "captains.md")
-	content := `# Captains
-- monitor-z - # Monitoring captain (home: /home/monitor-z; scope: infra monitoring; projects: monitoring; added: 2026-07-18)
-`
-	os.WriteFile(registryPath, []byte(content), 0644)
-
-	mates, err := ParseRegistry(registryPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(mates) != 1 {
-		t.Fatalf("expected 1, got %d", len(mates))
-	}
-	if mates[0].ID != "monitor-z" {
-		t.Errorf("id = %q", mates[0].ID)
-	}
-	if mates[0].Home != "/home/monitor-z" {
-		t.Errorf("home = %q", mates[0].Home)
-	}
-	if mates[0].Scope != "infra monitoring" {
-		t.Errorf("scope = %q", mates[0].Scope)
-	}
-	if mates[0].Project != "monitoring" {
-		t.Errorf("project = %q", mates[0].Project)
-	}
-	if mates[0].Added != "2026-07-18" {
-		t.Errorf("added = %q", mates[0].Added)
-	}
-}
-
-func TestParseRegistry_MissingFile(t *testing.T) {
-	mates, err := ParseRegistry("/nonexistent/captains.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(mates) != 0 {
-		t.Errorf("expected 0, got %d", len(mates))
-	}
-}
-
 // --- ConfigPush tests ---
 
 func TestConfigPush_RefusesUnmarkedHome(t *testing.T) {
@@ -1620,51 +1487,6 @@ func TestRecoverTransaction_ConfigPushStep(t *testing.T) {
 	}
 }
 
-// TestEnsureWatcher_NoLongerRequiresParentHome verifies that EnsureWatcher
-// no longer requires config/parent-home. The watcher is recovery-only and
-// does not need parent-home for terminal receipt routing.
-func TestGetInheritableListCaptains_Default(t *testing.T) {
-	os.Unsetenv("MUNSU_INHERITABLE_CONFIG")
-	list := getInheritableList()
-	expected := []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
-	if len(list) != len(expected) {
-		t.Fatalf("expected %d items, got %d: %v", len(expected), len(list), list)
-	}
-	for i, v := range expected {
-		if list[i] != v {
-			t.Errorf("list[%d] = %q, want %q", i, list[i], v)
-		}
-	}
-}
-
-func TestGetInheritableListCaptains_EnvOverride(t *testing.T) {
-	t.Setenv("MUNSU_INHERITABLE_CONFIG", "soldier-harness:model:custom-config")
-	list := getInheritableList()
-	expected := []string{"soldier-harness", "model", "custom-config"}
-	if len(list) != len(expected) {
-		t.Fatalf("expected %d items, got %d: %v", len(expected), len(list), list)
-	}
-	for i, v := range expected {
-		if list[i] != v {
-			t.Errorf("list[%d] = %q, want %q", i, list[i], v)
-		}
-	}
-}
-
-func TestGetInheritableListCaptains_EmptyEnv(t *testing.T) {
-	t.Setenv("MUNSU_INHERITABLE_CONFIG", "")
-	list := getInheritableList()
-	expected := []string{"soldier-harness", "soldier-dispatch.json", "backlog-backend"}
-	if len(list) != len(expected) {
-		t.Fatalf("expected %d items, got %d: %v", len(expected), len(list), list)
-	}
-	for i, v := range expected {
-		if list[i] != v {
-			t.Errorf("list[%d] = %q, want %q", i, list[i], v)
-		}
-	}
-}
-
 // --- ShQuote / buildLaunchScript tests ---
 
 func TestShQuote_Basic(t *testing.T) {
@@ -1966,7 +1788,7 @@ func TestHandoff_RefusesUnmarkedHome(t *testing.T) {
 }
 
 // TestHandoff_TransfersToCaptainWithoutTasksAxi replaces the legacy
-// tasks-axi-dependent contract: the journaled Task Transfer needs no tasks-axi
+// canonical contract: the journaled Task Transfer needs no external backlog tooling
 // binary and moves one queued task's ownership to the captain.
 func TestHandoff_TransfersToCaptainWithoutTasksAxi(t *testing.T) {
 	parent := t.TempDir()
@@ -2009,7 +1831,7 @@ func TestHandoff_RefusesSelfParent(t *testing.T) {
 }
 
 // TestHandoff_JournaledTransferOwnershipMovesToCaptain replaces the legacy
-// staged-mv/backlog-copy contract: the durable journaled transfer moves one
+// staged-mv contract: the durable journaled transfer moves one
 // queued task's ownership to the captain with a single destination generation,
 // and the pending journal is removed on success.
 func TestHandoff_JournaledTransferOwnershipMovesToCaptain(t *testing.T) {
@@ -3948,8 +3770,6 @@ func TestMigrateRollbackSafety(t *testing.T) {
 // TestConfigPush_InheritsEnvOverriddenKeys proves that MUNSU_INHERITABLE_CONFIG
 // no longer filters config push: after the typed-config hard cut the resolved
 // config is authoritative and the full inherited surface is always propagated.
-// The env list helper itself is covered by the TestGetInheritableListCaptains_*
-// tests below.
 func TestConfigPush_InheritsEnvOverriddenKeys(t *testing.T) {
 	t.Setenv("MUNSU_INHERITABLE_CONFIG", "custom-key:another-key:extra-key")
 

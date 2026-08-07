@@ -20,8 +20,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/minhtri2710/munsu/internal/home"
 )
 
 // Role identifies which role the obligation set targets.
@@ -234,78 +232,6 @@ func ClearTaskAll(homeDir, taskID string) error {
 		return nil
 	}
 	return err
-}
-
-// readCaptainID reads the captain ID from the provenance marker.
-// Duplicates minimal captain.ValidateProvenance logic without importing captain.
-func readTurnendCaptainID(captainHome string) (string, error) {
-	markerPath := filepath.Join(captainHome, ProvenanceMarkerName)
-	data, err := os.ReadFile(markerPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Fallback: use directory basename as synthetic ID.
-			return filepath.Base(captainHome), nil
-		}
-		return "", fmt.Errorf("reading provenance marker: %w", err)
-	}
-	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 3)
-	if len(lines) < 2 {
-		return filepath.Base(captainHome), nil
-	}
-	return strings.TrimSpace(lines[1]), nil
-}
-
-// RelayPendingReceipts scans the captain home for pending terminal receipts
-// and relays each one to the parent (General) home. After relay, writes an ack
-// and closes the ReportRelay obligation. This is the watcher-side equivalent of
-// captain.RelayTerminalReceipts, callable without importing the captain package.
-func RelayPendingReceipts(captainHome, parentHome string) (int, error) {
-	pending, err := ListPendingReceipts(captainHome)
-	if err != nil {
-		return 0, fmt.Errorf("listing pending receipts: %w", err)
-	}
-	if len(pending) == 0 {
-		return 0, nil
-	}
-
-	captainID, err := readTurnendCaptainID(captainHome)
-	if err != nil {
-		return 0, fmt.Errorf("reading captain id for relay: %w", err)
-	}
-
-	relayed := 0
-	for _, pr := range pending {
-		// Relay to General: write status under captain namespace
-		// state/captain:<captainID>.relay-<taskID>.<key>.status
-		relayTaskID := fmt.Sprintf("captain:%s.relay-%s", captainID, pr.TaskID)
-		relayLine := fmt.Sprintf("%s: soldier %s [key=%s]", pr.State, pr.TaskID, pr.TermKey)
-
-		if err := home.AppendStatus(parentHome, relayTaskID, relayLine); err != nil {
-			return relayed, fmt.Errorf("relaying receipt for %s/%s: %w", pr.TaskID, pr.TermKey, err)
-		}
-
-		// Also relay to event log for permanent durability
-		now := time.Now().UnixNano()
-		eventContent := fmt.Sprintf("terminal_uplink_task=%s key=%s captain=%s relayed_at=%d\n",
-			pr.TaskID, pr.TermKey, captainID, now)
-		eventPath := filepath.Join(parentHome, "state", relayTaskID+".turnend")
-		if err := os.MkdirAll(filepath.Dir(eventPath), 0755); err == nil {
-			os.WriteFile(eventPath, []byte(eventContent), 0644)
-		}
-
-		// Write ack in captain home (marks receipt as acknowledged)
-		if err := WriteAck(captainHome, pr.TaskID, pr.TermKey); err != nil {
-			return relayed, fmt.Errorf("writing ack for %s/%s: %w", pr.TaskID, pr.TermKey, err)
-		}
-
-		// Complete per-task obligation in captain home
-		if _, err := CompleteTaskObligation(captainHome, pr.TaskID, ReportRelay); err != nil {
-			return relayed, fmt.Errorf("completing obligation for %s: %w", pr.TaskID, err)
-		}
-
-		relayed++
-	}
-	return relayed, nil
 }
 
 // --- Durable relay receipts ---

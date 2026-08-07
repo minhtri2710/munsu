@@ -359,11 +359,12 @@ func canonicalExistingPath(path string) (string, error) {
 }
 
 // checkCaptainBacklogAuthority validates that when the spawner role is captain,
-// the task is present and dispatchable. Normal Captain flow is:
+// the task is present and dispatchable through the canonical Task Authority.
+// Normal Captain flow is:
 //
-//	tasks-axi start <id>  →  munsu spawn <id>
+//	munsu task start <id>  →  munsu spawn <id>
 //
-// Backlog in_flight without live meta/window MUST allow spawn without --force.
+// Working without live meta/window MUST allow spawn without --force.
 // Refuse only duplicate live execution (meta window/pane). --force is emergency bypass only.
 func (r *Runner) checkCaptainBacklogAuthority() error {
 	if r.args.Force {
@@ -377,63 +378,47 @@ func (r *Runner) checkCaptainBacklogAuthority() error {
 	// Kind-only meta (e.g. task add) is NOT live execution.
 	if meta, err := home.ReadMeta(r.homeDir, r.args.ID); err == nil {
 		if win := meta["window"]; win != "" {
-			return fmt.Errorf("captain backlog authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
+			return fmt.Errorf("captain task authority: task %s already has a live soldier session (window=%s); refuse duplicate live execution", r.args.ID, win)
 		}
 		if pane := meta["herdr_pane_id"]; pane != "" {
-			return fmt.Errorf("captain backlog authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", r.args.ID, pane)
+			return fmt.Errorf("captain task authority: task %s already has a live soldier session (pane=%s); refuse duplicate live execution", r.args.ID, pane)
 		}
 	}
 
-	// Check backlog state via selected backlog authority.
-	state, blocked, found, err := readBacklogTaskState(r.homeDir, r.args.ID)
+	agg, err := r.taskAggregate()
 	if err != nil {
-		// If backlog doesn't exist or can't be read, allow through but warn.
-		fmt.Fprintf(os.Stderr, "warning: cannot read backlog for captain authority check: %v\n", err)
-		return nil
+		return err
 	}
-	if !found {
-		return fmt.Errorf("captain backlog authority: task %s not found in backlog; register it with 'backlog add %s \"<description>\"'", r.args.ID, r.args.ID)
-	}
-	switch normalizeBacklogState(state) {
-	case "in-flight":
-		// start→spawn: backlog In flight without live window/pane is allowed.
+	switch agg.Phase {
+	case taskauthority.PhaseWorking:
+		// start→spawn: working without live window/pane is allowed.
 		return nil
-	case "done":
-		return fmt.Errorf("captain backlog authority: task %s is already done; reopen requires General instruction", r.args.ID)
-	case "blocked":
-		return fmt.Errorf("captain backlog authority: task %s is blocked (blocked-by: %s); resolve dependencies before dispatch", r.args.ID, blocked)
-	case "queued":
-		if blocked != "" {
-			return fmt.Errorf("captain backlog authority: task %s is blocked-by %s; resolve dependencies before dispatch", r.args.ID, blocked)
-		}
+	case taskauthority.PhaseDone:
+		return fmt.Errorf("captain task authority: task %s is already done; reopen requires General instruction", r.args.ID)
+	case taskauthority.PhaseBlocked:
+		return fmt.Errorf("captain task authority: task %s is blocked; resolve dependencies before dispatch", r.args.ID)
+	case taskauthority.PhaseQueued:
 		return nil
 	default:
-		return fmt.Errorf("captain backlog authority: task %s has unexpected state %q", r.args.ID, state)
+		return fmt.Errorf("captain task authority: task %s has unexpected phase %q", r.args.ID, agg.Phase)
 	}
 }
 
-// normalizeBacklogState maps tasks-axi (in_flight) and file-backend (in-flight).
-func normalizeBacklogState(state string) string {
-	switch strings.TrimSpace(state) {
-	case "in_flight", "in-flight", "inflight":
-		return "in-flight"
-	default:
-		return strings.TrimSpace(state)
+// taskAggregate reads one task's current canonical aggregate through the
+// composed Authority, failing closed when the task has no canonical record.
+func (r *Runner) taskAggregate() (taskauthority.Aggregate, error) {
+	if r.args.Authority == nil {
+		return taskauthority.Aggregate{}, fmt.Errorf("task authority is not composed for spawn")
 	}
-}
-
-// readBacklogTaskState reads the backlog state via the selected backlog authority.
-// Returns the state string, blocked-by value (always empty from GetItem),
-// whether found, and any error.
-var readBacklogTaskState = func(homeDir, id string) (string, string, bool, error) {
-	item, found, err := GetItem(homeDir, id)
+	taskID, err := domain.NewTaskID(r.args.ID)
 	if err != nil {
-		return "", "", false, fmt.Errorf("reading backlog state for %s: %w", id, err)
+		return taskauthority.Aggregate{}, fmt.Errorf("task %q has no canonical Task Authority record; register it with 'task add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
 	}
-	if !found {
-		return "", "", false, nil
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return taskauthority.Aggregate{}, fmt.Errorf("task %q has no canonical Task Authority record; register it with 'task add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
 	}
-	return item.State.String(), "", true, nil
+	return agg, nil
 }
 
 // Phase 2: resolveMode resolves the effective delivery mode.
@@ -484,7 +469,7 @@ func (r *Runner) validateHarnessFlag() error {
 // Phase 3a: resolveEffectiveIdentity resolves the exact harness/model/effort
 // once, caching the dispatch selection, and stores the identity on the Runner
 // so allowlist validation, preflight, and launch all use the same selection.
-// Runs before any backlog/worktree/pane/meta/status side effects; it only
+// Runs before any worktree/pane/meta/status side effects; it only
 // reads project config, dispatch config, and harness metadata.
 func (r *Runner) resolveEffectiveIdentity() error {
 	if r.harness == "" {
@@ -545,7 +530,7 @@ func (r *Runner) resolveModelAndEffort() {
 
 // Phase 3b: checkModelAllowlist enforces the optional munsu model allowlist on
 // the already-resolved effective identity (resolveEffectiveIdentity) before any
-// backlog/worktree/pane/meta/status side effects. An absent policy preserves
+// worktree/pane/meta/status side effects. An absent policy preserves
 // compatibility; an unresolved identity under an active policy fails closed.
 func (r *Runner) checkModelAllowlist() error {
 	present, err := harness.ModelAllowlistPresent(r.homeDir)
@@ -570,49 +555,38 @@ func (r *Runner) preflightBrief() error {
 	return nil
 }
 
-// Phase 5: checkBacklogAuthority verifies the task is uniquely queued+ready in the backlog.
-// Fail closed unless the task is uniquely present and ready, or --reopen is used.
+// Phase 5: checkBacklogAuthority verifies the task is uniquely present in the
+// canonical Task Authority and dispatchable. Fail closed unless the task is
+// present and ready, or --reopen is used.
 func (r *Runner) checkBacklogAuthority() error {
 	if err := RecoverTaskHandoffs(r.homeDir); err != nil {
 		return err
 	}
-	item, found, err := GetItem(r.homeDir, r.args.ID)
+	agg, err := r.taskAggregate()
 	if err != nil {
-		return fmt.Errorf("lifecycle guard: reading backlog: %w", err)
-	}
-	if !found {
-		return fmt.Errorf("lifecycle guard: task %q not found in backlog; register it with 'backlog add %q \"<description>\" --kind %s' before spawning", r.args.ID, r.args.ID, r.args.Kind)
-	}
-
-	// Check for duplicate IDs in backlog
-	dup, err := HasDuplicate(r.homeDir, r.args.ID)
-	if err != nil {
-		return fmt.Errorf("lifecycle guard: checking for duplicates: %w", err)
-	}
-	if dup {
-		return fmt.Errorf("lifecycle guard: task %q has duplicate entries in backlog; resolve duplicates before spawning", r.args.ID)
+		return err
 	}
 
 	// Check already-live: existing meta with window means a soldier session exists
 	meta, metaErr := home.ReadMeta(r.homeDir, r.args.ID)
 	metaExists := metaErr == nil && meta["window"] != ""
 
-	// State-based checks. Backlog In flight without live meta is start→spawn — allow.
-	switch item.State {
-	case StateBlocked:
+	// State-based checks. Working without live meta is start→spawn — allow.
+	switch agg.Phase {
+	case taskauthority.PhaseBlocked:
 		if !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is blocked; use --reopen to force dispatch or clear the blocker first", r.args.ID)
 		}
-	case StateDone:
+	case taskauthority.PhaseDone:
 		if !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is done; use --reopen to reopen", r.args.ID)
 		}
-	case StateInFlight:
+	case taskauthority.PhaseWorking:
 		// Allow when no live session; refuse only duplicate live execution.
 		if metaExists && !r.args.Reopen {
 			return fmt.Errorf("lifecycle guard: task %q is already in-flight with a live session; refuse duplicate live execution", r.args.ID)
 		}
-		return r.ensureTaskAggregate()
+		return nil
 	}
 
 	// Live session without matching state still refuses (stale meta after teardown failure).
@@ -620,24 +594,6 @@ func (r *Runner) checkBacklogAuthority() error {
 		return fmt.Errorf("lifecycle guard: task %q already has a live soldier session; refuse duplicate live execution", r.args.ID)
 	}
 
-	return r.ensureTaskAggregate()
-}
-
-func (r *Runner) ensureTaskAggregate() error {
-	// The canonical Task Authority record is created by backlog add / task add
-	// through the Authority; the spawn shim never creates aggregates (Task
-	// 7.8). Fail closed when the task has no canonical record — the heal path
-	// is registering the task through the backlog.
-	if r.args.Authority == nil {
-		return fmt.Errorf("lifecycle guard: task authority is not composed for spawn")
-	}
-	taskID, err := domain.NewTaskID(r.args.ID)
-	if err != nil {
-		return fmt.Errorf("lifecycle guard: task %q has no canonical Task Authority record; register it with 'backlog add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
-	}
-	if _, err := r.args.Authority.Get(taskID); err != nil {
-		return fmt.Errorf("lifecycle guard: task %q has no canonical Task Authority record; register it with 'backlog add %q \"<description>\" --kind %s' before spawning: %w", r.args.ID, r.args.ID, r.args.Kind, err)
-	}
 	return nil
 }
 
@@ -1463,7 +1419,6 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 		// Captain-only skills (will be denied by authority classification)
 		{Name: "captain-provisioning", Role: "captain"},
 		{Name: "munsu-ops", Role: "soldier"}, // explicitly denied in denylist
-		{Name: "tasks-axi", Role: "soldier"}, // explicitly denied in denylist (backlog mutation)
 		{Name: "stuck-soldier-recovery", Role: "captain"},
 		{Name: "no-mistakes", Role: "captain"},
 		{Name: "bootstrap-diagnostics", Role: "general"},

@@ -6,7 +6,7 @@
 
 When this session owns supervision and away mode is not active:
 
-1. Drain first: `munsu wake-drain`.
+1. Claim first: `munsu wake claim --consumer <id>`.
 2. Confirm Pi has loaded the munsu watcher extension (`fm-watch-arm-pi` custom tool).  
    If not, restart with both watcher and turn-end guard extensions loaded.
 3. Arm supervision using the `fm_watch_arm_pi` custom tool (or `/fm-watch-arm-pi` as human fallback).  
@@ -19,7 +19,7 @@ When this session owns supervision and away mode is not active:
 ## Key supervision commands
 
 - Use `munsu watch-arm` to arm the watcher.
-- Use `munsu wake-drain` to drain queued wake records.
+- Use `munsu wake claim` to claim queued wake records under a lease.
 - Pi extension tool `fm_watch_arm_pi` is the munsu-owned arm mechanism.
 - No PreToolUse seatbelt — munsu's pull-based watcher replaces turn-end hooks for soldiers.
 
@@ -30,6 +30,6 @@ When this session owns supervision and away mode is not active:
 
 ## See also
 
-- `munsu watch-arm --help`, `munsu wake-drain --help`, `munsu guard --help`
+- `munsu watch-arm --help`, `munsu wake claim --help`, `munsu guard --help`
 - `munsu skill show harness-adapters` — Pi launch template details.
 - Seeded `AGENTS.md` (orchestrator operating manual) §4 (Harness dispatch) and §5 (Supervision protocol)

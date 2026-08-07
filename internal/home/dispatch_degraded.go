@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// DispatchAction names a dispatch action gated by supervision. The legacy
+// v1 dispatch-control record shapes were deleted; the enum survives because
+// the supervision gates (fleet/CLI) classify actions as degraded or not.
+type DispatchAction string
+
+const (
+	DispatchActionHandoff DispatchAction = "handoff"
+	DispatchActionStart   DispatchAction = "start"
+	DispatchActionSpawn   DispatchAction = "spawn"
+)
+
 // ErrUnhealthyWatcher is returned when the watcher is unhealthy and the
 // operation is blocked by degraded mode. An unhealthy watcher blocks
 // new ownership, start, and spawn while allowing diagnostics, repair,

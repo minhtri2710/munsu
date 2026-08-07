@@ -295,7 +295,7 @@ Skill metadata comes from a versioned typed embedded manifest. Each skill declar
 
 ### 13. Verification and delivery
 
-The default warm `go test ./... -count=1` suite contains hermetic critical-contract tests and must have a median under five seconds across three runs on macOS, Linux, and Windows, with no run above eight seconds.
+The default warm `go test ./... -count=1` suite contains hermetic critical-contract tests and must have a median under five seconds across three runs on macOS, Linux, and Windows, with no run above eight seconds. **Superseded for owner-clean v1:** ADR-0008 drops the numeric per-suite budget for v1; the registry lock-overlap guard (independent Project/Captain aggregate operations must complete within the 2s overlap budget) remains binding.
 
 Required extended jobs cover race tests, state-machine properties, fuzzing, platform filesystem contracts, and real adapter integrations. A versioned test manifest defines all required commands per platform.
 

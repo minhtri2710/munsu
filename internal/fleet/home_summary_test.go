@@ -10,26 +10,16 @@ import (
 	"testing"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
-
-// setManualMode forces manual backlog backend for tests that use native md.
-func setManualMode(t *testing.T, homeDir string) {
-	t.Helper()
-	configDir := filepath.Join(homeDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatalf("creating config dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
-		t.Fatalf("writing backlog-backend config: %v", err)
-	}
-}
 
 func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 	home := t.TempDir()
-	setManualMode(t, home)
-	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	os.WriteFile(filepath.Join(home, "data", "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] t1: work\n- [ ] t2: queued\n"), 0644)
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
+	seedCanonicalPhase(t, home, "t1", taskauthority.PhaseWorking)
+	seedCanonicalPhase(t, home, "t2", taskauthority.PhaseQueued)
 	if err := mhome.WriteMeta(home, "t1", map[string]string{"kind": "ship", "window": "w1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -59,17 +49,13 @@ func TestSummarizeCaptainHome_ActiveChild(t *testing.T) {
 
 func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 	home := t.TempDir()
-	setManualMode(t, home)
-	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-	os.WriteFile(filepath.Join(home, "data", "md"), []byte(`# Backlog
-
-## day
-- [-] t-decision: needs input
-- [!] t-blocked: waiting dep
-- [x] t-done: shipped feature
-- [ ] t-queued: next work
-`), 0644)
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
+	seedCanonicalPhase(t, home, "t-decision", taskauthority.PhaseWorking)
+	seedCanonicalPhase(t, home, "t-blocked", taskauthority.PhaseBlocked)
+	seedCanonicalPhase(t, home, "t-done", taskauthority.PhaseDone)
+	seedCanonicalPhase(t, home, "t-queued", taskauthority.PhaseQueued)
 	if err := mhome.WriteMeta(home, "t-decision", map[string]string{"kind": "ship"}); err != nil {
 		t.Fatal(err)
 	}
@@ -110,29 +96,31 @@ func TestSummarizeCaptainHome_DecisionsHoldsLanded(t *testing.T) {
 	}
 }
 
-func TestSummarizeCaptainHome_MissingBacklogInvalid(t *testing.T) {
+func TestSummarizeCaptainHome_EmptyHomeValid(t *testing.T) {
 	home := t.TempDir()
-	setManualMode(t, home)
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
+	}
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	sum := SummarizeCaptainHome(home)
-	// Without any backlog items, the summary is still valid (empty backlog).
-	// "Missing structured backlog" only occurs when the backend reports an error.
+	// Without any canonical tasks, the summary is still valid (empty view).
+	if !sum.Valid {
+		t.Fatalf("valid=false reason=%q for empty home", sum.Reason)
+	}
 	if sum.State != "no_active_work" {
-		t.Fatalf("state=%q want no_active_work for empty backlog", sum.State)
+		t.Fatalf("state=%q want no_active_work for empty home", sum.State)
 	}
 }
 
 func TestSummarizeCaptainHome_OmittedCaps(t *testing.T) {
 	home := t.TempDir()
-	setManualMode(t, home)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
-
-	var b strings.Builder
-	b.WriteString("# Backlog\n\n")
-	for i := 0; i < 25; i++ {
-		fmt.Fprintf(&b, "- [ ] q%02d: queued item\n", i)
+	if _, err := mhome.Init(home); err != nil {
+		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(home, "data", "md"), []byte(b.String()), 0644)
+	auth := canonicalAtHome(t, home)
+	for i := 0; i < 25; i++ {
+		canonicalCreateTask(t, auth, fmt.Sprintf("q%02d", i), "ship", "")
+	}
 
 	sum := SummarizeCaptainHome(home)
 	if sum.Counts.Queued != 25 {

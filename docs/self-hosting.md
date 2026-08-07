@@ -94,7 +94,8 @@ all toolchain components are ready and prints the current fleet state.
 ### Register work
 
 ```sh
-munsu backlog add <task-id> "<description>" --kind ship --repo munsu --start
+munsu task add <task-id> "<description>" --kind ship --repo munsu
+munsu task start <task-id>
 munsu brief <task-id> munsu                     # scaffold brief
 # fill in {TASK} placeholder in data/<task-id>/brief.md
 ```
@@ -128,7 +129,7 @@ munsu send <task-id> "<instruction>"            # steer the soldier
 When the watcher fires, drain wakes:
 
 ```sh
-munsu wake-drain                                # process all queued wakes
+munsu wake claim --consumer <id>                # claim queued wakes under a lease
 munsu soldier-state <task-id>                      # read ground truth
 ```
 
@@ -152,7 +153,7 @@ munsu delivery merge-local <task-id>            # fast-forward merge
 ```sh
 munsu teardown <task-id>                        # safety-gated teardown
 munsu teardown <task-id> --force                # skip safety checks, removes data/<id>/
-munsu backlog done <task-id>                    # close the backlog item
+munsu task done <task-id>                       # close the task
 ```
 
 Without --force, scout teardown requires report.md and no unresolved decision
@@ -170,14 +171,14 @@ structured hold before completing.
 
 ```sh
 munsu task status <scout-id> "needs-decision" "<key>: <summary>"
-munsu backlog block <dependent-id> --by <scout-id>
+munsu task block <dependent-id> --by <scout-id>
 ```
 
 ### Recording the general's answer
 
 ```sh
 munsu task status <scout-id> "resolved" "<key>: <answer>"
-munsu backlog ready <dependent-id>
+munsu task unblock <dependent-id>
 ```
 
 ### Scout teardown with open holds
@@ -249,7 +250,7 @@ gates, and the return catch-up gate.
           └────────┬─────────┘
                    │ wake detected
           ┌────────▼─────────┐
-          │  munsu wake-drain│  read + clear wake queue
+          │  munsu wake claim│  claim queued wakes under a lease
           │  munsu soldier-state│  ground truth per task
           └────────┬─────────┘
                    │ re-arm if tasks in flight

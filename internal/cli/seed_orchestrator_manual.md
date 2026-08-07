@@ -42,9 +42,8 @@ Your munsu home (`~/.munsu` by default) contains:
 
 ```
 AGENTS.md         this file (orchestrator operating manual)
-config/           key-value configuration (soldier-harness, backlog-backend, backend)
+config/           key-value configuration (soldier-harness, backend)
 data/             durable fleet records
-  backlog.md      task queue (hand-edited fallback; tasks-axi automates this)
   captain.md      general preferences
   learnings.md    fleet-local knowledge
   projects.md     project registry
@@ -74,7 +73,7 @@ and `data/learnings.md` as curated fleet-local knowledge.
 Run `munsu session-start` exactly once at session start.
 
 Read the complete digest once and trust it as this turn's startup and recovery input.
-Do not separately re-read context files, backlog, metadata, or status files
+Do not separately re-read context files, metadata, or status files
 that the digest already printed.
 
 If the session lock is refused, another session is active — remain read-only.
@@ -136,7 +135,7 @@ Knowledge routing:
 
 Captain-scoped knowledge belongs in `data/general.md`.
 Fleet-local operational facts belong in `data/learnings.md`.
-Task-scoped notes belong in the backlog item.
+Task-scoped notes belong in the task record.
 Project-wide knowledge belongs in the project's committed `AGENTS.md`.
 
 ---
@@ -156,7 +155,8 @@ or queued and blocked when it touches the same project subsystem.
 ### Dispatch
 
 ```
-munsu backlog add <id> "<desc>" --kind ship --repo <name> --start
+munsu task add <id> "<desc>" --kind ship --repo <name>
+munsu task start <id>
 munsu brief <id> <repo>
 # Fill in the {TASK} placeholder in data/<id>/brief.md
 munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]
@@ -167,7 +167,7 @@ Check the spawned soldier: `munsu soldier-state <id>`.
 ### Supervise
 
 Ensure the persistent watcher: `munsu watch ensure`.
-On wake: drain with `munsu wake-drain`, then `munsu soldier-state <id>` as ground truth.
+On wake: claim with `munsu wake claim`, then `munsu soldier-state <id>` as ground truth.
 Steer with: `munsu send <id> "<line>"`.
 Peek at output: `munsu peek <id> [--lines N]`.
 
@@ -211,7 +211,7 @@ Use the per-harness protocol from `docs/supervision-protocols/<harness>.md`.
 
 Fundamental loop:
 
-1. Drain: `munsu wake-drain`.
+1. Claim: `munsu wake claim --consumer <id>`.
 2. Ensure: `munsu watch ensure`.
 3. The watcher polls every 5s, queues actionable wakes, and stays alive.
 4. On `signal:` — read event lines, reconcile current state.
@@ -229,7 +229,7 @@ Cross-cutting rules:
 
 ### Wake claim (preferred)
 
-The `munsu wake claim` API supersedes the legacy pull-based `munsu wake-drain` for new deployments:
+The `munsu wake claim` API is the lease-based wake queue surface:
 
 ```
 munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]
@@ -308,7 +308,7 @@ Communication with soldiers and captains follows a strict direction policy:
   states (done, failed, needs-decision, blocked).
 - **notify** --- alias for `munsu report`.
 - **inbox** --- preview view: `munsu inbox` lists pending wakes and last captain status lines side by side.
-  Use before `munsu wake claim` or `munsu wake-drain` to preview what needs attention.
+  Use before `munsu wake claim` to preview what needs attention.
   Rank-aware: shows captain:* status lines from the General's state directory.
 Rank-aware routing via MUNSU_ROLE:
   - soldier appends to its own task .status in the current home
@@ -319,20 +319,23 @@ Never use `munsu send` for parent communication. Use `munsu report` instead.
 
 ---
 
-## 11. Backlog contract
+## 11. Task Authority contract
 
-`data/backlog.md` is the durable queue, managed via the configured backlog backend:
+The canonical Task Authority owns task lifecycle. The `munsu task` command is the
+only Task noun:
 
 ```
-munsu backlog add <id> "<desc>" [--kind ship|scout|task] [--repo <name>] [--start]
-munsu backlog list
-munsu backlog show <id>
-munsu backlog block <id>
-munsu backlog ready <id>
-munsu backlog done <id>
+munsu task add <id> "<desc>" [--kind ship|scout] [--repo <name>]
+munsu task list
+munsu task show <id>
+munsu task start <id>
+munsu task block <id>
+munsu task unblock <id>
+munsu task done <id>
+munsu task reopen <id>
 ```
 
-Update the backlog on every dispatch, completion, and decision for a work item.
+Update task state on every dispatch, completion, and decision for a work item.
 Re-evaluate queued work after every teardown and heartbeat.
 
 Unresolved decisions follow the `decision-hold-lifecycle` policy, which owns
@@ -390,7 +393,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Session start | `munsu session-start` |
 | Detect harness | `munsu harness detect` |
 | Backend capabilities | `munsu backend capabilities` |
-| Add a task | `munsu backlog add <id> "<desc>" --kind ship --repo <name> --start` |
+| Add a task | `munsu task add <id> "<desc>" --kind ship --repo <name>` |
 | Scaffold brief | `munsu brief <id> <repo>` |
 | Spawn soldier | `munsu spawn <id> <project>` |
 | Steer soldier | `munsu send <id> "<line>"` |
@@ -399,7 +402,7 @@ Run: `munsu skill show <name>` to read any skill.
 | Check state | `munsu soldier-state <id>` |
 | Read output | `munsu peek <id>` |
 | Ensure watcher | `munsu watch ensure` |
-| Drain wakes | `munsu wake-drain`
+| Claim wakes | `munsu wake claim --consumer <id>`
 | Claim wakes | `munsu wake claim <consumer-id>`
 | Acknowledge wakes | `munsu wake ack <lease-id> <event-id...>`
 | Guard check | `munsu guard`
@@ -425,13 +428,13 @@ Run: `munsu skill show <name>` to read any skill.
 ```
 1. munsu init                        # ensure home exists (one-time)
 2. munsu session-start               # lock, bootstrap, digest
-3. munsu backlog add <id> ...        # register task
+3. munsu task add <id> ...           # register task
 4. munsu brief <id> <repo>           # scaffold soldier brief
    # Fill in the {TASK} placeholder in data/<id>/brief.md
 5. munsu spawn <id> <project>        # launch soldier in worktree+tmux window
 6. munsu watch ensure                # ensure persistent supervision
 7. munsu send <id> "<msg>"           # steer as needed
-8. munsu wake-drain / soldier-state  # on wake from watcher; or munsu wake claim
+8. munsu wake claim / soldier-state   # on wake from watcher
 9. munsu delivery pr-check <id> <url> # record PR when done
 10. munsu delivery pr-merge <id> <url> [--teardown]  # merge; --teardown cleans soldier
 11. munsu captain converge           # flush send outbox after captain lifecycle

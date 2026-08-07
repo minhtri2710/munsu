@@ -992,91 +992,6 @@ func TestRunCycle_StaleFingerprintStableAcrossPolls(t *testing.T) {
 	}
 }
 
-// TestRunCycle_RelayPendingReceipts verifies that the one-shot recovery
-// (runRecovery) handles pending receipt relay when MUNSU_PARENT_STATUS is set
-// and a TerminalReconcileHook is installed. The relay happens ONCE.
-func TestRunCycle_RelayPendingReceipts(t *testing.T) {
-	tmp := t.TempDir()
-	stateDir := filepath.Join(tmp, "state")
-	os.MkdirAll(stateDir, 0755)
-
-	parentHome := t.TempDir()
-	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
-
-	taskID := "test-soldier"
-	termKey := "uplink"
-
-	// Write provenance marker so turnend can read captain ID
-	captainID := "test-captain"
-	markerPath := filepath.Join(tmp, ProvenanceMarkerName)
-	os.MkdirAll(filepath.Dir(markerPath), 0755)
-	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+tmp+"\n"), 0644)
-
-	// Write receipt and init obligation (simulating soldier done)
-	if err := WriteReceipt(tmp, taskID, termKey, "done", "task complete"); err != nil {
-		t.Fatalf("WriteReceipt: %v", err)
-	}
-	if err := InitTaskObligations(tmp, taskID, termKey); err != nil {
-		t.Fatalf("InitTaskObligations: %v", err)
-	}
-
-	// Set MUNSU_PARENT_STATUS for recovery relay
-	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-
-	// Install a TerminalReconcileHook that relays receipts (simulating captain init)
-	origHooks := activeTestHooks
-	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
-		ph := os.Getenv("MUNSU_PARENT_STATUS")
-		if ph == "" || ph == homeDir {
-			return nil
-		}
-		_, err := RelayPendingReceipts(homeDir, ph)
-		return err
-	}}
-	defer func() { activeTestHooks = origHooks }()
-
-	recoveryDone = sync.Map{} // reset for test isolation
-
-	// Run one cycle — recovery should trigger and relay the pending receipt
-	emitted, err := testRunCycle(tmp)
-	if err != nil {
-		t.Fatalf("runCycle: %v", err)
-	}
-	_ = emitted // may be false if relay hook does not enqueue wake
-
-	// Verify ack was written
-	if !IsReceiptAcked(tmp, taskID, termKey) {
-		t.Error("receipt should be acked after recovery")
-	}
-
-	// Verify parent received the relay status
-	relayStatusPath := filepath.Join(parentHome, "state", "captain:"+captainID+".relay-"+taskID+".status")
-	data, err := os.ReadFile(relayStatusPath)
-	if err != nil {
-		t.Fatalf("parent relay status should exist: %v", err)
-	}
-	if !strings.Contains(string(data), "done") {
-		t.Errorf("relay status should contain 'done', got: %s", string(data))
-	}
-
-	// Verify obligation is closed
-	open, err := IsTaskReportRelayOpen(tmp, taskID)
-	if err != nil {
-		t.Fatalf("IsTaskReportRelayOpen: %v", err)
-	}
-	if open {
-		t.Error("ReportRelay should be closed after recovery")
-	}
-
-	// Second runCycle should NOT trigger recovery again (recoveryDone=true)
-	recoveryDone = sync.Map{}
-	emitted2, err2 := testRunCycle(tmp)
-	if err2 != nil {
-		t.Fatalf("second runCycle: %v", err2)
-	}
-	_ = emitted2
-}
-
 // TestNormalRunCycle_NoDiagnosticWake verifies that runCycle no longer
 // emits diagnostic wakes about missing parent-home. Pending receipts without
 // MUNSU_PARENT_STATUS are handled silently — the mailbox system makes them
@@ -1189,44 +1104,6 @@ func setupRunCycleTest(t *testing.T) string {
 	tmp := t.TempDir()
 	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
 	return tmp
-}
-
-// writeProvenanceMarker writes a munsu-v2 provenance marker for terminal
-// receipt reconciliation tests.
-func writeProvenanceMarker(t *testing.T, home, captainID string) {
-	t.Helper()
-	markerPath := filepath.Join(home, ProvenanceMarkerName)
-	os.MkdirAll(filepath.Dir(markerPath), 0755)
-	os.WriteFile(markerPath, []byte("munsu-v2\n"+captainID+"\n"+home+"\n"), 0644)
-}
-
-// installRelayHook installs a TerminalReconcileHook that relays pending
-// receipts via RelayPendingReceipts. Returns a cleanup function.
-func installRelayHook(t *testing.T) func() {
-	t.Helper()
-	origHooks := activeTestHooks
-	activeTestHooks = testWatcherHooks{reconcile: func(homeDir string, startup bool) error {
-		ph := os.Getenv("MUNSU_PARENT_STATUS")
-		if ph == "" || ph == homeDir {
-			return nil
-		}
-		_, err := RelayPendingReceipts(homeDir, ph)
-		return err
-	}}
-	return func() { activeTestHooks = origHooks }
-}
-
-// setupParentStatusTest creates a captain home and general (parent) home
-// with provenance marker and sets MUNSU_PARENT_STATUS. Returns both paths.
-func setupParentStatusTest(t *testing.T) (captainHome, generalHome string) {
-	t.Helper()
-	tmp := t.TempDir()
-	os.MkdirAll(filepath.Join(tmp, "state"), 0755)
-	parentHome := t.TempDir()
-	os.MkdirAll(filepath.Join(parentHome, "state"), 0755)
-	writeProvenanceMarker(t, tmp, "test-captain")
-	t.Setenv("MUNSU_PARENT_STATUS", parentHome)
-	return tmp, parentHome
 }
 
 // resetRecovery resets recoveryDone for test isolation.

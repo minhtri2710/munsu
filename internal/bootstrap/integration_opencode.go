@@ -409,7 +409,7 @@ function spawnArm(sessionID, client) {
         body: {
           parts: [{
             type: "text",
-            text: "WATCHER FIRED - drain queued wakes with 'munsu wake-drain', handle the reported wake, and continue normal supervision.\\n\\n" + reason,
+            text: "WATCHER FIRED - claim queued wakes with 'munsu wake claim', handle the reported wake, and continue normal supervision.\\n\\n" + reason,
           }],
         },
       });
@@ -424,7 +424,7 @@ function spawnArm(sessionID, client) {
         body: {
           parts: [{
             type: "text",
-            text: "WATCHER FIRED - drain queued wakes with 'munsu wake-drain', handle the reported wake, and continue normal supervision.\\n\\nwatcher: FAILED - OpenCode arm child failed: " + String(error.message),
+            text: "WATCHER FIRED - claim queued wakes with 'munsu wake claim', handle the reported wake, and continue normal supervision.\\n\\nwatcher: FAILED - OpenCode arm child failed: " + String(error.message),
           }],
         },
       });

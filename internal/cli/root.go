@@ -80,16 +80,6 @@ func MaximumNArgs(n int) cobra.PositionalArgs {
 	}
 }
 
-// isDefaultHome returns true if the resolved homeDir is the default ~/.munsu.
-// Used to force manual backlog backend for custom homes to prevent data leaks.
-func isDefaultHome(homeDir string) bool {
-	defaultHome, err := home.Resolve("")
-	if err != nil {
-		return true // conservative: assume default
-	}
-	return homeDir == defaultHome
-}
-
 // fleetSummary prints a compact fleet/orientation snapshot to the given writer.
 func fleetSummary(w io.Writer, homeDir string) {
 	snap, snapErr := fleet.Snapshot(homeDir)
@@ -140,7 +130,7 @@ func fleetSummary(w io.Writer, homeDir string) {
 		}
 	} else {
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "No tasks. Start with `munsu backlog add <id> \"<description>\"`.")
+		fmt.Fprintln(w, "No tasks. Start with `munsu task add <id> \"<description>\"`.")
 	}
 
 	fmt.Fprintln(w)
@@ -188,7 +178,6 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newTaskCmd())
 	root.AddCommand(newCapabilitiesCmd())
 	root.AddCommand(newBackendCmd())
-	root.AddCommand(newBacklogCmd())
 	root.AddCommand(newBriefCmd())
 	root.AddCommand(newSpawnCmd())
 	root.AddCommand(newSendCmd())
@@ -203,12 +192,10 @@ with no requirement to live inside a specific project checkout.`,
 	root.AddCommand(newSoldierFlushCmd())
 	root.AddCommand(newDeliveryCmd())
 	root.AddCommand(newFleetCmd())
-	root.AddCommand(newMigrateCmd())
 	root.AddCommand(newHerdrCmd())
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newWatchArmCmd())
 	root.AddCommand(newWakeCmd())
-	root.AddCommand(newWakeDrainAliasCmd())
 	root.AddCommand(newEventCmd())
 	root.AddCommand(newContractGuardCmd())
 	root.AddCommand(newDoctorCmd())

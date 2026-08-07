@@ -15,7 +15,7 @@ This skill is the single policy owner for unresolved general decisions discovere
 
 ## Policy
 
-Every unresolved decision that belongs to the general and is discovered while producing, reading, presenting, or ending an investigation or review must become a structured captain-held work item in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
+Every unresolved decision that belongs to the general and is discovered while producing, reading, presenting, or ending an investigation or review must become a structured captain-held work item in the canonical Task Authority of the home that owns the originating work before that work or review may be treated as complete.
 
 The agent performs the semantic inventory — scripts must not infer decisions from report prose, terminal output, or chat.
 
@@ -28,9 +28,8 @@ The agent performs the semantic inventory — scripts must not infer decisions f
 2. **Capture context.** Use `munsu stow` to save the full decision context as a durable learning if the context is non-obvious from the report alone.
 3. **Block dependent work.** When other tasks depend on the decision, record the dependency:
    ```
-   munsu backlog block <dependent-id> --by <blocker-id>
+   munsu task block <dependent-id> --by <blocker-id>
    ```
-   When using the tasks-axi backend, `--by <blocker-id>` is required. Omitting it falls back to manual backend.
    (The block will be cleared when the general resolves the decision.)
 5. **Record the answer.** After the general decides, update the originating task:
    ```
@@ -38,7 +37,7 @@ The agent performs the semantic inventory — scripts must not infer decisions f
    ```
 6. **Unblock dependent work.** When a decision clears a blocker:
    ```
-   munsu backlog ready <dependent-id>
+   munsu task unblock <dependent-id>
    ```
 7. **Close the loop.** Verify that no stale `needs-decision:` status lines remain for the originating task.
 

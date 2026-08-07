@@ -205,57 +205,6 @@ func TestTaskShowReadsCanonicalAuthorityRecords(t *testing.T) {
 	}
 }
 
-// TestBacklogAddCreatesCanonicalQueuedGeneration proves `backlog add` creates
-// one queued Task Generation and then appends the backlog projection.
-func TestBacklogAddCreatesCanonicalQueuedGeneration(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	if out, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--kind", "ship", "--repo", "munsu", "--home", homeDir}); err != nil {
-		t.Fatalf("add: %v\n%s", err, out)
-	}
-	agg, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "task"))
-	if err != nil {
-		t.Fatalf("authority Get: %v", err)
-	}
-	if agg.Generation != 1 || agg.Revision != taskauthority.FirstRevision || agg.Phase != taskauthority.PhaseQueued {
-		t.Fatalf("aggregate = %+v", agg)
-	}
-	if agg.Definition.Owner != filepath.Base(homeDir) || agg.Definition.Description != "work" || agg.Definition.Kind != "ship" || agg.Definition.Project != "munsu" {
-		t.Fatalf("definition = %+v", agg.Definition)
-	}
-	backlog, err := os.ReadFile(filepath.Join(homeDir, "data", "md"))
-	if err != nil {
-		t.Fatalf("backlog projection: %v", err)
-	}
-	if !strings.Contains(string(backlog), "task") {
-		t.Fatalf("backlog projection missing task:\n%s", backlog)
-	}
-}
-
-// TestBacklogAddProjectionFailureReturnsTypedPartial proves backlog add's
-// projection failure surfaces a typed partial result while the authoritative
-// Task Generation survives. A directory at the backlog file path forces the
-// projection to fail.
-func TestBacklogAddProjectionFailureReturnsTypedPartial(t *testing.T) {
-	homeDir := t.TempDir()
-	initCLITestHome(t, homeDir)
-	if err := os.MkdirAll(filepath.Join(homeDir, "data", "md"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	_, err := runBacklogLifecycleCommand(t, []string{"backlog", "add", "task", "work", "--home", homeDir})
-	var partial *LifecyclePartialError
-	if !errors.As(err, &partial) || partial.TaskID != "task" || partial.State != "queued" {
-		t.Fatalf("error = %T %v, want typed partial result", err, err)
-	}
-	agg, getErr := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "task"))
-	if getErr != nil {
-		t.Fatalf("authoritative commit must survive projection failure: %v", getErr)
-	}
-	if agg.Phase != taskauthority.PhaseQueued {
-		t.Fatalf("aggregate = %+v", agg)
-	}
-}
-
 // TestTaskObserveCanonicalTaskWithoutMeta proves `task observe` resolves a
 // task from its canonical Authority record even when no .meta projection
 // exists yet (Task 7.8 canonical-read preference): the projection is display
@@ -287,6 +236,39 @@ func TestTaskObserveCanonicalTaskWithoutMeta(t *testing.T) {
 	if !strings.Contains(out, "task_id: obs") {
 		t.Fatalf("task observe did not resolve the canonical task:\n%s", out)
 	}
+}
+
+// seedAuthorityTask creates one queued task through the concrete canonical
+// Authority so lifecycle tests drive canonical Task Authority records
+// (ADR-0008), never legacy v1 aggregates.
+func seedAuthorityTask(t *testing.T, auth *taskauthority.Canonical, id string) {
+	t.Helper()
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      tid,
+		Owner:       "owner",
+		Description: "work",
+		Kind:        "ship",
+		Reason:      "test seed",
+	}
+	op := mustCanonicalOp(t, "op-create-seed-"+id, req)
+	if _, err := auth.Create(op, req); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// readFileForTest reads one test fixture file, failing the test on error.
+func readFileForTest(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 // mustTaskIDFor converts a test task ID into a typed identity.

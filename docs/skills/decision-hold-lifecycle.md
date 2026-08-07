@@ -12,15 +12,15 @@ General decisions discovered during investigations or visual reviews must be tra
 
 ### Hold lifecycle (Phase A — protocol only)
 
-In Phase A, decision-hold uses status-file conventions and backlog primitives. Structured `munsu decision-hold` commands will be added in PR sequence D.
+In Phase A, decision-hold uses status-file conventions and Task Authority block/unblock primitives. Structured `munsu decision-hold` commands will be added in PR sequence D.
 
 | Step | Action | Command |
 |------|--------|---------|
 | Record | Append `needs-decision` status | `munsu task status <id> "needs-decision" "<key>: <summary>"` |
-| Block | Block dependent task | `munsu backlog block <dependent-id> --by <blocker-id>` |
+| Block | Block dependent task | `munsu task block <dependent-id> --by <blocker-id>` |
 | Record answer | Append resolved status | `munsu task status <id> "resolved" "<key>: <answer>"` |
-| Unblock | Clear blocker | `munsu backlog ready <dependent-id>` |
-| Verify | No stale needs-decision lines remain | `munsu backlog show <id>` |
+| Unblock | Clear blocker | `munsu task unblock <dependent-id>` |
+| Verify | No stale needs-decision lines remain | `munsu task show <id>` |
 
 ### Hold lifecycle (Phase D+ — structured commands)
 

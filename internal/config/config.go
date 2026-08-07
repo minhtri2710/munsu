@@ -17,7 +17,6 @@ var KnownKeys = []string{
 	"captain-harness",
 	"model",
 	"model-allowlist",
-	"backlog-backend",
 	"default-mode",
 	"wake-delivery-mode",
 	"require-no-mistakes",

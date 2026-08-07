@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // HomeSummary is a bounded structured view of one Captain home.
@@ -46,19 +47,20 @@ type DecisionBrief struct {
 	Verb    string
 	Summary string
 	Reason  string
-	Source  string // status | backlog
+	Source  string // status
 }
 
-// HoldBrief is one external hold (blocked backlog or parked/paused/blocked child).
+// HoldBrief is one external hold (blocked Task Authority record or
+// parked/paused/blocked child).
 type HoldBrief struct {
 	ID        string
 	Title     string
 	BlockedBy string
 	Reason    string
-	Source    string // backlog | child-state
+	Source    string // task-authority | child-state
 }
 
-// QueuedBrief is one queued backlog row.
+// QueuedBrief is one queued Task Authority record.
 type QueuedBrief struct {
 	ID    string
 	Title string
@@ -66,11 +68,21 @@ type QueuedBrief struct {
 	Kind  string
 }
 
-// LandedBrief is one recently completed backlog row.
+// LandedBrief is one recently completed Task Authority record.
 type LandedBrief struct {
 	ID    string
 	Title string
 	PRURL string
+}
+
+// queuedView is the Task Authority view of one queued task.
+type queuedView struct {
+	ID, Title, Repo, Kind string
+}
+
+// landedView is the Task Authority view of one landed task.
+type landedView struct {
+	ID, Title string
 }
 
 // EndpointBrief is one task meta endpoint under the home.
@@ -129,29 +141,40 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		return sum
 	}
 
-	items, listErr := ListItems(homeDir, StateQueued) // zero filter = all
-	backlogPresent := listErr == nil
-	if !backlogPresent {
-		items = nil
+	// Canonical Task Authority records are the state source (Task 7.8): the
+	// authoritative phase and kind win over the .status projection for the
+	// child's current state, and a legacy v1 home fails closed in the summary
+	// validity instead of silently projecting.
+	canonical, canonicalErr := canonicalAggregates(homeDir)
+	if canonicalErr != nil {
+		sum.Valid = false
+		sum.Reason = "task-authority state requires migration or repair: " + canonicalErr.Error()
+		sum.State = "unknown"
+		return sum
 	}
 
-	inFlightByID := map[string]Item{}
-	var queuedAll []Item
-	var landedAll []Item
-	for _, item := range items {
-		switch item.State {
-		case StateQueued:
+	inFlightByID := map[string]bool{}
+	var queuedAll []queuedView
+	var landedAll []landedView
+	for id, agg := range canonical {
+		switch agg.Phase {
+		case taskauthority.PhaseQueued:
 			sum.Counts.Queued++
-			queuedAll = append(queuedAll, item)
-		case StateInFlight:
+			queuedAll = append(queuedAll, queuedView{
+				ID:    id,
+				Title: agg.Definition.Description,
+				Repo:  agg.Definition.Project,
+				Kind:  agg.Definition.Kind,
+			})
+		case taskauthority.PhaseWorking:
 			sum.Counts.InFlight++
-			inFlightByID[item.ID] = item
-		case StateBlocked:
+			inFlightByID[id] = true
+		case taskauthority.PhaseBlocked:
 			sum.Counts.Blocked++
-		case StateDone:
+		case taskauthority.PhaseDone:
 			sum.Counts.Done++
-			if item.Kind != "captain" {
-				landedAll = append(landedAll, item)
+			if agg.Definition.Kind != "captain" {
+				landedAll = append(landedAll, landedView{ID: id, Title: agg.Definition.Description})
 			}
 		}
 	}
@@ -165,18 +188,6 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	metaByID := map[string]home.MetaEntry{}
 	for _, e := range entries {
 		metaByID[e.ID] = e
-	}
-
-	// Canonical Task Authority records are the preferred state source (Task
-	// 7.8): the authoritative phase and kind win over the .status projection
-	// for the child's current state, and a legacy v1 home fails closed in the
-	// summary validity instead of silently projecting.
-	canonical, canonicalErr := canonicalAggregates(homeDir)
-	if canonicalErr != nil {
-		sum.Valid = false
-		sum.Reason = "task-authority state requires migration or repair: " + canonicalErr.Error()
-		sum.State = "unknown"
-		return sum
 	}
 
 	type childState struct {
@@ -263,23 +274,25 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 	sum.DecisionsOpen = capSlice(decisionsAll, maxDecisionsOpen)
 
 	var holdsAll []HoldBrief
-	for _, item := range items {
-		if item.State != StateBlocked {
+	for id, agg := range canonical {
+		if agg.Phase != taskauthority.PhaseBlocked {
 			continue
 		}
 		holdsAll = append(holdsAll, HoldBrief{
-			ID:     trunc(item.ID, 120),
-			Title:  trunc(item.Description, 90),
+			ID:     trunc(id, 120),
+			Title:  trunc(agg.Definition.Description, 90),
 			Reason: "blocked",
-			Source: "backlog",
+			Source: "task-authority",
 		})
 	}
 	for _, c := range children {
 		switch c.verb {
 		case "parked", "paused", "blocked":
 			title := c.id
-			if item, ok := inFlightByID[c.id]; ok {
-				title = item.Description
+			if inFlightByID[c.id] {
+				if agg, ok := canonical[c.id]; ok {
+					title = agg.Definition.Description
+				}
 			}
 			holdsAll = append(holdsAll, HoldBrief{
 				ID:     trunc(c.id, 120),
@@ -298,7 +311,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		}
 		sum.Queued = append(sum.Queued, QueuedBrief{
 			ID:    trunc(item.ID, 120),
-			Title: trunc(item.Description, 120),
+			Title: trunc(item.Title, 120),
 			Repo:  trunc(item.Repo, 120),
 			Kind:  trunc(item.Kind, 40),
 		})
@@ -323,7 +336,7 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 		}
 		sum.Landed = append(sum.Landed, LandedBrief{
 			ID:    trunc(item.ID, 120),
-			Title: trunc(item.Description, 120),
+			Title: trunc(item.Title, 120),
 			PRURL: trunc(pr, 500),
 		})
 	}
@@ -365,46 +378,26 @@ func SummarizeCaptainHome(homeDir string) HomeSummary {
 			orphanInFlight = append(orphanInFlight, id)
 		}
 	}
-	var terminalInFlight []string
-	for id := range inFlightByID {
-		e, ok := metaByID[id]
-		if !ok {
-			continue
-		}
-		verb, _ := splitStatus(e.LastStatus)
-		if agg, ok := canonical[id]; ok {
-			verb = string(agg.Phase)
-		}
-		if verb == "done" || verb == "failed" {
-			terminalInFlight = append(terminalInFlight, id+"="+verb)
-		}
-	}
 	var unownedCurrent []string
 	for _, c := range children {
 		switch c.verb {
 		case "working", "parked", "paused", "blocked":
-			if _, ok := inFlightByID[c.id]; !ok {
+			if !inFlightByID[c.id] {
 				unownedCurrent = append(unownedCurrent, c.id+"="+c.verb)
 			}
 		}
 	}
 
 	switch {
-	case !backlogPresent:
-		sum.Valid = false
-		sum.Reason = "missing structured backlog"
 	case len(unknownChildren) > 0:
 		sum.Valid = false
 		sum.Reason = "child current state unavailable"
 	case len(orphanInFlight) > 0:
 		sum.Valid = false
-		sum.Reason = "in-flight backlog item has no child metadata"
+		sum.Reason = "in-flight task has no child metadata"
 	case len(unownedCurrent) > 0 && sum.Counts.InFlight > 0:
 		sum.Valid = false
-		sum.Reason = "live child state has no in-flight backlog item: " + strings.Join(unownedCurrent, ", ")
-	case len(terminalInFlight) > 0:
-		sum.Valid = false
-		sum.Reason = "in-flight backlog item has terminal child state: " + strings.Join(terminalInFlight, ", ")
+		sum.Reason = "live child state has no in-flight task: " + strings.Join(unownedCurrent, ", ")
 	}
 
 	captainDecision := false

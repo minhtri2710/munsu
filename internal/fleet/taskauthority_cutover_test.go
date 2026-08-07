@@ -277,12 +277,9 @@ func TestRetireTaskForceFailsClosedWithoutAuthoritativeEvidence(t *testing.T) {
 // working cannot classify a canonically done child as active.
 func TestSummarizeCaptainHomePrefersCanonicalPhase(t *testing.T) {
 	homeDir := t.TempDir()
-	// Initialize the canonical home first, then the manual-mode config and
-	// backlog files, then a canonically done child with a stale status line.
+	// Initialize the canonical home, then a canonically done child with a
+	// stale working status line: the authoritative phase wins.
 	seedCanonicalShipTask(t, homeDir, "t1", "done")
-	setManualMode(t, homeDir)
-	os.MkdirAll(filepath.Join(homeDir, "data"), 0755)
-	os.WriteFile(filepath.Join(homeDir, "data", "md"), []byte("# Backlog\n\n## 2026-01-01\n- [-] t1: work\n"), 0644)
 	if err := home.WriteMeta(homeDir, "t1", map[string]string{"kind": "ship", "window": "w1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -295,22 +292,5 @@ func TestSummarizeCaptainHomePrefersCanonicalPhase(t *testing.T) {
 	}
 	if sum.State == "active_child_work" {
 		t.Fatalf("state = %q, want non-active (canonical phase wins)", sum.State)
-	}
-}
-
-// TestCaptainNamespaceExemptFromTaskAuthorityGate pins the Task 7.8 captain
-// exemption: captain: namespace metadata writes in captain_captain.go remain
-// explicitly outside the task-authority grep gate — the captain supervisor
-// metadata is not moved into the Task Authority, and no legacy gate symbol
-// appears in the file.
-func TestCaptainNamespaceExemptFromTaskAuthorityGate(t *testing.T) {
-	src, err := os.ReadFile("captain_captain.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, sym := range []string{"WriteTaskAggregate", "UpdateCurrentTaskAggregate", "CreateTaskAggregate", "StartTask", "UnblockTask", "ReopenTask", "CreateDispatchHold", "ReleaseDispatchHold", "ResolveDispatchDecision", "CheckDispatchHold"} {
-		if strings.Contains(string(src), sym) {
-			t.Errorf("captain_captain.go carries legacy gate symbol %q; captain metadata stays outside the Task Authority", sym)
-		}
 	}
 }

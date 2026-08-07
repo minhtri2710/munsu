@@ -7,10 +7,6 @@
 *.out
 *.cov
 
-# Local development backlog state
-/backlog.md
-/.tasks/
-
 /state/
 /data/
 /config/

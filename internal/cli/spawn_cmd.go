@@ -42,9 +42,6 @@ remote/name heuristics.
 When inference fails, pass the project name explicitly or run 'munsu project add'.`,
 		Args: cobra.MatchAll(MinimumNArgs(1), cobra.MaximumNArgs(2)),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpSpawn, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("spawn compatibility check failed: %s", result.FormatErrors())
-			}
 			id := args[0]
 
 			// Resolve project name: explicit arg, or infer from cwd
@@ -105,7 +102,7 @@ When inference fails, pass the project name explicitly or run 'munsu project add
 	cmd.Flags().StringVar(&kind, "kind", "ship", "Task kind (ship|scout)")
 	cmd.Flags().StringVar(&mode, "mode", "", "Delivery mode (no-mistakes|direct-PR|local-only; empty=auto-detect)")
 	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip pre-flight checks")
-	cmd.Flags().BoolVar(&force, "force", false, "Bypass captain backlog authority checks")
+	cmd.Flags().BoolVar(&force, "force", false, "Bypass captain task authority checks")
 	cmd.Flags().BoolVar(&reopen, "reopen", false, "Allow spawning a done/blocked task (reopen)")
 	cmd.Flags().StringVar(&backend, "backend", "", "Session backend (tmux|herdr)")
 	cmd.Flags().StringVar(&harnessFlag, "harness", "", "Override soldier harness (pi, agy, etc.)")
@@ -307,9 +304,6 @@ func newPromoteCmd() *cobra.Command {
 		Short: "Promote a scout task to ship",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpTaskMutation, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("task mutation compatibility check failed: %s", result.FormatErrors())
-			}
 			id := args[0]
 
 			auth, err := ctx.TaskAuthority()
@@ -399,9 +393,6 @@ With --force:
 `,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpTeardown, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("teardown compatibility check failed: %s", result.FormatErrors())
-			}
 			id := args[0]
 
 			// Gate refusal: no-mistakes gate agents must not drive fleet lifecycle.

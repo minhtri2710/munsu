@@ -9,7 +9,7 @@ any project directory without requiring a specific checkout.
 cmd/munsu/main.go       Entrypoint — Cobra command execution
 internal/
   cli/                  Composition root, Cobra commands, self-update, stow, AGENTS.md helpers
-  fleet/                Captain, spawn, backlog, delivery, soldier state, project registry
+  fleet/                Captain, spawn, delivery, soldier state, project registry
   orchestrator/         Watcher, AFK, wake delivery, lifecycle and turn-end coordination
   home/                 Canonical home resolution plus domain-neutral durable mechanics (identity, journaled commit, locks, leases)
   taskauthority/        Canonical Task documents: lifecycle, dispatch, binding, delivery and transfer rules
@@ -30,7 +30,7 @@ in their authoritative module rather than in command wiring.
 | Module | Responsibility |
 |---|---|
 | `cli` | Wire Cobra commands to modules; own CLI-local self-update, stow, AGENTS.md and output helpers |
-| `fleet` | Orchestrate Captain lifecycle, Soldier spawn/state, backlog, project registry and delivery operations |
+| `fleet` | Orchestrate Captain lifecycle, Soldier spawn/state, Task Authority composition, project registry and delivery operations |
 | `orchestrator` | Coordinate supervision, AFK, wakes, turn-end obligations and cross-process lifecycle |
 | `home` | Resolve the munsu home and own domain-neutral durable mechanics: verified identity/roots, containment, scoped fenced locks and leases, atomic journaled change-set commits; retains generic `.meta`/`.status` primitives and the durable mailbox |
 | `taskauthority` | Own canonical Task documents — Aggregate, Generation/Revision, lifecycle, Dispatch Holds, delivery authorization/outcomes, transfer reservations, launch and retirement evidence — as named operations on one `Canonical` surface (ADR-0008 §2) |
@@ -54,7 +54,6 @@ Default home: `~/.munsu` (overridable via `MUNSU_HOME` or `--home`).
     <id>.meta              Task metadata projection
     <id>.status            Append-only status/event projection
   data/
-    backlog.md             Manual backlog fallback
     projects.md            Project registry
     captains.md            Captain registry
     <id>/brief.md          Per-task brief
@@ -129,7 +128,7 @@ dispatch or binding authority.
 ### Captain lifecycle (`internal/fleet`)
 
 `internal/fleet/captain_captain.go` owns seed, launch, retire, handoff,
-config-push, update and migration. `captain_recover.go` owns the recovery
+config-push, update and worktree migration. `captain_recover.go` owns the recovery
 transaction. CLI adapters in `internal/cli` compose verified harness, backend and
 integration capabilities into those operations.
 
@@ -145,7 +144,7 @@ and adjacent orchestrator lifecycle files.
 
 | Phase | Command | Authoritative module |
 |---|---|---|
-| Create / backlog | `munsu task add`, `munsu backlog` | `internal/taskauthority`, `internal/fleet` |
+| Create / lifecycle | `munsu task add/start/done/block/unblock/reopen` | `internal/taskauthority`, `internal/fleet` |
 | Brief | `munsu brief` | `internal/fleet` |
 | Spawn | `munsu spawn` | `internal/fleet`, composed by `internal/cli` |
 | Supervise | `munsu watch`, `munsu watch-arm`, `munsu afk` | `internal/orchestrator` |

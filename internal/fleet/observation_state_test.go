@@ -1,8 +1,6 @@
 package fleet
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -19,16 +17,13 @@ type fixedProbe struct{ alive bool }
 func (p fixedProbe) Probe(string, map[string]string) (bool, error) { return p.alive, nil }
 
 // setupObservationHome seeds a canonical home with a task authority record
-// (via the real Home-backed canonical Task Authority), meta, and (for
-// working states) an in-flight backlog line. Observation reads the canonical
+// (via the real Home-backed canonical Task Authority), meta, and the
+// canonical working phase for working states. Observation reads the canonical
 // record as state truth and the meta/status projections as display.
 func setupObservationHome(t *testing.T, homeDir, state string) {
 	t.Helper()
 	h, err := home.Init(homeDir)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := home.WriteMeta(homeDir, "task", map[string]string{"window": "w1:p1", "backend": "tmux"}); err != nil {
@@ -56,9 +51,6 @@ func setupObservationHome(t *testing.T, homeDir, state string) {
 		t.Fatal(err)
 	}
 	if state == "working" {
-		if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("# Backlog\n\n- [-] task: in flight\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
 		return
 	}
 	complete := taskauthority.CanonicalCompleteRequest{
@@ -103,7 +95,7 @@ func TestReadWithProbe_WorkingDeadPaneSupersededIsCoherent(t *testing.T) {
 		t.Fatal("pane_alive must be false when the probe reports the pane dead")
 	}
 	if !state.StatusLogSuperseded {
-		t.Fatal("status_log_superseded must be true (aggregate/backlog supersede the log)")
+		t.Fatal("status_log_superseded must be true (aggregate supersedes the log)")
 	}
 	if state.Status == "working" {
 		t.Fatalf("must never report working with pane_alive=false plus status_log_superseded=true; got status %q description %q", state.Status, state.Description)

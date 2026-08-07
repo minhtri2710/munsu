@@ -89,7 +89,11 @@ func canonicalAggregates(homeDir string) (map[string]tauth.Aggregate, error) {
 func currentCanonical(homeDir, id string) (tauth.Aggregate, error) {
 	taskID, err := domain.NewTaskID(id)
 	if err != nil {
-		return tauth.Aggregate{}, err
+		// A non-task identity (for example a captain:<id> projection task)
+		// can never hold a canonical task record; report it as a missing
+		// record so callers fall back to the projection tiers instead of
+		// failing closed on an identity that is not a Task identity.
+		return tauth.Aggregate{}, tauth.ErrNotFound
 	}
 	c, err := canonicalAuthority(homeDir)
 	if err != nil {

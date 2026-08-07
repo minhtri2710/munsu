@@ -86,9 +86,6 @@ Flags for worktree provisioning:
 		Short: "Launch a captain in its home (session-backed)",
 		Args:  ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpCaptainLaunch, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("captain launch compatibility check failed: %s", result.FormatErrors())
-			}
 			harnessName, err := harness.Captain(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("resolving captain harness: %w", err)
@@ -282,9 +279,6 @@ surface tracking. State changes tracked in parent state/.captain-converge.lock`,
 	Each step reports ok/failed/skipped so partial failures do not block the whole recovery.`,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			if result := fleet.CheckOperation(fleet.OpCaptainRecover, ctx.Home); !result.IsCompatible() {
-				return fmt.Errorf("captain recovery compatibility check failed: %s", result.FormatErrors())
-			}
 			registered, err := fleet.ListCaptains(ctx.Home)
 			if err != nil {
 				return fmt.Errorf("listing registered captains: %w", err)

@@ -276,7 +276,7 @@ func checkStaleLegacyRecords(parentHome, captainID string) error {
 
 // DefaultCaptainCharter returns the versioned, runtime-owned Captain charter.
 // It covers the full captain-charter-contract: domain, General authority, command envelope,
-// backlog authority, soldier lifecycle, downlink/uplink discipline, one-hop relay,
+// task authority, soldier lifecycle, downlink/uplink discipline, one-hop relay,
 // delivery/merge with mode-specific behavior, AXI-first fail-closed, persistence/recovery,
 // watcher/AFK safety, forbidden actions, and concise command recipes.
 // parentHome must be the General home whose state/captain:<id>.status is the escalation file.
@@ -301,7 +301,7 @@ An empty queue is healthy.
 The General (parent orchestrator) has full authority over your lifecycle:
 - Seeds, launches, retires, and reconciles you.
 - Sets your config (model, harness, inheritable settings).
-- Routes backlog items to you via handoff.
+- Routes tasks to you via handoff.
 - You operate within the domain assigned at seed time.
 
 ## Startup Bootstrap
@@ -345,19 +345,19 @@ Use %[6]smunsu send%[6]s to relay commands to Soldiers:
 - %[6]smunsu send%[6]s provides durability, idempotency, and audit.
 - If %[6]smunsu send%[6]s is unavailable, wait — no raw fallback.
 
-## Backlog Authority
+## Task Authority
 
-The selected backlog backend is the authoritative task source:
-- Use %[6]stasks-axi ready --file <backlog>%[6]s to list ready (unblocked, queued) items.
+The canonical Task Authority is the authoritative task source:
+- Use %[6]smunsu task list%[6]s to list tasks; queued (unblocked) items are ready.
 - Only ready items may be started. Never start a blocked or in-flight item.
-- Dependencies are resolved by the backend: blocked-by items are withheld until resolved.
-- De-duplication is handled by the backend (by key) — never parse or mutate backlog.md directly.
-- When a task completes, update its state via the backend: %[6]stasks-axi done <key> --file <backlog>%[6]s.
+- Dependencies are resolved by the Task Authority: blocked tasks are withheld until unblocked.
+- De-duplication is enforced by the Task Authority (one record per task ID) — never edit task state files directly.
+- When a task completes, update its state via %[6]smunsu task done <id>%[6]s.
 
 ## Soldier Lifecycle
 
 Spawn Soldiers to do work from this home. The dispatch ordering is:
-  %[6]stasks-axi ready --file <backlog>%[6]s → %[6]stasks-axi start <key> --file <backlog>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[6]s
+  %[6]smunsu task list%[6]s → %[6]smunsu task start <id>%[6]s → %[6]smunsu brief <id> <project>%[6]s → %[6]smunsu spawn <id> [<project>] --kind <kind> --mode <mode>%[6]s
 - kind: ship (default) | scout — mode: no-mistakes | direct-PR | local-only (empty = auto-detect)
 - After spawning, monitor soldier progress through their task state.
 - When a soldier completes, receive and ack its Uplink Report, then report the domain result to General (see One-Hop Uplink Report).
@@ -407,7 +407,7 @@ When a Soldier opens a PR:
 ## AXI-First / Fail-Closed
 
 All commands must use AXI-compliant CLIs:
-- Prefer the AXI variant: %[6]stasks-axi%[6]s, %[6]sgh-axi%[6]s, etc.
+- Prefer the AXI variant: %[6]sgh-axi%[6]s, etc.
 - If an AXI tool fails, report the failure — never fall back to unsafe raw commands.
 - Fail-closed: when uncertain, don't guess. Report up with what you know.
 
@@ -436,7 +436,7 @@ You MUST NOT:
 - Modify tracked AGENTS.md (user-owned); the canonical charter lives in .captain-charter.md.
 - Use raw Herdr/tmux commands for General communication.
 - Merge PRs without General authorization.
-- Parse or mutate backlog.md directly when tasks-axi is the selected backend.
+- Parse or mutate task state files directly; task lifecycle runs through %[6]smunsu task%[6]s commands.
 
 ## Concise Command Recipes
 
@@ -449,10 +449,9 @@ You MUST NOT:
 | Send to soldier | %[6]smunsu send <id> <message>%[6]s |
 | Merge PR | %[6]smunsu delivery pr-merge <id> <url> [--teardown]%[6]s |
 | Stuck soldier | %[6]smunsu peek <id>%[6]s → %[6]smunsu send <id> ...%[6]s → ... |
-| View tasks | %[6]stasks-axi list --file data/backlog.md%[6]s |
-| Ready tasks | %[6]stasks-axi ready --file data/backlog.md%[6]s |
-| Start task | %[6]stasks-axi start <key> --file data/backlog.md%[6]s |
-| Complete task | %[6]stasks-axi done <key> --file data/backlog.md%[6]s |
+| View tasks | %[6]smunsu task list%[6]s |
+| Start task | %[6]smunsu task start <id>%[6]s |
+| Complete task | %[6]smunsu task done <id>%[6]s |
 
 `, id, CaptainCharterVersion, home.FromGeneralLabel, "[mu-system:captain-bootstrap]", shQuote(statusFile), bt)
 }
@@ -2143,7 +2142,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeFailed, Detail: continuityErr.Error()})
 				errs = append(errs, fmt.Sprintf("%s: continuity reconciliation failed: %v", sm.ID, continuityErr))
 			} else {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeOK, Detail: fmt.Sprintf("accepted=%d notified=%d queued=%d relayed=%d", continuity.Accepted, continuity.Notified, continuity.Queued, continuity.Relayed)})
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": continuity reconciliation", Status: ConvergeOK, Detail: fmt.Sprintf("accepted=%d notified=%d queued=%d", continuity.Accepted, continuity.Notified, continuity.Queued)})
 			}
 		}
 

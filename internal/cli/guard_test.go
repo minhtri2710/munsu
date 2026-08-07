@@ -71,6 +71,7 @@ func writeStaleBeat(t *testing.T, homeDir string) {
 // but the watcher beat is stale.
 func TestGuardWarningOnStaleBeat(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 
 	writeTaskMeta(t, tmpDir, "test-task", "ship")
@@ -96,6 +97,7 @@ func TestGuardWarningOnStaleBeat(t *testing.T) {
 // but the watcher beat file does not exist.
 func TestGuardWarningOnMissingBeat(t *testing.T) {
 	tmpDir := t.TempDir()
+	initCLITestHome(t, tmpDir)
 	t.Setenv("MUNSU_HOME", tmpDir)
 
 	writeTaskMeta(t, tmpDir, "test-task", "scout")

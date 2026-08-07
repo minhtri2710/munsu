@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,9 +24,24 @@ func TestTaskShowFailsClosedOnMalformedParentHomeDuringRecovery(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(homeDir, "config", "parent-home"), []byte("\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runMigrateCommand([]string{"--home", homeDir, "task", "show", "TASK-1"}); err == nil {
+	if _, err := runCLICommand([]string{"--home", homeDir, "task", "show", "TASK-1"}); err == nil {
 		t.Fatal("expected task show to fail closed on malformed parent-home")
 	}
+}
+
+// runCLICommand executes one CLI command and returns the serialized output
+// plus the raw error.
+func runCLICommand(args []string) (string, error) {
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs(args)
+	err := root.Execute()
+	if err != nil {
+		WriteContractError(&out, err, args)
+	}
+	return out.String(), err
 }
 
 // TestTaskShowRecoversPendingTransferAndReadsCanonicalState proves the public
@@ -77,7 +93,7 @@ func TestTaskShowRecoversPendingTransferAndReadsCanonicalState(t *testing.T) {
 
 	// task show at the captain recovers the pending transfer (the journal
 	// lives at the configured parent) and serves the canonical record.
-	out, err := runMigrateCommand([]string{"--home", captain, "task", "show", "TASK-1"})
+	out, err := runCLICommand([]string{"--home", captain, "task", "show", "TASK-1"})
 	if err != nil {
 		t.Fatalf("task show recovery err=%v out=%s", err, out)
 	}
@@ -203,7 +219,7 @@ func TestCaptainHandoffAmbiguousIDCorrectionsPreserveDestinationAndSourceHome(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = runMigrateCommand([]string{"--home", parent, "captain", "handoff", captain, "TASK-1"})
+	_, err = runCLICommand([]string{"--home", parent, "captain", "handoff", captain, "TASK-1"})
 	if err == nil {
 		t.Fatal("expected ambiguous task ID error")
 	}

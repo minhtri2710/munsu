@@ -17,9 +17,9 @@ import (
 // --- Legacy project registry helpers ---
 //
 // ParseEntry/FormatEntry were removed from the fleet package during the
-// legacy-config hard cut and the configmigration package was deleted. These
-// test-local ports preserve the legacy-format project registry parsing
-// semantics so legacy-format project registry tests keep compiling.
+// legacy-config hard cut. These test-local ports preserve the legacy-format
+// project registry parsing semantics so legacy-format project registry tests
+// keep compiling.
 
 // ParseEntry parses a single legacy projects.md registry line into a Project.
 func ParseEntry(line string) (*Project, error) {
@@ -694,13 +694,14 @@ func TestResolveFromCwd_UrlSkipsPathMatch(t *testing.T) {
 
 	// Create munsu home dir and register project ONLY via URL (not a local path)
 	homeDir := filepath.Join(tmp, ".munsu")
-	// Write registry entry directly (avoid actual clone)
-	regPath := RegistryPath(homeDir)
-	if err := os.MkdirAll(filepath.Dir(regPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	// Legacy projects.md entries are ignored: URL-based entries are skipped
+	// during path matching (the canonical Fleet Registry is the sole project
+	// authority), so resolution falls back to the repo basename.
 	entry := "- url-project - https://github.com/user/repo.git (added 2026-07-01)\n"
-	if err := os.WriteFile(regPath, []byte(entry), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(homeDir, "data", "projects.md"), []byte(entry), 0644); err != nil {
 		t.Fatal(err)
 	}
 

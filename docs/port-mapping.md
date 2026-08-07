@@ -23,8 +23,8 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Capability | munsu command | munsu Go package | Status |
 |---|---|---|---|
 | Home directory | `munsu home` | `internal/home` | **implemented** |
-| Task lifecycle (canonical aggregate: Create/Start/Block/Unblock/Complete/Reopen/Supersede/Retire/Promote) | `munsu task add`, `munsu backlog`, `munsu spawn promote`, retirement flows | `internal/taskauthority` (canonical `Canonical` over `internal/home` durable mechanics), `internal/cli`/`internal/fleet` (composition) | **implemented** |
-| Task meta + status records (post-commit projections written after authoritative commits; `.status` append-only, ADR-0007 §7) | `munsu task add/show/status`; current via `soldier-state` | `internal/taskauthority` (authoritative source), `internal/home` (generic `.meta`/`.status` primitives), `internal/fleet`/`internal/cli` (projection writers) | **implemented** (list: delegated to tasks-axi) |
+| Task lifecycle (canonical aggregate: Create/Start/Block/Unblock/Complete/Reopen/Supersede/Retire/Promote) | `munsu task add/start/done/block/unblock/reopen`, `munsu spawn promote`, retirement flows | `internal/taskauthority` (canonical `Canonical` over `internal/home` durable mechanics), `internal/cli`/`internal/fleet` (composition) | **implemented** |
+| Task meta + status records (post-commit projections written after authoritative commits; `.status` append-only, ADR-0007 §7) | `munsu task add/show/status`; current via `soldier-state` | `internal/taskauthority` (authoritative source), `internal/home` (generic `.meta`/`.status` primitives), `internal/fleet`/`internal/cli` (projection writers) | **implemented** |
 | Dispatch control (holds/interpretation/decision) | `munsu decision-hold hold/complete/verify/resolve/list`, spawn and supervision flows | `internal/taskauthority` | **implemented** |
 | Worktree/endpoint binding + spawn confirmation | `munsu spawn` | `internal/taskauthority` (`BindWorktree`, launch operations), `internal/fleet` | **implemented** |
 | Delivery invariants (prepare/complete, merge attempt, issue-link reconcile, attestation, git authorization) | `munsu delivery pr-check/pr-merge/merge-local/pr-amend/reconcile/merge-status` | `internal/taskauthority` (invariant ops), `internal/fleet` (orchestration) | **implemented** |
@@ -47,12 +47,11 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Session start | `munsu session-start` | `internal/cli`, `internal/orchestrator` | **implemented** |
 | Watch soldier | `munsu watch` | `internal/orchestrator` | **implemented** |
 | Arm watcher | `munsu watch-arm` | `internal/cli` | **implemented** |
-| Wake claim / drain | `munsu wake claim` / `munsu wake-drain` | `internal/orchestrator` | **implemented** (prefer claim; drain is legacy) |
+| Wake claim / resolve / ack | `munsu wake claim` / `munsu wake resolve` / `munsu wake ack` | `internal/orchestrator` | **implemented** |
 | Guard supervision | `munsu guard` | `internal/cli` | **implemented** |
 | Stow skill | `munsu stow` | `internal/cli` | **implemented** |
 | Ensure AGENTS.md | `munsu ensure-agents-md` | `internal/cli` | **implemented** |
 | Project registry | `munsu project add/list/show/rm` | `internal/fleet` | **implemented** |
-| Backlog (tasks-axi + manual fallback) | `munsu backlog` | `internal/fleet` | **implemented** |
 | Review diff | `munsu delivery review-diff` | `internal/fleet` | **implemented** |
 | PR check/merge | `munsu delivery pr-check` / `munsu delivery pr-merge` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented** |
 | Local merge | `munsu delivery merge-local` | `internal/fleet`, `internal/taskauthority` (invariants) | **implemented** |
@@ -88,7 +87,7 @@ platform-specific infrastructure that do not belong in a standalone soldier-orch
 | Capability | Rationale |
 |---|---|
 | Social media integration | Social-platform interaction; not part of soldier lifecycle. |
-| Turn-end guards | **Munsu has NATIVE integration** (opt-in via `munsu integrate install --harness <X>`) for six harnesses:<br>  - **Pi** (live-verified: in-process session-start, wake-followup, turnend-guard, pretool-check, scope-gate)<br>  - **Claude** (contract+unit verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Grok** (contract+unit verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Codex** (contract+unit verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **OpenCode** (contract+unit verified: session-start nudge, turn-end guard, pretool-check, session.idle watch-arm)<br>  - **agy** (contract+unit verified: PreToolUse safety-check, turn-end Stop guard, PreInvocation nudge via `.agents/hooks.json`)<br>All non-Pi adapters are contract + unit verified (harnesses not installed locally, or headless mode does not exercise tool calls); only Pi is live-verified (runtime). Agy pre-auth confirmed locally; full pane lifecycle deferred. Legacy pull-based watcher diagnostics remain available via `munsu watch` / `munsu wake-drain` / `munsu guard`. |
+| Turn-end guards | **Munsu has NATIVE integration** (opt-in via `munsu integrate install --harness <X>`) for six harnesses:<br>  - **Pi** (live-verified: in-process session-start, wake-followup, turnend-guard, pretool-check, scope-gate)<br>  - **Claude** (contract+unit verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Grok** (contract+unit verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **Codex** (contract+unit verified: session-start nudge, turn-end Stop guard, pretool-check)<br>  - **OpenCode** (contract+unit verified: session-start nudge, turn-end guard, pretool-check, session.idle watch-arm)<br>  - **agy** (contract+unit verified: PreToolUse safety-check, turn-end Stop guard, PreInvocation nudge via `.agents/hooks.json`)<br>All non-Pi adapters are contract + unit verified (harnesses not installed locally, or headless mode does not exercise tool calls); only Pi is live-verified (runtime). Agy pre-auth confirmed locally; full pane lifecycle deferred. Pull-based watcher diagnostics remain available via `munsu watch` / `munsu guard`. |
 | Composer mode | Multi-agent composition; munsu spawns 1:1 soldiers. |
 | Command policies | Per-harness ARM/CD gating; not in munsu's generic model. |
 | Classification / Gate-Refuse library | Logic is inline in munsu (`--kind`, cobra validation) -- no extracted library needed. |
