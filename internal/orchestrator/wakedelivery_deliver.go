@@ -147,6 +147,18 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 			return nil, fmt.Errorf("init task obligations: %w", err)
 		}
 		receipt.ObligationsInit = true
+
+		// A General-launched local-only soldier has no Captain consumer to
+		// reconcile this receipt. Close that handoff locally; Captain-backed
+		// soldiers retain the asynchronous receipt/ack/reconcile path.
+		if !isCaptainHome(req.ParentHome) {
+			if err := WriteAck(req.ParentHome, req.TaskID, req.Key); err != nil {
+				return nil, fmt.Errorf("acknowledging local terminal receipt: %w", err)
+			}
+			if _, err := CompleteTaskObligation(req.ParentHome, req.TaskID, ReportRelay); err != nil {
+				return nil, fmt.Errorf("closing local report relay: %w", err)
+			}
+		}
 	}
 
 	// Step 3: Append to typed event log (best-effort)
@@ -164,6 +176,11 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	}
 
 	return receipt, nil
+}
+
+func isCaptainHome(homeDir string) bool {
+	_, err := os.Stat(filepath.Join(homeDir, ProvenanceMarkerName))
+	return err == nil
 }
 
 // --- ReconcilePending ---
