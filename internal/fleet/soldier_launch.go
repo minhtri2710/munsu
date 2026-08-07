@@ -77,7 +77,7 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 		b.WriteString(skillSection)
 		b.WriteString("\n\n")
 	}
-	b.WriteString(terminalReportReminder(input.TaskID, input.ParentCaptainID))
+	b.WriteString(terminalReportReminder(input.TaskID, input.TaskKind, input.ParentCaptainID))
 
 	prompt := b.String()
 	promptSHA := sha256Content([]byte(prompt))
@@ -174,13 +174,19 @@ func buildSkillInstructions(required, optional []SkillEntry, baseDir string) (st
 
 // terminalReportReminder returns the exact terminal report command
 // that the Soldier must use. The --key is required, not optional.
-func terminalReportReminder(taskID, parentCaptainID string) string {
+func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 	bt := "`"
+	doneMessage := "PR {url}"
+	doneDescription := "task complete, PR open (no merge)"
+	if taskKind == "scout" {
+		doneMessage = "summary of findings location"
+		doneDescription = "scout report complete"
+	}
 	return fmt.Sprintf(`## Terminal Report Requirement
 
 When the task is complete, you MUST execute exactly:
 
-%smunsu report done "PR {url}" --key %[2]s%s
+%smunsu report done "%[5]s" --key %[2]s%s
 
 This is the authoritative terminal report signal to your parent Captain (%[3]s).
 Do not use any other command or mechanism for terminal reporting.
@@ -191,9 +197,9 @@ Summary of report states:
 - %[4]smunsu report working "..." --key <slug>%[4]s — material phase
 - %[4]smunsu report blocked "{why}"%[4]s — after second obstacle encounter
 - %[4]smunsu report needs-decision "{summary}"%[4]s — human decision needed
-- %[4]smunsu report done "PR {url}" --key %[2]s%[4]s — task complete, PR open (no merge)
+- %[4]smunsu report done "%[5]s" --key %[2]s%[4]s — %[6]s
 - %[4]smunsu report failed "{reason}"%[4]s — task cannot be completed
-`, bt, taskID, parentCaptainID, bt)
+`, bt, taskID, parentCaptainID, bt, doneMessage, doneDescription)
 }
 
 // BuildLaunchArgs builds the harness binary name and argument list for a
