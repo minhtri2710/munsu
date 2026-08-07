@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -38,7 +37,7 @@ func newInitCmd() *cobra.Command {
 		Long: `Initialize the munsu home directory tree.
 
 Creates the directory structure: {state, data, config, projects}.
-Auto-detects and persists soldier harness and backlog backend.
+Auto-detects and persists the soldier harness.
 Writes starter configuration files and the orchestrator operating manual (AGENTS.md).
 Also installs the munsu skills so coding-agent harnesses can discover them.
 
@@ -103,8 +102,8 @@ Use --reconfigure to re-run auto-detection and overwrite existing config files a
 	return cmd
 }
 
-// autoDetectConfig detects soldier harness and backlog backend,
-// persisting them only if the config file is absent (or --reconfigure is set).
+// autoDetectConfig detects the soldier harness,
+// persisting it only if the config file is absent (or --reconfigure is set).
 func autoDetectConfig(homeDir string) error {
 	// Note: backend is runtime context and is NOT persisted at init time.
 
@@ -159,18 +158,6 @@ func autoDetectConfig(homeDir string) error {
 		}
 	}
 	// Existing base.json without --reconfigure stays untouched (idempotent).
-
-	// 2. Auto-detect backlog backend
-	if reconfigure || !configFileExists(homeDir, "backlog-backend") {
-		if _, err := exec.LookPath("tasks-axi"); err == nil {
-			if err := config.Set(homeDir, "backlog-backend", "tasks-axi"); err != nil {
-				return fmt.Errorf("setting backlog-backend: %w", err)
-			}
-			fmt.Println("Detected and persisted backlog-backend: tasks-axi")
-		}
-	} else {
-		fmt.Println("config/backlog-backend already exists (skipped; use --reconfigure to overwrite)")
-	}
 
 	return nil
 }

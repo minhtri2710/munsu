@@ -82,15 +82,15 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 		t.Error("DefaultCaptainCharter must contain 'munsu brief' command")
 	}
 
-	// Must contain tasks-axi commands for backlog management.
-	if !strings.Contains(charter, "tasks-axi ready") {
-		t.Error("DefaultCaptainCharter must contain 'tasks-axi ready' command")
+	// Must contain munsu task commands for task lifecycle management.
+	if !strings.Contains(charter, "munsu task list") {
+		t.Error("DefaultCaptainCharter must contain 'munsu task list' command")
 	}
-	if !strings.Contains(charter, "tasks-axi list") {
-		t.Error("DefaultCaptainCharter must contain 'tasks-axi list' command")
+	if !strings.Contains(charter, "munsu task start") {
+		t.Error("DefaultCaptainCharter must contain 'munsu task start' command")
 	}
-	if !strings.Contains(charter, "tasks-axi done") {
-		t.Error("DefaultCaptainCharter must contain 'tasks-axi done' command")
+	if !strings.Contains(charter, "munsu task done") {
+		t.Error("DefaultCaptainCharter must contain 'munsu task done' command")
 	}
 
 	// Must contain munsu send for soldier communication.
@@ -103,22 +103,22 @@ func TestCharter_CommandRecipesValid(t *testing.T) {
 		t.Error("DefaultCaptainCharter must contain 'munsu delivery pr-merge' command")
 	}
 
-	// Dispatch ordering must be correct: ready -> start -> brief -> spawn.
-	if !strings.Contains(charter, "tasks-axi ready") ||
-		!strings.Contains(charter, "tasks-axi start") ||
+	// Dispatch ordering must be correct: list -> start -> brief -> spawn.
+	if !strings.Contains(charter, "munsu task list") ||
+		!strings.Contains(charter, "munsu task start") ||
 		!strings.Contains(charter, "munsu brief") ||
 		!strings.Contains(charter, "munsu spawn") {
-		t.Error("DefaultCaptainCharter dispatch ordering must contain ready -> start -> brief -> spawn")
+		t.Error("DefaultCaptainCharter dispatch ordering must contain list -> start -> brief -> spawn")
 	}
 	// Verify the ordering appears in the correct sequence.
-	readyIdx := strings.Index(charter, "tasks-axi ready")
-	startIdx := strings.Index(charter, "tasks-axi start")
+	listIdx := strings.Index(charter, "munsu task list")
+	startIdx := strings.Index(charter, "munsu task start")
 	briefIdx := strings.Index(charter, "munsu brief")
 	spawnIdx := strings.Index(charter, "munsu spawn")
-	if readyIdx < 0 || startIdx < 0 || briefIdx < 0 || spawnIdx < 0 {
+	if listIdx < 0 || startIdx < 0 || briefIdx < 0 || spawnIdx < 0 {
 		t.Error("dispatch ordering missing one or more commands")
-	} else if !(readyIdx < startIdx && startIdx < briefIdx && briefIdx < spawnIdx) {
-		t.Error("dispatch ordering must be: ready -> start -> brief -> spawn")
+	} else if !(listIdx < startIdx && startIdx < briefIdx && briefIdx < spawnIdx) {
+		t.Error("dispatch ordering must be: list -> start -> brief -> spawn")
 	}
 }
 
@@ -149,24 +149,24 @@ func TestCharter_DeliveryModeNeutrality(t *testing.T) {
 	}
 }
 
-// TestCharter_BacklogAuthority verifies the charter delegates to the selected
-// backend (tasks-axi) rather than parsing backlog.md directly.
-func TestCharter_BacklogAuthority(t *testing.T) {
-	charter := DefaultCaptainCharter("backlog-test", t.TempDir())
+// TestCharter_TaskAuthority verifies the charter delegates task lifecycle to
+// the canonical Task Authority rather than parsing backlog files directly.
+func TestCharter_TaskAuthority(t *testing.T) {
+	charter := DefaultCaptainCharter("task-test", t.TempDir())
 
-	// Must say the selected backlog backend is authoritative.
-	if !strings.Contains(charter, "backlog backend") && !strings.Contains(charter, "selected backlog") {
-		t.Error("DefaultCaptainCharter must state the selected backlog backend is authoritative")
+	// Must say the Task Authority is authoritative.
+	if !strings.Contains(charter, "Task Authority") {
+		t.Error("DefaultCaptainCharter must state the Task Authority is authoritative")
 	}
 
-	// Must mention tasks-axi ready as the way to list ready items.
-	if !strings.Contains(charter, "tasks-axi ready") {
-		t.Error("DefaultCaptainCharter must mention 'tasks-axi ready' for listing ready items")
+	// Must mention munsu task list as the way to list ready items.
+	if !strings.Contains(charter, "munsu task list") {
+		t.Error("DefaultCaptainCharter must mention 'munsu task list' for listing ready items")
 	}
 
-	// Must forbid direct backlog.md parsing/mutation.
-	if !strings.Contains(charter, "never parse or mutate backlog.md") {
-		t.Error("DefaultCaptainCharter must forbid direct backlog.md parsing/mutation")
+	// Must forbid direct task state file editing.
+	if !strings.Contains(charter, "never edit task state files directly") {
+		t.Error("DefaultCaptainCharter must forbid direct task state file editing")
 	}
 }
 
@@ -189,7 +189,7 @@ func TestCharter_RelaySemantics(t *testing.T) {
 			t.Errorf("DefaultCaptainCharter must mention %q", required)
 		}
 	}
-	for _, legacy := range []string{"ReconcileTerminalReceipts", "turnend.WriteAck", "CompleteTaskObligation"} {
+	for _, legacy := range []string{"turnend.WriteAck", "CompleteTaskObligation"} {
 		if strings.Contains(charter, legacy) {
 			t.Errorf("DefaultCaptainCharter must not prescribe legacy relay %q", legacy)
 		}

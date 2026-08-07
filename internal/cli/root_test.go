@@ -26,7 +26,6 @@ var canonicalCommands = []struct {
 	{name: "harness", use: "harness"},
 	{name: "session-start", use: "session-start"},
 	{name: "task", use: "task"},
-	{name: "backlog", use: "backlog"},
 	{name: "brief", use: "brief <id> <repo>"},
 	{name: "spawn", use: "spawn <id> [<project>]"},
 	{name: "send", use: "send <id> <line>"},
@@ -38,7 +37,6 @@ var canonicalCommands = []struct {
 	{name: "teardown", use: "teardown <id>"},
 	{name: "delivery", use: "delivery"},
 	{name: "fleet", use: "fleet"},
-	{name: "migrate", use: "migrate"},
 	{name: "herdr", use: "herdr"},
 	{name: "watch", use: "watch"},
 	{name: "event", use: "event"},
@@ -98,13 +96,13 @@ func TestCanonicalCommandsRegistered(t *testing.T) {
 	}
 }
 
-// TestRestoredCommandsHelp verifies that help output for the three restored
-// commands and root help mentions them.
+// TestRestoredCommandsHelp verifies that help output for the restored commands
+// and root help mentions them.
 func TestRestoredCommandsHelp(t *testing.T) {
 	root := NewRootCommand()
 
 	// Each restored command should respond to --help without error
-	for _, name := range []string{"backlog", "session-start", "bootstrap"} {
+	for _, name := range []string{"session-start", "bootstrap"} {
 		t.Run(name+"-help", func(t *testing.T) {
 			cmd, _, err := root.Find([]string{name})
 			if err != nil {
@@ -130,7 +128,7 @@ func TestRestoredCommandsHelp(t *testing.T) {
 		}
 		// We can't easily capture cobra's stdout in a unit test without
 		// replacing os.Stdout, so we verify via command lookup instead.
-		for _, name := range []string{"backlog", "session-start", "bootstrap"} {
+		for _, name := range []string{"session-start", "bootstrap"} {
 			cmd, _, err := root.Find([]string{name})
 			if err != nil {
 				t.Errorf("command %q should be found on root after restore: %v", name, err)

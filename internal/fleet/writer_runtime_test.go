@@ -102,9 +102,6 @@ func TestWriterKindForArgsParsesHomeFormsAndCanonicalAliases(t *testing.T) {
 		{"equals", []string{"munsu", "afk", "--home=" + h}, "afk"},
 		{"alias", []string{"munsu", "watch", "--home", alias}, "watcher"},
 		{"substring", []string{"munsu", "watch", "--note", h, "--home", t.TempDir()}, ""},
-		{"tasks-axi-file", []string{"/usr/local/bin/tasks-axi", "list", "--file", filepath.Join(h, "data", "md")}, "tasks-axi"},
-		{"tasks-axi-equals", []string{"/usr/local/bin/tasks-axi", "list", "--file=" + filepath.Join(h, "data", "md")}, "tasks-axi"},
-		{"tasks-axi-path", []string{"tasks-axi", "list", "--path=" + filepath.Join(h, "data", "md")}, "tasks-axi"},
 		{"unrelated", []string{"echo", h, "watch"}, ""},
 	}
 	for _, tc := range cases {

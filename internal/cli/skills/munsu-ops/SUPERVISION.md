@@ -22,7 +22,7 @@ munsu soldier-state <id>             # read ground truth, not a raw status tail
 munsu wake ack <lease-id> <event-id> # acknowledge each processed event
 ```
 
-`munsu wake drain` and the `munsu wake-drain` alias remain legacy alternatives that drain all pending wakes without lease management.
+`munsu wake claim` is the lease-based wake queue surface; claim, resolve, and ack are the canonical operations.
 
 After handling actionable wakes, confirm the persistent watcher remains healthy if tasks are still in flight:
 

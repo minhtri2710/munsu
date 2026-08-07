@@ -17,7 +17,7 @@ import (
 //  2. each subdirectory of homeDir/captains/* (captain homes after handoff)
 //
 // This lets the general run delivery pr-check/pr-merge for soldiers that were
-// spawned only inside a captain home after backlog handoff (meta never
+// spawned only inside a captain home after task handoff (meta never
 // mirrored to the parent).
 func ResolveTaskHome(homeDir, id string) (taskHome string, meta map[string]string, err error) {
 	if homeDir == "" {

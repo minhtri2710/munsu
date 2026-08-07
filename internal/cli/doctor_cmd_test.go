@@ -176,7 +176,7 @@ func TestBuildCommandIndex_ContainsExpected(t *testing.T) {
 		"fleet view",
 		"fleet sync",
 		"spawn",
-		"backlog",
+		"task",
 		"help",
 	}
 

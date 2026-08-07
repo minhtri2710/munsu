@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -71,11 +70,10 @@ func LeaseStatusSummary(captainHome string) WatcherStatus {
 // starts the watcher. When hasChildWork is false and the watcher is
 // running, it stops the watcher (idle policy).
 //
-// parent-home is no longer required: the watcher is recovery-only and does
-// not route terminal receipts. If config/parent-home is set, it is passed as
-// MUNSU_PARENT_STATUS for legacy compatibility; if not, the watcher starts
-// without it. General never requires parent-home. Captain→General pending
-// remains durable and health-visible through the mailbox system.
+// parent-home is not required: the watcher is recovery-only for mailbox
+// delivery and does not route terminal receipts. General never requires
+// parent-home. Captain→General pending remains durable and health-visible
+// through the mailbox system.
 func EnsureWatcher(captainHome string, hasChildWork bool) error {
 	status := WatcherStatusSummary(captainHome)
 
@@ -94,13 +92,6 @@ func EnsureWatcher(captainHome string, hasChildWork bool) error {
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		cmd.Env = append(os.Environ(), "MUNSU_HOME="+captainHome)
-
-		// Pass parent-home for legacy receipt relay compatibility.
-		// Not required — the watcher is recovery-only.
-		parentHome, err := config.Get(captainHome, "parent-home")
-		if err == nil && parentHome != "" {
-			cmd.Env = append(cmd.Env, "MUNSU_PARENT_STATUS="+parentHome)
-		}
 
 		configureWatcherProcess(cmd)
 		if err := cmd.Start(); err != nil {

@@ -398,9 +398,6 @@ func TestSkillAuthorityClass_DeniedByList(t *testing.T) {
 	if got := SkillAuthorityClass("captain-provisioning", ""); got != "captain" {
 		t.Errorf("captain-provisioning = %q, want 'captain' (denied)", got)
 	}
-	if got := SkillAuthorityClass("tasks-axi", "soldier"); got != "captain" {
-		t.Errorf("tasks-axi = %q, want 'captain' (denied)", got)
-	}
 	if got := SkillAuthorityClass("no-mistakes", ""); got != "captain" {
 		t.Errorf("no-mistakes = %q, want 'captain' (denied)", got)
 	}

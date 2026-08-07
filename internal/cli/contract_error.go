@@ -21,7 +21,7 @@ func WriteContractError(writer io.Writer, err error, args []string) int {
 				Error: ErrorEnvelope{
 					ErrorCode: "conflict",
 					Retryable: false,
-					Action:    "Inspect the authoritative task state before retrying the backlog projection",
+					Action:    "Inspect the authoritative task state before retrying the .status projection",
 					Message:   partial.Error(),
 				},
 			},

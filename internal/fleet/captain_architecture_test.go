@@ -24,7 +24,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Invariant: Structured state (meta/backlog/provider) outranks pane prose
+// Invariant: Structured state (canonical aggregate/meta/provider) outranks pane prose
 // ---------------------------------------------------------------------------
 //
 // All operations that resolve captain identity, liveness, or command

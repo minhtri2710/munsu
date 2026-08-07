@@ -99,7 +99,7 @@ func TestSetOverwrites(t *testing.T) {
 
 func TestKnownKeys(t *testing.T) {
 	known := KnownKeys
-	expected := []string{"backend", "parent-home", "soldier-harness", "captain-harness", "model", "model-allowlist", "backlog-backend", "default-mode", "wake-delivery-mode", "require-no-mistakes", "afk-digest-window", "afk-wedge-stale-beat", "afk-wedge-max-repeat", "afk-max-defer", "install-root"}
+	expected := []string{"backend", "parent-home", "soldier-harness", "captain-harness", "model", "model-allowlist", "default-mode", "wake-delivery-mode", "require-no-mistakes", "afk-digest-window", "afk-wedge-stale-beat", "afk-wedge-max-repeat", "afk-max-defer", "install-root"}
 	if len(known) != len(expected) {
 		t.Errorf("KnownKeys length = %d, want %d", len(known), len(expected))
 	}
@@ -118,7 +118,6 @@ func TestIsKnownKey(t *testing.T) {
 		{"backend", true},
 		{"soldier-harness", true},
 		{"captain-harness", true},
-		{"backlog-backend", true},
 		{"default-mode", true},
 		{"unknown", false},
 		{"nonexistent", false},

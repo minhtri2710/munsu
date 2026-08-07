@@ -77,9 +77,6 @@ func TestTaskObserveCaptainUsesStructuredHomeState(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(captainHome, "data"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(captainHome, "data", "backlog.md"), []byte("# Backlog\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 	if err := mhome.AppendStatus(home, "captain:test", "working: historical parent state"); err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +493,6 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, "state"), 0755)
 	os.MkdirAll(filepath.Join(home, "data"), 0755)
 	// Idle captain home (no active children).
-	os.WriteFile(filepath.Join(captainHome, "data", "backlog.md"), []byte("# Backlog\n\n## Queued\n- [ ] hold: external\n"), 0644)
 	// Typed fleet documents replace the legacy captains.md registry: the
 	// captain is registered with a project binding through the canonical
 	// Fleet Registry (the sole lifecycle authority).

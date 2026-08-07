@@ -38,7 +38,7 @@ directory tree and writes a charter (AGENTS.md).
 |-----|---------|
 | `state/` | Runtime state (lock file, meta, status, config-push log) |
 | `data/` | Persistent domain data (captains registry, learnings) |
-| `config/` | Harness pin, dispatch profile, backlog backend |
+| `config/` | Harness pin, dispatch profile |
 | `projects/` | Per-project subdirectories for worktree isolation |
 
 ### Lease concept
@@ -128,8 +128,8 @@ munsu captain retire /var/munsu/captains/my-monitor --force
 
 ## Handoff
 
-`munsu captain handoff <captain-home> <item-keys...>` atomically transfers backlog
-items from the parent home to a captain.
+`munsu captain handoff <captain-home> <task-ids...>` atomically transfers queued
+tasks from the parent home to a captain.
 
 ### Two-phase protocol
 
@@ -171,7 +171,6 @@ Default list (order matters):
 ```
 soldier-harness
 soldier-dispatch.json
-backlog-backend
 ```
 
 Override via `MUNSU_INHERITABLE_CONFIG` env (colon-separated).

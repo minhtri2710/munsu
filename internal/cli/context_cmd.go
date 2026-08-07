@@ -100,7 +100,7 @@ Typical munsu-ops flow:
 			fmt.Fprintln(out, "=== Next steps (this session) ===")
 			fmt.Fprintln(out, "1. If more than one project fits, ask the user which registry name is the work target.")
 			fmt.Fprintln(out, "2. Run exactly once: munsu session-start")
-			fmt.Fprintln(out, "3. Dispatch via backlog/brief/spawn or captain handoff — do not edit project trees yourself.")
+			fmt.Fprintln(out, "3. Dispatch via task/brief/spawn or captain handoff — do not edit project trees yourself.")
 			fmt.Fprintln(out, "4. Captains/soldiers must not re-run munsu context for orchestrator doctrine.")
 			fmt.Fprintln(out, "=== end munsu context ===")
 			return nil

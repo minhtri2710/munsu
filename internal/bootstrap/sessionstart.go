@@ -19,7 +19,6 @@ type SessionStartResult struct {
 	Bootstrap       *Result
 	FleetSync       *fleet.SyncResult
 	Watcher         WatchEnsureResult
-	BacklogDigest   *fleet.BacklogDigest
 	CaptainLiveness *CaptainLivenessResult
 }
 
@@ -111,7 +110,7 @@ func printSupervisionBlock(w io.Writer, h string, acquired bool) {
 	fmt.Fprintln(w, "Daemon:  munsu watch ensure (idempotent start or attach)")
 	fmt.Fprintln(w, "Inspect: munsu watch run (one poll cycle)")
 	fmt.Fprintln(w, "Claim:   munsu wake claim --consumer <id>  (lease signal wakes from return channel)")
-	fmt.Fprintln(w, "Drain:   munsu wake-drain  (legacy full drain; prefer claim)")
+	fmt.Fprintln(w, "Claim:   munsu wake claim --consumer <id>  (lease signal wakes from return channel)")
 	fmt.Fprintln(w, "Repair:  munsu watch ensure")
 	fmt.Fprintln(w, "Guard:   munsu guard")
 }
@@ -344,20 +343,7 @@ func RunSessionStartWithWatcher(w io.Writer, home string, ensure WatchEnsureFunc
 		fmt.Fprintln(w, "  Repair: munsu watch ensure")
 	}
 
-	res.BacklogDigest = fleet.BuildDigest(home)
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "--- Backlog Digest ---")
-	if res.BacklogDigest.Total > 0 {
-		fmt.Fprintln(w, res.BacklogDigest.String())
-		if res.BacklogDigest.HasUnfinished() {
-			fmt.Fprintln(w, "  Full task bodies are available on demand: tasks-axi show <id> --full or data/backlog.md.")
-		}
-	} else {
-		fmt.Fprintln(w, "  (backlog empty or absent)")
-	}
-
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "--- Context ---")
 	printDataFile(w, home, "general.md")
 	printDataFile(w, home, "learnings.md")
 	printFleetState(w, home)

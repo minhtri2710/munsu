@@ -1,6 +1,6 @@
 ---
 name: munsu-ops
-description: Operate munsu as the fleet orchestrator CLI (init home, session-start, spawn/supervise soldiers, backlog management, captains, watcher, delivery helpers). Use when the user wants to run munsu, set up a munsu home, spawn or steer soldiers, arm the watcher, drain wakes, manage backlog or captains, or asks how to use munsu as a fleet orchestrator.
+description: Operate munsu as the fleet orchestrator CLI (init home, session-start, spawn/supervise soldiers, task lifecycle, captains, watcher, delivery helpers). Use when the user wants to run munsu, set up a munsu home, spawn or steer soldiers, arm the watcher, claim wakes, manage tasks or captains, or asks how to use munsu as a fleet orchestrator.
 ---
 
 # munsu-ops — fleet orchestration operator skill
@@ -37,7 +37,7 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 ### 4. Spawn / brief
 
-- `munsu backlog add <id> "<desc>" --kind ship|scout --repo <name>` — register the queued task; use `munsu backlog start <id>` only after readiness checks.
+- `munsu task add <id> "<desc>" --kind ship|scout --repo <name>` — register the queued task; use `munsu task start <id>` only after readiness checks.
 - `munsu brief <id> <repo> [--scout]` — scaffold the soldier brief.
 - Fill in the `{TASK}` placeholder in `data/<id>/brief.md`.
 - `munsu spawn <id> <project> [--kind ship|scout] [--mode no-mistakes|direct-PR|local-only]` — launch the soldier.
@@ -52,13 +52,13 @@ Determine the task kind (ship vs scout), identify the project from the registry,
 
 - Ensure the watcher: `munsu watch ensure [--restart]`.
 - On wake: prefer `munsu wake claim <consumer-id>` with lease management;
-  `munsu wake-drain` is the simpler legacy alternative that drains all pending wakes.
+  `munsu wake claim` is the lease-based wake queue surface.
 - Ground truth: `munsu soldier-state <id>` (not raw status tail).
 - Steer as needed: `munsu send <id> "<line>"` (downlink only; Soldier and Captain targets are valid, while uplink to `general` is refused).
 - Uplink status: `munsu report <state> "<msg>"` reports up the hierarchy (soldier/captain/general).
   Use `munsu notify` as an alias.
 - **inbox** — preview: `munsu inbox` lists pending wakes and last captain status lines side by side.
-  Use before `munsu wake claim` or `munsu wake-drain` to preview what needs attention.
+  Use before `munsu wake claim` to preview what needs attention.
 
 **Completion:** Actionable wakes handled; persistent watcher remains healthy while tasks are in flight.
 

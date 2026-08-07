@@ -88,4 +88,4 @@ Firstmate uses native CLI tool invocation (`tasks-axi`, `gh-axi`) as the primary
 
 ### 6. Denied skills classification (denylist + role-based)
 
-Firstmate's section 13 never includes spawn/supervision/merge skills for ordinary crewmates (scout/ship). Munsu soldier enforces this via `SoldierSkillDenied` explicit denylist (`captain-provisioning`, `munsu-ops`, `tasks-axi`, `no-mistakes`, `harness-adapters`, `stuck-soldier-recovery`, etc.) plus `SkillAuthorityClass` function that checks both denylist and role field.
+Firstmate's section 13 never includes spawn/supervision/merge skills for ordinary crewmates (scout/ship). Munsu soldier enforces this via `SoldierSkillDenied` explicit denylist (`captain-provisioning`, `munsu-ops`, `no-mistakes`, `harness-adapters`, `stuck-soldier-recovery`, etc.) plus `SkillAuthorityClass` function that checks both denylist and role field.

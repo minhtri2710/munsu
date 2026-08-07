@@ -7,7 +7,7 @@ Full command map grouped by lifecycle phase.
 | Command | Description |
 |---------|-------------|
 | `munsu home [--mkdir]` | Print the munsu home directory (`~/.munsu`). With `--mkdir`, create the directory tree. |
-| `munsu init` | Create home directory and seed the orchestrator operating manual. Auto-detects backend, soldier harness, and backlog backend. |
+| `munsu init` | Create home directory and seed the orchestrator operating manual. Auto-detects backend and soldier harness. |
 | `munsu init --reconfigure` | Re-run auto-detection and overwrite existing config files. |
 | `munsu doctor` | Run read-only diagnostics with fix commands for missing tools. |
 | `munsu config get <key>` | Read a configuration value. |
@@ -47,8 +47,8 @@ Full command map grouped by lifecycle phase.
 
 The recommended workflow for running a soldier task end-to-end:
 
-1. **`munsu backlog add <id> <desc> [--kind ship|scout] [--repo <name>]`**
-   Register the intent in the backlog; additions always start queued. Use `munsu backlog start <id>` as the separate validated start mutation.
+1. **`munsu task add <id> <desc> [--kind ship|scout] [--repo <name>]`**
+   Create the canonical task; additions always start queued. Use `munsu task start <id>` as the separate validated start mutation.
 2. **`munsu brief <id> <repo> [--scout]`**
    Scaffold a task brief that the soldier reads on startup.
 3. **`munsu spawn <id> [<project>] [--arm]`**
@@ -57,13 +57,10 @@ The recommended workflow for running a soldier task end-to-end:
    Monitor and interact with the running soldier as needed.
 5. **`munsu teardown <id>`**
    Terminate the soldier, release the worktree, and clean up runtime state.
-6. **`munsu backlog done <id>`**
-   Mark the item complete in the backlog (separate operator step after teardown).
+6. **`munsu task done <id>`**
+   Mark the task complete (separate operator step after teardown).
 
-> **Note:** Add tasks queued, then use `backlog start <id>` after readiness checks; the backlog links brief → spawn → teardown → closure.
-> `task add` creates the canonical task directly without a backlog row, so it stays outside the backlog → spawn → teardown chain; use `backlog add` to register the task in the backlog.
-
-See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
+> **Note:** Add tasks queued, then use `task start <id>` after readiness checks; the Task Authority links brief → spawn → teardown → closure.
 
 ## Supervision
 
@@ -73,7 +70,6 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 | `munsu watch-arm [--restart]` | Arm the watcher as a background process. With `--restart`, signal existing watcher first. |
 | `munsu wake claim <consumer-id> [--lease-seconds 60] [--limit 10]` | Claim a batch of pending wakes under a lease. |
 | `munsu wake ack <lease-id> <event-id...>` | Acknowledge one or more processed wakes. |
-| `munsu wake-drain` | Drain all queued wake records and print them. |
 | `munsu guard` | Warn on tangle (non-default branch in primary checkout) or stale watcher beat. |
 | `munsu afk` | Enter away-mode supervision daemon; polls at reduced cadence; stops on SIGTERM/SIGINT. |
 
@@ -89,13 +85,13 @@ See also: `spawn` warns when a backlog row is missing (requires `tasks-axi`).
 | `munsu captain launch <captain-home>` | Launch a captain in its home (session-backed). |
 | `munsu captain retire <captain-home>` | Retire a captain. Refuses with in-flight soldiers unless `--force`. |
 | `munsu captain list` | List registered captains. |
-| `munsu captain recover <captain-id>` | Run structured 11-step recovery: provenance, config, integration, charter-refresh, config-push, launch-readiness, relaunch-pane, watcher-ensure, legacy transport guard, terminal-reconcile, nudge-retry. Each step reports ok/failed/skipped. |
+| `munsu captain recover <captain-id>` | Run structured recovery: provenance, config, integration, charter-refresh, config-push, launch-readiness, relaunch-pane, watcher-ensure, legacy transport guard, nudge-retry. Each step reports ok/failed/skipped. |
 | `munsu captain converge` | Locked convergence sweep: validate registry/provenance, stale legacy records, nudge retry, fast-forward, inheritance push, liveness check, instruction surface tracking. |
 | `munsu captain update <captain-home>` | Safe fast-forward of a captain clone with typed outcome (already-current, fast-forwarded, state-only-skipped, etc.). |
 | `munsu captain migrate <captain-home> <id>` | Migrate a state-only home to managed worktree. Use `--repo` for transactional git-worktree migration. |
 | `munsu captain validate <captain-home>` | Validate a captain home structure and provenance. |
 | `munsu captain config-push <captain-home>` | Push inheritable config to a captain and advance generation tracking. Creates config-reread requirement on change. |
-| `munsu captain handoff <captain-home> <item-key...>` | Hand off queued backlog items to a captain (keys must be queued). |
+| `munsu captain handoff <captain-home> <task-id...>` | Hand off queued tasks to a captain (tasks must be queued). |
 
 ### Recovery paths
 
@@ -112,29 +108,20 @@ Session-start `Recover()` (invoked via `munsu session-start` with captain livene
 | `munsu delivery pr-merge <id> <pr-url> [-- --merge\|--rebase]` | Merge a PR via gh-axi CLI. Default method is squash. |
 | `munsu delivery merge-local <id>` | Fast-forward merge soldier branch to local default branch (no-remote projects only). |
 
-## Backlog
+## Task Lifecycle
 
 | Command | Description |
 |---------|-------------|
-| `munsu backlog add <id> <description> [--kind ship\|scout\|task] [--repo <name>]` | Add a queued task to the backlog. |
-| `munsu backlog list [state-filter]` | List backlog items. |
-| `munsu backlog show <id>` | Show backlog item details. |
-| `munsu backlog start <id>` | Mark a backlog item as in-flight. |
-| `munsu backlog done <id>` | Mark a backlog item as done. |
-| `munsu backlog block <id>` | Block a backlog item. |
-| `munsu backlog ready` | Query readiness and blocking reasons without mutation. |
-| `munsu backlog unblock <id>` | Unblock a blocked backlog item. |
-
-Uses `tasks-axi` CLI when available (>= 0.1.1), falling back to hand-editing `$MUNSU_HOME/data/backlog.md`. Custom home paths force the manual backend.
-
-## Task Meta
-
-| Command | Description |
-|---------|-------------|
-| `munsu task add <id> <description> [--kind ship\|scout] [--repo <name>]` | Add a new task to local state. |
-| `munsu task list [--state <filter>]` | List tasks (delegated to tasks-axi). |
+| `munsu task add <id> <description> [--kind ship\|scout] [--repo <name>]` | Add a new queued task. |
+| `munsu task list [--state <filter>]` | List tasks from the canonical Task Authority. |
 | `munsu task show <id> [--full]` | Show task details with optional status log. |
-| `munsu task status <id> <state> <message>` | Append a status line to a task. |
+| `munsu task start <id>` | Start a task (mark in-flight). |
+| `munsu task done <id>` | Mark a task as done. |
+| `munsu task block <id> [--by <dependency-id>]` | Block a task. |
+| `munsu task unblock <id>` | Unblock a blocked task. |
+| `munsu task reopen <id>` | Reopen a terminal task as a new generation. |
+| `munsu task retry <id>` | Supersede a terminal generation as a new queued generation. |
+| `munsu task status <id> <state> <message>` | Append an audit-only status line to a task. |
 
 ## Knowledge
 

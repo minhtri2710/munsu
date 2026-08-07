@@ -88,7 +88,7 @@ munsu wake claim --consumer general --output json
 `munsu wake claim --consumer <id>` leases entries from the durable wake queue at
 `state/.wake-queue` without destroying unacked ownership semantics.
 
-`munsu wake-drain` (legacy) reads and removes all entries from that queue.
+`munsu wake claim` reads entries from that queue under a lease.
 Each record contains:
 
 | Field   | Description                    |

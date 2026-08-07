@@ -22,21 +22,6 @@ func (a captainContinuityAdapter) Reconcile(parentHome string, captain fleet.Cap
 		return result, err
 	}
 	result.Accepted, result.Notified, result.Queued = uplink.Accepted, uplink.Notified, uplink.Queued
-	terminal, err := orchestrator.ReconcileTerminalReceipts(captain.Home, parentHome)
-	if err != nil {
-		return result, err
-	}
-	result.Relayed, result.Failed = terminal.Relayed(), terminal.Failed()
-	return result, nil
-}
-
-func (a captainContinuityAdapter) ReconcileTerminal(parentHome string, captain fleet.CaptainEndpoint) (fleet.CaptainContinuityResult, error) {
-	result := fleet.CaptainContinuityResult{}
-	terminal, err := orchestrator.ReconcileTerminalReceipts(captain.Home, parentHome)
-	if err != nil {
-		return result, err
-	}
-	result.Relayed, result.Failed = terminal.Relayed(), terminal.Failed()
 	return result, nil
 }
 

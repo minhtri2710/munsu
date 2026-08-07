@@ -11,7 +11,7 @@ func TestCreateBackupAndRestoreSmoke(t *testing.T) {
 	if err := EnsureDirTree(homeDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("backlog\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(homeDir, "data", "notes.md"), []byte("notes\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(homeDir, "config", "backend"), []byte("tmux\n"), 0600); err != nil {

@@ -585,7 +585,6 @@ func TestPropagateConfig_MultipleInheritableProps(t *testing.T) {
 		Config: config.ProjectOverlay{
 			SoldierHarness: "pi",
 			Backend:        "tmux",
-			BacklogBackend: "tasks-axi",
 		},
 	}
 	storeTestDocuments(t, parent, base, []testProjectRecord{
@@ -617,9 +616,6 @@ func TestPropagateConfig_MultipleInheritableProps(t *testing.T) {
 	}
 	if snapshot.Config().SoldierHarness != "pi" {
 		t.Errorf("expected SoldierHarness=pi, got %q", snapshot.Config().SoldierHarness)
-	}
-	if snapshot.Config().BacklogBackend != "tasks-axi" {
-		t.Errorf("expected BacklogBackend=tasks-axi, got %q", snapshot.Config().BacklogBackend)
 	}
 }
 

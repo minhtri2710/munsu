@@ -4,10 +4,10 @@ Every unresolved General decision found during an investigation or review must b
 
 1. Record a stable keyed `needs-decision` status.
 2. Preserve non-obvious context with `munsu stow`.
-3. Block dependent work through the backlog.
+3. Block dependent work through the Task Authority.
 4. Relay the choice to General.
 5. Record the answer as `resolved`.
 6. Unblock dependent work.
 7. Verify no keyed decision remains open.
 
-Structured `munsu decision-hold` commands are preferred when available; otherwise use task status and backlog dependency primitives.
+Structured `munsu decision-hold` commands are preferred when available; otherwise use task status and task block/unblock primitives.

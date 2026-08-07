@@ -25,7 +25,7 @@ func newInboxCmd() *cobra.Command {
   - Last captain status lines (state/captain:<id>.status) that are general-relevant
 
 No behavior change to the watcher. Use 'munsu inbox' before 'munsu wake claim' or
-'munsu wake-drain' to preview what needs attention.
+'munsu wake claim' to preview what needs attention.
 
 Captain-side subcommands:
   receive <ref>  — validate/load a mailbox envelope (no ack)
@@ -193,7 +193,7 @@ func renderInbox(homeDir string, w interface{ Write([]byte) (int, error) }) erro
 	if pending > 0 {
 		hasContent = true
 		out("Pending wakes: %d\n", pending)
-		out("  Run `munsu wake claim <consumer-id>` or `munsu wake-drain` to process.\n\n")
+		out("  Run `munsu wake claim <consumer-id>` to process.\n\n")
 	} else {
 		out("Wakes: none pending\n\n")
 	}

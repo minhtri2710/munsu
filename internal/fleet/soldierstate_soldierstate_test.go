@@ -8,20 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
-
-// setManualMode forces manual backlog backend for tests that use native backlog.md.
-func setSoldierStateManualMode(t *testing.T, homeDir string) {
-	t.Helper()
-	configDir := filepath.Join(homeDir, "config")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		t.Fatalf("creating config dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "backlog-backend"), []byte("manual\n"), 0644); err != nil {
-		t.Fatalf("writing backlog-backend config: %v", err)
-	}
-}
 
 // setHomeEnv sets MUNSU_HOME for the duration of a test.
 func setHomeEnv(t *testing.T, path string) {
@@ -29,6 +19,66 @@ func setHomeEnv(t *testing.T, path string) {
 	os.Setenv("MUNSU_HOME", path)
 	t.Cleanup(func() { os.Unsetenv("MUNSU_HOME") })
 }
+
+// seedCanonicalPhase creates one canonical task at the given phase through
+// the concrete Task Authority (ADR-0008), never legacy backlog state.
+func seedCanonicalPhase(t *testing.T, homeDir, taskID string, phase taskauthority.Phase) {
+	t.Helper()
+	auth := canonicalAtHome(t, homeDir)
+	tid := mustTaskID(t, taskID)
+	createReq := taskauthority.CanonicalCreateRequest{
+		HomeID: auth.HomeID(), TaskID: tid, Owner: "general", Description: "work", Kind: "ship", Reason: "test",
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-create-"+taskID), createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Create(op, createReq); err != nil {
+		t.Fatal(err)
+	}
+	switch phase {
+	case taskauthority.PhaseBlocked:
+		blockReq := taskauthority.CanonicalBlockRequest{
+			HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), Detail: "dep", Reason: "test",
+		}
+		op, err := domain.NewOperation(mustOpID(t, "op-block-"+taskID), blockReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := auth.Block(op, blockReq); err != nil {
+			t.Fatal(err)
+		}
+	case taskauthority.PhaseWorking:
+		startReq := taskauthority.CanonicalStartRequest{
+			HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), Reason: "test",
+		}
+		op, err := domain.NewOperation(mustOpID(t, "op-start-"+taskID), startReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := auth.Start(op, startReq); err != nil {
+			t.Fatal(err)
+		}
+	case taskauthority.PhaseDone:
+		completeReq := taskauthority.CanonicalCompleteRequest{
+			HomeID: auth.HomeID(), TaskID: tid, Precondition: domain.Of(1, 1), To: taskauthority.PhaseDone, Reason: "test",
+		}
+		op, err := domain.NewOperation(mustOpID(t, "op-done-"+taskID), completeReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := auth.Complete(op, completeReq); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		// queued stays as created
+	}
+}
+
+// aliveProbe is a test endpoint probe that always reports the pane alive.
+type aliveProbe struct{}
+
+func (aliveProbe) Probe(string, map[string]string) (bool, error) { return true, nil }
 
 func TestRead_NoMeta(t *testing.T) {
 	tmp := t.TempDir()
@@ -417,202 +467,158 @@ func TestApplyNoMistakesStep_Cancelled(t *testing.T) {
 	}
 }
 
-func TestRead_BacklogDoneOverridesStaleStatus(t *testing.T) {
+// TestRead_CanonicalDoneOverridesStaleStatus proves a canonical done phase
+// (tier 1) overrides a stale "working" status line (Task 7.8): the status
+// log is superseded display, never state truth.
+func TestRead_CanonicalDoneOverridesStaleStatus(t *testing.T) {
 	tmp := t.TempDir()
-	setSoldierStateManualMode(t, tmp)
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
+	seedCanonicalPhase(t, tmp, "canonical-done", taskauthority.PhaseDone)
 
 	// Create meta with window
-	if err := home.WriteMeta(tmp, "backlog-test", map[string]string{
+	if err := home.WriteMeta(tmp, "canonical-done", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Add a stale "working" status line
-	if err := home.AppendStatus(tmp, "backlog-test", "working: stale work"); err != nil {
+	if err := home.AppendStatus(tmp, "canonical-done", "working: stale work"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Write a backlog file with "done" for this task
-	backlogDir := filepath.Join(tmp, "data")
-	if err := os.MkdirAll(backlogDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	backlogContent := `# Backlog
-
-	## 2025-01-01
-	- [x] backlog-test: completed task
-`
-	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := ReadSoldierState(tmp, "backlog-test")
+	s, err := ReadSoldierState(tmp, "canonical-done")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Backlog "done" (tier 1) overrides stale "working" (tier 5)
+	// Canonical "done" overrides stale "working"
 	if s.Status != "done" {
-		t.Errorf("status = %q, want done (backlog overrides stale working)", s.Status)
-	}
-	if s.BacklogState != "done" {
-		t.Errorf("BacklogState = %q, want done", s.BacklogState)
+		t.Errorf("status = %q, want done (canonical overrides stale working)", s.Status)
 	}
 	if !s.StatusLogSuperseded {
-		t.Errorf("StatusLogSuperseded should be true when backlog overrides")
+		t.Errorf("StatusLogSuperseded should be true when canonical overrides")
 	}
 }
 
-func TestRead_BacklogBlockedOverridesStaleStatus(t *testing.T) {
+// TestRead_CanonicalBlockedOverridesStaleStatus proves a canonical blocked
+// phase overrides a stale status line.
+func TestRead_CanonicalBlockedOverridesStaleStatus(t *testing.T) {
 	tmp := t.TempDir()
-	setSoldierStateManualMode(t, tmp)
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
+	seedCanonicalPhase(t, tmp, "canonical-blocked", taskauthority.PhaseBlocked)
 
-	if err := home.WriteMeta(tmp, "blocked-test", map[string]string{
+	if err := home.WriteMeta(tmp, "canonical-blocked", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Add a stale "working" status line
-	if err := home.AppendStatus(tmp, "blocked-test", "working: active work"); err != nil {
+	if err := home.AppendStatus(tmp, "canonical-blocked", "working: active work"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Write a backlog file with "blocked"
-	backlogDir := filepath.Join(tmp, "data")
-	if err := os.MkdirAll(backlogDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	backlogContent := `# Backlog
-
-	## 2025-01-01
-	- [!] blocked-test: blocked task
-`
-	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := ReadSoldierState(tmp, "blocked-test")
+	s, err := ReadSoldierState(tmp, "canonical-blocked")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Status != "blocked" {
-		t.Errorf("status = %q, want blocked (backlog overrides status)", s.Status)
-	}
-	if s.BacklogState != "blocked" {
-		t.Errorf("BacklogState = %q, want blocked", s.BacklogState)
+		t.Errorf("status = %q, want blocked (canonical overrides status)", s.Status)
 	}
 }
 
-func TestRead_BacklogInFlightFallsThrough(t *testing.T) {
+// TestRead_CanonicalWorkingWinsWithAlivePane proves the canonical working
+// phase is state truth when the pane is verifiably alive.
+func TestRead_CanonicalWorkingWinsWithAlivePane(t *testing.T) {
 	tmp := t.TempDir()
-	setSoldierStateManualMode(t, tmp)
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
+	seedCanonicalPhase(t, tmp, "canonical-working", taskauthority.PhaseWorking)
 
 	// Create meta with window
-	if err := home.WriteMeta(tmp, "in-flight-test", map[string]string{
+	if err := home.WriteMeta(tmp, "canonical-working", map[string]string{
 		"window": "@nonexistent99",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Add a "blocked" status line
-	if err := home.AppendStatus(tmp, "in-flight-test", "blocked: waiting for dep"); err != nil {
+	// Add a stale "blocked" status line
+	if err := home.AppendStatus(tmp, "canonical-working", "blocked: waiting for dep"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Backlog says in-flight (falls through to tier 2)
-	backlogDir := filepath.Join(tmp, "data")
-	if err := os.MkdirAll(backlogDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	backlogContent := `# Backlog
-
-	## 2025-01-01
-	- [-] in-flight-test: in progress
-`
-	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := ReadSoldierState(tmp, "in-flight-test")
+	s, err := ReadWithProbe(tmp, "canonical-working", aliveProbe{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Backlog in-flight doesn't override — status from tier 2 (blocked) wins
-	if s.Status != "blocked" {
-		t.Errorf("status = %q, want blocked (in-flight falls through)", s.Status)
+	// Canonical working wins over the stale blocked status line.
+	if s.Status != "working" {
+		t.Errorf("status = %q, want working (canonical phase is state truth)", s.Status)
 	}
-	if s.BacklogState != "in-flight" {
-		t.Errorf("BacklogState = %q, want in-flight", s.BacklogState)
+	if !s.StatusLogSuperseded {
+		t.Errorf("StatusLogSuperseded should be true when canonical overrides")
 	}
 }
 
-func TestRead_BacklogQueuedWhenUnknown(t *testing.T) {
+// TestRead_CanonicalQueuedWhenUnknown proves a canonical queued phase is
+// surfaced when no higher work state exists.
+func TestRead_CanonicalQueuedWhenUnknown(t *testing.T) {
 	tmp := t.TempDir()
-	setSoldierStateManualMode(t, tmp)
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
+	seedCanonicalPhase(t, tmp, "canonical-queued", taskauthority.PhaseQueued)
 
 	// Create meta only (no status file, no window)
-	if err := home.WriteMeta(tmp, "queued-test", map[string]string{
+	if err := home.WriteMeta(tmp, "canonical-queued", map[string]string{
 		"kind": "ship",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Backlog says queued
-	backlogDir := filepath.Join(tmp, "data")
-	if err := os.MkdirAll(backlogDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	backlogContent := `# Backlog
-
-	## 2025-01-01
-	- [ ] queued-test: not started
-`
-	if err := os.WriteFile(filepath.Join(backlogDir, "backlog.md"), []byte(backlogContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := ReadSoldierState(tmp, "queued-test")
+	s, err := ReadSoldierState(tmp, "canonical-queued")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Queued state appears when status is unknown
+	// Queued phase appears as current state.
 	if s.Status != "queued" {
 		t.Errorf("status = %q, want queued", s.Status)
 	}
-	if s.BacklogState != "queued" {
-		t.Errorf("BacklogState = %q, want queued", s.BacklogState)
-	}
 }
 
-func TestRead_NoBacklogItemFallsThrough(t *testing.T) {
+func TestRead_NoCanonicalRecordFallsThrough(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	// Create meta with a "done" status
-	if err := home.WriteMeta(tmp, "no-backlog-item", map[string]string{
+	if err := home.WriteMeta(tmp, "no-canonical-record", map[string]string{
 		"kind": "ship",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := home.AppendStatus(tmp, "no-backlog-item", "done: completed without backlog"); err != nil {
+	if err := home.AppendStatus(tmp, "no-canonical-record", "done: completed without canonical record"); err != nil {
 		t.Fatal(err)
 	}
 
-	// No backlog file at all — should fall through to tier 2
-	s, err := ReadSoldierState(tmp, "no-backlog-item")
+	// No canonical record — falls through to the status file tier.
+	s, err := ReadSoldierState(tmp, "no-canonical-record")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Status != "done" {
 		t.Errorf("status = %q, want done from status file", s.Status)
-	}
-	if s.BacklogState != "" {
-		t.Errorf("BacklogState = %q, want empty (no backlog item)", s.BacklogState)
 	}
 }
 

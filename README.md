@@ -70,7 +70,7 @@ For standalone munsu use, skip this step — `munsu spawn --mode direct-PR` or `
 
 ```sh
 munsu home --mkdir       # create ~/.munsu/{state,data,config,projects}
-munsu init               # auto-detect backend, harness, backlog, and seed AGENTS.md
+munsu init               # auto-detect backend, harness, and seed AGENTS.md
 munsu doctor             # run diagnostics with fix commands
 munsu --help             # see the full command tree
 munsu --version          # print version
@@ -94,7 +94,7 @@ agent harnesses auto-discover at session start.
 
 | Skill | Description | Trigger |
 |-------|-------------|---------|
-| **munsu-ops** | Fleet orchestration — init home, session-start, spawn/supervise soldiers, backlog management, captains, watcher, delivery helpers. | Running munsu, spawning soldiers, draining wakes, managing backlog. |
+| **munsu-ops** | Fleet orchestration — init home, session-start, spawn/supervise soldiers, task lifecycle, captains, watcher, delivery helpers. | Running munsu, spawning soldiers, claiming wakes, managing tasks. |
 | **captain-provisioning** | Full captain lifecycle — seed, launch, retire, handoff, config-push — following the idle-by-default charter contract. | Provisioning, inspecting, or retiring a persistent domain supervisor (captain). |
 | **munsu-update** | Self-update munsu and fast-forward captain homes. | Invoking `/munsu-update`, "update munsu", "pull the latest munsu". |
 | **bootstrap-diagnostics** | Handle session-start bootstrap diagnostics — toolchain readiness lines. | Session-start diagnostic output (MISSING, NEEDS_GH_AUTH, TANGLE, etc.). |
@@ -120,9 +120,9 @@ munsu session-start
 ### Task management
 
 ```sh
-munsu backlog add <task-id> "<description>" --kind ship --repo <name> --start
-munsu backlog start <task-id>
-munsu backlog done <task-id>
+munsu task add <task-id> "<description>" --kind ship --repo <name>
+munsu task start <task-id>
+munsu task done <task-id>
 ```
 
 ### Soldier lifecycle

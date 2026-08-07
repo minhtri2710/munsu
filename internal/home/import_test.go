@@ -50,7 +50,7 @@ func TestImportLegacyIsIdempotentForSameGeneration(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(homeDir, "data"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(homeDir, "data", "backlog.md"), []byte("one\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(homeDir, "data", "notes.md"), []byte("one\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	req := importRequestWithBackup(t, homeDir, "gen-one", "build-one")

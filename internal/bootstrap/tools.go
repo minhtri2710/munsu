@@ -21,7 +21,6 @@ var checkedTools = []ToolSpec{
 	{"zellij", false},
 	{"treehouse", false},
 	{"no-mistakes", false},
-	{"tasks-axi", false},
 	{"gh-axi", false},
 	{"gh", false},
 }

@@ -286,9 +286,6 @@ func TestSupervisionBlockHeader(t *testing.T) {
 			if !strings.Contains(output, "Claim:   munsu wake claim --consumer") {
 				t.Errorf("expected Claim line, got: %s", output)
 			}
-			if !strings.Contains(output, "Drain:   munsu wake-drain") {
-				t.Errorf("expected Drain line, got: %s", output)
-			}
 			if !strings.Contains(output, "Guard:   munsu guard") {
 				t.Errorf("expected Guard line, got: %s", output)
 			}

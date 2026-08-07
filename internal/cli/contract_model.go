@@ -146,7 +146,7 @@ type CaptainHold struct {
 	Source    string `json:"source,omitempty"`
 }
 
-// CaptainQueued is one queued backlog row under a Captain home.
+// CaptainQueued is one queued Task Authority record under a Captain home.
 type CaptainQueued struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
@@ -154,7 +154,7 @@ type CaptainQueued struct {
 	Kind  string `json:"kind,omitempty"`
 }
 
-// CaptainLanded is one recently completed backlog row under a Captain home.
+// CaptainLanded is one recently completed Task Authority record under a Captain home.
 type CaptainLanded struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
@@ -242,25 +242,6 @@ type WakeAck struct {
 	WakeID  string `json:"wake_id"`
 	ClaimID string `json:"claim_id"`
 	State   string `json:"state"`
-}
-
-// WakeDrain reports a safe lease-backed drain of the wake queue.
-type WakeDrain struct {
-	Consumer  string            `json:"consumer"`
-	State     string            `json:"state"` // drained | empty
-	Drained   int               `json:"drained"`
-	Reclaimed int               `json:"reclaimed,omitempty"`
-	Remaining int               `json:"remaining"`
-	Records   []WakeDrainRecord `json:"records,omitempty"`
-}
-
-// WakeDrainRecord is one drained wake, surfaced in the response so claimed
-// material evidence is never swallowed by a drain.
-type WakeDrainRecord struct {
-	WakeID  string `json:"wake_id"`
-	Kind    string `json:"kind"`
-	Key     string `json:"key,omitempty"`
-	Payload string `json:"payload,omitempty"`
 }
 
 // DrainCycle records one General drain cycle: actionable wakes claimed,

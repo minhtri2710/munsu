@@ -13,7 +13,6 @@ func TestFixCommand(t *testing.T) {
 		{"git", "Install git: https://git-scm.com/downloads"},
 		{"treehouse", "go install github.com/kunchenguid/treehouse@latest"},
 		{"no-mistakes", "go install github.com/kunchenguid/no-mistakes@latest"},
-		{"tasks-axi", "npm install -g tasks-axi"},
 		{"gh-axi", "npm install -g gh-axi"},
 		{"gh", "Install GitHub CLI: brew install gh  |  https://cli.github.com/"},
 		{"tmux", "Install tmux: brew install tmux  |  apt install tmux  |  pacman -S tmux"},
