@@ -6,7 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/orchestrator"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // TestReportDoneDoesNotCaptureDeliveryIdentity proves the terminal report
@@ -14,6 +17,56 @@ import (
 // `report done` with a PR message proceeds as a plain uplink report and
 // leaves no pr_* meta projection and no delivery state behind. Delivery
 // truth is consumed from canonical authorization/outcome records only.
+func TestReportDoneCompletesScoutLifecycle(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	t.Setenv("MUNSU_HOME", homeDir)
+	t.Setenv("MUNSU_TASK_ID", "scout-report")
+	t.Setenv("MUNSU_ROLE", "soldier")
+	t.Setenv("MUNSU_PARENT_STATUS", homeDir)
+
+	root := NewRootCommand()
+	root.SetArgs([]string{"task", "add", "scout-report", "investigate", "--kind", "scout"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("task add: %v", err)
+	}
+	root = NewRootCommand()
+	root.SetArgs([]string{"task", "start", "scout-report"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("task start: %v", err)
+	}
+	root = NewRootCommand()
+	root.SetArgs([]string{"report", "done", "report.md", "--key", "scout-report", "--ring", "no-ring"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("report done: %v", err)
+	}
+
+	auth, err := taskAuthorityForRead(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid, _ := domain.NewTaskID("scout-report")
+	agg, err := auth.Get(tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Phase != taskauthority.PhaseDone {
+		t.Fatalf("phase = %s, want done", agg.Phase)
+	}
+	if !orchestrator.IsReceiptAcked(homeDir, "scout-report", "scout-report") {
+		// The Captain has not relayed it yet; the receipt and open obligation are
+		// the deterministic handoff consumed by ReconcilePending.
+		pending, err := orchestrator.ListPendingReceipts(homeDir)
+		if err != nil || len(pending) != 1 {
+			t.Fatalf("pending receipts=%d err=%v", len(pending), err)
+		}
+		open, err := orchestrator.IsTaskReportRelayOpen(homeDir, "scout-report")
+		if err != nil || !open {
+			t.Fatalf("relay obligation open=%v err=%v", open, err)
+		}
+	}
+}
+
 func TestReportDoneDoesNotCaptureDeliveryIdentity(t *testing.T) {
 	homeDir := t.TempDir()
 	parentHome := t.TempDir()
