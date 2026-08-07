@@ -90,6 +90,10 @@ func TestRecoverIntegrationStatus_MissingCanonicalIntegrationFailsClosed(t *test
 }
 
 func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "healthy-integration")
 	writeCanonicalPiIntegration(t, home)
