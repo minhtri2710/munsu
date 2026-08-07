@@ -185,6 +185,9 @@ func TestBlocked_NestedCaptainLaunchIsRefused(t *testing.T) {
 // with in-flight soldiers is refused unless --force is used.
 func TestBlocked_RetireRefusesInFlightSoldiers(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := mhome.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	smHome := filepath.Join(parent, "captains", "test-sm")
 	os.MkdirAll(filepath.Join(smHome, "state"), 0755)
 	os.WriteFile(filepath.Join(smHome, "AGENTS.md"), []byte("# charter\n"), 0644)
@@ -225,6 +228,9 @@ func TestBlocked_RetireRefusesInFlightSoldiers(t *testing.T) {
 // captain id twice is idempotent — no duplicate spawn or registry entry.
 func TestBlocked_DuplicateRegistrationIsNoop(t *testing.T) {
 	parent := t.TempDir()
+	if _, err := mhome.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 	sm := filepath.Join(parent, "captains", "api")
 	os.MkdirAll(sm, 0755)
 	SeedProvenance(sm, "api")

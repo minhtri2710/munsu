@@ -13,10 +13,8 @@ type TaskAggregateEvidence struct {
 
 // TaskAggregate is the v1 authoritative task aggregate shape. It is
 // decode-only (v1 decode shape): the v1 aggregate store and migration
-// implementation were deleted in Task 8.2, and supported migration is owned
-// by internal/taskauthorityfs, which unmarshals v1 aggregate documents into
-// this shape and converts them (convertV1Aggregate). No reader or writer of
-// the v1 aggregate store remains.
+// implementation were deleted in Task 8.2, and no reader or writer of the
+// v1 aggregate store remains.
 type TaskAggregate struct {
 	SchemaVersion                string                  `json:"schema_version"`
 	TaskID                       string                  `json:"task_id"`

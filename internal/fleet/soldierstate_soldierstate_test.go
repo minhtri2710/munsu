@@ -82,6 +82,9 @@ func (aliveProbe) Probe(string, map[string]string) (bool, error) { return true, 
 
 func TestRead_NoMeta(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	s, err := ReadSoldierState(tmp, "nonexistent")
@@ -99,6 +102,9 @@ func TestRead_NoMeta(t *testing.T) {
 
 func TestRead_NoWindow(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "no-win", map[string]string{"kind": "ship"}); err != nil {
@@ -121,6 +127,9 @@ func TestRead_NoWindow(t *testing.T) {
 
 func TestRead_WithWindow(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "with-win", map[string]string{
@@ -146,6 +155,9 @@ func TestRead_WithWindow(t *testing.T) {
 
 func TestRead_HerdrPaneNotFound_ReturnsPaneAliveFalse(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "incident-soldier", map[string]string{
@@ -177,6 +189,9 @@ func TestRead_HerdrPaneNotFound_ReturnsPaneAliveFalse(t *testing.T) {
 
 func TestRead_StatusLogOverrides(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "status-test", map[string]string{
@@ -204,6 +219,9 @@ func TestRead_StatusLogOverrides(t *testing.T) {
 
 func TestRead_FailedStatus(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "fail-test", map[string]string{
@@ -227,6 +245,9 @@ func TestRead_FailedStatus(t *testing.T) {
 
 func TestRead_MultipleStatusLines(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "multi-status", map[string]string{
@@ -257,6 +278,9 @@ func TestRead_MultipleStatusLines(t *testing.T) {
 
 func TestRead_ResolvedIsNotCurrentState(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 	if err := home.WriteMeta(tmp, "resolved-only", map[string]string{
 		"window": "@nonexistent99",
@@ -286,6 +310,9 @@ func TestRead_ResolvedIsNotCurrentState(t *testing.T) {
 
 func TestRead_KeyedOpenActivitiesMultiEvent(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 	if err := home.WriteMeta(tmp, "keyed-phases", map[string]string{
 		"window": "@nonexistent99",
@@ -315,6 +342,9 @@ func TestRead_KeyedOpenActivitiesMultiEvent(t *testing.T) {
 
 func TestRead_KeyedVerbBeforeColon(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 	if err := home.WriteMeta(tmp, "keyed-verb", map[string]string{
 		"window": "@nonexistent99",
@@ -334,6 +364,9 @@ func TestRead_KeyedVerbBeforeColon(t *testing.T) {
 
 func TestRead_GitBranch(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	// Init a git repo in tmp
@@ -369,6 +402,9 @@ func TestRead_GitBranch(t *testing.T) {
 
 func TestRead_LastNonTerminalStatus(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	setHomeEnv(t, tmp)
 
 	if err := home.WriteMeta(tmp, "nonterm", map[string]string{

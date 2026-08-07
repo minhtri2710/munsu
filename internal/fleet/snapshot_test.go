@@ -68,6 +68,9 @@ func TestPhaseFromMeta(t *testing.T) {
 
 func TestBearings_Idle(t *testing.T) {
 	tmpDir := t.TempDir()
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 
 	out, err := captureStdout(func() error {
 		return Bearings(tmpDir, "")
@@ -83,6 +86,9 @@ func TestBearings_Idle(t *testing.T) {
 
 func TestBearings_WithTasks(t *testing.T) {
 	tmpDir := t.TempDir()
+	if _, err := home.Init(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 
 	// Let's create state directory
 	stateDir := filepath.Join(tmpDir, "state")
@@ -171,6 +177,9 @@ func TestBearings_WithTasks(t *testing.T) {
 
 func TestView_RegisteredPhase(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
@@ -389,6 +398,9 @@ func withResolver(t *testing.T, fn func(homeDir, id string) (*CurrentStateInfo, 
 
 func TestCurrentState_PaneAliveOverDone(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
@@ -432,6 +444,9 @@ func TestCurrentState_PaneAliveOverDone(t *testing.T) {
 
 func TestCurrentState_NoMistakesOverridesBlocked(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
@@ -480,6 +495,9 @@ func TestCurrentState_NoMistakesOverridesBlocked(t *testing.T) {
 
 func TestCurrentState_ResolvedNotCurrentStatus(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
@@ -525,8 +543,9 @@ func TestCurrentState_ResolvedNotCurrentStatus(t *testing.T) {
 
 func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
 	parent := t.TempDir()
-	os.MkdirAll(filepath.Join(parent, "state"), 0755)
-	os.MkdirAll(filepath.Join(parent, "data"), 0755)
+	if _, err := home.Init(parent); err != nil {
+		t.Fatal(err)
+	}
 
 	// primary captain meta only
 	if err := home.WriteMeta(parent, "captain:munsu", map[string]string{
@@ -536,7 +555,9 @@ func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
 	}
 
 	capHome := filepath.Join(parent, "captains", "munsu")
-	os.MkdirAll(filepath.Join(capHome, "state"), 0755)
+	if _, err := home.Init(capHome); err != nil {
+		t.Fatal(err)
+	}
 	if err := home.WriteMeta(capHome, "ship-child", map[string]string{
 		"kind": "ship", "project": "munsu", "window": "w-child",
 	}); err != nil {
@@ -582,6 +603,9 @@ func TestSnapshot_IncludesCaptainHomeTasks(t *testing.T) {
 
 func TestSnapshot_PaneAliveProbeTrue(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
@@ -616,6 +640,9 @@ func TestSnapshot_PaneAliveProbeTrue(t *testing.T) {
 
 func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 
@@ -650,6 +677,9 @@ func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 
 func TestSnapshot_PaneAliveUnknownWhenNoProbe(t *testing.T) {
 	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
 

@@ -63,9 +63,9 @@ General does not read Captain chat. The operable path is:
 1. **Marked send** — `munsu send <captain-id> "..."` prefixes `[mu-from-general]` + U+2063 for `kind=captain`.
 2. **Captain status** — Captain appends one line to General home `state/captain:<id>.status` (charter return channel).
 3. **Signal wake** — watcher `RunCycle` / `munsu watch run` enqueues `kind=signal` for general-relevant last lines.
-4. **Claim** — General leases wakes with `munsu wake claim --consumer <id>` (prefer over legacy drain).
+4. **Claim** — General leases wakes with `munsu wake claim --consumer <id>`.
 
-Hermetic proof: `TestReturnChannelClosedLoop` in `internal/supervision` (no live pane required).
+Hermetic proof: `TestReturnChannelClosedLoop` in `internal/orchestrator` (no live pane required).
 
 Operator checklist (live home):
 
@@ -100,7 +100,7 @@ Each record contains:
 | Payload | Arbitrary message              |
 
 The lifecycle package provides `EnqueueWake` for producers and
-`ClaimWakes` / `DrainWakes` for consumers. `internal/waker` wraps drain helpers.
+`ClaimWakes` / `DrainWakes` for consumers. The orchestrator `waker` wraps drain helpers.
 
 ## Guard
 

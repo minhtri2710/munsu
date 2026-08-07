@@ -17,9 +17,9 @@ import (
 // --- Legacy project registry helpers ---
 //
 // ParseEntry/FormatEntry were removed from the fleet package during the
-// legacy-config hard cut and the configmigration package was deleted. These
-// test-local ports preserve the legacy-format project registry parsing
-// semantics so legacy-format project registry tests keep compiling.
+// legacy-config hard cut. These test-local ports preserve the legacy-format
+// project registry parsing semantics so legacy-format project registry tests
+// keep compiling.
 
 // ParseEntry parses a single legacy projects.md registry line into a Project.
 func ParseEntry(line string) (*Project, error) {

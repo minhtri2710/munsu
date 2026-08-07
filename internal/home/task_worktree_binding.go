@@ -11,11 +11,11 @@ import (
 // in Task 8.2; this constant now only locates the v1 worktree-lease markers.
 const taskAuthorityDir = "state/.task-authority"
 
-// TaskWorktreeBinding is the v1 worktree binding shape decoded by the
-// task-authority migration (internal/taskauthorityfs convertV1Aggregate).
-// It is decode-only: the legacy aggregate store that produced it was deleted
-// in Task 8.2, and current bindings live on taskauthority.Aggregate.Worktree.
-// The lease read below converts a current binding into this shape.
+// TaskWorktreeBinding is the v1 worktree binding shape retained as a
+// decode-only legacy shape. The legacy aggregate store that produced it was
+// deleted in Task 8.2, and current bindings live on
+// taskauthority.Aggregate.Worktree. The lease read below converts a current
+// binding into this shape.
 type TaskWorktreeBinding struct {
 	TaskGeneration     string `json:"task_generation"`
 	RepositoryIdentity string `json:"repository_identity"`

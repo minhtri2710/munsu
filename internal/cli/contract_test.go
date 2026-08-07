@@ -45,6 +45,7 @@ func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
 
 func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	if err := mhome.WriteMeta(home, "observe-me", map[string]string{"description": "inspect state", "worktree": filepath.Join(home, "branch-name")}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,9 @@ func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 
 func TestTaskObserveCaptainUsesStructuredHomeState(t *testing.T) {
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	captainHome := t.TempDir()
+	initCLITestHome(t, captainHome)
 	t.Setenv("MUNSU_HOME", home)
 	if err := mhome.WriteMeta(home, "captain:test", map[string]string{"kind": "captain", "sm_id": "test", "home": captainHome}); err != nil {
 		t.Fatal(err)
@@ -141,6 +144,7 @@ func TestSessionStartUsesSessionStartKind(t *testing.T) {
 
 func TestContractRejectsInvalidInputBeforeStateLookup(t *testing.T) {
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 	output, err := runContract(t, []string{"task", "observe", "missing", "--fields", "nope"})
 	if err == nil {
@@ -158,6 +162,7 @@ func TestContractRejectsInvalidInputBeforeStateLookup(t *testing.T) {
 
 func TestFleetSnapshotV2DefinitiveEmptyAndCompatibilityV1(t *testing.T) {
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
 	v2, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
@@ -307,13 +312,13 @@ func runContract(t *testing.T, args []string) (string, error) {
 
 func TestContractCLIReadsOnlyFreshTempHome(t *testing.T) {
 	home := t.TempDir()
+	// A read-only snapshot requires an initialized canonical home and must
+	// not mutate it: initialize once, then verify the listing is unchanged.
+	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 	before, err := os.ReadDir(home)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(before) != 0 {
-		t.Fatal("temp home was not clean")
 	}
 	if _, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"}); err != nil {
 		t.Fatal(err)
@@ -322,8 +327,8 @@ func TestContractCLIReadsOnlyFreshTempHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != 0 {
-		t.Errorf("read-only fleet snapshot changed clean home: %v", after)
+	if len(after) != len(before) {
+		t.Errorf("read-only fleet snapshot changed home: before=%v after=%v", before, after)
 	}
 }
 
@@ -397,6 +402,7 @@ func TestGuardHasContextualHelpHint(t *testing.T) {
 
 func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
 	// Empty snapshot: count:0, total:0, no soldiers, should still have help
@@ -444,6 +450,7 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 
 func TestFleetSnapshotV2CaptainGuidanceJSON(t *testing.T) {
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
 	out, err := runContract(t, []string{"fleet", "snapshot", "--version", "2", "--output", "json"})
@@ -488,10 +495,11 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	captainHome := filepath.Join(home, "captains", "domain-alpha")
-	os.MkdirAll(filepath.Join(captainHome, "state"), 0755)
-	os.MkdirAll(filepath.Join(captainHome, "data"), 0755)
-	os.MkdirAll(filepath.Join(home, "state"), 0755)
-	os.MkdirAll(filepath.Join(home, "data"), 0755)
+	// Captain homes are canonical homes too: fleet.Snapshot opens them via
+	// home.Open and fails closed when they are uninitialized.
+	if _, err := mhome.Init(captainHome); err != nil {
+		t.Fatal(err)
+	}
 	// Idle captain home (no active children).
 	// Typed fleet documents replace the legacy captains.md registry: the
 	// captain is registered with a project binding through the canonical
@@ -563,6 +571,7 @@ func TestFleetSnapshotV2ParentReconciliation(t *testing.T) {
 
 func TestTaskListShowsAggregateCount(t *testing.T) {
 	home := t.TempDir()
+	initCLITestHome(t, home)
 	t.Setenv("MUNSU_HOME", home)
 
 	// Empty state: should show "no tasks found"

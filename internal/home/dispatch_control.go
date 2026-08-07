@@ -1,9 +1,9 @@
 package home
 
-// This file retains only the legacy v1 dispatch-control record shapes that
-// taskauthorityfs migration decodes from legacy homes
-// (state/.dispatch/interpretations, holds, decisions). The v1 serialization
-// adapter (PersistDispatchInterpretation), the v1 read path
+// This file retains only the legacy v1 dispatch-control record shapes
+// decoded from legacy homes (state/.dispatch/interpretations, holds,
+// decisions). The v1 serialization adapter (PersistDispatchInterpretation),
+// the v1 read path
 // (LoadDispatchInterpretation/LoadDispatchDecision), and the holds-only
 // CheckDispatchHold were deleted in the same slice as their last production
 // callers moved: the handoff saga now evaluates dispatch through the composed
