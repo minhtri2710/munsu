@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -256,19 +257,22 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 		disableProjectSettingsYAML string // if non-empty, write this raw yaml instead of bool helper
 		agents                     []string
 		available                  map[string]bool
-		wantErr                    bool
+		wantBlocker                GateBlockerCategory
 	}{
-		{name: "no instruction files", agents: []string{"pi"}},
-		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantErr: true},
+		{name: "no instruction files", agents: []string{"pi"}, available: map[string]bool{"pi": true}},
+		{name: "pi incompatible", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
 		{name: "pi ok with disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"pi"}, available: map[string]bool{"pi": true}},
 		{name: "codex compatible", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}},
 		{name: "fallback claude compatible", hasDocs: true, agents: []string{"pi", "claude"}, available: map[string]bool{"pi": true, "claude": true}},
-		{name: "neutralizer unavailable", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"pi": true}, wantErr: true},
-		{name: "codex override defeats neutralization", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantErr: true},
-		{name: "claude override defeats neutralization", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantErr: true},
+		{name: "neutralizer unavailable", hasDocs: true, agents: []string{"codex", "pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
+		{name: "codex override defeats neutralization", hasDocs: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
+		{name: "claude override defeats neutralization", hasDocs: true, agents: []string{"claude"}, available: map[string]bool{"claude": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
 		{name: "disable_project_settings overrides codex defeat", hasDocs: true, disableProjectSettings: true, agents: []string{"codex"}, available: map[string]bool{"codex": true}},
-		{name: "malformed no-mistakes yaml still requires neutralizer", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: [", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantErr: true},
-		{name: "disable_project_settings false keeps preflight", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: false\n", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantErr: true},
+		{name: "malformed no-mistakes yaml still requires neutralizer", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: [", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
+		{name: "disable_project_settings false keeps preflight", hasDocs: true, disableProjectSettingsYAML: "disable_project_settings: false\n", agents: []string{"pi"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
+		{name: "configured agent unavailable", hasDocs: true, agents: []string{"pi"}, available: map[string]bool{}, wantBlocker: GateBlockerAgentUnavailable},
+		{name: "opencode refused under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"opencode"}, available: map[string]bool{"opencode": true}, wantBlocker: GateBlockerUnsupportedNeutralization},
+		{name: "auto resolves to available pi under disable_project_settings", hasDocs: true, disableProjectSettings: true, agents: []string{"auto"}, available: map[string]bool{"pi": true}, wantBlocker: GateBlockerNone},
 	}
 
 	for _, tc := range tests {
@@ -289,14 +293,17 @@ func TestCheckNoMistakesCompatibility(t *testing.T) {
 			case "claude override defeats neutralization":
 				cfg.AgentArgsOverride = map[string][]string{"claude": {"--setting-sources", "user,project"}}
 			}
-			err := checkNoMistakesCompatibility(repo, cfg, func(agent string) bool {
+			probe := ProbeNoMistakesGateAgent(repo, cfg, func(agent string) bool {
 				return tc.available[agent]
+			}, func() ProbeResult {
+				return ProbeResult{State: backend.Ready, Version: "1.45.4", Path: "/usr/local/bin/no-mistakes"}
 			})
-			if tc.wantErr && err == nil {
-				t.Fatal("expected incompatibility error")
+			got := GateBlockerNone
+			if probe.Blocker != nil {
+				got = probe.Blocker.Category
 			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if got != tc.wantBlocker {
+				t.Fatalf("blocker category = %q, want %q (detail: %v)", got, tc.wantBlocker, probe.Blocker)
 			}
 		})
 	}

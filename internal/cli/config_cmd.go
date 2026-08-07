@@ -54,7 +54,7 @@ Known config keys: ` + strings.Join(config.KnownKeys, ", ") + `.
 					Status:        "success",
 					Data:          MessageResult{Message: resolved},
 				})
-			case "default-mode", "require-no-mistakes":
+			case "default-mode", "require-no-mistakes", "allow-direct-pr-fallback":
 				// The fleet base document is the single operational authority for
 				// the delivery-mode contract; report the persisted typed value.
 				// A known-unset key reports empty success (the flat known-unset
@@ -275,7 +275,7 @@ func showConfig(homeDir string) string {
 				b.WriteString(fmt.Sprintf("%-30s %s (typed config)\n", key, val))
 			}
 			continue
-		case "default-mode", "require-no-mistakes":
+		case "default-mode", "require-no-mistakes", "allow-direct-pr-fallback":
 			val, ok, err := readBaseConfigField(homeDir, key)
 			if err != nil || !ok {
 				b.WriteString(fmt.Sprintf("%-30s <not set>\n", key))

@@ -19,12 +19,13 @@ type SpawnSoldierConfig struct {
 }
 
 type SpawnProjectConfig struct {
-	Frozen           fleetconfig.ResolvedSnapshot
-	SnapshotDigest   string
-	DispatchAutonomy string
-	ProjectName      string
-	ProjectPath      string
-	Soldier          SpawnSoldierConfig
+	Frozen                fleetconfig.ResolvedSnapshot
+	SnapshotDigest        string
+	DispatchAutonomy      string
+	ProjectName           string
+	ProjectPath           string
+	AllowDirectPRFallback bool
+	Soldier               SpawnSoldierConfig
 }
 
 func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnProjectConfig, error) {
@@ -80,11 +81,12 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 		)
 	}
 	return SpawnProjectConfig{
-		Frozen:           snapshot,
-		SnapshotDigest:   resolved.Digest,
-		DispatchAutonomy: resolved.DispatchAutonomy,
-		ProjectName:      resolved.Project,
-		ProjectPath:      resolved.ProjectPath,
+		Frozen:                snapshot,
+		SnapshotDigest:        resolved.Digest,
+		DispatchAutonomy:      resolved.DispatchAutonomy,
+		ProjectName:           resolved.Project,
+		ProjectPath:           resolved.ProjectPath,
+		AllowDirectPRFallback: resolved.AllowDirectPRFallback,
 		Soldier: SpawnSoldierConfig{
 			Harness: selection.Harness,
 			Model:   selection.Model,

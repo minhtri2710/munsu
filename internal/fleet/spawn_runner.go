@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,23 +29,24 @@ type Runner struct {
 	args Args
 
 	// phase state populated during Run
-	homeDir             string
-	effectiveMode       string
-	requestedMode       string // what was asked for (--mode flag, project registry, or config/default-mode)
-	fallbackReason      string // why effective mode differs from requested mode
-	projPath            string
-	wtPath              string
-	harness             string
-	model               string
-	effort              string
-	launchCmd           string
-	endpoints           EndpointCapabilities
-	endpoint            CreatedEndpoint
-	briefData           []byte
-	windowID            string
-	spawnRole           string
-	projectConfig       SpawnProjectConfig
-	projectConfigLoaded bool
+	homeDir               string
+	effectiveMode         string
+	requestedMode         string // what was asked for (--mode flag, project registry, or config/default-mode)
+	fallbackReason        string // why effective mode differs from requested mode
+	allowDirectPRFallback bool   // explicit configured direct-PR policy; fallback only with it
+	projPath              string
+	wtPath                string
+	harness               string
+	model                 string
+	effort                string
+	launchCmd             string
+	endpoints             EndpointCapabilities
+	endpoint              CreatedEndpoint
+	briefData             []byte
+	windowID              string
+	spawnRole             string
+	projectConfig         SpawnProjectConfig
+	projectConfigLoaded   bool
 
 	// dispatchSel caches the single dispatch-selection resolution so the quota
 	// selector is invoked at most once per spawn and the selection used for
@@ -433,6 +435,7 @@ func (r *Runner) resolveMode() error {
 		r.projectConfig = resolved
 		r.projectConfigLoaded = true
 		r.effectiveMode = resolved.Soldier.Mode
+		r.allowDirectPRFallback = resolved.AllowDirectPRFallback
 		r.requestedMode = r.args.Mode
 		if r.requestedMode == "" {
 			r.requestedMode = r.effectiveMode
@@ -642,7 +645,22 @@ func (r *Runner) preflightNoMistakes() error {
 	if preflight == nil {
 		preflight = defaultNoMistakesPreflight
 	}
-	return preflight(r.projPath)
+	err := preflight(r.projPath)
+	if err == nil {
+		return nil
+	}
+	// The no-mistakes gate preflight reported an exact blocker. Fail closed
+	// with supported delivery-mode guidance unless the operator explicitly
+	// configured the direct-PR fallback policy; the fallback records the
+	// blocker as audit evidence (fallbackReason → attestation → task meta).
+	var blocker *GateBlockerError
+	if r.allowDirectPRFallback && errors.As(err, &blocker) {
+		fmt.Fprintf(os.Stderr, "warning: no-mistakes delivery blocked (%s); falling back to direct-PR under the configured allow-direct-pr-fallback policy: %s\n", blocker.Category, blocker.Detail)
+		r.effectiveMode = "direct-PR"
+		r.fallbackReason = fmt.Sprintf("no-mistakes blocked (%s): %s; direct-PR fallback under configured allow-direct-pr-fallback policy", blocker.Category, blocker.Detail)
+		return nil
+	}
+	return err
 }
 
 // Phase 8: acquireWorktree acquires the worktree owned by the launch
