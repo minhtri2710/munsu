@@ -265,9 +265,13 @@ func parseConfiguredAgents(value any) []string {
 
 func agentAvailable(agent string) bool {
 	binary := agent
-	switch agent {
-	case "claude", "codex", "pi", "opencode", "copilot":
-	case "rovodev":
+	switch {
+	case strings.HasPrefix(agent, "acp:"):
+		// acp:<target> gate agents run through the user-installed acpx
+		// binary; the target's own availability cannot be verified from here.
+		binary = "acpx"
+	case agent == "claude", agent == "codex", agent == "pi", agent == "opencode", agent == "copilot":
+	case agent == "rovodev":
 		binary = "acli"
 	default:
 		return false
@@ -277,10 +281,10 @@ func agentAvailable(agent string) bool {
 }
 
 // projectSettingsDisabled reports whether repoPath/.no-mistakes.yaml sets
-// disable_project_settings: true (gate boundary). When true, the
-// no-mistakes daemon does not load project AGENTS.md/settings into gate agents,
-// so pi (and other non-codex/claude agents) are compatible without agent-side
-// neutralization flags.
+// disable_project_settings: true (gate boundary). When true, the no-mistakes
+// daemon does not load project AGENTS.md/settings into gate agents and
+// enforces the neutralization gate: pi, codex, and claude are verified under
+// the opt-out (no-mistakes >= 1.42.0), all other agents are refused.
 func projectSettingsDisabled(repoPath string) bool {
 	data, err := os.ReadFile(filepath.Join(repoPath, ".no-mistakes.yaml"))
 	if err != nil {
@@ -295,47 +299,24 @@ func projectSettingsDisabled(repoPath string) bool {
 	return raw.DisableProjectSettings
 }
 
-func checkNoMistakesCompatibility(repoPath string, cfg noMistakesConfig, available func(string) bool) error {
-	hasInstructions := false
-	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-		if _, err := os.Stat(filepath.Join(repoPath, name)); err == nil {
-			hasInstructions = true
-			break
-		}
-	}
-	if !hasInstructions {
-		return nil
-	}
-
-	// Trusted gate path: trusted gate config disables project instructions so the
-	// selected pipeline agent never adopts repo AGENTS.md identity.
-	if projectSettingsDisabled(repoPath) {
-		return nil
-	}
-
-	agents := cfg.Agents
-	if len(agents) == 0 {
-		agents = []string{"auto"}
-	}
-	if len(agents) == 1 && agents[0] == "auto" {
-		agents = []string{"claude", "codex", "opencode", "rovodev", "pi", "copilot"}
-	}
-	for _, agent := range agents {
-		if !available(agent) {
-			continue
-		}
-		switch agent {
-		case "codex":
-			if codexNeutralizationPreserved(cfg.AgentArgsOverride[agent]) {
-				return nil
-			}
-		case "claude":
-			if claudeNeutralizationPreserved(cfg.AgentArgsOverride[agent]) {
-				return nil
+func defaultNoMistakesPreflight(repoPath string) error {
+	cfg, err := loadNoMistakesConfig()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			cfg = noMistakesConfig{} // fresh host: no config → daemon defaults (agent: auto)
+		} else {
+			return &GateBlockerError{
+				Category: GateBlockerConfigMismatch,
+				Detail:   fmt.Sprintf("reading no-mistakes config: %v", err),
+				Guidance: "fix ~/.no-mistakes/config.yaml (or $NM_HOME/config.yaml)",
 			}
 		}
 	}
-	return fmt.Errorf("delivery mode 'no-mistakes' is incompatible with this repository's AGENTS.md/CLAUDE.md because no verified neutralization-capable gate agent is selected and available, and .no-mistakes.yaml does not set disable_project_settings: true; use '--mode direct-PR', install/select codex or claude in ~/.no-mistakes/config.yaml, or enable disable_project_settings in .no-mistakes.yaml")
+	probe := ProbeNoMistakesGateAgent(repoPath, cfg, agentAvailable, NoMistakesProbe)
+	if probe.Blocker != nil {
+		return probe.Blocker
+	}
+	return nil
 }
 
 func codexNeutralizationPreserved(args []string) bool {
@@ -371,14 +352,6 @@ func claudeNeutralizationPreserved(args []string) bool {
 		}
 	}
 	return true
-}
-
-func defaultNoMistakesPreflight(repoPath string) error {
-	cfg, err := loadNoMistakesConfig()
-	if err != nil {
-		return fmt.Errorf("reading no-mistakes config: %w", err)
-	}
-	return checkNoMistakesCompatibility(repoPath, cfg, agentAvailable)
 }
 
 // preflightDelivery runs the delivery-level mode preflight before

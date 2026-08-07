@@ -20,6 +20,7 @@ var KnownKeys = []string{
 	"default-mode",
 	"wake-delivery-mode",
 	"require-no-mistakes",
+	"allow-direct-pr-fallback",
 	"afk-digest-window",
 	"afk-wedge-stale-beat",
 	"afk-wedge-max-repeat",

@@ -43,13 +43,20 @@ type CaptainProfile struct {
 }
 
 type ProjectOverlay struct {
-	SoldierHarness    string            `json:"soldierHarness,omitempty"`
-	Model             string            `json:"model,omitempty"`
-	DispatchAutonomy  string            `json:"dispatchAutonomy,omitempty"`
-	DefaultMode       string            `json:"defaultMode,omitempty"`
-	RequireNoMistakes *bool             `json:"requireNoMistakes,omitempty"`
-	Backend           string            `json:"backend,omitempty"`
-	DispatchProfiles  []DispatchProfile `json:"dispatchProfiles,omitempty"`
+	SoldierHarness    string `json:"soldierHarness,omitempty"`
+	Model             string `json:"model,omitempty"`
+	DispatchAutonomy  string `json:"dispatchAutonomy,omitempty"`
+	DefaultMode       string `json:"defaultMode,omitempty"`
+	RequireNoMistakes *bool  `json:"requireNoMistakes,omitempty"`
+	// AllowDirectPRFallback is the explicit configured direct-PR policy: when
+	// true, a no-mistakes delivery that resolves but is blocked by the
+	// gate-agent capability preflight falls back to direct-PR with the blocker
+	// recorded as audit evidence. Unset/false fails closed: the blocker is
+	// reported with supported delivery-mode guidance instead of a silent
+	// bypass.
+	AllowDirectPRFallback *bool             `json:"allowDirectPRFallback,omitempty"`
+	Backend               string            `json:"backend,omitempty"`
+	DispatchProfiles      []DispatchProfile `json:"dispatchProfiles,omitempty"`
 }
 
 type FleetBaseDocument struct {
@@ -73,27 +80,29 @@ type ProjectFacts struct {
 }
 
 type BoundaryOverrides struct {
-	SoldierHarness    string
-	Model             string
-	DispatchAutonomy  string
-	DefaultMode       string
-	RequireNoMistakes *bool
-	Backend           string
-	DispatchProfiles  []DispatchProfile
+	SoldierHarness        string
+	Model                 string
+	DispatchAutonomy      string
+	DefaultMode           string
+	RequireNoMistakes     *bool
+	AllowDirectPRFallback *bool
+	Backend               string
+	DispatchProfiles      []DispatchProfile
 }
 
 type ResolvedProjectConfig struct {
-	Project           string            `json:"project"`
-	ProjectPath       string            `json:"projectPath"`
-	SoldierHarness    string            `json:"soldierHarness,omitempty"`
-	DispatchAutonomy  string            `json:"dispatchAutonomy,omitempty"`
-	Model             string            `json:"model,omitempty"`
-	DefaultMode       string            `json:"defaultMode,omitempty"`
-	RequireNoMistakes bool              `json:"requireNoMistakes"`
-	Backend           string            `json:"backend,omitempty"`
-	DispatchProfiles  []DispatchProfile `json:"dispatchProfiles,omitempty"`
-	CaptainProfile    CaptainProfile    `json:"captainProfile,omitempty"`
-	Digest            string            `json:"digest"`
+	Project               string            `json:"project"`
+	ProjectPath           string            `json:"projectPath"`
+	SoldierHarness        string            `json:"soldierHarness,omitempty"`
+	DispatchAutonomy      string            `json:"dispatchAutonomy,omitempty"`
+	Model                 string            `json:"model,omitempty"`
+	DefaultMode           string            `json:"defaultMode,omitempty"`
+	RequireNoMistakes     bool              `json:"requireNoMistakes"`
+	AllowDirectPRFallback bool              `json:"allowDirectPRFallback,omitempty"`
+	Backend               string            `json:"backend,omitempty"`
+	DispatchProfiles      []DispatchProfile `json:"dispatchProfiles,omitempty"`
+	CaptainProfile        CaptainProfile    `json:"captainProfile,omitempty"`
+	Digest                string            `json:"digest"`
 }
 
 func (d FleetBaseDocument) Validate() error {
@@ -134,14 +143,16 @@ func ResolveProject(base FleetBaseDocument, facts ProjectFacts, overrides Bounda
 	applyCaptainProfile(&captainProfile, facts.CaptainProfile)
 
 	require := effective.RequireNoMistakes != nil && *effective.RequireNoMistakes
+	allowDirectPR := effective.AllowDirectPRFallback != nil && *effective.AllowDirectPRFallback
 	return ResolvedProjectConfig{
 		Project: facts.Name, ProjectPath: facts.Path,
 		SoldierHarness: effective.SoldierHarness, Model: effective.Model,
 		DispatchAutonomy: effective.DispatchAutonomy,
 		DefaultMode:      effective.DefaultMode, RequireNoMistakes: require,
-		Backend:          effective.Backend,
-		DispatchProfiles: cloneProfiles(effective.DispatchProfiles),
-		CaptainProfile:   captainProfile, Digest: digest,
+		AllowDirectPRFallback: allowDirectPR,
+		Backend:               effective.Backend,
+		DispatchProfiles:      cloneProfiles(effective.DispatchProfiles),
+		CaptainProfile:        captainProfile, Digest: digest,
 	}, nil
 }
 
@@ -162,6 +173,10 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 		value := *src.RequireNoMistakes
 		dst.RequireNoMistakes = &value
 	}
+	if src.AllowDirectPRFallback != nil {
+		value := *src.AllowDirectPRFallback
+		dst.AllowDirectPRFallback = &value
+	}
 	if src.Backend != "" {
 		dst.Backend = src.Backend
 	}
@@ -171,7 +186,7 @@ func applyOverlay(dst *ProjectOverlay, src ProjectOverlay) {
 }
 
 func applyBoundaryOverrides(dst *ProjectOverlay, src BoundaryOverrides) {
-	applyOverlay(dst, ProjectOverlay{SoldierHarness: src.SoldierHarness, Model: src.Model, DispatchAutonomy: src.DispatchAutonomy, DefaultMode: src.DefaultMode, RequireNoMistakes: src.RequireNoMistakes, Backend: src.Backend, DispatchProfiles: src.DispatchProfiles})
+	applyOverlay(dst, ProjectOverlay{SoldierHarness: src.SoldierHarness, Model: src.Model, DispatchAutonomy: src.DispatchAutonomy, DefaultMode: src.DefaultMode, RequireNoMistakes: src.RequireNoMistakes, AllowDirectPRFallback: src.AllowDirectPRFallback, Backend: src.Backend, DispatchProfiles: src.DispatchProfiles})
 }
 
 func applyCaptainProfile(dst *CaptainProfile, src CaptainProfile) {
@@ -192,6 +207,10 @@ func cloneOverlay(src ProjectOverlay) ProjectOverlay {
 	if src.RequireNoMistakes != nil {
 		value := *src.RequireNoMistakes
 		result.RequireNoMistakes = &value
+	}
+	if src.AllowDirectPRFallback != nil {
+		value := *src.AllowDirectPRFallback
+		result.AllowDirectPRFallback = &value
 	}
 	return result
 }
