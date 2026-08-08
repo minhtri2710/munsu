@@ -12,6 +12,53 @@ import (
 	homepkg "github.com/minhtri2710/munsu/internal/home"
 )
 
+func TestResolveSpawnProjectConfigExplicitIdentityAssertions(t *testing.T) {
+	home := t.TempDir()
+	writeSpawnSnapshotDocuments(t, home)
+
+	resolved, err := ResolveSpawnProjectConfig(home, Args{ProjectName: "alpha"}, "general")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args Args
+	}{
+		{name: "matching backend", args: Args{ProjectName: "alpha", Backend: "tmux"}},
+		{name: "matching harness", args: Args{ProjectName: "alpha", HarnessFlag: resolved.Soldier.Harness}},
+		{name: "matching mode", args: Args{ProjectName: "alpha", Mode: resolved.Soldier.Mode}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveSpawnProjectConfig(home, tc.args, "general")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.SnapshotDigest != resolved.SnapshotDigest {
+				t.Fatalf("digest = %q, want stable digest %q", got.SnapshotDigest, resolved.SnapshotDigest)
+			}
+		})
+	}
+}
+
+func TestResolveSpawnProjectConfigRejectsConflictingIdentityAssertions(t *testing.T) {
+	home := t.TempDir()
+	writeSpawnSnapshotDocuments(t, home)
+	for _, tc := range []struct {
+		name string
+		args Args
+	}{
+		{name: "backend", args: Args{ProjectName: "alpha", Backend: "herdr"}},
+		{name: "harness", args: Args{ProjectName: "alpha", HarnessFlag: "claude"}},
+		{name: "mode", args: Args{ProjectName: "alpha", Mode: "local-only"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ResolveSpawnProjectConfig(home, tc.args, "general"); err == nil || !strings.Contains(err.Error(), "conflicts with resolved project snapshot") {
+				t.Fatalf("error = %v, want conflicting identity failure", err)
+			}
+		})
+	}
+}
+
 func TestResolveSpawnProjectConfigCrossRankIdentical(t *testing.T) {
 	home := t.TempDir()
 	writeSpawnSnapshotDocuments(t, home)
