@@ -36,6 +36,55 @@ func (e2eTeardown) QueryMergeStatus(*domain.DeliveryIdentity) (*domain.PRMergeSt
 	return nil, nil
 }
 
+func TestLocalOnlyScoutReportAllowsNormalTeardown(t *testing.T) {
+	homeDir, taskID := t.TempDir(), "e2e-scout"
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := home.WriteMeta(homeDir, taskID, map[string]string{"kind": "scout"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(homeDir, "data", taskID), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "data", taskID, "report.md"), []byte("# report\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := taskauthority.NewCanonical(mustOpenHome(t, homeDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Kind: "scout", Reason: "create"}
+	opID, err := domain.NewOperationID("op-create-" + taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Create(op, req); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := orchestrator.DeliverWake(orchestrator.DeliverRequest{
+		HomeDir: homeDir, ParentHome: homeDir, TaskID: taskID,
+		State: "done", Message: "report.md", Key: "terminal", Role: "soldier",
+	}); err != nil {
+		t.Fatalf("local-only terminal report: %v", err)
+	}
+	if _, err := fleet.RetireTask(fleet.Options{HomeDir: homeDir, ID: taskID}, e2eTeardown{}, orchestratorRetirementJournals{}, auth); err != nil {
+		t.Fatalf("normal teardown after local-only scout report: %v", err)
+	}
+}
+
 func TestRetirementTerminalUplinkContinuity(t *testing.T) {
 	homeDir, taskID, key := t.TempDir(), "task-e2e", "terminal"
 	if _, err := home.Init(homeDir); err != nil {

@@ -19,8 +19,37 @@ func deliverEnv(t *testing.T, withParent bool) (soldierHome, captainHome string)
 	soldierHome = t.TempDir()
 	if withParent {
 		captainHome = t.TempDir()
+		if err := os.WriteFile(filepath.Join(captainHome, ProvenanceMarkerName), []byte("captain=test-captain\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return soldierHome, captainHome
+}
+
+func TestDeliverWake_LocalOnlyParentSelfAcknowledges(t *testing.T) {
+	soldierHome, parentHome := deliverEnv(t, true)
+	os.Remove(filepath.Join(parentHome, ProvenanceMarkerName))
+
+	receipt, err := DeliverWake(DeliverRequest{
+		HomeDir: soldierHome, ParentHome: parentHome, TaskID: "local-scout",
+		State: "done", Message: "complete", Key: "terminal", Role: "soldier",
+	})
+	if err != nil {
+		t.Fatalf("DeliverWake: %v", err)
+	}
+	if !receipt.ReceiptWritten || !receipt.ObligationsInit {
+		t.Fatalf("receipt = %+v, want receipt and obligation setup", receipt)
+	}
+	if !IsReceiptAcked(parentHome, "local-scout", "terminal") {
+		t.Fatal("local-only terminal receipt was not self-acknowledged")
+	}
+	open, err := IsTaskReportRelayOpen(parentHome, "local-scout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open {
+		t.Fatal("local-only report relay remained open")
+	}
 }
 
 // TestDeliverWake_SoldierMaterialState verifies that a soldier doing a
