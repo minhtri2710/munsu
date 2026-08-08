@@ -36,7 +36,10 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 	if rank == "captain" {
 		snapshot, err = fleetconfig.LoadPublishedSnapshot(homeDir)
 	} else {
-		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{Backend: args.Backend})
+		// Resolve the immutable project snapshot without substituting CLI
+		// identities. Explicit flags are assertions about the resolved snapshot,
+		// not a second configuration authority.
+		snapshot, err = ResolveProjectSnapshot(homeDir, args.ProjectName, fleetconfig.BoundaryOverrides{})
 	}
 	if err != nil {
 		return SpawnProjectConfig{}, classifySnapshotError(args.ProjectName, err)
@@ -58,6 +61,9 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 	// the default mode is unset, ResolveDeliveryMode auto-detects (no-mistakes
 	// on PATH, else direct-PR) and refuses fallback when require-no-mistakes is
 	// set — preserving the unset → direct-PR default semantics.
+	if err := validateSpawnIdentityAssertions(args, resolved.Backend, resolved.SoldierHarness, normalizeSnapshotDeliveryMode(resolved.DefaultMode)); err != nil {
+		return SpawnProjectConfig{}, err
+	}
 	mode, err := ResolveDeliveryMode(args.Mode, normalizeSnapshotDeliveryMode(resolved.DefaultMode), resolved.RequireNoMistakes)
 	if err != nil {
 		return SpawnProjectConfig{}, err
@@ -94,6 +100,27 @@ func ResolveSpawnProjectConfig(homeDir string, args Args, rank string) (SpawnPro
 			Mode:    mode,
 		},
 	}, nil
+}
+
+func validateSpawnIdentityAssertions(args Args, backendName, harnessName, mode string) error {
+	checks := []struct {
+		name       string
+		explicit   string
+		configured string
+		normalize  func(string) string
+	}{
+		{name: "backend", explicit: args.Backend, configured: backendName, normalize: strings.TrimSpace},
+		{name: "harness", explicit: args.HarnessFlag, configured: harnessName, normalize: strings.TrimSpace},
+		{name: "mode", explicit: args.Mode, configured: mode, normalize: normalizeSnapshotDeliveryMode},
+	}
+	for _, check := range checks {
+		explicit := check.normalize(check.explicit)
+		configured := check.normalize(check.configured)
+		if explicit != "" && configured != "" && explicit != configured {
+			return fmt.Errorf("spawn %s %q conflicts with resolved project snapshot value %q; update the project overlay or omit the flag", check.name, explicit, configured)
+		}
+	}
+	return nil
 }
 
 func normalizeSnapshotDeliveryMode(mode string) string {
