@@ -26,6 +26,10 @@ func mustDoneScout(t *testing.T, c *Canonical, taskID string) domain.Preconditio
 	t.Helper()
 	create := createRequest(c, taskID)
 	create.Kind = "scout"
+	create.ScoutScope = "investigate the requested question"
+	create.ScoutRuntimeBudgetSecs = 300
+	create.ScoutScope = "investigate the requested question"
+	create.ScoutRuntimeBudgetSecs = 300
 	op := mustOperation(t, "op-create-"+taskID, create)
 	if _, err := c.Create(op, create); err != nil {
 		t.Fatal(err)
@@ -145,6 +149,8 @@ func TestCanonicalPromoteFailsClosedOnPreconditions(t *testing.T) {
 	// Live phase: a queued scout cannot promote.
 	live := createRequest(c, "live-1")
 	live.Kind = "scout"
+	live.ScoutScope = "investigate the requested question"
+	live.ScoutRuntimeBudgetSecs = 300
 	if _, err := c.Create(mustOperation(t, "op-create-live", live), live); err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +162,8 @@ func TestCanonicalPromoteFailsClosedOnPreconditions(t *testing.T) {
 	// Retired phase: a retired scout never promotes.
 	retired := createRequest(c, "retired-1")
 	retired.Kind = "scout"
+	retired.ScoutScope = "investigate the requested question"
+	retired.ScoutRuntimeBudgetSecs = 300
 	if _, err := c.Create(mustOperation(t, "op-create-retired", retired), retired); err != nil {
 		t.Fatal(err)
 	}

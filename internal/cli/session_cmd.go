@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/bootstrap"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
@@ -51,13 +52,30 @@ func newBriefCmd() *cobra.Command {
 					}
 				}
 			}
+			scoutScope, scoutBudget := "", int64(0)
+			if scout {
+				auth, err := ctx.TaskAuthority()
+				if err != nil {
+					return err
+				}
+				taskIDValue, err := domain.NewTaskID(id)
+				if err != nil {
+					return err
+				}
+				agg, err := auth.Get(taskIDValue)
+				if err != nil {
+					return fmt.Errorf("reading scout contract: %w", err)
+				}
+				if agg.Definition.Kind != "scout" {
+					return fmt.Errorf("task %q is not a scout", id)
+				}
+				scoutScope = agg.Definition.ScoutScope
+				scoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
+			}
 			opts := fleet.ScaffoldOptions{
-				HomeDir: ctx.Home,
-				ID:      id,
-				Repo:    repo,
-				Scout:   scout,
-				Mode:    resolvedMode,
-				Yolo:    projYolo,
+				HomeDir: ctx.Home, ID: id, Repo: repo, Scout: scout,
+				Mode: resolvedMode, Yolo: projYolo,
+				ScoutScope: scoutScope, ScoutRuntimeBudgetSecs: scoutBudget,
 			}
 
 			if err := fleet.Scaffold(opts); err != nil {

@@ -61,7 +61,9 @@ func TestLocalOnlyScoutReportAllowsNormalTeardown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Kind: "scout", Reason: "create"}
+	req := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Kind: "scout", ScoutScope: "investigate", ScoutRuntimeBudgetSecs: 300,
+		ScoutScope:             "investigate the requested question",
+		ScoutRuntimeBudgetSecs: 300, Reason: "create"}
 	opID, err := domain.NewOperationID("op-create-" + taskID)
 	if err != nil {
 		t.Fatal(err)
@@ -117,11 +119,13 @@ func TestRetirementTerminalUplinkContinuity(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := taskauthority.CanonicalCreateRequest{
-		HomeID: auth.HomeID(),
-		TaskID: tid,
-		Owner:  "owner",
-		Kind:   "scout",
-		Reason: "create",
+		HomeID:                 auth.HomeID(),
+		TaskID:                 tid,
+		Owner:                  "owner",
+		Kind:                   "scout",
+		ScoutScope:             "investigate the requested question",
+		ScoutRuntimeBudgetSecs: 300,
+		Reason:                 "create",
 	}
 	opID, err := domain.NewOperationID("op-create-" + taskID)
 	if err != nil {

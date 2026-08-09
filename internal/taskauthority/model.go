@@ -86,11 +86,13 @@ func (p Phase) Valid() bool {
 
 // TaskDefinition carries the durable definition of one Task Generation.
 type TaskDefinition struct {
-	Owner        string `json:"owner"`
-	Description  string `json:"description,omitempty"`
-	Kind         string `json:"kind,omitempty"`
-	Project      string `json:"project,omitempty"`
-	ParentTaskID string `json:"parent_task_id,omitempty"`
+	Owner                  string `json:"owner"`
+	Description            string `json:"description,omitempty"`
+	Kind                   string `json:"kind,omitempty"`
+	Project                string `json:"project,omitempty"`
+	ParentTaskID           string `json:"parent_task_id,omitempty"`
+	ScoutScope             string `json:"scout_scope,omitempty"`
+	ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
 }
 
 // EndpointBinding is a generation-bound runtime endpoint lease.
@@ -262,6 +264,22 @@ type Aggregate struct {
 // document identity (ADR-0008 §11): internal-history v2 identities are
 // replaced in place by the first supported current v1 definition.
 const TaskAuthoritySchema = "munsu.task-authority/v1"
+
+func validateScoutContract(def TaskDefinition) error {
+	if def.Kind != "scout" {
+		if strings.TrimSpace(def.ScoutScope) != "" || def.ScoutRuntimeBudgetSecs != 0 {
+			return validationError("scout-only fields are not valid for ship tasks")
+		}
+		return nil
+	}
+	if strings.TrimSpace(def.ScoutScope) == "" {
+		return validationError("scout task requires non-empty scope")
+	}
+	if def.ScoutRuntimeBudgetSecs <= 0 {
+		return validationError("scout task requires positive runtime budget seconds")
+	}
+	return nil
+}
 
 // NewAggregate builds the first Generation of a task with Revision one and
 // phase queued, validating the request fields.

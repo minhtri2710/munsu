@@ -61,19 +61,21 @@ func SkillAuthorityClass(name, role string) string {
 // LaunchEnvelope is the structured, versioned launch context for a Soldier.
 // Written to .soldier-envelope.json in the worktree root.
 type LaunchEnvelope struct {
-	EnvelopeVersion string            `json:"envelope_version"`
-	TaskID          string            `json:"task_id"`
-	TaskKind        string            `json:"task_kind"`
-	DeliveryMode    string            `json:"delivery_mode"`
-	Repository      string            `json:"repository"`
-	ParentCaptainID string            `json:"parent_captain_id"`
-	ParentHome      string            `json:"parent_home"`
-	CharterSHA256   string            `json:"charter_sha256"`
-	BriefSHA256     string            `json:"brief_sha256"`
-	PromptSHA256    string            `json:"prompt_sha256"`
-	RequiredSkills  []SkillEntry      `json:"required_skills,omitempty"`
-	OptionalSkills  []SkillEntry      `json:"optional_skills,omitempty"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	EnvelopeVersion        string            `json:"envelope_version"`
+	TaskID                 string            `json:"task_id"`
+	TaskKind               string            `json:"task_kind"`
+	DeliveryMode           string            `json:"delivery_mode"`
+	Repository             string            `json:"repository"`
+	ParentCaptainID        string            `json:"parent_captain_id"`
+	ParentHome             string            `json:"parent_home"`
+	ScoutScope             string            `json:"scout_scope,omitempty"`
+	ScoutRuntimeBudgetSecs int64             `json:"scout_runtime_budget_secs,omitempty"`
+	CharterSHA256          string            `json:"charter_sha256"`
+	BriefSHA256            string            `json:"brief_sha256"`
+	PromptSHA256           string            `json:"prompt_sha256"`
+	RequiredSkills         []SkillEntry      `json:"required_skills,omitempty"`
+	OptionalSkills         []SkillEntry      `json:"optional_skills,omitempty"`
+	Metadata               map[string]string `json:"metadata,omitempty"`
 }
 
 // WriteEnvelope writes the launch envelope to .soldier-envelope.json.

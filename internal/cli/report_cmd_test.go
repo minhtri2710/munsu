@@ -26,7 +26,7 @@ func TestReportDoneCompletesScoutLifecycle(t *testing.T) {
 	t.Setenv("MUNSU_PARENT_STATUS", homeDir)
 
 	root := NewRootCommand()
-	root.SetArgs([]string{"task", "add", "scout-report", "investigate", "--kind", "scout"})
+	root.SetArgs([]string{"task", "add", "scout-report", "investigate", "--kind", "scout", "--scope", "investigate report", "--budget", "300"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("task add: %v", err)
 	}

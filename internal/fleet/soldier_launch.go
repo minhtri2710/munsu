@@ -15,18 +15,20 @@ const PromptName = ".soldier-prompt.md"
 // LaunchPromptInput is the canonical input for building a Soldier launch prompt.
 // All fields must be populated before BuildLaunchPrompt is called.
 type LaunchPromptInput struct {
-	TaskID          string
-	TaskKind        string // "ship" or "scout"
-	DeliveryMode    string
-	Repository      string // repo name for brief
-	ParentCaptainID string
-	ParentHome      string
-	WorktreePath    string // absolute path to the disposable worktree
-	HomeDir         string // munsu home (parent)
-	BriefContent    []byte // complete task brief content
-	RequiredSkills  []SkillEntry
-	OptionalSkills  []SkillEntry
-	HarnessName     string
+	TaskID                 string
+	TaskKind               string // "ship" or "scout"
+	DeliveryMode           string
+	Repository             string // repo name for brief
+	ParentCaptainID        string
+	ParentHome             string
+	WorktreePath           string // absolute path to the disposable worktree
+	HomeDir                string // munsu home (parent)
+	BriefContent           []byte // complete task brief content
+	RequiredSkills         []SkillEntry
+	OptionalSkills         []SkillEntry
+	HarnessName            string
+	ScoutScope             string
+	ScoutRuntimeBudgetSecs int64
 }
 
 // BuildLaunchPrompt constructs the complete, role-specific Soldier launch prompt.
@@ -52,6 +54,12 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	}
 	if input.TaskKind == "" {
 		input.TaskKind = "ship"
+	}
+	if input.TaskKind == "scout" && (strings.TrimSpace(input.ScoutScope) == "" || input.ScoutRuntimeBudgetSecs <= 0) {
+		return "", nil, fmt.Errorf("soldier launch: scout scope and positive runtime budget are required")
+	}
+	if input.TaskKind != "scout" && (strings.TrimSpace(input.ScoutScope) != "" || input.ScoutRuntimeBudgetSecs != 0) {
+		return "", nil, fmt.Errorf("soldier launch: scout contract is only valid for scout tasks")
 	}
 	if input.DeliveryMode == "" {
 		input.DeliveryMode = "direct-PR"
@@ -85,18 +93,20 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	// 4. Build envelope.
 	briefSHA := sha256Content(input.BriefContent)
 	env := &LaunchEnvelope{
-		EnvelopeVersion: EnvelopeVersion,
-		TaskID:          input.TaskID,
-		TaskKind:        input.TaskKind,
-		DeliveryMode:    input.DeliveryMode,
-		Repository:      input.Repository,
-		ParentCaptainID: input.ParentCaptainID,
-		ParentHome:      input.ParentHome,
-		CharterSHA256:   charterSHA,
-		BriefSHA256:     briefSHA,
-		PromptSHA256:    promptSHA,
-		RequiredSkills:  input.RequiredSkills,
-		OptionalSkills:  input.OptionalSkills,
+		EnvelopeVersion:        EnvelopeVersion,
+		TaskID:                 input.TaskID,
+		TaskKind:               input.TaskKind,
+		DeliveryMode:           input.DeliveryMode,
+		Repository:             input.Repository,
+		ParentCaptainID:        input.ParentCaptainID,
+		ParentHome:             input.ParentHome,
+		ScoutScope:             input.ScoutScope,
+		ScoutRuntimeBudgetSecs: input.ScoutRuntimeBudgetSecs,
+		CharterSHA256:          charterSHA,
+		BriefSHA256:            briefSHA,
+		PromptSHA256:           promptSHA,
+		RequiredSkills:         input.RequiredSkills,
+		OptionalSkills:         input.OptionalSkills,
 		Metadata: map[string]string{
 			"harness": input.HarnessName,
 			"home":    input.HomeDir,

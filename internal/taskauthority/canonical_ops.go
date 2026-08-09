@@ -12,27 +12,31 @@ import (
 // CreateRequest creates one new queued task at Generation 1, Revision 1. The
 // request is the typed intent for the operation digest.
 type CanonicalCreateRequest struct {
-	HomeID       domain.HomeID
-	TaskID       domain.TaskID
-	Owner        string
-	Description  string
-	Kind         string
-	Project      domain.ProjectID
-	ParentTaskID domain.TaskID
-	Reason       string
+	HomeID                 domain.HomeID
+	TaskID                 domain.TaskID
+	Owner                  string
+	Description            string
+	Kind                   string
+	Project                domain.ProjectID
+	ParentTaskID           domain.TaskID
+	ScoutScope             string
+	ScoutRuntimeBudgetSecs int64
+	Reason                 string
 }
 
 func (r CanonicalCreateRequest) DigestBytes() ([]byte, error) {
 	return json.Marshal(struct {
-		HomeID       string `json:"home_id"`
-		TaskID       string `json:"task_id"`
-		Owner        string `json:"owner"`
-		Description  string `json:"description"`
-		Kind         string `json:"kind"`
-		Project      string `json:"project"`
-		ParentTaskID string `json:"parent_task_id"`
-		Reason       string `json:"reason"`
-	}{r.HomeID.Value(), r.TaskID.Value(), r.Owner, r.Description, r.Kind, r.Project.Value(), r.ParentTaskID.Value(), r.Reason})
+		HomeID                 string `json:"home_id"`
+		TaskID                 string `json:"task_id"`
+		Owner                  string `json:"owner"`
+		Description            string `json:"description"`
+		Kind                   string `json:"kind"`
+		Project                string `json:"project"`
+		ParentTaskID           string `json:"parent_task_id"`
+		ScoutScope             string `json:"scout_scope,omitempty"`
+		ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
+		Reason                 string `json:"reason"`
+	}{r.HomeID.Value(), r.TaskID.Value(), r.Owner, r.Description, r.Kind, r.Project.Value(), r.ParentTaskID.Value(), r.ScoutScope, r.ScoutRuntimeBudgetSecs, r.Reason})
 }
 
 // Create is the canonical operation that creates one queued Task Generation.
@@ -45,6 +49,9 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	}
 	if strings.TrimSpace(req.Owner) == "" {
 		return Outcome{}, validationError("create requires an owner")
+	}
+	if err := validateScoutContract(TaskDefinition{Kind: req.Kind, ScoutScope: req.ScoutScope, ScoutRuntimeBudgetSecs: req.ScoutRuntimeBudgetSecs}); err != nil {
+		return Outcome{}, err
 	}
 
 	lk, err := c.h.Lock(taskScope(req.TaskID.Value()))
@@ -66,6 +73,11 @@ func (c *Canonical) Create(op domain.Operation, req CanonicalCreateRequest) (Out
 	}
 
 	agg, err := NewAggregate(req.TaskID.Value(), req.Owner, req.Description, req.Kind, req.Project.Value(), req.ParentTaskID.Value())
+	if err == nil {
+		agg.Definition.ScoutScope = strings.TrimSpace(req.ScoutScope)
+		agg.Definition.ScoutRuntimeBudgetSecs = req.ScoutRuntimeBudgetSecs
+		err = validateScoutContract(agg.Definition)
+	}
 	if err != nil {
 		return Outcome{}, err
 	}

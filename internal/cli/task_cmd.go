@@ -28,6 +28,8 @@ func newTaskCmd() *cobra.Command {
 			desc := args[1]
 			kind, _ := cmd.Flags().GetString("kind")
 			repo, _ := cmd.Flags().GetString("repo")
+			scope, _ := cmd.Flags().GetString("scope")
+			budget, _ := cmd.Flags().GetInt64("budget")
 
 			project := ""
 			if repo != "" {
@@ -43,13 +45,15 @@ func newTaskCmd() *cobra.Command {
 				return err
 			}
 			req := taskauthority.CanonicalCreateRequest{
-				HomeID:      auth.HomeID(),
-				TaskID:      tid,
-				Owner:       resolveTaskOwner(ctx.Home),
-				Description: desc,
-				Kind:        kind,
-				Project:     domain.ProjectID{},
-				Reason:      "cli task add",
+				HomeID:                 auth.HomeID(),
+				TaskID:                 tid,
+				Owner:                  resolveTaskOwner(ctx.Home),
+				Description:            desc,
+				Kind:                   kind,
+				Project:                domain.ProjectID{},
+				ScoutScope:             scope,
+				ScoutRuntimeBudgetSecs: budget,
+				Reason:                 "cli task add",
 			}
 			if project != "" {
 				pid, err := domain.NewProjectID(project)
@@ -94,6 +98,8 @@ func newTaskCmd() *cobra.Command {
 	configureContractCommand(addCmd)
 	addCmd.Flags().String("kind", "ship", "Task kind (ship|scout)")
 	addCmd.Flags().String("repo", "", "Project repository name")
+	addCmd.Flags().String("scope", "", "Scout investigation scope (required for scout tasks)")
+	addCmd.Flags().Int64("budget", 0, "Maximum scout runtime in seconds (required and positive for scout tasks)")
 
 	listCmd := &cobra.Command{
 		Use:   "list",
