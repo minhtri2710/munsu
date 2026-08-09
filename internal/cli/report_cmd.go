@@ -105,6 +105,9 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			if role == "soldier" && state == "done" {
 				if isScoutTask(parentHome, taskID) {
 					if err := enforceScoutReportBudget(parentHome, taskID, time.Now()); err != nil {
+						if budgetErr := new(orchestrator.ScoutBudgetError); errors.As(err, &budgetErr) {
+							_ = home.AppendStatus(parentHome, taskID, "failed: scout runtime deadline evidence: "+formatScoutBudgetEvidence(budgetErr.Evidence))
+						}
 						return fmt.Errorf("report: scout completion rejected: %w", err)
 					}
 				}
@@ -260,6 +263,10 @@ func isScoutTask(homeDir, taskID string) bool {
 	}
 	agg, err := auth.Get(tid)
 	return err == nil && agg.Definition.Kind == "scout"
+}
+
+func formatScoutBudgetEvidence(e orchestrator.ScoutBudgetEvidence) string {
+	return fmt.Sprintf("outcome=%s budget_secs=%d started_at_unix=%d observed_at_unix=%d elapsed_secs=%d", e.Outcome, e.BudgetSecs, e.StartedAtUnix, e.ObservedAtUnix, e.ElapsedSecs)
 }
 
 func enforceScoutReportBudget(homeDir, taskID string, now time.Time) error {
