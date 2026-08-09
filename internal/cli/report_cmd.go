@@ -103,6 +103,11 @@ Use 'munsu send' for downlink steering; 'munsu report' for uplink status.`,
 			// transition before sending the uplink so teardown can observe the
 			// canonical terminal phase without requiring --force.
 			if role == "soldier" && state == "done" {
+				if isScoutTask(parentHome, taskID) {
+					if err := enforceScoutReportBudget(parentHome, taskID, time.Now()); err != nil {
+						return fmt.Errorf("report: scout completion rejected: %w", err)
+					}
+				}
 				if err := completeScoutReport(parentHome, taskID); err != nil {
 					return fmt.Errorf("report: completing scout lifecycle: %w", err)
 				}
@@ -255,6 +260,39 @@ func isScoutTask(homeDir, taskID string) bool {
 	}
 	agg, err := auth.Get(tid)
 	return err == nil && agg.Definition.Kind == "scout"
+}
+
+func enforceScoutReportBudget(homeDir, taskID string, now time.Time) error {
+	h, err := home.Open(homeDir)
+	if err != nil {
+		return err
+	}
+	auth, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		return err
+	}
+	tid, err := domain.NewTaskID(taskID)
+	if err != nil {
+		return err
+	}
+	agg, err := auth.Get(tid)
+	if err != nil {
+		return err
+	}
+	if agg.Definition.Kind != "scout" {
+		return nil
+	}
+	// Task-only/local report flows may not have a launch submission record; keep
+	// their existing report semantics. When launch evidence exists, its timestamp
+	// is authoritative and malformed evidence fails closed.
+	if agg.LaunchEvidence == nil {
+		return nil
+	}
+	if agg.LaunchEvidence.SubmittedAt <= 0 {
+		return fmt.Errorf("%w: task=%s", orchestrator.ErrScoutBudgetMissingTimestamp, taskID)
+	}
+	_, err = orchestrator.EnforceScoutRuntimeBudget(agg.Definition.ScoutRuntimeBudgetSecs, agg.LaunchEvidence.SubmittedAt, now.Unix(), now)
+	return err
 }
 
 func completeScoutReport(homeDir, taskID string) error {
