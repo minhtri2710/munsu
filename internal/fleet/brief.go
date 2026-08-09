@@ -10,12 +10,14 @@ import (
 
 // ScaffoldOptions controls brief generation.
 type ScaffoldOptions struct {
-	HomeDir string // munsu home directory
-	ID      string // task ID
-	Repo    string // project/repo name
-	Scout   bool   // generate scout brief instead of ship brief
-	Mode    string // delivery mode (feat, fix, refactor, etc.)
-	Yolo    bool   // yolo mode
+	HomeDir                string // munsu home directory
+	ID                     string // task ID
+	Repo                   string // project/repo name
+	Scout                  bool   // generate scout brief instead of ship brief
+	Mode                   string // delivery mode (feat, fix, refactor, etc.)
+	Yolo                   bool   // yolo mode
+	ScoutScope             string
+	ScoutRuntimeBudgetSecs int64
 }
 
 // Scaffold writes a brief.md at $MUNSU_HOME/data/<id>/brief.md.
@@ -42,7 +44,7 @@ func buildBrief(opts ScaffoldOptions) string {
 	var b strings.Builder
 
 	if opts.Scout {
-		b.WriteString(scoutBriefTemplate(id, repo, opts.Mode, opts.Yolo))
+		b.WriteString(scoutBriefTemplate(id, repo, opts.Mode, opts.Yolo, opts.ScoutScope, opts.ScoutRuntimeBudgetSecs))
 	} else {
 		b.WriteString(shipBriefTemplate(id, repo, opts.Mode, opts.Yolo))
 	}
@@ -122,7 +124,13 @@ Before that, close every open keyed decision with `+"`"+`resolved [key=<slug>]: 
 }
 
 // scoutBriefTemplate returns the scout-mode brief template.
-func scoutBriefTemplate(id, repo, mode string, yolo bool) string {
+func scoutBriefTemplate(id, repo, mode string, yolo bool, contract ...interface{}) string {
+	var scope string
+	var budget int64
+	if len(contract) == 2 {
+		scope, _ = contract[0].(string)
+		budget, _ = contract[1].(int64)
+	}
 	modeLine := ""
 	if mode != "" {
 		modeLine = fmt.Sprintf("Delivery mode: %s", mode)
@@ -133,6 +141,10 @@ func scoutBriefTemplate(id, repo, mode string, yolo bool) string {
 	}
 
 	return fmt.Sprintf(`# Scout brief: %s
+
+## Contract
+Scope: %s
+Maximum runtime (seconds): %d
 
 ## Setup
 You are in a disposable git worktree of %s, at a detached HEAD on a clean default branch.
@@ -153,7 +165,7 @@ what was found, and any recommendations.
 4. To close an open wake key, append `+"`"+`resolved [key=<slug>]: {summary}`+"`"+`. Repeating the same resolved key is safe.
 5. When done, run `+"`"+`munsu report done "{summary of findings location}"`+"`"+` and stop.
 6. Do not modify project files - only the report.
-`, id, repo, id, modeLine)
+`, id, scope, budget, repo, id, modeLine)
 }
 
 // Path returns the expected brief.md path for the given task ID.

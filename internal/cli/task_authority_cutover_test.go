@@ -132,7 +132,7 @@ func TestTaskListReadsCanonicalAuthorityRecords(t *testing.T) {
 	homeDir := t.TempDir()
 	initCLITestHome(t, homeDir)
 	for _, args := range [][]string{
-		{"task", "add", "alpha", "first", "--kind", "scout", "--repo", "proj-a", "--home", homeDir},
+		{"task", "add", "alpha", "first", "--kind", "scout", "--scope", "investigate proj-a", "--budget", "300", "--repo", "proj-a", "--home", homeDir},
 		{"task", "add", "beta", "second", "--kind", "ship", "--home", homeDir},
 	} {
 		if out, err := runTaskCommand(t, args); err != nil {

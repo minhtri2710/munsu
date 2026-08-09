@@ -39,6 +39,8 @@ type Runner struct {
 	harness               string
 	model                 string
 	effort                string
+	taskScoutScope        string
+	taskScoutBudget       int64
 	launchCmd             string
 	endpoints             EndpointCapabilities
 	endpoint              CreatedEndpoint
@@ -792,6 +794,8 @@ func (r *Runner) beginLaunchIntent() error {
 	if err != nil {
 		return fmt.Errorf("launch intent: resolving task %s: %w", r.args.ID, err)
 	}
+	r.taskScoutScope = agg.Definition.ScoutScope
+	r.taskScoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	req := r.buildBeginSpawnRequest(prec, agg.Generation)
 	if agg.Launch != nil {
@@ -1377,18 +1381,20 @@ func (r *Runner) buildSoldierPrompt() error {
 
 	// Build the prompt input struct.
 	input := LaunchPromptInput{
-		TaskID:          r.args.ID,
-		TaskKind:        r.args.Kind,
-		DeliveryMode:    r.effectiveMode,
-		Repository:      r.args.ProjectName,
-		ParentCaptainID: parentCaptainID,
-		ParentHome:      r.homeDir,
-		WorktreePath:    r.wtPath,
-		HomeDir:         r.homeDir,
-		BriefContent:    briefData,
-		RequiredSkills:  requiredSkills,
-		OptionalSkills:  optionalSkills,
-		HarnessName:     r.harness,
+		TaskID:                 r.args.ID,
+		TaskKind:               r.args.Kind,
+		DeliveryMode:           r.effectiveMode,
+		Repository:             r.args.ProjectName,
+		ParentCaptainID:        parentCaptainID,
+		ParentHome:             r.homeDir,
+		WorktreePath:           r.wtPath,
+		HomeDir:                r.homeDir,
+		BriefContent:           briefData,
+		RequiredSkills:         requiredSkills,
+		OptionalSkills:         optionalSkills,
+		HarnessName:            r.harness,
+		ScoutScope:             r.taskScoutScope,
+		ScoutRuntimeBudgetSecs: r.taskScoutBudget,
 	}
 
 	// Fail-closed: validate before building.
