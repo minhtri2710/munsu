@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,7 +41,51 @@ type ConfigDiagnostic struct {
 // RecoverTransaction sequences a structured captain recovery for one captain.
 // Each step runs in order and produces a StepResult with ok/failed/skipped,
 // so partial failures never block the entire recovery.
-type RecoverTransaction struct{ Capabilities RecoverCapabilities }
+type RecoverTransaction struct {
+	Capabilities RecoverCapabilities
+
+	now   func() time.Time
+	sleep func(time.Duration)
+}
+
+const (
+	relaunchProofAttempts = 20
+	relaunchProofInterval = 500 * time.Millisecond
+	relaunchGuardTTL      = 5 * time.Minute
+)
+
+const relaunchGuardUntilField = "relaunch_guard_until"
+
+func (tx *RecoverTransaction) nowTime() time.Time {
+	if tx.now != nil {
+		return tx.now()
+	}
+	return time.Now()
+}
+
+func (tx *RecoverTransaction) sleepFor(d time.Duration) {
+	if tx.sleep != nil {
+		tx.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// relaunchGuardDeadline resolves the persisted guard deadline. Missing,
+// malformed, or implausibly distant deadlines are normalized to now+ttl so
+// the guard always stays bounded; the second return reports whether the
+// caller must persist the normalized deadline.
+func relaunchGuardDeadline(meta map[string]string, ttl time.Duration, now time.Time) (time.Time, bool) {
+	if raw := meta[relaunchGuardUntilField]; raw != "" {
+		if secs, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			until := time.Unix(secs, 0)
+			if !until.After(now.Add(ttl)) {
+				return until, false
+			}
+		}
+	}
+	return now.Add(ttl), true
+}
 
 // Recover runs the full recovery transaction for a single captain.
 func (tx *RecoverTransaction) Recover(parentHome string, sm Info) *RecoverResult {
@@ -270,6 +315,7 @@ func (tx *RecoverTransaction) stepLaunchReadiness(parentHome string, sm Info) St
 }
 
 func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResult {
+	now := tx.nowTime()
 	alive, aliveErr := checkAliveWithProbe(parentHome, sm, tx.Capabilities.Probe)
 	if aliveErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
@@ -278,6 +324,7 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 	if alive {
 		if meta, err := mhome.ReadMeta(parentHome, taskIDForCaptain(sm.ID)); err == nil && meta["relaunch_liveness"] == "unproven" {
 			delete(meta, "relaunch_liveness")
+			delete(meta, relaunchGuardUntilField)
 			if err := mhome.WriteMeta(parentHome, taskIDForCaptain(sm.ID), meta); err != nil {
 				return StepResult{Name: "relaunch-pane", State: StepFailed,
 					Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", err)}
@@ -298,8 +345,24 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 			Detail: "seeded but not launched"}
 	}
 	if meta["relaunch_liveness"] == "unproven" {
-		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: "prior relaunch liveness remains unproven; refusing duplicate launch"}
+		until, normalized := relaunchGuardDeadline(meta, relaunchGuardTTL, now)
+		if normalized {
+			meta[relaunchGuardUntilField] = strconv.FormatInt(until.Unix(), 10)
+			if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+				return StepResult{Name: "relaunch-pane", State: StepFailed,
+					Detail: fmt.Sprintf("normalizing relaunch guard failed: %v", err)}
+			}
+		}
+		if remaining := until.Sub(now); remaining > 0 {
+			return StepResult{Name: "relaunch-pane", State: StepFailed,
+				Detail: fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))}
+		}
+		delete(meta, "relaunch_liveness")
+		delete(meta, relaunchGuardUntilField)
+		if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+			return StepResult{Name: "relaunch-pane", State: StepFailed,
+				Detail: fmt.Sprintf("clearing expired relaunch guard failed: %v", err)}
+		}
 	}
 
 	// Launched-but-dead: relaunch.
@@ -312,7 +375,7 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("post-launch metadata read failed: %v", metaErr)}
 	}
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < relaunchProofAttempts; attempt++ {
 		alive, aliveErr = checkAliveWithProbe(parentHome, sm, tx.Capabilities.Probe)
 		if aliveErr != nil {
 			return StepResult{Name: "relaunch-pane", State: StepFailed,
@@ -320,17 +383,19 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 		}
 		if alive {
 			delete(meta, "relaunch_liveness")
+			delete(meta, relaunchGuardUntilField)
 			if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
 				return StepResult{Name: "relaunch-pane", State: StepFailed,
 					Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", err)}
 			}
 			return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "relaunched successfully and liveness proven"}
 		}
-		if attempt < 4 {
-			time.Sleep(200 * time.Millisecond)
+		if attempt+1 < relaunchProofAttempts {
+			tx.sleepFor(relaunchProofInterval)
 		}
 	}
 	meta["relaunch_liveness"] = "unproven"
+	meta[relaunchGuardUntilField] = strconv.FormatInt(tx.nowTime().Add(relaunchGuardTTL).Unix(), 10)
 	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("post-launch liveness could not be proven; recording recovery guard failed: %v", err)}

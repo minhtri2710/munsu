@@ -3,8 +3,10 @@ package fleet
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
 	mhome "github.com/minhtri2710/munsu/internal/home"
@@ -133,11 +135,14 @@ func TestRecoverRelaunchFailsWhenPostLaunchLivenessIsUnproven(t *testing.T) {
 	writeCanonicalPiIntegration(t, home)
 	writeCaptainMeta(t, parent, "post-launch-dead", home, "dead-window")
 	launch := &countingLaunchEndpoint{}
-	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
-		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
-		Launch:      launch,
-		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
-	}}
+	tx := &RecoverTransaction{
+		Capabilities: RecoverCapabilities{
+			Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+			Launch:      launch,
+			Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+		},
+		sleep: func(time.Duration) {},
+	}
 
 	result := tx.Recover(parent, Info{ID: "post-launch-dead", Home: home})
 	if launch.calls != 1 {
@@ -257,4 +262,214 @@ func findStep(steps []StepResult, name string) *StepResult {
 		}
 	}
 	return nil
+}
+
+// writeRelaunchGuard seeds a set relaunch guard on a captain task, using the
+// given raw relaunch_guard_until value (empty leaves the field absent).
+func writeRelaunchGuard(t *testing.T, parent, id, untilRaw string) {
+	t.Helper()
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta["relaunch_liveness"] = "unproven"
+	if untilRaw != "" {
+		meta[relaunchGuardUntilField] = untilRaw
+	}
+	if err := mhome.WriteMeta(parent, taskIDForCaptain(id), meta); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoverRelaunchSlowBootProvesLivenessBeyondOldWindow(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "slow-boot")
+	writeCanonicalPiIntegration(t, home)
+	writeCaptainMeta(t, parent, "slow-boot", home, "dead-window")
+	launch := &countingLaunchEndpoint{}
+	// Pre-launch probe dead, then five dead post-launch probes, then alive on
+	// the sixth post-launch probe: the old five-probe window would fail this.
+	results := make([]CaptainProbeResult, 7)
+	results[6] = CaptainProbeResult{PaneAlive: true, AgentAlive: true}
+	tx := &RecoverTransaction{
+		Capabilities: RecoverCapabilities{
+			Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+			Launch:      launch,
+			Probe:       &testProbeEndpoint{results: results},
+		},
+		sleep: func(time.Duration) {},
+	}
+
+	result := tx.Recover(parent, Info{ID: "slow-boot", Home: home})
+	if launch.calls != 1 {
+		t.Fatalf("launch calls = %d, want 1", launch.calls)
+	}
+	step := findStep(result.Steps, "relaunch-pane")
+	if step == nil || step.State != StepOk || !strings.Contains(step.Detail, "relaunched") {
+		t.Fatalf("relaunch step = %+v, want successful relaunch after slow boot", step)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("slow-boot"))
+	if err != nil {
+		t.Fatalf("read relaunched meta: %v", err)
+	}
+	if _, ok := meta["relaunch_liveness"]; ok {
+		t.Fatalf("relaunch_liveness = %q, want cleared after proven liveness", meta["relaunch_liveness"])
+	}
+	if _, ok := meta[relaunchGuardUntilField]; ok {
+		t.Fatalf("%s = %q, want cleared after proven liveness", relaunchGuardUntilField, meta[relaunchGuardUntilField])
+	}
+}
+
+func TestRecoverRelaunchExpiredGuardAllowsOneFreshAttempt(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+
+	fixed := time.Unix(1_700_000_000, 0)
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "expired-guard")
+	writeCanonicalPiIntegration(t, home)
+	writeCaptainMeta(t, parent, "expired-guard", home, "dead-window")
+	writeRelaunchGuard(t, parent, "expired-guard", strconv.FormatInt(fixed.Add(-time.Hour).Unix(), 10))
+
+	launch := &countingLaunchEndpoint{}
+	tx := &RecoverTransaction{
+		Capabilities: RecoverCapabilities{
+			Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+			Launch:      launch,
+			Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+		},
+		now:   func() time.Time { return fixed },
+		sleep: func(time.Duration) {},
+	}
+
+	result := tx.Recover(parent, Info{ID: "expired-guard", Home: home})
+	if launch.calls != 1 {
+		t.Fatalf("launch calls = %d, want 1 fresh attempt after guard expiry", launch.calls)
+	}
+	step := findStep(result.Steps, "relaunch-pane")
+	if step == nil || step.State != StepFailed || !strings.Contains(step.Detail, "post-launch liveness") {
+		t.Fatalf("relaunch step = %+v, want failed proof after fresh attempt", step)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("expired-guard"))
+	if err != nil {
+		t.Fatalf("read re-armed guard meta: %v", err)
+	}
+	if meta["relaunch_liveness"] != "unproven" {
+		t.Fatalf("relaunch_liveness = %q, want unproven re-armed", meta["relaunch_liveness"])
+	}
+	wantUntil := strconv.FormatInt(fixed.Add(relaunchGuardTTL).Unix(), 10)
+	if meta[relaunchGuardUntilField] != wantUntil {
+		t.Fatalf("%s = %q, want re-armed %q", relaunchGuardUntilField, meta[relaunchGuardUntilField], wantUntil)
+	}
+
+	second := tx.Recover(parent, Info{ID: "expired-guard", Home: home})
+	secondStep := findStep(second.Steps, "relaunch-pane")
+	if launch.calls != 1 {
+		t.Fatalf("second recovery launch calls = %d, want 1 (refused while guard fresh)", launch.calls)
+	}
+	if secondStep == nil || secondStep.State != StepFailed || !strings.Contains(secondStep.Detail, "duplicate launch") {
+		t.Fatalf("second relaunch step = %+v, want fresh-guard refusal", secondStep)
+	}
+}
+
+func TestRecoverRelaunchMalformedGuardDeadlineIsNormalizedAndBounded(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+
+	fixed := time.Unix(1_700_000_000, 0)
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "missing", raw: ""},
+		{name: "malformed", raw: "not-a-time"},
+		{name: "implausibly-future", raw: strconv.FormatInt(fixed.Add(24*time.Hour).Unix(), 10)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := t.TempDir()
+			home := seedCaptainForTest(t, parent, "malformed-guard")
+			writeCanonicalPiIntegration(t, home)
+			writeCaptainMeta(t, parent, "malformed-guard", home, "dead-window")
+			writeRelaunchGuard(t, parent, "malformed-guard", tc.raw)
+
+			launch := &countingLaunchEndpoint{}
+			cur := fixed
+			tx := &RecoverTransaction{
+				Capabilities: RecoverCapabilities{
+					Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+					Launch:      launch,
+					Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+				},
+				now:   func() time.Time { return cur },
+				sleep: func(time.Duration) {},
+			}
+
+			result := tx.Recover(parent, Info{ID: "malformed-guard", Home: home})
+			if launch.calls != 0 {
+				t.Fatalf("launch calls = %d, want 0 (normalized guard refuses once)", launch.calls)
+			}
+			step := findStep(result.Steps, "relaunch-pane")
+			if step == nil || step.State != StepFailed || !strings.Contains(step.Detail, "duplicate launch") {
+				t.Fatalf("relaunch step = %+v, want bounded refusal", step)
+			}
+			meta, err := mhome.ReadMeta(parent, taskIDForCaptain("malformed-guard"))
+			if err != nil {
+				t.Fatalf("read normalized guard meta: %v", err)
+			}
+			wantUntil := strconv.FormatInt(fixed.Add(relaunchGuardTTL).Unix(), 10)
+			if meta[relaunchGuardUntilField] != wantUntil {
+				t.Fatalf("%s = %q, want normalized %q", relaunchGuardUntilField, meta[relaunchGuardUntilField], wantUntil)
+			}
+
+			cur = fixed.Add(relaunchGuardTTL + time.Second)
+			tx.Recover(parent, Info{ID: "malformed-guard", Home: home})
+			if launch.calls != 1 {
+				t.Fatalf("launch calls after deadline = %d, want 1 bounded retry", launch.calls)
+			}
+		})
+	}
+}
+
+func TestRecoverRelaunchAliveEndpointClearsGuard(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "alive-clears-guard")
+	writeCanonicalPiIntegration(t, home)
+	writeCaptainMeta(t, parent, "alive-clears-guard", home, "dead-window")
+	writeRelaunchGuard(t, parent, "alive-clears-guard", strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10))
+
+	launch := &countingLaunchEndpoint{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}},
+	}}
+
+	result := tx.Recover(parent, Info{ID: "alive-clears-guard", Home: home})
+	if launch.calls != 0 {
+		t.Fatalf("launch calls = %d, want 0", launch.calls)
+	}
+	step := findStep(result.Steps, "relaunch-pane")
+	if step == nil || step.State != StepOk || !strings.Contains(step.Detail, "alive") {
+		t.Fatalf("relaunch step = %+v, want alive no-action", step)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("alive-clears-guard"))
+	if err != nil {
+		t.Fatalf("read cleared guard meta: %v", err)
+	}
+	if _, ok := meta["relaunch_liveness"]; ok {
+		t.Fatalf("relaunch_liveness = %q, want cleared", meta["relaunch_liveness"])
+	}
+	if _, ok := meta[relaunchGuardUntilField]; ok {
+		t.Fatalf("%s = %q, want cleared", relaunchGuardUntilField, meta[relaunchGuardUntilField])
+	}
 }
