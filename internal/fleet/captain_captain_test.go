@@ -2826,7 +2826,7 @@ func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
 	republishWithCaptainProfile(t, parent, home, config.CaptainProfile{Harness: harness.Claude})
 	writeCaptainMeta(t, parent, "claude-captain", home, "dead-window")
 	integration := &countingStatusIntegrationPort{}
-	result, err := Recover(parent, []Info{{ID: "claude-captain", Home: home}}, RecoverCapabilities{Integration: integration, Launch: &countingLaunchEndpoint{}, Probe: &testProbeEndpoint{result: CaptainProbeResult{}}})
+	result, err := Recover(parent, []Info{{ID: "claude-captain", Home: home}}, RecoverCapabilities{Integration: integration, Launch: &countingLaunchEndpoint{}, Probe: &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}

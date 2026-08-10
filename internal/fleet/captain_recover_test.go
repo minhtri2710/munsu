@@ -123,7 +123,7 @@ func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
 		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 		Launch:      launch,
-		Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{}, {PaneAlive: true, AgentAlive: true}}},
+		Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
 	}}
 
 	result := tx.Recover(parent, Info{ID: "healthy-integration", Home: home})
@@ -157,7 +157,7 @@ func TestRecoverRelaunchFailsWhenPostLaunchLivenessIsUnproven(t *testing.T) {
 		Capabilities: RecoverCapabilities{
 			Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 			Launch:      launch,
-			Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+			Probe:       &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 		},
 		sleep: func(time.Duration) {},
 	}
@@ -196,7 +196,7 @@ func TestRecoverIntegrationStatus_MissingCanonicalIntegrationDoesNotRelaunch(t *
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
 		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "absent"}},
 		Launch:      launch,
-		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 	}}
 
 	result := tx.Recover(parent, Info{ID: "missing-integration", Home: home})
@@ -228,7 +228,7 @@ func TestRecoverIntegrationStatus_DriftedCanonicalIntegrationDoesNotRelaunch(t *
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
 		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "drifted", Message: "digest mismatch"}},
 		Launch:      launch,
-		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 	}}
 
 	result := tx.Recover(parent, Info{ID: "drifted-integration", Home: home})
@@ -312,6 +312,9 @@ func TestRecoverRelaunchSlowBootProvesLivenessBeyondOldWindow(t *testing.T) {
 	// Pre-launch probe dead, then five dead post-launch probes, then alive on
 	// the sixth post-launch probe: the old five-probe window would fail this.
 	results := make([]CaptainProbeResult, 7)
+	for i := 0; i < 6; i++ {
+		results[i] = CaptainProbeResult{Absent: true}
+	}
 	results[6] = CaptainProbeResult{PaneAlive: true, AgentAlive: true}
 	tx := &RecoverTransaction{
 		Capabilities: RecoverCapabilities{
@@ -359,7 +362,7 @@ func TestRecoverRelaunchExpiredGuardAllowsOneFreshAttempt(t *testing.T) {
 		Capabilities: RecoverCapabilities{
 			Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 			Launch:      launch,
-			Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+			Probe:       &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 		},
 		now:   func() time.Time { return fixed },
 		sleep: func(time.Duration) {},
@@ -422,7 +425,7 @@ func TestRecoverRelaunchMalformedGuardDeadlineIsNormalizedAndBounded(t *testing.
 				Capabilities: RecoverCapabilities{
 					Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 					Launch:      launch,
-					Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+					Probe:       &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 				},
 				now:   func() time.Time { return cur },
 				sleep: func(time.Duration) {},

@@ -94,6 +94,11 @@ func TestSessionProbeEndpointOrdinaryOutcomes(t *testing.T) {
 		if got.PaneAlive != alive || got.AgentAlive != alive {
 			t.Fatalf("got=%+v, alive=%v", got, alive)
 		}
+		// A plain Alive() bool cannot prove authoritative absence: Absent stays
+		// false even when Alive=false, so the unproven reading fails closed.
+		if got.Absent {
+			t.Fatalf("got=%+v, Absent must be false for non-agent-aware backend", got)
+		}
 	}
 }
 
@@ -220,15 +225,16 @@ func TestSessionLaunchEndpointDerivesContainerLabel(t *testing.T) {
 func TestSessionProbeEndpointAgentAwareOutcomes(t *testing.T) {
 	boom := errors.New("protocol failed")
 	tests := []struct {
-		name      string
-		backend   *captainProbeBackend
-		wantPane  bool
-		wantAgent bool
-		wantErr   error
+		name       string
+		backend    *captainProbeBackend
+		wantPane   bool
+		wantAgent  bool
+		wantAbsent bool
+		wantErr    error
 	}{
 		{name: "alive", backend: &captainProbeBackend{paneAlive: true, agentAlive: true}, wantPane: true, wantAgent: true},
-		{name: "agent absent", backend: &captainProbeBackend{paneAlive: true}, wantPane: true},
-		{name: "pane absent", backend: &captainProbeBackend{agentErr: backend.ErrPaneNotFound}},
+		{name: "agent absent", backend: &captainProbeBackend{paneAlive: true}, wantPane: true, wantAbsent: false},
+		{name: "pane absent", backend: &captainProbeBackend{agentErr: backend.ErrPaneNotFound}, wantAbsent: true},
 		{name: "other error", backend: &captainProbeBackend{agentErr: boom}, wantErr: boom},
 	}
 	for _, tt := range tests {
@@ -238,8 +244,8 @@ func TestSessionProbeEndpointAgentAwareOutcomes(t *testing.T) {
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("error=%v, want=%v", err, tt.wantErr)
 			}
-			if got.PaneAlive != tt.wantPane || got.AgentAlive != tt.wantAgent {
-				t.Fatalf("got=%+v", got)
+			if got.PaneAlive != tt.wantPane || got.AgentAlive != tt.wantAgent || got.Absent != tt.wantAbsent {
+				t.Fatalf("got=%+v, want pane=%t agent=%t absent=%t", got, tt.wantPane, tt.wantAgent, tt.wantAbsent)
 			}
 		})
 	}

@@ -343,6 +343,11 @@ func TestHerdrBackend_CheckAgentAlive_NoAgent(t *testing.T) {
 	if agentAlive {
 		t.Error("CheckAgentAlive agentAlive=true, want false")
 	}
+	// Pane-present/no-agent is NOT authoritative absence: it must never be
+	// reported as ErrPaneNotFound, the sole relaunch authority.
+	if errors.Is(err, ErrPaneNotFound) {
+		t.Error("CheckAgentAlive pane-present/no-agent must not be ErrPaneNotFound")
+	}
 }
 
 func TestHerdrBackend_CheckAgentAlive_PaneNotFound(t *testing.T) {

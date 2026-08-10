@@ -16,7 +16,8 @@ var ErrPaneNotFound = errors.New("pane not found")
 
 // ErrAgentNotFound is returned by agent-aware backends when a pane exists but
 // has no registered agent (bare shell or agent process missing). Recovery-critical
-// paths should treat this as "not alive for agent purposes" to trigger auto-recover.
+// paths must NOT treat this as authoritative absence: pane-present/no-agent is
+// not dead and never authorizes relaunch — it fails closed.
 var ErrAgentNotFound = errors.New("agent not found in pane")
 
 // Backend defines the operations for managing agent session windows.
@@ -35,8 +36,9 @@ type Backend interface {
 // CheckAgentAlive returns:
 //
 //	(true, true, nil)  — pane exists and agent is registered (recovery: alive)
-//	(true, false, nil) — pane exists but no agent (recovery: dead agent → auto-recover)
-//	(false, false, ErrPaneNotFound) — pane confirmed absent
+//	(true, false, nil) — pane exists but no agent (recovery: NOT dead; not
+//	  authoritative absence — recovery fails closed, never auto-recover)
+//	(false, false, ErrPaneNotFound) — pane confirmed absent (recovery: dead)
 //	(false, false, err) — backend resolution failure (recovery: fail closed)
 type AgentAwareBackend interface {
 	CheckAgentAlive(windowID string) (alive bool, agentAlive bool, err error)

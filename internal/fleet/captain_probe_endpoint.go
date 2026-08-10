@@ -5,7 +5,33 @@ type CaptainProbeResult struct {
 	AgentAlive     bool
 	ReadyForPrompt bool
 	AgentStatus    string
+
+	// Absent is true ONLY when the endpoint pane is authoritatively confirmed
+	// absent (backend ErrPaneNotFound). It is the sole relaunch authority:
+	// pane-present/no-agent, Starting/Unknown/Unresponsive/StaleIdentity/
+	// Unresolved, generic errors, and unproven plain Alive=false all leave
+	// Absent false and fail closed — none of them authorize Launch.
+	Absent bool
 }
+
+// CaptainEndpointState is the strict, typed liveness decision for one captain
+// endpoint, derived from CaptainProbeResult. It is the ONE decision rule used
+// by Converge, Recover, RecoverTransaction.stepRelaunch, and ProbeLiveness.
+type CaptainEndpointState int
+
+const (
+	// CaptainAlive: the pane and agent are confirmed live by observation.
+	CaptainAlive CaptainEndpointState = iota
+	// CaptainDead: the pane is authoritatively absent (ErrPaneNotFound).
+	// This is the ONLY state that authorizes relaunch.
+	CaptainDead
+	// CaptainUnproven: the endpoint is not confirmed alive and not
+	// authoritatively absent (pane-present/no-agent, generic errors, unproven
+	// plain Alive=false). Fails closed: never authorizes relaunch.
+	CaptainUnproven
+	// CaptainSeeded: no launch evidence exists in task meta (never launched).
+	CaptainSeeded
+)
 
 type ProbeEndpoint interface {
 	Probe(home string, meta map[string]string) (CaptainProbeResult, error)
