@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -2097,15 +2098,33 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, aliveErr))
 			continue
 		}
+		taskID := taskIDForCaptain(sm.ID)
 		if alive {
+			// Liveness proven by observation: clear any armed relaunch guard.
+			if cErr := clearRelaunchGuard(parentHome, taskID); cErr != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", cErr)})
+				errs = append(errs, fmt.Sprintf("%s: clearing resolved relaunch guard failed: %v", sm.ID, cErr))
+				continue
+			}
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
 		} else {
 			// Not alive. Check if launched (meta has window) to distinguish
 			// dead captain (auto-recover) from not-yet-launched (seeded).
-			taskID := taskIDForCaptain(sm.ID)
 			meta, mErr := mhome.ReadMeta(parentHome, taskID)
 			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
 			if launched {
+				// Launched-but-dead: refuse a duplicate relaunch while the guard is armed.
+				refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, time.Now())
+				if gErr != nil {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: gErr.Error()})
+					errs = append(errs, fmt.Sprintf("%s: relaunch guard check failed: %v", sm.ID, gErr))
+					continue
+				}
+				if refused {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))})
+					errs = append(errs, fmt.Sprintf("%s: duplicate relaunch refused (guard expires in %s)", sm.ID, remaining.Round(time.Second)))
+					continue
+				}
 				// Launched-but-dead: verify the canonical Pi integration before recovery.
 				if integrationErr := requireHealthyPiIntegration(sm.Home, caps.Integration); integrationErr != nil {
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
@@ -2116,8 +2135,17 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
 					errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
 				} else {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
-					fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
+					proven, pErr := proveRelaunch(parentHome, sm, caps.Probe, time.Sleep, time.Now)
+					if pErr != nil {
+						result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recovered but %v", pErr)})
+						errs = append(errs, fmt.Sprintf("%s: auto-recover liveness proof failed: %v", sm.ID, pErr))
+					} else if !proven {
+						result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: "dead agent — auto-recovered but post-launch liveness could not be proven; duplicate relaunch guarded"})
+						errs = append(errs, fmt.Sprintf("%s: auto-recover relaunched but post-launch liveness could not be proven", sm.ID))
+					} else {
+						result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
+						fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
+					}
 				}
 			} else {
 				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent (seeded)"})
@@ -2332,7 +2360,16 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			res.Entries = append(res.Entries, entry)
 			continue
 		}
+		taskID := taskIDForCaptain(sm.ID)
 		if alive {
+			// Liveness proven by observation: clear any armed relaunch guard.
+			if cErr := clearRelaunchGuard(parentHome, taskID); cErr != nil {
+				entry.Outcome = RecoverFailed
+				entry.Error = fmt.Sprintf("clearing resolved relaunch guard failed: %v", cErr)
+				res.Failed++
+				res.Entries = append(res.Entries, entry)
+				continue
+			}
 			entry.Outcome = RecoverAlive
 			res.Alive++
 			res.Entries = append(res.Entries, entry)
@@ -2340,7 +2377,6 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 		}
 
 		// Not alive. Distinguish launched-but-dead (meta+window) from seeded-never-launched.
-		taskID := taskIDForCaptain(sm.ID)
 		meta, mErr := mhome.ReadMeta(parentHome, taskID)
 		launched := false
 		if mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != "" {
@@ -2349,6 +2385,23 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 		if !launched {
 			entry.Outcome = RecoverSeeded
 			res.Seeded++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+
+		// Launched-but-dead: refuse a duplicate relaunch while the guard is armed.
+		refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, time.Now())
+		if gErr != nil {
+			entry.Outcome = RecoverFailed
+			entry.Error = gErr.Error()
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
+		if refused {
+			entry.Outcome = RecoverFailed
+			entry.Error = fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))
+			res.Failed++
 			res.Entries = append(res.Entries, entry)
 			continue
 		}
@@ -2366,8 +2419,19 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			entry.Error = lErr.Error()
 			res.Failed++
 		} else {
-			entry.Outcome = RecoverRelaunched
-			res.Relaunched++
+			proven, pErr := proveRelaunch(parentHome, sm, capabilities.Probe, time.Sleep, time.Now)
+			if pErr != nil {
+				entry.Outcome = RecoverFailed
+				entry.Error = fmt.Sprintf("relaunched but %v", pErr)
+				res.Failed++
+			} else if !proven {
+				entry.Outcome = RecoverFailed
+				entry.Error = "relaunched but post-launch liveness could not be proven; duplicate relaunch guarded"
+				res.Failed++
+			} else {
+				entry.Outcome = RecoverRelaunched
+				res.Relaunched++
+			}
 		}
 		res.Entries = append(res.Entries, entry)
 	}
