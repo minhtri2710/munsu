@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
 // --- RecoverTransaction tests ---
@@ -102,7 +103,7 @@ func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *
 	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
 		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 		Launch:      launch,
-		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+		Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{}, {PaneAlive: true, AgentAlive: true}}},
 	}}
 
 	result := tx.Recover(parent, Info{ID: "healthy-integration", Home: home})
@@ -112,6 +113,55 @@ func TestRecoverIntegrationStatus_HealthyCanonicalIntegrationPermitsRelaunch(t *
 	step := findStep(result.Steps, "relaunch-pane")
 	if step == nil || step.State != StepOk || !strings.Contains(step.Detail, "relaunched") {
 		t.Fatalf("relaunch step = %+v, want successful relaunch", step)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("healthy-integration"))
+	if err != nil {
+		t.Fatalf("read relaunched meta: %v", err)
+	}
+	if meta["window"] != "window" || meta["backend"] != "test" {
+		t.Fatalf("relaunched meta = %#v, want fresh endpoint metadata", meta)
+	}
+}
+
+func TestRecoverRelaunchFailsWhenPostLaunchLivenessIsUnproven(t *testing.T) {
+	oldLookPath := captainLookPath
+	captainLookPath = func(string) (string, error) { return "/test/bin/pi", nil }
+	t.Cleanup(func() { captainLookPath = oldLookPath })
+
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "post-launch-dead")
+	writeCanonicalPiIntegration(t, home)
+	writeCaptainMeta(t, parent, "post-launch-dead", home, "dead-window")
+	launch := &countingLaunchEndpoint{}
+	tx := &RecoverTransaction{Capabilities: RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+	}}
+
+	result := tx.Recover(parent, Info{ID: "post-launch-dead", Home: home})
+	if launch.calls != 1 {
+		t.Fatalf("launch calls = %d, want 1", launch.calls)
+	}
+	step := findStep(result.Steps, "relaunch-pane")
+	if step == nil || step.State != StepFailed || !strings.Contains(step.Detail, "post-launch liveness") {
+		t.Fatalf("relaunch step = %+v, want post-launch liveness failure", step)
+	}
+	meta, err := mhome.ReadMeta(parent, taskIDForCaptain("post-launch-dead"))
+	if err != nil {
+		t.Fatalf("read recovery guard meta: %v", err)
+	}
+	if meta["relaunch_liveness"] != "unproven" {
+		t.Fatalf("relaunch_liveness = %q, want unproven", meta["relaunch_liveness"])
+	}
+
+	second := tx.Recover(parent, Info{ID: "post-launch-dead", Home: home})
+	secondStep := findStep(second.Steps, "relaunch-pane")
+	if launch.calls != 1 {
+		t.Fatalf("second recovery launch calls = %d, want 1", launch.calls)
+	}
+	if secondStep == nil || secondStep.State != StepFailed || !strings.Contains(secondStep.Detail, "duplicate launch") {
+		t.Fatalf("second relaunch step = %+v, want duplicate-launch refusal", secondStep)
 	}
 }
 

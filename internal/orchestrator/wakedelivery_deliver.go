@@ -35,6 +35,8 @@ type DeliverRequest struct {
 type WakeReceipt struct {
 	EventID         uint64
 	EnqueueUnix     int64
+	EventAppended   bool
+	WakeEnqueued    bool
 	ReceiptWritten  bool
 	ObligationsInit bool
 }
@@ -166,13 +168,19 @@ func DeliverWake(req DeliverRequest) (*WakeReceipt, error) {
 	receipt.EventID = syntheticID
 	if err := AppendWithID(req.HomeDir, syntheticID, "task.status", req.TaskID, req.Key, statusLine); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: event append: %v\n", err)
+	} else {
+		receipt.EventAppended = true
 	}
 
 	// Step 4: For material states, enqueue a wake
 	if isMaterial(req.State) {
 		wakePayload := fmt.Sprintf("%s: %s [event=%d]", req.TaskID, statusLine, syntheticID)
-		receipt.EnqueueUnix = time.Now().Unix()
-		EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload)
+		if err := EnqueueWake(req.HomeDir, "signal", req.TaskID, wakePayload); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: wake enqueue: %v\n", err)
+		} else {
+			receipt.EnqueueUnix = time.Now().Unix()
+			receipt.WakeEnqueued = true
+		}
 	}
 
 	return receipt, nil

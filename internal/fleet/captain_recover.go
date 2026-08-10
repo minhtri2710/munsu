@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/minhtri2710/munsu/internal/config"
 	"github.com/minhtri2710/munsu/internal/harness"
@@ -275,6 +276,13 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 			Detail: fmt.Sprintf("alive check failed: %v", aliveErr)}
 	}
 	if alive {
+		if meta, err := mhome.ReadMeta(parentHome, taskIDForCaptain(sm.ID)); err == nil && meta["relaunch_liveness"] == "unproven" {
+			delete(meta, "relaunch_liveness")
+			if err := mhome.WriteMeta(parentHome, taskIDForCaptain(sm.ID), meta); err != nil {
+				return StepResult{Name: "relaunch-pane", State: StepFailed,
+					Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", err)}
+			}
+		}
 		return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "endpoint alive, no action needed"}
 	}
 
@@ -289,13 +297,46 @@ func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResul
 		return StepResult{Name: "relaunch-pane", State: StepSkipped,
 			Detail: "seeded but not launched"}
 	}
+	if meta["relaunch_liveness"] == "unproven" {
+		return StepResult{Name: "relaunch-pane", State: StepFailed,
+			Detail: "prior relaunch liveness remains unproven; refusing duplicate launch"}
+	}
 
 	// Launched-but-dead: relaunch.
 	if lErr := Launch(sm.Home, parentHome, tx.Capabilities.Launch); lErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
 			Detail: fmt.Sprintf("relaunch failed: %v", lErr)}
 	}
-	return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "relaunched successfully"}
+	meta, metaErr := mhome.ReadMeta(parentHome, taskID)
+	if metaErr != nil {
+		return StepResult{Name: "relaunch-pane", State: StepFailed,
+			Detail: fmt.Sprintf("post-launch metadata read failed: %v", metaErr)}
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		alive, aliveErr = checkAliveWithProbe(parentHome, sm, tx.Capabilities.Probe)
+		if aliveErr != nil {
+			return StepResult{Name: "relaunch-pane", State: StepFailed,
+				Detail: fmt.Sprintf("post-launch liveness check failed: %v", aliveErr)}
+		}
+		if alive {
+			delete(meta, "relaunch_liveness")
+			if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+				return StepResult{Name: "relaunch-pane", State: StepFailed,
+					Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", err)}
+			}
+			return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "relaunched successfully and liveness proven"}
+		}
+		if attempt < 4 {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	meta["relaunch_liveness"] = "unproven"
+	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+		return StepResult{Name: "relaunch-pane", State: StepFailed,
+			Detail: fmt.Sprintf("post-launch liveness could not be proven; recording recovery guard failed: %v", err)}
+	}
+	return StepResult{Name: "relaunch-pane", State: StepFailed,
+		Detail: "post-launch liveness could not be proven; duplicate relaunch guarded"}
 }
 
 func (tx *RecoverTransaction) stepWatcherEnsure(sm Info, configOk bool) StepResult {

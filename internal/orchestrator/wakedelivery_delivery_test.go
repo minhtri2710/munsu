@@ -77,6 +77,9 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	if receipt == nil {
 		t.Fatal("expected non-nil receipt")
 	}
+	if !receipt.EventAppended || !receipt.WakeEnqueued || receipt.EnqueueUnix == 0 {
+		t.Fatalf("receipt = %+v, want event, wake, and enqueue timestamp recorded", receipt)
+	}
 
 	// Local task status should exist
 	statusPath := filepath.Join(soldierHome, "state", "test-soldier.status")
