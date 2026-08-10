@@ -103,7 +103,7 @@ func TestRecover_ExpiredRelaunchGuardAllowsFreshRelaunchAndProvesLiveness(t *tes
 	}
 }
 
-func TestRecover_RelaunchProofProbeErrorFailsWithoutArming(t *testing.T) {
+func TestRecover_RelaunchProofProbeErrorArmsGuard(t *testing.T) {
 	parent := t.TempDir()
 	captainHome := seedCaptainForTest(t, parent, "probe-error-recover")
 	writeCanonicalPiIntegration(t, captainHome)
@@ -129,8 +129,94 @@ func TestRecover_RelaunchProofProbeErrorFailsWithoutArming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read relaunched meta: %v", err)
 	}
-	if _, ok := meta["relaunch_liveness"]; ok {
-		t.Fatalf("relaunch_liveness = %q, want unarmed on probe error", meta["relaunch_liveness"])
+	if meta["relaunch_liveness"] != "unproven" {
+		t.Fatalf("relaunch_liveness = %q, want unproven after probe error", meta["relaunch_liveness"])
+	}
+	untilRaw, ok := meta[relaunchGuardUntilField]
+	if !ok {
+		t.Fatalf("%s absent, want armed guard deadline after probe error", relaunchGuardUntilField)
+	}
+	if until, err := strconv.ParseInt(untilRaw, 10, 64); err != nil || time.Unix(until, 0).Before(time.Now()) {
+		t.Fatalf("%s = %q, want bounded future deadline", relaunchGuardUntilField, untilRaw)
+	}
+}
+
+func TestRecover_ProbeErrorArmedGuardRefusesDuplicateLaunchOnNextRecovery(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "probe-error-guarded")
+	writeCanonicalPiIntegration(t, captainHome)
+	writeCaptainMeta(t, parent, "probe-error-guarded", captainHome, "dead-window")
+	launch := &countingLaunchEndpoint{}
+
+	first, err := Recover(parent, []Info{{ID: "probe-error-guarded", Home: captainHome}}, RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &errorAfterLaunchProbe{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Failed != 1 || launch.calls != 1 {
+		t.Fatalf("first recovery launch calls=%d failed=%d, want 1/1", launch.calls, first.Failed)
+	}
+
+	second, err := Recover(parent, []Info{{ID: "probe-error-guarded", Home: captainHome}}, RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &errorAfterLaunchProbe{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.calls != 1 {
+		t.Fatalf("launch calls = %d, want 1 (no duplicate launch while guard armed)", launch.calls)
+	}
+	if second.Failed != 1 || !strings.Contains(second.Entries[0].Error, "duplicate launch refused") {
+		t.Fatalf("second recovery entry = %+v, want duplicate-launch refusal", second.Entries)
+	}
+}
+
+func TestRecover_ProbeErrorArmedGuardExpiryPermitsFreshProofAttempt(t *testing.T) {
+	parent := t.TempDir()
+	captainHome := seedCaptainForTest(t, parent, "probe-error-expired")
+	writeCanonicalPiIntegration(t, captainHome)
+	writeCaptainMeta(t, parent, "probe-error-expired", captainHome, "dead-window")
+	launch := &countingLaunchEndpoint{}
+
+	first, err := Recover(parent, []Info{{ID: "probe-error-expired", Home: captainHome}}, RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &errorAfterLaunchProbe{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Failed != 1 || launch.calls != 1 {
+		t.Fatalf("first recovery launch calls=%d failed=%d, want 1/1", launch.calls, first.Failed)
+	}
+
+	writeRelaunchGuard(t, parent, "probe-error-expired", strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10))
+
+	second, err := Recover(parent, []Info{{ID: "probe-error-expired", Home: captainHome}}, RecoverCapabilities{
+		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
+		Launch:      launch,
+		Probe:       &errorAfterLaunchProbe{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.calls != 2 {
+		t.Fatalf("launch calls = %d, want 2 (one fresh proof attempt after guard expiry)", launch.calls)
+	}
+	if second.Failed != 1 || !strings.Contains(second.Entries[0].Error, "post-launch liveness check failed") {
+		t.Fatalf("second recovery entry = %+v, want fresh proof attempt failing on probe error", second.Entries)
+	}
+	meta, err := home.ReadMeta(parent, taskIDForCaptain("probe-error-expired"))
+	if err != nil {
+		t.Fatalf("read re-armed guard meta: %v", err)
+	}
+	if meta["relaunch_liveness"] != "unproven" {
+		t.Fatalf("relaunch_liveness = %q, want re-armed unproven after fresh proof probe error", meta["relaunch_liveness"])
 	}
 }
 
