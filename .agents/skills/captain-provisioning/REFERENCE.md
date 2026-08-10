@@ -248,7 +248,7 @@ the whole recovery.
 4. **Charter-refresh** — re-read AGENTS.md and refresh instructions.
 5. **Config-push** — sync inheritable config from parent.
 6. **Launch-readiness** — verify the launch path is viable.
-7. **Relaunch-pane** — restart the captain's session pane.
+7. **Relaunch-pane** — restart the captain's session pane and prove post-launch liveness; refuses a duplicate relaunch while the relaunch guard is armed.
 8. **Watcher-ensure** — ensure the watcher is running.
 9. **Legacy transport guard** — check for legacy transport artifacts.
 10. **Terminal-reconcile** — reconcile pending terminal receipts.
@@ -256,15 +256,21 @@ the whole recovery.
 
 ### Launch behavior
 
-`recover` preserves a healthy live Captain. If a previously launched Captain is
-dead, the `relaunch-pane` step starts it again. If the Captain was seeded but
-never launched, that step is skipped and the Captain remains stopped; run
-`munsu captain launch <captain-home>` once to start it.
+`recover` preserves a healthy live Captain; observing liveness also clears any
+armed relaunch guard. If a previously launched Captain is dead, the
+`relaunch-pane` step starts it again and then polls the captain endpoint to
+prove post-launch liveness (up to ~10s). A relaunch whose liveness cannot be
+proven arms a 5-minute relaunch guard (`relaunch_liveness=unproven` plus
+`relaunch_guard_until` in the captain task meta); while the guard is armed,
+recovery refuses a duplicate relaunch until it expires. If the Captain was
+seeded but never launched, that step is skipped and the Captain remains
+stopped; run `munsu captain launch <captain-home>` once to start it.
 
 ```sh
 munsu captain recover my-captain
-# Healthy endpoint: no launch action.
-# Launched but dead: relaunched by the transaction.
+# Healthy endpoint: no launch action; any armed relaunch guard is cleared.
+# Launched but dead: relaunched and liveness proven; otherwise the step fails
+# and duplicate relaunches are refused while the guard is armed.
 # Seeded only: run `munsu captain launch <home>` after recovery.
 ```
 
