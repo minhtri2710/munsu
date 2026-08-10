@@ -158,6 +158,10 @@ func CaptainIDFromTask(taskID string, meta map[string]string) string {
 
 var captainLookPath = exec.LookPath
 
+// proveSleep is the pause between post-launch liveness probes in the
+// package-level Recover/Converge paths; overridden in tests.
+var proveSleep = time.Sleep
+
 // convergeLockAcquire acquires the converge lock exclusively.
 // Override in tests to avoid fd leaks.
 var convergeLockAcquire = func(parentHome string) (func(), error) {
@@ -2135,7 +2139,7 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
 					errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
 				} else {
-					proven, pErr := proveRelaunch(parentHome, sm, caps.Probe, time.Sleep, time.Now)
+					proven, pErr := proveRelaunch(parentHome, sm, caps.Probe, proveSleep, time.Now)
 					if pErr != nil {
 						result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recovered but %v", pErr)})
 						errs = append(errs, fmt.Sprintf("%s: auto-recover liveness proof failed: %v", sm.ID, pErr))
@@ -2419,7 +2423,7 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			entry.Error = lErr.Error()
 			res.Failed++
 		} else {
-			proven, pErr := proveRelaunch(parentHome, sm, capabilities.Probe, time.Sleep, time.Now)
+			proven, pErr := proveRelaunch(parentHome, sm, capabilities.Probe, proveSleep, time.Now)
 			if pErr != nil {
 				entry.Outcome = RecoverFailed
 				entry.Error = fmt.Sprintf("relaunched but %v", pErr)

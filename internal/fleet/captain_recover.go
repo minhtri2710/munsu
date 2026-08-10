@@ -142,27 +142,24 @@ func armRelaunchGuard(meta map[string]string, now time.Time) {
 
 // proveRelaunch polls the captain endpoint after a relaunch until liveness
 // is proven or the proof window elapses. Proven liveness clears the relaunch
-// guard; an elapsed window or a probe error arms the bounded guard so every
-// recovery path refuses a duplicate relaunch until it expires. Returns
-// proven=false when the window elapsed with the guard armed. sleep is the
-// pause between probes and now is the clock used to set the armed guard
-// deadline; both must be non-nil.
+// guard; an elapsed window arms the bounded guard so every recovery path
+// refuses a duplicate relaunch until it expires. Probe errors are retried
+// within the window and reported only if the window elapses without proven
+// liveness. Returns proven=false when the window elapsed with the guard
+// armed. sleep is the pause between probes and now is the clock used to set
+// the armed guard deadline; both must be non-nil.
 func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(time.Duration), now func() time.Time) (proven bool, err error) {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
 		return false, fmt.Errorf("post-launch metadata read failed: %w", err)
 	}
+	var lastProbeErr error
 	for attempt := 0; attempt < relaunchProofAttempts; attempt++ {
 		alive, aliveErr := checkAliveWithProbe(parentHome, sm, probe)
 		if aliveErr != nil {
-			armRelaunchGuard(meta, now())
-			if aErr := mhome.WriteMeta(parentHome, taskID, meta); aErr != nil {
-				return false, fmt.Errorf("post-launch liveness check failed: %w (arming relaunch guard failed: %v)", aliveErr, aErr)
-			}
-			return false, fmt.Errorf("post-launch liveness check failed: %w", aliveErr)
-		}
-		if alive {
+			lastProbeErr = aliveErr
+		} else if alive {
 			delete(meta, "relaunch_liveness")
 			delete(meta, relaunchGuardUntilField)
 			if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
@@ -176,7 +173,13 @@ func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(t
 	}
 	armRelaunchGuard(meta, now())
 	if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
+		if lastProbeErr != nil {
+			return false, fmt.Errorf("post-launch liveness could not be proven: %w (recording recovery guard failed: %v)", lastProbeErr, err)
+		}
 		return false, fmt.Errorf("post-launch liveness could not be proven; recording recovery guard failed: %w", err)
+	}
+	if lastProbeErr != nil {
+		return false, fmt.Errorf("post-launch liveness could not be proven; last probe error: %w", lastProbeErr)
 	}
 	return false, nil
 }
