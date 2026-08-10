@@ -12,6 +12,24 @@ import (
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
+// init supplies a deterministic Pi harness lookup for every recovery test.
+// Recovery paths that relaunch a captain resolve the "pi" binary through the
+// package-level captainLookPath seam; CI runners do not have pi on PATH, so
+// without a fixture the launch never reaches the endpoint under test. Only
+// "pi" is intercepted — every other binary delegates to the real lookup — so
+// tests asserting absence failures for other harnesses are unaffected, and
+// production lookup behavior is never touched. Per-test overrides of
+// captainLookPath save/restore this wrapper and keep working unchanged.
+func init() {
+	lookPath := captainLookPath
+	captainLookPath = func(name string) (string, error) {
+		if name == "pi" {
+			return "/test/bin/pi", nil
+		}
+		return lookPath(name)
+	}
+}
+
 // --- RecoverTransaction tests ---
 
 func TestRecoverTransaction_ProvenanceFailureSkipsAll(t *testing.T) {
