@@ -77,6 +77,9 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	if receipt == nil {
 		t.Fatal("expected non-nil receipt")
 	}
+	if !receipt.EventAppended || !receipt.WakeEnqueued || receipt.EnqueueUnix == 0 {
+		t.Fatalf("receipt = %+v, want event, wake, and enqueue timestamp recorded", receipt)
+	}
 
 	// Local task status should exist
 	statusPath := filepath.Join(soldierHome, "state", "test-soldier.status")
@@ -365,18 +368,14 @@ func TestDeliverWake_EventAppendIsBestEffort(t *testing.T) {
 	soldierHome := t.TempDir()
 	captainHome := t.TempDir()
 
-	// Create an unreadable event log path by making state a file
-	stateFile := filepath.Join(soldierHome, "state")
-	if err := os.MkdirAll(stateFile, 0755); err != nil {
-		t.Fatalf("mkdir state: %v", err)
+	// Force the event append to fail deterministically: a directory where
+	// the append-only event log file must be opened makes OpenFile fail,
+	// while the status append, receipt, and wake queue remain writable.
+	if err := os.MkdirAll(filepath.Join(soldierHome, "state", ".event-log"), 0755); err != nil {
+		t.Fatalf("mkdir event-log-as-dir: %v", err)
 	}
-	// This would only fail if the event log path itself is problematic.
-	// For real best-effort testing, we need the event Write to fail but
-	// the rest to succeed. The event log uses os.OpenFile with append,
-	// which only fails on broken FS or bad path. We can simulate by
-	// pre-creating a file where the event log directory should be.
-	// Instead, just verify DeliverWake succeeds when parentHome is fine.
-	_, err := DeliverWake(DeliverRequest{
+
+	receipt, err := DeliverWake(DeliverRequest{
 		HomeDir:    soldierHome,
 		ParentHome: captainHome,
 		TaskID:     "test-event-best-effort",
@@ -386,6 +385,46 @@ func TestDeliverWake_EventAppendIsBestEffort(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("DeliverWake: %v", err)
+	}
+	if receipt.EventAppended {
+		t.Fatalf("receipt = %+v, want EventAppended=false when event append fails", receipt)
+	}
+	// The report must not fail and the wake must still be enqueued so the
+	// parent supervisor is woken; the explicit EventAppended=false flag is
+	// what makes the gap recoverable.
+	if !receipt.WakeEnqueued || receipt.EnqueueUnix == 0 {
+		t.Fatalf("receipt = %+v, want wake still enqueued after event append failure", receipt)
+	}
+}
+
+func TestDeliverWake_EnqueueFailureRecorded(t *testing.T) {
+	soldierHome := t.TempDir()
+	captainHome := t.TempDir()
+
+	// Force the wake enqueue to fail deterministically: a directory where
+	// the append-only wake queue file must be opened makes OpenFile fail.
+	if err := os.MkdirAll(filepath.Join(soldierHome, "state", ".wake-queue"), 0755); err != nil {
+		t.Fatalf("mkdir wake-queue-as-dir: %v", err)
+	}
+
+	receipt, err := DeliverWake(DeliverRequest{
+		HomeDir:    soldierHome,
+		ParentHome: captainHome,
+		TaskID:     "test-enqueue-failure",
+		State:      "done",
+		Message:    "task complete",
+		Role:       "soldier",
+	})
+	if err != nil {
+		t.Fatalf("DeliverWake: %v", err)
+	}
+	// The failed enqueue must be explicit on the receipt (no timestamp, no
+	// wake flag) rather than silently indistinguishable from a delivered wake.
+	if receipt.WakeEnqueued || receipt.EnqueueUnix != 0 {
+		t.Fatalf("receipt = %+v, want WakeEnqueued=false and EnqueueUnix=0 when enqueue fails", receipt)
+	}
+	if !receipt.EventAppended {
+		t.Fatalf("receipt = %+v, want event still appended when enqueue fails", receipt)
 	}
 }
 

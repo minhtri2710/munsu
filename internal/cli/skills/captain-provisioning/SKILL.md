@@ -33,7 +33,7 @@ Source: `cmd/munsu/main.go` registers the CLI; `internal/cli/root.go` wires the 
 
 - **Repeated operations are idempotent** — rerunning the same verb converges to the same state.
 - **Retire refuses** while the captain home has in-flight soldiers (kind `ship|scout`); `--force` bypasses the check, use it only after proving blockers are stale or done.
-- **Recover preserves a healthy captain**, relaunches a launched-but-dead captain, and leaves a seeded-only captain stopped (run `munsu captain launch <captain-home>` once to start it).
+- **Recover preserves a healthy captain**, relaunches a launched-but-dead captain (refusing a duplicate relaunch while a prior relaunch's liveness remains unproven), and leaves a seeded-only captain stopped (run `munsu captain launch <captain-home>` once to start it).
 - **Migrate never retires or relaunches** — retire a live captain before migrating, then launch from the new worktree.
 - **Config-push refuses** symlink escapes outside the captain home and writes to git-tracked destinations.
 - **Every charter must encode the idle-by-default contract** — a captain reconciles only its own in-flight work, never self-initiates surveys, and treats an empty queue as healthy.

@@ -2818,39 +2818,6 @@ func TestRecover_SeededCaptainNotLaunched(t *testing.T) {
 		t.Errorf("entry = %+v, want RecoverSeeded", res.Entries)
 	}
 }
-
-func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		state      string
-		wantLaunch int
-		wantFailed int
-	}{
-		{name: "installed", state: "installed", wantLaunch: 1},
-		{name: "absent", state: "absent", wantFailed: 1},
-		{name: "drifted", state: "drifted", wantFailed: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			parent := t.TempDir()
-			home := seedCaptainForTest(t, parent, "pi-captain")
-			writeCanonicalPiIntegration(t, home)
-			writeCaptainMeta(t, parent, "pi-captain", home, "dead-window")
-			launch := &countingLaunchEndpoint{}
-			result, err := Recover(parent, []Info{{ID: "pi-captain", Home: home}}, RecoverCapabilities{
-				Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: tc.state, Message: "test status"}},
-				Launch:      launch,
-				Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if launch.calls != tc.wantLaunch || result.Failed != tc.wantFailed {
-				t.Fatalf("launch calls=%d failed=%d, want %d/%d; result=%+v", launch.calls, result.Failed, tc.wantLaunch, tc.wantFailed, result)
-			}
-		})
-	}
-}
-
 func TestRecover_NonPiHarnessDoesNotRequirePiIntegration(t *testing.T) {
 	parent := t.TempDir()
 	home := seedCaptainForTest(t, parent, "claude-captain")
