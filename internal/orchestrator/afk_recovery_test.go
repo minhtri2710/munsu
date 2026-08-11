@@ -55,13 +55,13 @@ func TestRecoveryActionDefault(t *testing.T) {
 func TestResolveRecovery_EndpointDead_AutoRelaunch(t *testing.T) {
 	// Authoritatively dead endpoint → auto-relaunch (when circuit is closed).
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeEndpointDead),
-		Verdict:      "unknown",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionAutoRelaunch {
 		t.Errorf("Action = %v, want auto-relaunch", action.Action)
@@ -74,13 +74,13 @@ func TestResolveRecovery_EndpointDead_AutoRelaunch(t *testing.T) {
 func TestResolveRecovery_EndpointDead_CircuitOpen_NoRelaunch(t *testing.T) {
 	// Authoritatively dead but circuit is open → no auto-relaunch (escalate).
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeEndpointDead),
-		Verdict:      "unknown",
-		CircuitOpen:  true,
-		CircuitBlocked: true,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      true,
+		CircuitBlocked:   true,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action == ActionAutoRelaunch {
 		t.Fatal("auto-relaunch when circuit is open, should escalate")
@@ -90,16 +90,53 @@ func TestResolveRecovery_EndpointDead_CircuitOpen_NoRelaunch(t *testing.T) {
 	}
 }
 
+func TestResolveRecovery_CaptureFailed_Nudge(t *testing.T) {
+	// Capture failure is not authoritative absence: bounded nudge, never
+	// auto-relaunch.
+	action := ResolveRecovery(RecoveryInput{
+		Outcome:          string(OutcomeCaptureFailed),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
+		IdentityResolved: true,
+		IdentityStale:    false,
+	})
+	if action.Action != ActionNudge {
+		t.Errorf("Action = %v, want nudge (capture failure never auto-relaunches)", action.Action)
+	}
+	if action.Reason == "" {
+		t.Error("Reason is empty")
+	}
+}
+
+func TestResolveRecovery_CaptureFailed_OpenCircuit_Quarantine(t *testing.T) {
+	// Circuit semantics preserved: an open circuit quarantines regardless of
+	// capture failure.
+	action := ResolveRecovery(RecoveryInput{
+		Outcome:          string(OutcomeCaptureFailed),
+		Verdict:          "unknown",
+		CircuitOpen:      true,
+		CircuitBlocked:   true,
+		IdentityKnown:    true,
+		IdentityResolved: true,
+		IdentityStale:    false,
+	})
+	if action.Action != ActionQuarantine {
+		t.Errorf("Action = %v, want quarantine (open circuit)", action.Action)
+	}
+}
+
 func TestResolveRecovery_UnresponsivePending_Nudge(t *testing.T) {
 	// Unresponsive endpoint (pending verdict) → nudge.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeUnsafe),
-		Verdict:      "pending",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeUnsafe),
+		Verdict:          "pending",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionNudge {
 		t.Errorf("Action = %v, want nudge", action.Action)
@@ -112,13 +149,13 @@ func TestResolveRecovery_UnresponsivePending_Nudge(t *testing.T) {
 func TestResolveRecovery_UnresponsiveUnknown_Nudge(t *testing.T) {
 	// Unresponsive endpoint (unknown verdict) → nudge.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeUnsafe),
-		Verdict:      "unknown",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeUnsafe),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionNudge {
 		t.Errorf("Action = %v, want nudge", action.Action)
@@ -128,13 +165,13 @@ func TestResolveRecovery_UnresponsiveUnknown_Nudge(t *testing.T) {
 func TestResolveRecovery_UnknownIdentity_Reconcile(t *testing.T) {
 	// Unknown identity → reconcile.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeEndpointDead),
-		Verdict:      "unknown",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  false,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    false,
 		IdentityResolved: false,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionReconcile {
 		t.Errorf("Action = %v, want reconcile", action.Action)
@@ -147,13 +184,13 @@ func TestResolveRecovery_UnknownIdentity_Reconcile(t *testing.T) {
 func TestResolveRecovery_UnresolvedIdentity_Reconcile(t *testing.T) {
 	// Unknown + not resolved → reconcile.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeEndpointDead),
-		Verdict:      "unknown",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  false,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    false,
 		IdentityResolved: false,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionReconcile {
 		t.Errorf("Action = %v, want reconcile", action.Action)
@@ -163,13 +200,13 @@ func TestResolveRecovery_UnresolvedIdentity_Reconcile(t *testing.T) {
 func TestResolveRecovery_StaleIdentity_Quarantine(t *testing.T) {
 	// Stale identity → quarantine.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeEndpointDead),
-		Verdict:      "unknown",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   true,
+		IdentityStale:    true,
 	})
 	if action.Action != ActionQuarantine {
 		t.Errorf("Action = %v, want quarantine", action.Action)
@@ -182,13 +219,13 @@ func TestResolveRecovery_StaleIdentity_Quarantine(t *testing.T) {
 func TestResolveRecovery_Injected_None(t *testing.T) {
 	// Successfully injected → no recovery action needed.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeInjected),
-		Verdict:      "empty",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeInjected),
+		Verdict:          "empty",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionNone {
 		t.Errorf("Action = %v, want none", action.Action)
@@ -198,13 +235,13 @@ func TestResolveRecovery_Injected_None(t *testing.T) {
 func TestResolveRecovery_BackendFailed_MaybeNudge(t *testing.T) {
 	// Backend failure (could be transient) → nudge.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeBackendFailed),
-		Verdict:      "empty",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeBackendFailed),
+		Verdict:          "empty",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionNudge {
 		t.Errorf("Action = %v, want nudge", action.Action)
@@ -302,13 +339,13 @@ func TestRecoveryIntegration_EndpointDeadCircuitClosed(t *testing.T) {
 	}
 
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeEndpointDead),
-		Verdict:      "unknown",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionAutoRelaunch {
 		t.Errorf("Action = %v, want auto-relaunch", action.Action)
@@ -344,13 +381,13 @@ func TestRecoveryIntegration_EndpointDeadCircuitOpen(t *testing.T) {
 	}
 
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:        string(OutcomeEndpointDead),
-		Verdict:        "unknown",
-		CircuitOpen:    true,
-		CircuitBlocked: blocked,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      true,
+		CircuitBlocked:   blocked,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action == ActionAutoRelaunch {
 		t.Fatal("auto-relaunch when circuit is open and blocked")
@@ -400,13 +437,13 @@ func TestRecoveryIntegration_StableAliveResetsCircuit(t *testing.T) {
 	}
 
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeEndpointDead),
-		Verdict:      "unknown",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeEndpointDead),
+		Verdict:          "unknown",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 	})
 	if action.Action != ActionAutoRelaunch {
 		t.Errorf("Action = %v, want auto-relaunch after circuit reset", action.Action)
@@ -429,13 +466,13 @@ func TestBoundedNudge_ExhaustedNoMoreNudges(t *testing.T) {
 
 	// Should not allow more nudges.
 	action := ResolveRecovery(RecoveryInput{
-		Outcome:      string(OutcomeUnsafe),
-		Verdict:      "pending",
-		CircuitOpen:  false,
-		CircuitBlocked: false,
-		IdentityKnown:  true,
+		Outcome:          string(OutcomeUnsafe),
+		Verdict:          "pending",
+		CircuitOpen:      false,
+		CircuitBlocked:   false,
+		IdentityKnown:    true,
 		IdentityResolved: true,
-		IdentityStale:   false,
+		IdentityStale:    false,
 		// The nudge tracker is checked externally before calling ResolveRecovery.
 		// When exhausted, the caller should skip the nudge or escalate.
 	})

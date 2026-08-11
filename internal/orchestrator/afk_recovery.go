@@ -49,11 +49,11 @@ func (a RecoveryAction) String() string {
 // a recovery action. All fields are populated externally by the caller
 // (the daemon triage cycle or the injector).
 type RecoveryInput struct {
-	Outcome      string `json:"outcome"`
-	Verdict      string `json:"verdict"`
-	Target       string `json:"target"`
-	TaskKey      string `json:"task_key"`
-	ErrorText    string `json:"error_text,omitempty"`
+	Outcome   string `json:"outcome"`
+	Verdict   string `json:"verdict"`
+	Target    string `json:"target"`
+	TaskKey   string `json:"task_key"`
+	ErrorText string `json:"error_text,omitempty"`
 
 	// Circuit state.
 	CircuitOpen    bool `json:"circuit_open"`
@@ -87,7 +87,8 @@ type RecoveryDecision struct {
 //	unsafe (pending)   | known/resolved     | closed   | nudge
 //	unsafe (unknown)   | known/resolved     | closed   | nudge
 //	backend-failed     | known/resolved     | closed   | nudge
-//	unsafe/backend-fail| known/resolved     | open     | escalate via quarantine
+//	capture-failed     | known/resolved     | closed   | nudge
+//	unsafe/backend/capture-fail | known/resolved | open | escalate via quarantine
 func ResolveRecovery(input RecoveryInput) RecoveryDecision {
 	// 1. Success → no action.
 	if input.Outcome == string(OutcomeInjected) {
@@ -128,8 +129,10 @@ func ResolveRecovery(input RecoveryInput) RecoveryDecision {
 		}
 	}
 
-	// 6. Unresponsive (unsafe/pending/unknown) → bounded nudge.
-	if input.Outcome == string(OutcomeUnsafe) || input.Outcome == string(OutcomeBackendFailed) {
+	// 6. Unresponsive (unsafe/pending/unknown) or unverifiable (capture
+	// failed) → bounded nudge. Never auto-relaunch: only authoritative
+	// endpoint absence may authorize relaunch.
+	if input.Outcome == string(OutcomeUnsafe) || input.Outcome == string(OutcomeBackendFailed) || input.Outcome == string(OutcomeCaptureFailed) {
 		return RecoveryDecision{
 			Action: ActionNudge,
 			Reason: fmt.Sprintf("endpoint unresponsive (outcome=%s, verdict=%s): bounded nudge",
@@ -162,10 +165,10 @@ func DefaultNudgeBudget() NudgeBudget {
 
 // NudgeTracker tracks bounded nudge attempts for an endpoint.
 type NudgeTracker struct {
-	mu       sync.Mutex
-	budget   NudgeBudget
-	nudges   []time.Time
-	lastAt   time.Time
+	mu     sync.Mutex
+	budget NudgeBudget
+	nudges []time.Time
+	lastAt time.Time
 }
 
 // NewNudgeTracker creates a nudge tracker with the given budget.

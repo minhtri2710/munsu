@@ -2,6 +2,7 @@ package backend
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -178,6 +179,17 @@ func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, 
 // falls back to textual matching for legacy/unknown error formats.
 func isNotFoundErr(err error) bool {
 	if err == nil {
+		return false
+	}
+	// Exec/transport failures (herdr binary missing from PATH, spawn errors)
+	// are backend failures — never authoritative pane absence. Classifying
+	// them as not-found would let a generic backend failure authorize
+	// captain auto-relaunch.
+	if errors.Is(err, exec.ErrNotFound) {
+		return false
+	}
+	var execErr *exec.Error
+	if errors.As(err, &execErr) {
 		return false
 	}
 	// Try structured error code first.

@@ -450,7 +450,7 @@ type SafetyCheckData struct {
 
 // ReportInjection records the outcome of one material report injection attempt.
 type ReportInjection struct {
-	Outcome string `json:"outcome"` // injected | unsafe | afk | endpoint-dead | backend-failed
+	Outcome string `json:"outcome"` // injected | unsafe | afk | endpoint-dead | backend-failed | capture-failed
 	Verdict string `json:"verdict,omitempty"`
 	Target  string `json:"target,omitempty"`
 	EventID uint64 `json:"event_id,omitempty"`
