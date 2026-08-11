@@ -42,6 +42,31 @@ func TestCheckAliveWithProbe_StrictStates(t *testing.T) {
 	}
 }
 
+// TestCheckAliveWithProbe_UnprovenAgentStatusFailsClosed proves the strict
+// decision fails closed on transitional/unproven agent statuses (Starting,
+// Unknown, Unresponsive, StaleIdentity, Unresolved) even when the coarse
+// pane+agent liveness bits are set, and stays alive only for confirmed-live
+// statuses.
+func TestCheckAliveWithProbe_UnprovenAgentStatusFailsClosed(t *testing.T) {
+	parent := t.TempDir()
+	home := seedCaptainForTest(t, parent, "strict-status")
+	writeCaptainMeta(t, parent, "strict-status", home, "dead-window")
+
+	for _, status := range []string{"starting", "unknown", "unresponsive", "staleidentity", "stale_identity", "stale-identity", "unresolved", "Unknown", " UNKNOWN "} {
+		state, err := checkAliveWithProbe(parent, Info{ID: "strict-status", Home: home}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true, AgentStatus: status}})
+		if state != CaptainUnproven || err == nil || !strings.Contains(err.Error(), "not authoritatively absent") {
+			t.Fatalf("agent status %q: state=%v err=%v, want CaptainUnproven fail-closed", status, state, err)
+		}
+	}
+
+	for _, status := range []string{"", "idle", "done", "working", "busy", "blocked"} {
+		state, err := checkAliveWithProbe(parent, Info{ID: "strict-status", Home: home}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true, AgentStatus: status}})
+		if err != nil || state != CaptainAlive {
+			t.Fatalf("agent status %q: state=%v err=%v, want CaptainAlive", status, state, err)
+		}
+	}
+}
+
 // TestProbeLiveness_StrictDeadOnly proves ProbeLiveness reports "dead" only
 // for authoritative pane absence; pane-present/no-agent and generic errors
 // fail closed as "unknown".

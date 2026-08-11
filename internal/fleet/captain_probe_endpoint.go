@@ -1,5 +1,7 @@
 package fleet
 
+import "strings"
+
 type CaptainProbeResult struct {
 	PaneAlive      bool
 	AgentAlive     bool
@@ -12,6 +14,25 @@ type CaptainProbeResult struct {
 	// Unresolved, generic errors, and unproven plain Alive=false all leave
 	// Absent false and fail closed — none of them authorize Launch.
 	Absent bool
+}
+
+// captainAgentStatusConfirmedLive reports whether agent status evidence is a
+// confirmed-live observation. Transitional or unproven statuses (Starting,
+// Unknown, Unresponsive, StaleIdentity, Unresolved) fail closed even when the
+// coarse pane+agent liveness bits are set. An empty status carries no
+// contradiction and defers to the coarse liveness bits.
+func captainAgentStatusConfirmedLive(status string) bool {
+	var norm strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(status)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			norm.WriteRune(r)
+		}
+	}
+	switch norm.String() {
+	case "starting", "unknown", "unresponsive", "staleidentity", "unresolved":
+		return false
+	}
+	return true
 }
 
 // CaptainEndpointState is the strict, typed liveness decision for one captain

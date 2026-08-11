@@ -2546,13 +2546,13 @@ func checkAliveWithProbe(parentHome string, sm Info, probe ProbeEndpoint) (Capta
 		// Authoritative pane absence: the sole relaunch authority.
 		return CaptainDead, nil
 	}
-	if result.PaneAlive && result.AgentAlive {
+	if result.PaneAlive && result.AgentAlive && captainAgentStatusConfirmedLive(result.AgentStatus) {
 		return CaptainAlive, nil
 	}
 	// Pane-present/no-agent, Starting/Unknown/Unresponsive/StaleIdentity/
 	// Unresolved, and unproven plain Alive=false are NOT authoritative absence:
 	// strict-dead-only fails closed instead of relaunching.
-	return CaptainUnproven, fmt.Errorf("captain %s endpoint evidence is not authoritatively absent (pane=%t agent=%t): strict-dead-only refuses relaunch", sm.ID, result.PaneAlive, result.AgentAlive)
+	return CaptainUnproven, fmt.Errorf("captain %s endpoint evidence is not authoritatively absent (pane=%t agent=%t status=%q): strict-dead-only refuses relaunch", sm.ID, result.PaneAlive, result.AgentAlive, result.AgentStatus)
 }
 
 // instructionSurfaceDigest returns a deterministic digest of the tracked instruction

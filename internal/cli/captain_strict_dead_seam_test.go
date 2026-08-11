@@ -19,6 +19,7 @@ import (
 type seamProbeBackend struct {
 	paneAlive  bool
 	agentAlive bool
+	status     string
 	err        error
 	calls      int
 }
@@ -31,6 +32,13 @@ func (b *seamProbeBackend) Teardown(string) error                    { return ni
 func (b *seamProbeBackend) CheckAgentAlive(string) (bool, bool, error) {
 	b.calls++
 	return b.paneAlive, b.agentAlive, b.err
+}
+
+func (b *seamProbeBackend) IsRecognizedAgent(string) (bool, string) {
+	if b.status == "" {
+		return false, ""
+	}
+	return true, b.status
 }
 
 // seamAbsentThenAliveBackend reports authoritative absence on the first probe
@@ -201,6 +209,42 @@ func TestRecoverSeam_NoAgentFailsClosed(t *testing.T) {
 	}
 	if launch.calls != 0 {
 		t.Fatalf("launch calls = %d, want 0 (pane-present/no-agent fails closed)", launch.calls)
+	}
+	if res.Failed != 1 || !strings.Contains(res.Entries[0].Error, "not authoritatively absent") {
+		t.Fatalf("result = %+v, want fail-closed entry naming strict-dead-only", res)
+	}
+}
+
+// TestProbeLivenessSeam_UnknownAgentStatusFailsClosed proves through the real
+// CLI probe endpoint that a registered agent with an "unknown" status (live
+// pane, transitional status) is never reported alive: it fails closed as
+// "unknown", never "alive" or "dead".
+func TestProbeLivenessSeam_UnknownAgentStatusFailsClosed(t *testing.T) {
+	parent, captainHome := seedSeamCaptain(t, "seam-unknown")
+	registered := []fleet.Info{{ID: "seam-unknown", Home: captainHome}}
+
+	probes := fleet.ProbeLiveness(parent, registered, seamProbeEndpoint(&seamProbeBackend{paneAlive: true, agentAlive: true, status: "unknown"}))
+	if len(probes) != 1 || probes[0].Status != "unknown" {
+		t.Fatalf("unknown-status probes = %+v, want unknown (never alive)", probes)
+	}
+}
+
+// TestRecoverSeam_UnknownAgentStatusFailsClosed proves through the real CLI
+// probe endpoint that an "unknown" agent status never authorizes Launch and
+// never clears the relaunch guard: it fails closed.
+func TestRecoverSeam_UnknownAgentStatusFailsClosed(t *testing.T) {
+	parent, captainHome := seedSeamCaptain(t, "seam-unknown-recover")
+	launch := &seamLaunchEndpoint{}
+
+	res, err := fleet.Recover(parent, []fleet.Info{{ID: "seam-unknown-recover", Home: captainHome}}, fleet.RecoverCapabilities{
+		Launch: launch,
+		Probe:  seamProbeEndpoint(&seamProbeBackend{paneAlive: true, agentAlive: true, status: "unknown"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.calls != 0 {
+		t.Fatalf("launch calls = %d, want 0 (unknown agent status fails closed)", launch.calls)
 	}
 	if res.Failed != 1 || !strings.Contains(res.Entries[0].Error, "not authoritatively absent") {
 		t.Fatalf("result = %+v, want fail-closed entry naming strict-dead-only", res)
