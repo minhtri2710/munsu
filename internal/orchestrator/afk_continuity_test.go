@@ -110,17 +110,22 @@ func TestFastPath_BackendErrorReturnsBackendFailed(t *testing.T) {
 	}
 }
 
-// TestFastPath_CaptureError returns endpoint-dead.
-func TestFastPath_CaptureErrorReturnsEndpointDead(t *testing.T) {
+// TestFastPath_CaptureErrorFailsClosed proves a capture failure is NOT
+// endpoint-dead: it fails closed (capture-failed), injects nothing, and can
+// never authorize relaunch.
+func TestFastPath_CaptureErrorFailsClosed(t *testing.T) {
 	bk := &fakeBackend{}
 	cap := &fakeCapture{err: os.ErrInvalid}
 	result := orchestrator.DirectInject(bk, cap, "s:p", "[report] done: test", "12345")
 
-	if string(result.Outcome) != "endpoint-dead" {
-		t.Fatalf("outcome = %q, want endpoint-dead", string(result.Outcome))
+	if string(result.Outcome) != "capture-failed" {
+		t.Fatalf("outcome = %q, want capture-failed (never endpoint-dead)", string(result.Outcome))
 	}
 	if result.Error == "" {
 		t.Error("error is empty on capture error")
+	}
+	if len(bk.calls) != 0 {
+		t.Fatalf("calls = %d, want 0 (capture failure must not inject)", len(bk.calls))
 	}
 }
 
@@ -194,7 +199,8 @@ func TestReliablePath_EventAppendRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTypedDiagnostics_InjectionOutcomes proves all five outcomes.
+// TestTypedDiagnostics_InjectionOutcomes proves typed outcomes across all
+// injection failure classes.
 func TestTypedDiagnostics_InjectionOutcomes(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -205,7 +211,7 @@ func TestTypedDiagnostics_InjectionOutcomes(t *testing.T) {
 		{"injected", &fakeBackend{}, &fakeCapture{content: "\u276F \n"}, "injected"},
 		{"unsafe-pending", &fakeBackend{}, &fakeCapture{content: "typed"}, "unsafe"},
 		{"unsafe-shell", &fakeBackend{}, &fakeCapture{content: "> \n"}, "unsafe"},
-		{"endpoint-dead", &fakeBackend{}, &fakeCapture{err: os.ErrInvalid}, "endpoint-dead"},
+		{"capture-failed", &fakeBackend{}, &fakeCapture{err: os.ErrInvalid}, "capture-failed"},
 		{"backend-failed", &failBackend{}, &fakeCapture{content: "\u276F \n"}, "backend-failed"},
 	}
 

@@ -28,6 +28,7 @@ const (
 	OutcomeAFK           InjectOutcome = "afk"
 	OutcomeEndpointDead  InjectOutcome = "endpoint-dead"
 	OutcomeBackendFailed InjectOutcome = "backend-failed"
+	OutcomeCaptureFailed InjectOutcome = "capture-failed"
 )
 
 // InjectResult carries the outcome and diagnostics of an injection attempt.
@@ -213,7 +214,7 @@ func DirectInject(backend Backend, capture PaneCapture, parentTarget, msg, event
 	safe, verdict, err := IsSafeInjectTarget(capture, parentTarget)
 	if err != nil {
 		return InjectResult{
-			Outcome: OutcomeEndpointDead,
+			Outcome: OutcomeCaptureFailed,
 			Verdict: verdict.String(),
 			Target:  parentTarget,
 			Error:   fmt.Sprintf("capture failed: %v", err),
