@@ -459,7 +459,8 @@ func (h *HerdrBackend) Capture(windowID string, lines int) (string, error) {
 // Returns:
 //
 //	(true, true, nil)  — pane exists and agent is registered
-//	(true, false, nil) — pane exists but no agent (bare shell / dead agent)
+//	(true, false, nil) — pane exists but no agent (bare shell / dead agent;
+//	  NOT authoritative absence — recovery must fail closed, never auto-recover)
 //	(false, false, ErrPaneNotFound) — pane confirmed absent
 //	(false, false, err) — backend resolution failure (fail closed)
 func (h *HerdrBackend) CheckAgentAlive(windowID string) (bool, bool, error) {

@@ -27,11 +27,11 @@ func TestRecover_PiIntegrationStatusControlsRelaunch(t *testing.T) {
 			writeCanonicalPiIntegration(t, home)
 			writeCaptainMeta(t, parent, "pi-captain", home, "dead-window")
 			launch := &countingLaunchEndpoint{}
-			var probe ProbeEndpoint = &testProbeEndpoint{result: CaptainProbeResult{}}
+			var probe ProbeEndpoint = &testProbeEndpoint{result: CaptainProbeResult{Absent: true}}
 			if tc.state == "installed" {
 				// The relaunch must prove post-launch liveness: dead before
 				// launch, alive on the first post-launch probe.
-				probe = &testProbeEndpoint{results: []CaptainProbeResult{{}, {PaneAlive: true, AgentAlive: true}}}
+				probe = &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}}
 			}
 			result, err := Recover(parent, []Info{{ID: "pi-captain", Home: home}}, RecoverCapabilities{
 				Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: tc.state, Message: "test status"}},
@@ -59,7 +59,7 @@ func TestRecover_ArmedRelaunchGuardRefusesDuplicateLaunch(t *testing.T) {
 	res, err := Recover(parent, []Info{{ID: "guarded-recover", Home: captainHome}}, RecoverCapabilities{
 		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 		Launch:      launch,
-		Probe:       &testProbeEndpoint{result: CaptainProbeResult{}},
+		Probe:       &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestRecover_ExpiredRelaunchGuardAllowsFreshRelaunchAndProvesLiveness(t *tes
 	res, err := Recover(parent, []Info{{ID: "expired-recover", Home: captainHome}}, RecoverCapabilities{
 		Integration: staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 		Launch:      launch,
-		Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{}, {PaneAlive: true, AgentAlive: true}}},
+		Probe:       &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestConverge_AutoRecoverRefusesArmedRelaunchGuard(t *testing.T) {
 		Mailbox:      &captainTestMailboxSender{},
 		Integration:  staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 		Launch:       launch,
-		Probe:        &testProbeEndpoint{result: CaptainProbeResult{}},
+		Probe:        &testProbeEndpoint{result: CaptainProbeResult{Absent: true}},
 	})
 	if err == nil {
 		t.Fatal("expected converge failure for guarded auto-recover")
@@ -303,7 +303,7 @@ func TestConverge_AutoRecoverProvesLivenessAfterExpiredRelaunchGuard(t *testing.
 		Mailbox:      &captainTestMailboxSender{},
 		Integration:  staticIntegrationPort{status: IntegrationStatus{Harness: "pi", Scope: "project", State: "installed"}},
 		Launch:       launch,
-		Probe:        &testProbeEndpoint{results: []CaptainProbeResult{{}, {PaneAlive: true, AgentAlive: true}}},
+		Probe:        &testProbeEndpoint{results: []CaptainProbeResult{{Absent: true}, {PaneAlive: true, AgentAlive: true}}},
 	})
 	if err != nil {
 		t.Fatalf("converge error: %v", err)
@@ -415,9 +415,9 @@ type errorAfterLaunchProbe struct{ calls int }
 func (p *errorAfterLaunchProbe) Probe(string, map[string]string) (CaptainProbeResult, error) {
 	p.calls++
 	if p.calls == 1 {
-		return CaptainProbeResult{}, nil
+		return CaptainProbeResult{Absent: true}, nil
 	}
-	return CaptainProbeResult{}, errors.New("backend down")
+	return CaptainProbeResult{Absent: true}, errors.New("backend down")
 }
 
 type errorThenAliveProbe struct{ calls int }
@@ -426,9 +426,9 @@ func (p *errorThenAliveProbe) Probe(string, map[string]string) (CaptainProbeResu
 	p.calls++
 	switch p.calls {
 	case 1:
-		return CaptainProbeResult{}, nil
+		return CaptainProbeResult{Absent: true}, nil
 	case 2, 3:
-		return CaptainProbeResult{}, errors.New("backend down")
+		return CaptainProbeResult{Absent: true}, errors.New("backend down")
 	default:
 		return CaptainProbeResult{PaneAlive: true, AgentAlive: true}, nil
 	}

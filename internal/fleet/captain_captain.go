@@ -2095,15 +2095,16 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": charter refresh", Status: ConvergeOK, Detail: "ok"})
 		}
 
-		// f. Liveness check + auto-recover.
-		alive, aliveErr := checkAliveWithProbe(parentHome, sm, caps.Probe)
-		if aliveErr != nil {
-			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: aliveErr.Error()})
-			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, aliveErr))
+		// f. Liveness check + strict-dead-only auto-recover.
+		state, stateErr := checkAliveWithProbe(parentHome, sm, caps.Probe)
+		if stateErr != nil {
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: stateErr.Error()})
+			errs = append(errs, fmt.Sprintf("%s: alive check failed: %v", sm.ID, stateErr))
 			continue
 		}
 		taskID := taskIDForCaptain(sm.ID)
-		if alive {
+		switch state {
+		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
 			if cErr := clearRelaunchGuard(parentHome, taskID); cErr != nil {
 				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", cErr)})
@@ -2111,48 +2112,57 @@ func Converge(parentHome string, registered []Info, caps ConvergeCapabilities) (
 				continue
 			}
 			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "alive"})
-		} else {
-			// Not alive. Check if launched (meta has window) to distinguish
-			// dead captain (auto-recover) from not-yet-launched (seeded).
+		case CaptainSeeded:
+			// No launch evidence in task meta: never launched.
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent (seeded)"})
+		case CaptainUnproven:
+			// Non-dead evidence (no-agent, generic errors, unproven Alive=false)
+			// is not authoritative absence; never relaunch.
+			result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: "endpoint state unproven; strict-dead-only refuses relaunch"})
+			errs = append(errs, fmt.Sprintf("%s: endpoint state unproven; strict-dead-only refuses relaunch", sm.ID))
+			continue
+		case CaptainDead:
+			// Launched-but-dead (binding already validated by checkAliveWithProbe):
+			// refuse a duplicate relaunch while the guard is armed, verify the
+			// canonical integration, then relaunch.
 			meta, mErr := mhome.ReadMeta(parentHome, taskID)
-			launched := mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != ""
-			if launched {
-				// Launched-but-dead: refuse a duplicate relaunch while the guard is armed.
-				refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, time.Now())
-				if gErr != nil {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: gErr.Error()})
-					errs = append(errs, fmt.Sprintf("%s: relaunch guard check failed: %v", sm.ID, gErr))
-					continue
-				}
-				if refused {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))})
-					errs = append(errs, fmt.Sprintf("%s: duplicate relaunch refused (guard expires in %s)", sm.ID, remaining.Round(time.Second)))
-					continue
-				}
-				// Launched-but-dead: verify the canonical Pi integration before recovery.
-				if integrationErr := requireHealthyPiIntegration(sm.Home, caps.Integration); integrationErr != nil {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
-					errs = append(errs, fmt.Sprintf("%s: auto-recover blocked: %v", sm.ID, integrationErr))
-					continue
-				}
-				if lErr := Launch(sm.Home, parentHome, caps.Launch); lErr != nil {
-					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
-					errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
-				} else {
-					proven, pErr := proveRelaunch(parentHome, sm, caps.Probe, proveSleep, time.Now)
-					if pErr != nil {
-						result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recovered but %v", pErr)})
-						errs = append(errs, fmt.Sprintf("%s: auto-recover liveness proof failed: %v", sm.ID, pErr))
-					} else if !proven {
-						result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: "dead agent — auto-recovered but post-launch liveness could not be proven; duplicate relaunch guarded"})
-						errs = append(errs, fmt.Sprintf("%s: auto-recover relaunched but post-launch liveness could not be proven", sm.ID))
-					} else {
-						result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
-						fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
-					}
-				}
+			if mErr != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("re-reading task meta for relaunch guard: %v", mErr)})
+				errs = append(errs, fmt.Sprintf("%s: re-reading task meta for relaunch guard: %v", sm.ID, mErr))
+				continue
+			}
+			refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, time.Now())
+			if gErr != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: gErr.Error()})
+				errs = append(errs, fmt.Sprintf("%s: relaunch guard check failed: %v", sm.ID, gErr))
+				continue
+			}
+			if refused {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("prior relaunch liveness remains unproven; duplicate launch refused (guard expires in %s)", remaining.Round(time.Second))})
+				errs = append(errs, fmt.Sprintf("%s: duplicate relaunch refused (guard expires in %s)", sm.ID, remaining.Round(time.Second)))
+				continue
+			}
+			// Launched-but-dead: verify the canonical Pi integration before recovery.
+			if integrationErr := requireHealthyPiIntegration(sm.Home, caps.Integration); integrationErr != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: integrationErr.Error()})
+				errs = append(errs, fmt.Sprintf("%s: auto-recover blocked: %v", sm.ID, integrationErr))
+				continue
+			}
+			if lErr := Launch(sm.Home, parentHome, caps.Launch); lErr != nil {
+				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recover failed: %v", lErr)})
+				errs = append(errs, fmt.Sprintf("%s: auto-recover failed: %v", sm.ID, lErr))
 			} else {
-				result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeSkipped, Detail: "absent (seeded)"})
+				proven, pErr := proveRelaunch(parentHome, sm, caps.Probe, proveSleep, time.Now)
+				if pErr != nil {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: fmt.Sprintf("dead agent — auto-recovered but %v", pErr)})
+					errs = append(errs, fmt.Sprintf("%s: auto-recover liveness proof failed: %v", sm.ID, pErr))
+				} else if !proven {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeFailed, Detail: "dead agent — auto-recovered but post-launch liveness could not be proven; duplicate relaunch guarded"})
+					errs = append(errs, fmt.Sprintf("%s: auto-recover relaunched but post-launch liveness could not be proven", sm.ID))
+				} else {
+					result.Steps = append(result.Steps, ConvergeStepResult{Name: sm.ID + ": liveness check", Status: ConvergeOK, Detail: "dead agent — auto-recovered"})
+					fmt.Printf("  %s: auto-recovered (dead agent)\n", sm.ID)
+				}
 			}
 		}
 
@@ -2355,17 +2365,20 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			continue
 		}
 
-		alive, aliveErr := checkAliveWithProbe(parentHome, sm, capabilities.Probe)
-		if aliveErr != nil {
-			// Backend resolution failure: cannot prove liveness, cannot safely relaunch.
+		state, stateErr := checkAliveWithProbe(parentHome, sm, capabilities.Probe)
+		if stateErr != nil {
+			// Backend resolution failure or non-authoritative evidence (no-agent,
+			// generic errors, unproven Alive=false): cannot prove liveness and
+			// cannot prove authoritative absence — fail closed, never relaunch.
 			entry.Outcome = RecoverFailed
-			entry.Error = fmt.Sprintf("alive check failed: %v", aliveErr)
+			entry.Error = fmt.Sprintf("alive check failed: %v", stateErr)
 			res.Failed++
 			res.Entries = append(res.Entries, entry)
 			continue
 		}
 		taskID := taskIDForCaptain(sm.ID)
-		if alive {
+		switch state {
+		case CaptainAlive:
 			// Liveness proven by observation: clear any armed relaunch guard.
 			if cErr := clearRelaunchGuard(parentHome, taskID); cErr != nil {
 				entry.Outcome = RecoverFailed
@@ -2378,21 +2391,31 @@ func Recover(parentHome string, registered []Info, capabilities RecoverCapabilit
 			res.Alive++
 			res.Entries = append(res.Entries, entry)
 			continue
-		}
-
-		// Not alive. Distinguish launched-but-dead (meta+window) from seeded-never-launched.
-		meta, mErr := mhome.ReadMeta(parentHome, taskID)
-		launched := false
-		if mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != "" {
-			launched = true
-		}
-		if !launched {
+		case CaptainSeeded:
+			// No launch evidence in task meta: never launched.
 			entry.Outcome = RecoverSeeded
 			res.Seeded++
 			res.Entries = append(res.Entries, entry)
 			continue
+		case CaptainUnproven:
+			entry.Outcome = RecoverFailed
+			entry.Error = "endpoint evidence is not authoritatively absent; strict-dead-only refuses relaunch"
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
 		}
 
+		// CaptainDead: launched-but-dead (binding already validated by
+		// checkAliveWithProbe). Refuse a duplicate relaunch while the guard is
+		// armed, verify the bound harness integration, then relaunch.
+		meta, mErr := mhome.ReadMeta(parentHome, taskID)
+		if mErr != nil {
+			entry.Outcome = RecoverFailed
+			entry.Error = fmt.Sprintf("re-reading task meta for relaunch guard: %v", mErr)
+			res.Failed++
+			res.Entries = append(res.Entries, entry)
+			continue
+		}
 		// Launched-but-dead: refuse a duplicate relaunch while the guard is armed.
 		refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, time.Now())
 		if gErr != nil {
@@ -2463,15 +2486,21 @@ func ProbeLiveness(parentHome string, registered []Info, probe ProbeEndpoint) []
 			continue
 		}
 		// CaptainStatus: alive | dead | seeded | unknown.
-		alive, err := checkAliveWithProbe(parentHome, sm, probe)
+		state, err := checkAliveWithProbe(parentHome, sm, probe)
 		if err != nil {
 			p.Status = "unknown"
-		} else if alive {
-			p.Status = "alive"
-		} else if _, metaErr := mhome.ReadMeta(parentHome, taskIDForCaptain(sm.ID)); metaErr != nil {
-			p.Status = "seeded"
 		} else {
-			p.Status = "dead"
+			switch state {
+			case CaptainAlive:
+				p.Status = "alive"
+			case CaptainDead:
+				// Authoritative pane absence is the only dead report.
+				p.Status = "dead"
+			case CaptainUnproven:
+				p.Status = "unknown"
+			case CaptainSeeded:
+				p.Status = "seeded"
+			}
 		}
 		probes = append(probes, p)
 	}
@@ -2485,31 +2514,45 @@ type LivenessProbe struct {
 	Status string // alive | dead | seeded | unknown
 }
 
-// checkAliveWithProbe validates Captain endpoint metadata before probing.
-func checkAliveWithProbe(parentHome string, sm Info, probe ProbeEndpoint) (bool, error) {
+// checkAliveWithProbe validates Captain endpoint metadata before probing and
+// derives the strict endpoint state. Only CaptainDead (authoritative pane
+// absence) authorizes relaunch; every other non-alive state is
+// CaptainUnproven and fails closed. CaptainSeeded means no launch evidence
+// exists in task meta (never launched).
+func checkAliveWithProbe(parentHome string, sm Info, probe ProbeEndpoint) (CaptainEndpointState, error) {
 	taskID := taskIDForCaptain(sm.ID)
 	meta, err := mhome.ReadMeta(parentHome, taskID)
 	if err != nil {
-		return false, nil
+		return CaptainSeeded, nil
 	}
 	if meta["kind"] != "captain" || meta["sm_id"] != sm.ID {
-		return false, nil
+		return CaptainSeeded, nil
 	}
 	canonSM, err := canonicalCaptainHome(sm.Home)
 	if err != nil {
-		return false, fmt.Errorf("canonicalizing captain home: %w", err)
+		return CaptainUnproven, fmt.Errorf("canonicalizing captain home: %w", err)
 	}
 	if meta["home"] != canonSM || meta["window"] == "" {
-		return false, nil
+		return CaptainSeeded, nil
 	}
 	if probe == nil {
-		return false, fmt.Errorf("captain probe endpoint capability is required")
+		return CaptainUnproven, fmt.Errorf("captain probe endpoint capability is required")
 	}
 	result, err := probe.Probe(parentHome, meta)
 	if err != nil {
-		return false, err
+		return CaptainUnproven, err
 	}
-	return result.PaneAlive && result.AgentAlive, nil
+	if result.Absent {
+		// Authoritative pane absence: the sole relaunch authority.
+		return CaptainDead, nil
+	}
+	if result.PaneAlive && result.AgentAlive && captainAgentStatusConfirmedLive(result.AgentStatus) {
+		return CaptainAlive, nil
+	}
+	// Pane-present/no-agent, Starting/Unknown/Unresponsive/StaleIdentity/
+	// Unresolved, and unproven plain Alive=false are NOT authoritative absence:
+	// strict-dead-only fails closed instead of relaunching.
+	return CaptainUnproven, fmt.Errorf("captain %s endpoint evidence is not authoritatively absent (pane=%t agent=%t status=%q): strict-dead-only refuses relaunch", sm.ID, result.PaneAlive, result.AgentAlive, result.AgentStatus)
 }
 
 // instructionSurfaceDigest returns a deterministic digest of the tracked instruction

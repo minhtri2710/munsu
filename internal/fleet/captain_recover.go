@@ -156,10 +156,10 @@ func proveRelaunch(parentHome string, sm Info, probe ProbeEndpoint, sleep func(t
 	}
 	var lastProbeErr error
 	for attempt := 0; attempt < relaunchProofAttempts; attempt++ {
-		alive, aliveErr := checkAliveWithProbe(parentHome, sm, probe)
-		if aliveErr != nil {
-			lastProbeErr = aliveErr
-		} else if alive {
+		state, stateErr := checkAliveWithProbe(parentHome, sm, probe)
+		if stateErr != nil {
+			lastProbeErr = stateErr
+		} else if state == CaptainAlive {
 			delete(meta, "relaunch_liveness")
 			delete(meta, relaunchGuardUntilField)
 			if err := mhome.WriteMeta(parentHome, taskID, meta); err != nil {
@@ -412,29 +412,34 @@ func (tx *RecoverTransaction) stepLaunchReadiness(parentHome string, sm Info) St
 }
 
 func (tx *RecoverTransaction) stepRelaunch(parentHome string, sm Info) StepResult {
-	alive, aliveErr := checkAliveWithProbe(parentHome, sm, tx.Capabilities.Probe)
-	if aliveErr != nil {
+	state, stateErr := checkAliveWithProbe(parentHome, sm, tx.Capabilities.Probe)
+	if stateErr != nil {
 		return StepResult{Name: "relaunch-pane", State: StepFailed,
-			Detail: fmt.Sprintf("alive check failed: %v", aliveErr)}
+			Detail: fmt.Sprintf("alive check failed: %v", stateErr)}
 	}
-	if alive {
-		if err := clearRelaunchGuard(parentHome, taskIDForCaptain(sm.ID)); err != nil {
+	taskID := taskIDForCaptain(sm.ID)
+	switch state {
+	case CaptainAlive:
+		if err := clearRelaunchGuard(parentHome, taskID); err != nil {
 			return StepResult{Name: "relaunch-pane", State: StepFailed,
 				Detail: fmt.Sprintf("clearing resolved relaunch guard failed: %v", err)}
 		}
 		return StepResult{Name: "relaunch-pane", State: StepOk, Detail: "endpoint alive, no action needed"}
-	}
-
-	// Not alive. Distinguish launched-but-dead from seeded-never-launched.
-	taskID := taskIDForCaptain(sm.ID)
-	meta, mErr := mhome.ReadMeta(parentHome, taskID)
-	launched := false
-	if mErr == nil && meta["kind"] == "captain" && meta["sm_id"] == sm.ID && meta["window"] != "" {
-		launched = true
-	}
-	if !launched {
+	case CaptainSeeded:
 		return StepResult{Name: "relaunch-pane", State: StepSkipped,
 			Detail: "seeded but not launched"}
+	case CaptainUnproven:
+		return StepResult{Name: "relaunch-pane", State: StepFailed,
+			Detail: "endpoint evidence is not authoritatively absent; strict-dead-only refuses relaunch"}
+	}
+
+	// CaptainDead: launched-but-dead (binding already validated by
+	// checkAliveWithProbe). Refuse a duplicate relaunch while the guard is
+	// armed, then relaunch and prove post-launch liveness.
+	meta, mErr := mhome.ReadMeta(parentHome, taskID)
+	if mErr != nil {
+		return StepResult{Name: "relaunch-pane", State: StepFailed,
+			Detail: fmt.Sprintf("re-reading task meta for relaunch guard: %v", mErr)}
 	}
 	refused, remaining, gErr := consultRelaunchGuard(parentHome, taskID, meta, tx.nowTime())
 	if gErr != nil {

@@ -257,9 +257,15 @@ the whole recovery.
 ### Launch behavior
 
 `recover` preserves a healthy live Captain; observing liveness also clears any
-armed relaunch guard. If a previously launched Captain is dead, the
-`relaunch-pane` step starts it again and then polls the captain endpoint to
-prove post-launch liveness (up to ~10s). A relaunch whose liveness cannot be
+armed relaunch guard. Recovery is strict-dead-only: only authoritative pane
+absence (`backend.ErrPaneNotFound`) qualifies as dead, and only that evidence
+permits the `relaunch-pane` step to launch. Pane-present/no-agent, transitional
+or unproven agent statuses (`Starting`, `Unknown`, `Unresponsive`,
+`StaleIdentity`, `Unresolved`), generic probe errors, and unproven plain
+`Alive=false` are not authoritative absence: the step fails closed without
+launching. If a previously launched Captain is dead, the `relaunch-pane` step
+starts it again and then polls the captain endpoint to prove post-launch
+liveness (up to ~10s). A relaunch whose liveness cannot be
 proven arms a 5-minute relaunch guard (`relaunch_liveness=unproven` plus
 `relaunch_guard_until` in the captain task meta); while the guard is armed,
 recovery refuses a duplicate relaunch until it expires. If the Captain was

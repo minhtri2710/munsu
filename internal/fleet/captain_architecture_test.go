@@ -43,17 +43,20 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 	parent := t.TempDir()
 	smHome := seedCaptainForTest(t, parent, "test-sm")
 
-	t.Run("returns false when no meta exists (not yet launched)", func(t *testing.T) {
-		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
+	t.Run("returns seeded when no meta exists (not yet launched)", func(t *testing.T) {
+		state, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for missing meta, got: %v", err)
 		}
-		if alive {
-			t.Fatal("expected false for captain with no meta")
+		if state == CaptainAlive {
+			t.Fatal("expected non-alive for captain with no meta")
+		}
+		if state != CaptainSeeded {
+			t.Fatalf("expected CaptainSeeded for missing meta, got %v", state)
 		}
 	})
 
-	t.Run("returns false when meta kind is not captain", func(t *testing.T) {
+	t.Run("returns seeded when meta kind is not captain", func(t *testing.T) {
 		// Write meta with wrong kind.
 		canon, _ := canonicalCaptainHome(smHome)
 		mhome.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
@@ -62,16 +65,19 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 			"home":   canon,
 			"window": "w1",
 		})
-		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
+		state, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for wrong kind, got: %v", err)
 		}
-		if alive {
-			t.Fatal("expected false for kind=ship, not captain")
+		if state == CaptainAlive {
+			t.Fatal("expected non-alive for kind=ship, not captain")
+		}
+		if state != CaptainSeeded {
+			t.Fatalf("expected CaptainSeeded for kind=ship, got %v", state)
 		}
 	})
 
-	t.Run("returns false when meta sm_id does not match", func(t *testing.T) {
+	t.Run("returns seeded when meta sm_id does not match", func(t *testing.T) {
 		canon, _ := canonicalCaptainHome(smHome)
 		mhome.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
 			"kind":   "captain",
@@ -79,16 +85,19 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 			"home":   canon,
 			"window": "w1",
 		})
-		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
+		state, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for wrong sm_id, got: %v", err)
 		}
-		if alive {
-			t.Fatal("expected false for mismatched sm_id")
+		if state == CaptainAlive {
+			t.Fatal("expected non-alive for mismatched sm_id")
+		}
+		if state != CaptainSeeded {
+			t.Fatalf("expected CaptainSeeded for mismatched sm_id, got %v", state)
 		}
 	})
 
-	t.Run("returns false when meta window is empty", func(t *testing.T) {
+	t.Run("returns seeded when meta window is empty", func(t *testing.T) {
 		canon, _ := canonicalCaptainHome(smHome)
 		mhome.WriteMeta(parent, taskIDForCaptain("test-sm"), map[string]string{
 			"kind":   "captain",
@@ -96,12 +105,15 @@ func TestStructuredState_CheckAliveViaBackendUsesMetaFiles(t *testing.T) {
 			"home":   canon,
 			"window": "",
 		})
-		alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
+		state, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: smHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
 		if err != nil {
 			t.Fatalf("expected nil error for empty window, got: %v", err)
 		}
-		if alive {
-			t.Fatal("expected false for empty window")
+		if state == CaptainAlive {
+			t.Fatal("expected non-alive for empty window")
+		}
+		if state != CaptainSeeded {
+			t.Fatalf("expected CaptainSeeded for empty window, got %v", state)
 		}
 	})
 }
@@ -123,13 +135,13 @@ func TestStructuredState_MetaHomeComparedCanonically(t *testing.T) {
 	}
 
 	// checkAliveViaBackend uses canonical home internally.
-	alive, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: symlinkHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
+	state, err := checkAliveWithProbe(parent, Info{ID: "test-sm", Home: symlinkHome}, &testProbeEndpoint{result: CaptainProbeResult{PaneAlive: true, AgentAlive: true}})
 	if err != nil {
 		t.Fatalf("checkAliveViaBackend via symlink: %v", err)
 	}
 	// Not alive because backend is not wired. The important thing is the
 	// canonical comparison succeeds (no home mismatch error).
-	_ = alive
+	_ = state
 	_ = canon
 }
 

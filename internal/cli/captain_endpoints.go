@@ -88,7 +88,8 @@ func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeR
 	if aware, ok := bk.(backend.AgentAwareBackend); ok {
 		pane, agent, err := aware.CheckAgentAlive(window)
 		if errors.Is(err, backend.ErrPaneNotFound) {
-			return fleet.CaptainProbeResult{}, nil
+			// Authoritative pane absence: the sole relaunch authority.
+			return fleet.CaptainProbeResult{Absent: true}, nil
 		}
 		result := fleet.CaptainProbeResult{PaneAlive: pane, AgentAlive: agent, ReadyForPrompt: pane && agent}
 		if recognized, ok := bk.(interface {
@@ -101,6 +102,9 @@ func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeR
 		return result, err
 	}
 	alive := bk.Alive(window)
+	// A plain Alive() bool cannot prove authoritative absence (the backend
+	// swallows the distinguishing error). Absent stays false: an unproven
+	// Alive=false reading fails closed and never authorizes relaunch.
 	return fleet.CaptainProbeResult{PaneAlive: alive, AgentAlive: alive, ReadyForPrompt: alive}, nil
 }
 
