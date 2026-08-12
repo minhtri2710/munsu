@@ -418,14 +418,11 @@ func runGuardClaude(homeDir string) error {
 	}
 
 	// Check fleet state for in-flight tasks
-	inFlight := 0
-	snap, snapErr := fleet.Snapshot(homeDir)
-	if snapErr == nil {
-		for _, ts := range snap.Tasks {
-			if ts.Kind == "ship" || ts.Kind == "scout" {
-				inFlight++
-			}
-		}
+	inFlight, guardErr := guardInFlight(homeDir)
+	if guardErr != nil {
+		fmt.Fprintln(os.Stderr, "cannot read authoritative fleet state:", guardErr)
+		exitWithCode(2)
+		return nil
 	}
 
 	// No in-flight work → safe to end turn
@@ -507,14 +504,11 @@ func runGuardCodexLike(homeDir string) error {
 	}
 
 	// Check fleet state for in-flight tasks
-	inFlight := 0
-	snap, snapErr := fleet.Snapshot(homeDir)
-	if snapErr == nil {
-		for _, ts := range snap.Tasks {
-			if ts.Kind == "ship" || ts.Kind == "scout" {
-				inFlight++
-			}
-		}
+	inFlight, guardErr := guardInFlight(homeDir)
+	if guardErr != nil {
+		fmt.Fprintln(os.Stderr, "cannot read authoritative fleet state:", guardErr)
+		exitWithCode(2)
+		return nil
 	}
 
 	// No in-flight work → safe to end turn
@@ -591,14 +585,11 @@ func runGuardGrok(homeDir string) error {
 	}
 
 	// Check fleet state for in-flight tasks
-	inFlight := 0
-	snap, snapErr := fleet.Snapshot(homeDir)
-	if snapErr == nil {
-		for _, ts := range snap.Tasks {
-			if ts.Kind == "ship" || ts.Kind == "scout" {
-				inFlight++
-			}
-		}
+	inFlight, guardErr := guardInFlight(homeDir)
+	if guardErr != nil {
+		fmt.Fprintln(os.Stderr, "cannot read authoritative fleet state:", guardErr)
+		exitWithCode(2)
+		return nil
 	}
 
 	// No in-flight work -> safe to end turn
@@ -690,14 +681,11 @@ func runGuardAgy(homeDir string) error {
 	}
 
 	// Check fleet state for in-flight tasks
-	inFlight := 0
-	snap, snapErr := fleet.Snapshot(homeDir)
-	if snapErr == nil {
-		for _, ts := range snap.Tasks {
-			if ts.Kind == "ship" || ts.Kind == "scout" {
-				inFlight++
-			}
-		}
+	inFlight, guardErr := guardInFlight(homeDir)
+	if guardErr != nil {
+		fmt.Fprintln(os.Stderr, "cannot read authoritative fleet state:", guardErr)
+		exitWithCode(2)
+		return nil
 	}
 
 	// No in-flight work -> safe to end turn
@@ -824,7 +812,7 @@ Ack claimed wakes after steering: munsu wake ack <lease-id> <event-id...>.`,
 				Limit:         limit,
 				PeekFleet:     !noPeek,
 				FleetSnapshot: func(homeDir string) ([]orchestrator.FleetTaskSnapshot, error) {
-					snap, err := fleet.Snapshot(homeDir)
+					snap, err := fleet.Snapshot(homeDir, snapshotDeps())
 					if err != nil {
 						return nil, err
 					}

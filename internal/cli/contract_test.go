@@ -519,10 +519,8 @@ func TestFleetSnapshotV2HasHelpAndAggregates(t *testing.T) {
 		t.Errorf("empty snapshot missing captain_guidance.note\n%s", output)
 	}
 
-	// Non-empty snapshot: add a task
-	if err := mhome.WriteMeta(home, "alpha", map[string]string{"description": "inspect", "worktree": home}); err != nil {
-		t.Fatal(err)
-	}
+	// Non-empty snapshot: add a canonical task
+	cliSeedCanonicalTask(t, home, "alpha", "ship")
 	out2, err := runContract(t, []string{"fleet", "snapshot", "--version", "2"})
 	if err != nil {
 		t.Fatalf("fleet snapshot v2 non-empty: %v", err)

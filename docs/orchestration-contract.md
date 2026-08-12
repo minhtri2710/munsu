@@ -21,7 +21,7 @@ A command family has one runtime owner: the package that emits its contract resu
 | Fleet state | `munsu fleet snapshot --version 2` | `internal/cli` | `internal/fleet` | `internal/fleet` snapshot (canonical-aware) | implemented |
 | Guard | `munsu guard` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` guard evaluation + `internal/fleet` snapshot | implemented |
 | Watch | `munsu watch ensure`, `munsu watch run` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` watcher lifecycle | implemented |
-| Wake | `munsu wake claim <wake-id> --owner <owner>`, `munsu wake ack <wake-id> --claim <claim-id>` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` wake records and drain state | implemented |
+| Wake | `munsu wake claim --consumer <id>`, `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>`, `munsu wake ack <lease-id> <event-id...>` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` wake records and drain state | implemented |
 | Backend discovery | `munsu backend capabilities [--backend <name>]` | `internal/cli` | `internal/backend` | `internal/backend` backend selection | implemented |
 | Spawn receipt | `munsu spawn <task-id> ...` | `internal/cli` | `internal/fleet` | `internal/fleet` spawn lifecycle | implemented |
 | Integration | `munsu integrate install`, `munsu integrate repair` | `internal/cli` | `internal/cli` | `internal/bootstrap` hook installation (post embed-ops) | implemented |
@@ -41,9 +41,10 @@ Every contract command accepts `--output toon|json`; `toon` is the default and `
 | `munsu guard` | none | `--output` | guard result |
 | `munsu watch ensure` | none | `--interval <duration>`, `--output` | ensure receipt |
 | `munsu watch run` | none | `--output` | one run receipt |
-| `munsu wake claim <wake-id>` | wake ID, `--owner <owner>` | `--owner`, `--output` | claim receipt |
-| `munsu wake ack <wake-id>` | wake ID, `--claim <claim-id>` | `--claim`, `--output` | acknowledgement receipt |
-| `munsu backend capabilities` | none | `--backend <name>`, `--output` | backend capabilities |
+| `munsu wake claim` | `--consumer <id>` (required) | `--consumer`, `--lease-captains`, `--limit`, `--output` | claim receipt |
+| `munsu wake resolve` | `--claim-id <lease-id>`, `--event-id <event-id>`, `--summary <text>` | `--claim-id`, `--event-id`, `--summary`, `--output` | resolve receipt |
+| `munsu wake ack <lease-id> <event-id...>` | lease ID + at least one event ID | `--output` | acknowledgement receipt |
+| `munsu backend capabilities` | none | `--backend <name>`, `--output` | backend capabilities (structured discovery currently exposes only `tmux` and `herdr`; zellij/cmux/orca remain experimental runtime backends and are not part of this contract surface) |
 | `munsu spawn <task-id>` | existing spawn arguments | `--output` in addition to existing flags | spawn receipt |
 | `munsu integrate install` | none | `--harness <name>`, `--scope project|user`, `--output` | integration receipt |
 | `munsu integrate repair` | none | `--harness <name>`, `--scope project|user`, `--output` | integration receipt |

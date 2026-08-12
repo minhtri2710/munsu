@@ -39,9 +39,13 @@ func buildRootSummary(t *testing.T, tasks [][2]string) string {
 	for _, task := range tasks {
 		id := task[0]
 		meta := task[1]
-		if err := os.WriteFile(filepath.Join(homeDir, "state", id+".meta"), []byte(meta), 0600); err != nil {
-			t.Fatalf("write meta: %v", err)
+		// Extract kind from the legacy meta text and seed a canonical record
+		// (clean break: the root summary reads authoritative Task Authority).
+		kind := "ship"
+		if strings.Contains(meta, "kind=scout") {
+			kind = "scout"
 		}
+		cliSeedCanonicalTask(t, homeDir, id, kind)
 	}
 
 	root.SetArgs([]string{})

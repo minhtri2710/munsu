@@ -130,16 +130,17 @@ dispatch or binding authority.
 `soldier-state`, `fleet snapshot`, and `guard` read task state through one
 canonical-first query so agents and the CLI receive the same Task truth.
 `internal/fleet.ReadWithProbe` is the shared soldier current-state query: it
-resolves the authoritative `taskauthority` Aggregate first (Task 7.8); when a
-canonical record is absent it falls back to the `.meta`/`.status` projections
-and provider/event evidence as **display-only** tiers, never as competing
-authority. `soldier-state` calls it directly; `fleet snapshot` calls it through
-the installed resolver (`fleet.SetCurrentStateResolver`) and the contract row
-derives its status from `fleet.PhaseFromProjection`; `guard` consumes
-`fleet.Snapshot` for its in-flight count. A resolver failure fails closed
-instead of silently projecting the `.status` tail; a legacy v1 home with
-delivery-evidence claims fails closed (see `internal/fleet/taskauthority_reads.go`
-`LegacyDeliveryEvidenceError`). Lifecycle, delivery, worktree/endpoint binding, and
+resolves the authoritative `taskauthority` Aggregate first (Task 7.8) and the
+canonical phase is the only lifecycle authority (clean break). `fleet snapshot`
+receives the current-state query as an explicit `fleet.SnapshotDependencies`
+dependency (`fleet.NewCanonicalCurrentState()`); the contract row derives its
+status from `fleet.PhaseFromProjection`; `guard` consumes `fleet.Snapshot` for
+its in-flight count and fails closed when Task truth is unreadable. A
+canonical/current-state failure fails closed instead of silently projecting the
+`.status` tail; a task-facing `.meta` without a canonical record is rejected
+(legacy/meta-only tasks are not authoritative), while captain metadata
+(kind=captain) is exempt. Endpoint/pane probing is diagnostic only and never
+changes lifecycle state. Lifecycle, delivery, worktree/endpoint binding, and
 handoff mutations all go through `internal/taskauthority`; every remaining
 `.meta`/`.status` write is a post-commit projection, a runtime
 (transport/ready/mailbox) marker, or captain metadata (ADR-0007 §7).

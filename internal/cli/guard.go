@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,36 +59,69 @@ func guardClearCooldown(path string) {
 	_ = os.Remove(path)
 }
 
-func guardWatcherPreRunE() func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		if cmd == cmd.Root() && (len(args) == 0 || args[0] == "--help" || args[0] == "-h") {
-			return nil
-		}
-		guardWarnWatcher()
-		return nil
-	}
-}
-
-func guardWarnWatcher() {
-	if os.Getenv("MUNSU_GUARD_SKIP") == "1" {
-		return
-	}
-
-	homeDir, err := home.Resolve(homeOverride)
+// guardInFlight counts task-facing (ship/scout) tasks using the single
+// canonical current-state snapshot. It fails closed on unreadable Task truth:
+// a corrupt/legacy/meta-only fleet home returns an error and is never treated
+// as an empty fleet. A home that is simply not initialized has no fleet to
+// guard and yields zero in-flight tasks (not an error).
+func guardInFlight(homeDir string) (int, error) {
+	snap, err := fleet.Snapshot(homeDir, snapshotDeps())
 	if err != nil {
-		return
+		if errors.Is(err, home.ErrNotInitialized) {
+			return 0, nil
+		}
+		return 0, err
 	}
-
-	snap, err := fleet.Snapshot(homeDir)
-	if err != nil || snap == nil || len(snap.Tasks) == 0 {
-		return
-	}
-
 	inFlight := 0
 	for _, ts := range snap.Tasks {
 		if ts.Kind == "ship" || ts.Kind == "scout" {
 			inFlight++
 		}
+	}
+	return inFlight, nil
+}
+
+func guardWatcherPreRunE() func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		if cmd == cmd.Root() && (len(args) == 0 || args[0] == "--help" || args[0] == "-h") {
+			return nil
+		}
+		return guardWarnWatcher()
+	}
+}
+
+// guardWarnWatcher evaluates guard state and emits a stderr warning when tasks
+// are in flight but the watcher is absent/stale. It is an advisory pre-run hook:
+// it never blocks the invoking command. When there is no initialized fleet home
+// to guard it is a no-op; when an initialized home has unreadable Task truth
+// (a snapshot/current-state failure) it fails loud to stderr rather than
+// silently treating the fleet as empty.
+func guardWarnWatcher() error {
+	if os.Getenv("MUNSU_GUARD_SKIP") == "1" {
+		return nil
+	}
+
+	homeDir, err := home.Resolve(homeOverride)
+	if err != nil {
+		return nil
+	}
+
+	// No initialized fleet home to guard: not a guardable situation.
+	if _, err := home.Open(homeDir); err != nil {
+		if errors.Is(err, home.ErrNotInitialized) {
+			return nil
+		}
+		// An initialized-but-unreadable home should fail loud below; surface
+		// only genuine absence here.
+		return nil
+	}
+
+	inFlight, err := guardInFlight(homeDir)
+	if err != nil {
+		// Fail loud, never silent: surface the unreadable Task truth without
+		// blocking the invoking command.
+		fmt.Fprintf(os.Stderr, "\nWARNING: cannot read authoritative fleet state: %v\n", err)
+		return nil
 	}
 
 	result := orchestrator.EvaluateGuard(homeDir, inFlight, time.Now())
@@ -96,17 +130,17 @@ func guardWarnWatcher() {
 	cdPath := guardCooldownPath(homeDir)
 	if beat.Exists && !beat.Stale {
 		guardClearCooldown(cdPath)
-		return
+		return nil
 	}
 
 	if inFlight == 0 {
 		guardClearCooldown(cdPath)
-		return
+		return nil
 	}
 
 	key := guardStateKey(beat, inFlight)
 	if guardCheckCooldown(cdPath, key) {
-		return
+		return nil
 	}
 
 	guardWriteCooldown(cdPath, key)
@@ -122,4 +156,5 @@ func guardWarnWatcher() {
 	fmt.Fprintf(os.Stderr, "\nWARNING: %d task(s) in flight but watcher is %s (last beat: %s)\n",
 		inFlight, status, ageStr)
 	fmt.Fprintf(os.Stderr, "  Repair with 'munsu watch ensure' or set MUNSU_GUARD_SKIP=1 to silence.\n\n")
+	return nil
 }

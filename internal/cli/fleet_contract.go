@@ -87,22 +87,14 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 	}
 }
 
-func init() {
-	// Fleet receives a typed probe port; session adapter wiring remains at the CLI composition root.
-	fleet.SetEndpointProbe(cliEndpointProbe{resolve: backend.BackendForTask})
-	fleet.SetCurrentStateResolver(func(homeDir, id string) (*fleet.CurrentStateInfo, error) {
-		st, err := fleet.ReadWithProbe(homeDir, id, cliEndpointProbe{resolve: backend.BackendForTask})
-		if err != nil {
-			return nil, err
-		}
-		return &fleet.CurrentStateInfo{
-			State:               st.Status,
-			Description:         st.Description,
-			NoMistakesRunStep:   st.NoMistakesRunStep,
-			StatusLogSuperseded: st.StatusLogSuperseded,
-			OpenActivities:      st.OpenActivities,
-		}, nil
-	})
+// snapshotDeps builds the explicit read dependencies for fleet snapshot/guard
+// callers: the canonical current-state query is always present, and the
+// endpoint probe (diagnostic only) is the CLI adapter over the session backend.
+func snapshotDeps() fleet.SnapshotDependencies {
+	return fleet.SnapshotDependencies{
+		CurrentState: fleet.NewCanonicalCurrentState(),
+		Endpoint:     cliEndpointProbe{resolve: backend.BackendForTask},
+	}
 }
 
 func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
@@ -121,7 +113,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	if _, err := contractOutput(cmd); err != nil {
 		return err
 	}
-	snapshot, err := fleet.Snapshot(ctx.Home)
+	snapshot, err := fleet.Snapshot(ctx.Home, snapshotDeps())
 	if err != nil {
 		return operationError("internal", "Run `munsu fleet snapshot --version 2` again", "Unable to read fleet state")
 	}
@@ -149,7 +141,7 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 	var captains []CaptainEntry
 	if err == nil {
 		for _, m := range matedata {
-			status := fleet.CaptainStatus(ctx.Home, m.ID, m.Home)
+			status := fleet.CaptainStatus(ctx.Home, m.ID, m.Home, cliEndpointProbe{resolve: backend.BackendForTask})
 			entry := CaptainEntry{
 				ID:               m.ID,
 				Home:             m.Home,

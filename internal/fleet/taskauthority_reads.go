@@ -3,6 +3,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
@@ -115,4 +116,40 @@ func currentCanonicalAggregate(homeDir, id string) (tauth.Aggregate, bool, error
 		return tauth.Aggregate{}, false, err
 	}
 	return agg, true, nil
+}
+
+// canonicalCurrentStateQ is the canonical current-state query. It is the
+// explicit dependency passed to snapshot/guard callers; it is stateless and
+// safe to construct at each composition call site.
+type canonicalCurrentStateQ struct{}
+
+// NewCanonicalCurrentState returns the canonical current-state query used as
+// the explicit CurrentState dependency for snapshot and guard readers.
+func NewCanonicalCurrentState() CurrentStateQuery {
+	return canonicalCurrentStateQ{}
+}
+
+// Read returns the authoritative current state for one task. The lifecycle
+// phase/description come from the canonical Task Authority record; open
+// activities are evidence derived from the status event log. A missing or
+// malformed canonical record fails closed (operation error) — there is no
+// legacy projection fallback.
+func (canonicalCurrentStateQ) Read(homeDir, taskID string) (*CurrentStateInfo, error) {
+	agg, canonical, err := currentCanonicalAggregate(homeDir, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if !canonical {
+		return nil, fmt.Errorf("task %q in home %q has no canonical Task Authority record", taskID, homeDir)
+	}
+	info := &CurrentStateInfo{
+		State:               string(agg.Phase),
+		Description:         agg.PhaseDetail,
+		StatusLogSuperseded: true,
+	}
+	if info.Description == "" {
+		info.Description = agg.Definition.Description
+	}
+	info.OpenActivities = home.OpenActivities(filepath.Join(home.StateDir(homeDir), taskID+".status"))
+	return info, nil
 }

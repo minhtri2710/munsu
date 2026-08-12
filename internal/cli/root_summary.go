@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/fleet"
+	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 )
 
@@ -33,36 +35,38 @@ type rootSummaryView struct {
 }
 
 // loadRootSummary queries the fleet snapshot and watcher beat status for the
-// given home and maps them into a presentation model. It tolerates an
-// unavailable snapshot exactly as before: totalTasks/inFlight stay at zero and
-// an empty task list renders the no-tasks hint.
-func loadRootSummary(homeDir string) rootSummaryView {
+// given home and maps them into a presentation model. Unreadable Task truth
+// fails closed (returns an error) rather than rendering an empty fleet.
+func loadRootSummary(homeDir string) (rootSummaryView, error) {
 	v := rootSummaryView{homeDir: homeDir, watcher: "--"}
 
-	snap, snapErr := fleet.Snapshot(homeDir)
-	if snapErr == nil && snap != nil {
-		v.totalTasks = len(snap.Tasks)
-		for _, ts := range snap.Tasks {
-			if ts.Kind == "ship" || ts.Kind == "scout" {
-				v.inFlight++
-			}
-			task := rootSummaryTask{
-				id:      ts.ID,
-				phase:   fleet.PhaseFromProjection(ts),
-				project: ts.Project,
-				status:  ts.CurrentDescription,
-			}
-			if task.project == "" {
-				task.project = "-"
-			}
-			if task.status == "" {
-				task.status = ts.LastStatus
-			}
-			if task.status == "" {
-				task.status = task.phase
-			}
-			v.tasks = append(v.tasks, task)
+	snap, err := fleet.Snapshot(homeDir, snapshotDeps())
+	if err != nil {
+		// A home that is simply not initialized has no fleet to summarize; this
+		// is absence, not unreadable Task truth.
+		if errors.Is(err, home.ErrNotInitialized) {
+			return v, nil
 		}
+		return v, fmt.Errorf("reading authoritative fleet state: %w", err)
+	}
+	v.totalTasks = len(snap.Tasks)
+	for _, ts := range snap.Tasks {
+		if ts.Kind == "ship" || ts.Kind == "scout" {
+			v.inFlight++
+		}
+		task := rootSummaryTask{
+			id:      ts.ID,
+			phase:   fleet.PhaseFromProjection(ts),
+			project: ts.Project,
+			status:  ts.CurrentState,
+		}
+		if task.project == "" {
+			task.project = "-"
+		}
+		if task.status == "" {
+			task.status = task.phase
+		}
+		v.tasks = append(v.tasks, task)
 	}
 
 	beat := orchestrator.ReadBeatStatus(homeDir, time.Now())
@@ -73,7 +77,7 @@ func loadRootSummary(homeDir string) rootSummaryView {
 			v.watcher = "alive"
 		}
 	}
-	return v
+	return v, nil
 }
 
 // renderRootSummary prints the compact fleet/orientation snapshot.

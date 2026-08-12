@@ -319,13 +319,11 @@ func TestAgyGuardBlindTurn(t *testing.T) {
 	}
 	runGit(t, tmpDir, "init")
 
-	// Create in-flight task meta
+	// Create an in-flight canonical task (clean break: guard reads only
+	// authoritative Task Authority records).
 	metaDir := filepath.Join(tmpDir, "state")
 	os.MkdirAll(metaDir, 0755)
-	meta := "kind=ship\nwindow=test\n"
-	if err := os.WriteFile(filepath.Join(metaDir, "test-task.meta"), []byte(meta), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
 
 	// Create stale beat (10 minutes ago)
 	beat := "0 0"

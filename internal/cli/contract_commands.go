@@ -123,7 +123,7 @@ func newTaskObserveCmd() *cobra.Command {
 			}
 			meta, _ := home.ReadMeta(ctx.Home, args[0])
 			if meta["kind"] == "captain" {
-				status := fleet.CaptainStatus(ctx.Home, fleet.CaptainIDFromTask(args[0], meta), meta["home"])
+				status := fleet.CaptainStatus(ctx.Home, fleet.CaptainIDFromTask(args[0], meta), meta["home"], cliEndpointProbe{resolve: backend.BackendForTask})
 				state.PaneAlive = status == "alive"
 				if summary := fleet.SummarizeCaptainHome(meta["home"]); summary.Valid {
 					state.Status = summary.State
@@ -179,15 +179,12 @@ func newContractGuardCmd() *cobra.Command {
 				return err
 			}
 
-			// Count in-flight tasks for unified evaluation
-			inFlight := 0
-			snap, snapErr := fleet.Snapshot(ctx.Home)
-			if snapErr == nil && snap != nil {
-				for _, ts := range snap.Tasks {
-					if ts.Kind == "ship" || ts.Kind == "scout" {
-						inFlight++
-					}
-				}
+			// Count in-flight tasks for unified evaluation, failing closed when
+			// the canonical current-state snapshot is unreadable: unreadable
+			// Task truth is an error/unknown, never an empty fleet.
+			inFlight, err := guardInFlight(ctx.Home)
+			if err != nil {
+				return operationError("invalid_state", "Run `munsu guard` again after the fleet is readable", "Unable to read authoritative fleet state: "+err.Error())
 			}
 
 			// Use shared guard evaluation (same as middleware)
