@@ -28,19 +28,6 @@ func captureStderr(f func()) string {
 	return buf.String()
 }
 
-// writeTaskMeta creates a minimal task meta file with the given kind.
-func writeTaskMeta(t *testing.T, homeDir, id, kind string) {
-	t.Helper()
-	meta := fmt.Sprintf("kind=%s\nwindow=test\n", kind)
-	metaDir := filepath.Join(homeDir, "state")
-	if err := os.MkdirAll(metaDir, 0755); err != nil {
-		t.Fatalf("creating state dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(metaDir, id+".meta"), []byte(meta), 0644); err != nil {
-		t.Fatalf("writing meta: %v", err)
-	}
-}
-
 // writeBeat creates a fresh watcher beat file.
 func writeBeat(t *testing.T, homeDir string) {
 	t.Helper()

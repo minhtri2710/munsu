@@ -76,7 +76,7 @@ func newFleetSnapshotCmd() *cobra.Command {
 			if version == 2 {
 				return runFleetSnapshotV2(cmd, ctx)
 			}
-			snap, err := fleet.Snapshot(ctx.Home)
+			snap, err := fleet.Snapshot(ctx.Home, snapshotDeps())
 			if err != nil {
 				return err
 			}
@@ -100,7 +100,7 @@ func newFleetViewCmd() *cobra.Command {
 		Use:   "view",
 		Short: "Render fleet view from snapshot",
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
-			return fleet.View(ctx.Home)
+			return fleet.View(ctx.Home, snapshotDeps())
 		}),
 	}
 }
@@ -120,7 +120,7 @@ When a project directory argument is given, only that project is shown.`,
 			if len(args) > 0 {
 				projectDir = args[0]
 			}
-			return fleet.Bearings(ctx.Home, projectDir)
+			return fleet.Bearings(ctx.Home, projectDir, snapshotDeps())
 		}),
 	}
 }

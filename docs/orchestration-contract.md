@@ -1,29 +1,29 @@
 # Versioned orchestration contract
 
-**Status:** Phase 0 normative specification and golden fixtures only.  This document names the output boundary that later phases may implement; it neither changes the current command surface nor grants behavior to any proposed command.
+**Status:** Implemented contract surface with versioned models, TOON/JSON output encoder, and paired golden fixtures. This document specifies the structured agent-facing orchestration contract that the following command families already implement; it does not grant or promise behavior for any command/flag beyond what is registered below.
 
 ## Purpose and scope
 
 This contract gives agent callers a small, versioned view of orchestration state and mutation receipts. It is grounded in the Agent eXperience Interface (AXI): token-efficient TOON on stdout by default, minimal result schemas, definitive empties, cheap aggregates, contextual next actions, structured errors, no prompts, and idempotent mutations.
 
-Phase 1 proposes a JSON-compatible Go model under `internal/contract/model.go` and golden representations under `internal/contract/fixtures`. Those paths do not exist in the current tree and are not current runtime owners. A separately approved implementation must create them or revise this planned boundary before constructing values and encoding the same ordered data as JSON or TOON.
+The JSON-compatible Go model lives in package `internal/cli` under `internal/cli/contract_model.go` (response/error envelopes, schemas, `SchemaVersion`), the TOON/JSON encoder and output helpers under `internal/cli/contract_output.go`, and the command wiring under `internal/cli/contract_commands.go` / `internal/cli/fleet_contract.go`. Paired golden fixtures live under `internal/cli/contract_fixtures/` (embedded via `internal/cli/contract_fixtures_embed.go`) and are drift-checked by `internal/cli/contract_contract_test.go`. There is no package literally named `internal/contract`; the contract belongs to the `cli` output boundary and composes cleanly with the domain owners it names.
 
 `schema_version` is required in every response and is presently `munsu.orchestration/v2`. `kind` identifies the response schema. Both encodings have identical field names, values, and semantics.
 
 ## Scope and single-owner boundaries
 
-A command family has one runtime owner: the package that emits its contract result. A package may call another package's public interface, but must not independently emit or redefine that family's contract result. **Current owner** is where the command and its contract emission live today; **Phase 1 owner** is the proposed single owner after the output boundary lands. Earlier packages that owned these domains (`internal/soldierstate`, `internal/task`, `internal/supervision`, `internal/waker`, `internal/session`, `internal/spawn`, `internal/integrate`) have been absorbed into the packages named below; the table names only packages that exist today.
+A command family has one runtime owner: the package that emits its contract result. A package may call another package's public interface, but must not independently emit or redefine that family's contract result. Every family below is **implemented**: the `internal/cli` output boundary emits its contract result, and the named domain owner holds that family's authority. Earlier packages that owned these domains (`internal/soldierstate`, `internal/task`, `internal/supervision`, `internal/waker`, `internal/session`, `internal/spawn`, `internal/integrate`) have been absorbed into the packages named below; the table names only packages that exist today.
 
-| Contract family | Exact planned command | Current owner | Phase 1 owner | Existing authority reused | Phase 0 status |
+| Contract family | Exact command | Runtime owner (emits contract) | Domain authority | Existing authority reused | Status |
 |---|---|---|---|---|---|
-| Discovery | `munsu capabilities` | `internal/cli` | `internal/cli` | root command registration | specified only |
-| Task observation | `munsu task observe <task-id>` | `internal/cli` | `internal/cli` | `internal/home` (task meta) and `internal/fleet` (soldier state) | specified only |
-| Fleet state | `munsu fleet snapshot --version 2` | `internal/cli` | `internal/fleet` | `internal/fleet` snapshot state | specified only |
-| Guard | `munsu guard` | `internal/cli` | `internal/cli` | `internal/orchestrator` guard evaluation | specified only |
-| Watch | `munsu watch ensure`, `munsu watch run` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` watcher lifecycle | specified only |
-| Wake | `munsu wake claim <wake-id> --owner <owner>`, `munsu wake ack <wake-id> --claim <claim-id>` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` wake records and drain state | specified only |
-| Backend discovery | `munsu backend capabilities [--backend <name>]` | `internal/cli` | `internal/backend` | `internal/backend` backend selection | specified only |
-| Spawn receipt | `munsu spawn <task-id> ...` | `internal/cli` | `internal/fleet` | `internal/fleet` spawn lifecycle | specified only |
+| Discovery | `munsu capabilities` | `internal/cli` | root command registration | root command registration | implemented |
+| Task observation | `munsu task observe <task-id>` | `internal/cli` | `internal/fleet` soldier state | `internal/taskauthority` canonical record + `internal/fleet` (`ReadWithProbe`) + `internal/home` projection | implemented |
+| Fleet state | `munsu fleet snapshot --version 2` | `internal/cli` | `internal/fleet` | `internal/fleet` snapshot (canonical-aware) | implemented |
+| Guard | `munsu guard` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` guard evaluation + `internal/fleet` snapshot | implemented |
+| Watch | `munsu watch ensure`, `munsu watch run` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` watcher lifecycle | implemented |
+| Wake | `munsu wake claim --consumer <id>`, `munsu wake resolve --claim-id <lease-id> --event-id <event-id> --summary <text>`, `munsu wake ack <lease-id> <event-id...>` | `internal/cli` | `internal/orchestrator` | `internal/orchestrator` wake records and drain state | implemented |
+| Backend discovery | `munsu backend capabilities [--backend <name>]` | `internal/cli` | `internal/backend` | `internal/backend` backend selection | implemented |
+| Spawn receipt | `munsu spawn <task-id> ...` | `internal/cli` | `internal/fleet` | `internal/fleet` spawn lifecycle | implemented |
 | Integration | `munsu integrate install`, `munsu integrate repair` | `internal/cli` | `internal/cli` | `internal/bootstrap` hook installation (post embed-ops) | implemented |
 
 A later implementation may add an output-boundary package, but it must not move domain ownership or alter the above commands' domain authority. Existing commands retain their behavior until a separately approved implementation phase.
@@ -41,9 +41,10 @@ Every contract command accepts `--output toon|json`; `toon` is the default and `
 | `munsu guard` | none | `--output` | guard result |
 | `munsu watch ensure` | none | `--interval <duration>`, `--output` | ensure receipt |
 | `munsu watch run` | none | `--output` | one run receipt |
-| `munsu wake claim <wake-id>` | wake ID, `--owner <owner>` | `--owner`, `--output` | claim receipt |
-| `munsu wake ack <wake-id>` | wake ID, `--claim <claim-id>` | `--claim`, `--output` | acknowledgement receipt |
-| `munsu backend capabilities` | none | `--backend <name>`, `--output` | backend capabilities |
+| `munsu wake claim` | `--consumer <id>` (required) | `--consumer`, `--lease-captains`, `--limit`, `--output` | claim receipt |
+| `munsu wake resolve` | `--claim-id <lease-id>`, `--event-id <event-id>`, `--summary <text>` | `--claim-id`, `--event-id`, `--summary`, `--output` | resolve receipt |
+| `munsu wake ack <lease-id> <event-id...>` | lease ID + at least one event ID | `--output` | acknowledgement receipt |
+| `munsu backend capabilities` | none | `--backend <name>`, `--output` | backend capabilities (structured discovery currently exposes only `tmux` and `herdr`; zellij/cmux/orca remain experimental runtime backends and are not part of this contract surface) |
 | `munsu spawn <task-id>` | existing spawn arguments | `--output` in addition to existing flags | spawn receipt |
 | `munsu integrate install` | none | `--harness <name>`, `--scope project|user`, `--output` | integration receipt |
 | `munsu integrate repair` | none | `--harness <name>`, `--scope project|user`, `--output` | integration receipt |
@@ -145,11 +146,11 @@ The core contract does not encode harness-private arguments, process names, or l
 | Remove a field, command, format, or error code | breaking | publish a new schema version with migration guidance |
 | Change TOON escaping/strictness below v3 major compatibility | breaking | publish a new schema version |
 
-## Phased PR sequence
+## Implementation status / phasing
 
-1. **Phase 0 (this PR):** contract document, JSON-compatible models, paired TOON/JSON golden fixtures, and fixture drift tests. No runtime, command, hook, adapter, or output change.
-2. **Phase 1:** add the output boundary and discovery/home-view behavior behind the specified schemas, preserving existing behavior until each command is explicitly migrated.
-3. **Phase 2:** implement the observation, fleet, guard, watch, wake, backend, and spawn families by their single owners with contract tests.
-4. **Phase 3:** implement opt-in integration and adapter delivery modes, then enable the skill/home-view consistency check in CI.
+The versioned model, TOON/JSON encoder, golden fixtures, fixture drift tests, and the command families below have landed under the `internal/cli` output boundary (see the owner table above). Residual phasing that requires future work before the remaining guarantees are exercised end-to-end:
+
+1. **Shipped:** versioned JSON-compatible models, paired TOON/JSON golden fixtures, fixture drift tests, and the registered contract command families (`capabilities`, `task observe`, `fleet snapshot --version 2`, `guard`, `watch`, `wake`, `backend capabilities`, `spawn`, `integrate`).
+2. **Remaining:** the skill/home-view consistency check in CI (compare static command guidance generated for the `munsu-ops` skill with the no-args home view) and full adapter delivery modes; these are opt-in and not yet enabled.
 
 Each phase must keep the exit, stdout/stderr, no-prompt, idempotency, and TOON v3.3 guarantees defined here.

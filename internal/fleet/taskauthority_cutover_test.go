@@ -3,7 +3,6 @@
 package fleet
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,7 +93,7 @@ func TestSnapshotCanonicalPhaseOverridesStaleProjection(t *testing.T) {
 	if err := home.AppendStatus(homeDir, "t1", "working: still working"); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Snapshot(homeDir)
+	snap, err := Snapshot(homeDir, testSnapshotDeps(t))
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -118,7 +117,7 @@ func TestSnapshotCanonicalPhaseOverridesStaleProjection(t *testing.T) {
 func TestSnapshotIncludesCanonicalTasksWithoutMeta(t *testing.T) {
 	homeDir := t.TempDir()
 	seedCanonicalShipTask(t, homeDir, "no-meta", "queued")
-	snap, err := Snapshot(homeDir)
+	snap, err := Snapshot(homeDir, testSnapshotDeps(t))
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -167,21 +166,17 @@ func TestSnapshotFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 	if err := home.WriteMeta(homeDir, "t1", map[string]string{"delivery_state": "merged", "kind": "ship", "window": "@1"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Snapshot(homeDir)
-	var legacy *LegacyDeliveryEvidenceError
-	if !errors.As(err, &legacy) {
-		t.Fatalf("Snapshot error = %v, want LegacyDeliveryEvidenceError", err)
+	_, err := Snapshot(homeDir, testSnapshotDeps(t))
+	if err == nil {
+		t.Fatal("Snapshot over a legacy meta-only task = nil error, want fail-closed rejection")
 	}
-	if legacy.TaskID != "t1" || legacy.Field != "delivery_state=merged" {
-		t.Fatalf("legacy error = %+v", legacy)
-	}
-	if !strings.Contains(err.Error(), "reconcile") {
-		t.Fatalf("heal path not documented in error: %v", err)
+	if !strings.Contains(err.Error(), "t1") || !strings.Contains(err.Error(), homeDir) {
+		t.Fatalf("clean-break error must carry task+home context, got: %v", err)
 	}
 }
 
 // TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged proves observation fails
-// closed on the same legacy shape.
+// closed on the same legacy shape (clean break: no canonical record).
 func TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
@@ -191,9 +186,11 @@ func TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := ReadSoldierState(homeDir, "t1")
-	var legacy *LegacyDeliveryEvidenceError
-	if !errors.As(err, &legacy) {
-		t.Fatalf("ReadSoldierState error = %v, want LegacyDeliveryEvidenceError", err)
+	if err == nil {
+		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
+	}
+	if !strings.Contains(err.Error(), homeDir) {
+		t.Errorf("clean-break error must carry home context, got: %v", err)
 	}
 }
 
@@ -211,12 +208,11 @@ func TestReadWithProbeFailsClosedOnLegacyMergeAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := ReadSoldierState(homeDir, "t1")
-	var legacy *LegacyDeliveryEvidenceError
-	if !errors.As(err, &legacy) {
-		t.Fatalf("ReadSoldierState error = %v, want LegacyDeliveryEvidenceError", err)
+	if err == nil {
+		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
 	}
-	if legacy.Field != "merge_authorization" {
-		t.Fatalf("field = %q, want merge_authorization", legacy.Field)
+	if !strings.Contains(err.Error(), homeDir) {
+		t.Errorf("clean-break error must carry home context, got: %v", err)
 	}
 }
 

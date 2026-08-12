@@ -241,13 +241,15 @@ func TestClaudeGuardBlindTurn(t *testing.T) {
 	}
 	runGit(t, tmpDir, "init")
 
-	// Create in-flight task meta
-	metaDir := filepath.Join(tmpDir, "state")
-	os.MkdirAll(metaDir, 0755)
-	meta := "kind=ship\nwindow=test\n"
-	if err := os.WriteFile(filepath.Join(metaDir, "test-task.meta"), []byte(meta), 0644); err != nil {
+	// Create an in-flight canonical task (clean break: guard reads only
+	// authoritative Task Authority records). home.Init must precede any state
+	// directory creation so the home is recognized as a canonical munsu home.
+	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
+	metaDir := filepath.Join(tmpDir, "state")
+	os.MkdirAll(metaDir, 0755)
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
 
 	// Create stale beat (10 minutes ago)
 	beat := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
@@ -294,13 +296,15 @@ func TestClaudeGuardHealthyExit(t *testing.T) {
 	t.Setenv("MUNSU_HOME", tmpDir)
 	t.Setenv("MUNSU_PARENT_STATUS", "")
 
-	// Create in-flight task meta
-	metaDir := filepath.Join(tmpDir, "state")
-	os.MkdirAll(metaDir, 0755)
-	meta := "kind=ship\nwindow=test\n"
-	if err := os.WriteFile(filepath.Join(metaDir, "test-task.meta"), []byte(meta), 0644); err != nil {
+	// Create an in-flight canonical task (clean break: guard reads only
+	// authoritative Task Authority records). home.Init must precede any state
+	// directory creation so the home is recognized as a canonical munsu home.
+	if _, err := home.Init(tmpDir); err != nil {
 		t.Fatal(err)
 	}
+	metaDir := filepath.Join(tmpDir, "state")
+	os.MkdirAll(metaDir, 0755)
+	writeTaskMeta(t, tmpDir, "test-task", "ship")
 
 	// Create fresh beat
 	beat := fmt.Sprintf("%d %d", time.Now().Unix(), os.Getpid())

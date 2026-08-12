@@ -81,8 +81,9 @@ func TestReadWithProbe_WorkingAliveIsCoherent(t *testing.T) {
 }
 
 // TestReadWithProbe_WorkingDeadPaneSupersededIsCoherent: a dead pane with a
-// working aggregate and superseded status log must NOT report working. A dead
-// pane cannot be working; observation must downgrade to a coherent state.
+// working aggregate and superseded status log. Under the clean-break contract
+// the canonical phase is the only lifecycle authority: a dead pane is a
+// diagnostic (pane_alive=false) and must NOT change the canonical working phase.
 func TestReadWithProbe_WorkingDeadPaneSupersededIsCoherent(t *testing.T) {
 	homeDir := t.TempDir()
 	setupObservationHome(t, homeDir, "working")
@@ -97,8 +98,10 @@ func TestReadWithProbe_WorkingDeadPaneSupersededIsCoherent(t *testing.T) {
 	if !state.StatusLogSuperseded {
 		t.Fatal("status_log_superseded must be true (aggregate supersedes the log)")
 	}
-	if state.Status == "working" {
-		t.Fatalf("must never report working with pane_alive=false plus status_log_superseded=true; got status %q description %q", state.Status, state.Description)
+	// The canonical working phase is preserved; the probe is diagnostic only
+	// and never silently changes lifecycle state.
+	if state.Status != "working" {
+		t.Fatalf("canonical phase = %q, want working (a dead pane is diagnostic, not lifecycle truth)", state.Status)
 	}
 }
 
@@ -120,6 +123,9 @@ func TestReadWithProbe_TerminalDeadPaneKeepsTerminalState(t *testing.T) {
 // TestReadWithProbe_NoProbeUnknownPaneDoesNotFabricate: without a probe the
 // pane liveness is unknown, and a superseded working aggregate must not be
 // reported as a coherent "working" (the current nil-probe path).
+// TestReadWithProbe_NoProbeSupersededWorkingIsCoherent: without a probe the
+// pane liveness is unknown (diagnostic), and the canonical working phase is
+// preserved — the probe never changes lifecycle state.
 func TestReadWithProbe_NoProbeSupersededWorkingIsCoherent(t *testing.T) {
 	homeDir := t.TempDir()
 	setupObservationHome(t, homeDir, "working")
@@ -132,7 +138,10 @@ func TestReadWithProbe_NoProbeSupersededWorkingIsCoherent(t *testing.T) {
 	if !state.StatusLogSuperseded {
 		t.Fatal("status_log_superseded must be true")
 	}
-	if state.Status == "working" {
-		t.Fatalf("nil-probe observation must not report working when pane liveness is unknown and the status log is superseded; got %q", state.Status)
+	if state.PaneAlive {
+		t.Fatal("pane_alive must be false when no probe exists")
+	}
+	if state.Status != "working" {
+		t.Fatalf("canonical phase = %q, want working (nil probe is diagnostic and never demotes the canonical lifecycle state)", state.Status)
 	}
 }

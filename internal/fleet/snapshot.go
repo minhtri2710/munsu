@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
-	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
 )
 
@@ -48,7 +47,9 @@ type TaskSnapshot struct {
 	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
 
-// CurrentStateInfo carries the resolved current-state projection for a task.
+// CurrentStateInfo carries the authoritative current state for a task. The
+// State/Description derive from the canonical Task Authority phase; all other
+// fields are evidence/diagnostic only.
 type CurrentStateInfo struct {
 	State               string            `json:"state"`
 	Description         string            `json:"description"`
@@ -57,55 +58,23 @@ type CurrentStateInfo struct {
 	OpenActivities      []domain.Activity `json:"open_activities,omitempty"`
 }
 
-// resolveCurrentState is a function pointer wired from CLI to use soldierstate.Read().
-// When nil, Snapshot falls back to simple meta+status logic.
-var resolveCurrentState func(homeDir, id string) (*CurrentStateInfo, error)
-
-// SetCurrentStateResolver installs the current-state resolver used by Snapshot.
-func SetCurrentStateResolver(fn func(homeDir, id string) (*CurrentStateInfo, error)) {
-	resolveCurrentState = fn
+// CurrentStateQuery reads the authoritative current state for one task. It is
+// the single current-state read used by snapshot, guard, and observation so
+// agents and the CLI receive the same Task truth. A missing or malformed
+// canonical record is an operation error, never a projection fallback.
+type CurrentStateQuery interface {
+	Read(homeDir, taskID string) (*CurrentStateInfo, error)
 }
 
-// CurrentState computes the resolved current-state projection for a task.
-// When a resolver is wired (via SetCurrentStateResolver), it takes precedence.
-// Fallback: meta window presence + last status line (display-only, not state truth).
-func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo {
-	if resolveCurrentState != nil {
-		info, err := resolveCurrentState(homeDir, id)
-		if err == nil && info != nil {
-			return info
-		}
-	}
-
-	// Fallback (no resolver wired): derive display phase from meta,
-	// then let a terminal status verb override. This is display-only.
-	paneAlive := meta["window"] != ""
-	info := &CurrentStateInfo{
-		State: PhaseFromMeta(meta["window"], paneAlive),
-	}
-
-	statusPath := filepath.Join(mhome.StateDir(homeDir), id+".status")
-	info.OpenActivities = home.OpenActivities(statusPath)
-
-	if data, err := os.ReadFile(statusPath); err == nil {
-		lines := strings.TrimSpace(string(data))
-		if lines != "" {
-			parts := strings.Split(lines, "\n")
-			lastLine := strings.TrimSpace(parts[len(parts)-1])
-			if lastLine != "" {
-				verb := statusVerb(lastLine)
-				_, note, _ := strings.Cut(lastLine, ":")
-				note = strings.TrimSpace(note)
-				switch verb {
-				case "working", "done", "failed", "blocked", "paused", "needs-decision", "awaiting_approval":
-					info.State = verb
-					info.Description = note
-				}
-			}
-		}
-	}
-
-	return info
+// SnapshotDependencies carries the explicit read dependencies for a fleet
+// snapshot. CurrentState is required; Endpoint is an optional diagnostic-only
+// probe. There is no implicit/package-global wiring.
+type SnapshotDependencies struct {
+	// CurrentState is the required canonical current-state query.
+	CurrentState CurrentStateQuery
+	// Endpoint is an optional probe used only to populate PaneAlive/
+	// PaneAliveUnknown diagnostics; it never changes lifecycle state.
+	Endpoint EndpointProbe
 }
 
 // PhaseFromMeta returns the display phase for a task from meta-only facts.
@@ -133,16 +102,21 @@ func PhaseFromProjection(ts TaskSnapshot) string {
 	return PhaseFromMeta(ts.Window, ts.PaneAlive)
 }
 
-// Snapshot builds a fleet snapshot by scanning state/*.meta in the primary
-// home and each registered captain home. Captain-owned soldiers remain visible
-// to the general after handoff (meta never lives on the parent home).
-func Snapshot(homeDir string) (*FleetSnapshot, error) {
+// Snapshot builds a fleet snapshot from canonical Task Authority records in
+// the primary home and each registered captain home. The canonical record is
+// the only authority; a task-facing `.meta` entry without a canonical record
+// is rejected (clean break), while captain metadata entries remain as
+// non-authority display. Endpoint probing is diagnostic only.
+func Snapshot(homeDir string, deps SnapshotDependencies) (*FleetSnapshot, error) {
+	if deps.CurrentState == nil {
+		return nil, fmt.Errorf("reading authoritative current state: no current-state query provided (home %s)", homeDir)
+	}
 	snap := &FleetSnapshot{
 		Schema: "munsu-fleet-snapshot.v1",
 		Time:   time.Now().UTC().Format(time.RFC3339),
 	}
 
-	if err := appendHomeTasks(snap, homeDir, "primary", ""); err != nil {
+	if err := appendHomeTasks(snap, homeDir, "primary", "", deps); err != nil {
 		return nil, err
 	}
 
@@ -157,7 +131,7 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 			}
 			ch := filepath.Join(capRoot, e.Name())
 			src := "captain:" + e.Name()
-			if err := appendHomeTasks(snap, ch, src, ch); err != nil {
+			if err := appendHomeTasks(snap, ch, src, ch, deps); err != nil {
 				if os.IsNotExist(err) {
 					continue
 				}
@@ -169,12 +143,13 @@ func Snapshot(homeDir string) (*FleetSnapshot, error) {
 	return snap, nil
 }
 
-func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) error {
-	// Canonical Task Authority records are the preferred source (Task 7.8):
-	// authoritative kind/project/phase win, and the .meta/.status projections
-	// are display fallback only — a stale .status can never override a newer
-	// authoritative lifecycle transition. A legacy v1 home fails closed
-	// (migration is explicit, never automatic).
+func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, deps SnapshotDependencies) error {
+	// Canonical Task Authority records are the only authority (clean break,
+	// Task 7.8): kind/project/phase come from the canonical record; the
+	// .meta/.status/probe data is diagnostic display only and can never
+	// override an authoritative lifecycle transition. A home that is not a
+	// canonical v1 home, or a task-facing meta without an authoritative
+	// record, fails closed.
 	canonical, err := canonicalAggregates(taskHome)
 	if err != nil {
 		return fmt.Errorf("reading canonical task authority state for %s: %w", taskHome, err)
@@ -189,64 +164,80 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 		return err
 	}
 
-	seenIDs := map[string]bool{}
+	// Reject task-facing meta-only entries (no canonical record). Captain
+	// metadata (kind=captain) is exempt: it is non-task authority metadata
+	// that lives outside the Task Authority by design.
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".meta")
-		meta, err := mhome.ReadMeta(taskHome, id)
-		if err != nil {
+		if _, hasCanonical := canonical[id]; hasCanonical {
 			continue
 		}
-		agg, hasCanonical := canonical[id]
-		if !hasCanonical {
-			// Legacy fail-closed posture (Task 7.8): a meta-only task that
-			// claims delivery outcomes without an authoritative record is
-			// never silently projected.
-			if claim := legacyDeliveryClaim(meta); claim != "" {
-				return &LegacyDeliveryEvidenceError{TaskID: id, Field: claim}
-			}
+		meta, metaErr := mhome.ReadMeta(taskHome, id)
+		if metaErr == nil && meta["kind"] == "captain" {
+			continue
+		}
+		return fmt.Errorf("reading authoritative current state for task %q in home %q: no canonical Task Authority record (legacy/meta-only tasks are not authoritative)", id, taskHome)
+	}
+
+	canonicalIDs := make([]string, 0, len(canonical))
+	for id := range canonical {
+		canonicalIDs = append(canonicalIDs, id)
+	}
+	sort.Strings(canonicalIDs)
+
+	for _, id := range canonicalIDs {
+		agg := canonical[id]
+
+		// .meta holds operational/display fields (diagnostic only).
+		meta, _ := mhome.ReadMeta(taskHome, id)
+
+		// Authoritative current state comes from the single canonical query.
+		info, err := deps.CurrentState.Read(taskHome, id)
+		if err != nil {
+			return fmt.Errorf("reading authoritative current state for task %q in home %q: %w", id, taskHome, err)
 		}
 
-		project := meta["project"]
-		kind := meta["kind"]
-		if hasCanonical {
-			if agg.Definition.Project != "" {
-				project = agg.Definition.Project
-			}
-			if agg.Definition.Kind != "" {
-				kind = agg.Definition.Kind
-			}
-		}
 		ts := TaskSnapshot{
-			ID:       id,
-			Project:  project,
-			Harness:  meta["harness"],
-			Model:    meta["model"],
-			Kind:     kind,
-			Mode:     meta["mode"],
-			Yolo:     meta["yolo"],
-			Window:   meta["window"],
-			Worktree: meta["worktree"],
-			Home:     homeLabel,
-			Source:   source,
+			ID:                  id,
+			Project:             agg.Definition.Project,
+			Kind:                agg.Definition.Kind,
+			Harness:             meta["harness"],
+			Model:               meta["model"],
+			Mode:                meta["mode"],
+			Yolo:                meta["yolo"],
+			Window:              meta["window"],
+			Worktree:            meta["worktree"],
+			Home:                homeLabel,
+			Source:              source,
+			CurrentState:        info.State,
+			CurrentDescription:  info.Description,
+			NoMistakesRunStep:   info.NoMistakesRunStep,
+			StatusLogSuperseded: true,
+			OpenActivities:      info.OpenActivities,
 		}
-		if w := meta["window"]; w != "" {
-			if endpointProbe != nil || paneAliveForCaptain != nil {
-				status, err := observeEndpoint(taskHome, meta)
-				if err != nil || status.State != EndpointAlive {
-					ts.PaneAlive = false
-					ts.PaneAliveUnknown = true
-				} else {
-					ts.PaneAlive = true
-					ts.PaneAliveUnknown = false
-				}
-			} else {
+		if ts.CurrentDescription == "" {
+			ts.CurrentDescription = agg.Definition.Description
+		}
+
+		// Endpoint liveness is diagnostic only and never changes lifecycle state.
+		if ts.Window != "" && deps.Endpoint != nil {
+			status, perr := observeEndpointWith(deps.Endpoint, taskHome, meta)
+			if perr != nil || status.State != EndpointAlive {
 				ts.PaneAlive = false
 				ts.PaneAliveUnknown = true
+			} else {
+				ts.PaneAlive = true
+				ts.PaneAliveUnknown = false
 			}
+		} else {
+			ts.PaneAlive = false
+			ts.PaneAliveUnknown = true
 		}
+
+		// LastStatus is a diagnostic display line (never state truth).
 		statusPath := filepath.Join(taskHome, "state", id+".status")
 		if data, err := os.ReadFile(statusPath); err == nil {
 			lines := strings.TrimSpace(string(data))
@@ -256,53 +247,34 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			}
 		}
 
-		// Resolve current-state projection when resolver is wired. A
-		// canonical record wins: the authoritative phase is the current state
-		// and the status log is superseded display (a stale .status can never
-		// override a newer authoritative lifecycle transition).
-		info := CurrentState(taskHome, id, meta)
-		if hasCanonical {
-			ts.CurrentState = string(agg.Phase)
-			ts.CurrentDescription = agg.PhaseDetail
-			if ts.CurrentDescription == "" {
-				ts.CurrentDescription = agg.Definition.Description
-			}
-			ts.StatusLogSuperseded = true
-			ts.OpenActivities = info.OpenActivities
-		} else {
-			ts.CurrentState = info.State
-			ts.CurrentDescription = info.Description
-			ts.NoMistakesRunStep = info.NoMistakesRunStep
-			ts.StatusLogSuperseded = info.StatusLogSuperseded
-			ts.OpenActivities = info.OpenActivities
-		}
-
 		snap.Tasks = append(snap.Tasks, ts)
-		seenIDs[id] = true
 	}
-	// Canonical tasks with no .meta projection are still part of the fleet.
-	canonicalIDs := make([]string, 0, len(canonical))
-	for id := range canonical {
-		canonicalIDs = append(canonicalIDs, id)
-	}
-	sort.Strings(canonicalIDs)
-	for _, id := range canonicalIDs {
-		if seenIDs[id] {
+
+	// Surface captain metadata entries (non-authority) so the fleet view still
+	// shows captains that have no task-authority record.
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".meta") || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		agg := canonical[id]
-		ts := TaskSnapshot{ID: id, Project: agg.Definition.Project, Kind: agg.Definition.Kind, Home: homeLabel, Source: source, CurrentState: string(agg.Phase), CurrentDescription: agg.PhaseDetail, StatusLogSuperseded: true}
-		if ts.CurrentDescription == "" {
-			ts.CurrentDescription = agg.Definition.Description
+		id := strings.TrimSuffix(entry.Name(), ".meta")
+		meta, metaErr := mhome.ReadMeta(taskHome, id)
+		if metaErr != nil || meta["kind"] != "captain" {
+			continue
+		}
+		ts := TaskSnapshot{
+			ID: id, Project: meta["project"], Kind: "captain", Home: homeLabel, Source: source,
+			Harness: meta["harness"], Model: meta["model"], Mode: meta["mode"], Yolo: meta["yolo"],
+			Window: meta["window"], Worktree: meta["worktree"], PaneAliveUnknown: true,
 		}
 		snap.Tasks = append(snap.Tasks, ts)
 	}
+
 	return nil
 }
 
 // View renders the fleet snapshot as Markdown.
-func View(homeDir string) error {
-	snap, err := Snapshot(homeDir)
+func View(homeDir string, deps SnapshotDependencies) error {
+	snap, err := Snapshot(homeDir, deps)
 	if err != nil {
 		return err
 	}
@@ -347,8 +319,8 @@ func View(homeDir string) error {
 }
 
 // Bearings prints a compact resume report.
-func Bearings(homeDir string, projectDir string) error {
-	snap, err := Snapshot(homeDir)
+func Bearings(homeDir string, projectDir string, deps SnapshotDependencies) error {
+	snap, err := Snapshot(homeDir, deps)
 	if err != nil {
 		return err
 	}
@@ -384,7 +356,7 @@ func Bearings(homeDir string, projectDir string) error {
 // Prefer parent state/captain:<id>.meta window + backend Alive when meta exists.
 // Home presence without launch meta is seeded; missing home is unknown.
 // Captain-home state/.lock is not used for launched liveness.
-func CaptainStatus(parentHome, captainID, homeDir string) string {
+func CaptainStatus(parentHome, captainID, homeDir string, probe EndpointProbe) string {
 	if homeDir == "" {
 		return "unknown"
 	}
@@ -411,10 +383,10 @@ func CaptainStatus(parentHome, captainID, homeDir string) string {
 		return "seeded"
 	}
 
-	if endpointProbe == nil && paneAliveForCaptain == nil {
+	if probe == nil {
 		return "unknown"
 	}
-	status, err := observeEndpoint(parentHome, meta)
+	status, err := observeProbe(probe, parentHome, meta)
 	if err != nil {
 		return "unknown"
 	}
@@ -450,32 +422,20 @@ type EndpointProbe interface {
 	ProbeEndpoint(EndpointRef) (EndpointStatus, error)
 }
 
-var endpointProbe EndpointProbe
-
-// SetEndpointProbe installs the typed endpoint probe at the composition root.
-func SetEndpointProbe(probe EndpointProbe) { endpointProbe = probe }
-
-// paneAliveForCaptain remains only as a test seam while existing fleet tests are cut over.
-var paneAliveForCaptain func(parentHome string, meta map[string]string) (bool, error)
-
-func SetPaneAliveProbe(fn func(parentHome string, meta map[string]string) (bool, error)) {
-	paneAliveForCaptain = fn
+// observeProbe applies an EndpointProbe to a task's meta-derived endpoint
+// identity. The probe is diagnostic only; a probe that errs or reports a
+// non-alive state yields an unknown/non-alive diagnostic, never a lifecycle
+// decision.
+func observeProbe(probe EndpointProbe, parentHome string, meta map[string]string) (EndpointStatus, error) {
+	ownerHome := meta["home"]
+	if ownerHome == "" {
+		ownerHome = parentHome
+	}
+	return probe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome})
 }
 
-func observeEndpoint(parentHome string, meta map[string]string) (EndpointStatus, error) {
-	if endpointProbe != nil {
-		ownerHome := meta["home"]
-		if ownerHome == "" {
-			ownerHome = parentHome
-		}
-		return endpointProbe.ProbeEndpoint(EndpointRef{Backend: meta["backend"], Handle: meta["window"], SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], Home: ownerHome})
-	}
-	alive, err := paneAliveForCaptain(parentHome, meta)
-	if err != nil {
-		return EndpointStatus{State: EndpointUnknown, Detail: err.Error()}, err
-	}
-	if alive {
-		return EndpointStatus{State: EndpointAlive}, nil
-	}
-	return EndpointStatus{State: EndpointUnknown}, nil
+// observeEndpointWith is the snapshot-local endpoint observation using the
+// caller-provided diagnostic probe from SnapshotDependencies.
+func observeEndpointWith(probe EndpointProbe, parentHome string, meta map[string]string) (EndpointStatus, error) {
+	return observeProbe(probe, parentHome, meta)
 }

@@ -9,8 +9,51 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minhtri2710/munsu/internal/domain"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
+
+// seedCanonicalTask seeds one queued canonical task of the given kind into
+// homeDir (clean break: fleet reads only authoritative Task Authority records).
+func seedCanonicalTask(t *testing.T, homeDir, id, kind string) {
+	t.Helper()
+	tid, err := domain.NewTaskID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := mhome.Open(homeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := taskauthority.NewCanonical(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := domain.NewProjectID("munsu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID: c.HomeID(), TaskID: tid, Owner: "owner",
+		Description: "work", Kind: kind, Project: project, Reason: "test",
+	}
+	if kind == "scout" {
+		req.ScoutScope = "investigate scope"
+		req.ScoutRuntimeBudgetSecs = 300
+	}
+	opID, err := domain.NewOperationID("op-create-" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Create(op, req); err != nil {
+		t.Fatalf("Create(%s): %v", id, err)
+	}
+}
 
 func TestCheckSessionScope_RefusesAmbientGateWithoutProjects(t *testing.T) {
 	t.Setenv("NO_MISTAKES_GATE", "")
@@ -185,16 +228,10 @@ func TestPrintFleetState_ShowsTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create a task meta file
+	// A canonical task with a status log tail.
 	taskID := "task-abc-123"
-	metaContent := "window=@42\nkind=deploy\n"
-	if err := os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a task status file
-	statusContent := "working\nprocessed event\n"
-	if err := os.WriteFile(filepath.Join(stateDir, taskID+".status"), []byte(statusContent), 0644); err != nil {
+	seedCanonicalTask(t, tmpDir, taskID, "deploy")
+	if err := mhome.AppendStatus(tmpDir, taskID, "working processed event"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,13 +239,12 @@ func TestPrintFleetState_ShowsTasks(t *testing.T) {
 		printFleetState(os.Stdout, tmpDir)
 	})
 
-	// Should show the task with status
+	// Should show the task with canonical phase.
 	if !strings.Contains(output, taskID) {
 		t.Errorf("expected task ID in output, got: %s", output)
 	}
-	// Status line shows last status entry
-	if !strings.Contains(output, "processed event") {
-		t.Errorf("expected last status line, got: %s", output)
+	if !strings.Contains(output, "queued") {
+		t.Errorf("expected canonical queued phase in output, got: %s", output)
 	}
 }
 
@@ -252,10 +288,7 @@ func TestPrintFleetState_TaskNoStatus(t *testing.T) {
 	}
 
 	taskID := "task-no-status"
-	metaContent := "window=@42\nkind=deploy\n"
-	if err := os.WriteFile(filepath.Join(stateDir, taskID+".meta"), []byte(metaContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalTask(t, tmpDir, taskID, "deploy")
 
 	output := captureStdout(func() {
 		printFleetState(os.Stdout, tmpDir)
@@ -264,11 +297,9 @@ func TestPrintFleetState_TaskNoStatus(t *testing.T) {
 	if !strings.Contains(output, taskID) {
 		t.Errorf("expected task ID in output, got: %s", output)
 	}
-	if !strings.Contains(output, "no status") {
-		t.Errorf("expected 'no status' fallback, got: %s", output)
-	}
-	if !strings.Contains(output, "alive") {
-		t.Errorf("expected 'alive' for window=@42 (CurrentState fallback reports alive), got: %s", output)
+	// Canonical phase is the authoritative state (no status tail needed).
+	if !strings.Contains(output, "queued") {
+		t.Errorf("expected canonical queued phase, got: %s", output)
 	}
 }
 
@@ -359,7 +390,7 @@ func TestEnsureWatcherForSession_StartsOnlyForOwnedInFlightFleet(t *testing.T) {
 	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=ship\n"), 0644)
+	seedCanonicalTask(t, tmp, "task-1", "ship")
 
 	calls := 0
 	result := ensureWatcherForSession(tmp, true, func(home string) WatchEnsureResult {
@@ -402,7 +433,7 @@ func TestEnsureWatcherForSession_HealthyWatcherIsReported(t *testing.T) {
 	}
 	stateDir := filepath.Join(tmp, "state")
 	os.MkdirAll(stateDir, 0755)
-	os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=scout\n"), 0644)
+	seedCanonicalTask(t, tmp, "task-1", "scout")
 
 	result := ensureWatcherForSession(tmp, true, func(home string) WatchEnsureResult {
 		return WatchEnsureResult{State: "healthy"}
@@ -461,9 +492,7 @@ func TestRunSessionStartReportsRuntimeIdentityBeforeWatcherEnsure(t *testing.T) 
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "task-1.meta"), []byte("kind=scout\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	seedCanonicalTask(t, home, "task-1", "scout")
 	running := writeExecutable(t, home, "bin/munsu", "current")
 	shadow := writeExecutable(t, home, "shadow/munsu", "shadow")
 

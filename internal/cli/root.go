@@ -97,7 +97,11 @@ with no requirement to live inside a specific project checkout.`,
 			if err != nil {
 				return fmt.Errorf("resolving home: %w", err)
 			}
-			renderRootSummary(cmd.OutOrStdout(), loadRootSummary(homeDir))
+			view, err := loadRootSummary(homeDir)
+			if err != nil {
+				return fmt.Errorf("rendering fleet summary: %w", err)
+			}
+			renderRootSummary(cmd.OutOrStdout(), view)
 			return nil
 		},
 	}

@@ -399,9 +399,9 @@ func TestBinaryTaskObserve_MissingTask(t *testing.T) {
 	}
 }
 
-// TestBinaryTaskObserve_DefinitiveEmpty verifies task observe on a task with
-// empty/default state returns a successful observation with status: unknown
-// rather than an error.
+// TestBinaryTaskObserve_DefinitiveEmpty verifies task observe on an existing
+// canonical task returns a successful observation (clean break: observation
+// reads authoritative Task Authority, never a .meta projection).
 func TestBinaryTaskObserve_DefinitiveEmpty(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping binary test in short mode")
@@ -409,13 +409,8 @@ func TestBinaryTaskObserve_DefinitiveEmpty(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
 
-	// Create a task meta so the task exists but has no status.
-	if err := os.MkdirAll(filepath.Join(home, "state"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state", "my-task.meta"), []byte("kind=ship\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Create a canonical task so observation resolves authoritative state.
+	cliSeedCanonicalTask(t, home, "my-task", "ship")
 
 	out, err := runMunsu(t, home, []string{"task", "observe", "my-task"})
 	if err != nil {

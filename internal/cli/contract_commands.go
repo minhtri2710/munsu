@@ -1,16 +1,17 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/backend"
-	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
+	tauth "github.com/minhtri2710/munsu/internal/taskauthority"
 	"github.com/spf13/cobra"
 )
 
@@ -102,38 +103,56 @@ func newTaskObserveCmd() *cobra.Command {
 			if _, err := contractOutput(cmd); err != nil {
 				return err
 			}
-			// Canonical record first, then the .meta projection (Task 7.8): a
-			// task exists when either the Task Authority or the projection
-			// knows it. The observation itself reads canonical state through
-			// ReadWithProbe.
-			auth, err := ctx.TaskAuthority()
-			if err != nil {
-				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to read task authority")
-			}
-			tid, tidErr := domain.NewTaskID(args[0])
-			_, authErr := auth.Get(tid)
-			if tidErr != nil || authErr != nil {
-				if _, metaErr := home.ReadMeta(ctx.Home, args[0]); metaErr != nil {
-					return operationError("not_found", "Run `munsu task list` to find a task ID", fmt.Sprintf("Task %q was not found", args[0]))
-				}
-			}
-			state, err := fleet.ReadWithProbe(ctx.Home, args[0], runtimeTaskEndpointProbe())
-			if err != nil {
-				return operationError("internal", "Run `munsu task observe "+args[0]+"` again", "Unable to observe task state")
-			}
-			meta, _ := home.ReadMeta(ctx.Home, args[0])
-			if meta["kind"] == "captain" {
-				status := fleet.CaptainStatus(ctx.Home, fleet.CaptainIDFromTask(args[0], meta), meta["home"])
-				state.PaneAlive = status == "alive"
+
+			// Read .meta only to detect the captain metadata exception. A
+			// captain is non-task metadata (not Task observation authority): it
+			// is observed through CaptainStatus/SummarizeCaptainHome and never
+			// routed through the Task Authority.
+			meta, metaErr := home.ReadMeta(ctx.Home, args[0])
+			hasMeta := metaErr == nil
+			if hasMeta && meta["kind"] == "captain" && strings.HasPrefix(args[0], "captain:") {
+				state := &fleet.State{TaskID: args[0], Status: fleet.CaptainStatus(ctx.Home, fleet.CaptainIDFromTask(args[0], meta), meta["home"], cliEndpointProbe{resolve: backend.BackendForTask})}
+				state.PaneAlive = state.Status == "alive"
 				if summary := fleet.SummarizeCaptainHome(meta["home"]); summary.Valid {
 					state.Status = summary.State
+					state.Description = summary.Reason
 				}
+				result := TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
+				if fields["description"] {
+					result.Description = state.Description
+				}
+				return writeContract(cmd, Response[TaskObserve]{
+					SchemaVersion: SchemaVersion, Kind: "task.observe", Status: "success", Data: result,
+					Help: []string{"Run `munsu task observe " + args[0] + " --fields description,branch` for expanded fields"},
+				})
 			}
+
+			// Ordinary task: canonical Task Authority is the only lifecycle
+			// authority. Missing/corrupt canonical truth fails closed and never
+			// falls back to .meta/.status/provider/event projections.
+			state, err := fleet.ReadWithProbe(ctx.Home, args[0], runtimeTaskEndpointProbe())
+			if err != nil {
+				if errors.Is(err, tauth.ErrNotFound) {
+					if hasMeta {
+						return operationError("invalid_state", "Run `munsu task reconcile "+args[0]+"` or observe it after canonical Task truth is established",
+							fmt.Sprintf("Task %q in home %q has no canonical Task Authority record; observation refuses the legacy projection", args[0], ctx.Home))
+					}
+					return operationError("not_found", "Run `munsu task list` to find a task ID",
+						fmt.Sprintf("Task %q was not found in home %q", args[0], ctx.Home))
+				}
+				// Corrupt/malformed canonical record, or an unreadable home: Task
+				// truth is present but unreadable — fail closed as invalid_state.
+				return operationError("invalid_state", "Run `munsu task reconcile "+args[0]+"` or observe it again after Task truth is readable",
+					fmt.Sprintf("Unable to read authoritative Task truth for task %q in home %q: %v", args[0], ctx.Home, err))
+			}
+
+			// .meta is used only for optional diagnostics after canonical truth
+			// has been resolved.
 			result := TaskObserve{TaskID: state.TaskID, Status: state.Status, PaneAlive: &state.PaneAlive}
 			if fields["description"] {
 				result.Description = state.Description
 			}
-			if fields["branch"] {
+			if fields["branch"] && hasMeta {
 				result.Branch = branchFor(meta)
 			}
 			if fields["no_mistakes_step"] {
@@ -179,15 +198,12 @@ func newContractGuardCmd() *cobra.Command {
 				return err
 			}
 
-			// Count in-flight tasks for unified evaluation
-			inFlight := 0
-			snap, snapErr := fleet.Snapshot(ctx.Home)
-			if snapErr == nil && snap != nil {
-				for _, ts := range snap.Tasks {
-					if ts.Kind == "ship" || ts.Kind == "scout" {
-						inFlight++
-					}
-				}
+			// Count in-flight tasks for unified evaluation, failing closed when
+			// the canonical current-state snapshot is unreadable: unreadable
+			// Task truth is an error/unknown, never an empty fleet.
+			inFlight, err := guardInFlight(ctx.Home)
+			if err != nil {
+				return operationError("invalid_state", "Run `munsu guard` again after the fleet is readable", "Unable to read authoritative fleet state: "+err.Error())
 			}
 
 			// Use shared guard evaluation (same as middleware)

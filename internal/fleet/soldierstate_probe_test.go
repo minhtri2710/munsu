@@ -1,3 +1,5 @@
+//go:build integration
+
 package fleet
 
 import (
@@ -7,6 +9,7 @@ import (
 	"testing"
 
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 type stateProbe struct {
@@ -20,13 +23,15 @@ func (p *stateProbe) Probe(_ string, meta map[string]string) (bool, error) {
 	return p.alive, p.err
 }
 
-// setupProbeHome initializes a canonical home with the given task meta so
-// observation's canonical Task Authority read succeeds.
+// setupProbeHome initializes a canonical home with a canonical task and the
+// given task meta so observation's canonical Task Authority read succeeds and
+// the endpoint probe receives the bound metadata.
 func setupProbeHome(t *testing.T, h string, metaContent string) {
 	t.Helper()
 	if _, err := mhome.Init(h); err != nil {
 		t.Fatalf("home.Init: %v", err)
 	}
+	seedCanonicalPhase(t, h, "task", taskauthority.PhaseWorking)
 	if err := os.MkdirAll(filepath.Join(h, "state"), 0700); err != nil {
 		t.Fatal(err)
 	}

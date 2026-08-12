@@ -125,6 +125,32 @@ orchestration (Task Transfer is a Fleet-owned journaled operation over two
 local Authority surfaces); `internal/home` no longer owns task lifecycle,
 dispatch or binding authority.
 
+### Current-state read path (single query)
+
+`soldier-state`, `fleet snapshot`, and `guard` read task state through one
+canonical-first query so agents and the CLI receive the same Task truth.
+`internal/fleet.ReadWithProbe` is the shared soldier current-state query: it
+resolves the authoritative `taskauthority` Aggregate first (Task 7.8) and the
+canonical phase is the only lifecycle authority (clean break). `fleet snapshot`
+receives the current-state query as an explicit `fleet.SnapshotDependencies`
+dependency (`fleet.NewCanonicalCurrentState()`); the contract row derives its
+status from `fleet.PhaseFromProjection`; `guard` consumes `fleet.Snapshot` for
+its in-flight count and fails closed when Task truth is unreadable. Guard
+invocation semantics: the pre-run middleware (`guardWarnWatcher`) is
+**advisory** — it surfaces unreadable Task truth or a watcher warning to stderr
+but never blocks an arbitrary command; the structured `munsu guard` command and
+the harness stop-hook guards (agy/claude/codex/opencode/grok) are **blocking
+enforcement** and return a structured `invalid_state` error or exit code 2 on
+unreadable Task truth. A
+canonical/current-state failure fails closed instead of silently projecting the
+`.status` tail; a task-facing `.meta` without a canonical record is rejected
+(legacy/meta-only tasks are not authoritative), while captain metadata
+(kind=captain) is exempt. Endpoint/pane probing is diagnostic only and never
+changes lifecycle state. Lifecycle, delivery, worktree/endpoint binding, and
+handoff mutations all go through `internal/taskauthority`; every remaining
+`.meta`/`.status` write is a post-commit projection, a runtime
+(transport/ready/mailbox) marker, or captain metadata (ADR-0007 §7).
+
 ### Captain lifecycle (`internal/fleet`)
 
 `internal/fleet/captain_captain.go` owns seed, launch, retire, handoff,
