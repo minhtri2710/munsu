@@ -217,11 +217,7 @@ func (c *Canonical) readGenDoc(taskID string, gen uint64) (taskDoc, bool, error)
 // receive's absence test: a receive must never overwrite or conflict with
 // existing destination history, so any existing document fails closed.
 func (c *Canonical) taskHasGenerationDocs(taskID string) (bool, error) {
-	path, err := c.h.Path(canonicalRoot, tasksDir+"/"+taskID)
-	if err != nil {
-		return false, err
-	}
-	entries, err := os.ReadDir(path)
+	entries, err := c.h.ReadDir(canonicalRoot, tasksDir+"/"+taskID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -235,11 +231,7 @@ func (c *Canonical) taskHasGenerationDocs(taskID string) (bool, error) {
 // directory under the verified home state root. Individual documents are
 // read through home.Read; this is a read-only query over canonical state.
 func (c *Canonical) listTaskIDs() ([]string, error) {
-	path, err := c.h.Path(canonicalRoot, tasksDir)
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(path)
+	entries, err := c.h.ReadDir(canonicalRoot, tasksDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -257,11 +249,7 @@ func (c *Canonical) listTaskIDs() ([]string, error) {
 }
 
 func (c *Canonical) listHoldIDs() ([]string, error) {
-	path, err := c.h.Path(canonicalRoot, holdsDir)
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(path)
+	entries, err := c.h.ReadDir(canonicalRoot, holdsDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil

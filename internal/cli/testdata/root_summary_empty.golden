@@ -1,0 +1,7 @@
+munsu @ {HOME}
+
+fleet: 0 tasks (0 in-flight) | watcher: -- | holds: --
+
+No tasks. Start with `munsu task add <id> "<description>"`.
+
+Next: munsu fleet bearings | munsu peek <id> | munsu --help

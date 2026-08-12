@@ -2,10 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"io"
-	"time"
 
-	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/home"
 	"github.com/minhtri2710/munsu/internal/orchestrator"
 	"github.com/spf13/cobra"
@@ -80,63 +77,6 @@ func MaximumNArgs(n int) cobra.PositionalArgs {
 	}
 }
 
-// fleetSummary prints a compact fleet/orientation snapshot to the given writer.
-func fleetSummary(w io.Writer, homeDir string) {
-	snap, snapErr := fleet.Snapshot(homeDir)
-
-	totalTasks := 0
-	inFlight := 0
-	if snapErr == nil && snap != nil {
-		totalTasks = len(snap.Tasks)
-		for _, ts := range snap.Tasks {
-			if ts.Kind == "ship" || ts.Kind == "scout" {
-				inFlight++
-			}
-		}
-	}
-
-	watcherStatus := "--"
-	beat := orchestrator.ReadBeatStatus(homeDir, time.Now())
-	if beat.Exists {
-		if beat.Stale {
-			watcherStatus = "stale"
-		} else {
-			watcherStatus = "alive"
-		}
-	}
-
-	fmt.Fprintf(w, "munsu @ %s\n\n", homeDir)
-	fmt.Fprintf(w, "fleet: %d tasks (%d in-flight) | watcher: %s | holds: --\n", totalTasks, inFlight, watcherStatus)
-
-	if snapErr == nil && snap != nil && len(snap.Tasks) > 0 {
-		fmt.Fprintln(w)
-		for _, ts := range snap.Tasks {
-			phase := fleet.PhaseFromProjection(ts)
-			project := ts.Project
-			if project == "" {
-				project = "-"
-			}
-			status := ts.CurrentDescription
-			if status == "" {
-				status = ts.LastStatus
-			}
-			if status == "" {
-				status = phase
-			}
-			fmt.Fprintf(w, "  %-20s [%-10s] %s\n", ts.ID, phase, project)
-			if status != "" && status != phase {
-				fmt.Fprintf(w, "  %-20s  %s\n", "", status)
-			}
-		}
-	} else {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "No tasks. Start with `munsu task add <id> \"<description>\"`.")
-	}
-
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Next: munsu fleet bearings | munsu peek <id> | munsu --help")
-}
-
 // NewRootCommand builds the munsu root cobra command with all subcommands.
 func NewRootCommand() *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
@@ -157,7 +97,7 @@ with no requirement to live inside a specific project checkout.`,
 			if err != nil {
 				return fmt.Errorf("resolving home: %w", err)
 			}
-			fleetSummary(cmd.OutOrStdout(), homeDir)
+			renderRootSummary(cmd.OutOrStdout(), loadRootSummary(homeDir))
 			return nil
 		},
 	}
