@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/minhtri2710/munsu/internal/backend"
 	"github.com/minhtri2710/munsu/internal/fleet"
@@ -131,10 +130,11 @@ func runFleetSnapshotV2(cmd *cobra.Command, ctx Ctx) error {
 		if entry.Kind == "captain" {
 			continue
 		}
-		status := entry.LastStatus
-		if index := strings.Index(status, ":"); index >= 0 {
-			status = strings.TrimSpace(status[:index])
-		}
+		// The contract row reports the resolved current-state projection, not
+		// the append-only .status tail: the canonical Task Authority phase (or
+		// the current-state resolver output) wins and a stale status verb can
+		// never override a newer authoritative lifecycle transition.
+		status := fleet.PhaseFromProjection(entry)
 		if status == "" {
 			status = fleet.PhaseFromMeta(entry.Window, entry.PaneAlive)
 		}

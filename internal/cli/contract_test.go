@@ -14,8 +14,10 @@ import (
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/config"
+	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/fleet"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
@@ -397,6 +399,97 @@ func TestGuardHasContextualHelpHint(t *testing.T) {
 	}
 	if !strings.Contains(output, "fleet snapshot") {
 		t.Errorf("guard help hint should mention fleet snapshot\n%s", output)
+	}
+}
+
+// TestFleetSnapshotV2CanonicalPhaseBeatsStaleStatus proves the contract row
+// reports the resolved current-state projection, not the append-only .status
+// tail: a canonical done phase beats a stale `working` status line (P0 read-path
+// consolidation). See BEO-14.
+func TestFleetSnapshotV2CanonicalPhaseBeatsStaleStatus(t *testing.T) {
+	home := t.TempDir()
+	initCLITestHome(t, home)
+	auth := testAuthorityFor(t, home)
+
+	createReq := taskauthority.CanonicalCreateRequest{
+		HomeID:      auth.HomeID(),
+		TaskID:      mustTaskIDFor(t, "alpha"),
+		Owner:       "owner",
+		Description: "inspect",
+		Kind:        "ship",
+		Reason:      "test",
+	}
+	if _, err := auth.Create(mustCanonicalOp(t, "op-create-stale", createReq), createReq); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := auth.Get(createReq.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prec := func() domain.Precondition { return domain.Of(uint64(cur.Generation), uint64(cur.Revision)) }
+	if _, err := auth.Start(mustCanonicalOp(t, "op-start-stale", taskauthority.CanonicalStartRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       createReq.TaskID,
+		Precondition: prec(),
+		Reason:       "test",
+	}), taskauthority.CanonicalStartRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       createReq.TaskID,
+		Precondition: prec(),
+		Reason:       "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cur, err = auth.Get(createReq.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Complete(mustCanonicalOp(t, "op-complete-stale", taskauthority.CanonicalCompleteRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       createReq.TaskID,
+		Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+		To:           taskauthority.PhaseDone,
+		Reason:       "test",
+	}), taskauthority.CanonicalCompleteRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       createReq.TaskID,
+		Precondition: domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+		To:           taskauthority.PhaseDone,
+		Reason:       "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A stale .status tail must NOT override the authoritative done phase.
+	if err := mhome.AppendStatus(home, "alpha", "working: stale tail claim"); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure a .meta projection exists so the snapshot builds a row (the stale
+	// status tail is exercised), rather than serving the no-projection branch.
+	if err := mhome.WriteMeta(home, "alpha", map[string]string{
+		"description": "inspect", "worktree": home, "project": "munsu", "kind": "ship",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MUNSU_HOME", home)
+	out, err := runContract(t, []string{"fleet", "snapshot", "--version", "2", "--output", "json"})
+	if err != nil {
+		t.Fatalf("fleet snapshot v2: %v", err)
+	}
+	var resp struct {
+		Data struct {
+			Soldiers []Soldier `json:"soldiers"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, out)
+	}
+	if len(resp.Data.Soldiers) != 1 {
+		t.Fatalf("soldiers = %+v, want exactly 1", resp.Data.Soldiers)
+	}
+	if got := resp.Data.Soldiers[0].Status; got != "done" {
+		t.Errorf("soldier status = %q, want %q (canonical done phase must beat the stale working status tail)", got, "done")
 	}
 }
 

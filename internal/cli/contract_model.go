@@ -1,6 +1,7 @@
 // Package contract defines the JSON-compatible data model for the versioned
-// orchestration contract. It intentionally has no runtime behavior; Phase 1
-// will use these types at the output boundary.
+// orchestration contract. It is used by the `internal/cli` contract command
+// surface (the output boundary) to emit structured responses; it carries no
+// domain behavior.
 package cli
 
 const (

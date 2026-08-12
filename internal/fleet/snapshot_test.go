@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -672,6 +673,37 @@ func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 	}
 	if !ts.PaneAliveUnknown {
 		t.Errorf("PaneAliveUnknown = false, want true for non-alive typed observation")
+	}
+}
+
+func TestSnapshot_ResolverErrorFailsClosedOverStaleStatus(t *testing.T) {
+	tmp := t.TempDir()
+	if _, err := home.Init(tmp); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+
+	if err := home.WriteMeta(tmp, "t1", map[string]string{
+		"window":   "@win",
+		"worktree": "/tmp/wt",
+		"project":  "munsu",
+		"kind":     "ship",
+	}); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+	// A valid, stale .status tail must NOT be silently projected when the
+	// canonical-aware resolver fails (Task 7.8 fail-closed posture).
+	if err := home.AppendStatus(tmp, "t1", "working: stale tail claim"); err != nil {
+		t.Fatalf("AppendStatus: %v", err)
+	}
+	resolveErr := errors.New("canonical read failed: recovery required")
+	withResolver(t, func(homeDir, id string) (*CurrentStateInfo, error) {
+		return nil, resolveErr
+	})
+
+	if _, err := Snapshot(tmp); err == nil {
+		t.Fatalf("Snapshot = nil error, want fail-closed error propagating the resolver failure")
 	}
 }
 

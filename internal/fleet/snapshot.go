@@ -67,13 +67,21 @@ func SetCurrentStateResolver(fn func(homeDir, id string) (*CurrentStateInfo, err
 }
 
 // CurrentState computes the resolved current-state projection for a task.
-// When a resolver is wired (via SetCurrentStateResolver), it takes precedence.
-// Fallback: meta window presence + last status line (display-only, not state truth).
-func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo {
+//
+// When a canonical-aware resolver is installed (via SetCurrentStateResolver) it
+// is authoritative and its failure fails closed -- a resolver error (legacy
+// fail-closed delivery evidence, corrupt home, recovery-required state) must
+// propagate rather than silently fall back to the .status tail. The legacy
+// meta+status projection is a display-only fallback used only when no resolver
+// is wired.
+func CurrentState(homeDir, id string, meta map[string]string) (*CurrentStateInfo, error) {
 	if resolveCurrentState != nil {
 		info, err := resolveCurrentState(homeDir, id)
-		if err == nil && info != nil {
-			return info
+		if err != nil {
+			return nil, err
+		}
+		if info != nil {
+			return info, nil
 		}
 	}
 
@@ -105,7 +113,7 @@ func CurrentState(homeDir, id string, meta map[string]string) *CurrentStateInfo 
 		}
 	}
 
-	return info
+	return info, nil
 }
 
 // PhaseFromMeta returns the display phase for a task from meta-only facts.
@@ -256,11 +264,15 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string) er
 			}
 		}
 
-		// Resolve current-state projection when resolver is wired. A
+		// Resolve current-state projection when a resolver is wired. A
 		// canonical record wins: the authoritative phase is the current state
 		// and the status log is superseded display (a stale .status can never
-		// override a newer authoritative lifecycle transition).
-		info := CurrentState(taskHome, id, meta)
+		// override a newer authoritative lifecycle transition). A resolver
+		// failure fails closed instead of silently projecting the .status tail.
+		info, err := CurrentState(taskHome, id, meta)
+		if err != nil {
+			return err
+		}
 		if hasCanonical {
 			ts.CurrentState = string(agg.Phase)
 			ts.CurrentDescription = agg.PhaseDetail
