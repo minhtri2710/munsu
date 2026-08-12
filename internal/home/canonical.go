@@ -198,6 +198,19 @@ func (h *Home) Read(root, key string) ([]byte, error) {
 	return data, nil
 }
 
+// ReadDir returns the directory entries at key within the logical root. It
+// resolves and verifies the path through the same contained, no-follow seam as
+// Read, so enumeration can never bypass the home security boundary via a raw
+// filesystem path. A missing directory or a non-directory target returns the
+// native os.ReadDir error unchanged; callers may treat os.ErrNotExist as absence.
+func (h *Home) ReadDir(root, key string) ([]os.DirEntry, error) {
+	path, err := h.Path(root, key)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadDir(path)
+}
+
 func createHome(abs string) (*Home, error) {
 	if err := os.MkdirAll(abs, 0700); err != nil {
 		return nil, fmt.Errorf("home: create root: %w", err)

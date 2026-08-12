@@ -1,0 +1,8 @@
+munsu @ {HOME}
+
+fleet: 2 tasks (2 in-flight) | watcher: -- | holds: --
+
+  task-one             [unknown   ] myproj
+  task-two             [unknown   ] -
+
+Next: munsu fleet bearings | munsu peek <id> | munsu --help
