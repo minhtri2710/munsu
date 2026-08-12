@@ -141,6 +141,7 @@ func mustWorkingDeliveryTask(t *testing.T, c *taskauthority.Canonical, taskID st
 			LeaseID:      "lease-ep-" + taskID,
 			FenceToken:   "fence-ep-" + taskID,
 			SessionOwner: "session-" + taskID,
+			Incarnation:  "inc-" + taskID, // opaque launch incarnation (BEO-16/P1a contract)
 			BoundAtUnix:  time.Now().Unix(),
 		},
 		Reason: "spawn",

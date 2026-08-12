@@ -31,8 +31,9 @@ func mustSpawnedAttestationTask(t *testing.T, homeDir, taskID string) (*Runner, 
 		windowID:      "session:pane-1",
 		effectiveMode: "direct-PR",
 		endpoint: CreatedEndpoint{
-			Backend: "herdr",
-			Handle:  "session:pane-1",
+			Backend:     "herdr",
+			Handle:      "session:pane-1",
+			Incarnation: "inc-" + taskID, // opaque launch incarnation (BEO-16/P1a contract)
 		},
 	}
 	spawned, err := r.confirmSpawn()
