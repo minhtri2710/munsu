@@ -387,14 +387,24 @@ type cleanupGate struct {
 // bypass the claim.
 func (c *Canonical) checkCleanupFence(cur Aggregate, gate *cleanupGate) error {
 	claim := cur.CleanupClaim
-	if claim == nil || claim.Status != CleanupActive {
+	if claim == nil {
 		return nil
 	}
-	if gate == nil {
-		return conflictError(ErrConflict, "task %s generation %s has an active cleanup claim (cleaning generation %s); lifecycle and acquisition mutations fail closed until cleanup completes or aborts", cur.TaskID, cur.Generation, claim.Generation)
+	if claim.Status == CleanupActive {
+		if gate == nil {
+			return conflictError(ErrConflict, "task %s generation %s has an active cleanup claim (cleaning generation %s); lifecycle and acquisition mutations fail closed until cleanup completes or aborts", cur.TaskID, cur.Generation, claim.Generation)
+		}
+		if gate.operationID != claim.OperationID || gate.generation != claim.Generation {
+			return conflictError(ErrConflict, "task %s generation %s cleanup claim fence mismatch: the mutation is not a continuation of the active cleanup claim (generation %s)", cur.TaskID, cur.Generation, claim.Generation)
+		}
+		return nil
 	}
-	if gate.operationID != claim.OperationID || gate.generation != claim.Generation {
-		return conflictError(ErrConflict, "task %s generation %s cleanup claim fence mismatch: the mutation is not a continuation of the active cleanup claim (generation %s)", cur.TaskID, cur.Generation, claim.Generation)
+	// Reconciled (completed/aborted) claims do not block ordinary mutations,
+	// but a cleanup continuation must still carry the EXACT stored identity:
+	// a foreign continuation is never accepted as a no-op and never mutates
+	// the stored claim.
+	if gate != nil && (gate.operationID != claim.OperationID || gate.generation != claim.Generation) {
+		return conflictError(ErrConflict, "task %s generation %s cleanup claim fence mismatch: the continuation identity does not match the stored claim (generation %s, status %s)", cur.TaskID, cur.Generation, claim.Generation, claim.Status)
 	}
 	return nil
 }

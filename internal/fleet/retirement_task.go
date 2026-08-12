@@ -136,9 +136,10 @@ func completeRetirementCleanup(authority *taskauthority.Canonical, taskID domain
 
 // AbortRetirementCleanup releases the active cleanup claim of the given
 // retired generation WITHOUT completing cleanup (operator escape hatch for a
-// stuck claim): the task becomes reopenable, the retired generation's
-// preserved evidence remains as a historical record, and a later teardown
-// retry re-activates the claim and resumes cleanup.
+// stuck claim): the task becomes reopenable and the retired generation's
+// preserved evidence remains as a historical record. Abort is TERMINAL: a
+// later teardown retry does not re-activate the claim and never resumes the
+// aborted cleanup against a reopened generation.
 func AbortRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
 	cur, err := authority.Get(taskID)
 	if err != nil {
@@ -248,12 +249,20 @@ func retireTaskAuthoritatively(opts Options, meta map[string]string, authority *
 }
 
 // priorRetiredGeneration scans the generations before the current one for the
-// most recent retirement that committed with preserved resource evidence. A
-// teardown retry after the task reopened resumes that retirement's cleanup
-// (Replayed=true outcome pinned to the exact prior generation) instead of
-// retiring the reopened generation: the committed retirement evidence of the
-// exact prior generation is the only authority for which resources may be
-// released.
+// most recent retirement whose cleanup is still ACTIVELY claimed. A teardown
+// retry after the task reopened resumes that retirement's cleanup (Replayed
+// outcome pinned to the exact prior generation) instead of retiring the
+// reopened generation: the committed retirement evidence of the exact prior
+// generation is the only authority for which resources may be released.
+//
+// With the durable cleanup claim, a prior generation is resumable only while
+// its claim is ACTIVE (crash mid-cleanup). A completed claim means the cleanup
+// finished (nothing to resume) and an aborted claim is terminal (the operator
+// explicitly stopped it; an old teardown retry must NEVER resume aborted
+// cleanup against a reopened generation — BEO-16/P1a). Since Reopen is
+// rejected while a claim is active, an active-claim prior generation cannot
+// coexist with a newer current generation, so this path is defensive; it must
+// stay fail-closed against completed/aborted/claimless retired generations.
 func priorRetiredGeneration(authority *taskauthority.Canonical, taskID domain.TaskID, currentGen taskauthority.Generation) (taskauthority.Outcome, bool, error) {
 	for gen := uint64(currentGen) - 1; gen >= 1; gen-- {
 		agg, err := authority.GetGeneration(taskID, taskauthority.Generation(gen))
@@ -264,6 +273,10 @@ func priorRetiredGeneration(authority *taskauthority.Canonical, taskID domain.Ta
 			return taskauthority.Outcome{}, false, err
 		}
 		if agg.Phase != taskauthority.PhaseRetired || agg.Retirement == nil {
+			continue
+		}
+		if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+			// Completed (cleanup done) or aborted (terminal): never resumed.
 			continue
 		}
 		return taskauthority.Outcome{
@@ -523,21 +536,29 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// moment the retire commits. The claim outlives the task-scope lock held
 	// by the revalidation fences and keeps the task pinned across the external
 	// backend/filesystem actions that follow each fence — closing the
-	// post-unlock window. A claim a previous run already reconciled to
-	// completed means the cleanup finished: nothing is re-run and the result
-	// reports the already-cleaned state.
+	// post-unlock window. A claim a previous run already reconciled is
+	// terminal: COMPLETED means the cleanup finished (nothing is re-run) and
+	// ABORTED means the operator stopped it (abort is never resumed; a retry
+	// reports the terminal state without releasing anything).
 	claimGen := committed.Generation
 	curForClaim, err := authority.Get(taskID)
 	if err != nil {
 		return cleanupPending(fmt.Errorf("teardown %s: resolving current state for cleanup claim: %w", opts.ID, err))
 	}
-	if curForClaim.CleanupClaim != nil && curForClaim.CleanupClaim.Status == taskauthority.CleanupCompleted && curForClaim.CleanupClaim.Generation == claimGen {
-		result.Steps = append(result.Steps, fmt.Sprintf("cleanup already completed for generation %s", claimGen))
-		return result, nil
+	if claim := curForClaim.CleanupClaim; claim != nil && claim.Generation == claimGen {
+		switch claim.Status {
+		case taskauthority.CleanupCompleted:
+			result.Steps = append(result.Steps, fmt.Sprintf("cleanup already completed for generation %s", claimGen))
+			return result, nil
+		case taskauthority.CleanupAborted:
+			result.Steps = append(result.Steps, fmt.Sprintf("cleanup was aborted for generation %s; abort is terminal and nothing is released", claimGen))
+			return result, nil
+		}
 	}
-	// Assert (or re-assert) the claim before any probe/release; a crash or an
-	// explicit abort is reconciled here (the claim is re-activated under the
-	// same stable retirement identity).
+	// Assert the claim before any probe/release; a crash is reconciled here
+	// (the claim is already active under the same stable retirement identity,
+	// so the assert is a no-op). An aborted or completed claim never reaches
+	// this point (handled above); BeginCleanup itself fails closed if it does.
 	if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
 		return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
 	}

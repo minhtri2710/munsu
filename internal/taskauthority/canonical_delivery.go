@@ -748,6 +748,13 @@ func (c *Canonical) mutateDelivery(op domain.Operation, taskID domain.TaskID, pr
 	if err := c.checkReservationFence(doc.Aggregate, nil); err != nil {
 		return DeliveryIndex{}, false, err
 	}
+	// Delivery state (authorization/revocation/outcome) is task-scoped
+	// lifecycle state and must not mutate while a cleanup claim is active
+	// (BEO-16/P1a): the claim's promised serialization covers delivery too,
+	// so the revision snapshot cleanup revalidates against cannot move.
+	if err := c.checkCleanupFence(doc.Aggregate, nil); err != nil {
+		return DeliveryIndex{}, false, err
+	}
 	index, _, err := c.readDeliveryIndex(taskID.Value())
 	if err != nil {
 		return DeliveryIndex{}, false, err

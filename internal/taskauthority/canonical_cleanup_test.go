@@ -164,22 +164,28 @@ func TestCanonicalCleanupCompleteThenAbortLifecycle(t *testing.T) {
 	if _, err := c.Reopen(mustOperation(t, "op-life-reopen2", reopen2), reopen2); err != nil {
 		t.Fatalf("Reopen after abort: %v", err)
 	}
-	// BeginCleanup re-activates the aborted claim (a teardown retry resumes
-	// cleanup) and the aggregate is pinned again.
-	begin := CanonicalBeginCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(3, 1), ClaimOperationID: "op-life-retire2", ClaimGeneration: Generation(2), Reason: "resume"}
-	if _, err := c.BeginCleanup(mustOperation(t, "op-life-begin-resume", begin), begin); err != nil {
-		t.Fatalf("BeginCleanup after abort: %v", err)
+	// Abort is TERMINAL: a teardown retry must never re-activate the aborted
+	// claim, and an old cleanup retry must never attach the historical claim
+	// to the reopened generation. BeginCleanup on the reopened (generation 3)
+	// task with the generation-2 claim identity fails closed — no activation,
+	// no overwrite.
+	agg, err = c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim != nil {
+		t.Fatalf("reopened generation leaked a cleanup claim: %+v", agg.CleanupClaim)
+	}
+	begin := CanonicalBeginCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(3, 1), ClaimOperationID: "op-life-retire2", ClaimGeneration: Generation(2), Reason: "old retry"}
+	if _, err := c.BeginCleanup(mustOperation(t, "op-life-begin-resume", begin), begin); !errors.Is(err, ErrConflict) {
+		t.Fatalf("BeginCleanup of historical claim on reopened generation = %v, want ErrConflict", err)
 	}
 	agg, err = c.Get(mustTaskID(t, "t1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupActive || agg.CleanupClaim.Generation != 2 {
-		t.Fatalf("claim not re-activated: %+v", agg.CleanupClaim)
-	}
-	reopen3 := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(3, 2), Reason: "reopen"}
-	if _, err := c.Reopen(mustOperation(t, "op-life-reopen3", reopen3), reopen3); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Reopen with re-activated claim = %v, want ErrConflict", err)
+	if agg.CleanupClaim != nil {
+		t.Fatalf("historical claim activated on reopened generation: %+v", agg.CleanupClaim)
 	}
 }
 
@@ -223,5 +229,160 @@ func TestCanonicalCleanupClaimRequiresCompleteProof(t *testing.T) {
 	req := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 1), ClaimOperationID: "op-proof-retire", ClaimGeneration: Generation(1), Reason: "x"}
 	if _, err := c.CompleteCleanup(mustOperation(t, "op-proof-stale2", req), req); !errors.Is(err, domain.ErrStalePrecondition) {
 		t.Fatalf("stale CompleteCleanup = %v, want domain.ErrStalePrecondition", err)
+	}
+}
+
+// TestCanonicalBeginCleanupExactFencing proves BeginCleanup accepts only a
+// current aggregate retired at exactly ClaimGeneration with the preserved
+// retirement evidence matching the claim identity: it fails closed on a newer
+// (reopened) generation, on a non-retired phase, on a foreign stored claim
+// identity, and on a missing/mismatched evidence record — so an old teardown
+// retry can never attach historical cleanup to a reopened generation or
+// overwrite a foreign claim (BEO-16/P1a).
+func TestCanonicalBeginCleanupExactFencing(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	wt := bindWorktreeRequest(c, "t1", preconditionOf(1, 1))
+	if _, err := c.BindWorktree(mustOperation(t, "op-fence-wt", wt), wt); err != nil {
+		t.Fatal(err)
+	}
+	ep := bindEndpointRequest(c, "t1", preconditionOf(1, 2))
+	if _, err := c.BindEndpoint(mustOperation(t, "op-fence-ep", ep), ep); err != nil {
+		t.Fatal(err)
+	}
+	retireWithClaim(t, c, "t1", preconditionOf(1, 3), "op-fence-retire")
+
+	// A foreign claim identity can never overwrite the stored active claim.
+	foreign := CanonicalBeginCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 4), ClaimOperationID: "op-foreign", ClaimGeneration: Generation(1), Reason: "x"}
+	if _, err := c.BeginCleanup(mustOperation(t, "op-fence-foreign", foreign), foreign); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign BeginCleanup on active claim = %v, want ErrConflict", err)
+	}
+
+	// Reconcile the claim to completed, then reopen: the reopened generation
+	// (2) is retired fresh and carries its own claim; a historical
+	// BeginCleanup for generation 1 must fail closed on the newer generation.
+	complete := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 4), ClaimOperationID: "op-fence-retire", ClaimGeneration: Generation(1), Reason: "done"}
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-fence-complete", complete), complete); err != nil {
+		t.Fatal(err)
+	}
+	reopen := CanonicalReopenRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 5), Reason: "reopen"}
+	if _, err := c.Reopen(mustOperation(t, "op-fence-reopen", reopen), reopen); err != nil {
+		t.Fatal(err)
+	}
+	histBegin := CanonicalBeginCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(2, 1), ClaimOperationID: "op-fence-retire", ClaimGeneration: Generation(1), Reason: "old retry"}
+	if _, err := c.BeginCleanup(mustOperation(t, "op-fence-hist", histBegin), histBegin); !errors.Is(err, ErrConflict) {
+		t.Fatalf("historical BeginCleanup on reopened generation = %v, want ErrConflict", err)
+	}
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim != nil {
+		t.Fatalf("historical claim activated on reopened generation: %+v", agg.CleanupClaim)
+	}
+	// A historical CompleteCleanup on the reopened generation also fails
+	// closed (its gate identity does not match the current state).
+	histComplete := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(2, 1), ClaimOperationID: "op-fence-retire", ClaimGeneration: Generation(1), Reason: "x"}
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-fence-hist-complete", histComplete), histComplete); !errors.Is(err, ErrConflict) {
+		t.Fatalf("historical CompleteCleanup on reopened generation = %v, want ErrConflict", err)
+	}
+
+	// A queued (non-retired) task can never be claimed.
+	c2, _, _ := newTestCanonical(t)
+	mustCreate(t, c2, "q")
+	queuedBegin := CanonicalBeginCleanupRequest{HomeID: c2.HomeID(), TaskID: mustTaskID(t, "q"), Precondition: preconditionOf(1, 1), ClaimOperationID: "op-q-retire", ClaimGeneration: Generation(1), Reason: "x"}
+	if _, err := c2.BeginCleanup(mustOperation(t, "op-fence-queued", queuedBegin), queuedBegin); !errors.Is(err, ErrConflict) {
+		t.Fatalf("BeginCleanup on queued task = %v, want ErrConflict", err)
+	}
+
+	// A bindingless (meta-only) retired generation with an ACTIVE claim under
+	// the exact identity no-ops on BeginCleanup — its crash-resume retry works
+	// even though it preserved no resource evidence (the claim itself is the
+	// authority; the evidence identity check guards only the from-scratch
+	// claim-set path).
+	c3, _, _ := newTestCanonical(t)
+	mustCreate(t, c3, "legacy")
+	legacyRetire := retireRequest(t, c3, "legacy", preconditionOf(1, 1))
+	if _, err := c3.Retire(mustOperation(t, "op-legacy-retire", legacyRetire), legacyRetire); err != nil {
+		t.Fatal(err)
+	}
+	legacyAgg, err := c3.Get(mustTaskID(t, "legacy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyAgg.Retirement != nil {
+		t.Fatalf("bindingless retire preserved evidence: %+v", legacyAgg.Retirement)
+	}
+	noEvidence := CanonicalBeginCleanupRequest{HomeID: c3.HomeID(), TaskID: mustTaskID(t, "legacy"), Precondition: preconditionOf(1, 2), ClaimOperationID: "op-legacy-retire", ClaimGeneration: Generation(1), Reason: "resume"}
+	if _, err := c3.BeginCleanup(mustOperation(t, "op-fence-no-evidence", noEvidence), noEvidence); err != nil {
+		t.Fatalf("meta-only crash-resume BeginCleanup = %v, want idempotent no-op", err)
+	}
+	legacyAgg, err = c3.Get(mustTaskID(t, "legacy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyAgg.CleanupClaim == nil || legacyAgg.CleanupClaim.Status != CleanupActive {
+		t.Fatalf("meta-only claim not retained: %+v", legacyAgg.CleanupClaim)
+	}
+}
+
+// TestCanonicalCleanupReconciliationIdentityFenced proves every reconciliation
+// idempotency path requires the EXACT stored claim identity: a foreign
+// CompleteCleanup/AbortCleanup/BeginCleanup on a completed or aborted claim is
+// rejected (never a successful no-op), and the same-identity no-ops succeed.
+func TestCanonicalCleanupReconciliationIdentityFenced(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	retireWithClaim(t, c, "t1", preconditionOf(1, 1), "op-id-retire")
+
+	// Complete under the exact identity, then attempt foreign continuations.
+	complete := CanonicalCompleteCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 2), ClaimOperationID: "op-id-retire", ClaimGeneration: Generation(1), Reason: "done"}
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-id-complete", complete), complete); err != nil {
+		t.Fatal(err)
+	}
+	foreignComplete := complete
+	foreignComplete.ClaimOperationID = "op-foreign"
+	foreignComplete.Precondition = preconditionOf(1, 3)
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-id-foreign-complete", foreignComplete), foreignComplete); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign CompleteCleanup on completed claim = %v, want ErrConflict", err)
+	}
+	foreignAbort := CanonicalAbortCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 3), ClaimOperationID: "op-foreign", ClaimGeneration: Generation(1), Reason: "x"}
+	if _, err := c.AbortCleanup(mustOperation(t, "op-id-foreign-abort", foreignAbort), foreignAbort); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign AbortCleanup on completed claim = %v, want ErrConflict", err)
+	}
+	foreignBegin := CanonicalBeginCleanupRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, 3), ClaimOperationID: "op-foreign", ClaimGeneration: Generation(1), Reason: "x"}
+	if _, err := c.BeginCleanup(mustOperation(t, "op-id-foreign-begin", foreignBegin), foreignBegin); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign BeginCleanup on completed claim = %v, want ErrConflict", err)
+	}
+	// The same-identity CompleteCleanup idempotent no-op still succeeds.
+	completeAgain := complete
+	completeAgain.Precondition = preconditionOf(1, 3)
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-id-complete-again", completeAgain), completeAgain); err != nil {
+		t.Fatalf("same-identity re-complete = %v, want idempotent no-op", err)
+	}
+
+	// Same for the aborted path on a fresh claim.
+	c2, _, _ := newTestCanonical(t)
+	mustCreate(t, c2, "t2")
+	retireWithClaim(t, c2, "t2", preconditionOf(1, 1), "op-id-retire2")
+	abort := CanonicalAbortCleanupRequest{HomeID: c2.HomeID(), TaskID: mustTaskID(t, "t2"), Precondition: preconditionOf(1, 2), ClaimOperationID: "op-id-retire2", ClaimGeneration: Generation(1), Reason: "abort"}
+	if _, err := c2.AbortCleanup(mustOperation(t, "op-id-abort", abort), abort); err != nil {
+		t.Fatal(err)
+	}
+	foreignAbort2 := abort
+	foreignAbort2.ClaimOperationID = "op-foreign"
+	foreignAbort2.Precondition = preconditionOf(1, 3)
+	if _, err := c2.AbortCleanup(mustOperation(t, "op-id-foreign-abort2", foreignAbort2), foreignAbort2); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign AbortCleanup on aborted claim = %v, want ErrConflict", err)
+	}
+	foreignComplete2 := CanonicalCompleteCleanupRequest{HomeID: c2.HomeID(), TaskID: mustTaskID(t, "t2"), Precondition: preconditionOf(1, 3), ClaimOperationID: "op-foreign", ClaimGeneration: Generation(1), Reason: "x"}
+	if _, err := c2.CompleteCleanup(mustOperation(t, "op-id-foreign-complete2", foreignComplete2), foreignComplete2); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign CompleteCleanup on aborted claim = %v, want ErrConflict", err)
+	}
+	// The same-identity AbortCleanup idempotent no-op still succeeds.
+	abortAgain := abort
+	abortAgain.Precondition = preconditionOf(1, 3)
+	if _, err := c2.AbortCleanup(mustOperation(t, "op-id-abort-again", abortAgain), abortAgain); err != nil {
+		t.Fatalf("same-identity re-abort = %v, want idempotent no-op", err)
 	}
 }

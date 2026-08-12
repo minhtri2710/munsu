@@ -134,9 +134,18 @@ it; a concurrent reopen/rebind between a fence and an action is rejected, not
 merely detected. The claim is reconciled by the cleanup continuation
 operations: `CompleteCleanup` (all evidence-pinned releases + projection
 removal succeeded — the task becomes reopenable), `AbortCleanup` (operator
-escape hatch — the task becomes reopenable without cleanup, and a teardown
-retry re-activates the claim), and the idempotent `BeginCleanup` assert
-(resumed after a crash or abort). The fences additionally fail
+escape hatch — the task becomes reopenable without cleanup; abort is
+TERMINAL, so a later teardown retry never re-activates or resumes the aborted
+cleanup against a reopened generation), and the idempotent `BeginCleanup`
+assert (crash resume only), which is exact-generation/phase/evidence fenced:
+it accepts only a current aggregate retired at exactly the claimed generation
+with preserved retirement evidence matching the claim identity, and every
+Begin/Complete/Abort path is identity-fenced even on completed/aborted
+idempotency paths (a foreign continuation is never a no-op and never
+overwrites the stored claim). Delivery mutations (`AuthorizeDelivery`/
+`RevokeDeliveryAuthorization`/`CommitDeliveryOutcome`) are gated by the
+active claim too, so the revision snapshot cleanup revalidates against cannot
+move. The fences additionally fail
 `cleanup-pending` without releasing anything when the claim is missing/
 foreign/reconciled, when generation/revision advanced, when a reopen owns any
 evidence-pinned identity, or when the preserved retirement evidence changed.
