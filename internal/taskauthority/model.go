@@ -247,6 +247,15 @@ type RetirementEvidence struct {
 	RetiredAt   int64            `json:"retired_at,omitempty"`
 	Endpoint    *EndpointBinding `json:"endpoint,omitempty"`
 	Worktree    *WorktreeBinding `json:"worktree,omitempty"`
+	// Acquired preserves the exact identity of a pre-bind acquired endpoint
+	// (a launch that acquired an external backend resource but never bound
+	// it) as cleanup evidence (BEO-16/P1a): a known externally held resource
+	// must be reconciled by cleanup — the cleanup claim never completes while
+	// a preserved acquired endpoint remains unresolved. A bound Endpoint
+	// subsumes the acquired record (BindEndpoint enforces exact identity
+	// match), so Acquired is preserved only when the endpoint was never
+	// bound.
+	Acquired *AcquiredEndpoint `json:"acquired,omitempty"`
 }
 
 // CleanupStatus is the reconciliation state of a durable cleanup claim.
@@ -440,6 +449,11 @@ func validateRetirementEvidence(ev RetirementEvidence) error {
 	}
 	if ev.Worktree != nil {
 		if err := validateWorktreeBinding(*ev.Worktree); err != nil {
+			return err
+		}
+	}
+	if ev.Acquired != nil {
+		if err := validateAcquiredEndpoint(*ev.Acquired); err != nil {
 			return err
 		}
 	}
@@ -713,6 +727,10 @@ func (a Aggregate) clone() Aggregate {
 		if e.Worktree != nil {
 			cp := *e.Worktree
 			e.Worktree = &cp
+		}
+		if e.Acquired != nil {
+			cp := *e.Acquired
+			e.Acquired = &cp
 		}
 		out.Retirement = &e
 	}

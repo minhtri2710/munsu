@@ -79,6 +79,21 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend Bound
 		}
 	}
 
+	// Capture the retirement target at invocation start (BEO-16/P1a): this
+	// merge-and-retire invocation is a distinct explicit teardown request
+	// bound to the generation it observes now. If the task reopens to a
+	// newer generation after this capture, the delayed RetireTask fails
+	// closed with a typed conflict instead of implicitly retiring the newer
+	// generation.
+	targetGen := func() *taskauthority.Generation {
+		agg, gerr := authority.Get(taskID)
+		if gerr != nil {
+			return nil
+		}
+		g := agg.Generation
+		return &g
+	}()
+
 	// Phase 1: canonical committed delivery outcome (no .meta truth).
 	alreadyMerged := false
 	out, err := authority.DeliveryOutcome(taskID)
@@ -135,9 +150,10 @@ func MergeAndRetire(homeDir, id, prURL string, extraArgs []string, backend Bound
 	// partial cleanup), Force=true skips worktree-based safety checks — the
 	// canonical completed outcome is sufficient proof that work is landed.
 	retireOpts := Options{
-		HomeDir: homeDir,
-		ID:      id,
-		Force:   alreadyMerged,
+		HomeDir:            homeDir,
+		ID:                 id,
+		Force:              alreadyMerged,
+		ExpectedGeneration: targetGen,
 	}
 	teardownResult, retireErr := RetireTask(retireOpts, backend, journals, authority)
 

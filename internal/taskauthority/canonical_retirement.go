@@ -66,14 +66,27 @@ func (c *Canonical) Retire(op domain.Operation, req CanonicalRetireRequest) (Out
 		// Preserve the exact ownership evidence immutably; then clear the
 		// active binding owner so no active binding query reports an owned
 		// resource on a retired generation. Resource release itself is #412.
-		if cur.Endpoint != nil || cur.Worktree != nil {
-			next.Retirement = &RetirementEvidence{
+		// A pre-bind acquired endpoint (a launch that acquired an external
+		// backend resource but never bound it) is preserved as cleanup
+		// evidence too (BEO-16/P1a): a known externally held resource must be
+		// reconciled by cleanup, and the cleanup claim never completes while
+		// a preserved acquired endpoint remains unresolved. A bound Endpoint
+		// subsumes the acquired record (BindEndpoint enforces exact identity
+		// match), so Acquired evidence is kept only when the endpoint was
+		// never bound.
+		if cur.Endpoint != nil || cur.Worktree != nil || cur.AcquiredEndpoint != nil {
+			ev := &RetirementEvidence{
 				OperationID: op.ID.Value(),
 				Generation:  cur.Generation,
 				RetiredAt:   c.now().UnixNano(),
 				Endpoint:    cur.Endpoint,
 				Worktree:    cur.Worktree,
 			}
+			if cur.Endpoint == nil && cur.AcquiredEndpoint != nil {
+				ae := *cur.AcquiredEndpoint
+				ev.Acquired = &ae
+			}
+			next.Retirement = ev
 		}
 		next.Endpoint = nil
 		next.Worktree = nil

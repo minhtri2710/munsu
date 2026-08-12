@@ -387,6 +387,7 @@ func newPromoteCmd() *cobra.Command {
 
 func newTeardownCmd() *cobra.Command {
 	var force bool
+	var targetGen uint
 
 	cmd := &cobra.Command{
 		Use:   "teardown <id>",
@@ -400,6 +401,12 @@ With --force:
   - Skips report.md and decision-hold checks
   - Removes data/<id>/ including report.md and fleet.md
   - Use when the scout completed without a formal report or for cleanup
+
+--generation binds this invocation to the exact generation it intends to
+retire (captured when the teardown request was issued). A delayed retry that
+observes the task reopened to a newer generation fails closed instead of
+implicitly retiring the newer generation; a fresh teardown of a reopened
+generation must pass its explicit generation here.
 `,
 		Args: ExactArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -414,6 +421,10 @@ With --force:
 				HomeDir: ctx.Home,
 				ID:      id,
 				Force:   force,
+			}
+			if targetGen > 0 {
+				g := taskauthority.Generation(targetGen)
+				opts.ExpectedGeneration = &g
 			}
 
 			// Resolve the task home (cross-home retirement: a handed-off task
@@ -452,6 +463,7 @@ With --force:
 	configureContractCommand(cmd)
 
 	cmd.Flags().BoolVar(&force, "force", false, "Skip safety checks")
+	cmd.Flags().UintVar(&targetGen, "generation", 0, "Bind this teardown to the exact generation it intends to retire; a delayed retry never retires a newer generation")
 
 	return cmd
 }

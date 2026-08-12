@@ -908,13 +908,42 @@ func TestRetirementAbortTerminalOldRetryNeverReleasesReopenedOwnership(t *testin
 	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-2", "fence-ep-2")
 	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
 
-	// Abort is TERMINAL: the old teardown retry NEVER resumes the aborted
-	// generation-1 cleanup and never activates a generation-1 claim on the
-	// reopened generation. It retires generation 2 FRESH and releases only
-	// generation-2's own resources (the reused handle under ITS lease).
+	// Abort is TERMINAL and the old teardown retry is a STALE continuation:
+	// bound to the aborted generation-1 retirement, it fails closed with a
+	// typed error and NEVER retires the reopened generation 2 (BEO-16/P1a) —
+	// no claim activation, no release.
+	stale := &recordingTeardown{alive: true}
+	_, retErr := RetireTask(opts, stale, fakeRetirementJournals{}, auth)
+	if retErr == nil {
+		t.Fatal("stale teardown retry must fail closed")
+	}
+	var staleErr *RetirementStaleTeardownError
+	if !errors.As(retErr, &staleErr) {
+		t.Fatalf("stale teardown retry error = %v", retErr)
+	}
+	if staleErr.PriorGeneration != 1 || staleErr.CurrentGeneration != 2 || staleErr.TerminalStatus != "aborted" {
+		t.Fatalf("stale error = %+v, want prior 1 / current 2 / aborted", staleErr)
+	}
+	if len(stale.disposed) != 0 || len(stale.returned) != 0 {
+		t.Fatalf("stale retry released resources: disposed=%v returned=%v", stale.disposed, stale.returned)
+	}
+	aggMid, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggMid.Generation != 2 || aggMid.Phase != taskauthority.PhaseWorking || aggMid.CleanupClaim != nil {
+		t.Fatalf("stale retry disturbed the reopened generation: %+v", aggMid)
+	}
+
+	// A FRESH teardown request bound to the reopened generation — the
+	// distinct explicit target (BEO-16/P1a) — retires generation 2 and
+	// releases only generation-2's own resources (the reused handle under ITS
+	// lease).
+	target := taskauthority.Generation(2)
+	fresh := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &target}
 	second := &recordingTeardown{alive: true}
-	if _, err := RetireTask(opts, second, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("teardown retry on reopened generation: %v", err)
+	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("fresh teardown of reopened generation: %v", err)
 	}
 	if len(second.disposed) != 1 || second.disposed[0].Handle != "@1" {
 		t.Fatalf("disposed=%+v, want exactly the reopened generation's own endpoint @1 (its cleanup, not the aborted generation-1 resume)", second.disposed)
@@ -993,12 +1022,41 @@ func TestRetirementAbortTerminalOldRetryReleasesOnlyReopenedResources(t *testing
 	seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-new", "fence-ep-new")
 	writeRetireMeta(t, homeDir, taskID, "@2", newWT)
 
-	// Abort is TERMINAL: the old teardown retry releases ONLY the reopened
-	// generation's own resources; the aborted generation-1 evidence and
-	// projection are never touched.
+	// Abort is TERMINAL and the old teardown retry is a STALE continuation:
+	// bound to the aborted generation-1 retirement, it fails closed with a
+	// typed error and NEVER retires the reopened generation 2 (BEO-16/P1a).
+	stale := &recordingTeardown{alive: true}
+	_, retErr := RetireTask(opts, stale, fakeRetirementJournals{}, auth)
+	if retErr == nil {
+		t.Fatal("stale teardown retry must fail closed")
+	}
+	var staleErr *RetirementStaleTeardownError
+	if !errors.As(retErr, &staleErr) {
+		t.Fatalf("stale teardown retry error = %v", retErr)
+	}
+	if staleErr.PriorGeneration != 1 || staleErr.CurrentGeneration != 2 || staleErr.TerminalStatus != "aborted" {
+		t.Fatalf("stale error = %+v, want prior 1 / current 2 / aborted", staleErr)
+	}
+	if len(stale.disposed) != 0 || len(stale.returned) != 0 {
+		t.Fatalf("stale retry released resources: disposed=%v returned=%v", stale.disposed, stale.returned)
+	}
+	aggMid, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggMid.Generation != 2 || aggMid.Phase != taskauthority.PhaseWorking || aggMid.CleanupClaim != nil {
+		t.Fatalf("stale retry disturbed the reopened generation: %+v", aggMid)
+	}
+
+	// A FRESH teardown request bound to the reopened generation — the
+	// distinct explicit target (BEO-16/P1a) — retires generation 2 and
+	// releases ONLY generation-2's own resources; the aborted generation-1
+	// evidence and projection are never touched.
+	target := taskauthority.Generation(2)
+	fresh := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &target}
 	second := &recordingTeardown{alive: true}
-	if _, err := RetireTask(opts, second, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("teardown retry on reopened generation: %v", err)
+	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("fresh teardown of reopened generation: %v", err)
 	}
 	if len(second.disposed) != 1 || second.disposed[0].Handle != "@2" {
 		t.Fatalf("disposed=%+v, want reopened generation's own endpoint @2 only (never the aborted generation-1 endpoint)", second.disposed)
@@ -1161,16 +1219,45 @@ func TestRetirementAbortTerminalOldRetryNeverClaimsPreBindAcquisition(t *testing
 		t.Fatalf("BeginCleanup of historical claim on reopened generation = %v, want ErrConflict", err)
 	}
 
-	// The old teardown retry through RetireTask retires generation 2 FRESH
-	// (the aborted generation 1 is never resumed): the pre-bind acquired
-	// endpoint is never disposed (no binding = no release evidence) and only
-	// generation-2's own worktree is returned.
-	second := &recordingTeardown{alive: true}
-	if _, err := RetireTask(opts, second, fakeRetirementJournals{}, auth); err != nil {
-		t.Fatalf("teardown retry on reopened generation: %v", err)
+	// The old teardown retry through RetireTask is a STALE continuation bound
+	// to the aborted generation-1 retirement: it fails closed with a typed
+	// error and NEVER retires the reopened generation 2 — the pre-bind
+	// acquired endpoint is untouched (no claim activation, no dispose).
+	stale := &recordingTeardown{alive: true}
+	_, retErr := RetireTask(opts, stale, fakeRetirementJournals{}, auth)
+	if retErr == nil {
+		t.Fatal("stale teardown retry must fail closed")
 	}
-	if len(second.disposed) != 0 {
-		t.Fatalf("old teardown retry disposed the pre-bind acquired endpoint: %v", second.disposed)
+	var staleErr *RetirementStaleTeardownError
+	if !errors.As(retErr, &staleErr) {
+		t.Fatalf("stale teardown retry error = %v", retErr)
+	}
+	if staleErr.PriorGeneration != 1 || staleErr.CurrentGeneration != 2 || staleErr.TerminalStatus != "aborted" {
+		t.Fatalf("stale error = %+v, want prior 1 / current 2 / aborted", staleErr)
+	}
+	if len(stale.disposed) != 0 || len(stale.returned) != 0 {
+		t.Fatalf("stale retry released resources: disposed=%v returned=%v", stale.disposed, stale.returned)
+	}
+	aggMid, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggMid.Generation != 2 || aggMid.Phase != taskauthority.PhaseQueued || aggMid.CleanupClaim != nil || aggMid.AcquiredEndpoint == nil || aggMid.AcquiredEndpoint.Handle != "@1" {
+		t.Fatalf("stale retry disturbed the reopened generation: %+v", aggMid)
+	}
+
+	// A FRESH teardown request bound to the reopened generation (the distinct
+	// explicit target, BEO-16/P1a) retires generation 2. Its preserved
+	// pre-bind acquired endpoint (the known externally held resource) is now
+	// reconciled: probed and disposed, never completed-unresolved.
+	target := taskauthority.Generation(2)
+	fresh := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &target}
+	second := &recordingTeardown{alive: true}
+	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("fresh teardown of reopened generation: %v", err)
+	}
+	if len(second.disposed) != 1 || second.disposed[0].Handle != "@1" || second.disposed[0].Backend != "tmux" {
+		t.Fatalf("disposed=%+v, want exactly the reopened generation's own acquired endpoint @1 (its cleanup, never the aborted generation-1 resume)", second.disposed)
 	}
 	if len(second.returned) != 1 || second.returned[0] != wtDir {
 		t.Fatalf("returned=%v, want reopened generation's own worktree %s", second.returned, wtDir)
@@ -1248,5 +1335,387 @@ func TestRetirementAbortTerminalSameGenerationRetryNeverResumes(t *testing.T) {
 	// The projectons survive (nothing was released/removed).
 	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); err != nil {
 		t.Fatalf("meta destroyed on aborted retry: %v", err)
+	}
+}
+
+// TestRetirementAcquiredEndpointResolvedOnFreshTeardown proves High-2 closure
+// (BEO-16/P1a): a fresh teardown of a generation that acquired an endpoint
+// pre-bind (launch intent + AttachEndpoint, never bound) preserves the exact
+// acquired identity as cleanup evidence and DISPOSES the known externally held
+// resource — the cleanup claim never completes while a preserved acquired
+// endpoint remains unresolved.
+func TestRetirementAcquiredEndpointResolvedOnFreshTeardown(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "acquired-fresh"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+
+	// The task acquires an endpoint pre-bind (never binds it): launch intent
+	// + AttachEndpoint with the exact acquired identity.
+	begin := taskauthority.CanonicalBeginSpawnRequest{
+		HomeID:                auth.HomeID(),
+		TaskID:                mustTaskID(t, taskID),
+		Precondition:          domain.Of(1, 1),
+		SnapshotDigest:        strings.Repeat("a", 64),
+		Backend:               "tmux",
+		Harness:               "pi",
+		Model:                 "opus",
+		Effort:                "high",
+		Mode:                  "direct-PR",
+		Kind:                  "ship",
+		Project:               "proj",
+		ParentTaskID:          "parent",
+		LaunchID:              "launch-" + taskID,
+		WindowLabel:           "window-" + taskID,
+		WorktreeReservationID: "wt-res-1",
+		WorktreeFenceToken:    "wt-fence-1",
+		EndpointReservationID: "ep-res-1",
+		EndpointFenceToken:    "ep-fence-1",
+		EndpointIncarnation:   "inc-" + taskID,
+		Reason:                "spawn",
+	}
+	if _, err := auth.BeginSpawn(mustFleetOperation(t, "op-begin-"+taskID, begin), begin); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
+	attach := taskauthority.CanonicalAttachEndpointRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(1, 2),
+		Backend:      "tmux",
+		Handle:       "@1",
+		LeaseID:      "ep-res-1",
+		FenceToken:   "ep-fence-1",
+		SessionOwner: "session-" + taskID,
+		WorkspaceID:  "ws-" + taskID,
+		TabID:        "tab-" + taskID,
+		Incarnation:  "inc-" + taskID,
+		Reason:       "attach",
+	}
+	if _, err := auth.AttachEndpoint(mustFleetOperation(t, "op-attach-"+taskID, attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.AcquiredEndpoint == nil || agg.AcquiredEndpoint.Handle != "@1" {
+		t.Fatalf("acquired endpoint not recorded: %+v", agg.AcquiredEndpoint)
+	}
+
+	// A fresh teardown (no prior retirement) retires the generation: the
+	// preserved acquired endpoint is probed (live) and DISPOSED, and the
+	// claim completes only after the known externally held resource is
+	// reconciled.
+	rec := &recordingTeardown{alive: true}
+	if _, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("fresh teardown: %v", err)
+	}
+	if len(rec.disposed) != 1 || rec.disposed[0].Handle != "@1" || rec.disposed[0].Backend != "tmux" {
+		t.Fatalf("disposed=%+v, want the acquired endpoint @1 disposed (never completed-unresolved)", rec.disposed)
+	}
+	if len(rec.returned) != 0 {
+		t.Fatalf("returned=%v, want no worktree (none was bound)", rec.returned)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg2.Phase != taskauthority.PhaseRetired || agg2.CleanupClaim == nil || agg2.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("current aggregate = %+v, want retired with a completed claim", agg2)
+	}
+	if agg2.Retirement == nil || agg2.Retirement.Acquired == nil ||
+		agg2.Retirement.Acquired.Backend != "tmux" || agg2.Retirement.Acquired.Handle != "@1" ||
+		agg2.Retirement.Acquired.LeaseID != "ep-res-1" || agg2.Retirement.Acquired.FenceToken != "ep-fence-1" ||
+		agg2.Retirement.Acquired.Incarnation != "inc-"+taskID || agg2.Retirement.Generation != 1 {
+		t.Fatalf("acquired evidence not preserved with the exact identity: %+v", agg2.Retirement)
+	}
+}
+
+// TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration
+// proves the invocation binding also covers a COMPLETED prior retirement: a
+// delayed retry of the original teardown must never implicitly retire the
+// reopened generation even though the prior cleanup finished normally — a
+// fresh teardown requires the distinct explicit target (BEO-16/P1a).
+func TestRetirementStaleRetryAfterCompletedPriorNeverRetiresReopenedGeneration(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "stale-completed"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
+
+	// Generation-1 retirement completes normally (claim completed).
+	first := &recordingTeardown{alive: true}
+	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("generation-1 teardown: %v", err)
+	}
+
+	// Reopen to generation 2; it acquires NEW resources.
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopen := taskauthority.CanonicalReopenRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       "reopen",
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-reopen-stale-completed"), reopen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Reopen(op, reopen); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2")
+	seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-2", "fence-ep-2")
+	writeRetireMeta(t, homeDir, taskID, "@2", wtDir)
+
+	// A delayed retry of the ORIGINAL teardown (nil target) is a stale
+	// continuation of the completed generation-1 retirement: typed error,
+	// generation 2 never retired.
+	stale := &recordingTeardown{alive: true}
+	_, retErr := RetireTask(opts, stale, fakeRetirementJournals{}, auth)
+	if retErr == nil {
+		t.Fatal("stale teardown retry must fail closed")
+	}
+	var staleErr *RetirementStaleTeardownError
+	if !errors.As(retErr, &staleErr) {
+		t.Fatalf("stale teardown retry error = %v", retErr)
+	}
+	if staleErr.PriorGeneration != 1 || staleErr.CurrentGeneration != 2 || staleErr.TerminalStatus != "completed" {
+		t.Fatalf("stale error = %+v, want prior 1 / current 2 / completed", staleErr)
+	}
+	if len(stale.disposed) != 0 || len(stale.returned) != 0 {
+		t.Fatalf("stale retry released resources: disposed=%v returned=%v", stale.disposed, stale.returned)
+	}
+	aggMid, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggMid.Generation != 2 || aggMid.Phase != taskauthority.PhaseWorking || aggMid.CleanupClaim != nil {
+		t.Fatalf("stale retry disturbed the reopened generation: %+v", aggMid)
+	}
+
+	// The distinct explicit request retires generation 2.
+	target := taskauthority.Generation(2)
+	fresh := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &target}
+	second := &recordingTeardown{alive: true}
+	if _, err := RetireTask(fresh, second, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("fresh teardown of reopened generation: %v", err)
+	}
+	if len(second.disposed) != 1 || second.disposed[0].Handle != "@2" {
+		t.Fatalf("disposed=%+v, want the reopened generation's own endpoint @2", second.disposed)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg2.Generation != 2 || agg2.Phase != taskauthority.PhaseRetired || agg2.CleanupClaim == nil || agg2.CleanupClaim.Generation != 2 || agg2.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("current aggregate = %+v, want generation 2 retired with its own completed claim", agg2)
+	}
+	hist, err := auth.GetGeneration(mustTaskID(t, taskID), taskauthority.Generation(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != taskauthority.CleanupCompleted || hist.Retirement == nil || hist.Retirement.Endpoint == nil || hist.Retirement.Endpoint.LeaseID != "lease-ep-1" {
+		t.Fatalf("generation-1 record disturbed: claim=%+v evidence=%+v", hist.CleanupClaim, hist.Retirement)
+	}
+}
+
+// TestRetirementExplicitTargetConflictWhenGenerationAdvanced proves a teardown
+// pinned to an expected generation (Options.ExpectedGeneration) that observes
+// the current generation advanced past the target fails closed with the typed
+// conflict — it never retires the newer generation.
+func TestRetirementExplicitTargetConflictWhenGenerationAdvanced(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "target-advanced"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
+
+	// Generation-1 retirement with interrupted cleanup, then abort + reopen.
+	first := &recordingTeardown{alive: true, disposeErr: errors.New("window busy")}
+	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+	abortCleanupFor(t, auth, taskID, taskauthority.Generation(1))
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopen := taskauthority.CanonicalReopenRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       "reopen",
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-reopen-target-adv"), reopen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Reopen(op, reopen); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+
+	// A retry pinned to generation 1 observes generation 2 current: typed
+	// target conflict, nothing released.
+	pinned := taskauthority.Generation(1)
+	pinnedOpts := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &pinned}
+	rec := &recordingTeardown{alive: true}
+	_, retErr := RetireTask(pinnedOpts, rec, fakeRetirementJournals{}, auth)
+	if retErr == nil {
+		t.Fatal("pinned retry must fail closed")
+	}
+	var conflict *RetirementTargetConflictError
+	if !errors.As(retErr, &conflict) {
+		t.Fatalf("pinned retry error = %v, want *RetirementTargetConflictError", retErr)
+	}
+	if conflict.Target != 1 || conflict.Current != 2 {
+		t.Fatalf("conflict = %+v, want target 1 / current 2", conflict)
+	}
+	if len(rec.disposed) != 0 || len(rec.returned) != 0 {
+		t.Fatalf("pinned retry released resources: disposed=%v returned=%v", rec.disposed, rec.returned)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg2.Generation != 2 || agg2.Phase != taskauthority.PhaseQueued || agg2.CleanupClaim != nil {
+		t.Fatalf("pinned retry disturbed the reopened generation: %+v", agg2)
+	}
+}
+
+// TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration proves the
+// invocation binding is enforced BEFORE the retired-phase replay (BEO-16/P1a):
+// a teardown pinned to generation 1 that arrives after the task reopened to
+// generation 2 AND generation 2 was itself retired fails closed with the
+// typed target conflict — it is never reported as a successful replay of
+// generation 2's retirement and never releases anything. Only a replay pinned
+// to the exact current generation may replay.
+// TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration proves the
+// invocation binding is enforced BEFORE the retired-phase replay (BEO-16/P1a):
+// a teardown pinned to generation 1 that arrives after the task reopened to
+// generation 2 AND generation 2 is itself already retired (claim still active,
+// cleanup interrupted) fails closed with the typed target conflict — it is
+// never reported as a successful replay of generation 2's retirement and
+// never resumes its cleanup. Only a replay pinned to the exact current
+// generation may replay.
+func TestRetirementPinnedRetryNeverReplaysNewerRetiredGeneration(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "pinned-replay"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
+
+	// Generation-1 retirement completes normally (claim completed).
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	first := &recordingTeardown{alive: true}
+	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("generation-1 teardown: %v", err)
+	}
+
+	// Reopen to generation 2; its teardown retires it but the cleanup is
+	// interrupted (claim stays ACTIVE on the retired generation 2).
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopen := taskauthority.CanonicalReopenRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       "reopen",
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-reopen-pinned-replay"), reopen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Reopen(op, reopen); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2")
+	seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-2", "fence-ep-2")
+	writeRetireMeta(t, homeDir, taskID, "@2", wtDir)
+	target2 := taskauthority.Generation(2)
+	secondOpts := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &target2}
+	second := &recordingTeardown{alive: true, disposeErr: errors.New("window busy")}
+	if _, err := RetireTask(secondOpts, second, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup for generation 2")
+	}
+	aggRet, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aggRet.Generation != 2 || aggRet.Phase != taskauthority.PhaseRetired || aggRet.CleanupClaim == nil || aggRet.CleanupClaim.Generation != 2 || aggRet.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("generation 2 not retired with active claim: %+v", aggRet)
+	}
+
+	// A delayed retry pinned to generation 1 observes generation 2 current
+	// (retired, claim active): typed target conflict — never a Replayed
+	// success for generation 2, never a resume of its cleanup.
+	pinned := taskauthority.Generation(1)
+	pinnedOpts := Options{HomeDir: homeDir, ID: taskID, Force: true, ExpectedGeneration: &pinned}
+	rec := &recordingTeardown{alive: true}
+	_, retErr := RetireTask(pinnedOpts, rec, fakeRetirementJournals{}, auth)
+	if retErr == nil {
+		t.Fatal("pinned retry must fail closed, not replay the newer retirement")
+	}
+	var conflict *RetirementTargetConflictError
+	if !errors.As(retErr, &conflict) {
+		t.Fatalf("pinned retry error = %v, want *RetirementTargetConflictError", retErr)
+	}
+	if conflict.Target != 1 || conflict.Current != 2 {
+		t.Fatalf("conflict = %+v, want target 1 / current 2", conflict)
+	}
+	if len(rec.disposed) != 0 || len(rec.returned) != 0 {
+		t.Fatalf("pinned retry released resources: disposed=%v returned=%v", rec.disposed, rec.returned)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg2.Generation != 2 || agg2.Phase != taskauthority.PhaseRetired || agg2.CleanupClaim == nil || agg2.CleanupClaim.Generation != 2 || agg2.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("generation-2 retirement disturbed: %+v", agg2)
+	}
+	if agg2.Retirement == nil || agg2.Retirement.Endpoint == nil || agg2.Retirement.Endpoint.LeaseID != "lease-ep-2" {
+		t.Fatalf("generation-2 evidence disturbed: %+v", agg2.Retirement)
+	}
+
+	// The exact-current retry (pinned to generation 2) still resumes the
+	// interrupted generation-2 cleanup and completes it.
+	resume := &recordingTeardown{alive: true}
+	if _, err := RetireTask(secondOpts, resume, fakeRetirementJournals{}, auth); err != nil {
+		t.Fatalf("generation-2 cleanup resume: %v", err)
+	}
+	if len(resume.disposed) != 1 || resume.disposed[0].Handle != "@2" {
+		t.Fatalf("resume disposed=%+v, want generation-2 endpoint @2", resume.disposed)
+	}
+	agg3, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg3.CleanupClaim == nil || agg3.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("generation-2 claim not completed: %+v", agg3.CleanupClaim)
+	}
+	hist, err := auth.GetGeneration(mustTaskID(t, taskID), taskauthority.Generation(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != taskauthority.CleanupCompleted {
+		t.Fatalf("generation-1 record disturbed: %+v", hist.CleanupClaim)
 	}
 }
