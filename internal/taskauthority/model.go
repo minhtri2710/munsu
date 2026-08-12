@@ -239,12 +239,55 @@ type LaunchEvidence struct {
 // release only resources still owned by that generation and for diagnostics.
 // The retired generation's active Endpoint/Worktree are nil: it no longer acts
 // as an active binding owner, while the evidence remains durably rereadable.
+// The cleanup claim bound to the same retirement is a sibling record: the
+// evidence pins what may be released, the claim serializes WHEN.
 type RetirementEvidence struct {
 	OperationID string           `json:"operation_id,omitempty"`
 	Generation  Generation       `json:"generation"`
 	RetiredAt   int64            `json:"retired_at,omitempty"`
 	Endpoint    *EndpointBinding `json:"endpoint,omitempty"`
 	Worktree    *WorktreeBinding `json:"worktree,omitempty"`
+}
+
+// CleanupStatus is the reconciliation state of a durable cleanup claim.
+type CleanupStatus string
+
+const (
+	// CleanupActive is the claim state from the moment the retirement commits:
+	// the generation's resource cleanup is in flight (or crashed mid-flight)
+	// and every lifecycle/acquisition mutation on the task is rejected until
+	// the claim is reconciled.
+	CleanupActive CleanupStatus = "active"
+	// CleanupCompleted marks the claim reconciled after all evidence-pinned
+	// releases and projection removal succeeded: the task may be reopened.
+	CleanupCompleted CleanupStatus = "completed"
+	// CleanupAborted marks the claim released by explicit operator action
+	// WITHOUT cleanup completing: the task may be reopened (the retired
+	// generation's preserved evidence remains as a historical record, and a
+	// later teardown retry re-activates the claim and resumes cleanup).
+	CleanupAborted CleanupStatus = "aborted"
+)
+
+// CleanupClaim is the durable canonical cleanup/disposal claim recorded on the
+// current Task Aggregate while one retirement's cleanup is in flight
+// (BEO-16/P1a). It is committed atomically with the Retire transition, so a
+// retired generation is claimed from the instant the retirement commits. While
+// the claim is ACTIVE, Reopen/BindEndpoint/BindWorktree and every other
+// task-scoped mutation fails closed — a concurrent actor can never land a
+// reopen or acquisition between a fleet-side revalidation (which holds the
+// task lock only for the read) and the external backend/filesystem action that
+// follows it, because the durable claim keeps the task pinned even after the
+// lock is released. The claim is reconciled by the cleanup continuation
+// operations (BeginCleanup/CompleteCleanup/AbortCleanup), which carry the
+// claim's owning identity (the stable retirement Operation ID and the cleaned
+// generation) and are the only mutations allowed while the claim is active.
+// taskauthority persists the claim opaquely; Fleet owns the lifecycle.
+type CleanupClaim struct {
+	OperationID  string        `json:"operation_id"`
+	Generation   Generation    `json:"generation"`
+	Status       CleanupStatus `json:"status"`
+	ClaimedAt    int64         `json:"claimed_at"`
+	ReconciledAt int64         `json:"reconciled_at,omitempty"`
 }
 
 // Aggregate is the authoritative record of one Task Generation.
@@ -264,6 +307,7 @@ type Aggregate struct {
 	LaunchEvidence   *LaunchEvidence     `json:"launch_evidence,omitempty"`
 	Transfer         *TransferState      `json:"transfer,omitempty"`
 	Retirement       *RetirementEvidence `json:"retirement,omitempty"`
+	CleanupClaim     *CleanupClaim       `json:"cleanup_claim,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -353,6 +397,11 @@ func validateAggregate(agg Aggregate) error {
 			return err
 		}
 	}
+	if agg.CleanupClaim != nil {
+		if err := validateCleanupClaim(*agg.CleanupClaim); err != nil {
+			return err
+		}
+	}
 	if agg.Launch != nil {
 		if err := validateLaunchIntent(*agg.Launch); err != nil {
 			return err
@@ -393,6 +442,27 @@ func validateRetirementEvidence(ev RetirementEvidence) error {
 		if err := validateWorktreeBinding(*ev.Worktree); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateCleanupClaim checks the durable cleanup claim shape: a safe owning
+// retirement Operation ID, a valid cleaned generation, a valid status, and a
+// claimed timestamp.
+func validateCleanupClaim(claim CleanupClaim) error {
+	if claim.OperationID == "" || strings.ContainsAny(claim.OperationID, `/\\`) {
+		return validationError("cleanup claim missing operation id")
+	}
+	if err := claim.Generation.Validate(); err != nil {
+		return err
+	}
+	switch claim.Status {
+	case CleanupActive, CleanupCompleted, CleanupAborted:
+	default:
+		return validationError("cleanup claim has invalid status %q", claim.Status)
+	}
+	if claim.ClaimedAt <= 0 {
+		return validationError("cleanup claim missing claimed timestamp")
 	}
 	return nil
 }
@@ -645,6 +715,10 @@ func (a Aggregate) clone() Aggregate {
 			e.Worktree = &cp
 		}
 		out.Retirement = &e
+	}
+	if a.CleanupClaim != nil {
+		cp := *a.CleanupClaim
+		out.CleanupClaim = &cp
 	}
 	if a.Launch != nil {
 		l := *a.Launch

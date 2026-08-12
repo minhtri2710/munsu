@@ -394,6 +394,12 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 	if err := c.checkReservationFence(cur, nil); err != nil {
 		return Outcome{}, err
 	}
+	// An ACTIVE cleanup claim pins the task until cleanup completes or aborts:
+	// a retired-but-unreconciled generation can never be reopened (BEO-16/P1a
+	// durable disposal claim).
+	if err := c.checkCleanupFence(cur, nil); err != nil {
+		return Outcome{}, err
+	}
 	if !cur.Phase.terminal() {
 		return Outcome{}, preconditionError("reopen requires terminal task")
 	}

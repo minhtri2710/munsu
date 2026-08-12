@@ -54,9 +54,116 @@ func (e *RetirementCleanupPendingError) Unwrap() error { return e.CleanupErr }
 // taskRetireOperationID returns the stable Task Operation identity of the
 // retirement transition for one task generation (ADR-0007 §6): retries replay
 // the durable receipt idempotently instead of re-committing, and a reopened
-// generation retires under its own identity.
+// generation retires under its own identity. It is also the owning identity
+// of the durable cleanup claim committed with the retirement.
 func taskRetireOperationID(taskID string, generation taskauthority.Generation) string {
 	return fmt.Sprintf("task-retire-%s-%s", taskID, generation)
+}
+
+// taskCleanupOperationID returns a fresh Task Operation identity for one
+// cleanup-continuation action (begin/complete/abort) of one retirement's
+// durable cleanup claim. It is deliberately NOT deterministic: a repeat of an
+// abort must re-evaluate against current state (a teardown retry can
+// re-activate an aborted claim), so the continuation ops do not rely on
+// receipt replay — the claim's own stable identity is the retirement
+// Operation ID carried by the request.
+func taskCleanupOperationID(kind, taskID string, generation taskauthority.Generation) string {
+	return fmt.Sprintf("task-cleanup-%s-%s-%s-%d", kind, taskID, generation, time.Now().UnixNano())
+}
+
+// beginRetirementCleanup asserts (or re-asserts) the durable cleanup claim for
+// the retired generation on the current aggregate. It is idempotent: an
+// already-active claim with the same owning identity is a no-op (no revision
+// advance), an aborted claim is re-activated under the same identity, and a
+// completed claim is left untouched (the caller skips completed claims before
+// calling this).
+func beginRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+	cur, err := authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("resolving current state for cleanup claim: %w", err)
+	}
+	req := taskauthority.CanonicalBeginCleanupRequest{
+		HomeID:           authority.HomeID(),
+		TaskID:           taskID,
+		Precondition:     domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
+		ClaimGeneration:  claimGen,
+		Reason:           "retirement cleanup",
+	}
+	opID, err := domain.NewOperationID(taskCleanupOperationID("begin", taskID.Value(), claimGen))
+	if err != nil {
+		return fmt.Errorf("cleanup begin operation identity: %w", err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return fmt.Errorf("cleanup begin operation: %w", err)
+	}
+	if _, err := authority.BeginCleanup(op, req); err != nil {
+		return err
+	}
+	return nil
+}
+
+// completeRetirementCleanup reconciles the active cleanup claim to completed
+// after all evidence-pinned releases and projection removal succeeded,
+// releasing the task for reopen.
+func completeRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+	cur, err := authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("resolving current state to complete cleanup claim: %w", err)
+	}
+	req := taskauthority.CanonicalCompleteCleanupRequest{
+		HomeID:           authority.HomeID(),
+		TaskID:           taskID,
+		Precondition:     domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
+		ClaimGeneration:  claimGen,
+		Reason:           "retirement cleanup complete",
+	}
+	opID, err := domain.NewOperationID(taskCleanupOperationID("complete", taskID.Value(), claimGen))
+	if err != nil {
+		return fmt.Errorf("cleanup complete operation identity: %w", err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return fmt.Errorf("cleanup complete operation: %w", err)
+	}
+	if _, err := authority.CompleteCleanup(op, req); err != nil {
+		return err
+	}
+	return nil
+}
+
+// AbortRetirementCleanup releases the active cleanup claim of the given
+// retired generation WITHOUT completing cleanup (operator escape hatch for a
+// stuck claim): the task becomes reopenable, the retired generation's
+// preserved evidence remains as a historical record, and a later teardown
+// retry re-activates the claim and resumes cleanup.
+func AbortRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, claimGen taskauthority.Generation) error {
+	cur, err := authority.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("resolving current state to abort cleanup claim: %w", err)
+	}
+	req := taskauthority.CanonicalAbortCleanupRequest{
+		HomeID:           authority.HomeID(),
+		TaskID:           taskID,
+		Precondition:     domain.Of(uint64(cur.Generation), uint64(cur.Revision)),
+		ClaimOperationID: taskRetireOperationID(taskID.Value(), claimGen),
+		ClaimGeneration:  claimGen,
+		Reason:           "operator abort",
+	}
+	opID, err := domain.NewOperationID(taskCleanupOperationID("abort", taskID.Value(), claimGen))
+	if err != nil {
+		return fmt.Errorf("cleanup abort operation identity: %w", err)
+	}
+	op, err := domain.NewOperation(opID, req)
+	if err != nil {
+		return fmt.Errorf("cleanup abort operation: %w", err)
+	}
+	if _, err := authority.AbortCleanup(op, req); err != nil {
+		return err
+	}
+	return nil
 }
 
 // retireTaskAuthoritatively commits the retired phase transition through the
@@ -242,8 +349,16 @@ func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthorit
 // ownership changed since cleanup began (BEO-16/P1a TOCTOU guard). It is
 // called AFTER the probe and IMMEDIATELY BEFORE each destructive action
 // (Dispose, worktree return, projection removal) so a stale snapshot can never
-// authorize destructive cleanup against current runtime state. It fails
-// closed — nothing released, cleanup stays pending — when:
+// authorize destructive cleanup against current runtime state. The read also
+// verifies the DURABLE cleanup claim for the cleaned generation is still
+// active and owned by this retirement (the exact stable retirement Operation
+// identity): after the lock is released, the durable claim — not the lock —
+// is what keeps Reopen/BindEndpoint/acquisition from landing before the
+// external backend/filesystem action. It fails closed — nothing released,
+// cleanup stays pending — when:
+//   - the cleanup claim is missing, reconciled, or owned by a different
+//     retirement (nothing may be released without the durable claim pinning
+//     the task), or
 //   - the current generation advanced (revision moved) since the initial
 //     snapshot, or a reopen landed and the newer generation owns any
 //     evidence-pinned identity (currentOwnershipConflict), or
@@ -251,10 +366,18 @@ func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthorit
 //     replaced (identity compare), or
 //   - the still-current retired generation is no longer the generation the
 //     evidence pins.
-func revalidateRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, ev *taskauthority.RetirementEvidence, initial *taskauthority.Aggregate) (taskauthority.Aggregate, error) {
+//
+// claimGen is the generation whose cleanup is claimed (the retired
+// generation); ev may be nil when the retired generation preserved no
+// resource evidence.
+func revalidateRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, ev *taskauthority.RetirementEvidence, claimGen taskauthority.Generation, initial *taskauthority.Aggregate) (taskauthority.Aggregate, error) {
 	cur, err := authority.CurrentLocked(taskID)
 	if err != nil {
 		return taskauthority.Aggregate{}, fmt.Errorf("re-reading current task state under lock: %w", err)
+	}
+	claim := cur.CleanupClaim
+	if claim == nil || claim.Status != taskauthority.CleanupActive || claim.OperationID != taskRetireOperationID(taskID.Value(), claimGen) || claim.Generation != claimGen {
+		return taskauthority.Aggregate{}, fmt.Errorf("task %s cleanup claim for generation %s is not active and owned by this retirement (status %v); refusing destructive cleanup", cur.TaskID, claimGen, cleanupStatusLabel(claim))
 	}
 	if err := currentOwnershipConflict(&cur, ev); err != nil {
 		return taskauthority.Aggregate{}, err
@@ -280,6 +403,15 @@ func revalidateRetirementCleanup(authority *taskauthority.Canonical, taskID doma
 		}
 	}
 	return cur, nil
+}
+
+// cleanupStatusLabel renders a cleanup claim's reconciliation status for
+// diagnostics (nil claim included).
+func cleanupStatusLabel(claim *taskauthority.CleanupClaim) string {
+	if claim == nil {
+		return "absent"
+	}
+	return string(claim.Status)
 }
 
 // sameRetiredEndpoint compares the exact retired endpoint identity
@@ -385,6 +517,31 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		}
 	}
 
+	// The durable cleanup claim gates every lifecycle/acquisition mutation
+	// while cleanup is in flight (BEO-16/P1a): it is committed atomically with
+	// the retirement, so Reopen/BindEndpoint/acquisition fail closed from the
+	// moment the retire commits. The claim outlives the task-scope lock held
+	// by the revalidation fences and keeps the task pinned across the external
+	// backend/filesystem actions that follow each fence — closing the
+	// post-unlock window. A claim a previous run already reconciled to
+	// completed means the cleanup finished: nothing is re-run and the result
+	// reports the already-cleaned state.
+	claimGen := committed.Generation
+	curForClaim, err := authority.Get(taskID)
+	if err != nil {
+		return cleanupPending(fmt.Errorf("teardown %s: resolving current state for cleanup claim: %w", opts.ID, err))
+	}
+	if curForClaim.CleanupClaim != nil && curForClaim.CleanupClaim.Status == taskauthority.CleanupCompleted && curForClaim.CleanupClaim.Generation == claimGen {
+		result.Steps = append(result.Steps, fmt.Sprintf("cleanup already completed for generation %s", claimGen))
+		return result, nil
+	}
+	// Assert (or re-assert) the claim before any probe/release; a crash or an
+	// explicit abort is reconciled here (the claim is re-activated under the
+	// same stable retirement identity).
+	if err := beginRetirementCleanup(authority, taskID, claimGen); err != nil {
+		return cleanupPending(fmt.Errorf("teardown %s: asserting cleanup claim: %w", opts.ID, err))
+	}
+
 	// Resolve the authoritative cleanup identity from the committed canonical
 	// retirement evidence of the exact retired generation — never from the
 	// mutable .meta projection. The evidence pins the endpoint/worktree lease
@@ -420,7 +577,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// aggregate, never the initial snapshot (BEO-16/P1a TOCTOU guard). A
 		// concurrent reopen/rebind between the probe and this re-read fails
 		// closed — cleanup pending, nothing released.
-		cur, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current)
+		cur, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: post-probe ownership revalidation: %w", opts.ID, err))
 		}
@@ -455,7 +612,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				// landed since the authorization can never authorize disposing a
 				// resource now owned by the newer generation (BEO-16/P1a TOCTOU
 				// guard).
-				if _, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current); err != nil {
+				if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 					return cleanupPending(fmt.Errorf("teardown %s: dispose fence: %w", opts.ID, err))
 				}
 				request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
@@ -505,7 +662,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			// reopen/rebind that landed since the probe can never authorize
 			// returning a resource now owned by the reopened generation
 			// (BEO-16/P1a TOCTOU guard).
-			if _, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current); err != nil {
+			if _, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current); err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: worktree return fence: %w", opts.ID, err))
 			}
 			if err := backend.ReturnWorktree(opts.HomeDir, wtPath); err != nil {
@@ -529,7 +686,7 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		// current generation. A reopen that landed after the initial read fails
 		// closed — the projections describe the current task and must not be
 		// destroyed (BEO-16/P1a TOCTOU guard).
-		cur, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current)
+		cur, err := revalidateRetirementCleanup(authority, taskID, ev, claimGen, evidence.current)
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: projection cleanup fence: %w", opts.ID, err))
 		}
@@ -617,6 +774,16 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			}
 		}
 	}
+
+	// Reconcile the durable cleanup claim: every evidence-pinned release and
+	// projection removal succeeded, so the claim completes and the task
+	// becomes reopenable (BEO-16/P1a completion reconciliation). A crash or
+	// failure before this commit leaves the claim active and the next retry
+	// resumes cleanup idempotently.
+	if err := completeRetirementCleanup(authority, taskID, claimGen); err != nil {
+		return cleanupPending(fmt.Errorf("teardown %s: completing cleanup claim: %w", opts.ID, err))
+	}
+	result.Steps = append(result.Steps, fmt.Sprintf("cleanup claim completed for generation %s", claimGen))
 
 	return result, nil
 }

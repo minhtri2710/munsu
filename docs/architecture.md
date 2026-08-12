@@ -122,12 +122,25 @@ probe of an expected handle with no acquisition record (e.g. a mutable `.meta`
 projection) is never promoted and fails closed. An incomplete/stale proof or an
 ambiguous reading is demoted to `unknown`/`stale` and fails closed — nothing is
 disposed or relaunched on ambiguous state. Retirement closes the probe→dispose
-TOCTOU window with an authoritative re-read/compare-and-fence: the current
-aggregate is re-read under the task-authority lock (`CurrentLocked`) AFTER the
-probe and IMMEDIATELY BEFORE each destructive action (Dispose, worktree
-return, projection removal), failing `cleanup-pending` without releasing
-anything when generation/revision advanced, a reopen owns any evidence-pinned
-identity, or the preserved retirement evidence changed. `Backend.Alive` (the
+TOCTOU window with BOTH a durable canonical cleanup claim AND an authoritative
+re-read/compare-and-fence: the retirement transition commits a durable
+`CleanupClaim` (active) atomically with the retired phase, and every
+Reopen/BindEndpoint/BindWorktree/acquisition/lifecycle mutation fails closed
+while the claim is active — so even though each revalidation fence
+(`CurrentLocked`) holds the task-scope lock only for the read, the durable
+claim keeps the task pinned across the external backend/filesystem actions
+(Dispose, worktree return, the projection multi-remove sequence) that follow
+it; a concurrent reopen/rebind between a fence and an action is rejected, not
+merely detected. The claim is reconciled by the cleanup continuation
+operations: `CompleteCleanup` (all evidence-pinned releases + projection
+removal succeeded — the task becomes reopenable), `AbortCleanup` (operator
+escape hatch — the task becomes reopenable without cleanup, and a teardown
+retry re-activates the claim), and the idempotent `BeginCleanup` assert
+(resumed after a crash or abort). The fences additionally fail
+`cleanup-pending` without releasing anything when the claim is missing/
+foreign/reconciled, when generation/revision advanced, when a reopen owns any
+evidence-pinned identity, or when the preserved retirement evidence changed.
+`Backend.Alive` (the
 former boolean liveness surface) is fully removed, and the typed
 `EndpointObservation.Alive()` compatibility helper is deleted as well: every
 session adapter exposes a structured probe (`CheckAlive`/`CheckAgentAlive`);

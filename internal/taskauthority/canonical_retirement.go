@@ -77,6 +77,17 @@ func (c *Canonical) Retire(op domain.Operation, req CanonicalRetireRequest) (Out
 		}
 		next.Endpoint = nil
 		next.Worktree = nil
+		// A durable cleanup claim is committed atomically WITH the retirement
+		// (BEO-16/P1a): the generation is pinned against Reopen/BindEndpoint/
+		// acquisition from the instant the retire commits, so no window exists
+		// between the retirement transition and the fleet cleanup claim. The
+		// claim is reconciled by CompleteCleanup/AbortCleanup.
+		next.CleanupClaim = &CleanupClaim{
+			OperationID: op.ID.Value(),
+			Generation:  cur.Generation,
+			Status:      CleanupActive,
+			ClaimedAt:   c.now().UnixNano(),
+		}
 		next.Revision++
 		return next, nil
 	})

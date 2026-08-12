@@ -341,7 +341,7 @@ func commitError(taskID domain.TaskID, prec domain.Precondition, err error) erro
 // one atomic home.Commit that writes the new current document and the
 // operation receipt together.
 func (c *Canonical) mutateTask(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error)) (Outcome, error) {
-	return c.mutateTaskFenced(op, taskID, prec, apply, nil)
+	return c.mutateTaskFenced(op, taskID, prec, apply, nil, nil)
 }
 
 // mutateTaskTransfer runs one task-scoped mutation that is authorized to
@@ -349,10 +349,57 @@ func (c *Canonical) mutateTask(op domain.Operation, taskID domain.TaskID, prec d
 // reservation. gate must match the current reservation's ID and fence token;
 // the common fence check rejects any other mutation on a reserved task.
 func (c *Canonical) mutateTaskTransfer(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, gate reservationGate, apply func(Aggregate) (Aggregate, error)) (Outcome, error) {
-	return c.mutateTaskFenced(op, taskID, prec, apply, &gate)
+	return c.mutateTaskFenced(op, taskID, prec, apply, &gate, nil)
 }
 
-// mutationGate is the internal transfer-continuation capability. It is built
+// mutateTaskCleanup runs one task-scoped mutation that is authorized to
+// continue the cleanup state machine on a task with an active cleanup claim.
+// gate must match the current claim's owning identity (the stable retirement
+// Operation ID and the cleaned generation); the common cleanup fence rejects
+// any other mutation while the claim is active. It is the cleanup analogue of
+// mutateTaskTransfer: the continuation capability is built only inside the
+// cleanup boundary operations from the request's claim identity, never from a
+// raw caller boolean.
+func (c *Canonical) mutateTaskCleanup(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, gate cleanupGate, apply func(Aggregate) (Aggregate, error)) (Outcome, error) {
+	return c.mutateTaskFenced(op, taskID, prec, apply, nil, &gate)
+}
+
+// cleanupGate is the internal cleanup-continuation capability. It is built
+// only inside the cleanup boundary operations (BeginCleanup/CompleteCleanup/
+// AbortCleanup) from the request's claim identity (the stable retirement
+// Operation ID and the cleaned generation), never accepted from a caller as a
+// raw bypass boolean or string. The common cleanup fence verifies it matches
+// the current active claim before allowing a mutation on a claimed task.
+type cleanupGate struct {
+	operationID string
+	generation  Generation
+}
+
+// checkCleanupFence fails closed when the current aggregate has an ACTIVE
+// cleanup claim and the mutation is not a cleanup continuation bound to that
+// exact claim identity (BEO-16/P1a durable disposal claim). A nil gate (every
+// ordinary lifecycle/dispatch/binding/reopen mutation) is rejected while the
+// claim is active, so a concurrent Reopen/BindEndpoint/acquisition can never
+// land between a fleet revalidation and the external action that follows it:
+// the claim is durable and outlives the task-scope lock. A claim that is
+// completed or aborted (reconciled) does not block. A stale or foreign gate
+// fails closed even with the right task, so no other actor can reconcile or
+// bypass the claim.
+func (c *Canonical) checkCleanupFence(cur Aggregate, gate *cleanupGate) error {
+	claim := cur.CleanupClaim
+	if claim == nil || claim.Status != CleanupActive {
+		return nil
+	}
+	if gate == nil {
+		return conflictError(ErrConflict, "task %s generation %s has an active cleanup claim (cleaning generation %s); lifecycle and acquisition mutations fail closed until cleanup completes or aborts", cur.TaskID, cur.Generation, claim.Generation)
+	}
+	if gate.operationID != claim.OperationID || gate.generation != claim.Generation {
+		return conflictError(ErrConflict, "task %s generation %s cleanup claim fence mismatch: the mutation is not a continuation of the active cleanup claim (generation %s)", cur.TaskID, cur.Generation, claim.Generation)
+	}
+	return nil
+}
+
+// reservationGate is the internal transfer-continuation capability. It is built
 // only inside the transfer boundary operations from the request's reservation
 // ID and fence token, never accepted from a caller as a raw bypass boolean or
 // string. The common mutation fence verifies it matches the current
@@ -394,7 +441,7 @@ func (c *Canonical) checkMutableCurrent(cur Aggregate) error {
 	return nil
 }
 
-func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error), gate *reservationGate) (Outcome, error) {
+func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, prec domain.Precondition, apply func(Aggregate) (Aggregate, error), gate *reservationGate, cleanup *cleanupGate) (Outcome, error) {
 	if err := op.Validate(); err != nil {
 		return Outcome{}, err
 	}
@@ -424,11 +471,15 @@ func (c *Canonical) mutateTaskFenced(op domain.Operation, taskID domain.TaskID, 
 		return Outcome{}, err
 	}
 	// Reject non-current/superseded generations first, independently of
-	// Transfer state; then apply the active-reservation fence for current tasks.
+	// Transfer/cleanup state; then apply the active-reservation fence and the
+	// active-cleanup-claim fence for current tasks.
 	if err := c.checkMutableCurrent(doc.Aggregate); err != nil {
 		return Outcome{}, err
 	}
 	if err := c.checkReservationFence(doc.Aggregate, gate); err != nil {
+		return Outcome{}, err
+	}
+	if err := c.checkCleanupFence(doc.Aggregate, cleanup); err != nil {
 		return Outcome{}, err
 	}
 	next, err := apply(doc.Aggregate)

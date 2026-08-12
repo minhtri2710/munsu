@@ -431,19 +431,55 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 		t.Fatalf("BindEndpoint: %v", err)
 	}
 
-	// Retire generation 1 (revision 4), preserving the ownership evidence.
+	// Retire generation 1 (revision 4), preserving the ownership evidence and
+	// committing the durable active cleanup claim atomically.
 	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
 	if _, err := c.Retire(mustOperation(t, "op-reopen-hist-retire", req), req); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
-
-	// Reopen into generation 2.
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupActive || agg.CleanupClaim.Generation != 1 || agg.CleanupClaim.OperationID != "op-reopen-hist-retire" {
+		t.Fatalf("retire did not commit the active cleanup claim: %+v", agg.CleanupClaim)
+	}
+	// A retired generation carries an ACTIVE cleanup claim: reopening requires
+	// reconciling the claim first, and any other mutation fails closed.
 	reopen := CanonicalReopenRequest{
 		HomeID:       c.HomeID(),
 		TaskID:       mustTaskID(t, "t1"),
 		Precondition: preconditionOf(1, 4),
 		Reason:       "reopen",
 	}
+	if _, err := c.Reopen(mustOperation(t, "op-reopen-hist-blocked", reopen), reopen); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Reopen with active cleanup claim = %v, want ErrConflict", err)
+	}
+
+	// Complete the cleanup claim (revision 5): the claim is reconciled and
+	// the retired task becomes reopenable.
+	complete := CanonicalCompleteCleanupRequest{
+		HomeID:           c.HomeID(),
+		TaskID:           mustTaskID(t, "t1"),
+		Precondition:     preconditionOf(1, 4),
+		ClaimOperationID: "op-reopen-hist-retire",
+		ClaimGeneration:  Generation(1),
+		Reason:           "cleanup complete",
+	}
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-reopen-hist-complete", complete), complete); err != nil {
+		t.Fatalf("CompleteCleanup: %v", err)
+	}
+	agg, err = c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupCompleted || agg.CleanupClaim.ReconciledAt <= 0 {
+		t.Fatalf("cleanup claim not reconciled to completed: %+v", agg.CleanupClaim)
+	}
+
+	// Reopen into generation 2 (the superseded record keeps revision 6 via
+	// the supersession bump).
+	reopen.Precondition = preconditionOf(1, 5)
 	if _, err := c.Reopen(mustOperation(t, "op-reopen-hist-reopen", reopen), reopen); err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
@@ -457,14 +493,17 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 	if hist.Current {
 		t.Fatalf("historical read reports current truth: %+v", hist)
 	}
-	if hist.Generation != 1 || hist.Phase != PhaseRetired || hist.Revision != 5 {
+	if hist.Generation != 1 || hist.Phase != PhaseRetired || hist.Revision != 6 {
 		// Reopen marks the superseded record with one more revision (the
 		// supersession bump, mirroring the transfer path); the retired phase
 		// and evidence are what the historical read must preserve.
-		t.Fatalf("historical aggregate = gen %s phase %q revision %d, want gen 1 retired revision 5", hist.Generation, hist.Phase, hist.Revision)
+		t.Fatalf("historical aggregate = gen %s phase %q revision %d, want gen 1 retired revision 6", hist.Generation, hist.Phase, hist.Revision)
 	}
 	if hist.Retirement == nil {
 		t.Fatalf("historical retirement evidence missing")
+	}
+	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != CleanupCompleted {
+		t.Fatalf("historical cleanup claim not preserved as completed: %+v", hist.CleanupClaim)
 	}
 	if hist.Retirement.Generation != 1 || hist.Retirement.OperationID != "op-reopen-hist-retire" {
 		t.Fatalf("retirement evidence = %+v, want generation 1 operation op-reopen-hist-retire", hist.Retirement)

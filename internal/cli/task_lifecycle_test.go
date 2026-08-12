@@ -248,3 +248,66 @@ func TestTaskRetryRefusesLiveGeneration(t *testing.T) {
 		t.Fatalf("retry of blocked generation = %v\n%s, want reopen precondition", err, out)
 	}
 }
+
+// TestTaskCleanupAbortReleasesClaimForReopen proves `task cleanup-abort`
+// releases the durable cleanup claim of a retired task with pending cleanup
+// (BEO-16/P1a abort reconciliation): the claim reconciles to aborted, an
+// active-claim reopen is rejected before the abort and accepted after it.
+func TestTaskCleanupAbortReleasesClaimForReopen(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+	auth := testAuthorityFor(t, homeDir)
+	seedAuthorityTask(t, auth, "task")
+
+	retireReq := taskauthority.CanonicalRetireRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "task"),
+		Precondition: domain.Of(1, 1),
+		Reason:       "seed retire",
+	}
+	// The fleet production retirement uses the deterministic retirement
+	// operation identity (task-retire-<id>-<generation>); the abort
+	// continuation derives the same claim identity.
+	if _, err := auth.Retire(mustCanonicalOp(t, "task-retire-task-1", retireReq), retireReq); err != nil {
+		t.Fatal(err)
+	}
+	agg, err := auth.Get(mustTaskIDFor(t, "task"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupActive {
+		t.Fatalf("no active cleanup claim after retire: %+v", agg.CleanupClaim)
+	}
+
+	// A direct reopen is rejected while the claim is active.
+	reopen := taskauthority.CanonicalReopenRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskIDFor(t, "task"),
+		Precondition: domain.Of(1, 2),
+		Reason:       "cli reopen",
+	}
+	if _, err := auth.Reopen(mustCanonicalOp(t, "cli-reopen-blocked", reopen), reopen); err == nil {
+		t.Fatal("reopen with active cleanup claim must fail closed")
+	}
+
+	// The CLI abort command releases the claim.
+	if out, err := runTaskCommand(t, []string{"task", "cleanup-abort", "task", "--home", homeDir}); err != nil {
+		t.Fatalf("cleanup-abort: %v\n%s", err, out)
+	}
+	agg, err = auth.Get(mustTaskIDFor(t, "task"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != taskauthority.CleanupAborted || agg.CleanupClaim.Generation != 1 {
+		t.Fatalf("claim not aborted: %+v", agg.CleanupClaim)
+	}
+
+	// Reopen succeeds after the abort.
+	if out, err := runTaskCommand(t, []string{"task", "reopen", "task", "--home", homeDir}); err != nil {
+		t.Fatalf("reopen after abort: %v\n%s", err, out)
+	}
+	agg, err = auth.Get(mustTaskIDFor(t, "task"))
+	if err != nil || agg.Generation != 2 || agg.Phase != taskauthority.PhaseQueued {
+		t.Fatalf("aggregate after reopen = %+v err=%v", agg, err)
+	}
+}
