@@ -67,8 +67,21 @@ type NoopWatcherHooks struct{}
 func (NoopWatcherHooks) Reconcile(string, bool) error { return nil }
 func (NoopWatcherHooks) Activate(string)              {}
 
+// RunWithProbeAndSender starts the persistent watcher with the given probe,
+// sender, hooks, retirement port and task-state port. It keeps the original
+// pure-polling signature; RunWithProbeSenderAndEvents adds the native event
+// lane (BEO-17/P1b).
 func RunWithProbeAndSender(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (*WakeReason, error) {
-	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, states)
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, states, nil)
+}
+
+// RunWithProbeSenderAndEvents is like RunWithProbeAndSender but also runs the
+// bounded native observation event lane (BEO-17/P1b): a validated event hint
+// triggers an immediate re-probe cycle; every other outcome keeps the polling
+// ticker as the cadence authority (the watcher is never silent). A nil port
+// keeps the watcher on pure polling.
+func RunWithProbeSenderAndEvents(homeDir string, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
+	return run(homeDir, time.NewTicker, signalChannel(), probe, sender, hooks, retirement, states, events)
 }
 
 func signalChannel() <-chan os.Signal {
@@ -77,7 +90,7 @@ func signalChannel() <-chan os.Signal {
 	return sigCh
 }
 
-func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort) (*WakeReason, error) {
+func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-chan os.Signal, probe TaskEndpointProbe, sender BoundSender, hooks WatcherHooks, retirement RetirementPort, states TaskStatePort, events ObservationEventPort) (*WakeReason, error) {
 	acquired, err := AcquireWatch(homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("watcher lock: %w", err)
@@ -108,6 +121,18 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 	ticker := newTicker(watcherPollInterval)
 	defer ticker.Stop()
 
+	// Optional native event lane (BEO-17/P1b): bounded event wait feeding
+	// validated wake hints; every other outcome is absorbed by the lane so
+	// the polling ticker remains the cadence authority and the watcher is
+	// never silent. A closed lane (no event surface, degraded reader) keeps
+	// pure polling.
+	var eventPulses <-chan eventPulse
+	if events != nil {
+		stopLane := make(chan struct{})
+		defer close(stopLane)
+		eventPulses = startEventLane(homeDir, NewEventWaiter(events), stopLane)
+	}
+
 	for {
 		select {
 		case <-sigCh:
@@ -116,6 +141,24 @@ func run(homeDir string, newTicker func(time.Duration) *time.Ticker, sigCh <-cha
 			WriteBeat(homeDir)
 			if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states); err != nil {
 				return nil, err
+			}
+		case pulse, ok := <-eventPulses:
+			if !ok {
+				// Event lane closed (no native surface / degraded): keep pure
+				// polling for the rest of the run.
+				eventPulses = nil
+				continue
+			}
+			if pulse.outcome == EventWaitSignal {
+				// Event-to-reprobe (BEO-17/P1b): a native wake hint only
+				// triggers an immediate re-probe cycle; the cycle re-probes the
+				// exact binding before any recovery/relaunch/dispose decision.
+				// The hint itself is never lifecycle truth and never sets a
+				// Task phase.
+				WriteBeat(homeDir)
+				if _, err := runCycleWithProbeAndSender(homeDir, probe, sender, hooks, retirement, states); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

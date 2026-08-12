@@ -156,6 +156,11 @@ const (
 	SourceInvalid ObservationSource = iota
 	SourceProbe
 	SourceDerived
+	// SourceEvent marks an observation/hint derived from a native event
+	// transport (BEO-17/P1b). Event-derived hints are wake/activity hints only
+	// and are never lifecycle truth; Absent()/Live() require probe or derived
+	// sources and freshness authorization by Fleet.
+	SourceEvent
 )
 
 func (s ObservationSource) String() string {
@@ -164,13 +169,15 @@ func (s ObservationSource) String() string {
 		return "probe"
 	case SourceDerived:
 		return "derived"
+	case SourceEvent:
+		return "event"
 	default:
 		return "invalid"
 	}
 }
 
 func (s ObservationSource) Valid() bool {
-	return s >= SourceProbe && s <= SourceDerived
+	return s >= SourceProbe && s <= SourceEvent
 }
 
 // EndpointRef identifies one exact bound endpoint for a typed probe. Incarnation

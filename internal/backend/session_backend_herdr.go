@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -633,6 +634,15 @@ func (h *HerdrBackend) Teardown(windowID string) error {
 	}
 
 	return nil
+}
+
+// Wait implements ObservationEventSource over the herdr agent status-wait
+// surface (BEO-17/P1b). The backend's configured session and identity are
+// used; wire/protocol detail stays adapter-owned. See HerdrEventSource for
+// the capability/version gate and normalization contract.
+func (h *HerdrBackend) Wait(ctx context.Context, endpoint EndpointRef, after EventCursor) (ObservationSignal, error) {
+	src := &HerdrEventSource{Session: h.Session, CLIPath: ""}
+	return src.Wait(ctx, endpoint, after)
 }
 
 // Capability probes the installed herdr CLI and returns capability info.
