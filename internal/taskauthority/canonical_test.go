@@ -84,7 +84,6 @@ func TestCanonicalCreateGetList(t *testing.T) {
 		t.Fatalf("create outcome = %+v", out)
 	}
 	mustCreate(t, c, "t2")
-
 	agg, err := c.Get(mustTaskID(t, "t1"))
 	if err != nil {
 		t.Fatal(err)
@@ -862,4 +861,44 @@ func mustPathForTest(t *testing.T, h *home.Home, key string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestCanonicalCurrentLockedSerializesWithMutation proves CurrentLocked
+// returns the current authoritative aggregate under the task-scope lock and
+// observes a concurrent mutation's committed state (BEO-16/P1a retirement
+// TOCTOU guard seam): after a mutation commits, the locked re-read reflects
+// the new revision; a superseded generation is not returned as current truth.
+func TestCanonicalCurrentLockedSerializesWithMutation(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+
+	agg, err := c.CurrentLocked(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("CurrentLocked: %v", err)
+	}
+	if agg.TaskID != "t1" || agg.Generation != 1 || agg.Revision != FirstRevision || agg.Phase != PhaseQueued {
+		t.Fatalf("CurrentLocked = %+v", agg)
+	}
+
+	// A committed mutation advances the revision; the next locked re-read
+	// observes it (the fence re-read never sees a stale snapshot).
+	prec := preconditionOf(uint64(agg.Generation), uint64(agg.Revision))
+	block := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, Reason: "test"}
+	op := mustOperation(t, "op-block-t1-locked", block)
+	if _, err := c.Block(op, block); err != nil {
+		t.Fatalf("Block: %v", err)
+	}
+	after, err := c.CurrentLocked(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("CurrentLocked after mutation: %v", err)
+	}
+	if after.Revision != agg.Revision+1 {
+		t.Fatalf("CurrentLocked revision = %d, want %d", after.Revision, agg.Revision+1)
+	}
+
+	// A task that does not exist fails closed with ErrNotFound (same
+	// current-Task-truth contract as Get).
+	if _, err := c.CurrentLocked(mustTaskID(t, "missing")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CurrentLocked(missing) = %v, want ErrNotFound", err)
+	}
 }

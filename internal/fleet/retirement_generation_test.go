@@ -255,12 +255,18 @@ type recordingTeardown struct {
 	returned   []string
 	alive      bool
 	status     *RetirementEndpointStatus // fixed observation; overrides alive when set
+	onProbe    func()                    // executed at the start of Probe (TOCTOU simulation)
+	onDispose  func()                    // executed at the start of Dispose (TOCTOU simulation)
+	onReturn   func()                    // executed at the start of ReturnWorktree (TOCTOU simulation)
 	disposeErr error
 	returnErr  error
 }
 
 func (r *recordingTeardown) RefuseGate() error { return nil }
 func (r *recordingTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
+	if r.onProbe != nil {
+		r.onProbe()
+	}
 	if r.status != nil {
 		return *r.status, nil
 	}
@@ -271,6 +277,9 @@ func (r *recordingTeardown) Probe(string, map[string]string) (RetirementEndpoint
 	return RetirementEndpointStatus{Lifecycle: lifecycle, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceProbe}, nil
 }
 func (r *recordingTeardown) Dispose(_ string, _ map[string]string, req DisposeRequest) error {
+	if r.onDispose != nil {
+		r.onDispose()
+	}
 	r.disposed = append(r.disposed, req)
 	return r.disposeErr
 }
@@ -278,6 +287,9 @@ func (r *recordingTeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*d
 	return QueryDeliveryMergeStatus(ident)
 }
 func (r *recordingTeardown) ReturnWorktree(_ string, path string) error {
+	if r.onReturn != nil {
+		r.onReturn()
+	}
 	r.returned = append(r.returned, path)
 	return r.returnErr
 }
@@ -357,6 +369,205 @@ func TestRetirementAmbiguousObservationNeverDisposes(t *testing.T) {
 				t.Fatalf("%s observation disposed %d endpoints; must never dispose on ambiguity", state, len(rec.disposed))
 			}
 		})
+	}
+}
+
+// reopenTaskGen2 reopens the task to generation 2 and binds the given worktree
+// and endpoint identities on it. It is used by the TOCTOU tests to simulate a
+// concurrent actor re-acquiring resources at exactly the reviewer's window
+// (between the probe and the destructive action).
+func reopenTaskGen2(t *testing.T, auth *taskauthority.Canonical, taskID, wtDir, wtLease, wtFence, epHandle, epLease, epFence string) {
+	t.Helper()
+	agg, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopen := taskauthority.CanonicalReopenRequest{
+		HomeID:       auth.HomeID(),
+		TaskID:       mustTaskID(t, taskID),
+		Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+		Reason:       "reopen",
+	}
+	op, err := domain.NewOperation(mustOpID(t, "op-reopen-"+taskID+"-toctou"), reopen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Reopen(op, reopen); err != nil {
+		t.Fatalf("Reopen during cleanup: %v", err)
+	}
+	seedWorktreeEvidence(t, auth, taskID, wtDir, wtLease, wtFence)
+	seedEndpointEvidence(t, auth, taskID, epHandle, epLease, epFence)
+}
+
+// TestRetirementReopenBetweenProbeAndDisposeFailsClosed proves the current
+// authoritative re-read/compare-and-fence immediately after the probe (and
+// again immediately before Dispose) fails closed when a concurrent reopen
+// re-acquires the SAME retired handle/lease inside the probe window: cleanup
+// stays pending, nothing is disposed, and the reopened generation's canonical
+// binding is untouched (BEO-16/P1a TOCTOU guard).
+func TestRetirementReopenBetweenProbeAndDisposeFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "toctou-reopen"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
+
+	// Commit the generation-1 retirement with interrupted cleanup (the
+	// destructive Dispose never ran).
+	first := &recordingTeardown{alive: true, disposeErr: errors.New("window busy")}
+	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+
+	// A concurrent actor reopens the task and re-acquires the SAME handle
+	// between the probe and the dispose fence (a new lease, so the canonical
+	// operation identities stay unique). The fake teardown runs this at Probe
+	// time — exactly the reviewer's TOCTOU window.
+	second := &recordingTeardown{alive: true, onProbe: func() {
+		reopenTaskGen2(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2", "@1", "lease-ep-2", "fence-ep-2")
+	}}
+	_, err := RetireTask(opts, second, fakeRetirementJournals{}, auth)
+	if err == nil {
+		t.Fatal("expected fail-closed ownership conflict on reopen between probe and dispose")
+	}
+	var pending *RetirementCleanupPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("error = %T %v, want typed RetirementCleanupPendingError", err, err)
+	}
+	if len(second.disposed) != 0 || len(second.returned) != 0 {
+		t.Fatalf("TOCTOU cleanup released resources: disposed=%v returned=%v", second.disposed, second.returned)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg2.Generation != 2 || agg2.Endpoint == nil || agg2.Endpoint.Handle != "@1" || agg2.Endpoint.LeaseID != "lease-ep-2" || agg2.Worktree == nil || agg2.Worktree.LeaseID != "lease-wt-2" {
+		t.Fatalf("generation-2 binding disturbed: %+v", agg2)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); err != nil {
+		t.Fatalf("current projection destroyed: %v", err)
+	}
+}
+
+// TestRetirementReopenBeforeWorktreeReturnFailsClosed proves the worktree
+// return fence fails closed when a concurrent reopen re-acquires the SAME
+// retired worktree path/lease after the (independently fenced) endpoint
+// dispose: the worktree is never returned to the pool and the reopened
+// generation's worktree binding is untouched (BEO-16/P1a TOCTOU guard).
+func TestRetirementReopenBeforeWorktreeReturnFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "toctou-worktree"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
+
+	// Commit the generation-1 retirement with interrupted cleanup at the
+	// worktree return (dispose succeeded, return failed).
+	first := &recordingTeardown{alive: true, returnErr: errors.New("pool busy")}
+	if _, err := RetireTask(opts, first, fakeRetirementJournals{}, auth); err == nil {
+		t.Fatal("expected pending cleanup")
+	}
+
+	// A concurrent actor reopens the task and re-acquires the SAME worktree
+	// path right after the endpoint dispose — before the worktree return fence
+	// (a new lease, so the canonical operation identities stay unique). The
+	// fake runs this at Dispose time.
+	second := &recordingTeardown{alive: true, onDispose: func() {
+		reopenTaskGen2(t, auth, taskID, wtDir, "lease-wt-2", "fence-wt-2", "@2", "lease-ep-2", "fence-ep-2")
+	}}
+	_, err := RetireTask(opts, second, fakeRetirementJournals{}, auth)
+	if err == nil {
+		t.Fatal("expected fail-closed ownership conflict on reopen before worktree return")
+	}
+	var pending *RetirementCleanupPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("error = %T %v, want typed RetirementCleanupPendingError", err, err)
+	}
+	if len(second.returned) != 0 {
+		t.Fatalf("TOCTOU cleanup returned the worktree now owned by generation 2: %v", second.returned)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg2.Generation != 2 || agg2.Worktree == nil || agg2.Worktree.Path != wtDir || agg2.Worktree.LeaseID != "lease-wt-2" {
+		t.Fatalf("generation-2 worktree binding disturbed: %+v", agg2)
+	}
+}
+
+// TestRetirementReopenBeforeProjectionCleanupFailsClosed proves the projection
+// cleanup fence fails closed when a concurrent reopen lands after the
+// (independently fenced) endpoint/worktree release but before any current
+// projection is removed: the task reopened, so .meta/.status/data are NOT
+// destroyed and the reopened generation's projection survives (BEO-16/P1a
+// TOCTOU guard).
+func TestRetirementReopenBeforeProjectionCleanupFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	taskID := "toctou-projection"
+	auth := canonicalMergeTestAuth(t, homeDir, taskID)
+	wtDir := filepath.Join(homeDir, "worktrees", taskID)
+	os.MkdirAll(wtDir, 0755)
+	seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt-1", "fence-wt-1")
+	seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep-1", "fence-ep-1")
+	writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+	opts := Options{HomeDir: homeDir, ID: taskID, Force: true}
+
+	// A concurrent actor reopens the task as soon as the retired endpoint and
+	// worktree have been released (right at ReturnWorktree) — before the
+	// projection removal fence. The fake runs this at ReturnWorktree time.
+	rec := &recordingTeardown{alive: true, onReturn: func() {
+		// Reopen to a NEW generation with its own resources (no identity
+		// overlap): the ownership conflict passes, but the projection fence
+		// must still refuse to remove the CURRENT generation's projections.
+		agg, err := auth.Get(mustTaskID(t, taskID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		reopen := taskauthority.CanonicalReopenRequest{
+			HomeID:       auth.HomeID(),
+			TaskID:       mustTaskID(t, taskID),
+			Precondition: domain.Of(uint64(agg.Generation), uint64(agg.Revision)),
+			Reason:       "reopen",
+		}
+		op, err := domain.NewOperation(mustOpID(t, "op-reopen-"+taskID+"-proj"), reopen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := auth.Reopen(op, reopen); err != nil {
+			t.Fatalf("Reopen during cleanup: %v", err)
+		}
+		newWT := filepath.Join(homeDir, "worktrees", taskID+"-new")
+		os.MkdirAll(newWT, 0755)
+		seedWorktreeEvidence(t, auth, taskID, newWT, "lease-wt-new", "fence-wt-new")
+		seedEndpointEvidence(t, auth, taskID, "@2", "lease-ep-new", "fence-ep-new")
+		writeRetireMeta(t, homeDir, taskID, "@2", newWT)
+	}}
+	_, err := RetireTask(opts, rec, fakeRetirementJournals{}, auth)
+	if err == nil {
+		t.Fatal("expected fail-closed projection fence on reopen before projection cleanup")
+	}
+	var pending *RetirementCleanupPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("error = %T %v, want typed RetirementCleanupPendingError", err, err)
+	}
+	// The current (generation-2) projection must survive.
+	if _, err := os.Stat(filepath.Join(homeDir, "state", taskID+".meta")); err != nil {
+		t.Fatalf("current projection destroyed: %v", err)
+	}
+	agg2, err := auth.Get(mustTaskID(t, taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg2.Generation != 2 || agg2.Endpoint == nil || agg2.Endpoint.Handle != "@2" {
+		t.Fatalf("generation-2 binding disturbed: %+v", agg2)
 	}
 }
 

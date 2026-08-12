@@ -121,12 +121,18 @@ creation receipt, the durable `AcquiredEndpoint`, or the canonical
 probe of an expected handle with no acquisition record (e.g. a mutable `.meta`
 projection) is never promoted and fails closed. An incomplete/stale proof or an
 ambiguous reading is demoted to `unknown`/`stale` and fails closed — nothing is
-disposed or relaunched on ambiguous state. `Backend.Alive` (the former boolean
-liveness surface) is fully removed, and the typed `EndpointObservation.Alive()`
-compatibility helper is deleted as well: every session adapter exposes a
-structured probe (`CheckAlive`/`CheckAgentAlive`); the opaque launch
-incarnation is minted by Fleet and persisted in the `LaunchIntent`/binding
-before acquisition. The static capability matrix
+disposed or relaunched on ambiguous state. Retirement closes the probe→dispose
+TOCTOU window with an authoritative re-read/compare-and-fence: the current
+aggregate is re-read under the task-authority lock (`CurrentLocked`) AFTER the
+probe and IMMEDIATELY BEFORE each destructive action (Dispose, worktree
+return, projection removal), failing `cleanup-pending` without releasing
+anything when generation/revision advanced, a reopen owns any evidence-pinned
+identity, or the preserved retirement evidence changed. `Backend.Alive` (the
+former boolean liveness surface) is fully removed, and the typed
+`EndpointObservation.Alive()` compatibility helper is deleted as well: every
+session adapter exposes a structured probe (`CheckAlive`/`CheckAgentAlive`);
+the opaque launch incarnation is minted by Fleet and persisted in the
+`LaunchIntent`/binding before acquisition. The static capability matrix
 (`backend.Capabilities` / `CapabilityMatrix`) records for each of the five
 backends: create, reservation-aware create, submit, probe (and its exact
 resource granularity), dispose, worktree ownership (a separate provider, never

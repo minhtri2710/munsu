@@ -237,6 +237,71 @@ func currentOwnershipConflict(current *taskauthority.Aggregate, ev *taskauthorit
 	return nil
 }
 
+// revalidateRetirementCleanup performs an authoritative current aggregate
+// re-read under the task-authority lock and fails closed when canonical
+// ownership changed since cleanup began (BEO-16/P1a TOCTOU guard). It is
+// called AFTER the probe and IMMEDIATELY BEFORE each destructive action
+// (Dispose, worktree return, projection removal) so a stale snapshot can never
+// authorize destructive cleanup against current runtime state. It fails
+// closed — nothing released, cleanup stays pending — when:
+//   - the current generation advanced (revision moved) since the initial
+//     snapshot, or a reopen landed and the newer generation owns any
+//     evidence-pinned identity (currentOwnershipConflict), or
+//   - the preserved retirement evidence of the retired generation was
+//     replaced (identity compare), or
+//   - the still-current retired generation is no longer the generation the
+//     evidence pins.
+func revalidateRetirementCleanup(authority *taskauthority.Canonical, taskID domain.TaskID, ev *taskauthority.RetirementEvidence, initial *taskauthority.Aggregate) (taskauthority.Aggregate, error) {
+	cur, err := authority.CurrentLocked(taskID)
+	if err != nil {
+		return taskauthority.Aggregate{}, fmt.Errorf("re-reading current task state under lock: %w", err)
+	}
+	if err := currentOwnershipConflict(&cur, ev); err != nil {
+		return taskauthority.Aggregate{}, err
+	}
+	if initial != nil && cur.Generation == initial.Generation && cur.Revision != initial.Revision {
+		return taskauthority.Aggregate{}, fmt.Errorf("task %s generation %s advanced from revision %d to %d during cleanup; refusing destructive cleanup", cur.TaskID, cur.Generation, initial.Revision, cur.Revision)
+	}
+	// When the retired generation is still current and evidence is preserved,
+	// the retirement evidence must be the same one cleanup started from;
+	// replaced, dropped or identity-changed evidence means canonical state
+	// changed and no destructive action may proceed. A nil evidence (no
+	// bindings were ever owned) pins nothing, so only the current
+	// generation/revision checks above apply.
+	if ev != nil && cur.Generation == ev.Generation {
+		if cur.Retirement == nil || cur.Retirement.OperationID != ev.OperationID || cur.Retirement.Generation != ev.Generation {
+			return taskauthority.Aggregate{}, fmt.Errorf("task %s retirement evidence changed since cleanup began; refusing destructive cleanup", cur.TaskID)
+		}
+		if ev.Endpoint != nil && !sameRetiredEndpoint(cur.Retirement.Endpoint, ev.Endpoint) {
+			return taskauthority.Aggregate{}, fmt.Errorf("task %s retirement endpoint evidence changed; refusing destructive cleanup", cur.TaskID)
+		}
+		if ev.Worktree != nil && !sameRetiredWorktree(cur.Retirement.Worktree, ev.Worktree) {
+			return taskauthority.Aggregate{}, fmt.Errorf("task %s retirement worktree evidence changed; refusing destructive cleanup", cur.TaskID)
+		}
+	}
+	return cur, nil
+}
+
+// sameRetiredEndpoint compares the exact retired endpoint identity
+// (backend/handle/lease/fence/incarnation) preserved in the current evidence
+// against the evidence cleanup started from.
+func sameRetiredEndpoint(a, b *taskauthority.EndpointBinding) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Backend == b.Backend && a.Handle == b.Handle && a.LeaseID == b.LeaseID && a.FenceToken == b.FenceToken && a.Incarnation == b.Incarnation
+}
+
+// sameRetiredWorktree compares the exact retired worktree identity
+// (path/lease/fence) preserved in the current evidence against the evidence
+// cleanup started from.
+func sameRetiredWorktree(a, b *taskauthority.WorktreeBinding) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Path == b.Path && a.LeaseID == b.LeaseID && a.FenceToken == b.FenceToken
+}
+
 // Run fails closed because teardown requires a task-bound endpoint capability.
 // Production callers must compose that capability through RunWithBackend.
 func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalPort, authority *taskauthority.Canonical) (*TeardownResult, error) {
@@ -350,6 +415,15 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
+		// Authoritative current re-read under the task-authority lock AFTER the
+		// probe: the authorization proof must be grounded in the CURRENT
+		// aggregate, never the initial snapshot (BEO-16/P1a TOCTOU guard). A
+		// concurrent reopen/rebind between the probe and this re-read fails
+		// closed — cleanup pending, nothing released.
+		cur, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current)
+		if err != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: post-probe ownership revalidation: %w", opts.ID, err))
+		}
 		// Authorize against the exact canonical EndpointBinding of the retired
 		// generation. Negative exact absence and positive liveness are separate
 		// authorities (BEO-16/P1a): the canonical EndpointBinding is the
@@ -365,8 +439,8 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 			incarnation: ep.Incarnation,
 			leaseID:     ep.LeaseID,
 			fenceToken:  ep.FenceToken,
-			generation:  uint64(evidence.current.Generation),
-			revision:    uint64(evidence.current.Revision),
+			generation:  uint64(cur.Generation),
+			revision:    uint64(cur.Revision),
 			acquired:    true, // canonical EndpointBinding evidence is the acquisition receipt
 		}
 		auth := status.AuthorizedAbsence(proof)
@@ -376,6 +450,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		} else {
 			live := status.AuthorizedLive(proof)
 			if live.Live() {
+				// Compare-and-fence immediately before Dispose: re-read the
+				// current aggregate under the task lock so a reopen/rebind that
+				// landed since the authorization can never authorize disposing a
+				// resource now owned by the newer generation (BEO-16/P1a TOCTOU
+				// guard).
+				if _, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current); err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: dispose fence: %w", opts.ID, err))
+				}
 				request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
 				if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
 					request.DenyWorkspaceClose = true
@@ -418,6 +500,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 					return cleanupPending(fmt.Errorf("teardown %s: pre-return artifact verification failed: %w (use --force to override)", opts.ID, err))
 				}
 			}
+			// Compare-and-fence immediately before ReturnWorktree: the current
+			// canonical ownership is re-validated under the task lock so a
+			// reopen/rebind that landed since the probe can never authorize
+			// returning a resource now owned by the reopened generation
+			// (BEO-16/P1a TOCTOU guard).
+			if _, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current); err != nil {
+				return cleanupPending(fmt.Errorf("teardown %s: worktree return fence: %w", opts.ID, err))
+			}
 			if err := backend.ReturnWorktree(opts.HomeDir, wtPath); err != nil {
 				return cleanupPending(fmt.Errorf("teardown %s: worktree return failed: %w (lease still held)", opts.ID, err))
 			}
@@ -434,6 +524,18 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 	// retirement evidence is never removed here: projection removal must not
 	// erase the durable retirement evidence.
 	if fullCleanup {
+		// Compare-and-fence before any projection/artifact removal: projection
+		// cleanup is only safe while the retired generation is STILL the
+		// current generation. A reopen that landed after the initial read fails
+		// closed — the projections describe the current task and must not be
+		// destroyed (BEO-16/P1a TOCTOU guard).
+		cur, err := revalidateRetirementCleanup(authority, taskID, ev, evidence.current)
+		if err != nil {
+			return cleanupPending(fmt.Errorf("teardown %s: projection cleanup fence: %w", opts.ID, err))
+		}
+		if cur.Generation != committed.Generation {
+			return cleanupPending(fmt.Errorf("teardown %s: task reopened to generation %s during cleanup; refusing to remove current projections", opts.ID, cur.Generation))
+		}
 		// 3. Remove task meta file
 		metaFilePath, err := taskMetaFilePath(opts.HomeDir, opts.ID)
 		if err == nil {
