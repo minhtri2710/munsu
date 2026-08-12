@@ -16,8 +16,8 @@
 // FreshnessUnknown — an adapter cannot attest the opaque launch incarnation.
 // Freshness current-ness and authoritative absence are concluded ONLY by Fleet
 // after matching the observation against the exact canonical binding/generation/
-// revision/fence (see fleet.authorizeObservation). An adapter probe therefore
-// never yields an Absent()/Live() reading on its own.
+// revision/fence (see fleet.authorizeAbsence / authorizeLive). An adapter probe
+// therefore never yields an Absent()/Live() reading on its own.
 package backend
 
 import (
@@ -268,13 +268,10 @@ func (o EndpointObservation) State() EndpointObservationState {
 	}
 }
 
-// Alive returns the coarse summary true for a confirmed-live reading. It is a
-// diagnostic helper only: "false" here means "not proven live", never "dead".
-func (o EndpointObservation) Alive() bool { return o.Lifecycle == LifecycleAlive }
-
 // Live reports a confirmed-alive, current, exact-binding reading and is the
 // only positive readiness condition. It is true only after Fleet authorized
-// freshness as current against the exact canonical binding.
+// freshness as current against the exact canonical binding and the explicit
+// acquisition evidence (BEO-16/P1a).
 func (o EndpointObservation) Live() bool {
 	return o.Lifecycle == LifecycleAlive && o.Freshness == FreshnessCurrent
 }
@@ -331,7 +328,7 @@ func ObservationFromProbeError(err error) EndpointObservation {
 // never returns an Absent() (recovery-eligible) observation because it cannot
 // attest the exact bound incarnation/generation/fence. Callers keep the raw
 // observation as diagnostic input and pass it to Fleet's freshness
-// authorization (authorizeObservation in internal/fleet) for a policy decision.
+// authorization (authorizeAbsence/authorizeLive in internal/fleet) for a policy decision.
 func ObserveEndpoint(bk Backend, handle string) EndpointObservation {
 	ref := EndpointRef{Handle: handle}
 	obs := EndpointObservation{

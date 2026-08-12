@@ -254,12 +254,16 @@ type recordingTeardown struct {
 	disposed   []DisposeRequest
 	returned   []string
 	alive      bool
+	status     *RetirementEndpointStatus // fixed observation; overrides alive when set
 	disposeErr error
 	returnErr  error
 }
 
 func (r *recordingTeardown) RefuseGate() error { return nil }
 func (r *recordingTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
+	if r.status != nil {
+		return *r.status, nil
+	}
 	lifecycle := LifecycleDead
 	if r.alive {
 		lifecycle = LifecycleAlive
@@ -321,6 +325,39 @@ func TestRetirementDisposesAndReturnsOnlyEvidenceOwnedResources(t *testing.T) {
 		t.Fatalf("canonical retirement evidence lost: %+v", agg.Retirement)
 	}
 	_ = result
+}
+
+// TestRetirementAmbiguousObservationNeverDisposes asserts a raw retirement
+// probe that is ambiguous (unknown/stale/unresponsive/starting — anything that
+// is NOT an authorized exact absence and NOT an authorized live reading) never
+// disposes the endpoint: cleanup stays pending and the lease/ownership is
+// retained (BEO-16: unknown != dead, positive liveness needs acquisition
+// evidence).
+func TestRetirementAmbiguousObservationNeverDisposes(t *testing.T) {
+	for _, state := range []EndpointObservationState{EndpointUnknown, EndpointUnresponsive, EndpointStaleIdentity, EndpointStarting} {
+		t.Run(state.String(), func(t *testing.T) {
+			homeDir := t.TempDir()
+			taskID := "amb-retire"
+			auth := canonicalMergeTestAuth(t, homeDir, taskID)
+			wtDir := filepath.Join(homeDir, "worktrees", taskID)
+			os.MkdirAll(wtDir, 0755)
+			seedWorktreeEvidence(t, auth, taskID, wtDir, "lease-wt", "fence-wt")
+			seedEndpointEvidence(t, auth, taskID, "@1", "lease-ep", "fence-ep")
+			writeRetireMeta(t, homeDir, taskID, "@1", wtDir)
+
+			rec := &recordingTeardown{status: func() *RetirementEndpointStatus {
+				s := endpointStatusFromState(state)
+				return &RetirementEndpointStatus{Lifecycle: s.Lifecycle, Responsiveness: s.Responsiveness, Freshness: s.Freshness, Activity: s.Activity, Source: s.Source, Detail: s.Detail}
+			}()}
+			_, err := RetireTask(Options{HomeDir: homeDir, ID: taskID, Force: true}, rec, fakeRetirementJournals{}, auth)
+			if err == nil {
+				t.Fatalf("%s observation must fail closed (cleanup pending), got nil", state)
+			}
+			if len(rec.disposed) != 0 {
+				t.Fatalf("%s observation disposed %d endpoints; must never dispose on ambiguity", state, len(rec.disposed))
+			}
+		})
+	}
 }
 
 func TestRetirementMetaSubstitutionCannotRedirectCleanup(t *testing.T) {

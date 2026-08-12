@@ -18,7 +18,7 @@ func TestEndpointObservationOrthogonalAxes(t *testing.T) {
 
 	// Live/Absent require FreshnessCurrent, which only Fleet authorization sets.
 	live := base(LifecycleAlive, Responsive, FreshnessCurrent, SourceProbe)
-	if !live.Live() || !live.Alive() {
+	if !live.Live() {
 		t.Fatalf("alive/current/probe must be Live: %+v", live)
 	}
 

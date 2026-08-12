@@ -350,36 +350,46 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
-		// Authorize freshness against the exact canonical EndpointBinding of the
-		// retired generation. An incomplete proof (or an ambiguous
+		// Authorize against the exact canonical EndpointBinding of the retired
+		// generation. Negative exact absence and positive liveness are separate
+		// authorities (BEO-16/P1a): the canonical EndpointBinding is the
+		// explicit acquisition receipt for the positive path, and the current
+		// aggregate generation/revision are revalidated before either
+		// conclusion. An incomplete/stale proof (or an ambiguous
 		// starting/unknown/stale/unresponsive reading) fails closed: ownership
 		// is retained, nothing is disposed, and cleanup stays pending. Only an
 		// authorized Absent() skips disposal; only an authorized Live() disposes.
-		auth := status.AuthorizedAgainst(exactEndpointProof{
+		proof := exactEndpointProof{
 			backend:     ep.Backend,
 			handle:      ep.Handle,
 			incarnation: ep.Incarnation,
 			leaseID:     ep.LeaseID,
 			fenceToken:  ep.FenceToken,
-		})
-		switch {
-		case auth.AuthoritativeAbsent():
+			generation:  uint64(evidence.current.Generation),
+			revision:    uint64(evidence.current.Revision),
+			acquired:    true, // canonical EndpointBinding evidence is the acquisition receipt
+		}
+		auth := status.AuthorizedAbsence(proof)
+		if auth.AuthoritativeAbsent() {
 			// Exact structured, Fleet-authorized absence: already gone.
 			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", ep.Handle))
-		case auth.Live():
-			request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
-			if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
-				request.DenyWorkspaceClose = true
+		} else {
+			live := status.AuthorizedLive(proof)
+			if live.Live() {
+				request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
+				if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
+					request.DenyWorkspaceClose = true
+				}
+				if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
+					return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
+				}
+				result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", ep.Handle))
+			} else {
+				// Ambiguous (starting/unknown/stale/unresponsive) or unauthorized:
+				// never dispose, never claim already gone — keep ownership and fail
+				// closed as cleanup pending (BEO-16: unknown != dead).
+				return cleanupPending(fmt.Errorf("teardown %s: endpoint %s observation %s is ambiguous; cleanup pending, lease retained", opts.ID, ep.Handle, live.Lifecycle))
 			}
-			if err := backend.Dispose(opts.HomeDir, meta, request); err != nil {
-				return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
-			}
-			result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", ep.Handle))
-		default:
-			// Ambiguous (starting/unknown/stale/unresponsive) or unauthorized:
-			// never dispose, never claim already gone — keep ownership and fail
-			// closed as cleanup pending (BEO-16: unknown != dead).
-			return cleanupPending(fmt.Errorf("teardown %s: endpoint %s observation %s is ambiguous; cleanup pending, lease retained", opts.ID, ep.Handle, auth.Lifecycle))
 		}
 	}
 

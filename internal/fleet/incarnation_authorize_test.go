@@ -19,8 +19,9 @@ func TestAuthorizeObservationFailsClosedOnIncompleteProof(t *testing.T) {
 	if raw.Absent() || raw.Live() {
 		t.Fatalf("raw probe must not be Live/Absent: %+v", raw)
 	}
-	// Complete canonical proof authorizes an otherwise dead observation to Absent.
-	complete := authorizeObservation(raw, exactEndpointProof{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "lease", fenceToken: "fence"})
+	// Complete canonical proof + current generation/revision authorizes an
+	// otherwise dead observation to Absent via the NEGATIVE authority.
+	complete := authorizeAbsence(raw, exactEndpointProof{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "lease", fenceToken: "fence", generation: 1, revision: 4})
 	if !complete.Absent() || complete.Live() {
 		t.Fatalf("authorized dead observation must be Absent (not Live): %+v", complete)
 	}
@@ -31,10 +32,11 @@ func TestAuthorizeObservationFailsClosedOnIncompleteProof(t *testing.T) {
 	for _, proof := range []exactEndpointProof{
 		{},                             // empty
 		{backend: "tmux", handle: "p"}, // no incarnation/lease/fence
-		{backend: "tmux", handle: "p", incarnation: "inc-1"},               // no lease/fence
-		{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "l"}, // no fence
+		{backend: "tmux", handle: "p", incarnation: "inc-1"},                                // no lease/fence
+		{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "l"},                  // no fence
+		{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "l", fenceToken: "f"}, // no generation/revision
 	} {
-		obs := authorizeObservation(raw, proof)
+		obs := authorizeAbsence(raw, proof)
 		if obs.Absent() || obs.Live() {
 			t.Fatalf("incomplete proof must not authorize recovery: proof=%+v obs=%+v", proof, obs)
 		}
@@ -44,12 +46,70 @@ func TestAuthorizeObservationFailsClosedOnIncompleteProof(t *testing.T) {
 	}
 }
 
+// TestAuthorizeLiveRequiresAcquisitionEvidence asserts positive liveness is
+// NEVER promoted from raw probe liveness alone: the proof must carry an
+// explicit acquisition receipt (acquired) plus complete identity and current
+// generation/revision. A probe of an expected handle with no acquisition
+// record fails closed (ABA: a reused handle cannot become Live()).
+func TestAuthorizeLiveRequiresAcquisitionEvidence(t *testing.T) {
+	rawAlive := backend.EndpointObservation{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe}
+	if rawAlive.Live() || rawAlive.Absent() {
+		t.Fatalf("raw probe must not be Live/Absent: %+v", rawAlive)
+	}
+	complete := exactEndpointProof{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "lease", fenceToken: "fence", generation: 1, revision: 4}
+	// No acquisition evidence: alive raw + complete proof + current gen/rev
+	// must NOT become Live() (P1a adapters cannot attest incarnation).
+	if noEvidence := authorizeLive(rawAlive, complete); noEvidence.Live() {
+		t.Fatalf("alive raw without acquisition evidence must not be Live: %+v", noEvidence)
+	}
+	// With the explicit acquisition receipt the same raw is Live().
+	withEvidence := complete
+	withEvidence.acquired = true
+	if live := authorizeLive(rawAlive, withEvidence); !live.Live() {
+		t.Fatalf("alive raw with acquisition evidence must be Live: %+v", live)
+	}
+	// A non-alive raw (starting/unknown/stale) with full evidence still fails
+	// closed: positive liveness requires an alive/responsive reading.
+	for _, raw := range []backend.EndpointObservation{
+		{Lifecycle: LifecycleStarting, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe},
+		{Lifecycle: LifecycleUnknown, Responsiveness: Responsive, Freshness: FreshnessStale, Activity: ActivityUnknown, Source: SourceProbe},
+		{Lifecycle: LifecycleUnknown, Responsiveness: Unresponsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe},
+	} {
+		if obs := authorizeLive(raw, withEvidence); obs.Live() {
+			t.Fatalf("non-alive raw with evidence must not be Live: %+v", obs)
+		}
+	}
+}
+
+// TestAuthorizeAbsenceRequiresNarrowExactAbsence asserts the NEGATIVE
+// authority only concludes Absent() for a narrow exact structured absence
+// (dead + trusted source) — never for alive/starting/unknown/unresponsive
+// readings, even with a complete current proof.
+func TestAuthorizeAbsenceRequiresNarrowExactAbsence(t *testing.T) {
+	complete := exactEndpointProof{backend: "tmux", handle: "p", incarnation: "inc-1", leaseID: "lease", fenceToken: "fence", generation: 1, revision: 4}
+	for _, raw := range []backend.EndpointObservation{
+		{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe},
+		{Lifecycle: LifecycleStarting, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe},
+		{Lifecycle: LifecycleUnknown, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe},
+		{Lifecycle: LifecycleUnknown, Responsiveness: Unresponsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceProbe},
+	} {
+		if obs := authorizeAbsence(raw, complete); obs.Absent() {
+			t.Fatalf("%+v must not authorize Absent (not a narrow probe/derived dead absence)", raw)
+		}
+	}
+	// A derived-sourced dead reading IS a narrow exact absence.
+	deadDerived := backend.EndpointObservation{Lifecycle: LifecycleDead, Responsiveness: Responsive, Freshness: FreshnessUnknown, Activity: ActivityUnknown, Source: SourceDerived}
+	if obs := authorizeAbsence(deadDerived, complete); !obs.Absent() {
+		t.Fatalf("derived dead must be Absent: %+v", obs)
+	}
+}
+
 // TestReentrantAuthorizeUsesCorrectIncarnation ensures a matching incarnation
 // authorizes current while a stale/foreign incarnation on the proof fails
 // closed (ABA safety at the proof level).
 func TestReentrantAuthorizeUsesCorrectIncarnation(t *testing.T) {
 	raw := backend.ObservationFromProbeError(backend.ErrPaneNotFound)
-	good := authorizeObservation(raw, exactEndpointProof{backend: "tmux", handle: "p", incarnation: "inc-exact", leaseID: "l", fenceToken: "f"})
+	good := authorizeAbsence(raw, exactEndpointProof{backend: "tmux", handle: "p", incarnation: "inc-exact", leaseID: "l", fenceToken: "f", generation: 1, revision: 2})
 	if !good.Absent() || good.Incarnation != "inc-exact" {
 		t.Fatalf("exact-incarnation proof must authorize: %+v", good)
 	}

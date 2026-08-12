@@ -56,7 +56,7 @@ const (
 // backend/handle identify the exact bound endpoint; incarnation is the opaque
 // launch-operation provenance token; leaseID/fenceToken are the canonical
 // launch reservation fences; generation/revision are the exact aggregate
-// preconditions.
+// preconditions revalidated at authorization time.
 type exactEndpointProof struct {
 	backend     string
 	handle      string
@@ -65,36 +65,75 @@ type exactEndpointProof struct {
 	fenceToken  string
 	generation  uint64
 	revision    uint64
+	// acquired marks an explicitly recorded acquisition receipt tying the
+	// exact handle to the incarnation: the CreatedEndpoint returned by the
+	// backend create (fresh in-process acquisition), the durable
+	// AcquiredEndpoint, or the canonical EndpointBinding evidence. P1a
+	// adapters cannot attest incarnation, so positive liveness is NEVER
+	// concluded without it; a probe of an expected handle with no acquisition
+	// record (e.g. a mutable .meta projection) fails closed.
+	acquired bool
 }
 
-// authorized reports whether the proof is complete enough to conclude current.
-// Every field must be non-empty (except generation/revision which are matched
-// by the canonical precondition and are deliberately not required here to keep
-// the proof purely about endpoint identity). An incomplete proof fails closed.
+// authorized reports whether the proof is complete enough to conclude
+// current. Every identity field must be non-empty; an incomplete proof fails
+// closed. generation/revision are required separately by current().
 func (p exactEndpointProof) authorized() bool {
 	return p.backend != "" && p.handle != "" && p.incarnation != "" && p.leaseID != "" && p.fenceToken != ""
 }
 
-// authorizeObservation is Fleet's sole freshness authority (BEO-16/P1a). An
-// adapter probe reports FreshnessUnknown and an empty Incarnation — an adapter
-// cannot attest the opaque launch incarnation. Only Fleet, by matching the
-// observation to a complete exactEndpointProof (the exact bound
-// backend/handle plus the canonical incarnation/lease/fence), may conclude
-// FreshnessCurrent. On an incomplete proof the observation is demoted to
-// LifecycleUnknown/FreshnessStale, carries no incarnation, and is never
-// Live()/Absent().
-//
-// The caller probes the exact bound handle of the canonical binding, so the
-// backend/handle affinity is assured before authorization; the proof's presence
-// and completeness is what grants freshness.
-func authorizeObservation(raw EndpointStatus, proof exactEndpointProof) EndpointStatus {
-	if !proof.authorized() {
-		raw.Lifecycle = LifecycleUnknown
-		raw.Freshness = FreshnessStale
-		raw.Activity = ActivityUnknown
-		raw.Incarnation = ""
-		raw.Detail = "cannot authorize freshness: incomplete canonical proof (backend/handle/incarnation/lease/fence required)"
-		return raw
+// current reports whether the proof carries the revalidated current
+// generation/revision of the canonical aggregate. A caller that cannot
+// revalidate against task authority (no canonical access) fails closed.
+func (p exactEndpointProof) current() bool { return p.generation != 0 && p.revision != 0 }
+
+// demoteObservation fails an observation closed to unknown/stale: it never
+// grants Absent()/Live() and never carries an incarnation.
+func demoteObservation(raw EndpointStatus, reason string) EndpointStatus {
+	raw.Lifecycle = LifecycleUnknown
+	raw.Freshness = FreshnessStale
+	raw.Activity = ActivityUnknown
+	raw.Incarnation = ""
+	raw.Detail = reason
+	return raw
+}
+
+// authorizeAbsence is Fleet's NEGATIVE authorization authority (BEO-16/P1a).
+// Only a narrowly classified exact structured target absence — the exact
+// bound handle probed dead with a trusted probe/derived source, against a
+// complete canonical proof revalidated under current generation/revision —
+// may conclude Absent(). Anything else fails closed to unknown/stale and is
+// never Absent()/Live(). Absence does not require an acquisition receipt: a
+// dead reading of the exact bound handle is absent regardless of which
+// incarnation previously owned it.
+func authorizeAbsence(raw EndpointStatus, proof exactEndpointProof) EndpointStatus {
+	if !proof.authorized() || !proof.current() {
+		return demoteObservation(raw, "cannot authorize absence: incomplete or stale canonical proof (backend/handle/incarnation/lease/fence/current-generation-revision required)")
+	}
+	if raw.Lifecycle != LifecycleDead || (raw.Source != SourceProbe && raw.Source != SourceDerived) {
+		return demoteObservation(raw, "observation is not a narrow exact structured target absence")
+	}
+	raw.Freshness = FreshnessCurrent
+	raw.Incarnation = proof.incarnation
+	return raw
+}
+
+// authorizeLive is Fleet's POSITIVE authorization authority (BEO-16/P1a). Raw
+// probe liveness is promoted to Live() ONLY with explicit acquisition/
+// creation evidence tied to the incarnation (proof.acquired): P1a adapters
+// cannot attest incarnation, so a probe of an expected handle with no
+// acquisition record is never promoted — a reused handle cannot become Live()
+// merely because it matches the expected strings (ABA fail-closed). The proof
+// must also be complete and revalidated under current generation/revision.
+func authorizeLive(raw EndpointStatus, proof exactEndpointProof) EndpointStatus {
+	if !proof.authorized() || !proof.current() {
+		return demoteObservation(raw, "cannot authorize liveness: incomplete or stale canonical proof (backend/handle/incarnation/lease/fence/current-generation-revision required)")
+	}
+	if !proof.acquired {
+		return demoteObservation(raw, "cannot authorize liveness: no explicit acquisition evidence tied to the incarnation")
+	}
+	if raw.Lifecycle != LifecycleAlive || raw.Responsiveness != Responsive {
+		return demoteObservation(raw, "raw probe is not alive/responsive")
 	}
 	raw.Freshness = FreshnessCurrent
 	raw.Incarnation = proof.incarnation

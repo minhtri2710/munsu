@@ -110,17 +110,27 @@ dead`. A backend adapter reports only what it directly observes (lifecycle and
 responsiveness) and never fabricates freshness or incarnation: it always
 returns `FreshnessUnknown`, so an adapter probe alone is never `Live()`/`Absent()`.
 Freshness current-ness and authoritative absence are concluded ONLY by Fleet,
-by matching the observation against the exact canonical binding/incarnation/
-generation/revision/fence (`fleet.authorizeObservation`); an incomplete or
-mismatched proof is demoted to `unknown`/`stale` and fails closed — nothing is
+and the two are separate authorities (`fleet.authorizeAbsence` vs
+`fleet.authorizeLive`): negative exact absence is granted only for a narrowly
+classified structured absence (dead + probe/derived source) of the exact bound
+handle revalidated under the current canonical generation/revision/fence;
+positive liveness is promoted to `Live()` only WITH explicit acquisition
+/creation evidence tying the exact handle to the incarnation (the in-process
+creation receipt, the durable `AcquiredEndpoint`, or the canonical
+`EndpointBinding` evidence) — P1a adapters cannot attest incarnation, so a
+probe of an expected handle with no acquisition record (e.g. a mutable `.meta`
+projection) is never promoted and fails closed. An incomplete/stale proof or an
+ambiguous reading is demoted to `unknown`/`stale` and fails closed — nothing is
 disposed or relaunched on ambiguous state. `Backend.Alive` (the former boolean
-liveness surface) is fully removed: every session adapter exposes a structured
-probe (`CheckAlive`/`CheckAgentAlive`); the opaque launch incarnation is minted
-by Fleet and persisted in the `LaunchIntent`/binding before acquisition. The
-static capability matrix (`backend.Capabilities` / `CapabilityMatrix`) records
-for each of the five backends: create, reservation-aware create, submit, probe
-(and its exact resource granularity), dispose, worktree ownership (a separate
-provider, never a session backend), native busy and native event wait (Herdr
+liveness surface) is fully removed, and the typed `EndpointObservation.Alive()`
+compatibility helper is deleted as well: every session adapter exposes a
+structured probe (`CheckAlive`/`CheckAgentAlive`); the opaque launch
+incarnation is minted by Fleet and persisted in the `LaunchIntent`/binding
+before acquisition. The static capability matrix
+(`backend.Capabilities` / `CapabilityMatrix`) records for each of the five
+backends: create, reservation-aware create, submit, probe (and its exact
+resource granularity), dispose, worktree ownership (a separate provider, never
+a session backend), native busy and native event wait (Herdr
 `proposed` for P1b, not claimed current), and
 secondmate (out of scope).
 

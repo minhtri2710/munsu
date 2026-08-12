@@ -52,22 +52,23 @@ func (s RetirementEndpointStatus) Live() bool {
 	return s.Lifecycle == LifecycleAlive && s.Freshness == FreshnessCurrent
 }
 
-// AuthorizedAgainst concludes freshness for this raw retirement probe against
-// the exact canonical EndpointBinding proof (backend/handle/incarnation/lease/
-// fence). Only Fleet may conclude current; a raw probe is fresh-unknown and an
-// incomplete proof fails closed. This is the single authorization gate before a
-// retirement Dispose decision (BEO-16/P1a): ambiguous states stay pending and
-// are never disposed.
-func (s RetirementEndpointStatus) AuthorizedAgainst(endpointProof exactEndpointProof) RetirementEndpointStatus {
-	if !endpointProof.authorized() {
-		s.Lifecycle = LifecycleUnknown
-		s.Freshness = FreshnessStale
-		s.Activity = ActivityUnknown
-		s.Incarnation = ""
-		s.Detail = "cannot authorize retirement freshness: incomplete canonical endpoint proof"
-		return s
-	}
-	s.Freshness = FreshnessCurrent
-	s.Incarnation = endpointProof.incarnation
-	return s
+// AuthorizedAbsence concludes NEGATIVE authorization for this raw retirement
+// probe against the exact canonical EndpointBinding proof (BEO-16/P1a): only a
+// narrow exact structured absence of the exact bound handle, revalidated under
+// the current generation/revision, may conclude AuthoritativeAbsent(). A raw
+// probe is fresh-unknown; an incomplete/stale proof or a non-absence reading
+// fails closed to unknown/stale and is never Absent()/Live().
+func (s RetirementEndpointStatus) AuthorizedAbsence(proof exactEndpointProof) RetirementEndpointStatus {
+	return RetirementEndpointStatus(authorizeAbsence(EndpointStatus(s), proof))
+}
+
+// AuthorizedLive concludes POSITIVE authorization for this raw retirement
+// probe (BEO-16/P1a): raw probe liveness is promoted to Live() only with
+// explicit acquisition evidence tying the exact handle to the incarnation
+// (proof.acquired — the canonical EndpointBinding is the acquisition receipt)
+// plus a complete proof revalidated under current generation/revision.
+// Without the evidence, positive freshness stays unknown and Live() is
+// unavailable — the retirement step stays pending and never disposes.
+func (s RetirementEndpointStatus) AuthorizedLive(proof exactEndpointProof) RetirementEndpointStatus {
+	return RetirementEndpointStatus(authorizeLive(EndpointStatus(s), proof))
 }

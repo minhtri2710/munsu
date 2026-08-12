@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -22,6 +23,12 @@ type BoundEndpoint struct {
 	FenceToken    string
 	Incarnation   string
 	CanonicalHome string
+	// Generation/Revision are the .meta projection of the canonical aggregate
+	// precondition, revalidated before any authorization. .meta never carries
+	// them in production, so the fence fails closed; a caller that can prove
+	// current generation/revision supplies them explicitly.
+	Generation uint64
+	Revision   uint64
 }
 
 type EndpointScanner interface {
@@ -82,7 +89,7 @@ func (TaskEndpointScanner) ScanEndpoints(canonicalHome string) ([]BoundEndpoint,
 		if backend == "" {
 			return nil, fmt.Errorf("endpoint meta %s has no bound backend", entry.Name())
 		}
-		endpoints = append(endpoints, BoundEndpoint{TaskID: strings.TrimSuffix(entry.Name(), ".meta"), MetaPath: path, Backend: backend, Handle: handle, SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], LeaseID: meta["endpoint_lease_id"], FenceToken: meta["endpoint_fence_token"], Incarnation: meta["endpoint_incarnation"], CanonicalHome: canonicalHome})
+		endpoints = append(endpoints, BoundEndpoint{TaskID: strings.TrimSuffix(entry.Name(), ".meta"), MetaPath: path, Backend: backend, Handle: handle, SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], LeaseID: meta["endpoint_lease_id"], FenceToken: meta["endpoint_fence_token"], Incarnation: meta["endpoint_incarnation"], Generation: metaUint(meta, "task_generation"), Revision: metaUint(meta, "task_revision"), CanonicalHome: canonicalHome})
 	}
 	sort.Slice(endpoints, func(i, j int) bool { return endpoints[i].TaskID < endpoints[j].TaskID })
 	return endpoints, nil
@@ -100,6 +107,17 @@ func readEndpointMeta(path string) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// metaUint parses a .meta key into a uint64; a missing/empty value yields 0
+// (never an error) so a projection without the canonical precondition fails
+// closed instead of authorizing.
+func metaUint(meta map[string]string, key string) uint64 {
+	v, err := strconv.ParseUint(meta[key], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 func validBoundEndpoint(e BoundEndpoint) bool {
 	return e.TaskID != "" && e.Backend != "" && e.Handle != "" && e.CanonicalHome != ""
@@ -125,25 +143,24 @@ func fenceEndpoints(canonical string, scanner EndpointScanner, controller Endpoi
 		if err != nil {
 			return evidence, fmt.Errorf("probing endpoint %s: %w", endpoint.TaskID, err)
 		}
-		// Authorize freshness against the exact canonical proof of this bound
-		// endpoint. .meta alone cannot authorize: an incomplete proof (missing
-		// lease/fence/incarnation) or an ambiguous starting/unknown/
-		// stale/unresponsive reading fails closed — metadata is retained and
-		// nothing is disposed (BEO-16).
-		auth := authorizeObservation(status, exactEndpointProof{
+		// Authorize against the exact canonical proof of this bound endpoint
+		// (BEO-16/P1a). Negative exact absence and positive liveness are
+		// separate authorities: a .meta projection is NOT an acquisition
+		// receipt, so positive liveness is never concluded here — a live
+		// reading fails closed (metadata retained, nothing disposed). Only a
+		// narrow authorized Absent() (dead + current generation/revision) is
+		// accepted; anything else (missing lease/fence/incarnation, stale
+		// generation/revision, or an ambiguous starting/unknown/stale/
+		// unresponsive reading) fails closed.
+		auth := authorizeAbsence(status, exactEndpointProof{
 			backend: endpoint.Backend, handle: endpoint.Handle,
 			incarnation: endpoint.Incarnation, leaseID: endpoint.LeaseID, fenceToken: endpoint.FenceToken,
+			generation: endpoint.Generation, revision: endpoint.Revision,
 		})
-		switch {
-		case auth.Absent():
-			// Fleet-authorized, already gone: keep.
-		case auth.Live():
-			if err := controller.DisposeBoundEndpoint(endpoint); err != nil {
-				return evidence, fmt.Errorf("disposing endpoint %s: %w", endpoint.TaskID, err)
-			}
-		default:
-			// Ambiguous or unauthorized: keep metadata, fail closed.
-			return evidence, fmt.Errorf("endpoint %s observation %s is not safe to fence (ambiguous cannot be disposed)", endpoint.TaskID, auth.State())
+		if !auth.Absent() {
+			// Not an authorized exact absence: keep metadata, fail closed
+			// (nothing is disposed from .meta-only liveness evidence).
+			return evidence, fmt.Errorf("endpoint %s observation %s is not safe to fence (ambiguous cannot be disposed; .meta projection is not acquisition evidence)", endpoint.TaskID, auth.State())
 		}
 		evidence = append(evidence, fmt.Sprintf("endpoint:%s:%s:%s", endpoint.TaskID, endpoint.Backend, endpoint.Handle))
 	}
@@ -167,12 +184,13 @@ func fenceEndpoints(canonical string, scanner EndpointScanner, controller Endpoi
 		if err != nil {
 			return evidence, fmt.Errorf("re-probing endpoint %s: %w", e.TaskID, err)
 		}
-		auth := authorizeObservation(status, exactEndpointProof{
+		auth := authorizeAbsence(status, exactEndpointProof{
 			backend: e.Backend, handle: e.Handle,
 			incarnation: e.Incarnation, leaseID: e.LeaseID, fenceToken: e.FenceToken,
+			generation: e.Generation, revision: e.Revision,
 		})
 		if !auth.Absent() {
-			return evidence, fmt.Errorf("endpoint %s observation %s after disposal, want dead/current authorized", e.TaskID, auth.State())
+			return evidence, fmt.Errorf("endpoint %s observation %s after fencing, want authorized dead/current absence", e.TaskID, auth.State())
 		}
 	}
 	return evidence, nil

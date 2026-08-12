@@ -63,7 +63,7 @@ func TestCLIEndpointProbeRequiresLiveAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Alive() || status.State() != fleet.EndpointStarting {
+	if status.Lifecycle == fleet.LifecycleAlive || status.State() != fleet.EndpointStarting {
 		t.Fatalf("endpoint must be starting when the pane exists but the agent is not alive: %+v", status)
 	}
 }
@@ -77,7 +77,7 @@ func TestCLIEndpointProbePreservesBoundMetadata(t *testing.T) {
 		return probeBackend{aliveHandle: "session-1:pane-1"}, "herdr", nil
 	}}
 	status, err := probe.ProbeEndpoint(fleet.EndpointRef{Backend: "herdr", Handle: "session-1:pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", Home: "/home"})
-	if err != nil || !status.Alive() {
+	if err != nil || status.Lifecycle != fleet.LifecycleAlive {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
 	if gotHome != "/home" || got["herdr_session"] != "session-1" || got["herdr_workspace_id"] != "workspace-1" || got["herdr_tab_id"] != "tab-1" || got["window"] != "session-1:pane-1" {

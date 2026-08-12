@@ -34,13 +34,13 @@ func (f *endpointFake) DisposeBoundEndpoint(e BoundEndpoint) error {
 	return nil
 }
 func endpoint(home string) BoundEndpoint {
-	return BoundEndpoint{TaskID: "task", Backend: "herdr", Handle: "pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", LeaseID: "lease-1", FenceToken: "fence-1", Incarnation: "inc-1", CanonicalHome: home}
+	return BoundEndpoint{TaskID: "task", Backend: "herdr", Handle: "pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", LeaseID: "lease-1", FenceToken: "fence-1", Incarnation: "inc-1", Generation: 1, Revision: 2, CanonicalHome: home}
 }
 
-func TestTaskEndpointScannerReadsFullBoundMetadata(t *testing.T) {
+func TestFenceEndpointsReadsFullBoundMetadata(t *testing.T) {
 	h := t.TempDir()
 	os.MkdirAll(filepath.Join(h, "state"), 0700)
-	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("backend=herdr\nwindow=pane-1\nherdr_session=session-1\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab-1\nendpoint_lease_id=lease-1\nendpoint_fence_token=fence-1\nendpoint_incarnation=inc-1\n"), 0600)
+	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("backend=herdr\nwindow=pane-1\nherdr_session=session-1\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab-1\nendpoint_lease_id=lease-1\nendpoint_fence_token=fence-1\nendpoint_incarnation=inc-1\ntask_generation=1\ntask_revision=2\n"), 0600)
 	got, err := (TaskEndpointScanner{}).ScanEndpoints(h)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("got=%+v err=%v", got, err)
@@ -85,13 +85,50 @@ func TestServiceEndpointControllerFailsClosedOnIncompleteIdentity(t *testing.T) 
 	}
 }
 
-func TestFenceEndpointsRetainsMetadataWhenEndpointIsDead(t *testing.T) {
+// TestFenceEndpointsRetainsMetadataOnLiveWithoutAcquisitionEvidence asserts a
+// live reading of a .meta-bound endpoint NEVER authorizes disposal: .meta is a
+// mutable projection, not an acquisition receipt, so the fence fails closed
+// and retains the metadata (BEO-16/P1a — positive liveness needs explicit
+// acquisition evidence).
+func TestFenceEndpointsRetainsMetadataOnLiveWithoutAcquisitionEvidence(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointAlive), endpointStatusFromState(EndpointDead)}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointAlive)}}
+	if _, err := fenceEndpoints(h, f, f); err == nil {
+		t.Fatal("live .meta-bound endpoint must fail closed (no disposal)")
+	}
+	if len(f.disposed) != 0 {
+		t.Fatalf("fence disposed a live .meta-bound endpoint without acquisition evidence: %v", f.disposed)
+	}
+}
+
+// TestFenceEndpointsKeepsWhenAuthorizedAbsent asserts an exact authorized
+// absence (dead + current generation/revision + complete proof) is accepted:
+// the metadata is retained as evidence and nothing is disposed.
+func TestFenceEndpointsKeepsWhenAuthorizedAbsent(t *testing.T) {
+	h := t.TempDir()
+	e := endpoint(h)
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointDead), endpointStatusFromState(EndpointDead)}}
 	got, err := fenceEndpoints(h, f, f)
-	if err != nil || len(got) != 1 || len(f.disposed) != 1 {
+	if err != nil || len(got) != 1 || len(f.disposed) != 0 {
 		t.Fatalf("got=%v disposed=%v err=%v", got, f.disposed, err)
+	}
+}
+
+// TestFenceEndpointsFailsClosedWithoutCurrentGenerationRevision asserts a
+// complete proof that cannot be revalidated under a current canonical
+// generation/revision (zero values) never authorizes — not even absence — and
+// the metadata is retained.
+func TestFenceEndpointsFailsClosedWithoutCurrentGenerationRevision(t *testing.T) {
+	h := t.TempDir()
+	e := endpoint(h)
+	e.Generation, e.Revision = 0, 0
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointDead)}}
+	if _, err := fenceEndpoints(h, f, f); err == nil {
+		t.Fatal("endpoint without current generation/revision must fail closed")
+	}
+	if len(f.disposed) != 0 {
+		t.Fatalf("fence disposed without revalidated generation/revision: %v", f.disposed)
 	}
 }
 func TestFenceEndpointsFailsWhenStillAlive(t *testing.T) {
@@ -123,7 +160,7 @@ func TestFenceEndpointsFailsOnIdentityReplacement(t *testing.T) {
 func TestFenceEndpointsFailsOnPostDisposalProbeError(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointAlive), {}}, probeErrs: []error{nil, errors.New("probe failed")}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointDead), {}}, probeErrs: []error{nil, errors.New("probe failed")}}
 	if _, err := fenceEndpoints(h, f, f); err == nil {
 		t.Fatal("expected error")
 	}
@@ -145,8 +182,8 @@ func TestFenceEndpointsFailsClosedOnUncertainInitialObservation(t *testing.T) {
 func TestFenceEndpointsRequiresAuthoritativeDeadAfterDisposal(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointStarting), endpointStatusFromState(EndpointUnknown)}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointDead), endpointStatusFromState(EndpointUnknown)}}
 	if _, err := fenceEndpoints(h, f, f); err == nil {
-		t.Fatal("expected non-dead post-disposal observation to fail")
+		t.Fatal("expected non-dead post-keep observation to fail")
 	}
 }

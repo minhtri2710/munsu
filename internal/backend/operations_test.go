@@ -108,7 +108,7 @@ func TestBoundOperationsUseResolvedAdapter(t *testing.T) {
 	if got, err := service.SubmitPrompt(SubmitPromptRequest{Endpoint: EndpointRef{Backend: "tmux", Handle: "p1"}, Prompt: "hello"}); err != nil || got.Status != "submitted" {
 		t.Fatalf("submit = %+v, %v", got, err)
 	}
-	if status, err := service.ProbeEndpoint(EndpointRef{Backend: "tmux", Handle: "p1"}); err != nil || !status.Alive() {
+	if status, err := service.ProbeEndpoint(EndpointRef{Backend: "tmux", Handle: "p1"}); err != nil || status.Lifecycle != LifecycleAlive {
 		t.Fatalf("probe = %+v, %v", status, err)
 	}
 	if err := service.DisposeEndpoint(EndpointRef{Backend: "tmux", Handle: "p1"}); err != nil {

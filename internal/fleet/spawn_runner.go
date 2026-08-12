@@ -105,19 +105,43 @@ func (r *Runner) mintEndpointIncarnation() (string, error) {
 	return mint()
 }
 
-// authorizeEndpoint concludes freshness for a probe of the bound endpoint
-// against the exact canonical launch identity (BEO-16/P1a). Only Fleet may set
-// FreshnessCurrent; an adapter probe alone is always fresh-unknown and is never
-// Live()/Absent(). On an incomplete proof the observation is demoted and fails
-// closed.
+// authorizeEndpoint concludes Fleet's authorization for a probe of an endpoint
+// the runner holds acquisition evidence for (BEO-16/P1a): the in-process
+// CreatedEndpoint from CreateReserved (fresh acquisition) or the durable
+// AcquiredEndpoint (recovery) both tie the exact handle to the launch
+// incarnation. The proof revalidates the CURRENT canonical generation/revision
+// at authorization time. Raw probe liveness is promoted to Live() only with
+// that explicit acquisition evidence; a probe alone is never Live()/Absent().
 func (r *Runner) authorizeEndpoint(obs SpawnEndpointObservation, ep CreatedEndpoint) SpawnEndpointObservation {
-	return authorizeObservation(obs, exactEndpointProof{
+	gen, rev := r.canonicalGenerationRevision()
+	return authorizeLive(obs, exactEndpointProof{
 		backend:     ep.Backend,
 		handle:      ep.Handle,
 		incarnation: ep.Incarnation,
 		leaseID:     r.epReservationID(),
 		fenceToken:  r.epFenceToken(),
+		generation:  gen,
+		revision:    rev,
+		acquired:    true, // in-process creation receipt or durable AcquiredEndpoint
 	})
+}
+
+// canonicalGenerationRevision revalidates the current canonical aggregate
+// generation/revision at authorization time. A task with no aggregate or no
+// current generation fails closed (returns 0,0).
+func (r *Runner) canonicalGenerationRevision() (uint64, uint64) {
+	if r.args.Authority == nil {
+		return 0, 0
+	}
+	taskID, err := domain.NewTaskID(r.args.ID)
+	if err != nil {
+		return 0, 0
+	}
+	agg, err := r.args.Authority.Get(taskID)
+	if err != nil {
+		return 0, 0
+	}
+	return uint64(agg.Generation), uint64(agg.Revision)
 }
 
 // Run executes the full spawn orchestration sequence.
@@ -1267,9 +1291,11 @@ func (r *Runner) createSession() error {
 			return fmt.Errorf("verifying recorded pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
 		}
 		authorized := r.authorizeEndpoint(status, ep)
-		// Recovery only re-adopts a confirmed-live, authorized endpoint. An
-		// ambiguous/unknown/unresponsive/dead reading fails closed (no
-		// replacement and no dispose) — ownership is preserved.
+		// Recovery only re-adopts a confirmed-live, authorized endpoint. The
+		// durable AcquiredEndpoint IS the explicit acquisition receipt (tied
+		// to the incarnation); without it — or with an ambiguous/unknown/
+		// unresponsive/dead reading — recovery fails closed (no replacement
+		// and no dispose) and ownership is preserved.
 		if !authorized.Live() {
 			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement)", ep.Handle, authorized.State(), ep.Backend)
 		}
@@ -1708,12 +1734,23 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if probeErr != nil {
 				return fmt.Errorf("probing bound endpoint: %w", probeErr)
 			}
-			auth := r.authorizeEndpoint(status, r.endpoint)
-			if auth.Absent() {
+			gen, rev := r.canonicalGenerationRevision()
+			// Negative authorization: only an authorized exact absence (narrow
+			// dead + current generation/revision) means the window died.
+			// Ambiguous readings are never "died" (BEO-16: unknown != dead).
+			if dead := authorizeAbsence(status, exactEndpointProof{
+				backend: r.endpoint.Backend, handle: r.endpoint.Handle, incarnation: r.endpoint.Incarnation,
+				leaseID: r.epReservationID(), fenceToken: r.epFenceToken(),
+				generation: gen, revision: rev,
+			}); dead.Absent() {
 				return fmt.Errorf("window died while waiting for ready")
 			}
-			if auth.Lifecycle != LifecycleAlive && auth.Lifecycle != LifecycleStarting {
-				return fmt.Errorf("endpoint observation %s while waiting for ready", auth.State())
+			// Positive readiness progression uses the raw lifecycle of the
+			// fresh acquisition (alive/starting proceed); Live() freshness is
+			// asserted by verifyEndpointReadyBeforePersist with the explicit
+			// acquisition evidence.
+			if status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting {
+				return fmt.Errorf("endpoint observation %s while waiting for ready", status.State())
 			}
 			capture, err := r.endpoints.Capture(r.endpoint, 60)
 			if err != nil {
@@ -1743,6 +1780,9 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 	if err != nil {
 		return fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
 	}
+	// Positive readiness gate: Live() requires explicit acquisition evidence
+	// (the in-process creation receipt) plus a complete proof revalidated
+	// under the current generation/revision.
 	auth := r.authorizeEndpoint(status, r.endpoint)
 	if !auth.Live() {
 		// Never dispose on an ambiguous/unknown/starting/stale reading: the
