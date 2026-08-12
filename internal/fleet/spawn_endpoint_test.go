@@ -17,9 +17,9 @@ func (f fakeEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error 
 }
 func (f fakeEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointObservation, error) {
 	if f.backend.Alive(ep.Handle) {
-		return SpawnEndpointObservation{State: EndpointAlive}, nil
+		return endpointStatusFromState(EndpointAlive), nil
 	}
-	return SpawnEndpointObservation{State: EndpointDead}, nil
+	return endpointStatusFromState(EndpointDead), nil
 }
 func (f fakeEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
 	return f.backend.Capture(ep.Handle, n)

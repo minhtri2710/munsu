@@ -101,11 +101,18 @@ func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeR
 		}
 		return result, err
 	}
-	alive := bk.Alive(window)
-	// A plain Alive() bool cannot prove authoritative absence (the backend
-	// swallows the distinguishing error). Absent stays false: an unproven
-	// Alive=false reading fails closed and never authorizes relaunch.
-	return fleet.CaptainProbeResult{PaneAlive: alive, AgentAlive: alive, ReadyForPrompt: alive}, nil
+	obs := backend.ObserveBackendEndpoint(bk, window)
+	// Only a structured authoritative absence (dead/current) may set Absent;
+	// every ambiguous reading (unknown/unresponsive/starting/stale, malformed,
+	// or a plain legacy-bool false) leaves Absent false and fails closed — it
+	// never authorizes relaunch. Non-agent-aware backends equate agent presence
+	// with confirmed pane liveness.
+	return fleet.CaptainProbeResult{
+		PaneAlive:      obs.Live(),
+		AgentAlive:     obs.Live(),
+		ReadyForPrompt: obs.Live(),
+		Absent:         obs.Absent(),
+	}, nil
 }
 
 func (e sessionProbeEndpoint) Probe(home string, meta map[string]string) (fleet.CaptainProbeResult, error) {
@@ -158,14 +165,22 @@ func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error
 		return err
 	}
 	window := meta["window"]
-	if bk.Alive(window) {
+	// Authoritative absence (dead/current exact reading) means the endpoint is
+	// already gone — no teardown required. Every other state (alive, starting,
+	// unknown, stale, unresponsive) is either live or not confirmable as absent
+	// and is cleaned up to avoid an orphaned endpoint.
+	obs := backend.ObserveBackendEndpoint(bk, window)
+	if obs.Absent() {
+		return nil
+	}
+	if obs.Live() {
 		if err := bk.SendKeys(window, "/quit"); err != nil {
 			return err
 		}
 		if e.sleep != nil {
 			e.sleep(500 * time.Millisecond)
 		}
-		if !bk.Alive(window) {
+		if re := backend.ObserveBackendEndpoint(bk, window); re.Absent() {
 			return nil
 		}
 	}

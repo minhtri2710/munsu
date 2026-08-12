@@ -256,7 +256,7 @@ func TestCaptainStatus_Alive(t *testing.T) {
 	}
 
 	// Stale/missing lock must not matter when pane is alive.
-	status := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: EndpointStatus{State: EndpointAlive}})
+	status := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: endpointStatusFromState(EndpointAlive)})
 	if status != "alive" {
 		t.Errorf("CaptainStatus = %q, want %q", status, "alive")
 	}
@@ -283,7 +283,7 @@ func TestCaptainStatus_Dead(t *testing.T) {
 
 	// Live lock must not override a non-alive pane: the diagnostic probe
 	// reports unknown, never a lifecycle decision.
-	status := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: EndpointStatus{State: EndpointUnknown}})
+	status := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: endpointStatusFromState(EndpointUnknown)})
 	if status != "unknown" {
 		t.Errorf("CaptainStatus = %q, want %q", status, "unknown")
 	}
@@ -348,7 +348,7 @@ func TestCaptainStatusTypedObservations(t *testing.T) {
 			if err := home.WriteMeta(parent, "captain:test-sm", map[string]string{"kind": "captain", "sm_id": "test-sm", "home": smHome, "window": "@cap", "backend": "tmux"}); err != nil {
 				t.Fatal(err)
 			}
-			if got := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: EndpointStatus{State: tt.state}}); got != tt.want {
+			if got := CaptainStatus(parent, "test-sm", smHome, snapshotProbe{status: endpointStatusFromState(tt.state)}); got != tt.want {
 				t.Fatalf("CaptainStatus=%q want %q", got, tt.want)
 			}
 		})
@@ -489,7 +489,7 @@ func TestSnapshot_PaneAliveProbeTrue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := Snapshot(tmp, testSnapshotDeps(t, snapshotProbe{status: EndpointStatus{State: EndpointAlive}}))
+	snap, err := Snapshot(tmp, testSnapshotDeps(t, snapshotProbe{status: endpointStatusFromState(EndpointAlive)}))
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestSnapshot_PaneAliveProbeFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := Snapshot(tmp, testSnapshotDeps(t, snapshotProbe{status: EndpointStatus{State: EndpointDead}}))
+	snap, err := Snapshot(tmp, testSnapshotDeps(t, snapshotProbe{status: endpointStatusFromState(EndpointDead)}))
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}

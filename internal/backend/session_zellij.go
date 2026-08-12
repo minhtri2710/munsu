@@ -209,22 +209,35 @@ func (z *ZellijBackend) Capture(windowID string, lines int) (string, error) {
 // Alive checks whether the pane still exists by querying list-panes.
 // windowID may be "<session>:<pane_id>" or a bare pane ID.
 func (z *ZellijBackend) Alive(windowID string) bool {
+	alive, err := z.CheckAlive(windowID)
+	if err != nil {
+		return false
+	}
+	return alive
+}
+
+// CheckAlive is the structured probe for the typed observation contract. It
+// returns (true, nil) when the exact pane exists, (false, ErrPaneNotFound)
+// when the parsed authoritative pane list confirms the pane is absent, and an
+// operational error for every other failure (command failure, malformed JSON).
+// An operational failure is never authoritative absence.
+func (z *ZellijBackend) CheckAlive(windowID string) (bool, error) {
 	pid := z.paneID(windowID)
 
 	bin, err := zellijBin()
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	cmd := exec.Command(bin, "--session", z.Session, "action", "list-panes", "--json")
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		return false, fmt.Errorf("zellij: listing panes: %w", err)
 	}
 
 	var panes []zellijPaneEntry
 	if err := json.Unmarshal(out, &panes); err != nil {
-		return false
+		return false, fmt.Errorf("zellij: malformed pane list: %w", err)
 	}
 
 	// Normalize the pane ID to a numeric value (strip "terminal_" prefix).
@@ -234,10 +247,11 @@ func (z *ZellijBackend) Alive(windowID string) bool {
 			continue
 		}
 		if fmt.Sprintf("terminal_%d", p.ID) == pid || p.ID == targetID {
-			return !p.Exited
+			return !p.Exited, nil
 		}
 	}
-	return false
+	// The parsed authoritative list lacks the exact pane: confirmed absent.
+	return false, ErrPaneNotFound
 }
 
 // normalizePaneID extracts the numeric ID from a pane identifier like "terminal_3" -> 3.

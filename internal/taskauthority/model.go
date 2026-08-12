@@ -95,7 +95,10 @@ type TaskDefinition struct {
 	ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
 }
 
-// EndpointBinding is a generation-bound runtime endpoint lease.
+// EndpointBinding is a generation-bound runtime endpoint lease. Incarnation
+// is the opaque generation-bound identity minted by Fleet for this exact
+// endpoint binding and used to reject stale/foreign observations (freshness).
+// taskauthority persists the opaque value without importing backend.
 type EndpointBinding struct {
 	Backend      string `json:"backend"`
 	Handle       string `json:"handle"`
@@ -104,6 +107,7 @@ type EndpointBinding struct {
 	SessionOwner string `json:"session_owner,omitempty"`
 	WorkspaceID  string `json:"workspace_id,omitempty"`
 	TabID        string `json:"tab_id,omitempty"`
+	Incarnation  string `json:"incarnation,omitempty"`
 	BoundAtUnix  int64  `json:"bound_at_unix"`
 }
 
@@ -207,6 +211,7 @@ type AcquiredEndpoint struct {
 	SessionOwner string `json:"session_owner,omitempty"`
 	WorkspaceID  string `json:"workspace_id,omitempty"`
 	TabID        string `json:"tab_id,omitempty"`
+	Incarnation  string `json:"incarnation,omitempty"`
 	AcquiredAt   int64  `json:"acquired_at"`
 }
 

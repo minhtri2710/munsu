@@ -41,7 +41,7 @@ func (a *fakeEndpointAdapter) Submit(handle, prompt string) (SubmitPromptResult,
 	return SubmitPromptResult{Status: "submitted"}, nil
 }
 func (*fakeEndpointAdapter) Probe(string) (EndpointObservation, error) {
-	return EndpointObservation{State: EndpointAlive, RecognizedAgent: true}, nil
+	return EndpointObservation{Lifecycle: LifecycleAlive, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceProbe}, nil
 }
 func (a *fakeEndpointAdapter) Dispose(handle string) error { a.disposed = handle; return nil }
 
@@ -94,7 +94,7 @@ func TestBoundOperationsFailClosedWithoutFallback(t *testing.T) {
 	if _, err := service.SubmitPrompt(SubmitPromptRequest{Endpoint: EndpointRef{Backend: "herdr", Handle: "p1"}, Prompt: "hello"}); err == nil {
 		t.Fatal("SubmitPrompt fell back")
 	}
-	if observation, err := service.ProbeEndpoint(EndpointRef{Backend: "herdr", Handle: "p1"}); err != nil || observation.State != EndpointUnresolved {
+	if observation, err := service.ProbeEndpoint(EndpointRef{Backend: "herdr", Handle: "p1"}); err != nil || observation.State() != EndpointUnresolved {
 		t.Fatalf("ProbeEndpoint = %+v, %v; want unresolved without fallback", observation, err)
 	}
 	if err := service.DisposeEndpoint(EndpointRef{Backend: "herdr", Handle: "p1"}); err == nil {
@@ -147,8 +147,8 @@ func TestProbeEndpointUnresolvedBackendIsTypedObservationWithoutFallback(t *test
 	if err != nil {
 		t.Fatalf("ProbeEndpoint should return typed unresolved observation, got error: %v", err)
 	}
-	if observation.State != EndpointUnresolved {
-		t.Fatalf("state = %v, want unresolved", observation.State)
+	if observation.State() != EndpointUnresolved {
+		t.Fatalf("state = %v, want unresolved", observation.State())
 	}
 	if tmux.created != "" {
 		t.Fatalf("fallback adapter was touched: %+v", tmux)
@@ -160,10 +160,10 @@ func TestProbeEndpointUnresolvedBackendIsTypedObservationWithoutFallback(t *test
 
 func TestProbeFailuresNeverBecomeDead(t *testing.T) {
 	observation := ObservationFromProbeError(EndpointRef{Backend: "tmux", Handle: "p1"}, errors.New("timeout"))
-	if observation.State == EndpointDead {
+	if observation.State() == EndpointDead {
 		t.Fatalf("probe failure mapped to dead: %+v", observation)
 	}
-	if observation.State != EndpointUnresponsive {
-		t.Fatalf("state = %v, want unresponsive", observation.State)
+	if observation.State() != EndpointUnresponsive {
+		t.Fatalf("state = %v, want unresponsive", observation.State())
 	}
 }

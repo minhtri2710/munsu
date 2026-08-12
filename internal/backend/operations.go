@@ -2,11 +2,6 @@ package backend
 
 import "fmt"
 
-type EndpointRef struct {
-	Backend string
-	Handle  string
-}
-
 type CreateEndpointRequest struct {
 	PreferredBackend string
 	Container        string
@@ -74,12 +69,22 @@ func (s Service) SubmitPrompt(request SubmitPromptRequest) (SubmitPromptResult, 
 func (s Service) ProbeEndpoint(endpoint EndpointRef) (EndpointObservation, error) {
 	adapter, err := s.adapters.Resolve(endpoint.Backend)
 	if err != nil {
-		return EndpointObservation{State: EndpointUnresolved, Detail: fmt.Sprintf("resolving bound backend %q: %v", endpoint.Backend, err)}, nil
+		return EndpointObservation{
+			Lifecycle:      LifecycleUnknown,
+			Responsiveness: ResponsivenessUnknown,
+			Freshness:      FreshnessUnknown,
+			Activity:       ActivityUnknown,
+			Source:         SourceDerived,
+			Incarnation:    endpoint.Incarnation,
+			ObservedAt:     observedNow(),
+			Detail:         fmt.Sprintf("resolving bound backend %q: %v", endpoint.Backend, err),
+		}, nil
 	}
 	observation, err := adapter.Probe(endpoint.Handle)
 	if err != nil {
 		return ObservationFromProbeError(endpoint, err), nil
 	}
+	observation.Incarnation = endpoint.Incarnation
 	return observation, nil
 }
 

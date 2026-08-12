@@ -120,14 +120,14 @@ func fenceEndpoints(canonical string, scanner EndpointScanner, controller Endpoi
 		if err != nil {
 			return evidence, fmt.Errorf("probing endpoint %s: %w", endpoint.TaskID, err)
 		}
-		switch status.State {
+		switch status.State() {
 		case EndpointAlive, EndpointStarting:
 			if err := controller.DisposeBoundEndpoint(endpoint); err != nil {
 				return evidence, fmt.Errorf("disposing endpoint %s: %w", endpoint.TaskID, err)
 			}
 		case EndpointDead:
 		default:
-			return evidence, fmt.Errorf("endpoint %s observation %s is not safe to fence", endpoint.TaskID, status.State)
+			return evidence, fmt.Errorf("endpoint %s observation %s is not safe to fence", endpoint.TaskID, status.State())
 		}
 		evidence = append(evidence, fmt.Sprintf("endpoint:%s:%s:%s", endpoint.TaskID, endpoint.Backend, endpoint.Handle))
 	}
@@ -151,8 +151,8 @@ func fenceEndpoints(canonical string, scanner EndpointScanner, controller Endpoi
 		if err != nil {
 			return evidence, fmt.Errorf("re-probing endpoint %s: %w", e.TaskID, err)
 		}
-		if status.State != EndpointDead {
-			return evidence, fmt.Errorf("endpoint %s observation %s after disposal, want dead", e.TaskID, status.State)
+		if status.State() != EndpointDead {
+			return evidence, fmt.Errorf("endpoint %s observation %s after disposal, want dead", e.TaskID, status.State())
 		}
 	}
 	return evidence, nil

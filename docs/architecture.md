@@ -99,6 +99,24 @@ operations. Verified implementations include tmux and herdr; zellij, cmux and
 orca are explicit experimental adapters. Resolution rejects unknown backends
 rather than silently selecting an unverified implementation.
 
+Endpoint observation (BEO-16/P1a) is the typed, orthogonal runtime diagnostic
+of one exact bound endpoint: `Lifecycle` (starting/alive/dead/unknown),
+`Responsiveness`, `Freshness`, `Activity`, `Source`, `ObservedAt`, opaque
+`Incarnation`, and diagnostic `Detail`. It is NOT Task lifecycle truth — the
+canonical Task phase stays in `internal/taskauthority` and a probe never
+mutates it. The crossing guards encode the policy invariants: `unknown !=
+idle`, `unknown != dead`, `unresponsive != dead`, `starting != dead`, `stale !=
+dead`; a plain legacy-bool `false` is never authoritative absence. Only a
+structured `ErrPaneNotFound`-equivalent of the exact bound endpoint (dead +
+current) plus valid generation/revision/fence checks qualifies for Fleet
+recovery. `Backend.Alive` is retained only as a diagnostic legacy-bool source
+(never a recovery/dispose decision). The static capability matrix
+(`backend.Capabilities` / `CapabilityMatrix`) records for each of the five
+backends: create, reservation-aware create, submit, probe, dispose, worktree
+ownership (a separate provider, never a session backend), native busy and
+native event wait (Herdr `proposed` for P1b, not claimed current), and
+secondmate (out of scope).
+
 ### Delivery acceptance (`internal/domain`)
 
 `internal/domain/domain.go` is the single owner of `PR`, `Review`, `CheckRun`,

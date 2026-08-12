@@ -58,6 +58,7 @@ for harnesses with a verified adapter; unverified harnesses show "planned/unsupp
 | Worktree pool (treehouse) | `munsu worktree get/return/status` | `internal/backend`, `internal/cli` | **implemented** |
 | Config | `munsu config get/set` | `internal/config` | **implemented** |
 | Session backend (tmux + herdr + zellij + cmux + orca) | `--backend` flag | `internal/backend` | **implemented** (cmux/orca experimental, alongside zellij). Structured `munsu backend capabilities` currently exposes only `tmux` and `herdr`. |
+| Endpoint observation (BEO-16/P1a) | typed orthogonal probe | `internal/backend` | **implemented**: `Lifecycle`/`Responsiveness`/`Freshness`/`Activity`/`Source`/`Incarnation`/`Detail`; `Backend.Alive` is diagnostic-only; recovery/dispose decisions use the typed contract (authoritative dead/current absence only). Native busy/event transport is P1b (Herdr `proposed`, not claimed current). |
 | Dispatch profiles | `config/soldier-dispatch.json` | `internal/harness` | **implemented** |
 | Home init | `munsu init` | `internal/cli` | **implemented** |
 | AFK away-mode supervision | munsu afk | internal/orchestrator | **implemented** (Go-native, full lifecycle -- see `docs/skills/afk.md`) |

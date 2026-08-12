@@ -191,6 +191,7 @@ type CanonicalAttachEndpointRequest struct {
 	SessionOwner string
 	WorkspaceID  string
 	TabID        string
+	Incarnation  string
 	Reason       string
 }
 
@@ -207,9 +208,10 @@ func (r CanonicalAttachEndpointRequest) DigestBytes() ([]byte, error) {
 		SessionOwner string `json:"session_owner,omitempty"`
 		WorkspaceID  string `json:"workspace_id,omitempty"`
 		TabID        string `json:"tab_id,omitempty"`
+		Incarnation  string `json:"incarnation,omitempty"`
 		Reason       string `json:"reason,omitempty"`
 	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision,
-		r.Backend, r.Handle, r.LeaseID, r.FenceToken, r.SessionOwner, r.WorkspaceID, r.TabID, r.Reason})
+		r.Backend, r.Handle, r.LeaseID, r.FenceToken, r.SessionOwner, r.WorkspaceID, r.TabID, r.Incarnation, r.Reason})
 }
 
 // validateAttachEndpointRequest checks the typed request shape: a valid task
@@ -282,6 +284,7 @@ func (c *Canonical) AttachEndpoint(op domain.Operation, req CanonicalAttachEndpo
 			SessionOwner: req.SessionOwner,
 			WorkspaceID:  req.WorkspaceID,
 			TabID:        req.TabID,
+			Incarnation:  req.Incarnation,
 			AcquiredAt:   c.now().UnixNano(),
 		}
 		next.Revision++
@@ -297,7 +300,7 @@ func acquiredEndpointSame(e AcquiredEndpoint, req CanonicalAttachEndpointRequest
 	return e.Backend == req.Backend && e.Handle == req.Handle &&
 		e.LeaseID == req.LeaseID && e.FenceToken == req.FenceToken &&
 		e.SessionOwner == req.SessionOwner && e.WorkspaceID == req.WorkspaceID &&
-		e.TabID == req.TabID
+		e.TabID == req.TabID && e.Incarnation == req.Incarnation
 }
 
 // CanonicalRecordLaunchRequest records the successful launch submission

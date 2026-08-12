@@ -46,6 +46,13 @@ type Args struct {
 	// (Task 4.1): bindWorktree fails closed when it is nil. Construction stays
 	// side-effect free; no package global carries it.
 	Authority *taskauthority.Canonical
+
+	// IncarnationMint is an optional opaque incarnation generator for the
+	// endpoint binding. When nil, a crypto/rand generator is used. Tests
+	// inject a deterministic func. The generated value is persisted by
+	// taskauthority as an opaque generation-bound identity and reused (not
+	// re-minted) on retry/recovery of the same launch operation.
+	IncarnationMint IncarnationMintFunc
 }
 
 // Run executes the full spawn orchestration sequence by delegating to Runner.

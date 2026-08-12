@@ -84,20 +84,49 @@ func cmuxOutput(args ...string) (string, error) {
 
 // workspaceExists checks whether a workspace with the given ID exists.
 func (c *CmuxBackend) workspaceExists(workspaceID string) bool {
-	out, err := cmuxOutput("list-workspaces", "--json")
+	alive, err := c.checkWorkspaceAlive(workspaceID)
 	if err != nil {
 		return false
 	}
+	return alive
+}
+
+// checkWorkspaceAlive returns (true, nil) when the exact workspace exists,
+// (false, ErrPaneNotFound) when the workspace is confirmed absent, and an
+// operational error for every other failure (command failure, malformed JSON).
+// This is the structured probe surface used by the typed observation contract:
+// an operational failure is never authoritative absence.
+func (c *CmuxBackend) checkWorkspaceAlive(workspaceID string) (bool, error) {
+	if workspaceID == "" {
+		return false, fmt.Errorf("cmux: empty workspace identity")
+	}
+	if _, err := cmuxBin(); err != nil {
+		return false, err
+	}
+	out, err := cmuxOutput("list-workspaces", "--json")
+	if err != nil {
+		return false, fmt.Errorf("cmux: listing workspaces: %w", err)
+	}
 	var resp cmuxWorkspaceListResponse
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
-		return false
+		return false, fmt.Errorf("cmux: malformed workspace list: %w", err)
 	}
 	for _, ws := range resp.Result.Workspaces {
 		if ws.WorkspaceID == workspaceID {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	// The parsed authoritative list lacks the exact workspace: confirmed absent.
+	return false, ErrPaneNotFound
+}
+
+// CheckAlive is the structured probe for the typed observation contract.
+func (c *CmuxBackend) CheckAlive(windowID string) (bool, error) {
+	wid, _ := ParseCmuxWindow(windowID)
+	if wid == "" {
+		return false, fmt.Errorf("cmux: invalid window handle %q", windowID)
+	}
+	return c.checkWorkspaceAlive(wid)
 }
 
 // NewWindow creates a new cmux workspace. The session parameter is used as

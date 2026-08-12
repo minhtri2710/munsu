@@ -42,6 +42,9 @@ type ordinaryCaptainProbeBackend struct {
 	teardownErr   error
 	sendCalls     int
 	teardownCalls int
+	// notFoundOnAbsent makes a false probe report structured authoritative
+	// absence (ErrPaneNotFound), modelling a verified structured backend.
+	notFoundOnAbsent bool
 }
 
 func (b *ordinaryCaptainProbeBackend) NewWindow(string, string) (string, error) { return "", nil }
@@ -54,6 +57,21 @@ func (b *ordinaryCaptainProbeBackend) Alive(string) bool {
 	}
 	b.aliveCalls++
 	return result
+}
+
+// CheckAlive is the structured probe: a false probe reports authoritative
+// absence (ErrPaneNotFound) when notFoundOnAbsent is set, else an operational
+// not-confirmed reading.
+func (b *ordinaryCaptainProbeBackend) CheckAlive(string) (bool, error) {
+	result := b.alive
+	if b.aliveCalls < len(b.aliveResults) {
+		result = b.aliveResults[b.aliveCalls]
+	}
+	b.aliveCalls++
+	if !result && b.notFoundOnAbsent {
+		return false, backend.ErrPaneNotFound
+	}
+	return result, nil
 }
 func (b *ordinaryCaptainProbeBackend) Teardown(string) error { b.teardownCalls++; return b.teardownErr }
 
@@ -151,7 +169,7 @@ func TestSessionRetireEndpointOutcomes(t *testing.T) {
 		{name: "backend mismatch", bk: &ordinaryCaptainProbeBackend{}, meta: map[string]string{"backend": "tmux", "window": "pane"}, wantErr: true},
 		{name: "herdr mismatch", bk: &ordinaryCaptainProbeBackend{}, meta: map[string]string{"backend": "herdr", "window": "other:pane", "herdr_session": "owned"}, wantErr: true},
 		{name: "quit failure", bk: &ordinaryCaptainProbeBackend{alive: true, sendErr: boom}, meta: map[string]string{"window": "pane"}, wantErr: true, wantSend: 1},
-		{name: "graceful exit", bk: &ordinaryCaptainProbeBackend{aliveResults: []bool{true, false}}, meta: map[string]string{"window": "pane"}, wantSend: 1},
+		{name: "graceful exit", bk: &ordinaryCaptainProbeBackend{aliveResults: []bool{true, false}, notFoundOnAbsent: true}, meta: map[string]string{"window": "pane"}, wantSend: 1},
 		{name: "teardown fallback", bk: &ordinaryCaptainProbeBackend{aliveResults: []bool{true, true}}, meta: map[string]string{"window": "pane"}, wantSend: 1, wantTeardown: 1},
 		{name: "dead teardown failure", bk: &ordinaryCaptainProbeBackend{teardownErr: boom}, meta: map[string]string{"window": "pane"}, wantErr: true, wantTeardown: 1},
 	}

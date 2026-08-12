@@ -350,9 +350,14 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
-		if !status.Alive {
+		if status.AuthoritativeAbsent() {
+			// Exact structured absence of the bound endpoint: already gone.
 			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", ep.Handle))
 		} else {
+			// Live, transitional, stale, unknown, or unresponsive: not
+			// authoritatively absent, so the recorded endpoint lease must be
+			// released exactly. An ambiguous reading is never an excuse to
+			// claim the endpoint is already gone (BEO-16: unknown != dead).
 			request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
 			if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
 				request.DenyWorkspaceClose = true

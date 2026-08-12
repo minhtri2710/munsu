@@ -161,31 +161,45 @@ func (o *OrcaBackend) Capture(windowID string, lines int) (string, error) {
 
 // Alive checks whether the terminal identified by windowID still exists.
 func (o *OrcaBackend) Alive(windowID string) bool {
+	alive, err := o.CheckAlive(windowID)
+	if err != nil {
+		return false
+	}
+	return alive
+}
+
+// CheckAlive is the structured probe for the typed observation contract. It
+// returns (true, nil) when the exact terminal exists, (false, ErrPaneNotFound)
+// when the parsed authoritative terminal list confirms the terminal is absent,
+// and an operational error for every other failure (command failure, malformed
+// JSON). An operational failure is never authoritative absence.
+func (o *OrcaBackend) CheckAlive(windowID string) (bool, error) {
 	_, terminalID := ParseOrcaWindow(windowID)
 	if terminalID == "" {
-		return false
+		return false, fmt.Errorf("orca: invalid window handle %q", windowID)
 	}
 
 	if _, err := orcaBin(); err != nil {
-		return false
+		return false, err
 	}
 
 	out, err := orcaOutput("terminal", "list", "--json")
 	if err != nil {
-		return false
+		return false, fmt.Errorf("orca: listing terminals: %w", err)
 	}
 
 	var resp orcaTerminalListResponse
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
-		return false
+		return false, fmt.Errorf("orca: malformed terminal list: %w", err)
 	}
 
 	for _, t := range resp.Terminals {
 		if t.TerminalID == terminalID {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	// The parsed authoritative list lacks the exact terminal: confirmed absent.
+	return false, ErrPaneNotFound
 }
 
 // Teardown closes the terminal identified by windowID.

@@ -66,7 +66,7 @@ func (s *endpointService) DisposeEndpoint(e BoundEndpoint) error { s.gotDispose 
 func TestServiceEndpointControllerPreservesFullIdentity(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	service := &endpointService{status: EndpointStatus{State: EndpointAlive}}
+	service := &endpointService{status: endpointStatusFromState(EndpointAlive)}
 	controller := ServiceEndpointController{Service: service}
 	if _, err := controller.ProbeBoundEndpoint(e); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestServiceEndpointControllerFailsClosedOnIncompleteIdentity(t *testing.T) 
 func TestFenceEndpointsRetainsMetadataWhenEndpointIsDead(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{{State: EndpointAlive}, {State: EndpointDead}}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointAlive), endpointStatusFromState(EndpointDead)}}
 	got, err := fenceEndpoints(h, f, f)
 	if err != nil || len(got) != 1 || len(f.disposed) != 1 {
 		t.Fatalf("got=%v disposed=%v err=%v", got, f.disposed, err)
@@ -97,7 +97,7 @@ func TestFenceEndpointsRetainsMetadataWhenEndpointIsDead(t *testing.T) {
 func TestFenceEndpointsFailsWhenStillAlive(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{{State: EndpointAlive}, {State: EndpointAlive}}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointAlive), endpointStatusFromState(EndpointAlive)}}
 	if _, err := fenceEndpoints(h, f, f); err == nil {
 		t.Fatal("expected error")
 	}
@@ -115,7 +115,7 @@ func TestFenceEndpointsFailsOnIdentityReplacement(t *testing.T) {
 	before := endpoint(h)
 	after := before
 	after.Handle = "pane-2"
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{before}, {after}}, probes: []EndpointStatus{{State: EndpointAlive}}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{before}, {after}}, probes: []EndpointStatus{endpointStatusFromState(EndpointAlive)}}
 	if _, err := fenceEndpoints(h, f, f); err == nil {
 		t.Fatal("expected error")
 	}
@@ -123,7 +123,7 @@ func TestFenceEndpointsFailsOnIdentityReplacement(t *testing.T) {
 func TestFenceEndpointsFailsOnPostDisposalProbeError(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{{State: EndpointAlive}, {}}, probeErrs: []error{nil, errors.New("probe failed")}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointAlive), {}}, probeErrs: []error{nil, errors.New("probe failed")}}
 	if _, err := fenceEndpoints(h, f, f); err == nil {
 		t.Fatal("expected error")
 	}
@@ -134,7 +134,7 @@ func TestFenceEndpointsFailsClosedOnUncertainInitialObservation(t *testing.T) {
 	e := endpoint(h)
 	for _, state := range []EndpointObservationState{EndpointUnresponsive, EndpointUnknown, EndpointUnresolved, EndpointStaleIdentity} {
 		t.Run(state.String(), func(t *testing.T) {
-			f := &endpointFake{endpoints: [][]BoundEndpoint{{e}}, probes: []EndpointStatus{{State: state}}}
+			f := &endpointFake{endpoints: [][]BoundEndpoint{{e}}, probes: []EndpointStatus{endpointStatusFromState(state)}}
 			if _, err := fenceEndpoints(h, f, f); err == nil {
 				t.Fatalf("expected %s to fail closed", state)
 			}
@@ -145,7 +145,7 @@ func TestFenceEndpointsFailsClosedOnUncertainInitialObservation(t *testing.T) {
 func TestFenceEndpointsRequiresAuthoritativeDeadAfterDisposal(t *testing.T) {
 	h := t.TempDir()
 	e := endpoint(h)
-	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{{State: EndpointStarting}, {State: EndpointUnknown}}}
+	f := &endpointFake{endpoints: [][]BoundEndpoint{{e}, {e}}, probes: []EndpointStatus{endpointStatusFromState(EndpointStarting), endpointStatusFromState(EndpointUnknown)}}
 	if _, err := fenceEndpoints(h, f, f); err == nil {
 		t.Fatal("expected non-dead post-disposal observation to fail")
 	}

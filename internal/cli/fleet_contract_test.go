@@ -63,7 +63,7 @@ func TestCLIEndpointProbeRequiresLiveAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Alive() || status.State != fleet.EndpointStarting {
+	if status.Alive() || status.State() != fleet.EndpointStarting {
 		t.Fatalf("endpoint must be starting when the pane exists but the agent is not alive: %+v", status)
 	}
 }
@@ -101,7 +101,7 @@ func TestCLIEndpointProbeRejectsHerdrSessionMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.State != fleet.EndpointStaleIdentity {
+	if status.State() != fleet.EndpointStaleIdentity {
 		t.Fatalf("status=%+v, want stale-identity", status)
 	}
 }

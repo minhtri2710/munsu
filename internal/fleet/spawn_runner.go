@@ -47,6 +47,7 @@ type Runner struct {
 	briefData             []byte
 	windowID              string
 	spawnRole             string
+	incarnation           string // opaque generation-bound endpoint incarnation, minted once per launch
 	projectConfig         SpawnProjectConfig
 	projectConfigLoaded   bool
 
@@ -90,6 +91,35 @@ type Runner struct {
 // NewRunner creates a Runner for the given Args.
 func NewRunner(args Args) *Runner {
 	return &Runner{args: args, endpoints: args.Endpoints}
+}
+
+// resolvedIncarnation returns the opaque endpoint incarnation for this launch.
+// On recovery it is the persisted AcquiredEndpoint incarnation (reused, never
+// re-minted); otherwise it is minted once per launch operation via the
+// injectable generator (default crypto/rand).
+func (r *Runner) resolvedIncarnation() string {
+	if r.incarnation != "" {
+		return r.incarnation
+	}
+	if rec := r.recordedAcquiredEndpoint(); rec != nil && rec.Incarnation != "" {
+		r.incarnation = rec.Incarnation
+		return r.incarnation
+	}
+	mint := r.args.IncarnationMint
+	if mint == nil {
+		mint = defaultIncarnationMint
+	}
+	v, err := mint()
+	if err != nil {
+		// A mint failure must fail the launch closed; the value is integral to
+		// the freshness identity. Persist the marker to surface it, but the
+		// caller (createSession) will propagate the error path. Fall back to a
+		// stable per-run marker rather than a repeatable empty value.
+		r.incarnation = "launch-incarnation-mint-failed"
+		return r.incarnation
+	}
+	r.incarnation = v
+	return r.incarnation
 }
 
 // Run executes the full spawn orchestration sequence.
@@ -1212,13 +1242,15 @@ func (r *Runner) createSession() error {
 			SessionOwner: acquired.SessionOwner,
 			WorkspaceID:  acquired.WorkspaceID,
 			TabID:        acquired.TabID,
+			Incarnation:  acquired.Incarnation,
 		}
+		r.incarnation = acquired.Incarnation
 		status, err := r.endpoints.Probe(ep)
-		if err != nil || (status.State != EndpointAlive && status.State != EndpointStarting) {
+		if err != nil || !status.Live() {
 			if err != nil {
 				return fmt.Errorf("verifying recorded pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
 			}
-			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement)", ep.Handle, status.State, ep.Backend)
+			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement)", ep.Handle, status.State(), ep.Backend)
 		}
 		r.endpoint, r.windowID = ep, ep.Handle
 		return nil
@@ -1253,13 +1285,26 @@ func (r *Runner) createSession() error {
 	if err != nil {
 		return err
 	}
+	// Mint/propagate the opaque incarnation once per launch operation. The
+	// probe below and the attach/bind records cross-check freshness with it.
+	ep.Incarnation = r.resolvedIncarnation()
 	status, err := r.endpoints.Probe(ep)
-	if err != nil || (status.State != EndpointAlive && status.State != EndpointStarting) {
+	// A created-but-not-yet-reported-live-endpoint (starting) is masked as a
+	// valid acquisition here; the readiness wait after submit decides liveness.
+	// Ambiguous/unresponsive/stale readings are not dead and never dispose the
+	// acquired endpoint as a replacement — the endpoint is disposed only on a
+	// hard probe error (a created endpoint this run does not yet durably own).
+	if err != nil {
 		_ = r.endpoints.Dispose(ep)
-		if err != nil {
-			return fmt.Errorf("verifying created pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
-		}
-		return fmt.Errorf("created pane %q observation %s on backend %q", ep.Handle, status.State, ep.Backend)
+		return fmt.Errorf("verifying created pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
+	}
+	if status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting {
+		_ = r.endpoints.Dispose(ep)
+		return fmt.Errorf("created pane %q observation %s on backend %q", ep.Handle, status.State(), ep.Backend)
+	}
+	if status.Freshness == FreshnessStale {
+		_ = r.endpoints.Dispose(ep)
+		return fmt.Errorf("created pane %q stale observation on backend %q", ep.Handle, ep.Backend)
 	}
 	r.endpoint, r.windowID = ep, ep.Handle
 	return nil
@@ -1286,7 +1331,7 @@ func (r *Runner) attachEndpoint() error {
 	if agg.AcquiredEndpoint != nil {
 		a := *agg.AcquiredEndpoint
 		if a.Backend != r.endpoint.Backend || a.Handle != r.endpoint.Handle ||
-			a.SessionOwner != r.endpoint.SessionOwner || a.WorkspaceID != r.endpoint.WorkspaceID || a.TabID != r.endpoint.TabID {
+			a.SessionOwner != r.endpoint.SessionOwner || a.WorkspaceID != r.endpoint.WorkspaceID || a.TabID != r.endpoint.TabID || a.Incarnation != r.endpoint.Incarnation {
 			return fmt.Errorf("attaching acquired endpoint: recorded acquired endpoint %s/%s does not match created endpoint %s/%s; refuse", a.Backend, a.Handle, r.endpoint.Backend, r.endpoint.Handle)
 		}
 		if r.launch != nil && (a.LeaseID != r.launch.EndpointReservationID || a.FenceToken != r.launch.EndpointFenceToken) {
@@ -1305,6 +1350,7 @@ func (r *Runner) attachEndpoint() error {
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
+		Incarnation:  r.endpoint.Incarnation,
 		Reason:       "spawn",
 	}
 	op, err := r.spawnOperation("attach", agg.Generation, req)
@@ -1645,11 +1691,11 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if probeErr != nil {
 				return fmt.Errorf("probing bound endpoint: %w", probeErr)
 			}
-			if status.State == EndpointDead {
+			if status.Absent() {
 				return fmt.Errorf("window died while waiting for ready")
 			}
-			if status.State == EndpointUnresponsive || status.State == EndpointUnresolved || status.State == EndpointUnknown || status.State == EndpointStaleIdentity {
-				return fmt.Errorf("endpoint observation %s while waiting for ready", status.State)
+			if status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting {
+				return fmt.Errorf("endpoint observation %s while waiting for ready", status.State())
 			}
 			capture, err := r.endpoints.Capture(r.endpoint, 60)
 			if err != nil {
@@ -1676,7 +1722,7 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 
 func (r *Runner) verifyEndpointReadyBeforePersist() error {
 	status, err := r.endpoints.Probe(r.endpoint)
-	if err != nil || status.State != EndpointAlive {
+	if err != nil || !status.Live() {
 		// Phase-aware disposal: only an endpoint the aggregate does not yet
 		// durably own is disposed on failure. After the durable attach the
 		// endpoint is recorded; disposal would orphan the record, so recovery
@@ -1687,7 +1733,7 @@ func (r *Runner) verifyEndpointReadyBeforePersist() error {
 		if err != nil {
 			return fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
 		}
-		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state", r.windowID, status.State, r.endpoint.Backend)
+		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state", r.windowID, status.State(), r.endpoint.Backend)
 	}
 	return nil
 }
@@ -1753,6 +1799,7 @@ func (r *Runner) confirmSpawn() (taskauthority.Outcome, error) {
 		SessionOwner: r.endpoint.SessionOwner,
 		WorkspaceID:  r.endpoint.WorkspaceID,
 		TabID:        r.endpoint.TabID,
+		Incarnation:  r.endpoint.Incarnation,
 		BoundAtUnix:  time.Now().Unix(),
 	}
 	req := taskauthority.CanonicalBindEndpointRequest{

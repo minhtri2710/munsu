@@ -64,9 +64,9 @@ func (f *reentrantEndpointCapabilities) Submit(ep CreatedEndpoint, text string) 
 
 func (f *reentrantEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointObservation, error) {
 	if f.probeAlive {
-		return SpawnEndpointObservation{State: EndpointAlive}, nil
+		return endpointStatusFromState(EndpointAlive), nil
 	}
-	return SpawnEndpointObservation{State: EndpointDead}, nil
+	return endpointStatusFromState(EndpointDead), nil
 }
 
 func (f *reentrantEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {

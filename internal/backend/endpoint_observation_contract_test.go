@@ -20,7 +20,7 @@ func (b *contractBackend) CheckAlive(string) (bool, error)          { return b.a
 type contractAgentBackend struct {
 	alive      bool
 	agentAlive bool
-	checkErr  error
+	checkErr   error
 }
 
 func (b contractAgentBackend) NewWindow(string, string) (string, error) { return "", nil }
@@ -50,10 +50,10 @@ func TestEndpointObservationContract(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ObserveBackendEndpoint(tt.bk, "pane-1")
-			if got.State != tt.want {
+			if got.State() != tt.want {
 				t.Fatalf("ObserveBackendEndpoint() = %+v, want state %v", got, tt.want)
 			}
-			if (tt.name == "plain probe failure" || tt.name == "agent probe failure") && got.State == EndpointDead {
+			if (tt.name == "plain probe failure" || tt.name == "agent probe failure") && got.State() == EndpointDead {
 				t.Fatal("operational probe failure must never be dead")
 			}
 		})
