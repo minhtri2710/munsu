@@ -86,6 +86,7 @@ func seedEndpointEvidence(t *testing.T, auth *taskauthority.Canonical, taskID, h
 			SessionOwner: "session-" + taskID,
 			WorkspaceID:  "ws-" + taskID,
 			TabID:        "tab-" + taskID,
+			Incarnation:  "inc-" + taskID,
 			BoundAtUnix:  time.Now().Unix(),
 		},
 		Reason: "spawn",
@@ -259,7 +260,11 @@ type recordingTeardown struct {
 
 func (r *recordingTeardown) RefuseGate() error { return nil }
 func (r *recordingTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
-	return RetirementEndpointStatus{Alive: r.alive}, nil
+	lifecycle := LifecycleDead
+	if r.alive {
+		lifecycle = LifecycleAlive
+	}
+	return RetirementEndpointStatus{Lifecycle: lifecycle, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceProbe}, nil
 }
 func (r *recordingTeardown) Dispose(_ string, _ map[string]string, req DisposeRequest) error {
 	r.disposed = append(r.disposed, req)

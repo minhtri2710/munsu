@@ -206,16 +206,6 @@ func (z *ZellijBackend) Capture(windowID string, lines int) (string, error) {
 	return out, nil
 }
 
-// Alive checks whether the pane still exists by querying list-panes.
-// windowID may be "<session>:<pane_id>" or a bare pane ID.
-func (z *ZellijBackend) Alive(windowID string) bool {
-	alive, err := z.CheckAlive(windowID)
-	if err != nil {
-		return false
-	}
-	return alive
-}
-
 // CheckAlive is the structured probe for the typed observation contract. It
 // returns (true, nil) when the exact pane exists, (false, ErrPaneNotFound)
 // when the parsed authoritative pane list confirms the pane is absent, and an

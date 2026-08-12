@@ -106,15 +106,22 @@ of one exact bound endpoint: `Lifecycle` (starting/alive/dead/unknown),
 canonical Task phase stays in `internal/taskauthority` and a probe never
 mutates it. The crossing guards encode the policy invariants: `unknown !=
 idle`, `unknown != dead`, `unresponsive != dead`, `starting != dead`, `stale !=
-dead`; a plain legacy-bool `false` is never authoritative absence. Only a
-structured `ErrPaneNotFound`-equivalent of the exact bound endpoint (dead +
-current) plus valid generation/revision/fence checks qualifies for Fleet
-recovery. `Backend.Alive` is retained only as a diagnostic legacy-bool source
-(never a recovery/dispose decision). The static capability matrix
-(`backend.Capabilities` / `CapabilityMatrix`) records for each of the five
-backends: create, reservation-aware create, submit, probe, dispose, worktree
-ownership (a separate provider, never a session backend), native busy and
-native event wait (Herdr `proposed` for P1b, not claimed current), and
+dead`. A backend adapter reports only what it directly observes (lifecycle and
+responsiveness) and never fabricates freshness or incarnation: it always
+returns `FreshnessUnknown`, so an adapter probe alone is never `Live()`/`Absent()`.
+Freshness current-ness and authoritative absence are concluded ONLY by Fleet,
+by matching the observation against the exact canonical binding/incarnation/
+generation/revision/fence (`fleet.authorizeObservation`); an incomplete or
+mismatched proof is demoted to `unknown`/`stale` and fails closed — nothing is
+disposed or relaunched on ambiguous state. `Backend.Alive` (the former boolean
+liveness surface) is fully removed: every session adapter exposes a structured
+probe (`CheckAlive`/`CheckAgentAlive`); the opaque launch incarnation is minted
+by Fleet and persisted in the `LaunchIntent`/binding before acquisition. The
+static capability matrix (`backend.Capabilities` / `CapabilityMatrix`) records
+for each of the five backends: create, reservation-aware create, submit, probe
+(and its exact resource granularity), dispose, worktree ownership (a separate
+provider, never a session backend), native busy and native event wait (Herdr
+`proposed` for P1b, not claimed current), and
 secondmate (out of scope).
 
 ### Delivery acceptance (`internal/domain`)

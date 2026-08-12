@@ -159,15 +159,6 @@ func (o *OrcaBackend) Capture(windowID string, lines int) (string, error) {
 	return out, nil
 }
 
-// Alive checks whether the terminal identified by windowID still exists.
-func (o *OrcaBackend) Alive(windowID string) bool {
-	alive, err := o.CheckAlive(windowID)
-	if err != nil {
-		return false
-	}
-	return alive
-}
-
 // CheckAlive is the structured probe for the typed observation contract. It
 // returns (true, nil) when the exact terminal exists, (false, ErrPaneNotFound)
 // when the parsed authoritative terminal list confirms the terminal is absent,

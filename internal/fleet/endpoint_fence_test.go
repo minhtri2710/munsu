@@ -34,13 +34,13 @@ func (f *endpointFake) DisposeBoundEndpoint(e BoundEndpoint) error {
 	return nil
 }
 func endpoint(home string) BoundEndpoint {
-	return BoundEndpoint{TaskID: "task", Backend: "herdr", Handle: "pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", CanonicalHome: home}
+	return BoundEndpoint{TaskID: "task", Backend: "herdr", Handle: "pane-1", SessionOwner: "session-1", WorkspaceID: "workspace-1", TabID: "tab-1", LeaseID: "lease-1", FenceToken: "fence-1", Incarnation: "inc-1", CanonicalHome: home}
 }
 
 func TestTaskEndpointScannerReadsFullBoundMetadata(t *testing.T) {
 	h := t.TempDir()
 	os.MkdirAll(filepath.Join(h, "state"), 0700)
-	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("backend=herdr\nwindow=pane-1\nherdr_session=session-1\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab-1\n"), 0600)
+	os.WriteFile(filepath.Join(h, "state", "task.meta"), []byte("backend=herdr\nwindow=pane-1\nherdr_session=session-1\nherdr_workspace_id=workspace-1\nherdr_tab_id=tab-1\nendpoint_lease_id=lease-1\nendpoint_fence_token=fence-1\nendpoint_incarnation=inc-1\n"), 0600)
 	got, err := (TaskEndpointScanner{}).ScanEndpoints(h)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("got=%+v err=%v", got, err)

@@ -277,8 +277,8 @@ func TestTmux_Alive_TmuxNotOnPath(t *testing.T) {
 
 	os.Setenv("PATH", "/dev/null")
 	tk := &TmuxBackend{}
-	if tk.Alive("@0") {
-		t.Error("Alive() returned true when tmux is not on PATH")
+	if alive, _ := tk.CheckAlive("@0"); alive {
+		t.Error("CheckAlive() returned true when tmux is not on PATH")
 	}
 }
 
@@ -312,8 +312,8 @@ func TestTmux_Backend_NotFound(t *testing.T) {
 	})
 
 	t.Run("Alive", func(t *testing.T) {
-		if tk.Alive("@0") {
-			t.Error("Alive returned true when tmux is not on PATH")
+		if alive, _ := tk.CheckAlive("@0"); alive {
+			t.Error("CheckAlive returned true when tmux is not on PATH")
 		}
 	})
 
@@ -380,11 +380,11 @@ func (f *fakeBackend) Capture(windowID string, lines int) (string, error) {
 	return "", nil
 }
 
-func (f *fakeBackend) Alive(windowID string) bool {
+func (f *fakeBackend) CheckAlive(windowID string) (bool, error) {
 	if f.aliveFn != nil {
-		return f.aliveFn(windowID)
+		return f.aliveFn(windowID), nil
 	}
-	return f.windows[windowID]
+	return f.windows[windowID], nil
 }
 
 func (f *fakeBackend) Teardown(windowID string) error {
@@ -416,15 +416,15 @@ func TestFakeBackend_NewWindow(t *testing.T) {
 func TestFakeBackend_AliveAfterNewWindow(t *testing.T) {
 	f := newFakeBackend()
 	wid, _ := f.NewWindow("s", "n")
-	if !f.Alive(wid) {
-		t.Error("Alive should return true after NewWindow")
+	if alive, _ := f.CheckAlive(wid); !alive {
+		t.Error("CheckAlive should return true after NewWindow")
 	}
 }
 
 func TestFakeBackend_AliveUnknown(t *testing.T) {
 	f := newFakeBackend()
-	if f.Alive("@nonexistent") {
-		t.Error("Alive should return false for unknown window")
+	if alive, _ := f.CheckAlive("@nonexistent"); alive {
+		t.Error("CheckAlive should return false for unknown window")
 	}
 }
 
@@ -432,8 +432,8 @@ func TestFakeBackend_TeardownRemoves(t *testing.T) {
 	f := newFakeBackend()
 	wid, _ := f.NewWindow("s", "n")
 	f.Teardown(wid)
-	if f.Alive(wid) {
-		t.Error("Alive should return false after Teardown")
+	if alive, _ := f.CheckAlive(wid); alive {
+		t.Error("CheckAlive should return false after Teardown")
 	}
 }
 
@@ -493,7 +493,7 @@ func TestFakeBackend_Lifecycle(t *testing.T) {
 	if err := f.Teardown(wid); err != nil {
 		t.Fatal(err)
 	}
-	if f.Alive(wid) {
+	if alive, _ := f.CheckAlive(wid); alive {
 		t.Error("should not be alive after teardown")
 	}
 }
@@ -588,8 +588,8 @@ func TestHerdrBackend_NotFound(t *testing.T) {
 	})
 
 	t.Run("Alive", func(t *testing.T) {
-		if h.Alive("@0") {
-			t.Error("Alive returned true when herdr is not on PATH")
+		if alive, _ := h.CheckAlive("@0"); alive {
+			t.Error("CheckAlive returned true when herdr is not on PATH")
 		}
 	})
 

@@ -168,9 +168,10 @@ type TransferActivationInfo struct {
 // identities reserved here. It stores only facts Fleet knows before acquisition
 // — the frozen snapshot digest, the explicit Backend and Harness/adapter
 // identity, model/effort/mode/kind/project/parent identities, the deterministic
-// launch identity/window label, and the one-time worktree/endpoint reservation
-// identities (reservation ID + fence token) — sufficient to bind or recover the
-// same operation. No identity is selected, detected, defaulted, probed, or
+// launch identity/window label, the one-time worktree/endpoint reservation
+// identities (reservation ID + fence token), and the opaque endpoint
+// incarnation minted for this launch operation — sufficient to bind or recover
+// the same operation. No identity is selected, detected, defaulted, probed, or
 // fallen back here: Fleet supplies every value explicitly.
 //
 // LaunchIntent is not a process record and carries no executable content: it is
@@ -193,6 +194,7 @@ type LaunchIntent struct {
 	WorktreeFenceToken    string `json:"worktree_fence_token"`
 	EndpointReservationID string `json:"endpoint_reservation_id"`
 	EndpointFenceToken    string `json:"endpoint_fence_token"`
+	EndpointIncarnation   string `json:"endpoint_incarnation,omitempty"`
 	PlannedAt             int64  `json:"planned_at"`
 }
 
@@ -403,7 +405,7 @@ func validateRetirementEvidence(ev RetirementEvidence) error {
 // endpoint reservation fences (reservation ID + fence token) must be present
 // and safe. Validation is shape-only: no value is selected, detected,
 // defaulted, probed, or fallen back.
-func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken string) error {
+func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken, endpointIncarnation string) error {
 	if !domain.IsSHA256(snapshotDigest) {
 		return validationError("launch snapshot digest must be a 64-hex sha256 digest")
 	}
@@ -433,6 +435,9 @@ func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mod
 	if endpointFenceToken == "" || strings.ContainsAny(endpointFenceToken, `/\\`) {
 		return validationError("launch requires an endpoint fence token")
 	}
+	if strings.TrimSpace(endpointIncarnation) == "" || strings.ContainsAny(endpointIncarnation, `/\\`) {
+		return validationError("launch requires an opaque endpoint incarnation token")
+	}
 	return nil
 }
 
@@ -443,7 +448,7 @@ func validateLaunchIntent(l LaunchIntent) error {
 	if l.OperationID == "" || strings.ContainsAny(l.OperationID, `/\\`) {
 		return validationError("launch intent missing operation id")
 	}
-	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken); err != nil {
+	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken, l.EndpointIncarnation); err != nil {
 		return err
 	}
 	if l.PlannedAt <= 0 {
@@ -563,6 +568,9 @@ func validateEndpointBinding(binding EndpointBinding) error {
 	}
 	if strings.TrimSpace(binding.FenceToken) == "" {
 		return validationError("endpoint binding missing fence token")
+	}
+	if strings.TrimSpace(binding.Incarnation) == "" {
+		return validationError("endpoint binding missing opaque incarnation token")
 	}
 	if binding.BoundAtUnix <= 0 {
 		return validationError("endpoint binding missing bound timestamp")

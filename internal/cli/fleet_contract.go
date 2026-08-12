@@ -104,10 +104,10 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 			Detail:         fmt.Sprintf("bound backend resolved as %q", resolved),
 		}, nil
 	}
-	// Produce the typed orthogonal observation of the exact bound endpoint and
-	// freshness cross-check it against the persisted incarnation (when bound).
-	observation := backend.ObserveBoundEndpoint(bk, endpoint.Handle, endpoint.Incarnation)
-	return observation, nil
+	// Produce the raw typed observation of the exact bound endpoint handle.
+	// Freshness is concluded by Fleet's authorizeObservation against the exact
+	// canonical binding; the CLI never fabricates incarnation/freshness.
+	return backend.ObserveEndpoint(bk, endpoint.Handle), nil
 }
 
 // snapshotDeps builds the explicit read dependencies for fleet snapshot/guard

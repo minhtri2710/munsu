@@ -9,10 +9,15 @@
 // reading from being mistaken for an authoritative Task or endpoint decision:
 //
 //	unknown != idle, unknown != dead, unresponsive != dead, starting != dead,
-//	stale != dead, plain legacy-bool false != dead.
+//	stale != dead.
 //
-// Only a structured authoritative absence of the exact bound endpoint, plus
-// valid generation/revision/fence checks, may qualify for Fleet recovery.
+// A backend adapter reports only what it directly observes: lifecycle and
+// responsiveness from its structured probe, an empty Incarnation, and
+// FreshnessUnknown — an adapter cannot attest the opaque launch incarnation.
+// Freshness current-ness and authoritative absence are concluded ONLY by Fleet
+// after matching the observation against the exact canonical binding/generation/
+// revision/fence (see fleet.authorizeObservation). An adapter probe therefore
+// never yields an Absent()/Live() reading on its own.
 package backend
 
 import (
@@ -83,6 +88,9 @@ func (r Responsiveness) Valid() bool {
 // Freshness describes how confidently an observation matches the exact bound
 // incarnation/cursor of the endpoint. Stale observations are diagnostic only
 // and must never be used to dispose, teardown, relaunch, or replace.
+//
+// Backend adapters always report FreshnessUnknown: only Fleet may conclude
+// current after matching the observation against the exact canonical binding.
 type Freshness uint8
 
 const (
@@ -140,15 +148,13 @@ func (a Activity) Valid() bool {
 	return a >= ActivityBusy && a <= ActivityUnknown
 }
 
-// ObservationSource records how an observation was produced. Legacy-bool
-// readings are retained only as diagnostic pane-presence; they are never
-// authoritative alive/dead and never qualify for recovery.
+// ObservationSource records how an observation was produced. Only a structured
+// probe (or a Fleet-derived conclusion) is a trustworthy decision input.
 type ObservationSource uint8
 
 const (
 	SourceInvalid ObservationSource = iota
 	SourceProbe
-	SourceLegacyBool
 	SourceDerived
 )
 
@@ -156,8 +162,6 @@ func (s ObservationSource) String() string {
 	switch s {
 	case SourceProbe:
 		return "probe"
-	case SourceLegacyBool:
-		return "legacy-bool"
 	case SourceDerived:
 		return "derived"
 	default:
@@ -169,22 +173,20 @@ func (s ObservationSource) Valid() bool {
 	return s >= SourceProbe && s <= SourceDerived
 }
 
-// EndpointRef identifies one exact bound endpoint and is the identity carried
-// by typed probes. Incarnation is the opaque generation-bound identity minted
-// by Fleet at launch and persisted by taskauthority; it is used to reject
-// stale/foreign observations (freshness).
+// EndpointRef identifies one exact bound endpoint for a typed probe. Incarnation
+// is the opaque launch-operation provenance token minted and persisted by Fleet
+// (BEO-16/P1a). An adapter carries the requested reference but never attests the
+// incarnation itself; the field is populated by Fleet's freshness authorization.
 type EndpointRef struct {
 	Backend     string
 	Handle      string
 	Incarnation string
 }
 
-// EndpointObservation is the typed, orthogonal runtime diagnostic of one
-// exact bound endpoint. Lifecycle is the only axis that may qualify for
-// recovery (and only when dead with a current, exact-binding reading).
-// Responsiveness, Freshness, Activity, Source, ObservedAt, Incarnation and
-// Detail are diagnostic provenance/decision inputs — none of them are Task
-// phase and none may mutate canonical Task lifecycle on their own.
+// EndpointObservation is the typed, orthogonal runtime diagnostic of one exact
+// bound endpoint. Only a Fleet-authorized observation (freshness current plus a
+// lifecycle reading) may qualify for recovery/readiness; an adapter probe on its
+// own is fresh unknown and never Live()/Absent().
 type EndpointObservation struct {
 	Lifecycle      LifecycleState
 	Responsiveness Responsiveness
@@ -196,19 +198,15 @@ type EndpointObservation struct {
 	Detail         string
 }
 
-// Valid reports whether every orthogonal axis holds a valid (non-zero)
-// value, which every produced observation must.
+// Valid reports whether every orthogonal axis holds a valid (non-zero) value.
 func (o EndpointObservation) Valid() bool {
 	return o.Lifecycle.Valid() && o.Responsiveness.Valid() &&
 		o.Freshness.Valid() && o.Activity.Valid() && o.Source.Valid()
 }
 
 // EndpointObservationState is the coarse lifecycle summary of an observation,
-// retained as a probe-result carrier and diagnostic summary (BEO-16 internal
-// cutover). Recovery and readiness policy decisions must use the typed
-// Lifecycle/Responsiveness/Freshness/Activity axes and the crossing guards
-// below (dead requires an authoritative structured absence); a coarse state
-// is never interpreted as a boolean "Alive" policy.
+// retained as a diagnostic summary. Policy decisions use the typed axes and the
+// Live()/Absent() guards; a coarse state is never a boolean "Alive" policy.
 type EndpointObservationState uint8
 
 const (
@@ -247,9 +245,7 @@ func (s EndpointObservationState) Valid() bool {
 	return s >= EndpointAlive && s <= EndpointUnresolved
 }
 
-// State derives the coarse lifecycle summary from the orthogonal axes. It is
-// diagnostic output, not policy truth: the authoritative decision input is
-// the structured Live()/Absent()/Lifecycle helpers.
+// State derives the coarse lifecycle summary from the orthogonal axes.
 func (o EndpointObservation) State() EndpointObservationState {
 	switch o.Lifecycle {
 	case LifecycleAlive:
@@ -272,20 +268,20 @@ func (o EndpointObservation) State() EndpointObservationState {
 	}
 }
 
-// Alive returns the coarse summary true for a confirmed-live, current, exact
-// reading. It is a diagnostic helper only: "false" here means "not proven
-// live", never "dead" and never a recovery trigger.
+// Alive returns the coarse summary true for a confirmed-live reading. It is a
+// diagnostic helper only: "false" here means "not proven live", never "dead".
 func (o EndpointObservation) Alive() bool { return o.Lifecycle == LifecycleAlive }
 
-// Live reports a confirmed-alive, current, exact-binding reading. Only this
-// is a positive readiness condition; starting/unknown/stale are not live.
+// Live reports a confirmed-alive, current, exact-binding reading and is the
+// only positive readiness condition. It is true only after Fleet authorized
+// freshness as current against the exact canonical binding.
 func (o EndpointObservation) Live() bool {
 	return o.Lifecycle == LifecycleAlive && o.Freshness == FreshnessCurrent
 }
 
-// Absent reports structured authoritative absence: dead + current + a
-// trustworthy source. This is the ONLY condition that may qualify for
-// recovery. Everything else fails closed.
+// Absent reports structured authoritative absence: dead + current + a trusted
+// source. This is the ONLY condition that may qualify for recovery, and only
+// Fleet can authorize freshness current; an adapter probe alone is never absent.
 func (o EndpointObservation) Absent() bool {
 	return o.Lifecycle == LifecycleDead && o.Freshness == FreshnessCurrent &&
 		(o.Source == SourceProbe || o.Source == SourceDerived)
@@ -299,49 +295,19 @@ func (o EndpointObservation) String() string {
 
 func observedNow() time.Time { return time.Now().UTC() }
 
-// CrossCheckBinding marks an observation whose bound identity does not match
-// the expected exact endpoint identity as unknown/stale/unknown: a mismatch
-// (wrong backend, wrong handle, or wrong incarnation) must never remain
-// authoritative. expectBackend/expectHandle/expectIncarnation are the exact
-// bound identities; empty strings are not compared.
-func (o EndpointObservation) CrossCheckBinding(expectBackend, expectHandle, expectIncarnation string) EndpointObservation {
-	if o.Source != SourceProbe && o.Source != SourceDerived {
-		return o
-	}
-	mismatch := ""
-	if expectIncarnation != "" && o.Incarnation != expectIncarnation {
-		mismatch = "incarnation"
-	} else if expectHandle != "" && o.Incarnation == "" {
-		// probe carried no incarnation for a bound endpoint that expects one
-		mismatch = "incarnation-absent"
-	}
-	if mismatch == "" {
-		return o
-	}
-	o.Lifecycle = LifecycleUnknown
-	o.Freshness = FreshnessStale
-	o.Activity = ActivityUnknown
-	if o.Detail == "" {
-		o.Detail = mismatch + " mismatch"
-	} else {
-		o.Detail = o.Detail + "; " + mismatch + " mismatch"
-	}
-	return o
-}
-
-// ObservationFromProbeError maps a probe error to the typed orthogonal
-// contract. Only a structured ErrPaneNotFound (exact authoritative absence of
-// the bound endpoint) becomes dead/current; every operational failure
-// (timeout, malformed response, permission, missing binary, socket/CLI
-// failure) becomes unknown/unresponsive/unknown and never dead.
-func ObservationFromProbeError(endpoint EndpointRef, err error) EndpointObservation {
+// ObservationFromProbeError maps a probe error to the typed contract. A
+// structured ErrPaneNotFound is evidence of endpoint absence (lifecycle dead)
+// but — because an adapter cannot attest the opaque launch incarnation — the
+// observation is still fresh unknown and is NOT Absent() on its own. Every
+// operational failure (timeout, malformed response, permission, missing binary,
+// server/socket failure) is unresponsive/unknown and never dead.
+func ObservationFromProbeError(err error) EndpointObservation {
 	obs := EndpointObservation{
 		Lifecycle:      LifecycleUnknown,
 		Responsiveness: Responsive,
-		Freshness:      FreshnessCurrent,
+		Freshness:      FreshnessUnknown,
 		Activity:       ActivityUnknown,
 		Source:         SourceProbe,
-		Incarnation:    endpoint.Incarnation,
 		ObservedAt:     observedNow(),
 	}
 	if err == nil {
@@ -350,120 +316,90 @@ func ObservationFromProbeError(endpoint EndpointRef, err error) EndpointObservat
 	}
 	if errors.Is(err, ErrPaneNotFound) {
 		obs.Lifecycle = LifecycleDead
-		obs.Freshness = FreshnessCurrent
+		obs.Responsiveness = Responsive
 		obs.Detail = err.Error()
 		return obs
 	}
 	obs.Responsiveness = Unresponsive
-	obs.Freshness = FreshnessUnknown
-	obs.Detail = fmt.Sprintf("probing %s/%s: %v", endpoint.Backend, endpoint.Handle, err)
+	obs.Detail = err.Error()
 	return obs
 }
 
-// ObserveBackendEndpoint produces the typed observation of one endpoint
-// handle without an incarnation (incarnation unknown). Callers with the exact
-// bound identity should use ObserveBoundEndpoint so the probe freshness
-// cross-check can reject stale/foreign observations.
-func ObserveBackendEndpoint(bk Backend, handle string) EndpointObservation {
-	return ObserveBoundEndpoint(bk, handle, "")
-}
-
-// ObserveBoundEndpoint produces the typed orthogonal observation of one exact
-// bound endpoint from its full identity. The candidate reflection carries the
-// observed backend/handle/incarnation (when known) and is freshness
-// cross-checked against the exact bound identities. An authoritative dead
-// reading is only produced from a structured ErrPaneNotFound; operational
-// failures become unresponsive/unknown.
-//
-// expectedIncarnation is the opaque value persisted by taskauthority for the
-// exact binding. When empty, no cross-check on incarnation is performed
-// (freshness stays as reported by the adapter).
-func ObserveBoundEndpoint(bk Backend, handle, expectedIncarnation string) EndpointObservation {
-	ref := EndpointRef{Handle: handle, Incarnation: expectedIncarnation}
+// ObserveEndpoint produces the raw typed observation of one endpoint from its
+// handle. It never fabricates freshness or incarnation: the adapter reports
+// lifecycle/responsiveness only, FreshnessUnknown, and empty Incarnation. It
+// never returns an Absent() (recovery-eligible) observation because it cannot
+// attest the exact bound incarnation/generation/fence. Callers keep the raw
+// observation as diagnostic input and pass it to Fleet's freshness
+// authorization (authorizeObservation in internal/fleet) for a policy decision.
+func ObserveEndpoint(bk Backend, handle string) EndpointObservation {
+	ref := EndpointRef{Handle: handle}
+	obs := EndpointObservation{
+		Lifecycle:      LifecycleUnknown,
+		Responsiveness: ResponsivenessUnknown,
+		Freshness:      FreshnessUnknown,
+		Activity:       ActivityUnknown,
+		Source:         SourceProbe,
+		ObservedAt:     observedNow(),
+	}
 	if bk == nil || handle == "" {
-		return EndpointObservation{
-			Lifecycle:      LifecycleUnknown,
-			Responsiveness: ResponsivenessUnknown,
-			Freshness:      FreshnessUnknown,
-			Activity:       ActivityUnknown,
-			Source:         SourceDerived,
-			Incarnation:    expectedIncarnation,
-			ObservedAt:     observedNow(),
-			Detail:         "endpoint identity is incomplete",
-		}
+		obs.Source = SourceDerived
+		obs.Detail = "endpoint identity is incomplete"
+		return obs
 	}
 
 	if aware, ok := bk.(AgentAwareBackend); ok {
 		paneAlive, agentAlive, err := aware.CheckAgentAlive(handle)
 		if err != nil {
-			return ObservationFromProbeError(ref, err)
+			return reflectError(ref, err)
 		}
-		return reflectAgent(ref, paneAlive, agentAlive)
+		return reflectLiveness(ref, paneAlive, agentAlive)
 	}
 	if prober, ok := bk.(endpointProber); ok {
 		alive, agentAlive, err := prober.probeEndpoint(handle)
 		if err != nil {
-			return ObservationFromProbeError(ref, err)
+			return reflectError(ref, err)
 		}
-		return reflectAgent(ref, alive, agentAlive)
+		return reflectLiveness(ref, alive, agentAlive)
 	}
 	if checker, ok := bk.(endpointAliveChecker); ok {
 		paneAlive, err := checker.CheckAlive(handle)
 		if err != nil {
-			return ObservationFromProbeError(ref, err)
+			return reflectError(ref, err)
 		}
 		if paneAlive {
 			// A non-agent-aware structured backend cannot recognize an agent;
-			// its best confirmed-live signal is exact pane liveness.
-			return EndpointObservation{
-				Lifecycle:      LifecycleAlive,
-				Responsiveness: Responsive,
-				Freshness:      FreshnessCurrent,
-				Activity:       ActivityUnknown,
-				Source:         SourceProbe,
-				Incarnation:    expectedIncarnation,
-				ObservedAt:     observedNow(),
-			}
+			// its best confirmed signal is pane liveness (freshness still unknown
+			// until Fleet authorizes it).
+			obs.Lifecycle = LifecycleAlive
+			obs.Responsiveness = Responsive
+			return obs
 		}
-		return EndpointObservation{
-			Lifecycle:      LifecycleUnknown,
-			Responsiveness: Responsive,
-			Freshness:      FreshnessUnknown,
-			Activity:       ActivityUnknown,
-			Source:         SourceProbe,
-			Incarnation:    expectedIncarnation,
-			ObservedAt:     observedNow(),
-			Detail:         "pane absent without authoritative absence error",
-		}
+		obs.Responsiveness = Responsive
+		obs.Detail = "pane absent without authoritative absence error"
+		return obs
 	}
-	// Legacy bool-only backend: retain pane presence as diagnostic only.
-	// true AND false both map to lifecycle unknown — never authoritative
-	// alive, and false is never dead (BEO-16 no-bool-policy cutover).
-	alive := bk.Alive(handle)
-	detail := "legacy bool probe (pane present)"
-	if !alive {
-		detail = "legacy bool probe (pane absent) — not authoritative absence"
-	}
-	return EndpointObservation{
-		Lifecycle:      LifecycleUnknown,
-		Responsiveness: ResponsivenessUnknown,
-		Freshness:      FreshnessUnknown,
-		Activity:       ActivityUnknown,
-		Source:         SourceLegacyBool,
-		Incarnation:    expectedIncarnation,
-		ObservedAt:     observedNow(),
-		Detail:         detail,
-	}
+	// No structured probe surface: the endpoint liveness is unknown (the backend
+	// exists but provides no authoritative probe). This is not an unresolved
+	// backend identity.
+	obs.Responsiveness = ResponsivenessUnknown
+	obs.Detail = "backend has no structured probe surface"
+	return obs
 }
 
-func reflectAgent(ref EndpointRef, paneAlive, agentAlive bool) EndpointObservation {
+func reflectError(ref EndpointRef, err error) EndpointObservation {
+	obs := ObservationFromProbeError(err)
+	obs.ObservedAt = observedNow()
+	return obs
+}
+
+func reflectLiveness(ref EndpointRef, paneAlive, agentAlive bool) EndpointObservation {
 	obs := EndpointObservation{
 		Lifecycle:      LifecycleUnknown,
 		Responsiveness: Responsive,
-		Freshness:      FreshnessCurrent,
+		Freshness:      FreshnessUnknown,
 		Activity:       ActivityUnknown,
 		Source:         SourceProbe,
-		Incarnation:    ref.Incarnation,
 		ObservedAt:     observedNow(),
 	}
 	switch {
@@ -487,9 +423,9 @@ type endpointProber interface {
 	probeEndpoint(handle string) (alive bool, agentAlive bool, err error)
 }
 
-// endpointAliveChecker is the structured probe surface implemented by tmux
-// and herdr: it distinguishes authoritative absence (ErrPaneNotFound) from
-// operational failure.
+// endpointAliveChecker is the structured probe surface implemented by the five
+// session adapters: it distinguishes authoritative absence (ErrPaneNotFound)
+// from operational failure.
 type endpointAliveChecker interface {
 	CheckAlive(string) (bool, error)
 }

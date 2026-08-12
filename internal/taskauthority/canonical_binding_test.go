@@ -26,14 +26,15 @@ func worktreeBinding() WorktreeBinding {
 
 func endpointBinding() EndpointBinding {
 	return EndpointBinding{
-		Backend:     "claude",
-		Handle:      "handle-1",
-		LeaseID:     "lease-ep",
-		FenceToken:  "fence-ep",
+		Backend:      "claude",
+		Handle:       "handle-1",
+		LeaseID:      "lease-ep",
+		FenceToken:   "fence-ep",
 		SessionOwner: "owner",
-		WorkspaceID: "ws",
-		TabID:       "tab",
-		BoundAtUnix: 2000,
+		WorkspaceID:  "ws",
+		TabID:        "tab",
+		Incarnation:  "inc-bind",
+		BoundAtUnix:  2000,
 	}
 }
 

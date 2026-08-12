@@ -35,11 +35,11 @@ func (f *fakeBackend) Capture(windowID string, lines int) (string, error) {
 	return "> ready", nil
 }
 
-func (f *fakeBackend) Alive(windowID string) bool {
+func (f *fakeBackend) CheckAlive(windowID string) (bool, error) {
 	if f.alive != nil {
-		return f.alive(windowID)
+		return f.alive(windowID), nil
 	}
-	return true
+	return true, nil
 }
 
 func (f *fakeBackend) Teardown(windowID string) error {

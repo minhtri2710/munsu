@@ -101,16 +101,17 @@ func probeCaptainBackend(bk backend.Backend, window string) (fleet.CaptainProbeR
 		}
 		return result, err
 	}
-	obs := backend.ObserveBackendEndpoint(bk, window)
-	// Only a structured authoritative absence (dead/current) may set Absent;
-	// every ambiguous reading (unknown/unresponsive/starting/stale, malformed,
-	// or a plain legacy-bool false) leaves Absent false and fails closed — it
-	// never authorizes relaunch. Non-agent-aware backends equate agent presence
-	// with confirmed pane liveness.
+	obs := backend.ObserveEndpoint(bk, window)
+	// A non-agent-aware structured backend reports raw pane presence via its
+	// lifecycle; it cannot conclude authoritative absence (absent requires
+	// Fleet freshness authorization, which this diagnostic-only path does not
+	// perform). Absent stays false for every ambiguous reading, so it never
+	// authorizes relaunch from an unproven probe.
+	present := obs.Lifecycle == backend.LifecycleAlive || obs.Lifecycle == backend.LifecycleStarting
 	return fleet.CaptainProbeResult{
-		PaneAlive:      obs.Live(),
-		AgentAlive:     obs.Live(),
-		ReadyForPrompt: obs.Live(),
+		PaneAlive:      present,
+		AgentAlive:     present,
+		ReadyForPrompt: present,
 		Absent:         obs.Absent(),
 	}, nil
 }
@@ -165,22 +166,22 @@ func (e sessionRetireEndpoint) Retire(home string, meta map[string]string) error
 		return err
 	}
 	window := meta["window"]
-	// Authoritative absence (dead/current exact reading) means the endpoint is
-	// already gone — no teardown required. Every other state (alive, starting,
-	// unknown, stale, unresponsive) is either live or not confirmable as absent
-	// and is cleaned up to avoid an orphaned endpoint.
-	obs := backend.ObserveBackendEndpoint(bk, window)
-	if obs.Absent() {
-		return nil
-	}
-	if obs.Live() {
+	// Explicit captain retirement authorizes disposal of the bound endpoint;
+	// the decision to dispose is authorization + exact bound identity, NOT
+	// ambiguous liveness. A raw probe cannot attest freshness (unknown != dead),
+	// so it never skips disposal on its own. We attempt a graceful /quit when a
+	// pane is present (alive/starting raw lifecycle) and, once the quit returns
+	// an exact dead lifecycle, the endpoint exited cleanly — nothing left to
+	// dispose. Every other outcome still disposes to release the lease.
+	obs := backend.ObserveEndpoint(bk, window)
+	if obs.Lifecycle == backend.LifecycleAlive || obs.Lifecycle == backend.LifecycleStarting {
 		if err := bk.SendKeys(window, "/quit"); err != nil {
 			return err
 		}
 		if e.sleep != nil {
 			e.sleep(500 * time.Millisecond)
 		}
-		if re := backend.ObserveBackendEndpoint(bk, window); re.Absent() {
+		if re := backend.ObserveEndpoint(bk, window); re.Lifecycle == backend.LifecycleDead {
 			return nil
 		}
 	}

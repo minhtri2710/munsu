@@ -66,6 +66,40 @@ func (c CapabilityAvailability) String() string {
 	}
 }
 
+// ProbeGranularity describes the exact resource a backend's structured probe
+// proves existence/absence of. Exact authoritative dead/current is only
+// meaningful at this granularity (BEO-16/P1a).
+type ProbeGranularity uint8
+
+const (
+	// GranularityInvalid is the zero/undefined value.
+	GranularityInvalid ProbeGranularity = iota
+	// GranularityPane is exact pane/session liveness (no agent recognition).
+	GranularityPane
+	// GranularityPaneAgent is exact pane plus agent recognition.
+	GranularityPaneAgent
+	// GranularityWorkspace is workspace-level liveness only (no per-surface
+	// agent semantics).
+	GranularityWorkspace
+	// GranularityTerminal is terminal-existence liveness only.
+	GranularityTerminal
+)
+
+func (g ProbeGranularity) String() string {
+	switch g {
+	case GranularityPane:
+		return "pane"
+	case GranularityPaneAgent:
+		return "pane+agent"
+	case GranularityWorkspace:
+		return "workspace"
+	case GranularityTerminal:
+		return "terminal"
+	default:
+		return "invalid"
+	}
+}
+
 // BackendCapabilities is the static, deterministic descriptor for one session
 // backend. It is a compile-time fact about the adapter surface, not a runtime
 // health check.
@@ -84,6 +118,11 @@ type BackendCapabilities struct {
 	// Probe reports a structured (error-returning) endpoint probe that can
 	// distinguish authoritative absence from operational failure.
 	Probe CapabilityAvailability
+	// ProbeGranularity describes the exact resource semantics the probe proves.
+	// It prevents a coarser resource liveness (e.g. cmux workspace, orca
+	// terminal) from being mistaken for exact agent-surface/incarnation proof
+	// and constrains authoritative dead/current to the stated granularity.
+	ProbeGranularity ProbeGranularity
 	// Dispose reports teardown/close of the endpoint.
 	Dispose CapabilityAvailability
 	// WorktreeOwnership reports whether the backend owns the worktree. In munsu
@@ -112,6 +151,7 @@ func Capabilities(name string) (BackendCapabilities, error) {
 			ReservationAwareCreate: CapCurrent,
 			Submit:                 CapCurrent,
 			Probe:                  CapCurrent,
+			ProbeGranularity:       GranularityPane,
 			Dispose:                CapCurrent,
 			WorktreeOwnership:      CapUnsupported,
 			NativeBusy:             CapUnsupported,
@@ -126,6 +166,7 @@ func Capabilities(name string) (BackendCapabilities, error) {
 			ReservationAwareCreate: CapCurrent,
 			Submit:                 CapCurrent,
 			Probe:                  CapCurrent,
+			ProbeGranularity:       GranularityPaneAgent,
 			Dispose:                CapCurrent,
 			WorktreeOwnership:      CapUnsupported,
 			NativeBusy:             CapProposed,
@@ -140,6 +181,7 @@ func Capabilities(name string) (BackendCapabilities, error) {
 			ReservationAwareCreate: CapUnsupported,
 			Submit:                 CapCurrent,
 			Probe:                  CapCurrent,
+			ProbeGranularity:       GranularityPane,
 			Dispose:                CapCurrent,
 			WorktreeOwnership:      CapUnsupported,
 			NativeBusy:             CapUnsupported,
@@ -157,6 +199,7 @@ func Capabilities(name string) (BackendCapabilities, error) {
 			// liveness) and capture is unsupported; the capability is structured
 			// for the workspace resource only.
 			Probe:             CapCurrent,
+			ProbeGranularity:  GranularityWorkspace,
 			Dispose:           CapCurrent,
 			WorktreeOwnership: CapUnsupported,
 			NativeBusy:        CapUnsupported,
@@ -172,6 +215,7 @@ func Capabilities(name string) (BackendCapabilities, error) {
 			Submit:                 CapCurrent,
 			// orca probe resolves at terminal-existence granularity only.
 			Probe:             CapCurrent,
+			ProbeGranularity:  GranularityTerminal,
 			Dispose:           CapCurrent,
 			WorktreeOwnership: CapUnsupported,
 			NativeBusy:        CapUnsupported,

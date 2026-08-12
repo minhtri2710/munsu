@@ -20,12 +20,15 @@ var ErrPaneNotFound = errors.New("pane not found")
 // not dead and never authorizes relaunch — it fails closed.
 var ErrAgentNotFound = errors.New("agent not found in pane")
 
-// Backend defines the operations for managing agent session windows.
+// Backend defines the operations for managing agent session windows. There is
+// no boolean liveness surface: every session adapter provides a structured
+// probe (CheckAlive or CheckAgentAlive) that distinguishes authoritative
+// absence (ErrPaneNotFound) from operational failure (BEO-16/P1a clean cutover
+// from the former Backend.Alive bool).
 type Backend interface {
 	NewWindow(session, name string) (string, error)
 	SendKeys(windowID, text string) error
 	Capture(windowID string, lines int) (string, error)
-	Alive(windowID string) bool
 	Teardown(windowID string) error
 }
 

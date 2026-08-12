@@ -350,14 +350,23 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 		if err != nil {
 			return cleanupPending(fmt.Errorf("teardown %s: verifying bound endpoint: %w", opts.ID, err))
 		}
-		if status.AuthoritativeAbsent() {
-			// Exact structured absence of the bound endpoint: already gone.
+		// Authorize freshness against the exact canonical EndpointBinding of the
+		// retired generation. An incomplete proof (or an ambiguous
+		// starting/unknown/stale/unresponsive reading) fails closed: ownership
+		// is retained, nothing is disposed, and cleanup stays pending. Only an
+		// authorized Absent() skips disposal; only an authorized Live() disposes.
+		auth := status.AuthorizedAgainst(exactEndpointProof{
+			backend:     ep.Backend,
+			handle:      ep.Handle,
+			incarnation: ep.Incarnation,
+			leaseID:     ep.LeaseID,
+			fenceToken:  ep.FenceToken,
+		})
+		switch {
+		case auth.AuthoritativeAbsent():
+			// Exact structured, Fleet-authorized absence: already gone.
 			result.Steps = append(result.Steps, fmt.Sprintf("session window %s already gone (still tearing down)", ep.Handle))
-		} else {
-			// Live, transitional, stale, unknown, or unresponsive: not
-			// authoritatively absent, so the recorded endpoint lease must be
-			// released exactly. An ambiguous reading is never an excuse to
-			// claim the endpoint is already gone (BEO-16: unknown != dead).
+		case auth.Live():
 			request := DisposeRequest{Backend: ep.Backend, Handle: ep.Handle, SessionOwner: ep.SessionOwner, WorkspaceID: ep.WorkspaceID, TabID: ep.TabID, Home: opts.HomeDir, TaskID: opts.ID}
 			if request.WorkspaceID != "" && len(otherWorkspaceRefs(opts.HomeDir, opts.ID, request.WorkspaceID)) > 0 {
 				request.DenyWorkspaceClose = true
@@ -366,6 +375,11 @@ func RetireTask(opts Options, backend BoundTeardown, journals RetirementJournalP
 				return cleanupPending(fmt.Errorf("teardown %s: disposing bound endpoint: %w", opts.ID, err))
 			}
 			result.Steps = append(result.Steps, fmt.Sprintf("session window %s killed", ep.Handle))
+		default:
+			// Ambiguous (starting/unknown/stale/unresponsive) or unauthorized:
+			// never dispose, never claim already gone — keep ownership and fail
+			// closed as cleanup pending (BEO-16: unknown != dead).
+			return cleanupPending(fmt.Errorf("teardown %s: endpoint %s observation %s is ambiguous; cleanup pending, lease retained", opts.ID, ep.Handle, auth.Lifecycle))
 		}
 	}
 

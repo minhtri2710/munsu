@@ -159,7 +159,7 @@ func TestProbeEndpointUnresolvedBackendIsTypedObservationWithoutFallback(t *test
 }
 
 func TestProbeFailuresNeverBecomeDead(t *testing.T) {
-	observation := ObservationFromProbeError(EndpointRef{Backend: "tmux", Handle: "p1"}, errors.New("timeout"))
+	observation := ObservationFromProbeError(errors.New("timeout"))
 	if observation.State() == EndpointDead {
 		t.Fatalf("probe failure mapped to dead: %+v", observation)
 	}

@@ -16,7 +16,7 @@ func TestFakeSessionBackend(t *testing.T) {
 		t.Fatalf("NewWindow failed: %v", err)
 	}
 
-	if !fake.Alive(winID) {
+	if alive, err := fake.CheckAlive(winID); !alive || err != nil {
 		t.Error("expected window to be alive")
 	}
 
@@ -27,7 +27,7 @@ func TestFakeSessionBackend(t *testing.T) {
 	if err := fake.Teardown(winID); err != nil {
 		t.Fatalf("Teardown failed: %v", err)
 	}
-	if fake.Alive(winID) {
+	if alive, _ := fake.CheckAlive(winID); alive {
 		t.Error("expected window to be dead after teardown")
 	}
 }

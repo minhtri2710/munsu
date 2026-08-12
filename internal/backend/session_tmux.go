@@ -163,10 +163,13 @@ func (t *TmuxBackend) Capture(windowID string, lines int) (string, error) {
 }
 
 // CheckAlive checks whether the identified window/pane still exists by running
+// CheckAlive checks whether the identified window/pane still exists by running
 // `tmux list-panes -t <windowID>`.
 // Returns (true, nil) if confirmed alive.
-// Returns (false, ErrPaneNotFound) if confirmed dead / absent.
-// Returns (false, err) if tmux binary or execution failed.
+// Returns (false, ErrPaneNotFound) only for an exact, per-target absence
+// (e.g. "can't find window/pane", "no such window"); server/socket, timeout,
+// permission, missing-binary and generic/broad "not found" failures are
+// operational errors and never authoritative absence.
 func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 	bin, err := tmuxBin()
 	if err != nil {
@@ -176,20 +179,18 @@ func (t *TmuxBackend) CheckAlive(windowID string) (bool, error) {
 	cmd := exec.Command(bin, "list-panes", "-t", target)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		return true, nil
+		// A successful list-panes must return non-empty target output; empty
+		// successful output is not authoritative presence.
+		if strings.TrimSpace(string(out)) != "" {
+			return true, nil
+		}
+		return false, fmt.Errorf("tmux list-panes: empty output for target %q", target)
 	}
 	msg := strings.TrimSpace(string(out))
-	if strings.Contains(msg, "can't find") || strings.Contains(msg, "not found") || strings.Contains(msg, "no server running") {
+	if isTmuxTargetAbsent(msg) {
 		return false, ErrPaneNotFound
 	}
 	return false, fmt.Errorf("tmux list-panes: %s", msg)
-}
-
-// Alive checks whether the identified window/pane still exists by running
-// `tmux list-panes -t <windowID>`. Returns true ONLY when confirmed alive.
-func (t *TmuxBackend) Alive(windowID string) bool {
-	alive, err := t.CheckAlive(windowID)
-	return err == nil && alive
 }
 
 // Teardown kills the identified window via `tmux kill-window -t <windowID>`.
@@ -203,4 +204,23 @@ func (t *TmuxBackend) Teardown(windowID string) error {
 	cmd := exec.Command(bin, "kill-window", "-t", target)
 	_ = cmd.Run() // ignore errors — window may already be gone
 	return nil
+}
+
+// isTmuxTargetAbsent reports whether a tmux list-panes error is an exact,
+// per-target absence of the requested window/pane (e.g. "can't find window:
+// <target>" or "no such window"). Server/socket availability errors ("no server
+// running", connection refused), timeouts, permission errors and generic/broad
+// "not found" are NOT per-target absence and return false so CheckAlive keeps
+// them as operational errors (never ErrPaneNotFound).
+func isTmuxTargetAbsent(msg string) bool {
+	m := strings.ToLower(strings.TrimSpace(msg))
+	for _, tok := range []string{
+		"can't find window", "can't find pane", "can't find session",
+		"no such window", "no such pane", "no such session",
+	} {
+		if strings.Contains(m, tok) {
+			return true
+		}
+	}
+	return false
 }

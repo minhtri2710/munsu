@@ -232,19 +232,6 @@ func (c *CmuxBackend) Capture(windowID string, lines int) (string, error) {
 	return "", fmt.Errorf("cmux: capture not supported (cmux has no capture-pane equivalent)")
 }
 
-// Alive checks whether the workspace associated with windowID still exists.
-func (c *CmuxBackend) Alive(windowID string) bool {
-	wid, _ := ParseCmuxWindow(windowID)
-	if wid == "" {
-		return false
-	}
-
-	if _, err := cmuxBin(); err != nil {
-		return false
-	}
-	return c.workspaceExists(wid)
-}
-
 // Teardown closes the workspace associated with windowID.
 // Errors are silently ignored if the workspace is already gone.
 func (c *CmuxBackend) Teardown(windowID string) error {

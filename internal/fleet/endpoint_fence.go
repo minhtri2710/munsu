@@ -9,13 +9,18 @@ import (
 )
 
 type BoundEndpoint struct {
-	TaskID        string
-	MetaPath      string
-	Backend       string
-	Handle        string
-	SessionOwner  string
-	WorkspaceID   string
-	TabID         string
+	TaskID       string
+	MetaPath     string
+	Backend      string
+	Handle       string
+	SessionOwner string
+	WorkspaceID  string
+	TabID        string
+	// Canonical endpoint proof (when available from Task Authority); required
+	// to authorize freshness before any disposal. .meta alone cannot authorize.
+	LeaseID       string
+	FenceToken    string
+	Incarnation   string
 	CanonicalHome string
 }
 
@@ -77,7 +82,7 @@ func (TaskEndpointScanner) ScanEndpoints(canonicalHome string) ([]BoundEndpoint,
 		if backend == "" {
 			return nil, fmt.Errorf("endpoint meta %s has no bound backend", entry.Name())
 		}
-		endpoints = append(endpoints, BoundEndpoint{TaskID: strings.TrimSuffix(entry.Name(), ".meta"), MetaPath: path, Backend: backend, Handle: handle, SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], CanonicalHome: canonicalHome})
+		endpoints = append(endpoints, BoundEndpoint{TaskID: strings.TrimSuffix(entry.Name(), ".meta"), MetaPath: path, Backend: backend, Handle: handle, SessionOwner: meta["herdr_session"], WorkspaceID: meta["herdr_workspace_id"], TabID: meta["herdr_tab_id"], LeaseID: meta["endpoint_lease_id"], FenceToken: meta["endpoint_fence_token"], Incarnation: meta["endpoint_incarnation"], CanonicalHome: canonicalHome})
 	}
 	sort.Slice(endpoints, func(i, j int) bool { return endpoints[i].TaskID < endpoints[j].TaskID })
 	return endpoints, nil
@@ -100,7 +105,7 @@ func validBoundEndpoint(e BoundEndpoint) bool {
 	return e.TaskID != "" && e.Backend != "" && e.Handle != "" && e.CanonicalHome != ""
 }
 func sameBoundEndpoint(a, b BoundEndpoint) bool {
-	return a.TaskID == b.TaskID && a.Backend == b.Backend && a.Handle == b.Handle && a.SessionOwner == b.SessionOwner && a.WorkspaceID == b.WorkspaceID && a.TabID == b.TabID && a.CanonicalHome == b.CanonicalHome
+	return a.TaskID == b.TaskID && a.Backend == b.Backend && a.Handle == b.Handle && a.SessionOwner == b.SessionOwner && a.WorkspaceID == b.WorkspaceID && a.TabID == b.TabID && a.LeaseID == b.LeaseID && a.FenceToken == b.FenceToken && a.Incarnation == b.Incarnation && a.CanonicalHome == b.CanonicalHome
 }
 
 func fenceEndpoints(canonical string, scanner EndpointScanner, controller EndpointController) ([]string, error) {
@@ -120,14 +125,25 @@ func fenceEndpoints(canonical string, scanner EndpointScanner, controller Endpoi
 		if err != nil {
 			return evidence, fmt.Errorf("probing endpoint %s: %w", endpoint.TaskID, err)
 		}
-		switch status.State() {
-		case EndpointAlive, EndpointStarting:
+		// Authorize freshness against the exact canonical proof of this bound
+		// endpoint. .meta alone cannot authorize: an incomplete proof (missing
+		// lease/fence/incarnation) or an ambiguous starting/unknown/
+		// stale/unresponsive reading fails closed — metadata is retained and
+		// nothing is disposed (BEO-16).
+		auth := authorizeObservation(status, exactEndpointProof{
+			backend: endpoint.Backend, handle: endpoint.Handle,
+			incarnation: endpoint.Incarnation, leaseID: endpoint.LeaseID, fenceToken: endpoint.FenceToken,
+		})
+		switch {
+		case auth.Absent():
+			// Fleet-authorized, already gone: keep.
+		case auth.Live():
 			if err := controller.DisposeBoundEndpoint(endpoint); err != nil {
 				return evidence, fmt.Errorf("disposing endpoint %s: %w", endpoint.TaskID, err)
 			}
-		case EndpointDead:
 		default:
-			return evidence, fmt.Errorf("endpoint %s observation %s is not safe to fence", endpoint.TaskID, status.State())
+			// Ambiguous or unauthorized: keep metadata, fail closed.
+			return evidence, fmt.Errorf("endpoint %s observation %s is not safe to fence (ambiguous cannot be disposed)", endpoint.TaskID, auth.State())
 		}
 		evidence = append(evidence, fmt.Sprintf("endpoint:%s:%s:%s", endpoint.TaskID, endpoint.Backend, endpoint.Handle))
 	}
@@ -151,8 +167,12 @@ func fenceEndpoints(canonical string, scanner EndpointScanner, controller Endpoi
 		if err != nil {
 			return evidence, fmt.Errorf("re-probing endpoint %s: %w", e.TaskID, err)
 		}
-		if status.State() != EndpointDead {
-			return evidence, fmt.Errorf("endpoint %s observation %s after disposal, want dead", e.TaskID, status.State())
+		auth := authorizeObservation(status, exactEndpointProof{
+			backend: e.Backend, handle: e.Handle,
+			incarnation: e.Incarnation, leaseID: e.LeaseID, fenceToken: e.FenceToken,
+		})
+		if !auth.Absent() {
+			return evidence, fmt.Errorf("endpoint %s observation %s after disposal, want dead/current authorized", e.TaskID, auth.State())
 		}
 	}
 	return evidence, nil

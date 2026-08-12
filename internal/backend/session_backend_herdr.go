@@ -563,14 +563,6 @@ func (h *HerdrBackend) CheckAlive(windowID string) (bool, error) {
 	return false, err
 }
 
-// Alive checks whether the pane still exists via herdr pane get.
-// windowID may be "<session>:<pane_id>" or a bare pane ID.
-// Returns true ONLY when confirmed alive.
-func (h *HerdrBackend) Alive(windowID string) bool {
-	alive, err := h.CheckAlive(windowID)
-	return err == nil && alive
-}
-
 // tabIDToClose returns the tab ID to close during teardown.
 // Checks lastCreate first, then TeardownTabID (from meta).
 func (h *HerdrBackend) tabIDToClose() string {

@@ -31,6 +31,7 @@ func launchRequest(c *Canonical, taskID string, prec domain.Precondition) Canoni
 		WorktreeFenceToken:    "wt-fence-" + taskID,
 		EndpointReservationID: "ep-res-" + taskID,
 		EndpointFenceToken:    "ep-fence-" + taskID,
+		EndpointIncarnation:   "inc-" + taskID,
 		Reason:                "spawn",
 	}
 }
@@ -52,6 +53,7 @@ func launchEndpointBinding(req CanonicalBeginSpawnRequest, handle string) Endpoi
 	b.Handle = handle
 	b.LeaseID = req.EndpointReservationID
 	b.FenceToken = req.EndpointFenceToken
+	b.Incarnation = req.EndpointIncarnation
 	return b
 }
 
@@ -70,6 +72,7 @@ func attachRequest(c *Canonical, taskID string, prec domain.Precondition, req Ca
 		SessionOwner: "owner",
 		WorkspaceID:  "ws",
 		TabID:        "tab",
+		Incarnation:  req.EndpointIncarnation,
 		Reason:       "attach",
 	}
 }
@@ -651,13 +654,13 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 
 	// Acquire the endpoint with the opaque incarnation.
 	attach := attachRequest(c, "t1", preconditionOf(1, rev+1), req, "handle-1")
-	attach.Incarnation = "inc-launch-1"
+	attach.Incarnation = req.EndpointIncarnation
 	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
 		t.Fatalf("AttachEndpoint: %v", err)
 	}
 
 	agg0, _ := c.Get(mustTaskID(t, "t1"))
-	if agg0.AcquiredEndpoint == nil || agg0.AcquiredEndpoint.Incarnation != "inc-launch-1" {
+	if agg0.AcquiredEndpoint == nil || agg0.AcquiredEndpoint.Incarnation != req.EndpointIncarnation {
 		t.Fatalf("acquired endpoint incarnation not persisted: %+v", agg0.AcquiredEndpoint)
 	}
 
@@ -687,7 +690,7 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 		t.Fatalf("bind with mismatched incarnation = %v, want ErrConflict", err)
 	}
 	// Correct incarnation binds.
-	be.Binding.Incarnation = "inc-launch-1"
+	be.Binding.Incarnation = req.EndpointIncarnation
 	out, err := c.BindEndpoint(mustOperation(t, "op-be-1", be), be)
 	if err != nil {
 		t.Fatalf("BindEndpoint: %v", err)
@@ -697,7 +700,7 @@ func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
 	}
 
 	agg, _ := c.Get(mustTaskID(t, "t1"))
-	if agg.Endpoint == nil || agg.Endpoint.Incarnation != "inc-launch-1" {
+	if agg.Endpoint == nil || agg.Endpoint.Incarnation != req.EndpointIncarnation {
 		t.Fatalf("endpoint binding incarnation = %+v", agg.Endpoint)
 	}
 }

@@ -145,8 +145,8 @@ func TestZellijBackend_Alive(t *testing.T) {
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
 	z := NewZellijBackend("test-s")
-	if !z.Alive("test-s:terminal_1") {
-		t.Error("Alive returned false for existing pane")
+	if alive, err := z.CheckAlive("test-s:terminal_1"); !alive || err != nil {
+		t.Errorf("CheckAlive returned not-alive/err for existing pane: %v", err)
 	}
 }
 
@@ -157,8 +157,8 @@ func TestZellijBackend_Alive_ReturnsFalseWhenNotFound(t *testing.T) {
 	t.Setenv("PATH", tmp+":"+oldPath)
 
 	z := NewZellijBackend("test-s")
-	if z.Alive("test-s:terminal_999") {
-		t.Error("Alive returned true for nonexistent pane")
+	if alive, err := z.CheckAlive("test-s:terminal_999"); alive || err == nil {
+		t.Error("CheckAlive returned alive/err==nil for nonexistent pane")
 	}
 }
 
@@ -244,8 +244,8 @@ func TestZellijBackend_NotFound(t *testing.T) {
 	})
 
 	t.Run("Alive", func(t *testing.T) {
-		if z.Alive("@0") {
-			t.Error("Alive returned true when zellij is not on PATH")
+		if alive, err := z.CheckAlive("@0"); alive || err == nil {
+			t.Error("CheckAlive returned alive/err==nil when zellij is not on PATH")
 		}
 	})
 

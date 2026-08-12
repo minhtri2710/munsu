@@ -71,6 +71,15 @@ func TestCapabilityMatrixIsDeterministicAndAccurate(t *testing.T) {
 		}
 	}
 
+	// Probe granularity must match the exact resource semantics, so a coarser
+	// probe is never mistaken for exact agent-surface proof.
+	granularity := map[string]ProbeGranularity{"tmux": GranularityPane, "herdr": GranularityPaneAgent, "zellij": GranularityPane, "cmux": GranularityWorkspace, "orca": GranularityTerminal}
+	for name, want := range granularity {
+		c, _ := Capabilities(name)
+		if c.ProbeGranularity != want {
+			t.Errorf("%s probe granularity = %v, want %v", name, c.ProbeGranularity, want)
+		}
+	}
 	if _, err := Capabilities("nope"); err == nil {
 		t.Fatal("unknown backend must fail closed")
 	}
@@ -169,21 +178,20 @@ func TestObservationBindsAndNormalizesFakes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			old := os.Getenv("PATH")
 			t.Setenv("PATH", tc.binDir+string(os.PathListSeparator)+old)
-			obs := ObserveBoundEndpoint(tc.mk(), tc.handle, "")
+			obs := ObserveEndpoint(tc.mk(), tc.handle)
 			if obs.Lifecycle != tc.want {
 				t.Fatalf("lifecycle = %v (state=%v) want %v (detail=%q)", obs.Lifecycle, obs.State(), tc.want, obs.Detail)
 			}
-			if tc.want == LifecycleDead {
-				if !obs.Absent() {
-					t.Fatalf("dead/current reading must be Absent: %+v", obs)
-				}
-			} else {
-				if obs.Absent() {
-					t.Fatalf("ambiguous reading must not authorize recovery (Absent): %+v", obs)
-				}
-				if obs.Lifecycle != LifecycleUnknown {
-					t.Fatalf("operational failure lifecycle = %v, want unknown (not dead)", obs.Lifecycle)
-				}
+			// An adapter probe never concludes freshness: it is always
+			// FreshnessUnknown and therefore never Absent()/Live() on its own.
+			if obs.Freshness != FreshnessUnknown || obs.Incarnation != "" {
+				t.Fatalf("adapter observation must be fresh-unknown/empty-incarnation: %+v", obs)
+			}
+			if obs.Absent() || obs.Live() {
+				t.Fatalf("raw adapter observation must not be Live/Absent: %+v", obs)
+			}
+			if tc.want != LifecycleDead && obs.Lifecycle == LifecycleDead {
+				t.Fatalf("operational failure lifecycle = %v, want not dead", obs.Lifecycle)
 			}
 		})
 	}

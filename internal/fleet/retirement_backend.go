@@ -17,6 +17,7 @@ type RetirementEndpointStatus struct {
 	Activity       Activity
 	Source         ObservationSource
 	ObservedAt     time.Time
+	Incarnation    string
 	Detail         string
 }
 
@@ -49,4 +50,24 @@ func (s RetirementEndpointStatus) AuthoritativeAbsent() bool {
 // Live reports a confirmed-alive/current reading (dispose the endpoint).
 func (s RetirementEndpointStatus) Live() bool {
 	return s.Lifecycle == LifecycleAlive && s.Freshness == FreshnessCurrent
+}
+
+// AuthorizedAgainst concludes freshness for this raw retirement probe against
+// the exact canonical EndpointBinding proof (backend/handle/incarnation/lease/
+// fence). Only Fleet may conclude current; a raw probe is fresh-unknown and an
+// incomplete proof fails closed. This is the single authorization gate before a
+// retirement Dispose decision (BEO-16/P1a): ambiguous states stay pending and
+// are never disposed.
+func (s RetirementEndpointStatus) AuthorizedAgainst(endpointProof exactEndpointProof) RetirementEndpointStatus {
+	if !endpointProof.authorized() {
+		s.Lifecycle = LifecycleUnknown
+		s.Freshness = FreshnessStale
+		s.Activity = ActivityUnknown
+		s.Incarnation = ""
+		s.Detail = "cannot authorize retirement freshness: incomplete canonical endpoint proof"
+		return s
+	}
+	s.Freshness = FreshnessCurrent
+	s.Incarnation = endpointProof.incarnation
+	return s
 }

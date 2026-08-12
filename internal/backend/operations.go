@@ -75,17 +75,13 @@ func (s Service) ProbeEndpoint(endpoint EndpointRef) (EndpointObservation, error
 			Freshness:      FreshnessUnknown,
 			Activity:       ActivityUnknown,
 			Source:         SourceDerived,
-			Incarnation:    endpoint.Incarnation,
 			ObservedAt:     observedNow(),
 			Detail:         fmt.Sprintf("resolving bound backend %q: %v", endpoint.Backend, err),
 		}, nil
 	}
-	observation, err := adapter.Probe(endpoint.Handle)
-	if err != nil {
-		return ObservationFromProbeError(endpoint, err), nil
-	}
-	observation.Incarnation = endpoint.Incarnation
-	return observation, nil
+	// The adapter returns a raw observation (fresh unknown, no incarnation);
+	// this service does not fabricate provenance from the requested identity.
+	return adapter.Probe(endpoint.Handle)
 }
 
 func (s Service) DisposeEndpoint(endpoint EndpointRef) error {

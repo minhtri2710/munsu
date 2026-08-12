@@ -94,7 +94,7 @@ func (s *spawnSessionEndpoints) Probe(ep fleet.CreatedEndpoint) (fleet.SpawnEndp
 	if err != nil {
 		return fleet.SpawnEndpointObservation{}, err
 	}
-	return backend.ObserveBoundEndpoint(bk, ep.Handle, ep.Incarnation), nil
+	return backend.ObserveEndpoint(bk, ep.Handle), nil
 }
 
 func (s *spawnSessionEndpoints) Capture(ep fleet.CreatedEndpoint, lines int) (string, error) {

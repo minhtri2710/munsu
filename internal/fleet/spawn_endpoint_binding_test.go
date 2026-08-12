@@ -156,6 +156,7 @@ func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, ta
 		WorktreeFenceToken:    wtFence,
 		EndpointReservationID: epRes,
 		EndpointFenceToken:    epFence,
+		EndpointIncarnation:   "inc-" + taskID,
 		Reason:                "spawn",
 	}
 	op, err := domain.NewOperation(mustOpID(t, "spawn-begin-"+taskID+"-1"), req)
@@ -175,6 +176,7 @@ func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, ta
 	r.launch = agg.Launch
 	r.launchID = agg.Launch.LaunchID
 	r.windowLabel = agg.Launch.WindowLabel
+	r.incarnation = agg.Launch.EndpointIncarnation
 }
 
 func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T) {
@@ -196,6 +198,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 			SessionOwner: "session",
 			WorkspaceID:  "workspace-1",
 			TabID:        "tab-1",
+			Incarnation:  "bind-task-incarnation",
 			Metadata: map[string]string{
 				"herdr_session":      "session",
 				"herdr_workspace_id": "workspace-1",

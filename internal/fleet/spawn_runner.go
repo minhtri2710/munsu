@@ -93,33 +93,31 @@ func NewRunner(args Args) *Runner {
 	return &Runner{args: args, endpoints: args.Endpoints}
 }
 
-// resolvedIncarnation returns the opaque endpoint incarnation for this launch.
-// On recovery it is the persisted AcquiredEndpoint incarnation (reused, never
-// re-minted); otherwise it is minted once per launch operation via the
-// injectable generator (default crypto/rand).
-func (r *Runner) resolvedIncarnation() string {
-	if r.incarnation != "" {
-		return r.incarnation
-	}
-	if rec := r.recordedAcquiredEndpoint(); rec != nil && rec.Incarnation != "" {
-		r.incarnation = rec.Incarnation
-		return r.incarnation
-	}
+// mintEndpointIncarnation produces a fresh opaque endpoint incarnation for a
+// first-time launch attempt. An error aborts the launch (never a shared
+// sentinel), because the incarnation is integral to the freshness identity.
+// Recovery reuses the persisted LaunchIntent incarnation instead of minting.
+func (r *Runner) mintEndpointIncarnation() (string, error) {
 	mint := r.args.IncarnationMint
 	if mint == nil {
 		mint = defaultIncarnationMint
 	}
-	v, err := mint()
-	if err != nil {
-		// A mint failure must fail the launch closed; the value is integral to
-		// the freshness identity. Persist the marker to surface it, but the
-		// caller (createSession) will propagate the error path. Fall back to a
-		// stable per-run marker rather than a repeatable empty value.
-		r.incarnation = "launch-incarnation-mint-failed"
-		return r.incarnation
-	}
-	r.incarnation = v
-	return r.incarnation
+	return mint()
+}
+
+// authorizeEndpoint concludes freshness for a probe of the bound endpoint
+// against the exact canonical launch identity (BEO-16/P1a). Only Fleet may set
+// FreshnessCurrent; an adapter probe alone is always fresh-unknown and is never
+// Live()/Absent(). On an incomplete proof the observation is demoted and fails
+// closed.
+func (r *Runner) authorizeEndpoint(obs SpawnEndpointObservation, ep CreatedEndpoint) SpawnEndpointObservation {
+	return authorizeObservation(obs, exactEndpointProof{
+		backend:     ep.Backend,
+		handle:      ep.Handle,
+		incarnation: ep.Incarnation,
+		leaseID:     r.epReservationID(),
+		fenceToken:  r.epFenceToken(),
+	})
 }
 
 // Run executes the full spawn orchestration sequence.
@@ -827,7 +825,22 @@ func (r *Runner) beginLaunchIntent() error {
 	r.taskScoutScope = agg.Definition.ScoutScope
 	r.taskScoutBudget = agg.Definition.ScoutRuntimeBudgetSecs
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
-	req := r.buildBeginSpawnRequest(prec, agg.Generation)
+	// Resolve the opaque endpoint incarnation BEFORE any acquisition so a crash
+	// after create but before attach can reuse the same token (BEO-16/P1a).
+	// Recovery reuses the persisted LaunchIntent incarnation; a first attempt
+	// mints it here and the mint error aborts (never a shared sentinel).
+	endpointIncarnation := ""
+	if agg.Launch != nil {
+		endpointIncarnation = agg.Launch.EndpointIncarnation
+	} else {
+		inc, err := r.mintEndpointIncarnation()
+		if err != nil {
+			return fmt.Errorf("launch intent: minting endpoint incarnation: %w", err)
+		}
+		endpointIncarnation = inc
+	}
+	r.incarnation = endpointIncarnation
+	req := r.buildBeginSpawnRequest(prec, agg.Generation, endpointIncarnation)
 	if agg.Launch != nil {
 		if !r.launchIntentMatches(req, *agg.Launch) {
 			return fmt.Errorf("launch intent: task %s generation %s already holds a different launch intent; refuse to re-launch", r.args.ID, agg.Generation)
@@ -868,10 +881,13 @@ func (r *Runner) beginLaunchIntent() error {
 }
 
 // buildBeginSpawnRequest constructs the deterministic BeginSpawn request for
-// the task's current generation from the immutable snapshot digest and the
-// explicit launch identities. Every value is derived deterministically so a
-// retry reproduces the identical intent (same Operation ID and digest).
-func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation) taskauthority.CanonicalBeginSpawnRequest {
+// the task's current generation from the immutable snapshot digest, the
+// explicit launch identities, and the opaque endpoint incarnation resolved
+// for this launch operation (reused from the persisted intent on recovery, or
+// freshly minted on first attempt). Every derived value is reproducible on a
+// retry (same Operation ID and digest); the incarnation is provided by the
+// caller because it is opaque and cannot be re-derived.
+func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthority.Generation, endpointIncarnation string) taskauthority.CanonicalBeginSpawnRequest {
 	wtRes, wtFence, epRes, epFence := spawnReservationIdentities(r.args.ID, uint64(gen))
 	return taskauthority.CanonicalBeginSpawnRequest{
 		HomeID:                r.args.Authority.HomeID(),
@@ -892,6 +908,7 @@ func (r *Runner) buildBeginSpawnRequest(prec domain.Precondition, gen taskauthor
 		WorktreeFenceToken:    wtFence,
 		EndpointReservationID: epRes,
 		EndpointFenceToken:    epFence,
+		EndpointIncarnation:   endpointIncarnation,
 		Reason:                "spawn",
 	}
 }
@@ -905,7 +922,7 @@ func (r *Runner) launchIntentMatches(req taskauthority.CanonicalBeginSpawnReques
 		l.Project == req.Project && l.ParentTaskID == req.ParentTaskID && l.LaunchID == req.LaunchID &&
 		l.WindowLabel == req.WindowLabel && l.WorktreeReservationID == req.WorktreeReservationID &&
 		l.WorktreeFenceToken == req.WorktreeFenceToken && l.EndpointReservationID == req.EndpointReservationID &&
-		l.EndpointFenceToken == req.EndpointFenceToken
+		l.EndpointFenceToken == req.EndpointFenceToken && l.EndpointIncarnation == req.EndpointIncarnation
 }
 
 // adoptLaunch copies the committed launch intent identities onto the Runner
@@ -1246,11 +1263,15 @@ func (r *Runner) createSession() error {
 		}
 		r.incarnation = acquired.Incarnation
 		status, err := r.endpoints.Probe(ep)
-		if err != nil || !status.Live() {
-			if err != nil {
-				return fmt.Errorf("verifying recorded pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
-			}
-			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement)", ep.Handle, status.State(), ep.Backend)
+		if err != nil {
+			return fmt.Errorf("verifying recorded pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
+		}
+		authorized := r.authorizeEndpoint(status, ep)
+		// Recovery only re-adopts a confirmed-live, authorized endpoint. An
+		// ambiguous/unknown/unresponsive/dead reading fails closed (no
+		// replacement and no dispose) — ownership is preserved.
+		if !authorized.Live() {
+			return fmt.Errorf("recorded pane %q observation %s on backend %q; recovery fails closed (no replacement)", ep.Handle, authorized.State(), ep.Backend)
 		}
 		r.endpoint, r.windowID = ep, ep.Handle
 		return nil
@@ -1285,26 +1306,22 @@ func (r *Runner) createSession() error {
 	if err != nil {
 		return err
 	}
-	// Mint/propagate the opaque incarnation once per launch operation. The
-	// probe below and the attach/bind records cross-check freshness with it.
-	ep.Incarnation = r.resolvedIncarnation()
+	// The opaque incarnation is resolved (minted or reused) in beginLaunchIntent
+	// before any acquisition; propagate it onto the created endpoint for the
+	// attach/bind records and freshness authorization.
+	ep.Incarnation = r.incarnation
 	status, err := r.endpoints.Probe(ep)
-	// A created-but-not-yet-reported-live-endpoint (starting) is masked as a
-	// valid acquisition here; the readiness wait after submit decides liveness.
-	// Ambiguous/unresponsive/stale readings are not dead and never dispose the
-	// acquired endpoint as a replacement — the endpoint is disposed only on a
-	// hard probe error (a created endpoint this run does not yet durably own).
+	// A created endpoint is owned by this launch reservation. Alive/starting
+	// (raw lifecycle) may proceed to durable attach; readiness is confirmed
+	// after submit by verifyEndpointReadyBeforePersist (Fleet-authorized). Any
+	// dead or ambiguous (unknown/unresponsive/stale) reading returns
+	// readiness-pending WITHOUT disposing — the reservation and ownership are
+	// preserved and no replacement is fabricated (BEO-16).
 	if err != nil {
-		_ = r.endpoints.Dispose(ep)
 		return fmt.Errorf("verifying created pane %q on backend %q: %w", ep.Handle, ep.Backend, err)
 	}
 	if status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting {
-		_ = r.endpoints.Dispose(ep)
-		return fmt.Errorf("created pane %q observation %s on backend %q", ep.Handle, status.State(), ep.Backend)
-	}
-	if status.Freshness == FreshnessStale {
-		_ = r.endpoints.Dispose(ep)
-		return fmt.Errorf("created pane %q stale observation on backend %q", ep.Handle, ep.Backend)
+		return fmt.Errorf("created pane %q observation %s on backend %q; readiness pending (no dispose, reservation preserved)", ep.Handle, status.State(), ep.Backend)
 	}
 	r.endpoint, r.windowID = ep, ep.Handle
 	return nil
@@ -1691,11 +1708,12 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 			if probeErr != nil {
 				return fmt.Errorf("probing bound endpoint: %w", probeErr)
 			}
-			if status.Absent() {
+			auth := r.authorizeEndpoint(status, r.endpoint)
+			if auth.Absent() {
 				return fmt.Errorf("window died while waiting for ready")
 			}
-			if status.Lifecycle != LifecycleAlive && status.Lifecycle != LifecycleStarting {
-				return fmt.Errorf("endpoint observation %s while waiting for ready", status.State())
+			if auth.Lifecycle != LifecycleAlive && auth.Lifecycle != LifecycleStarting {
+				return fmt.Errorf("endpoint observation %s while waiting for ready", auth.State())
 			}
 			capture, err := r.endpoints.Capture(r.endpoint, 60)
 			if err != nil {
@@ -1722,18 +1740,15 @@ func (r *Runner) waitForHarnessReady(timeoutSec int) error {
 
 func (r *Runner) verifyEndpointReadyBeforePersist() error {
 	status, err := r.endpoints.Probe(r.endpoint)
-	if err != nil || !status.Live() {
-		// Phase-aware disposal: only an endpoint the aggregate does not yet
-		// durably own is disposed on failure. After the durable attach the
-		// endpoint is recorded; disposal would orphan the record, so recovery
-		// fails closed instead.
-		if !r.endpointDurablyAttached() {
-			_ = r.endpoints.Dispose(r.endpoint)
-		}
-		if err != nil {
-			return fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
-		}
-		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state", r.windowID, status.State(), r.endpoint.Backend)
+	if err != nil {
+		return fmt.Errorf("verifying created pane %q on backend %q: %w", r.windowID, r.endpoint.Backend, err)
+	}
+	auth := r.authorizeEndpoint(status, r.endpoint)
+	if !auth.Live() {
+		// Never dispose on an ambiguous/unknown/starting/stale reading: the
+		// endpoint is owned by this launch reservation, so readiness is
+		// pending and ownership is preserved (no replacement, no dispose).
+		return fmt.Errorf("created pane %q observation %s on backend %q before persisting state; readiness pending (no dispose)", r.windowID, auth.State(), r.endpoint.Backend)
 	}
 	return nil
 }
