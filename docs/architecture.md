@@ -135,7 +135,13 @@ canonical phase is the only lifecycle authority (clean break). `fleet snapshot`
 receives the current-state query as an explicit `fleet.SnapshotDependencies`
 dependency (`fleet.NewCanonicalCurrentState()`); the contract row derives its
 status from `fleet.PhaseFromProjection`; `guard` consumes `fleet.Snapshot` for
-its in-flight count and fails closed when Task truth is unreadable. A
+its in-flight count and fails closed when Task truth is unreadable. Guard
+invocation semantics: the pre-run middleware (`guardWarnWatcher`) is
+**advisory** — it surfaces unreadable Task truth or a watcher warning to stderr
+but never blocks an arbitrary command; the structured `munsu guard` command and
+the harness stop-hook guards (agy/claude/codex/opencode/grok) are **blocking
+enforcement** and return a structured `invalid_state` error or exit code 2 on
+unreadable Task truth. A
 canonical/current-state failure fails closed instead of silently projecting the
 `.status` tail; a task-facing `.meta` without a canonical record is rejected
 (legacy/meta-only tasks are not authoritative), while captain metadata

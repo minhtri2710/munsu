@@ -48,6 +48,9 @@ func TestCapabilitiesContractOutputsTOONAndJSON(t *testing.T) {
 func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	home := t.TempDir()
 	initCLITestHome(t, home)
+	// A canonical task (clean break: observation reads authoritative Task
+	// Authority, never a .meta/.status projection).
+	cliSeedCanonicalTask(t, home, "observe-me", "ship")
 	if err := mhome.WriteMeta(home, "observe-me", map[string]string{"description": "inspect state", "worktree": filepath.Join(home, "branch-name")}); err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +68,8 @@ func TestTaskObserveContractDefaultAndExpandedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expanded task observe: %v", err)
 	}
-	if !strings.Contains(expanded, "branch: branch-name") || !strings.Contains(expanded, "status: unknown") {
-		t.Errorf("expanded task observe = %s", expanded)
+	if !strings.Contains(expanded, "branch: branch-name") || !strings.Contains(expanded, "status: queued") {
+		t.Errorf("expanded task observe = %s (canonical queued phase expected)", expanded)
 	}
 }
 

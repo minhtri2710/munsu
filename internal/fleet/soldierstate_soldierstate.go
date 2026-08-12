@@ -1,18 +1,15 @@
 // Package soldierstate reads and reports the current state of a soldier.
-// The precedence hierarchy for current-state truth is:
-//  1. Canonical Task Authority record, when present (Task 7.8): the
-//     authoritative phase is state truth; .meta/.status are display fallback
-//     and can never override a newer authoritative lifecycle transition
-//  2. Task meta/status projection (display fallback only)
-//  3. Provider state (GitHub PR merged/closed/open)
-//  4. Typed event log (keyed open/close transitions)
-//  5. Status file fallback (append-only .status lines)
 //
-// Pane prose is diagnostic only — never derived as current-state truth.
+// The canonical Task Authority record is the only lifecycle authority (clean
+// break): `Status`/`Description` derive solely from the authoritative
+// `taskauthority.Aggregate.Phase`/`PhaseDetail`. `.meta`, `.status`, provider
+// PR, no-mistakes and endpoint evidence are diagnostic/evidence only and can
+// never change lifecycle state without a canonical record. A missing or
+// corrupt canonical record is an operation error, never a projection fallback.
 package fleet
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +17,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/domain"
 	"github.com/minhtri2710/munsu/internal/home"
+	tauth "github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // State describes the current state of a soldier.
@@ -58,40 +56,34 @@ func ReadSoldierState(homeDir string, id string) (*State, error) {
 func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State, error) {
 	s := &State{TaskID: id, Status: "unknown"}
 
-	// Canonical Task Authority state first (Task 7.8): the authoritative
-	// phase is state truth; .meta/.status are projection and display fallback
-	// and can never override a newer authoritative lifecycle transition. A
-	// missing record falls back to the legacy projection tiers below; a
-	// legacy v1 home fails closed (migration is explicit).
-	agg, canonical, err := currentCanonicalAggregate(homeDir, id)
+	// Canonical Task Authority is the only lifecycle authority (clean break,
+	// Task 7.8). A missing or corrupt canonical record is an operation error
+	// with task/home context, never a .meta/.status projection fallback.
+	agg, err := currentCanonical(homeDir, id)
 	if err != nil {
-		return nil, err
-	}
-	// Read meta for operational projections when present.
-	meta, err := home.ReadMeta(homeDir, id)
-	if err != nil {
-		if canonical {
-			s.Status = string(agg.Phase)
-			if s.Status == "" {
-				s.Status = "unknown"
-			}
-			s.Description = agg.PhaseDetail
-			if s.Description == "" {
-				s.Description = agg.Definition.Description
-			}
-			s.StatusLogSuperseded = true
-			// No meta means no window to probe; the canonical phase remains the
-			// lifecycle state (endpoint liveness is diagnostic only).
-			return s, nil
+		if errors.Is(err, tauth.ErrNotFound) {
+			return nil, fmt.Errorf("reading authoritative current state for task %q in home %q: %w", id, homeDir, tauth.ErrNotFound)
 		}
-		// Missing meta means the task was never spawned or has been torn down.
-		// Return a soft "unknown" state instead of a hard error.
-		s.Status = "unknown"
-		s.Description = "torn-down: no meta file for " + id
-		return s, nil
+		return nil, fmt.Errorf("reading authoritative current state for task %q in home %q: %w", id, homeDir, err)
 	}
 
-	// Read status lines (needed by multiple tiers)
+	// Canonical phase is state truth.
+	s.Status = string(agg.Phase)
+	if s.Status == "" {
+		s.Status = "unknown"
+	}
+	s.Description = agg.PhaseDetail
+	if s.Description == "" {
+		s.Description = agg.Definition.Description
+	}
+	// The canonical record is the top-precedence source: the status log is
+	// always superseded display, never state truth.
+	s.StatusLogSuperseded = true
+
+	// .meta provides operational/display data (diagnostic only).
+	meta, _ := home.ReadMeta(homeDir, id)
+
+	// .status contributes diagnostic evidence only (never lifecycle state).
 	statusLines, _ := home.ReadStatus(homeDir, id)
 	statusPath := filepath.Join(home.StateDir(homeDir), id+".status")
 	if len(statusLines) > 0 {
@@ -99,174 +91,24 @@ func ReadWithProbe(homeDir string, id string, probe StateEndpointProbe) (*State,
 	}
 	s.OpenActivities = home.OpenActivities(statusPath)
 
-	if !canonical {
-		// Legacy fail-closed posture (Task 7.8): a meta-only task that claims
-		// delivery outcomes without an authoritative record is never silently
-		// projected by the observation.
-		if claim := legacyDeliveryClaim(meta); claim != "" {
-			return nil, &LegacyDeliveryEvidenceError{TaskID: id, Field: claim}
-		}
-	}
-
-	if canonical {
-		s.Status = string(agg.Phase)
-		if s.Status == "" {
-			s.Status = "unknown"
-		}
-		s.Description = agg.PhaseDetail
-		if s.Description == "" {
-			s.Description = agg.Definition.Description
-		}
-		// The canonical record is the top-precedence source: the status log is
-		// always superseded display, never state truth.
-		s.StatusLogSuperseded = true
-		// Endpoint liveness is diagnostic only. It never changes the canonical
-		// lifecycle phase: a dead/unverifiable endpoint does not turn canonical
-		// working into dead/unknown.
-		if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {
-			alive, err := probe.Probe(homeDir, meta)
-			s.PaneAlive = err == nil && alive
-		}
-		return s, nil
-	}
-
-	// --- No-mistakes run-step (pipeline state) ---
-	// This is a fast local check that feeds into the legacy hierarchy below.
-	wtPath := meta["worktree"]
-	if wtPath != "" {
+	// No-mistakes run-step is diagnostic evidence only; it never changes the
+	// canonical phase.
+	if wtPath := meta["worktree"]; wtPath != "" {
 		currentBranch := getGitBranch(wtPath)
-		if step, outcome, ok := checkNoMistakesRun(wtPath, currentBranch); ok {
+		if step, _, ok := checkNoMistakesRun(wtPath, currentBranch); ok {
 			s.NoMistakesRunStep = step
-			s.applyNoMistakesStep(step, outcome)
 		}
 	}
 
-	// --- TIER 2: Last report (status file meta) ---
-	// The last state-bearing line from the status log is the soldier's last report.
-	// Terminal states (done, failed) at this tier resolve before lower tiers.
-	if len(statusLines) > 0 {
-		lastLine := lastStateBearingLine(statusLines)
-		if lastLine != "" {
-			state, msg := statusVerbAndNote(lastLine)
-			switch state {
-			case "done", "failed":
-				s.Status = state
-				s.Description = msg
-				return s, nil
-			case "blocked", "needs-decision", "awaiting_approval":
-				s.Status = state
-				s.Description = msg
-				return s, nil
-			case "working", "paused":
-				s.Status = state
-				s.Description = msg
-				// Continue to lower tiers for additional evidence
-			}
-		}
-	}
-
-	// --- TIER 3: Provider PR state ---
-	// When the task has a PR, the provider state is a strong signal.
-	if prStatus, ok := readPRState(meta); ok {
-		switch prStatus {
-		case "MERGED":
-			s.Status = "done"
-			s.Description = "PR merged"
-			return s, nil
-		case "CLOSED":
-			// PR was closed without merge — treat as failed when no other
-			// higher-priority state contradicts.
-			if s.Status == "unknown" {
-				s.Status = "failed"
-				s.Description = "PR closed without merge"
-			}
-		case "OPEN":
-			// PR is still open — keep current state.
-		}
-	}
-
-	// --- TIER 4: Typed event log ---
-	// OpenActivities are evidence of keyed transitions. Already populated above.
-	// If we have open activities but no state, default to working.
-	if len(s.OpenActivities) > 0 && s.Status == "unknown" {
-		s.Status = "working"
-		s.Description = "has open activities"
-	}
-
-	// --- TIER 5: Status file fallback ---
-	// Raw last state-bearing line when nothing above resolved.
-	if s.Status == "unknown" && len(statusLines) > 0 {
-		lastLine := lastStateBearingLine(statusLines)
-		if lastLine != "" {
-			state, msg := statusVerbAndNote(lastLine)
-			if home.IsValidStatusState(state) && state != "resolved" {
-				s.Status = state
-				s.Description = msg
-			}
-		}
-	}
-
-	// --- Pane liveness (diagnostic only) ---
-	// Terminal output is NOT truth. Pane liveness is captured for diagnostic
-	// display but never used as current-state authority.
+	// Endpoint liveness is diagnostic only. It never changes the canonical
+	// lifecycle phase: a dead/unverifiable endpoint does not turn canonical
+	// working into dead/unknown.
 	if windowID, ok := meta["window"]; ok && windowID != "" && probe != nil {
 		alive, err := probe.Probe(homeDir, meta)
 		s.PaneAlive = err == nil && alive
 	}
 
 	return s, nil
-}
-
-// readPRState checks the GitHub PR provider state for a task.
-// Returns the PR state (MERGED/CLOSED/OPEN) and whether the check succeeded.
-func readPRState(meta map[string]string) (string, bool) {
-	provider := meta["pr_provider"]
-	owner := meta["pr_owner"]
-	repo := meta["pr_repo"]
-	num := meta["pr_number"]
-	if provider == "" || owner == "" || repo == "" || num == "" {
-		return "", false
-	}
-
-	// Use gh CLI to query PR state.
-	cmd := exec.Command("gh", "pr", "view",
-		num,
-		"--repo", fmt.Sprintf("%s/%s", owner, repo),
-		"--json", "state",
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", false
-	}
-
-	var result struct {
-		State string `json:"state"`
-	}
-	if err := json.Unmarshal(out, &result); err != nil {
-		return "", false
-	}
-	return result.State, true
-}
-
-// applyNoMistakesStep maps a no-mistakes run-step to the soldier status.
-func (s *State) applyNoMistakesStep(step, outcome string) {
-	switch step {
-	case "running", "fixing", "ci":
-		s.Status = "working"
-		s.Description = fmt.Sprintf("no-mistakes: %s", step)
-	case "awaiting_approval", "fix_review":
-		s.Status = "awaiting_approval"
-		s.Description = fmt.Sprintf("no-mistakes: %s", step)
-	case "checks-passed", "passed":
-		s.Status = "done"
-		s.Description = fmt.Sprintf("no-mistakes: checks green (%s)", outcome)
-	case "failed":
-		s.Status = "failed"
-		s.Description = fmt.Sprintf("no-mistakes: %s", outcome)
-	case "cancelled":
-		s.Status = "failed"
-		s.Description = "no-mistakes: cancelled"
-	}
 }
 
 // checkNoMistakesRun reads no-mistakes run status from the worktree path, using
@@ -300,47 +142,4 @@ func getGitBranch(wtPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-// lastStateBearingLine returns the last non-empty status line when it carries a
-// current-state verb. Pure close events (resolved, captain-held) only fold keys
-// and must not become Status or resurrect an earlier line.
-func lastStateBearingLine(lines []string) string {
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		verb, _ := statusVerbAndNote(line)
-		switch verb {
-		case "resolved", "captain-held":
-			// Close-only event: no status-log current state.
-			return ""
-		case "working", "paused", "blocked", "needs-decision", "done", "failed", "awaiting_approval":
-			return line
-		default:
-			if home.IsValidStatusState(verb) && verb != "resolved" {
-				return line
-			}
-			if strings.Contains(line, ":") {
-				return line
-			}
-			return ""
-		}
-	}
-	return ""
-}
-
-// statusVerbAndNote extracts the leading verb (optional [key=…] stripped) and note.
-func statusVerbAndNote(line string) (verb, note string) {
-	line = strings.TrimSpace(line)
-	before, after, found := strings.Cut(line, ":")
-	if idx := strings.Index(before, "[key="); idx >= 0 {
-		before = strings.TrimSpace(before[:idx])
-	}
-	verb = strings.TrimSpace(before)
-	if found {
-		return verb, strings.TrimSpace(after)
-	}
-	return verb, ""
 }

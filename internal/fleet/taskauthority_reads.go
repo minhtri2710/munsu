@@ -10,46 +10,12 @@ import (
 	tauth "github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
-// This file owns the canonical-read preference for snapshot and observation
-// (Task 7.8, ADR-0007 §7): authoritative Task Authority records are the
-// preferred source for kind, project, and lifecycle phase; the .meta and
-// .status projections are display fallback only and can never override a
-// newer authoritative lifecycle transition. A home that is not a canonical
-// v1 home fails closed (migration is explicit and never automatic); a
-// canonical home with no authority state at all serves the empty view
+// This file owns the canonical-read path for snapshot and observation
+// (Task 7.8, ADR-0007 §7): authoritative Task Authority records are the only
+// source for kind, project, and lifecycle phase. A home that is not a
+// canonical v1 home fails closed (migration is explicit and never automatic);
+// a canonical home with no authority state at all serves the empty view
 // without creating anything.
-
-// LegacyDeliveryEvidenceError is the typed fail-closed outcome of a snapshot
-// or observation read over a task whose .meta carries delivery evidence
-// claims without an authoritative Task Authority record (Task 7.8 decision
-// (a)): the canonical read refuses to silently project the legacy shape. The
-// heal path is a mutation that commits authoritative evidence (merge,
-// reconcile, or poll) or projection reconciliation (`munsu task reconcile`).
-type LegacyDeliveryEvidenceError struct {
-	TaskID string
-	Field  string
-}
-
-func (e *LegacyDeliveryEvidenceError) Error() string {
-	return fmt.Sprintf("task %s carries legacy delivery evidence %q without an authoritative Task Authority record; commit authoritative evidence (merge/reconcile/poll) or run 'munsu task reconcile'", e.TaskID, e.Field)
-}
-
-// legacyDeliveryClaim returns the meta key of a delivery evidence claim that
-// has no meaning without an authoritative record: a meta-only
-// delivery_state=merged (no authoritative merge attempt) and the legacy
-// merge_authorization JSON (old shape incl. task_generation and RFC3339
-// authorized_at — no longer consumed by the canonical read path since Task
-// 7.4). Both are fail-closed rather than silently projected.
-func legacyDeliveryClaim(meta map[string]string) string {
-	switch {
-	case meta[MetaDeliveryState] == string(DeliveryStateMerged):
-		return MetaDeliveryState + "=merged"
-	case meta[MetaLegacyMergeAuth] != "":
-		return MetaLegacyMergeAuth
-	default:
-		return ""
-	}
-}
 
 // canonicalAuthority opens the canonical home and constructs the canonical
 // Task Authority over it. A directory that is not an initialized canonical
@@ -84,16 +50,17 @@ func canonicalAggregates(homeDir string) (map[string]tauth.Aggregate, error) {
 }
 
 // currentCanonical reads one task's current authoritative aggregate. A
-// missing record is ErrNotFound (the caller falls back to the projection and
-// display tiers); a non-canonical home and corrupt/recovery-required homes
-// fail closed.
+// missing record is ErrNotFound (the caller reports a canonical-missing
+// clean-break error); a non-canonical home and corrupt/recovery-required
+// homes fail closed. `currentCanonical` is used by canonical observation and
+// the current-state query; it is never a projection fallback gate.
 func currentCanonical(homeDir, id string) (tauth.Aggregate, error) {
 	taskID, err := domain.NewTaskID(id)
 	if err != nil {
-		// A non-task identity (for example a captain:<id> projection task)
-		// can never hold a canonical task record; report it as a missing
-		// record so callers fall back to the projection tiers instead of
-		// failing closed on an identity that is not a Task identity.
+		// A non-task identity (for example a captain:<id> metadata key) can
+		// never hold a canonical task record; report it as missing so callers
+		// surface a clean-break canonical-missing result rather than treating
+		// it as Task observation authority.
 		return tauth.Aggregate{}, tauth.ErrNotFound
 	}
 	c, err := canonicalAuthority(homeDir)
@@ -104,9 +71,10 @@ func currentCanonical(homeDir, id string) (tauth.Aggregate, error) {
 }
 
 // currentCanonicalAggregate reads one task's current authoritative aggregate,
-// reporting whether the task has a canonical record. A missing record is not
-// an error (the caller falls back to the projection and display tiers);
-// non-canonical homes and corrupt state fail closed.
+// reporting whether a canonical record exists. A missing record is not itself
+// an error, but every canonical-only caller must treat a missing record as a
+// clean-break operation error; non-canonical homes and corrupt state fail
+// closed.
 func currentCanonicalAggregate(homeDir, id string) (tauth.Aggregate, bool, error) {
 	agg, err := currentCanonical(homeDir, id)
 	if err != nil {

@@ -3,7 +3,6 @@
 package fleet
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,7 +176,7 @@ func TestSnapshotFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 }
 
 // TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged proves observation fails
-// closed on the same legacy shape.
+// closed on the same legacy shape (clean break: no canonical record).
 func TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 	homeDir := t.TempDir()
 	if _, err := home.Init(homeDir); err != nil {
@@ -187,9 +186,11 @@ func TestReadWithProbeFailsClosedOnLegacyMetaOnlyMerged(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := ReadSoldierState(homeDir, "t1")
-	var legacy *LegacyDeliveryEvidenceError
-	if !errors.As(err, &legacy) {
-		t.Fatalf("ReadSoldierState error = %v, want LegacyDeliveryEvidenceError", err)
+	if err == nil {
+		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
+	}
+	if !strings.Contains(err.Error(), homeDir) {
+		t.Errorf("clean-break error must carry home context, got: %v", err)
 	}
 }
 
@@ -207,12 +208,11 @@ func TestReadWithProbeFailsClosedOnLegacyMergeAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := ReadSoldierState(homeDir, "t1")
-	var legacy *LegacyDeliveryEvidenceError
-	if !errors.As(err, &legacy) {
-		t.Fatalf("ReadSoldierState error = %v, want LegacyDeliveryEvidenceError", err)
+	if err == nil {
+		t.Fatal("ReadSoldierState over a legacy meta-only task = nil, want fail-closed")
 	}
-	if legacy.Field != "merge_authorization" {
-		t.Fatalf("field = %q, want merge_authorization", legacy.Field)
+	if !strings.Contains(err.Error(), homeDir) {
+		t.Errorf("clean-break error must carry home context, got: %v", err)
 	}
 }
 

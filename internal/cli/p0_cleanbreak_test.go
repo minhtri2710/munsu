@@ -10,6 +10,7 @@ import (
 
 	"github.com/minhtri2710/munsu/internal/home"
 	mhome "github.com/minhtri2710/munsu/internal/home"
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // TestStructuredGuardFailsClosedOnUnreadableTruth proves the structured
@@ -140,5 +141,124 @@ func TestBackendCapabilitiesOnlyTmuxHerdr(t *testing.T) {
 	}
 	if out, err := runContract(t, []string{"backend", "capabilities", "--backend", "orca"}); err == nil {
 		t.Errorf("backend capabilities --backend orca must be rejected (not exposed), got:\n%s", out)
+	}
+}
+
+// TestTaskObserveMetaOnlyFailsClosed proves `task observe` on an ordinary
+// meta-only task (no canonical record) returns a structured invalid_state with
+// task/home context, never a projection fallback.
+func TestTaskObserveMetaOnlyFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", homeDir)
+	if err := os.MkdirAll(filepath.Join(homeDir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeDir, "state", "legacy-task.meta"), []byte("kind=ship\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runContract(t, []string{"task", "observe", "legacy-task"})
+	if err == nil {
+		t.Fatalf("task observe over a meta-only task = nil error, want fail-closed; output:\n%s", out)
+	}
+	if !strings.Contains(out, "invalid_state") {
+		t.Errorf("meta-only task observe must return invalid_state, got:\n%s", out)
+	}
+	if !strings.Contains(out, "legacy-task") || !strings.Contains(out, homeDir) {
+		t.Errorf("error must carry task and home context, got:\n%s", out)
+	}
+	if strings.Contains(out, "kind: task.observe") {
+		t.Errorf("meta-only task observe must not emit a success envelope, got:\n%s", out)
+	}
+}
+
+// TestTaskObserveMissingTaskNotFound proves `task observe` on a completely
+// missing task returns a structured not_found with task/home context.
+func TestTaskObserveMissingTaskNotFound(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", homeDir)
+
+	out, err := runContract(t, []string{"task", "observe", "does-not-exist"})
+	if err == nil {
+		t.Fatalf("task observe over a missing task = nil error, want not_found; output:\n%s", out)
+	}
+	if !strings.Contains(out, "not_found") {
+		t.Errorf("missing task observe must return not_found, got:\n%s", out)
+	}
+	if !strings.Contains(out, "does-not-exist") || !strings.Contains(out, homeDir) {
+		t.Errorf("error must carry task and home context, got:\n%s", out)
+	}
+}
+
+// TestTaskObserveCorruptCanonicalFailsClosed proves a corrupt canonical record
+// yields a structured invalid_state with task/home context.
+func TestTaskObserveCorruptCanonicalFailsClosed(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", homeDir)
+	cliSeedCanonicalTask(t, homeDir, "corrupt", "ship")
+	cur := filepath.Join(homeDir, "state", "task-authority", "tasks", "corrupt", "current.json")
+	if err := os.WriteFile(cur, []byte("{not-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runContract(t, []string{"task", "observe", "corrupt"})
+	if err == nil {
+		t.Fatalf("task observe over a corrupt canonical record = nil error, want fail-closed; output:\n%s", out)
+	}
+	if !strings.Contains(out, "invalid_state") {
+		t.Errorf("corrupt canonical observe must return invalid_state, got:\n%s", out)
+	}
+	if !strings.Contains(out, "corrupt") || !strings.Contains(out, homeDir) {
+		t.Errorf("error must carry task and home context, got:\n%s", out)
+	}
+}
+
+// TestTaskObserveCanonicalDoneBeatsStaleStatus proves canonical phase wins over
+// a stale .status tail through the task observe contract.
+func TestTaskObserveCanonicalDoneBeatsStaleStatus(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", homeDir)
+	cliSeedCanonicalTaskPhase(t, homeDir, "done-task", "ship", taskauthority.PhaseDone)
+	if err := mhome.AppendStatus(homeDir, "done-task", "working: stale tail"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runContract(t, []string{"task", "observe", "done-task", "--output", "json"})
+	if err != nil {
+		t.Fatalf("task observe canonical done: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"status": "done"`) {
+		t.Errorf("task observe must report canonical done phase, got:\n%s", out)
+	}
+}
+
+// TestTaskObserveCanonicalWithoutMetaSucceeds proves a canonical task with no
+// .meta projection is still observable from its authoritative phase.
+func TestTaskObserveCanonicalWithoutMetaSucceeds(t *testing.T) {
+	homeDir := t.TempDir()
+	if _, err := home.Init(homeDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MUNSU_HOME", homeDir)
+	cliSeedCanonicalTaskPhase(t, homeDir, "no-meta", "ship", taskauthority.PhaseQueued)
+
+	out, err := runContract(t, []string{"task", "observe", "no-meta", "--output", "json"})
+	if err != nil {
+		t.Fatalf("task observe canonical without meta: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"status": "queued"`) {
+		t.Errorf("task observe must report canonical queued phase, got:\n%s", out)
 	}
 }
