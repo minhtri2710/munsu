@@ -3,6 +3,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -345,10 +346,31 @@ func TestRegistryBindLockScopeIsSmallestTruthful(t *testing.T) {
 // --- Bounded scale evidence for the Binding aggregate -----------------------
 
 // TestRegistryBindingScaleBound proves the Binding aggregate handles a stated
-// representative cardinality within a generous elapsed guard, tracing the real
-// encoding/read/commit path. The hard bound is the invariant (all N bindings
-// readable, one owner each); the elapsed guard is deliberately generous and
-// only catches a pathological regression, not a brittle micro-threshold.
+// representative cardinality, tracing the real encoding/read/commit path. The
+// hard bound is the invariant (all N bindings readable, one owner each); the
+// cost bound is the SHAPE of per-binding cost, not its absolute value.
+//
+// The guard used to be an absolute wall-clock ceiling (60s for the whole
+// sequence). That ceiling was unrunnable as a stable signal: the sequence is
+// dominated by durable per-commit I/O (~110ms per binding on an idle SSD, so
+// ~20s of pure floor), leaving under 3x headroom, and the same unchanged code
+// measured 10s to 71s across CI runs depending on runner load and -race build
+// contention. It failed on `main` (run 31680287927) without a single line of
+// internal/fleet having changed. Absolute wall-clock cannot separate "the code
+// regressed" from "the runner was busy", so it is not asserted on here.
+//
+// What the guard actually needs to catch is a pathological regression — an
+// accidental per-binding scan over all existing bindings, which turns per-op
+// cost from flat into linear in the number of bindings already stored. That is
+// a property of the SHAPE of the cost curve, and a ratio between two samples
+// from the same run cancels out machine speed, -race overhead and runner load.
+// Measured healthy shape: first-decile median 108ms vs last-decile median
+// 109ms (ratio ~1.0 over a 10x cardinality increase). Sensitivity is set by
+// the ~110ms durable-commit floor F: a regression adding c per stored binding
+// yields ratio (F+190c)/(F+10c), so the 3x guard trips only when c > F/80
+// (~1.4ms per stored binding). That catches heavy per-binding I/O (per-binding
+// fsync, doc re-read); a microsecond in-memory scan stays under the floor,
+// out of reach of any wall-clock shape guard.
 func TestRegistryBindingScaleBound(t *testing.T) {
 	const n = 200
 	r, _, _ := newTestRegistry(t)
@@ -359,10 +381,15 @@ func TestRegistryBindingScaleBound(t *testing.T) {
 	for i := 0; i < n; i++ {
 		mustRegisterCaptain(t, r, fmt.Sprintf("scale-cap-%d", i))
 	}
+	perBind := make([]time.Duration, n)
 	for i := 0; i < n; i++ {
+		bindStart := time.Now()
 		mustBind(t, r, fmt.Sprintf("scale-cap-%d", i), fmt.Sprintf("scale-proj-%d", i))
+		perBind[i] = time.Since(bindStart)
 	}
-	elapsed := time.Since(start)
+	// Elapsed is evidence, not an assertion: logged so a genuinely slow run is
+	// still visible in CI output without being a failure signal on its own.
+	t.Logf("%d projects + %d captains + %d bindings in %v", n, n, n, time.Since(start))
 
 	// Hard invariant: every binding is readable and one-to-one.
 	for i := 0; i < n; i++ {
@@ -375,12 +402,30 @@ func TestRegistryBindingScaleBound(t *testing.T) {
 		}
 	}
 
-	// Generous guard: 200 bindings over the real home commit path must be well
-	// under 60s. This is not a micro-threshold; it only fails on a pathological
-	// regression (e.g. accidental O(n^2) scan per binding).
-	if elapsed > 60*time.Second {
-		t.Fatalf("%d bindings took %v, beyond the generous scale guard", n, elapsed)
+	// Shape guard: per-binding cost must stay flat as the stored binding count
+	// grows 10x. Medians, not means, so a single scheduling stall on a loaded
+	// runner cannot move the verdict.
+	const decile = n / 10
+	first := medianDuration(perBind[:decile])
+	last := medianDuration(perBind[n-decile:])
+	t.Logf("per-binding median: first decile %v, last decile %v", first, last)
+	if first <= 0 {
+		t.Fatalf("first-decile median is %v — clock resolution too coarse to judge cost shape", first)
 	}
+	if ratio := float64(last) / float64(first); ratio > 3 {
+		t.Fatalf("per-binding cost grew %.1fx from the first to the last decile "+
+			"(median %v -> %v): binding cost scales with the number of stored "+
+			"bindings, which is the pathological per-binding scan this guard exists to catch",
+			ratio, first, last)
+	}
+}
+
+// medianDuration returns the median of samples without mutating the caller's
+// slice. Callers pass windows of a live measurement series.
+func medianDuration(samples []time.Duration) time.Duration {
+	sorted := append([]time.Duration(nil), samples...)
+	sort.Slice(sorted, func(a, b int) bool { return sorted[a] < sorted[b] })
+	return sorted[len(sorted)/2]
 }
 
 // BenchmarkRegistryBindingAggregate measures per-binding cost (elapsed and
