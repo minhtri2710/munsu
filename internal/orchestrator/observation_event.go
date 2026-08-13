@@ -111,11 +111,17 @@ type EventWaiter struct {
 }
 
 // endpointCursorState is the per-endpoint cursor state scoped to the expected
-// incarnation. A change of expected incarnation resets the cursor (fresh
-// stream), so a rollover that restarts at a lower cursor is never suppressed.
+// incarnation and guarded by a generation token. A change of expected
+// incarnation resets the cursor (fresh stream), so a rollover that restarts at
+// a lower cursor is never suppressed. generation is incremented on every
+// accepted commit: a waiter captures it before its blocking Source.Wait and
+// rejects its own result at compare-and-advance if the state advanced while it
+// was blocked (an overlapping old/new incarnation wait must never roll back
+// state committed by a newer incarnation).
 type endpointCursorState struct {
 	incarnation string
 	cursor      backend.EventCursor
+	generation  uint64
 }
 
 // NewEventWaiter constructs the bounded event wait state over a port.
@@ -249,6 +255,12 @@ func (w *EventWaiter) WaitForSignal(ctx context.Context, homeDir string, timeout
 // can never wake the watcher.
 func (w *EventWaiter) waitEndpoint(ctx context.Context, es EndpointSource) (backend.ObservationSignal, EventWaitOutcome) {
 	after := w.lastCursor(es)
+	// Capture the cursor-state generation BEFORE the blocking wait. At commit
+	// time a generation mismatch means the state advanced while this waiter
+	// was blocked (e.g. a newer incarnation committed after a rollover), so
+	// this in-flight result is stale: it must be rejected WITHOUT rolling back
+	// state, and the next wait for the current incarnation proceeds fresh.
+	gen := w.generationFor(es.Endpoint)
 	sig, werr := es.Source.Wait(ctx, es.Endpoint, after)
 	if werr != nil {
 		if errors.Is(werr, context.DeadlineExceeded) || errors.Is(werr, context.Canceled) {
@@ -288,8 +300,15 @@ func (w *EventWaiter) waitEndpoint(ctx context.Context, es EndpointSource) (back
 	// never across the blocking wait): the current cursor is re-read scoped to
 	// the expected incarnation, so a concurrent accepted signal is suppressed
 	// exactly once and an incarnation rollover resets the stream exactly once.
+	// A generation mismatch first rejects stale in-flight results: an old
+	// waiter returning after a rollover committed must never roll the state
+	// back to its own incarnation.
 	lk := w.lockFor(es.Endpoint)
 	lk.Lock()
+	if w.generationFor(es.Endpoint) != gen {
+		lk.Unlock()
+		return backend.ObservationSignal{}, EventWaitTimeout // state advanced while waiting (stale generation)
+	}
 	last := w.lastCursor(es)
 	if !es.Source.After(sig.Cursor, last) {
 		lk.Unlock()
@@ -339,10 +358,25 @@ func (w *EventWaiter) lastCursor(es EndpointSource) backend.EventCursor {
 	return st.cursor
 }
 
+// generationFor returns the cursor-state generation for an exact bound
+// endpoint (0 when no state has been recorded yet). It is captured before a
+// blocking Source.Wait and compared at commit time to reject stale in-flight
+// results.
+func (w *EventWaiter) generationFor(endpoint backend.EndpointRef) uint64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	st := w.states[endpointKey(endpoint)]
+	if st == nil {
+		return 0
+	}
+	return st.generation
+}
+
 // recordCursor stores the accepted cursor for an exact bound endpoint, along
-// with the expected incarnation it was accepted under. A change of incarnation
-// atomically replaces the state (fresh stream); the empty cursor is not
-// recorded (the state still tracks the incarnation change).
+// with the expected incarnation it was accepted under, and advances the
+// generation token. A change of incarnation atomically replaces the state
+// (fresh stream); the empty cursor is not recorded (the state still tracks the
+// incarnation change).
 func (w *EventWaiter) recordCursor(es EndpointSource, cursor backend.EventCursor) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -356,6 +390,7 @@ func (w *EventWaiter) recordCursor(es EndpointSource, cursor backend.EventCursor
 	if cursor != "" {
 		st.cursor = cursor
 	}
+	st.generation++
 }
 
 // eventPulse is the bridge from the event lane goroutine to the watcher loop.

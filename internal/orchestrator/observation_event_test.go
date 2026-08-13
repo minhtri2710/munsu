@@ -237,6 +237,31 @@ func (b *blockingEventSource) Wait(ctx context.Context, endpoint backend.Endpoin
 
 func (b *blockingEventSource) After(next, prev backend.EventCursor) bool { return next != prev }
 
+// gatedEventSource models a real adapter whose Wait blocks until an external
+// release and then returns a scripted signal. It signals when Wait has been
+// entered so a test can deterministically order overlapping waits.
+type gatedEventSource struct {
+	entered chan struct{}
+	release chan struct{}
+	sig     backend.ObservationSignal
+}
+
+func (g *gatedEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef, after backend.EventCursor) (backend.ObservationSignal, error) {
+	select {
+	case <-g.entered:
+	default:
+		close(g.entered)
+	}
+	select {
+	case <-ctx.Done():
+		return backend.ObservationSignal{}, ctx.Err()
+	case <-g.release:
+		return g.sig, nil
+	}
+}
+
+func (g *gatedEventSource) After(next, prev backend.EventCursor) bool { return next != prev }
+
 // TestEventWaiter_WaitForSignal_ConcurrentBoundedWait is the blocker-2
 // regression: caller A holds a long in-flight wait on an endpoint while caller
 // B waits on the SAME endpoint with a short timeout. B must return within its
@@ -273,6 +298,67 @@ func TestEventWaiter_WaitForSignal_ConcurrentBoundedWait(t *testing.T) {
 
 	close(src.release)
 	<-doneA
+}
+
+// TestEventWaiter_WaitForSignal_OverlappingIncarnationWaits is the blocker
+// 1f11ad5e race regression: an OLD in-flight waiter (captured its generation
+// before the blocking Source.Wait) returns AFTER a NEW incarnation already
+// committed cursor 1. Its stale result must be rejected at compare-and-advance
+// (generation mismatch) and must NOT roll the state back to the old
+// incarnation, so the next event of the new stream (cursor 2) is still
+// accepted.
+func TestEventWaiter_WaitForSignal_OverlappingIncarnationWaits(t *testing.T) {
+	ep := backend.EndpointRef{Backend: "herdr", Handle: "w:p"}
+
+	oldSrc := &gatedEventSource{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		sig: backend.ObservationSignal{
+			Endpoint:    ep,
+			Incarnation: "inc-old",
+			Activity:    backend.ActivityIdle,
+			Source:      backend.SourceEvent,
+			Cursor:      "43",
+		},
+	}
+	newSrc := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: ep, Incarnation: "inc-new", Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "1"},
+		{Endpoint: ep, Incarnation: "inc-new", Activity: backend.ActivityIdle, Source: backend.SourceEvent, Cursor: "2"},
+	}}
+	w := NewEventWaiter(staticEventPort(
+		EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: oldSrc},
+		EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: newSrc},
+	))
+
+	// Old waiter A starts and blocks inside Source.Wait (its generation was
+	// captured before Wait returned control).
+	doneOld := make(chan struct{})
+	var oldOutcome EventWaitOutcome
+	go func() {
+		defer close(doneOld)
+		_, oldOutcome = w.waitEndpoint(context.Background(), EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: oldSrc})
+	}()
+	<-oldSrc.entered
+
+	// Rollover: the new incarnation commits cursor 1.
+	sig, outcome := w.waitEndpoint(context.Background(), EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: newSrc})
+	if outcome != EventWaitSignal || sig.Cursor != "1" {
+		t.Fatalf("new incarnation commit = (outcome %v, cursor %q), want (signal, %q)", outcome, sig.Cursor, "1")
+	}
+
+	// Old waiter A finally returns cursor 43: stale generation — rejected, and
+	// the state must not be rolled back to inc-old/43.
+	close(oldSrc.release)
+	<-doneOld
+	if oldOutcome != EventWaitTimeout {
+		t.Fatalf("old in-flight result outcome = %v, want timeout (stale generation rejected)", oldOutcome)
+	}
+
+	// The next event of the new stream (cursor 2) is still accepted.
+	sig, outcome = w.waitEndpoint(context.Background(), EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: newSrc})
+	if outcome != EventWaitSignal || sig.Cursor != "2" {
+		t.Fatalf("cursor 2 after rejected rollback = (outcome %v, cursor %q), want (signal, %q)", outcome, sig.Cursor, "2")
+	}
 }
 
 // TestEventWaiter_WaitForSignal_MultiEndpointWake is the blocker-3
