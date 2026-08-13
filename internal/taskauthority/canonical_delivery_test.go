@@ -346,8 +346,11 @@ func TestCanonicalDeliveryAuthorizationFailClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			req := authorizeRequest(c, "t1", preconditionOf(uint64(agg.Generation), uint64(agg.Revision)))
-			if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-fail-"+tc.name, req), req); !errors.Is(err, ErrPrecondition) {
-				t.Fatalf("authorize on %s task = %v, want ErrPrecondition", tc.name, err)
+			// A retired task now carries an active cleanup claim, so the delivery
+			// mutation fails closed on the claim fence (ErrConflict) rather than
+			// the phase gate (ErrPrecondition); either way delivery is rejected.
+			if _, err := c.AuthorizeDelivery(mustOperation(t, "op-auth-fail-"+tc.name, req), req); err == nil || (!errors.Is(err, ErrPrecondition) && !errors.Is(err, ErrConflict)) {
+				t.Fatalf("authorize on %s task = %v, want ErrPrecondition or ErrConflict", tc.name, err)
 			}
 		})
 	}
@@ -1465,4 +1468,70 @@ func TestCanonicalDeliverySchemaRejectsMalformedRecords(t *testing.T) {
 		plant(t, c, deliveryAuthorizationKey("t1", "op-auth-t1"), `{not json`)
 		readFails(t, c)
 	})
+}
+
+// TestCanonicalDeliveryRejectedWhileCleanupClaimActive proves the delivery
+// mutations (AuthorizeDelivery, RevokeDeliveryAuthorization,
+// CommitDeliveryOutcome) are gated by the active cleanup claim: a retired task
+// with an in-flight cleanup can never mutate delivery state or advance the
+// revision the cleanup revalidates against (BEO-16/P1a medium finding).
+func TestCanonicalDeliveryRejectedWhileCleanupClaimActive(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustDeliveryTask(t, c, "t1") // working, revision 3
+
+	// Retire generation 1: the durable active cleanup claim is committed.
+	retire := retireRequest(t, c, "t1", preconditionOf(1, 3))
+	if _, err := c.Retire(mustOperation(t, "op-delclaim-retire", retire), retire); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupActive {
+		t.Fatalf("cleanup claim not active: %+v", agg.CleanupClaim)
+	}
+	rev := uint64(agg.Revision)
+
+	// AuthorizeDelivery fails closed on the claim fence.
+	authReq := authorizeRequest(c, "t1", preconditionOf(1, rev))
+	if _, err := c.AuthorizeDelivery(mustOperation(t, "op-delclaim-auth", authReq), authReq); !errors.Is(err, ErrConflict) {
+		t.Fatalf("AuthorizeDelivery with active claim = %v, want ErrConflict", err)
+	}
+
+	// RevokeDeliveryAuthorization fails closed on the claim fence.
+	revokeReq := CanonicalRevokeDeliveryRequest{
+		HomeID:                   c.HomeID(),
+		TaskID:                   mustTaskID(t, "t1"),
+		Precondition:             preconditionOf(1, rev),
+		AuthorizationOperationID: "op-auth-any",
+		Reason:                   "revoke",
+	}
+	if _, err := c.RevokeDeliveryAuthorization(mustOperation(t, "op-delclaim-revoke", revokeReq), revokeReq); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RevokeDeliveryAuthorization with active claim = %v, want ErrConflict", err)
+	}
+
+	// CommitDeliveryOutcome fails closed on the claim fence.
+	outcomeReq := CanonicalDeliveryOutcomeRequest{
+		HomeID:                   c.HomeID(),
+		TaskID:                   mustTaskID(t, "t1"),
+		Precondition:             preconditionOf(1, rev),
+		AuthorizationOperationID: "op-auth-any",
+		Status:                   DeliveryOutcomeCompleted,
+		Detail:                   "outcome",
+	}
+	if _, err := c.CommitDeliveryOutcome(mustOperation(t, "op-delclaim-commit", outcomeReq), outcomeReq); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CommitDeliveryOutcome with active claim = %v, want ErrConflict", err)
+	}
+
+	// The claim fence is identity-fenced for continuations and the aggregate
+	// revision never advanced: the delivery mutation could not invalidate the
+	// cleanup revalidation snapshot.
+	agg, err = c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uint64(agg.Revision) != rev {
+		t.Fatalf("revision advanced %d -> %d despite claim rejection", rev, agg.Revision)
+	}
 }

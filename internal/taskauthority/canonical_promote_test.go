@@ -177,8 +177,12 @@ func TestCanonicalPromoteFailsClosedOnPreconditions(t *testing.T) {
 		t.Fatal(err)
 	}
 	retiredPromote := promoteRequest(t, c, "retired-1", preconditionOf(1, 2))
-	if _, err := c.Promote(mustOperation(t, "op-promote-retired", retiredPromote), retiredPromote); err == nil || !errors.Is(err, ErrPrecondition) {
-		t.Fatalf("promote retired scout = %v, want ErrPrecondition", err)
+	if _, err := c.Promote(mustOperation(t, "op-promote-retired", retiredPromote), retiredPromote); err == nil || (!errors.Is(err, ErrPrecondition) && !errors.Is(err, ErrConflict)) {
+		// A retired generation carries an active cleanup claim until cleanup is
+		// reconciled, so Promote fails closed on the claim fence (ErrConflict)
+		// rather than the phase gate (ErrPrecondition); either way a retired
+		// scout never promotes.
+		t.Fatalf("promote retired scout = %v, want ErrPrecondition or ErrConflict", err)
 	}
 }
 

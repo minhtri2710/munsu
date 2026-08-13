@@ -22,7 +22,11 @@ type fakeTeardown struct {
 
 func (f fakeTeardown) RefuseGate() error { return nil }
 func (f fakeTeardown) Probe(string, map[string]string) (RetirementEndpointStatus, error) {
-	return RetirementEndpointStatus{Alive: f.alive}, f.probeErr
+	lifecycle := LifecycleDead
+	if f.alive {
+		lifecycle = LifecycleAlive
+	}
+	return RetirementEndpointStatus{Lifecycle: lifecycle, Responsiveness: Responsive, Freshness: FreshnessCurrent, Activity: ActivityUnknown, Source: SourceProbe}, f.probeErr
 }
 func (f fakeTeardown) Dispose(string, map[string]string, DisposeRequest) error { return f.disposeErr }
 func (f fakeTeardown) QueryMergeStatus(ident *domain.DeliveryIdentity) (*domain.PRMergeStatus, error) {

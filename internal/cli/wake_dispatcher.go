@@ -15,8 +15,8 @@ type probeAdapter struct {
 }
 
 func (a *probeAdapter) Probe(window string) (orchestrator.EndpointObservation, error) {
-	obs := backend.ObserveBackendEndpoint(a.bk, window)
-	return orchestrator.EndpointObservation{State: orchestrator.EndpointObservationState(obs.State), Detail: obs.Detail}, nil
+	obs := backend.ObserveEndpoint(a.bk, window)
+	return orchestrator.EndpointObservation{State: orchestrator.EndpointObservationState(obs.State()), Detail: obs.Detail}, nil
 }
 
 // submitAdapter wraps a backend.Backend into an orchestrator.SubmitPort.

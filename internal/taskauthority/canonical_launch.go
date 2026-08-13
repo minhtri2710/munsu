@@ -52,7 +52,12 @@ type CanonicalBeginSpawnRequest struct {
 	WorktreeFenceToken    string
 	EndpointReservationID string
 	EndpointFenceToken    string
-	Reason                string
+	// EndpointIncarnation is the opaque launch-operation provenance token
+	// minted by Fleet BEFORE BeginSpawn and persisted here so a crash after
+	// create but before attach reuses the same token (BEO-16/P1a). It is not
+	// a backend attestation.
+	EndpointIncarnation string
+	Reason              string
 }
 
 func (r CanonicalBeginSpawnRequest) DigestBytes() ([]byte, error) {
@@ -76,12 +81,13 @@ func (r CanonicalBeginSpawnRequest) DigestBytes() ([]byte, error) {
 		WorktreeFenceToken    string `json:"worktree_fence_token"`
 		EndpointReservationID string `json:"endpoint_reservation_id"`
 		EndpointFenceToken    string `json:"endpoint_fence_token"`
+		EndpointIncarnation   string `json:"endpoint_incarnation,omitempty"`
 		Reason                string `json:"reason,omitempty"`
 	}{
 		r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision,
 		r.SnapshotDigest, r.Backend, r.Harness, r.Model, r.Effort, r.Mode, r.Kind, r.Project,
 		r.ParentTaskID, r.LaunchID, r.WindowLabel, r.WorktreeReservationID, r.WorktreeFenceToken,
-		r.EndpointReservationID, r.EndpointFenceToken, r.Reason,
+		r.EndpointReservationID, r.EndpointFenceToken, r.EndpointIncarnation, r.Reason,
 	})
 }
 
@@ -95,7 +101,7 @@ func validateBeginSpawnRequest(req CanonicalBeginSpawnRequest) error {
 	if err := req.Precondition.Validate(); err != nil {
 		return err
 	}
-	return validateLaunchIdentity(req.SnapshotDigest, req.Backend, req.Harness, req.Model, req.Effort, req.Mode, req.Kind, req.Project, req.ParentTaskID, req.LaunchID, req.WindowLabel, req.WorktreeReservationID, req.WorktreeFenceToken, req.EndpointReservationID, req.EndpointFenceToken)
+	return validateLaunchIdentity(req.SnapshotDigest, req.Backend, req.Harness, req.Model, req.Effort, req.Mode, req.Kind, req.Project, req.ParentTaskID, req.LaunchID, req.WindowLabel, req.WorktreeReservationID, req.WorktreeFenceToken, req.EndpointReservationID, req.EndpointFenceToken, req.EndpointIncarnation)
 }
 
 // BeginSpawn commits the immutable launch intent for the task's current
@@ -156,6 +162,7 @@ func (c *Canonical) BeginSpawn(op domain.Operation, req CanonicalBeginSpawnReque
 			WorktreeFenceToken:    req.WorktreeFenceToken,
 			EndpointReservationID: req.EndpointReservationID,
 			EndpointFenceToken:    req.EndpointFenceToken,
+			EndpointIncarnation:   req.EndpointIncarnation,
 			PlannedAt:             c.now().UnixNano(),
 		}
 		next.Revision++
@@ -174,7 +181,8 @@ func launchIntentSame(l LaunchIntent, req CanonicalBeginSpawnRequest) bool {
 		l.Kind == req.Kind && l.Project == req.Project && l.ParentTaskID == req.ParentTaskID &&
 		l.LaunchID == req.LaunchID && l.WindowLabel == req.WindowLabel &&
 		l.WorktreeReservationID == req.WorktreeReservationID && l.WorktreeFenceToken == req.WorktreeFenceToken &&
-		l.EndpointReservationID == req.EndpointReservationID && l.EndpointFenceToken == req.EndpointFenceToken
+		l.EndpointReservationID == req.EndpointReservationID && l.EndpointFenceToken == req.EndpointFenceToken &&
+		l.EndpointIncarnation == req.EndpointIncarnation
 }
 
 // CanonicalAttachEndpointRequest records the exact acquired endpoint identity
@@ -191,6 +199,7 @@ type CanonicalAttachEndpointRequest struct {
 	SessionOwner string
 	WorkspaceID  string
 	TabID        string
+	Incarnation  string
 	Reason       string
 }
 
@@ -207,9 +216,10 @@ func (r CanonicalAttachEndpointRequest) DigestBytes() ([]byte, error) {
 		SessionOwner string `json:"session_owner,omitempty"`
 		WorkspaceID  string `json:"workspace_id,omitempty"`
 		TabID        string `json:"tab_id,omitempty"`
+		Incarnation  string `json:"incarnation,omitempty"`
 		Reason       string `json:"reason,omitempty"`
 	}{r.HomeID.Value(), r.TaskID.Value(), r.Precondition.Generation, r.Precondition.Revision,
-		r.Backend, r.Handle, r.LeaseID, r.FenceToken, r.SessionOwner, r.WorkspaceID, r.TabID, r.Reason})
+		r.Backend, r.Handle, r.LeaseID, r.FenceToken, r.SessionOwner, r.WorkspaceID, r.TabID, r.Incarnation, r.Reason})
 }
 
 // validateAttachEndpointRequest checks the typed request shape: a valid task
@@ -266,6 +276,12 @@ func (c *Canonical) AttachEndpoint(op domain.Operation, req CanonicalAttachEndpo
 		if req.LeaseID != cur.Launch.EndpointReservationID || req.FenceToken != cur.Launch.EndpointFenceToken {
 			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s acquired endpoint does not match the launch endpoint reservation fence", cur.TaskID, cur.Generation)
 		}
+		if req.Incarnation == "" {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s acquired endpoint requires the launch incarnation token", cur.TaskID, cur.Generation)
+		}
+		if req.Incarnation != cur.Launch.EndpointIncarnation {
+			return Aggregate{}, conflictError(ErrConflict, "task %s generation %s acquired endpoint incarnation does not match the launch intent incarnation", cur.TaskID, cur.Generation)
+		}
 		if cur.AcquiredEndpoint != nil {
 			if acquiredEndpointSame(*cur.AcquiredEndpoint, req) {
 				return cur.clone(), nil
@@ -282,6 +298,7 @@ func (c *Canonical) AttachEndpoint(op domain.Operation, req CanonicalAttachEndpo
 			SessionOwner: req.SessionOwner,
 			WorkspaceID:  req.WorkspaceID,
 			TabID:        req.TabID,
+			Incarnation:  req.Incarnation,
 			AcquiredAt:   c.now().UnixNano(),
 		}
 		next.Revision++
@@ -297,7 +314,7 @@ func acquiredEndpointSame(e AcquiredEndpoint, req CanonicalAttachEndpointRequest
 	return e.Backend == req.Backend && e.Handle == req.Handle &&
 		e.LeaseID == req.LeaseID && e.FenceToken == req.FenceToken &&
 		e.SessionOwner == req.SessionOwner && e.WorkspaceID == req.WorkspaceID &&
-		e.TabID == req.TabID
+		e.TabID == req.TabID && e.Incarnation == req.Incarnation
 }
 
 // CanonicalRecordLaunchRequest records the successful launch submission

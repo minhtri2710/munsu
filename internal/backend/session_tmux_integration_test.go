@@ -3,6 +3,7 @@
 package backend
 
 import (
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -42,7 +43,7 @@ func TestTmux_NewWindow(t *testing.T) {
 	}
 
 	// Verify the window is alive
-	if !tk.Alive(wid) {
+	if alive, _ := tk.CheckAlive(wid); !alive {
 		t.Fatal("NewWindow window not alive after creation")
 	}
 
@@ -52,7 +53,7 @@ func TestTmux_NewWindow(t *testing.T) {
 	}
 
 	// Verify it's gone
-	if tk.Alive(wid) {
+	if alive, _ := tk.CheckAlive(wid); alive {
 		t.Error("window still alive after Teardown")
 	}
 }
@@ -63,9 +64,9 @@ func TestTmux_Alive_UnknownWindow(t *testing.T) {
 	}
 
 	tk := &TmuxBackend{}
-	// An unknown window should return false
-	if tk.Alive("@99999") {
-		t.Error("Alive('@99999') returned true for unknown window")
+	// An unknown window should return false (ErrPaneNotFound)
+	if alive, err := tk.CheckAlive("@99999"); alive || !errors.Is(err, ErrPaneNotFound) {
+		t.Errorf("CheckAlive('@99999') = %v, %v; want false + ErrPaneNotFound", alive, err)
 	}
 }
 
@@ -84,7 +85,7 @@ func TestTmux_NewWindow_SessionAutoCreated(t *testing.T) {
 		t.Fatal("NewWindow returned empty window ID")
 	}
 	// Verify the window is alive
-	if !tk.Alive(wid) {
+	if alive, _ := tk.CheckAlive(wid); !alive {
 		t.Fatal("NewWindow window not alive after session auto-create")
 	}
 	// Clean up

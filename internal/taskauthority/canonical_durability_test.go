@@ -303,6 +303,7 @@ func TestCanonicalBeginSpawnInterruptedCommitRecovers(t *testing.T) {
 			WorktreeFenceToken:    req.WorktreeFenceToken,
 			EndpointReservationID: req.EndpointReservationID,
 			EndpointFenceToken:    req.EndpointFenceToken,
+			EndpointIncarnation:   req.EndpointIncarnation,
 			PlannedAt:             1000,
 		},
 	}

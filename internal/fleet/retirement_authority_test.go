@@ -89,13 +89,13 @@ func TestMergeAndRetireRetiresThroughAuthority(t *testing.T) {
 
 	// The authoritative retirement transition committed through the canonical
 	// Authority: phase retired (create + bind wt + bind ep + authorize +
-	// outcome + retire).
+	// outcome + retire + claim complete).
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 6 {
-		t.Fatalf("aggregate = phase %q revision %d, want retired revision 6", agg.Phase, agg.Revision)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
+		t.Fatalf("aggregate = phase %q revision %d, want retired revision 7", agg.Phase, agg.Revision)
 	}
 
 	// Saga-side cleanup removed the task meta.
@@ -138,7 +138,9 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 
 	// The committed retirement stands and the .meta projection is untouched
 	// (cleanup only removes it later); the canonical completed delivery
-	// outcome is preserved.
+	// outcome is preserved. Revision 6 = retire committed the durable claim;
+	// the failed first attempt's BeginCleanup was a no-op (claim already
+	// active), so the aggregate carries exactly the retire bump.
 	agg, err := auth.Get(mustTaskID(t, taskID))
 	if err != nil {
 		t.Fatal(err)
@@ -166,8 +168,9 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	}
 
 	// Retry: delivery is never rerun (canonical completed outcome skips),
-	// the retired phase is observed (no double transition, revision stays 6),
-	// and the cleanup resumes to completion.
+	// the retired phase is observed (no double transition, only the claim
+	// completion advances revision 6 -> 7), and the cleanup resumes to
+	// completion.
 	second := MergeAndRetire(homeDir, taskID, "https://github.com/owner/repo/pull/1", nil, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if second == nil {
 		t.Fatal("expected non-nil retry result")
@@ -182,8 +185,8 @@ func TestMergeAndRetireCleanupFailurePreservesCanonicalTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agg.Revision != 6 {
-		t.Fatalf("retry re-committed the retirement: revision = %d, want 6", agg.Revision)
+	if agg.Revision != 7 {
+		t.Fatalf("retry re-committed the retirement: revision = %d, want 7 (claim completion only)", agg.Revision)
 	}
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatal("retry should complete the cleanup and remove meta")
@@ -245,14 +248,14 @@ func TestRetireTaskCleanupFailureReturnsResumableReceipt(t *testing.T) {
 	}
 
 	// Resume: the retired phase is observed (same stable Operation identity
-	// replays the durable receipt; revision unchanged) and the cleanup
-	// completes.
+	// replays the durable receipt; only the claim completion advances the
+	// revision) and the cleanup completes.
 	_, err = RetireTask(opts, fakeTeardown{alive: true}, fakeRetirementJournals{}, auth)
 	if err != nil {
 		t.Fatalf("resume failed: %v", err)
 	}
 	agg, _ := auth.Get(mustTaskID(t, taskID))
-	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 6 {
-		t.Fatalf("aggregate after resume = %+v, want retired revision 6", agg)
+	if agg.Phase != taskauthority.PhaseRetired || agg.Revision != 7 {
+		t.Fatalf("aggregate after resume = %+v, want retired revision 7", agg)
 	}
 }

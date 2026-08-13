@@ -99,6 +99,69 @@ operations. Verified implementations include tmux and herdr; zellij, cmux and
 orca are explicit experimental adapters. Resolution rejects unknown backends
 rather than silently selecting an unverified implementation.
 
+Endpoint observation (BEO-16/P1a) is the typed, orthogonal runtime diagnostic
+of one exact bound endpoint: `Lifecycle` (starting/alive/dead/unknown),
+`Responsiveness`, `Freshness`, `Activity`, `Source`, `ObservedAt`, opaque
+`Incarnation`, and diagnostic `Detail`. It is NOT Task lifecycle truth — the
+canonical Task phase stays in `internal/taskauthority` and a probe never
+mutates it. The crossing guards encode the policy invariants: `unknown !=
+idle`, `unknown != dead`, `unresponsive != dead`, `starting != dead`, `stale !=
+dead`. A backend adapter reports only what it directly observes (lifecycle and
+responsiveness) and never fabricates freshness or incarnation: it always
+returns `FreshnessUnknown`, so an adapter probe alone is never `Live()`/`Absent()`.
+Freshness current-ness and authoritative absence are concluded ONLY by Fleet,
+and the two are separate authorities (`fleet.authorizeAbsence` vs
+`fleet.authorizeLive`): negative exact absence is granted only for a narrowly
+classified structured absence (dead + probe/derived source) of the exact bound
+handle revalidated under the current canonical generation/revision/fence;
+positive liveness is promoted to `Live()` only WITH explicit acquisition
+/creation evidence tying the exact handle to the incarnation (the in-process
+creation receipt, the durable `AcquiredEndpoint`, or the canonical
+`EndpointBinding` evidence) — P1a adapters cannot attest incarnation, so a
+probe of an expected handle with no acquisition record (e.g. a mutable `.meta`
+projection) is never promoted and fails closed. An incomplete/stale proof or an
+ambiguous reading is demoted to `unknown`/`stale` and fails closed — nothing is
+disposed or relaunched on ambiguous state. Retirement closes the probe→dispose
+TOCTOU window with BOTH a durable canonical cleanup claim AND an authoritative
+re-read/compare-and-fence: the retirement transition commits a durable
+`CleanupClaim` (active) atomically with the retired phase, and every
+Reopen/BindEndpoint/BindWorktree/acquisition/lifecycle mutation fails closed
+while the claim is active — so even though each revalidation fence
+(`CurrentLocked`) holds the task-scope lock only for the read, the durable
+claim keeps the task pinned across the external backend/filesystem actions
+(Dispose, worktree return, the projection multi-remove sequence) that follow
+it; a concurrent reopen/rebind between a fence and an action is rejected, not
+merely detected. The claim is reconciled by the cleanup continuation
+operations: `CompleteCleanup` (all evidence-pinned releases + projection
+removal succeeded — the task becomes reopenable), `AbortCleanup` (operator
+escape hatch — the task becomes reopenable without cleanup; abort is
+TERMINAL, so a later teardown retry never re-activates or resumes the aborted
+cleanup against a reopened generation), and the idempotent `BeginCleanup`
+assert (crash resume only), which is exact-generation/phase/evidence fenced:
+it accepts only a current aggregate retired at exactly the claimed generation
+with preserved retirement evidence matching the claim identity, and every
+Begin/Complete/Abort path is identity-fenced even on completed/aborted
+idempotency paths (a foreign continuation is never a no-op and never
+overwrites the stored claim). Delivery mutations (`AuthorizeDelivery`/
+`RevokeDeliveryAuthorization`/`CommitDeliveryOutcome`) are gated by the
+active claim too, so the revision snapshot cleanup revalidates against cannot
+move. The fences additionally fail
+`cleanup-pending` without releasing anything when the claim is missing/
+foreign/reconciled, when generation/revision advanced, when a reopen owns any
+evidence-pinned identity, or when the preserved retirement evidence changed.
+`Backend.Alive` (the
+former boolean liveness surface) is fully removed, and the typed
+`EndpointObservation.Alive()` compatibility helper is deleted as well: every
+session adapter exposes a structured probe (`CheckAlive`/`CheckAgentAlive`);
+the opaque launch incarnation is minted by Fleet and persisted in the
+`LaunchIntent`/binding before acquisition. The static capability matrix
+(`backend.Capabilities` / `CapabilityMatrix`) records for each of the five
+backends: create, reservation-aware create, submit, probe (and its exact
+resource granularity), dispose, worktree ownership (a separate provider, never
+a session backend), native busy and native event wait (Herdr
+`proposed` for P1b, not claimed current), and
+secondmate (out of scope).
+
 ### Delivery acceptance (`internal/domain`)
 
 `internal/domain/domain.go` is the single owner of `PR`, `Review`, `CheckRun`,

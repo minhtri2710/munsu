@@ -84,7 +84,6 @@ func TestCanonicalCreateGetList(t *testing.T) {
 		t.Fatalf("create outcome = %+v", out)
 	}
 	mustCreate(t, c, "t2")
-
 	agg, err := c.Get(mustTaskID(t, "t1"))
 	if err != nil {
 		t.Fatal(err)
@@ -432,19 +431,55 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 		t.Fatalf("BindEndpoint: %v", err)
 	}
 
-	// Retire generation 1 (revision 4), preserving the ownership evidence.
+	// Retire generation 1 (revision 4), preserving the ownership evidence and
+	// committing the durable active cleanup claim atomically.
 	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
 	if _, err := c.Retire(mustOperation(t, "op-reopen-hist-retire", req), req); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
-
-	// Reopen into generation 2.
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupActive || agg.CleanupClaim.Generation != 1 || agg.CleanupClaim.OperationID != "op-reopen-hist-retire" {
+		t.Fatalf("retire did not commit the active cleanup claim: %+v", agg.CleanupClaim)
+	}
+	// A retired generation carries an ACTIVE cleanup claim: reopening requires
+	// reconciling the claim first, and any other mutation fails closed.
 	reopen := CanonicalReopenRequest{
 		HomeID:       c.HomeID(),
 		TaskID:       mustTaskID(t, "t1"),
 		Precondition: preconditionOf(1, 4),
 		Reason:       "reopen",
 	}
+	if _, err := c.Reopen(mustOperation(t, "op-reopen-hist-blocked", reopen), reopen); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Reopen with active cleanup claim = %v, want ErrConflict", err)
+	}
+
+	// Complete the cleanup claim (revision 5): the claim is reconciled and
+	// the retired task becomes reopenable.
+	complete := CanonicalCompleteCleanupRequest{
+		HomeID:           c.HomeID(),
+		TaskID:           mustTaskID(t, "t1"),
+		Precondition:     preconditionOf(1, 4),
+		ClaimOperationID: "op-reopen-hist-retire",
+		ClaimGeneration:  Generation(1),
+		Reason:           "cleanup complete",
+	}
+	if _, err := c.CompleteCleanup(mustOperation(t, "op-reopen-hist-complete", complete), complete); err != nil {
+		t.Fatalf("CompleteCleanup: %v", err)
+	}
+	agg, err = c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupCompleted || agg.CleanupClaim.ReconciledAt <= 0 {
+		t.Fatalf("cleanup claim not reconciled to completed: %+v", agg.CleanupClaim)
+	}
+
+	// Reopen into generation 2 (the superseded record keeps revision 6 via
+	// the supersession bump).
+	reopen.Precondition = preconditionOf(1, 5)
 	if _, err := c.Reopen(mustOperation(t, "op-reopen-hist-reopen", reopen), reopen); err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
@@ -458,14 +493,17 @@ func TestCanonicalReopenPreservesHistoricalRetirementEvidence(t *testing.T) {
 	if hist.Current {
 		t.Fatalf("historical read reports current truth: %+v", hist)
 	}
-	if hist.Generation != 1 || hist.Phase != PhaseRetired || hist.Revision != 5 {
+	if hist.Generation != 1 || hist.Phase != PhaseRetired || hist.Revision != 6 {
 		// Reopen marks the superseded record with one more revision (the
 		// supersession bump, mirroring the transfer path); the retired phase
 		// and evidence are what the historical read must preserve.
-		t.Fatalf("historical aggregate = gen %s phase %q revision %d, want gen 1 retired revision 5", hist.Generation, hist.Phase, hist.Revision)
+		t.Fatalf("historical aggregate = gen %s phase %q revision %d, want gen 1 retired revision 6", hist.Generation, hist.Phase, hist.Revision)
 	}
 	if hist.Retirement == nil {
 		t.Fatalf("historical retirement evidence missing")
+	}
+	if hist.CleanupClaim == nil || hist.CleanupClaim.Status != CleanupCompleted {
+		t.Fatalf("historical cleanup claim not preserved as completed: %+v", hist.CleanupClaim)
 	}
 	if hist.Retirement.Generation != 1 || hist.Retirement.OperationID != "op-reopen-hist-retire" {
 		t.Fatalf("retirement evidence = %+v, want generation 1 operation op-reopen-hist-retire", hist.Retirement)
@@ -862,4 +900,44 @@ func mustPathForTest(t *testing.T, h *home.Home, key string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestCanonicalCurrentLockedSerializesWithMutation proves CurrentLocked
+// returns the current authoritative aggregate under the task-scope lock and
+// observes a concurrent mutation's committed state (BEO-16/P1a retirement
+// TOCTOU guard seam): after a mutation commits, the locked re-read reflects
+// the new revision; a superseded generation is not returned as current truth.
+func TestCanonicalCurrentLockedSerializesWithMutation(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+
+	agg, err := c.CurrentLocked(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("CurrentLocked: %v", err)
+	}
+	if agg.TaskID != "t1" || agg.Generation != 1 || agg.Revision != FirstRevision || agg.Phase != PhaseQueued {
+		t.Fatalf("CurrentLocked = %+v", agg)
+	}
+
+	// A committed mutation advances the revision; the next locked re-read
+	// observes it (the fence re-read never sees a stale snapshot).
+	prec := preconditionOf(uint64(agg.Generation), uint64(agg.Revision))
+	block := CanonicalBlockRequest{HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: prec, Reason: "test"}
+	op := mustOperation(t, "op-block-t1-locked", block)
+	if _, err := c.Block(op, block); err != nil {
+		t.Fatalf("Block: %v", err)
+	}
+	after, err := c.CurrentLocked(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatalf("CurrentLocked after mutation: %v", err)
+	}
+	if after.Revision != agg.Revision+1 {
+		t.Fatalf("CurrentLocked revision = %d, want %d", after.Revision, agg.Revision+1)
+	}
+
+	// A task that does not exist fails closed with ErrNotFound (same
+	// current-Task-truth contract as Get).
+	if _, err := c.CurrentLocked(mustTaskID(t, "missing")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CurrentLocked(missing) = %v, want ErrNotFound", err)
+	}
 }

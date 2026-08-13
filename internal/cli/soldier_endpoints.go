@@ -44,7 +44,11 @@ func (s sessionSoldierEndpoints) Alive(home string, meta map[string]string) (boo
 	if err != nil {
 		return false, err
 	}
-	return bk.Alive(meta["window"]), nil
+	// Typed observation: only a confirmed-live/current reading is alive. A
+	// legacy-bool false, operational failure, stale, or starting reading is
+	// NOT alive (gates the send — never a recovery/dispose decision and never
+	// authoritative death).
+	return backend.ObserveEndpoint(bk, meta["window"]).Live(), nil
 }
 
 func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool, error) {
@@ -58,7 +62,7 @@ func (s sessionSoldierEndpoints) Busy(home string, meta map[string]string) (bool
 	if herdr, ok := bk.(recognizedAgentBackend); ok {
 		recognized, status := herdr.IsRecognizedAgent(meta["window"])
 		if !recognized {
-			if !bk.Alive(meta["window"]) {
+			if !backend.ObserveEndpoint(bk, meta["window"]).Live() {
 				return false, fmt.Errorf("endpoint not alive")
 			}
 			return false, fmt.Errorf("endpoint status unknown: not a recognized agent")

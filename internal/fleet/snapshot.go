@@ -225,7 +225,7 @@ func appendHomeTasks(snap *FleetSnapshot, taskHome, source, homeLabel string, de
 		// Endpoint liveness is diagnostic only and never changes lifecycle state.
 		if ts.Window != "" && deps.Endpoint != nil {
 			status, perr := observeEndpointWith(deps.Endpoint, taskHome, meta)
-			if perr != nil || status.State != EndpointAlive {
+			if perr != nil || !status.Live() {
 				ts.PaneAlive = false
 				ts.PaneAliveUnknown = true
 			} else {
@@ -390,7 +390,7 @@ func CaptainStatus(parentHome, captainID, homeDir string, probe EndpointProbe) s
 	if err != nil {
 		return "unknown"
 	}
-	switch status.State {
+	switch status.State() {
 	case EndpointAlive:
 		return "alive"
 	case EndpointStarting:
@@ -416,6 +416,9 @@ type EndpointRef struct {
 	WorkspaceID  string
 	TabID        string
 	Home         string
+	// Incarnation is the opaque generation-bound endpoint identity (when known)
+	// used to freshness cross-check observations of the exact binding.
+	Incarnation string
 }
 
 type EndpointProbe interface {

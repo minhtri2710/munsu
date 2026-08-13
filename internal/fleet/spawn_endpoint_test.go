@@ -16,10 +16,14 @@ func (f fakeEndpointCapabilities) Submit(ep CreatedEndpoint, text string) error 
 	return f.backend.SendKeys(ep.Handle, text)
 }
 func (f fakeEndpointCapabilities) Probe(ep CreatedEndpoint) (SpawnEndpointObservation, error) {
-	if f.backend.Alive(ep.Handle) {
-		return SpawnEndpointObservation{State: EndpointAlive}, nil
+	alive, err := f.backend.CheckAlive(ep.Handle)
+	if err != nil {
+		return endpointStatusFromState(EndpointUnresponsive), nil
 	}
-	return SpawnEndpointObservation{State: EndpointDead}, nil
+	if alive {
+		return endpointStatusFromState(EndpointAlive), nil
+	}
+	return endpointStatusFromState(EndpointDead), nil
 }
 func (f fakeEndpointCapabilities) Capture(ep CreatedEndpoint, n int) (string, error) {
 	return f.backend.Capture(ep.Handle, n)

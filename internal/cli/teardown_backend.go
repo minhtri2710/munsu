@@ -43,7 +43,16 @@ func (s sessionBoundTeardown) Probe(home string, meta map[string]string) (fleet.
 	if err != nil {
 		return fleet.RetirementEndpointStatus{}, err
 	}
-	return fleet.RetirementEndpointStatus{Alive: bk.Alive(meta["window"])}, nil
+	obs := backend.ObserveEndpoint(bk, meta["window"])
+	return fleet.RetirementEndpointStatus{
+		Lifecycle:      fleet.LifecycleState(obs.Lifecycle),
+		Responsiveness: fleet.Responsiveness(obs.Responsiveness),
+		Freshness:      fleet.Freshness(obs.Freshness),
+		Activity:       fleet.Activity(obs.Activity),
+		Source:         fleet.ObservationSource(obs.Source),
+		ObservedAt:     obs.ObservedAt,
+		Detail:         obs.Detail,
+	}, nil
 }
 
 func (s sessionBoundTeardown) Dispose(home string, meta map[string]string, req fleet.DisposeRequest) error {

@@ -101,13 +101,13 @@ func (b *FakeSessionBackend) Capture(windowID string, lines int) (string, error)
 	return "", nil
 }
 
-func (b *FakeSessionBackend) Alive(windowID string) bool {
+func (b *FakeSessionBackend) CheckAlive(windowID string) (bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if win, ok := b.Windows[windowID]; ok {
-		return win.IsAlive
+		return win.IsAlive, nil
 	}
-	return false
+	return false, nil
 }
 
 func (b *FakeSessionBackend) Teardown(windowID string) error {

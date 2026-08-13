@@ -95,7 +95,10 @@ type TaskDefinition struct {
 	ScoutRuntimeBudgetSecs int64  `json:"scout_runtime_budget_secs,omitempty"`
 }
 
-// EndpointBinding is a generation-bound runtime endpoint lease.
+// EndpointBinding is a generation-bound runtime endpoint lease. Incarnation
+// is the opaque generation-bound identity minted by Fleet for this exact
+// endpoint binding and used to reject stale/foreign observations (freshness).
+// taskauthority persists the opaque value without importing backend.
 type EndpointBinding struct {
 	Backend      string `json:"backend"`
 	Handle       string `json:"handle"`
@@ -104,6 +107,7 @@ type EndpointBinding struct {
 	SessionOwner string `json:"session_owner,omitempty"`
 	WorkspaceID  string `json:"workspace_id,omitempty"`
 	TabID        string `json:"tab_id,omitempty"`
+	Incarnation  string `json:"incarnation,omitempty"`
 	BoundAtUnix  int64  `json:"bound_at_unix"`
 }
 
@@ -164,9 +168,10 @@ type TransferActivationInfo struct {
 // identities reserved here. It stores only facts Fleet knows before acquisition
 // — the frozen snapshot digest, the explicit Backend and Harness/adapter
 // identity, model/effort/mode/kind/project/parent identities, the deterministic
-// launch identity/window label, and the one-time worktree/endpoint reservation
-// identities (reservation ID + fence token) — sufficient to bind or recover the
-// same operation. No identity is selected, detected, defaulted, probed, or
+// launch identity/window label, the one-time worktree/endpoint reservation
+// identities (reservation ID + fence token), and the opaque endpoint
+// incarnation minted for this launch operation — sufficient to bind or recover
+// the same operation. No identity is selected, detected, defaulted, probed, or
 // fallen back here: Fleet supplies every value explicitly.
 //
 // LaunchIntent is not a process record and carries no executable content: it is
@@ -189,6 +194,7 @@ type LaunchIntent struct {
 	WorktreeFenceToken    string `json:"worktree_fence_token"`
 	EndpointReservationID string `json:"endpoint_reservation_id"`
 	EndpointFenceToken    string `json:"endpoint_fence_token"`
+	EndpointIncarnation   string `json:"endpoint_incarnation,omitempty"`
 	PlannedAt             int64  `json:"planned_at"`
 }
 
@@ -207,6 +213,7 @@ type AcquiredEndpoint struct {
 	SessionOwner string `json:"session_owner,omitempty"`
 	WorkspaceID  string `json:"workspace_id,omitempty"`
 	TabID        string `json:"tab_id,omitempty"`
+	Incarnation  string `json:"incarnation,omitempty"`
 	AcquiredAt   int64  `json:"acquired_at"`
 }
 
@@ -232,12 +239,64 @@ type LaunchEvidence struct {
 // release only resources still owned by that generation and for diagnostics.
 // The retired generation's active Endpoint/Worktree are nil: it no longer acts
 // as an active binding owner, while the evidence remains durably rereadable.
+// The cleanup claim bound to the same retirement is a sibling record: the
+// evidence pins what may be released, the claim serializes WHEN.
 type RetirementEvidence struct {
 	OperationID string           `json:"operation_id,omitempty"`
 	Generation  Generation       `json:"generation"`
 	RetiredAt   int64            `json:"retired_at,omitempty"`
 	Endpoint    *EndpointBinding `json:"endpoint,omitempty"`
 	Worktree    *WorktreeBinding `json:"worktree,omitempty"`
+	// Acquired preserves the exact identity of a pre-bind acquired endpoint
+	// (a launch that acquired an external backend resource but never bound
+	// it) as cleanup evidence (BEO-16/P1a): a known externally held resource
+	// must be reconciled by cleanup — the cleanup claim never completes while
+	// a preserved acquired endpoint remains unresolved. A bound Endpoint
+	// subsumes the acquired record (BindEndpoint enforces exact identity
+	// match), so Acquired is preserved only when the endpoint was never
+	// bound.
+	Acquired *AcquiredEndpoint `json:"acquired,omitempty"`
+}
+
+// CleanupStatus is the reconciliation state of a durable cleanup claim.
+type CleanupStatus string
+
+const (
+	// CleanupActive is the claim state from the moment the retirement commits:
+	// the generation's resource cleanup is in flight (or crashed mid-flight)
+	// and every lifecycle/acquisition mutation on the task is rejected until
+	// the claim is reconciled.
+	CleanupActive CleanupStatus = "active"
+	// CleanupCompleted marks the claim reconciled after all evidence-pinned
+	// releases and projection removal succeeded: the task may be reopened.
+	CleanupCompleted CleanupStatus = "completed"
+	// CleanupAborted marks the claim released by explicit operator action
+	// WITHOUT cleanup completing: the task may be reopened (the retired
+	// generation's preserved evidence remains as a historical record, and a
+	// later teardown retry re-activates the claim and resumes cleanup).
+	CleanupAborted CleanupStatus = "aborted"
+)
+
+// CleanupClaim is the durable canonical cleanup/disposal claim recorded on the
+// current Task Aggregate while one retirement's cleanup is in flight
+// (BEO-16/P1a). It is committed atomically with the Retire transition, so a
+// retired generation is claimed from the instant the retirement commits. While
+// the claim is ACTIVE, Reopen/BindEndpoint/BindWorktree and every other
+// task-scoped mutation fails closed — a concurrent actor can never land a
+// reopen or acquisition between a fleet-side revalidation (which holds the
+// task lock only for the read) and the external backend/filesystem action that
+// follows it, because the durable claim keeps the task pinned even after the
+// lock is released. The claim is reconciled by the cleanup continuation
+// operations (BeginCleanup/CompleteCleanup/AbortCleanup), which carry the
+// claim's owning identity (the stable retirement Operation ID and the cleaned
+// generation) and are the only mutations allowed while the claim is active.
+// taskauthority persists the claim opaquely; Fleet owns the lifecycle.
+type CleanupClaim struct {
+	OperationID  string        `json:"operation_id"`
+	Generation   Generation    `json:"generation"`
+	Status       CleanupStatus `json:"status"`
+	ClaimedAt    int64         `json:"claimed_at"`
+	ReconciledAt int64         `json:"reconciled_at,omitempty"`
 }
 
 // Aggregate is the authoritative record of one Task Generation.
@@ -257,6 +316,7 @@ type Aggregate struct {
 	LaunchEvidence   *LaunchEvidence     `json:"launch_evidence,omitempty"`
 	Transfer         *TransferState      `json:"transfer,omitempty"`
 	Retirement       *RetirementEvidence `json:"retirement,omitempty"`
+	CleanupClaim     *CleanupClaim       `json:"cleanup_claim,omitempty"`
 }
 
 // TaskAuthoritySchema is the deterministic schema identity for the canonical
@@ -346,6 +406,11 @@ func validateAggregate(agg Aggregate) error {
 			return err
 		}
 	}
+	if agg.CleanupClaim != nil {
+		if err := validateCleanupClaim(*agg.CleanupClaim); err != nil {
+			return err
+		}
+	}
 	if agg.Launch != nil {
 		if err := validateLaunchIntent(*agg.Launch); err != nil {
 			return err
@@ -387,6 +452,32 @@ func validateRetirementEvidence(ev RetirementEvidence) error {
 			return err
 		}
 	}
+	if ev.Acquired != nil {
+		if err := validateAcquiredEndpoint(*ev.Acquired); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateCleanupClaim checks the durable cleanup claim shape: a safe owning
+// retirement Operation ID, a valid cleaned generation, a valid status, and a
+// claimed timestamp.
+func validateCleanupClaim(claim CleanupClaim) error {
+	if claim.OperationID == "" || strings.ContainsAny(claim.OperationID, `/\\`) {
+		return validationError("cleanup claim missing operation id")
+	}
+	if err := claim.Generation.Validate(); err != nil {
+		return err
+	}
+	switch claim.Status {
+	case CleanupActive, CleanupCompleted, CleanupAborted:
+	default:
+		return validationError("cleanup claim has invalid status %q", claim.Status)
+	}
+	if claim.ClaimedAt <= 0 {
+		return validationError("cleanup claim missing claimed timestamp")
+	}
 	return nil
 }
 
@@ -398,7 +489,7 @@ func validateRetirementEvidence(ev RetirementEvidence) error {
 // endpoint reservation fences (reservation ID + fence token) must be present
 // and safe. Validation is shape-only: no value is selected, detected,
 // defaulted, probed, or fallen back.
-func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken string) error {
+func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mode, kind, project, parentTaskID, launchID, windowLabel, worktreeReservationID, worktreeFenceToken, endpointReservationID, endpointFenceToken, endpointIncarnation string) error {
 	if !domain.IsSHA256(snapshotDigest) {
 		return validationError("launch snapshot digest must be a 64-hex sha256 digest")
 	}
@@ -428,6 +519,9 @@ func validateLaunchIdentity(snapshotDigest, backend, harness, model, effort, mod
 	if endpointFenceToken == "" || strings.ContainsAny(endpointFenceToken, `/\\`) {
 		return validationError("launch requires an endpoint fence token")
 	}
+	if strings.TrimSpace(endpointIncarnation) == "" || strings.ContainsAny(endpointIncarnation, `/\\`) {
+		return validationError("launch requires an opaque endpoint incarnation token")
+	}
 	return nil
 }
 
@@ -438,7 +532,7 @@ func validateLaunchIntent(l LaunchIntent) error {
 	if l.OperationID == "" || strings.ContainsAny(l.OperationID, `/\\`) {
 		return validationError("launch intent missing operation id")
 	}
-	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken); err != nil {
+	if err := validateLaunchIdentity(l.SnapshotDigest, l.Backend, l.Harness, l.Model, l.Effort, l.Mode, l.Kind, l.Project, l.ParentTaskID, l.LaunchID, l.WindowLabel, l.WorktreeReservationID, l.WorktreeFenceToken, l.EndpointReservationID, l.EndpointFenceToken, l.EndpointIncarnation); err != nil {
 		return err
 	}
 	if l.PlannedAt <= 0 {
@@ -559,6 +653,9 @@ func validateEndpointBinding(binding EndpointBinding) error {
 	if strings.TrimSpace(binding.FenceToken) == "" {
 		return validationError("endpoint binding missing fence token")
 	}
+	if strings.TrimSpace(binding.Incarnation) == "" {
+		return validationError("endpoint binding missing opaque incarnation token")
+	}
 	if binding.BoundAtUnix <= 0 {
 		return validationError("endpoint binding missing bound timestamp")
 	}
@@ -631,7 +728,15 @@ func (a Aggregate) clone() Aggregate {
 			cp := *e.Worktree
 			e.Worktree = &cp
 		}
+		if e.Acquired != nil {
+			cp := *e.Acquired
+			e.Acquired = &cp
+		}
 		out.Retirement = &e
+	}
+	if a.CleanupClaim != nil {
+		cp := *a.CleanupClaim
+		out.CleanupClaim = &cp
 	}
 	if a.Launch != nil {
 		l := *a.Launch

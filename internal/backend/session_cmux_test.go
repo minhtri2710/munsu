@@ -134,8 +134,8 @@ func TestCmuxBackend_NotFound(t *testing.T) {
 	})
 
 	t.Run("Alive", func(t *testing.T) {
-		if c.Alive("w:s") {
-			t.Error("Alive returned true when cmux is not on PATH")
+		if alive, err := c.CheckAlive("w:s"); alive || err == nil {
+			t.Error("CheckAlive returned alive/err==nil when cmux is not on PATH")
 		}
 	})
 
@@ -149,8 +149,8 @@ func TestCmuxBackend_NotFound(t *testing.T) {
 
 func TestCmuxBackend_Alive_InvalidHandle(t *testing.T) {
 	c := newCmuxBackend()
-	if c.Alive("") {
-		t.Error("Alive returned true for empty window handle")
+	if alive, err := c.CheckAlive(""); alive || err == nil {
+		t.Error("CheckAlive returned alive/err==nil for empty window handle")
 	}
 }
 

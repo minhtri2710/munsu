@@ -152,11 +152,11 @@ func TestHerdrBackend_Alive(t *testing.T) {
 	t.Setenv("PATH", fakePath+":"+oldPath)
 
 	h := NewHerdrBackend("test-s")
-	if !h.Alive("wTest:p1") {
-		t.Error("Alive returned false for existing pane")
+	if alive, _ := h.CheckAlive("wTest:p1"); !alive {
+		t.Error("CheckAlive returned false for existing pane")
 	}
-	if !h.Alive("test-s:wTest:p1") {
-		t.Error("Alive returned false for session:prefix pane")
+	if alive, _ := h.CheckAlive("test-s:wTest:p1"); !alive {
+		t.Error("CheckAlive returned false for session:prefix pane")
 	}
 }
 
@@ -241,8 +241,8 @@ func TestHerdrBackend_Alive_ReturnsFalseWhenNotFound(t *testing.T) {
 	t.Setenv("PATH", tmp+":"+oldPath)
 
 	h := NewHerdrBackend("test-s")
-	if h.Alive("nonexistent") {
-		t.Error("Alive returned true for nonexistent pane")
+	if alive, err := h.CheckAlive("nonexistent"); alive || err == nil {
+		t.Error("CheckAlive returned alive/err==nil for nonexistent pane")
 	}
 }
 
@@ -437,8 +437,8 @@ func TestHerdrBackend_CheckAlive_PaneNotFound(t *testing.T) {
 	if !errors.Is(err, ErrPaneNotFound) {
 		t.Errorf("CheckAlive error = %v, want ErrPaneNotFound", err)
 	}
-	if h.Alive("default:w6E:p3") {
-		t.Error("Alive returned true for pane_not_found")
+	if alive, _ := h.CheckAlive("default:w6E:p3"); alive {
+		t.Error("CheckAlive returned true for pane_not_found")
 	}
 }
 

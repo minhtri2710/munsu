@@ -125,8 +125,8 @@ func TestOrcaBackend_NotFound(t *testing.T) {
 	})
 
 	t.Run("Alive", func(t *testing.T) {
-		if o.Alive("c|t") {
-			t.Error("Alive returned true when orca is not on PATH")
+		if alive, err := o.CheckAlive("c|t"); alive || err == nil {
+			t.Error("CheckAlive returned alive/err==nil when orca is not on PATH")
 		}
 	})
 
@@ -140,8 +140,8 @@ func TestOrcaBackend_NotFound(t *testing.T) {
 
 func TestOrcaBackend_Alive_InvalidHandle(t *testing.T) {
 	o := NewOrcaBackend()
-	if o.Alive("") {
-		t.Error("Alive returned true for empty window handle")
+	if alive, err := o.CheckAlive(""); alive || err == nil {
+		t.Error("CheckAlive returned alive/err==nil for empty window handle")
 	}
 }
 

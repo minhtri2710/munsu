@@ -111,6 +111,34 @@ func (c *Canonical) Get(taskID domain.TaskID) (Aggregate, error) {
 	return doc.Aggregate.clone(), nil
 }
 
+// CurrentLocked returns the current authoritative Task Aggregate under the
+// task-scope lock. Unlike Get (a lock-free committed read), this read
+// serializes against concurrent canonical mutations for the same task
+// (Reopen/BindEndpoint/Retire), so a caller can re-read and compare-and-fence
+// immediately before a destructive external action (BEO-16/P1a retirement
+// TOCTOU guard): a mutation either commits before the locked read (observed)
+// or after it, never in between. It returns the same current-Task-truth
+// contract as Get: a superseded/non-current generation fails closed with
+// ErrNotFound.
+func (c *Canonical) CurrentLocked(taskID domain.TaskID) (Aggregate, error) {
+	if err := taskID.Validate(); err != nil {
+		return Aggregate{}, err
+	}
+	lk, err := c.h.Lock(taskScope(taskID.Value()))
+	if err != nil {
+		return Aggregate{}, err
+	}
+	defer lk.Release()
+	doc, exists, err := c.readTaskDoc(taskID.Value())
+	if err != nil {
+		return Aggregate{}, err
+	}
+	if !exists || !doc.Aggregate.Current {
+		return Aggregate{}, conflictError(ErrNotFound, "task %s not found", taskID.Value())
+	}
+	return doc.Aggregate.clone(), nil
+}
+
 // GetGeneration returns the stored generation document for a task as a narrow
 // historical/audit read. It is NOT a current-Task-truth query: a superseded or
 // non-current generation is returned by its exact generation for audit and
@@ -364,6 +392,12 @@ func (c *Canonical) Reopen(op domain.Operation, req CanonicalReopenRequest) (Out
 		return Outcome{}, err
 	}
 	if err := c.checkReservationFence(cur, nil); err != nil {
+		return Outcome{}, err
+	}
+	// An ACTIVE cleanup claim pins the task until cleanup completes or aborts:
+	// a retired-but-unreconciled generation can never be reopened (BEO-16/P1a
+	// durable disposal claim).
+	if err := c.checkCleanupFence(cur, nil); err != nil {
 		return Outcome{}, err
 	}
 	if !cur.Phase.terminal() {

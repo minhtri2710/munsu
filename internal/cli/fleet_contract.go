@@ -35,18 +35,40 @@ func (p cliEndpointProbe) Probe(home string, meta map[string]string) (bool, erro
 }
 
 func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.EndpointStatus, error) {
+	incomplete := fleet.EndpointStatus{
+		Lifecycle:      fleet.LifecycleUnknown,
+		Responsiveness: fleet.ResponsivenessUnknown,
+		Freshness:      fleet.FreshnessUnknown,
+		Activity:       fleet.ActivityUnknown,
+		Source:         fleet.SourceDerived,
+		Detail:         "bound endpoint identity is incomplete",
+	}
 	if endpoint.Backend == "" || endpoint.Handle == "" || endpoint.Home == "" {
-		return fleet.EndpointStatus{State: fleet.EndpointUnknown, Detail: "bound endpoint identity is incomplete"}, fmt.Errorf("bound endpoint identity is incomplete")
+		return incomplete, fmt.Errorf("bound endpoint identity is incomplete")
 	}
 	switch endpoint.Backend {
 	case "tmux", "herdr", "zellij", "cmux", "orca":
 	default:
-		return fleet.EndpointStatus{State: fleet.EndpointUnresolved, Detail: fmt.Sprintf("unsupported bound backend %q", endpoint.Backend)}, fmt.Errorf("unsupported bound backend %q", endpoint.Backend)
+		return fleet.EndpointStatus{
+			Lifecycle:      fleet.LifecycleUnknown,
+			Responsiveness: fleet.ResponsivenessUnknown,
+			Freshness:      fleet.FreshnessUnknown,
+			Activity:       fleet.ActivityUnknown,
+			Source:         fleet.SourceDerived,
+			Detail:         fmt.Sprintf("unsupported bound backend %q", endpoint.Backend),
+		}, fmt.Errorf("unsupported bound backend %q", endpoint.Backend)
 	}
 	if endpoint.Backend == "herdr" && endpoint.SessionOwner != "" {
 		handleSession, _ := backend.ParseWindow(endpoint.Handle)
 		if handleSession != "" && handleSession != endpoint.SessionOwner {
-			return fleet.EndpointStatus{State: fleet.EndpointStaleIdentity, Detail: "herdr session ownership mismatch"}, nil
+			return fleet.EndpointStatus{
+				Lifecycle:      fleet.LifecycleUnknown,
+				Responsiveness: fleet.ResponsivenessUnknown,
+				Freshness:      fleet.FreshnessStale,
+				Activity:       fleet.ActivityUnknown,
+				Source:         fleet.SourceDerived,
+				Detail:         "herdr session ownership mismatch",
+			}, nil
 		}
 	}
 	meta := map[string]string{
@@ -63,28 +85,29 @@ func (p cliEndpointProbe) ProbeEndpoint(endpoint fleet.EndpointRef) (fleet.Endpo
 	}
 	bk, resolved, err := resolve(endpoint.Home, meta)
 	if err != nil {
-		return fleet.EndpointStatus{State: fleet.EndpointUnresolved, Detail: err.Error()}, nil
+		return fleet.EndpointStatus{
+			Lifecycle:      fleet.LifecycleUnknown,
+			Responsiveness: fleet.ResponsivenessUnknown,
+			Freshness:      fleet.FreshnessUnknown,
+			Activity:       fleet.ActivityUnknown,
+			Source:         fleet.SourceDerived,
+			Detail:         err.Error(),
+		}, nil
 	}
 	if resolved != endpoint.Backend {
-		return fleet.EndpointStatus{State: fleet.EndpointStaleIdentity, Detail: fmt.Sprintf("bound backend resolved as %q", resolved)}, nil
+		return fleet.EndpointStatus{
+			Lifecycle:      fleet.LifecycleUnknown,
+			Responsiveness: fleet.ResponsivenessUnknown,
+			Freshness:      fleet.FreshnessStale,
+			Activity:       fleet.ActivityUnknown,
+			Source:         fleet.SourceDerived,
+			Detail:         fmt.Sprintf("bound backend resolved as %q", resolved),
+		}, nil
 	}
-	observation := backend.ObserveBackendEndpoint(bk, endpoint.Handle)
-	switch observation.State {
-	case backend.EndpointAlive:
-		return fleet.EndpointStatus{State: fleet.EndpointAlive, Detail: observation.Detail}, nil
-	case backend.EndpointStarting:
-		return fleet.EndpointStatus{State: fleet.EndpointStarting, Detail: observation.Detail}, nil
-	case backend.EndpointUnresponsive:
-		return fleet.EndpointStatus{State: fleet.EndpointUnresponsive, Detail: observation.Detail}, nil
-	case backend.EndpointDead:
-		return fleet.EndpointStatus{State: fleet.EndpointDead, Detail: observation.Detail}, nil
-	case backend.EndpointStaleIdentity:
-		return fleet.EndpointStatus{State: fleet.EndpointStaleIdentity, Detail: observation.Detail}, nil
-	case backend.EndpointUnresolved:
-		return fleet.EndpointStatus{State: fleet.EndpointUnresolved, Detail: observation.Detail}, nil
-	default:
-		return fleet.EndpointStatus{State: fleet.EndpointUnknown, Detail: observation.Detail}, nil
-	}
+	// Produce the raw typed observation of the exact bound endpoint handle.
+	// Freshness is concluded by Fleet's authorizeAbsence/authorizeLive against
+	// the exact canonical binding; the CLI never fabricates incarnation/freshness.
+	return backend.ObserveEndpoint(bk, endpoint.Handle), nil
 }
 
 // snapshotDeps builds the explicit read dependencies for fleet snapshot/guard

@@ -14,8 +14,8 @@ type CreateRequest struct {
 }
 
 type CreatedEndpoint struct {
-	Backend, Handle, SessionOwner, WorkspaceID, TabID string
-	Metadata                                          map[string]string
+	Backend, Handle, SessionOwner, WorkspaceID, TabID, Incarnation string
+	Metadata                                                       map[string]string
 }
 
 type SpawnEndpointObservation = EndpointStatus

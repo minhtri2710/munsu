@@ -31,6 +31,7 @@ func launchRequest(c *Canonical, taskID string, prec domain.Precondition) Canoni
 		WorktreeFenceToken:    "wt-fence-" + taskID,
 		EndpointReservationID: "ep-res-" + taskID,
 		EndpointFenceToken:    "ep-fence-" + taskID,
+		EndpointIncarnation:   "inc-" + taskID,
 		Reason:                "spawn",
 	}
 }
@@ -52,6 +53,7 @@ func launchEndpointBinding(req CanonicalBeginSpawnRequest, handle string) Endpoi
 	b.Handle = handle
 	b.LeaseID = req.EndpointReservationID
 	b.FenceToken = req.EndpointFenceToken
+	b.Incarnation = req.EndpointIncarnation
 	return b
 }
 
@@ -70,6 +72,7 @@ func attachRequest(c *Canonical, taskID string, prec domain.Precondition, req Ca
 		SessionOwner: "owner",
 		WorkspaceID:  "ws",
 		TabID:        "tab",
+		Incarnation:  req.EndpointIncarnation,
 		Reason:       "attach",
 	}
 }
@@ -626,7 +629,82 @@ func TestCanonicalRecordLaunchOperationReusedConflict(t *testing.T) {
 	}
 }
 
-// TestCanonicalLaunchFlowComposesToWorking drives the complete launch sequence
+// TestCanonicalLaunchIncarnationPersistsAndFencesBinds asserts the opaque
+// incarnation minted by Fleet is persisted on the acquired endpoint and that
+// BindEndpoint requires the EXACT incarnation of the acquired record — a
+// mismatched (stale/foreign) incarnation never binds (BEO-16/P1a).
+func TestCanonicalLaunchIncarnationPersistsAndFencesBinds(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+
+	req, rev := mustBeginSpawn(t, c, "t1", preconditionOf(1, 1))
+
+	// Bind the worktree.
+	bw := CanonicalBindWorktreeRequest{
+		HomeID: c.HomeID(), TaskID: mustTaskID(t, "t1"), Precondition: preconditionOf(1, rev),
+		Binding: WorktreeBinding{
+			RepositoryIdentity: "repo", Path: "/wt", GitDir: "/wt/.git", CommonDir: "/wt/.git",
+			Head: "sha", LeaseID: req.WorktreeReservationID, FenceToken: req.WorktreeFenceToken, BoundAtUnix: 2000,
+		},
+		Reason: "spawn",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-wt-1", bw), bw); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+
+	// Acquire the endpoint with the opaque incarnation.
+	attach := attachRequest(c, "t1", preconditionOf(1, rev+1), req, "handle-1")
+	attach.Incarnation = req.EndpointIncarnation
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-1", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+
+	agg0, _ := c.Get(mustTaskID(t, "t1"))
+	if agg0.AcquiredEndpoint == nil || agg0.AcquiredEndpoint.Incarnation != req.EndpointIncarnation {
+		t.Fatalf("acquired endpoint incarnation not persisted: %+v", agg0.AcquiredEndpoint)
+	}
+
+	// A different operation with a different (stale/foreign) incarnation must
+	// conflict on the same acquired endpoint.
+	foreign := attachRequest(c, "t1", preconditionOf(1, rev+2), req, "handle-1")
+	foreign.Incarnation = "inc-foreign"
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-foreign", foreign), foreign); !errors.Is(err, ErrConflict) {
+		t.Fatalf("attach with different incarnation = %v, want ErrConflict", err)
+	}
+
+	// Record launch evidence, then bind the endpoint.
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, rev+2), req)
+	if _, err := c.RecordLaunch(mustOperation(t, "op-record-1", record), record); err != nil {
+		t.Fatalf("RecordLaunch: %v", err)
+	}
+	be := bindEndpointRequest(c, "t1", preconditionOf(1, rev+3))
+	be.Binding.Handle = "handle-1"
+	be.Binding.LeaseID = req.EndpointReservationID
+	be.Binding.FenceToken = req.EndpointFenceToken
+	be.Binding.SessionOwner = "owner"
+	be.Binding.WorkspaceID = "ws"
+	be.Binding.TabID = "tab"
+	// Wrong incarnation: must NOT bind (stale/foreign identity).
+	be.Binding.Incarnation = "inc-foreign"
+	if _, err := c.BindEndpoint(mustOperation(t, "op-be-foreign", be), be); !errors.Is(err, ErrConflict) {
+		t.Fatalf("bind with mismatched incarnation = %v, want ErrConflict", err)
+	}
+	// Correct incarnation binds.
+	be.Binding.Incarnation = req.EndpointIncarnation
+	out, err := c.BindEndpoint(mustOperation(t, "op-be-1", be), be)
+	if err != nil {
+		t.Fatalf("BindEndpoint: %v", err)
+	}
+	if out.Phase != PhaseWorking {
+		t.Fatalf("bind outcome phase = %s, want working", out.Phase)
+	}
+
+	agg, _ := c.Get(mustTaskID(t, "t1"))
+	if agg.Endpoint == nil || agg.Endpoint.Incarnation != req.EndpointIncarnation {
+		t.Fatalf("endpoint binding incarnation = %+v", agg.Endpoint)
+	}
+}
+
 // — BeginSpawn, BindWorktree, AttachEndpoint, RecordLaunch, BindEndpoint — and
 // proves the committed outcome: the phase transitions only at the final
 // BindEndpoint, and the active bindings carry the exact reservation identities

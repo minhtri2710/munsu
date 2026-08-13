@@ -282,6 +282,7 @@ rank (munsu task start|done|block|unblock|reopen).`,
 	cmd.AddCommand(newTaskUnblockCmd())
 	cmd.AddCommand(newTaskReopenCmd())
 	cmd.AddCommand(newTaskRetryCmd())
+	cmd.AddCommand(newTaskCleanupAbortCmd())
 	cmd.AddCommand(newTaskObserveCmd())
 	return cmd
 }
@@ -453,6 +454,38 @@ func newTaskRetryCmd() *cobra.Command {
 // projection failure must not roll back the authoritative transition; the
 // projection can be retried independently and the authoritative operation is
 // never replayed.
+func newTaskCleanupAbortCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "cleanup-abort <id>",
+		Short: "Abort a retired task's pending cleanup claim and release it for reopen",
+		Args:  ExactArgs(1),
+		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
+			auth, err := ctx.TaskAuthority()
+			if err != nil {
+				return err
+			}
+			tid, err := domain.NewTaskID(args[0])
+			if err != nil {
+				return err
+			}
+			agg, err := auth.Get(tid)
+			if err != nil {
+				return err
+			}
+			if agg.CleanupClaim == nil {
+				return fmt.Errorf("task %s has no cleanup claim to abort (only a retired generation with pending cleanup carries one)", args[0])
+			}
+			if agg.CleanupClaim.Status == taskauthority.CleanupCompleted {
+				return fmt.Errorf("task %s cleanup claim for generation %s is already completed; nothing to abort", args[0], agg.CleanupClaim.Generation)
+			}
+			if err := fleet.AbortRetirementCleanup(auth, tid, agg.CleanupClaim.Generation); err != nil {
+				return err
+			}
+			return nil
+		}),
+	}
+}
+
 func runTaskLifecycleTransition(ctx Ctx, verb, projectionState string, args []string, op func(auth *taskauthority.Canonical, tid domain.TaskID, agg taskauthority.Aggregate) error) error {
 	taskID := args[0]
 	auth, err := ctx.TaskAuthority()

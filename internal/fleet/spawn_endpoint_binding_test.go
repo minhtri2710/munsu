@@ -156,6 +156,7 @@ func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, ta
 		WorktreeFenceToken:    wtFence,
 		EndpointReservationID: epRes,
 		EndpointFenceToken:    epFence,
+		EndpointIncarnation:   "inc-" + taskID,
 		Reason:                "spawn",
 	}
 	op, err := domain.NewOperation(mustOpID(t, "spawn-begin-"+taskID+"-1"), req)
@@ -175,6 +176,7 @@ func seedLaunchIntent(t *testing.T, auth *taskauthority.Canonical, r *Runner, ta
 	r.launch = agg.Launch
 	r.launchID = agg.Launch.LaunchID
 	r.windowLabel = agg.Launch.WindowLabel
+	r.incarnation = agg.Launch.EndpointIncarnation
 }
 
 func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T) {
@@ -196,6 +198,7 @@ func TestEndpointBindingOrderingPersistsBindingMetadataThenWorking(t *testing.T)
 			SessionOwner: "session",
 			WorkspaceID:  "workspace-1",
 			TabID:        "tab-1",
+			Incarnation:  "bind-task-incarnation",
 			Metadata: map[string]string{
 				"herdr_session":      "session",
 				"herdr_workspace_id": "workspace-1",
@@ -371,7 +374,7 @@ func (s *sequenceEndpointCapabilities) CreateReserved(CreateRequest) (CreatedEnd
 func (s *sequenceEndpointCapabilities) Submit(CreatedEndpoint, string) error { return nil }
 func (s *sequenceEndpointCapabilities) Probe(CreatedEndpoint) (SpawnEndpointObservation, error) {
 	if len(s.probes) == 0 {
-		return SpawnEndpointObservation{State: EndpointUnknown}, nil
+		return endpointStatusFromState(EndpointUnknown), nil
 	}
 	result := s.probes[0]
 	s.probes = s.probes[1:]
@@ -385,7 +388,7 @@ func (s *sequenceEndpointCapabilities) Dispose(CreatedEndpoint) error { return n
 func TestCreateSessionAcceptsStartingObservation(t *testing.T) {
 	caps := &sequenceEndpointCapabilities{
 		created: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
-		probes:  []SpawnEndpointObservation{{State: EndpointStarting}},
+		probes:  []SpawnEndpointObservation{endpointStatusFromState(EndpointStarting)},
 	}
 	r := &Runner{homeDir: t.TempDir(), endpoints: caps}
 	if err := r.createSession(); err != nil {
@@ -396,7 +399,7 @@ func TestCreateSessionAcceptsStartingObservation(t *testing.T) {
 func TestFinalEndpointVerificationRejectsStartingObservation(t *testing.T) {
 	caps := &sequenceEndpointCapabilities{
 		created: CreatedEndpoint{Backend: "herdr", Handle: "session:pane-1"},
-		probes:  []SpawnEndpointObservation{{State: EndpointStarting}},
+		probes:  []SpawnEndpointObservation{endpointStatusFromState(EndpointStarting)},
 	}
 	r := &Runner{homeDir: t.TempDir(), endpoints: caps, endpoint: caps.created, windowID: caps.created.Handle}
 	if err := r.verifyEndpointReadyBeforePersist(); err == nil {

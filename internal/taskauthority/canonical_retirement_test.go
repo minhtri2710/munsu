@@ -270,3 +270,115 @@ func TestCanonicalRetireOperationReusedConflict(t *testing.T) {
 		t.Fatalf("reused op id with different intent = %v, want ErrOperationConflict", err)
 	}
 }
+
+// TestCanonicalRetirePreservesAcquiredEndpointEvidence proves High-2 closure
+// (BEO-16/P1a): a retirement of a generation that acquired an endpoint
+// pre-bind (launch intent + AttachEndpoint, never bound) durably preserves the
+// exact acquired identity (backend/handle/lease/fence/incarnation +
+// generation) as cleanup evidence, so the known externally held resource can
+// never be completed-unresolved — cleanup must reconcile it.
+func TestCanonicalRetirePreservesAcquiredEndpointEvidence(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	launch := launchRequest(c, "t1", preconditionOf(1, 1))
+	if _, err := c.BeginSpawn(mustOperation(t, "op-spawn-ae", launch), launch); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
+	attach := attachRequest(c, "t1", preconditionOf(1, 2), launch, "@1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-ae", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.AcquiredEndpoint == nil || agg.AcquiredEndpoint.Handle != "@1" {
+		t.Fatalf("acquired endpoint not recorded: %+v", agg.AcquiredEndpoint)
+	}
+
+	req := retireRequest(t, c, "t1", preconditionOf(1, 3))
+	if _, err := c.Retire(mustOperation(t, "op-retire-ae", req), req); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	agg, err = c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Retirement == nil || agg.Retirement.Acquired == nil {
+		t.Fatalf("acquired endpoint evidence not preserved on retirement: %+v", agg.Retirement)
+	}
+	ae := agg.Retirement.Acquired
+	if ae.Backend != launch.Backend || ae.Handle != "@1" ||
+		ae.LeaseID != launch.EndpointReservationID || ae.FenceToken != launch.EndpointFenceToken ||
+		ae.Incarnation != launch.EndpointIncarnation {
+		t.Fatalf("acquired evidence identity not exact: %+v", ae)
+	}
+	if agg.Retirement.Generation != 1 || agg.Retirement.OperationID != "op-retire-ae" {
+		t.Fatalf("evidence identity = %+v, want generation 1 / op-retire-ae", agg.Retirement)
+	}
+	if agg.Retirement.Endpoint != nil {
+		t.Fatalf("bound endpoint evidence present without a binding: %+v", agg.Retirement.Endpoint)
+	}
+	if agg.CleanupClaim == nil || agg.CleanupClaim.Status != CleanupActive {
+		t.Fatalf("claim not active: %+v", agg.CleanupClaim)
+	}
+}
+
+// TestCanonicalRetireBoundEndpointSubsumesAcquiredRecord proves the acquired
+// record is NOT duplicated as cleanup evidence when the endpoint was bound:
+// BindEndpoint enforces exact identity match, so the bound Endpoint evidence
+// covers the same resource and the cleanup releases it exactly once.
+func TestCanonicalRetireBoundEndpointSubsumesAcquiredRecord(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	mustCreate(t, c, "t1")
+	launch := launchRequest(c, "t1", preconditionOf(1, 1))
+	if _, err := c.BeginSpawn(mustOperation(t, "op-spawn-sub", launch), launch); err != nil {
+		t.Fatalf("BeginSpawn: %v", err)
+	}
+	attach := attachRequest(c, "t1", preconditionOf(1, 2), launch, "@1")
+	if _, err := c.AttachEndpoint(mustOperation(t, "op-attach-sub", attach), attach); err != nil {
+		t.Fatalf("AttachEndpoint: %v", err)
+	}
+	bindWT := CanonicalBindWorktreeRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 3),
+		Binding:      launchWorktreeBinding(launch),
+		Reason:       "spawn",
+	}
+	if _, err := c.BindWorktree(mustOperation(t, "op-bindwt-sub", bindWT), bindWT); err != nil {
+		t.Fatalf("BindWorktree: %v", err)
+	}
+	record := recordLaunchRequest(c, "t1", preconditionOf(1, 4), launch)
+	if _, err := c.RecordLaunch(mustOperation(t, "op-record-sub", record), record); err != nil {
+		t.Fatalf("RecordLaunch: %v", err)
+	}
+	bind := CanonicalBindEndpointRequest{
+		HomeID:       c.HomeID(),
+		TaskID:       mustTaskID(t, "t1"),
+		Precondition: preconditionOf(1, 5),
+		Binding:      launchEndpointBinding(launch, "@1"),
+		Reason:       "spawn",
+	}
+	if _, err := c.BindEndpoint(mustOperation(t, "op-bind-sub", bind), bind); err != nil {
+		t.Fatalf("BindEndpoint: %v", err)
+	}
+
+	req := retireRequest(t, c, "t1", preconditionOf(1, 6))
+	if _, err := c.Retire(mustOperation(t, "op-retire-sub", req), req); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	agg, err := c.Get(mustTaskID(t, "t1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Retirement == nil || agg.Retirement.Endpoint == nil {
+		t.Fatalf("bound endpoint evidence missing: %+v", agg.Retirement)
+	}
+	if agg.Retirement.Acquired != nil {
+		t.Fatalf("acquired evidence duplicated alongside the bound endpoint (double-dispose risk): %+v", agg.Retirement.Acquired)
+	}
+	if agg.Retirement.Endpoint.Handle != "@1" || agg.Retirement.Endpoint.LeaseID != launch.EndpointReservationID {
+		t.Fatalf("bound evidence identity: %+v", agg.Retirement.Endpoint)
+	}
+}

@@ -151,8 +151,8 @@ func (c *Canonical) BindEndpoint(op domain.Operation, req CanonicalBindEndpointR
 
 // endpointBindingMatchesAcquired reports whether a bind-endpoint request's
 // binding carries the exact identity of the committed acquired endpoint
-// (backend, handle, lease, fence, session owner, workspace, tab). BoundAtUnix
-// is bind-time state, not part of the acquired endpoint identity.
+// (backend, handle, lease, fence, session owner, workspace, tab, incarnation).
+// BoundAtUnix is bind-time state, not part of the acquired endpoint identity.
 func endpointBindingMatchesAcquired(binding EndpointBinding, acquired AcquiredEndpoint) bool {
 	return binding.Backend == acquired.Backend &&
 		binding.Handle == acquired.Handle &&
@@ -160,7 +160,8 @@ func endpointBindingMatchesAcquired(binding EndpointBinding, acquired AcquiredEn
 		binding.FenceToken == acquired.FenceToken &&
 		binding.SessionOwner == acquired.SessionOwner &&
 		binding.WorkspaceID == acquired.WorkspaceID &&
-		binding.TabID == acquired.TabID
+		binding.TabID == acquired.TabID &&
+		binding.Incarnation == acquired.Incarnation
 }
 
 // holdsBlockAction reports whether any committed hold for the given action

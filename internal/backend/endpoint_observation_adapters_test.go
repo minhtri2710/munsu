@@ -28,11 +28,11 @@ func TestRuntimeAdapterObservationContract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ObserveBackendEndpoint(tt.bk, tt.handle)
-			if got.State != tt.want {
-				t.Fatalf("state=%v detail=%q want %v", got.State, got.Detail, tt.want)
+			got := ObserveEndpoint(tt.bk, tt.handle)
+			if got.State() != tt.want {
+				t.Fatalf("state=%v detail=%q want %v", got.State(), got.Detail, tt.want)
 			}
-			if (tt.want == EndpointUnresponsive) && got.State == EndpointDead {
+			if (tt.want == EndpointUnresponsive) && got.State() == EndpointDead {
 				t.Fatal("operational failure must never be dead")
 			}
 		})
@@ -45,8 +45,8 @@ func writeObservationFakeTmux(t *testing.T, dir string) {
 	script := `#!/bin/sh
 if [ "$1" = "list-panes" ]; then
   case "$3" in
-    alive) exit 0 ;;
-    dead) echo "can't find window" >&2; exit 1 ;;
+    alive) echo "$3: 1" ; exit 0 ;;
+    dead) echo "can't find window: $3" >&2; exit 1 ;;
     fail) echo "permission denied" >&2; exit 1 ;;
   esac
 fi
