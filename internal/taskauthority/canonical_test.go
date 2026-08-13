@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -939,5 +940,87 @@ func TestCanonicalCurrentLockedSerializesWithMutation(t *testing.T) {
 	// current-Task-truth contract as Get).
 	if _, err := c.CurrentLocked(mustTaskID(t, "missing")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CurrentLocked(missing) = %v, want ErrNotFound", err)
+	}
+}
+
+// scoutCreateRequest builds a valid scout create request the negative cases
+// below degrade one field at a time, so each failure is attributable to the
+// single field under test rather than to an unrelated missing one.
+func scoutCreateRequest(c *Canonical, taskID string) CanonicalCreateRequest {
+	req := createRequest(c, taskID)
+	req.Kind = "scout"
+	req.ScoutScope = "investigate the requested question"
+	req.ScoutRuntimeBudgetSecs = 300
+	return req
+}
+
+// TestCanonicalCreateRejectsScoutWithoutScope proves the scout contract fails
+// closed on scope: a scout task with no scope (or whitespace-only scope) is
+// refused as invalid input and no Task Generation is committed. Whitespace is
+// covered here because the guard trims before the emptiness check, so a
+// blank-but-non-empty scope must not slip past it.
+func TestCanonicalCreateRejectsScoutWithoutScope(t *testing.T) {
+	for _, scope := range []string{"", "   \t\n"} {
+		c, _, _ := newTestCanonical(t)
+		req := scoutCreateRequest(c, "scout-no-scope")
+		req.ScoutScope = scope
+		op := mustOperation(t, "op-create-scout-no-scope", req)
+
+		_, err := c.Create(op, req)
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("Create(scout, scope=%q) = %v, want ErrInvalidInput", scope, err)
+		}
+		if !strings.Contains(err.Error(), "requires non-empty scope") {
+			t.Errorf("Create(scout, scope=%q) error = %v, want the scope contract message", scope, err)
+		}
+		if _, err := c.Get(mustTaskID(t, "scout-no-scope")); !errors.Is(err, ErrNotFound) {
+			t.Errorf("rejected scout create left a task behind: Get = %v, want ErrNotFound", err)
+		}
+	}
+}
+
+// TestCanonicalCreateRejectsScoutWithoutPositiveBudget proves the scout
+// contract fails closed on runtime budget: zero and negative budgets are both
+// refused and commit nothing. A scout with an unbounded or nonsensical budget
+// has no runtime ceiling, so this is the guard that keeps the ceiling real.
+func TestCanonicalCreateRejectsScoutWithoutPositiveBudget(t *testing.T) {
+	for _, budget := range []int64{0, -1} {
+		c, _, _ := newTestCanonical(t)
+		req := scoutCreateRequest(c, "scout-bad-budget")
+		req.ScoutRuntimeBudgetSecs = budget
+		op := mustOperation(t, "op-create-scout-bad-budget", req)
+
+		_, err := c.Create(op, req)
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("Create(scout, budget=%d) = %v, want ErrInvalidInput", budget, err)
+		}
+		if !strings.Contains(err.Error(), "requires positive runtime budget") {
+			t.Errorf("Create(scout, budget=%d) error = %v, want the budget contract message", budget, err)
+		}
+		if _, err := c.Get(mustTaskID(t, "scout-bad-budget")); !errors.Is(err, ErrNotFound) {
+			t.Errorf("rejected scout create left a task behind: Get = %v, want ErrNotFound", err)
+		}
+	}
+}
+
+// TestCanonicalCreateAcceptsCompleteScoutContract is the positive control for
+// the two negative tests above: with both scout fields present and valid the
+// same request path commits, and the fields survive onto the aggregate. Without
+// it, a guard that rejected every scout would still pass the negatives.
+func TestCanonicalCreateAcceptsCompleteScoutContract(t *testing.T) {
+	c, _, _ := newTestCanonical(t)
+	req := scoutCreateRequest(c, "scout-ok")
+	op := mustOperation(t, "op-create-scout-ok", req)
+	if _, err := c.Create(op, req); err != nil {
+		t.Fatalf("Create(valid scout): %v", err)
+	}
+	agg, err := c.Get(mustTaskID(t, "scout-ok"))
+	if err != nil {
+		t.Fatalf("Get(scout-ok): %v", err)
+	}
+	if agg.Definition.Kind != "scout" ||
+		agg.Definition.ScoutScope != "investigate the requested question" ||
+		agg.Definition.ScoutRuntimeBudgetSecs != 300 {
+		t.Fatalf("scout definition = %+v, want kind/scope/budget preserved", agg.Definition)
 	}
 }

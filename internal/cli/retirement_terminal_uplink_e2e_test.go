@@ -61,9 +61,15 @@ func TestLocalOnlyScoutReportAllowsNormalTeardown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := taskauthority.CanonicalCreateRequest{HomeID: auth.HomeID(), TaskID: tid, Owner: "owner", Kind: "scout", ScoutScope: "investigate", ScoutRuntimeBudgetSecs: 300,
+	req := taskauthority.CanonicalCreateRequest{
+		HomeID:                 auth.HomeID(),
+		TaskID:                 tid,
+		Owner:                  "owner",
+		Kind:                   "scout",
 		ScoutScope:             "investigate the requested question",
-		ScoutRuntimeBudgetSecs: 300, Reason: "create"}
+		ScoutRuntimeBudgetSecs: 300,
+		Reason:                 "create",
+	}
 	opID, err := domain.NewOperationID("op-create-" + taskID)
 	if err != nil {
 		t.Fatal(err)
