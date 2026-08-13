@@ -82,6 +82,15 @@ func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSourc
 // writeFakeHerdrEventWaitBlocking is like writeFakeHerdrEventWait but the
 // `agent wait` branch sleeps until killed (models a herdr CLI blocked inside
 // its own bounded wait, only interruptible by the caller's context).
+//
+// The blocking branch uses `exec sleep` so the sleeping process REPLACES the
+// shell and keeps the same pid exec.CommandContext knows about. A plain
+// `sleep 300` would be a grandchild: CommandContext kills only the direct
+// child (the shell), the surviving grandchild keeps the write end of the
+// stdout pipe open, and cmd.Output() blocks waiting for an EOF that never
+// comes until the sleep elapses. With `exec` there is no grandchild at all,
+// so cancellation is deterministic on both macOS and Linux and does not
+// depend on process-group kill semantics, which differ between them.
 func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath string) string {
 	t.Helper()
 	bin := filepath.Join(dir, "herdr")
@@ -98,7 +107,7 @@ func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath stri
 		"fi\n" +
 		`if [ "$3" = "agent" ] && [ "$4" = "wait" ]; then` + "\n" +
 		`  echo "$@" >> "` + logPath + `"` + "\n" +
-		"  sleep 300\n" +
+		"  exec sleep 300\n" +
 		"fi\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
