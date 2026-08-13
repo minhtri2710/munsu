@@ -308,8 +308,19 @@ func TestTmux_Alive_ServerFailureIsNotPaneNotFound(t *testing.T) {
 	}{
 		{"no server running", "no server running on /tmp/tmux-1000/default"},
 		{"connection refused", "error connecting to /tmp/tmux-1000/default (Connection refused)"},
-		{"lost server", "lost server"},
+		// tmux 3.x wording; `strings` on a 3.7b binary has no "lost server".
+		{"server exited unexpectedly", "server exited unexpectedly"},
+		// Legacy wording, emitted by tmux <= 2.x. Kept so the classification
+		// still holds for a stale server binary on an old host.
+		{"lost server (legacy tmux <= 2.x)", "lost server"},
 		{"permission denied", "error connecting to /tmp/tmux-1000/default (Permission denied)"},
+		// The four cases above avoid every isTmuxTargetAbsent token by
+		// accident, so on their own they cannot tell a strict allowlist from a
+		// broad one. These two say the quiet part out loud: CheckAlive's doc
+		// comment promises generic/broad "not found" is operational, so a
+		// bare "not found" token must never be read as authoritative absence.
+		{"generic not found", "not found"},
+		{"tmux binary missing from a wrapper's PATH", "tmux: command not found"},
 	}
 	for _, tc := range operational {
 		t.Run(tc.name, func(t *testing.T) {

@@ -21,6 +21,26 @@ const tmuxSetupTimeout = 10 * time.Second
 // sessionSeq makes disposable session names unique within a test binary.
 var sessionSeq atomic.Int64
 
+// disposableSessionName reserves a tmux session name scoped to this process —
+// so it never collides with a developer's own sessions — and registers the
+// t.Cleanup that kills it. It does NOT create the session: use it when the code
+// under test is what creates the session, and newDisposableSession when the
+// test needs one to already exist. Killing a session that was never created is
+// a no-op, so the cleanup is safe either way.
+func disposableSessionName(t *testing.T) string {
+	t.Helper()
+
+	session := fmt.Sprintf("munsu-it-%d-%d", os.Getpid(), sessionSeq.Add(1))
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), tmuxSetupTimeout)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "tmux", "kill-session", "-t", session).Run()
+	})
+
+	return session
+}
+
 // newDisposableSession starts a dedicated detached tmux session — creating a
 // tmux server if none is running — and returns its name. The name is scoped to
 // this process so it never collides with a developer's own sessions, and
@@ -28,19 +48,13 @@ var sessionSeq atomic.Int64
 func newDisposableSession(t *testing.T) string {
 	t.Helper()
 
-	session := fmt.Sprintf("munsu-it-%d-%d", os.Getpid(), sessionSeq.Add(1))
+	session := disposableSessionName(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxSetupTimeout)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session).CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session -d -s %s: %v: %s", session, err, strings.TrimSpace(string(out)))
 	}
-
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), tmuxSetupTimeout)
-		defer cancel()
-		_ = exec.CommandContext(ctx, "tmux", "kill-session", "-t", session).Run()
-	})
 
 	return session
 }
@@ -103,8 +117,13 @@ func TestTmux_NewWindow_SessionAutoCreated(t *testing.T) {
 	}
 
 	tk := &TmuxBackend{}
+	// The session must NOT exist beforehand — that is the point of the test —
+	// so reserve a per-process name and let NewWindow create it. Teardown below
+	// only kills the window; the auto-created session is the harness's to clean
+	// up, and the registered t.Cleanup is what keeps it off the dev machine.
+	session := disposableSessionName(t)
 	// With F1.1, a nonexistent session is auto-created
-	wid, err := tk.NewWindow("munsu-test-session-12345", "test")
+	wid, err := tk.NewWindow(session, "test")
 	if err != nil {
 		t.Fatalf("NewWindow should auto-create session, got error: %v", err)
 	}
