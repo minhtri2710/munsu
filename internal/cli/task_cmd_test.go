@@ -125,3 +125,66 @@ func TestTaskStatusMissingTaskStillAuditOnly(t *testing.T) {
 		t.Fatalf("status projection = %v err=%v", lines, err)
 	}
 }
+
+// TestTaskAddRejectsScoutMissingScoutContract proves the scout contract is
+// enforced on the CLI path, not only inside the Authority: `task add --kind
+// scout` without a scope, and with a non-positive budget, are both refused and
+// commit no task. The CLI defaults `--scope` to "" and `--budget` to 0, so
+// without this guard the ordinary invocation would create a scout with no
+// investigation scope and no runtime ceiling.
+func TestTaskAddRejectsScoutMissingScoutContract(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantMsg string
+	}{
+		{"no scope", []string{"--kind", "scout", "--budget", "300"}, "requires non-empty scope"},
+		{"no budget", []string{"--kind", "scout", "--scope", "investigate"}, "requires positive runtime budget"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			initCLITestHome(t, homeDir)
+
+			args := append([]string{"task", "add", "recon", "investigate the thing"}, tc.args...)
+			out, err := runTaskCommand(t, append(args, "--home", homeDir))
+			if err == nil {
+				t.Fatalf("task add %v succeeded, want the scout contract to refuse it\n%s", tc.args, out)
+			}
+			if !errors.Is(err, taskauthority.ErrInvalidInput) {
+				t.Errorf("task add %v error = %v, want ErrInvalidInput", tc.args, err)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("task add %v error = %v, want it to mention %q", tc.args, err, tc.wantMsg)
+			}
+			if _, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "recon")); !errors.Is(err, taskauthority.ErrNotFound) {
+				t.Errorf("refused scout create left a task behind: Get = %v, want ErrNotFound", err)
+			}
+		})
+	}
+}
+
+// TestTaskAddAcceptsCompleteScoutContract is the positive control: the same
+// CLI path with both scout flags present commits, and the flag values reach the
+// authoritative aggregate.
+func TestTaskAddAcceptsCompleteScoutContract(t *testing.T) {
+	homeDir := t.TempDir()
+	initCLITestHome(t, homeDir)
+
+	out, err := runTaskCommand(t, []string{
+		"task", "add", "recon", "investigate the thing",
+		"--kind", "scout", "--scope", "investigate the thing", "--budget", "300",
+		"--home", homeDir,
+	})
+	if err != nil {
+		t.Fatalf("task add (valid scout): %v\n%s", err, out)
+	}
+	agg, err := testAuthorityFor(t, homeDir).Get(mustTaskIDFor(t, "recon"))
+	if err != nil {
+		t.Fatalf("authority Get: %v", err)
+	}
+	if agg.Definition.Kind != "scout" ||
+		agg.Definition.ScoutScope != "investigate the thing" ||
+		agg.Definition.ScoutRuntimeBudgetSecs != 300 {
+		t.Fatalf("scout definition = %+v, want the --scope/--budget flags preserved", agg.Definition)
+	}
+}
