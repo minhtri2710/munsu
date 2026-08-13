@@ -25,8 +25,11 @@ var sessionSeq atomic.Int64
 // so it never collides with a developer's own sessions — and registers the
 // t.Cleanup that kills it. It does NOT create the session: use it when the code
 // under test is what creates the session, and newDisposableSession when the
-// test needs one to already exist. Killing a session that was never created is
-// a no-op, so the cleanup is safe either way.
+// test needs one to already exist. The cleanup is safe either way: killing a
+// name that was never created fails harmlessly, and the "=" target prefix
+// forces tmux to match that exact name — without it tmux falls back to prefix
+// matching, so cleaning up an uncreated "munsu-it-<pid>-1" would kill a live
+// "munsu-it-<pid>-11" belonging to another test.
 func disposableSessionName(t *testing.T) string {
 	t.Helper()
 
@@ -35,7 +38,7 @@ func disposableSessionName(t *testing.T) string {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), tmuxSetupTimeout)
 		defer cancel()
-		_ = exec.CommandContext(ctx, "tmux", "kill-session", "-t", session).Run()
+		_ = exec.CommandContext(ctx, "tmux", "kill-session", "-t", "="+session).Run()
 	})
 
 	return session
