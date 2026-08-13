@@ -29,8 +29,14 @@ WORKFLOW="$ROOT/.github/workflows/ci.yml"
 die() { echo "::error::$*" >&2; exit 1; }
 
 # Constraint lines, one raw expression per line ("integration", "!darwin && !linux", ...).
+#
+# `[[:space:]]` rather than a literal space, because that is the grammar: go/build
+# accepts any whitespace between `//go:build` and the expression, so
+# `//go:build<TAB>integration` is a real constraint. Matching only a space made a
+# tab-written tag invisible to the derivation -- the same fail-open this script
+# exists to prevent. (No whitespace is allowed between `//` and `go:build`.)
 constraints() {
-	grep -rh --include='*.go' -E '^//go:build ' "$ROOT" | sed 's|^//go:build[[:space:]]*||'
+	grep -rh --include='*.go' -E '^//go:build[[:space:]]' "$ROOT" | sed 's|^//go:build[[:space:]]*||'
 }
 
 # "file<TAB>expression" pairs for every //go:build line, so checks can name the
@@ -38,7 +44,7 @@ constraints() {
 # the path:linenum:content prefix that GNU grep prints anyway, so the sed below
 # also works on BSD grep, where -H alone omits the line number.
 constraint_pairs() {
-	grep -rHn --include='*.go' -E '^//go:build ' "$ROOT" |
+	grep -rHn --include='*.go' -E '^//go:build[[:space:]]' "$ROOT" |
 		sed -E 's|^(.*):[0-9]+:[[:space:]]*//go:build[[:space:]]*(.*)$|\1\t\2|'
 }
 
@@ -98,16 +104,37 @@ check() {
 	# the old grammar: the two are not interchangeable (`// +build a,b` is AND,
 	# space is OR), so folding them together would mis-parse. A file carrying
 	# both lines is fine -- `//go:build` is the authoritative one.
+	#
+	# The pattern follows the grammar, not one example. go/build trims all
+	# whitespace after `//`, then requires `+build` followed by whitespace or end
+	# of line -- so `//+build x`, `//  +build x`, `//<TAB>+build x` and
+	# `// +build<TAB>x` are all real constraints, while `// +buildfoo` is not.
+	# Matching a single literal space caught 1 of those 6 shapes and left the
+	# hole open for the rest.
+	#
+	# Scope is the whole file, deliberately. A `// +build` line below the package
+	# clause is not a constraint today, but `gofmt` hoists it to the top and adds
+	# the matching `//go:build` -- so running the very command this error suggests
+	# turns it into one, and a file every lane compiles becomes tag-gated. Flagging
+	# it is correct; the wording below says why without claiming it is already
+	# invisible.
+	#
+	# Note for whoever adds `vendor/` later: this repo has none today, so the scan
+	# is tree-wide. Vendored third-party code predating Go 1.17 routinely carries
+	# `// +build` with no `//go:build`, which would light this up across the whole
+	# vendor tree. Deal with it then -- do not pre-add an exclusion for a directory
+	# that does not exist, since that is just another hole waiting to be filled.
 	local legacy
-	legacy="$( { grep -rl --include='*.go' -E '^// \+build ' "$ROOT" || true; } |
+	legacy="$( { grep -rl --include='*.go' -E '^//[[:space:]]*\+build([[:space:]]|$)' "$ROOT" || true; } |
 		while IFS= read -r f; do
 			[ -n "$f" ] || continue
-			grep -qE '^//go:build ' "$f" || echo "${f#"$ROOT"/}"
+			grep -qE '^//go:build[[:space:]]' "$f" || echo "${f#"$ROOT"/}"
 		done)"
 	if [ -n "$legacy" ]; then
 		echo "::error::legacy '// +build' line with no '//go:build' line -- run gofmt on:" >&2
 		printf '  %s\n' $legacy >&2
-		echo "  Tag derivation reads '//go:build' only, so these files are invisible to every lane." >&2
+		echo "  gofmt turns that line into a real build constraint (hoisting it and adding //go:build)," >&2
+		echo "  and tag derivation only reads //go:build -- so leaving it here hides the tag from every lane." >&2
 		failed=1
 	fi
 
