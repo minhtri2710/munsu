@@ -3,37 +3,59 @@
 package backend
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// TestTmux_NewWindow requires an active tmux server.
+// tmuxSetupTimeout bounds the harness's own tmux calls so a hung server fails
+// the test instead of hanging until the job timeout.
+const tmuxSetupTimeout = 10 * time.Second
+
+// sessionSeq makes disposable session names unique within a test binary.
+var sessionSeq atomic.Int64
+
+// newDisposableSession starts a dedicated detached tmux session — creating a
+// tmux server if none is running — and returns its name. The name is scoped to
+// this process so it never collides with a developer's own sessions, and
+// t.Cleanup kills it so nothing leaks into another test or the dev machine.
+func newDisposableSession(t *testing.T) string {
+	t.Helper()
+
+	session := fmt.Sprintf("munsu-it-%d-%d", os.Getpid(), sessionSeq.Add(1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxSetupTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", session).CombinedOutput(); err != nil {
+		t.Fatalf("tmux new-session -d -s %s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	}
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), tmuxSetupTimeout)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "tmux", "kill-session", "-t", session).Run()
+	})
+
+	return session
+}
+
+// TestTmux_NewWindow creates its own tmux server/session so it runs for real
+// wherever tmux is installed, instead of borrowing whatever session happens to
+// be open (and skipping when none is).
 func TestTmux_NewWindow(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not on PATH")
 	}
 
-	// Check there's a tmux server running
-	check := exec.Command("tmux", "list-sessions")
-	if err := check.Run(); err != nil {
-		t.Skip("no tmux server running")
-	}
-
+	session := newDisposableSession(t)
 	tk := &TmuxBackend{}
 
-	// Try creating a window in the first available session
-	sessionsOut, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessions := strings.Fields(string(sessionsOut))
-	if len(sessions) == 0 {
-		t.Skip("no tmux sessions available")
-	}
-
-	session := sessions[0]
 	wid, err := tk.NewWindow(session, "munsu-test")
 	if err != nil {
 		t.Fatal(err)
@@ -64,10 +86,9 @@ func TestTmux_Alive_UnknownWindow(t *testing.T) {
 	}
 
 	// CheckAlive talks to the server, so an unknown window is only
-	// distinguishable from a dead server when a server is running.
-	if err := exec.Command("tmux", "list-sessions").Run(); err != nil {
-		t.Skip("no tmux server running")
-	}
+	// distinguishable from a dead server when a server is running — start our
+	// own rather than depending on one already being up.
+	newDisposableSession(t)
 
 	tk := &TmuxBackend{}
 	// An unknown window should return false (ErrPaneNotFound)
