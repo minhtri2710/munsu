@@ -7,10 +7,17 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// hasHerdr reports whether herdr is available on PATH.
+func hasHerdr() bool {
+	_, err := exec.LookPath("herdr")
+	return err == nil
+}
 
 // writeFakeHerdr creates a fake herdr executable in dir that responds to
 // expected commands: workspace list, workspace create, workspace close,
@@ -464,6 +471,10 @@ func TestMetaExtras_NilBeforeNewWindow(t *testing.T) {
 }
 
 func TestResolve_HerdrUsesDefaultSessionNotHometag(t *testing.T) {
+	if !hasHerdr() {
+		t.Skip("herdr not on PATH (Resolve verifies the requested capability)")
+	}
+
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 	if err := os.MkdirAll(homeDir, 0755); err != nil {
@@ -493,6 +504,10 @@ func TestResolve_HerdrUsesDefaultSessionNotHometag(t *testing.T) {
 }
 
 func TestBackendForTask_HerdrSessionFromMeta(t *testing.T) {
+	if !hasHerdr() {
+		t.Skip("herdr not on PATH (BackendForTask verifies the requested capability)")
+	}
+
 	tmpDir := t.TempDir()
 
 	// With herdr_session in meta
@@ -518,6 +533,10 @@ func TestBackendForTask_HerdrSessionFromMeta(t *testing.T) {
 }
 
 func TestBackendForTask_HerdrSessionFromWindow(t *testing.T) {
+	if !hasHerdr() {
+		t.Skip("herdr not on PATH (BackendForTask verifies the requested capability)")
+	}
+
 	tmpDir := t.TempDir()
 
 	// With window session prefix but no herdr_session
@@ -542,6 +561,10 @@ func TestBackendForTask_HerdrSessionFromWindow(t *testing.T) {
 }
 
 func TestBackendForTask_HerdrSessionFallsBackToDefault(t *testing.T) {
+	if !hasHerdr() {
+		t.Skip("herdr not on PATH (BackendForTask verifies the requested capability)")
+	}
+
 	tmpDir := t.TempDir()
 
 	// No herdr_session, no window session prefix

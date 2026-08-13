@@ -63,6 +63,12 @@ func TestTmux_Alive_UnknownWindow(t *testing.T) {
 		t.Skip("tmux not on PATH")
 	}
 
+	// CheckAlive talks to the server, so an unknown window is only
+	// distinguishable from a dead server when a server is running.
+	if err := exec.Command("tmux", "list-sessions").Run(); err != nil {
+		t.Skip("no tmux server running")
+	}
+
 	tk := &TmuxBackend{}
 	// An unknown window should return false (ErrPaneNotFound)
 	if alive, err := tk.CheckAlive("@99999"); alive || !errors.Is(err, ErrPaneNotFound) {
