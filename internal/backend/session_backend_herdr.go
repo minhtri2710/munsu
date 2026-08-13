@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -172,6 +173,22 @@ func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, 
 		return tmp.herdr(args...)
 	}
 	return h.herdr(args...)
+}
+
+// isHerdrWaitTimeout returns true when the herdr CLI reported a structured
+// 'timeout' error — its own bounded wait elapsed before a status change. This
+// is the normal bounded-wait outcome and must be classified as a context
+// deadline (poll fallback), never as a generic reader failure.
+func isHerdrWaitTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if herr := parseHerdrError(err); herr != nil {
+		return herr.Code == HerdrErrTimeout
+	}
+	// No structured envelope: this is not a typed timeout; leave it to the
+	// generic reader-failure path (no textual guessing here).
+	return false
 }
 
 // isNotFoundErr returns true for structured 'not found' / 'pane_not_found' herdr errors.
@@ -633,6 +650,23 @@ func (h *HerdrBackend) Teardown(windowID string) error {
 	}
 
 	return nil
+}
+
+// Wait implements ObservationEventSource over the herdr agent status-wait
+// surface (BEO-17/P1b). The backend's configured session and identity are
+// used; wire/protocol detail stays adapter-owned. See HerdrEventSource for
+// the capability/version gate and normalization contract.
+func (h *HerdrBackend) Wait(ctx context.Context, endpoint EndpointRef, after EventCursor) (ObservationSignal, error) {
+	src := &HerdrEventSource{Session: h.Session, CLIPath: ""}
+	return src.Wait(ctx, endpoint, after)
+}
+
+// After implements the adapter-owned cursor ordering for the herdr surface
+// (BEO-17/P1b). See HerdrEventSource.After: cursor semantics stay adapter-
+// owned; the orchestrator never parses or compares cursors itself.
+func (h *HerdrBackend) After(next, prev EventCursor) bool {
+	src := &HerdrEventSource{Session: h.Session, CLIPath: ""}
+	return src.After(next, prev)
 }
 
 // Capability probes the installed herdr CLI and returns capability info.

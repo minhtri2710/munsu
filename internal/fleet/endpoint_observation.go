@@ -49,6 +49,7 @@ const (
 	SourceInvalid = backend.SourceInvalid
 	SourceProbe   = backend.SourceProbe
 	SourceDerived = backend.SourceDerived
+	SourceEvent   = backend.SourceEvent
 )
 
 // exactEndpointProof carries the exact canonical identities Fleet must match
