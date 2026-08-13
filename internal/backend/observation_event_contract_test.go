@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func writeFakeHerdrEventWait(t *testing.T, dir, schemaJSON, waitJSON string, wai
 		`if [ "$3" = "agent" ] && [ "$4" = "wait" ]; then` + "\n" +
 		`  echo "$@" >> "` + logPath + `"` + "\n" +
 		`  echo '` + waitJSON + `'` + "\n" +
-		"  exit " + itoa(waitExit) + "\n" +
+		"  exit " + strconv.Itoa(waitExit) + "\n" +
 		"fi\n" +
 		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
 		"exit 1\n"
@@ -45,13 +46,6 @@ func writeFakeHerdrEventWait(t *testing.T, dir, schemaJSON, waitJSON string, wai
 		t.Fatal(err)
 	}
 	return dir
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	return string(rune('0' + n))
 }
 
 // fakeHerdrSchemaReady is a protocol-17 schema (agent_facade + agent_wait
@@ -240,6 +234,25 @@ func TestHerdrEventSource_Wait_Timeout(t *testing.T) {
 	}
 }
 
+// awaitFakeBlocking blocks until the fake herdr has recorded its agent-wait
+// argv line, which it does immediately before `exec sleep`. Polling this
+// marker replaces a fixed sleep: on a loaded runner a fixed sleep can elapse
+// while the fake is still starting up, so cancel() would kill the process
+// during exec/start-up instead of while it is blocked. That variant still
+// passes (ctx.Err() is non-nil either way) but never exercises the
+// kill-the-blocked-process path — silent coverage loss, not a visible flake.
+func awaitFakeBlocking(t *testing.T, logPath string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if fi, err := os.Stat(logPath); err == nil && fi.Size() > 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("fake herdr never reached its blocking agent-wait branch (no argv recorded at %s)", logPath)
+}
+
 func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 	// Caller cancellation must surface as the caller's own ctx.Err() (the
 	// adapter never masks a cancelled bounded wait as anything else).
@@ -251,8 +264,17 @@ func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
 		_, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 		done <- err
 	}()
-	// Let the fake enter its blocking agent-wait branch, then cancel.
-	time.Sleep(50 * time.Millisecond)
+	// Synchronize on the fake actually reaching its blocking branch, so the
+	// cancellation below can only be observed by killing a blocked process.
+	awaitFakeBlocking(t, logPath)
+	// Guard the other half of the same property: Wait must still be in flight
+	// when cancel() fires. If it already returned, whatever error arrives says
+	// nothing about the cancellation path.
+	select {
+	case err := <-done:
+		t.Fatalf("Wait returned before cancellation (err = %v); the blocked-process kill path was not exercised", err)
+	default:
+	}
 	cancel()
 	select {
 	case err := <-done:
