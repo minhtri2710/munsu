@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -280,6 +281,72 @@ func TestTmux_Alive_TmuxNotOnPath(t *testing.T) {
 	if alive, _ := tk.CheckAlive("@0"); alive {
 		t.Error("CheckAlive() returned true when tmux is not on PATH")
 	}
+}
+
+// fakeFailingTmux writes a tmux stub that prints msg and exits non-zero, then
+// puts it first on PATH for the duration of the test. It makes the failure mode
+// of the tmux CLI deterministic — a real server that dies at exactly the right
+// moment is not reproducible.
+func fakeFailingTmux(t *testing.T, msg string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q >&2\nexit 1\n", msg)
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestTmux_Alive_ServerFailureIsNotPaneNotFound pins the classification
+// invariant in CheckAlive: only an exact per-target absence is authoritative
+// absence (ErrPaneNotFound). Server/socket failures are operational errors — a
+// caller must never read "the server is gone" as "this pane is gone".
+func TestTmux_Alive_ServerFailureIsNotPaneNotFound(t *testing.T) {
+	operational := []struct {
+		name string
+		msg  string
+	}{
+		{"no server running", "no server running on /tmp/tmux-1000/default"},
+		{"connection refused", "error connecting to /tmp/tmux-1000/default (Connection refused)"},
+		{"lost server", "lost server"},
+		{"permission denied", "error connecting to /tmp/tmux-1000/default (Permission denied)"},
+	}
+	for _, tc := range operational {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeFailingTmux(t, tc.msg)
+
+			tk := &TmuxBackend{}
+			alive, err := tk.CheckAlive("@99999")
+			if alive {
+				t.Error("CheckAlive returned true for a failing tmux server")
+			}
+			if err == nil {
+				t.Fatal("CheckAlive returned nil error for a failing tmux server")
+			}
+			if errors.Is(err, ErrPaneNotFound) {
+				t.Errorf("CheckAlive misclassified server failure %q as ErrPaneNotFound", tc.msg)
+			}
+			if !strings.Contains(err.Error(), tc.msg) {
+				t.Errorf("error %v does not carry the tmux message %q", err, tc.msg)
+			}
+		})
+	}
+
+	// Control: the same harness must still yield ErrPaneNotFound for an exact
+	// per-target absence, so the assertions above are discrimination, not a
+	// blanket "never ErrPaneNotFound".
+	t.Run("target absent is ErrPaneNotFound", func(t *testing.T) {
+		fakeFailingTmux(t, "can't find window: @99999")
+
+		tk := &TmuxBackend{}
+		alive, err := tk.CheckAlive("@99999")
+		if alive {
+			t.Error("CheckAlive returned true for an absent window")
+		}
+		if !errors.Is(err, ErrPaneNotFound) {
+			t.Errorf("CheckAlive err = %v, want ErrPaneNotFound", err)
+		}
+	})
 }
 
 // TestTmux_Backend_NotFound tests every method returns an error when tmux is missing.
