@@ -24,6 +24,23 @@ constraints() {
 	grep -rh --include='*.go' -E '^//go:build ' "$ROOT" | sed 's|^//go:build[[:space:]]*||'
 }
 
+# "file<TAB>expression" pairs for every //go:build line, so checks can name the
+# file a constraint lives in instead of just quoting the expression. -n forces
+# the path:linenum:content prefix that GNU grep prints anyway, so the sed below
+# also works on BSD grep, where -H alone omits the line number.
+constraint_pairs() {
+	grep -rHn --include='*.go' -E '^//go:build ' "$ROOT" |
+		sed -E 's|^(.*):[0-9]+:[[:space:]]*//go:build[[:space:]]*(.*)$|\1\t\2|'
+}
+
+# ci.yml with comment lines dropped, so dead lane commands preserved in
+# comments cannot satisfy the lane-presence greps below. Note the residual
+# limitation: this filters comments, it does not evaluate `if:` conditions,
+# so a step disabled via `if: false` would still satisfy the check.
+workflow_body() {
+	grep -vE '^[[:space:]]*#' "$WORKFLOW"
+}
+
 # Split constraint expressions into terms, keeping any leading "!".
 terms() {
 	sed -e 's/&&/ /g' -e 's/||/ /g' -e 's/[()]/ /g' | tr -s '[:space:]' '\n' | sed '/^$/d'
@@ -84,16 +101,20 @@ check() {
 		[ -n "${reason:-}" ] || { echo "::error::${tag}: manifest entry needs a reason" >&2; failed=1; }
 		case "$treatment" in
 		test-lane)
-			grep -qE -- "-tags[= ]${tag}\b" "$WORKFLOW" ||
-				{ echo "::error::${tag}: classified test-lane but no lane in ci.yml passes -tags ${tag}" >&2; failed=1; }
+			if ! workflow_body | grep -E -- "-tags[= ]${tag}\b" >/dev/null; then
+				echo "::error::${tag}: classified test-lane but no lane in ci.yml passes -tags ${tag}" >&2
+				failed=1
+			fi
 			if tag_terms "$tag" | grep -qFx "!${tag}"; then
 				echo "::error::${tag}: negated somewhere, so the derived package set for its lane is wrong" >&2
 				failed=1
 			fi
 			;;
 		goos-vet)
-			grep -qE -- "GOOS=${tag}\b.*go vet" "$WORKFLOW" ||
-				{ echo "::error::${tag}: classified goos-vet but no 'GOOS=${tag} go vet' step in ci.yml" >&2; failed=1; }
+			if ! workflow_body | grep -E -- "GOOS=${tag}\b.*go vet" >/dev/null; then
+				echo "::error::${tag}: classified goos-vet but no 'GOOS=${tag} go vet' step in ci.yml" >&2
+				failed=1
+			fi
 			;;
 		race-excluded)
 			if tag_terms "$tag" | grep -qFx "$tag"; then
@@ -110,7 +131,36 @@ check() {
 	done < <(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST")
 
 	[ "$failed" -eq 0 ] || exit 1
+	check_conjunctions
 	echo "build tags: $(echo "$repo_tags_list" | wc -l | tr -d ' ') classified, lanes present"
+}
+
+# A test-lane tag conjoined with a POSITIVE goos-vet tag is compiled by no lane:
+# the test lane runs on linux (so GOOS=windows/darwin is off there) and the GOOS
+# vet does not set -tags <tag>. A NEGATED goos term is legitimate and must not
+# fail: `//go:build integration && !windows` compiles fine on ubuntu.
+check_conjunctions() {
+	local failed=0 goos_tags test_lane_tags file constraint terms_line tag term
+	goos_tags="$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | awk -F '\t' '$2 == "goos-vet" { print $1 }')"
+	test_lane_tags="$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | awk -F '\t' '$2 == "test-lane" { print $1 }')"
+	[ -n "$goos_tags" ] || return 0
+	[ -n "$test_lane_tags" ] || return 0
+	while IFS=$'\t' read -r file constraint; do
+		terms_line="$(printf '%s' "$constraint" | terms)"
+		for tag in $test_lane_tags; do
+			# Only a positive mention of the test-lane tag is a conjunction
+			# hazard; a negated one is already an error of its own elsewhere.
+			printf '%s\n' "$terms_line" | grep -Fx "$tag" >/dev/null || continue
+			for term in $terms_line; do
+				[[ "$term" == !* ]] && continue
+				printf '%s\n' "$goos_tags" | grep -Fx "$term" >/dev/null || continue
+				echo "::error::${file}: '${constraint}' conjoins test-lane tag '${tag}' with positive GOOS term '${term}': no lane compiles this file -- the ${tag} lane runs on linux (GOOS=${term} off there) and the GOOS=${term} vet does not set -tags ${tag}. Split the file or add an explicit cross-product step." >&2
+				failed=1
+				break
+			done
+		done
+	done < <(constraint_pairs)
+	[ "$failed" -eq 0 ] || exit 1
 }
 
 case "${1:-}" in
