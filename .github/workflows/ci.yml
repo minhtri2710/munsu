@@ -23,6 +23,36 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  race:
+    name: Race detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      # The default lane runs without -race, so crash/replay/fence concurrency
+      # in home, taskauthority and backend was never race-checked in CI.
+      - run: go test -race -count=1 -timeout 25m ./...
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      # `go test ./...` never builds integration-tagged files, so this suite
+      # was invisible to CI. Packages are listed explicitly: ./internal/cli is
+      # excluded because its integration tests fail on main (BEO-20 follow-up),
+      # every other package carrying `//go:build integration` is covered.
+      - run: go test -count=1 -timeout 35m -tags integration ./internal/backend ./internal/bootstrap ./internal/fleet ./internal/orchestrator
+
   invariants:
     name: Repo invariants
     runs-on: ubuntu-latest
