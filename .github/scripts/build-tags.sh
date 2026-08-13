@@ -135,29 +135,45 @@ check() {
 	echo "build tags: $(echo "$repo_tags_list" | wc -l | tr -d ' ') classified, lanes present"
 }
 
-# A test-lane tag conjoined with a POSITIVE goos-vet tag is compiled by no lane:
+# A test-lane tag AND-ed with a POSITIVE goos-vet tag is compiled by no lane:
 # the test lane runs on linux (so GOOS=windows/darwin is off there) and the GOOS
-# vet does not set -tags <tag>. A NEGATED goos term is legitimate and must not
-# fail: `//go:build integration && !windows` compiles fine on ubuntu.
+# vet does not set -tags <tag>. That is the `//go:build e2e && windows` hole --
+# invisible to every lane and, before this check, to `check` as well.
+#
+# Two shapes must NOT fail, or the check becomes a false-alarm generator:
+#   //go:build integration && !windows   negated GOOS, builds fine on ubuntu
+#   //go:build integration || windows    the integration lane still builds it
+# Hence the unit of judgement is the disjunct, not the whole expression: a file
+# is reachable as long as ONE disjunct is free of positive GOOS terms.
 check_conjunctions() {
-	local failed=0 goos_tags test_lane_tags file constraint terms_line tag term
+	local failed=0 goos_tags test_lane_tags file constraint tag
 	goos_tags="$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | awk -F '\t' '$2 == "goos-vet" { print $1 }')"
 	test_lane_tags="$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | awk -F '\t' '$2 == "test-lane" { print $1 }')"
 	[ -n "$goos_tags" ] || return 0
 	[ -n "$test_lane_tags" ] || return 0
 	while IFS=$'\t' read -r file constraint; do
-		terms_line="$(printf '%s' "$constraint" | terms)"
 		for tag in $test_lane_tags; do
-			# Only a positive mention of the test-lane tag is a conjunction
-			# hazard; a negated one is already an error of its own elsewhere.
-			printf '%s\n' "$terms_line" | grep -Fx "$tag" >/dev/null || continue
-			for term in $terms_line; do
-				[[ "$term" == !* ]] && continue
-				printf '%s\n' "$goos_tags" | grep -Fx "$term" >/dev/null || continue
-				echo "::error::${file}: '${constraint}' conjoins test-lane tag '${tag}' with positive GOOS term '${term}': no lane compiles this file -- the ${tag} lane runs on linux (GOOS=${term} off there) and the GOOS=${term} vet does not set -tags ${tag}. Split the file or add an explicit cross-product step." >&2
-				failed=1
-				break
-			done
+			# Only a positive mention is a hazard; a negated test-lane tag is
+			# already an error of its own above.
+			printf '%s' "$constraint" | terms | grep -Fx "$tag" >/dev/null || continue
+
+			local reachable=0 blocker="" disjunct hit
+			while IFS= read -r disjunct; do
+				[ -n "${disjunct// /}" ] || continue
+				# `|| true`: no match is the common case, and under pipefail a
+				# failing grep inside $( ) would abort the script via set -e.
+				hit="$(printf '%s' "$disjunct" | terms | grep -v '^!' |
+					grep -Fx -f <(printf '%s\n' "$goos_tags") | head -1 || true)"
+				if [ -z "$hit" ]; then
+					reachable=1
+					break
+				fi
+				[ -n "$blocker" ] || blocker="$hit"
+			done < <(printf '%s' "$constraint" | awk -F '\\|\\|' '{ for (i = 1; i <= NF; i++) print $i }')
+
+			[ "$reachable" -eq 0 ] || continue
+			echo "::error::${file}: '${constraint}' pairs test-lane tag '${tag}' with positive GOOS term '${blocker}' in every branch: no lane compiles this file -- the ${tag} lane runs on linux (GOOS=${blocker} is off there) and the GOOS=${blocker} vet does not set -tags ${tag}. Split the file, or add an explicit cross-product step and classify it." >&2
+			failed=1
 		done
 	done < <(constraint_pairs)
 	[ "$failed" -eq 0 ] || exit 1
