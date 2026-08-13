@@ -4,8 +4,17 @@
 #
 # CI lanes derive their package lists from the source tree with `packages`
 # instead of hard-coding them, so a new `//go:build integration` file in a
-# sixth package joins the lane by existing. `check` guards the remaining gap:
-# a brand new tag that no lane covers at all.
+# sixth package joins the lane by existing. `check` guards the remaining gaps:
+# a brand new tag that no lane covers at all, and a file written in the legacy
+# `// +build` syntax that this derivation cannot see.
+#
+# What `check` does NOT do, so nobody trusts it further than it goes: the lane
+# greps are textual. They assert a non-comment line in ci.yml carries the
+# command; they do not evaluate `if:` conditions, so a step disabled via
+# `if: false` still satisfies them. And the manifest classification is
+# self-declared: `check` catches a tag whose lane was *forgotten*, not an
+# author who downgrades an entry to `default` and drops the lane in the same
+# diff. That case is caught by reading the diff, not by this script.
 #
 # Usage:
 #   build-tags.sh packages <tag>   packages holding a file guarded by <tag>
@@ -60,11 +69,19 @@ tag_terms() {
 # which is exact as long as the tag is never negated -- `check` enforces that
 # for every test-lane tag, so a `//go:build !integration` file cannot quietly
 # widen a lane's package set.
+#
+# Directories `go list ./...` deliberately skips are dropped: any path with a
+# `testdata` segment, or a segment starting with `_` or `.`. Fixtures under
+# `testdata/` are routinely code that is not meant to compile, so emitting them
+# would hand the lane an explicit path and turn a fixture into a red lane. The
+# filter is textual rather than a `go list` call because the `invariants` job
+# has no Go toolchain.
 packages() {
 	local tag="$1" dirs
 	[ -n "$tag" ] || die "packages: missing tag"
 	dirs="$(grep -rlE "^//go:build\b.*\b${tag}\b" --include='*.go' "$ROOT" |
-		xargs -n1 dirname | sort -u | sed "s|^${ROOT}|.|")"
+		xargs -n1 dirname | sed "s|^${ROOT}|.|" |
+		{ grep -vE '/(testdata|[_.][^/]*)(/|$)' || true; } | sort -u)"
 	[ -n "$dirs" ] || die "no package carries build tag '${tag}' -- stale lane or manifest entry"
 	echo $dirs
 }
@@ -72,6 +89,27 @@ packages() {
 check() {
 	local failed=0 tag treatment reason
 	[ -f "$MANIFEST" ] || die "missing $MANIFEST"
+
+	# The toolchain still honors a lone `// +build` line, but every derivation
+	# here reads `//go:build` only: a file carrying just the old line drops its
+	# package out of the lane and never surfaces its tag to the manifest, with
+	# `check` staying green -- fail-open, which is the exact failure this whole
+	# mechanism exists to prevent. Fail closed instead of teaching `constraints`
+	# the old grammar: the two are not interchangeable (`// +build a,b` is AND,
+	# space is OR), so folding them together would mis-parse. A file carrying
+	# both lines is fine -- `//go:build` is the authoritative one.
+	local legacy
+	legacy="$( { grep -rl --include='*.go' -E '^// \+build ' "$ROOT" || true; } |
+		while IFS= read -r f; do
+			[ -n "$f" ] || continue
+			grep -qE '^//go:build ' "$f" || echo "${f#"$ROOT"/}"
+		done)"
+	if [ -n "$legacy" ]; then
+		echo "::error::legacy '// +build' line with no '//go:build' line -- run gofmt on:" >&2
+		printf '  %s\n' $legacy >&2
+		echo "  Tag derivation reads '//go:build' only, so these files are invisible to every lane." >&2
+		failed=1
+	fi
 
 	local manifest_tags repo_tags_list
 	manifest_tags="$(grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | cut -f1 | sort -u)"

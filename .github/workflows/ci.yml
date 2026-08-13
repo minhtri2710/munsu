@@ -108,9 +108,12 @@ jobs:
           set -eu
           [ "$(readlink .claude/skills)" = "../.agents/skills" ] || { echo "::error::.claude/skills must be a symlink to ../.agents/skills"; exit 1; }
       # Every `//go:build` tag must be classified in .github/build-tags.manifest
-      # and, if it claims a lane, that lane must exist. Catches the tag that
-      # arrives with no lane at all -- the one gap deriving package lists from
-      # the tree cannot close by itself.
+      # and, if it claims a lane, a non-comment line of this file must carry
+      # that lane's command. Catches the tag that arrives with no lane at all --
+      # the one gap deriving package lists from the tree cannot close by itself.
+      # The lane assertion is textual, not semantic: it does not evaluate `if:`,
+      # so it catches a lane that was forgotten or commented out, not one
+      # deliberately disabled. See the header of build-tags.sh for the limits.
       - name: Build tags must be covered by a lane
         run: .github/scripts/build-tags.sh check
       - name: Personal fleet paths must not be tracked
