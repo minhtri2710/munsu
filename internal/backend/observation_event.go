@@ -17,9 +17,10 @@ import (
 )
 
 // EventCursor is an opaque, monotonically increasing position in the native
-// event stream. Only the adapter interprets it; the orchestrator stores and
-// compares it for duplicate/out-of-order suppression. An empty cursor means
-// "from the current position" (no durable resume across restarts in P1b).
+// event stream. Only the adapter interprets it: the orchestrator stores and
+// passes cursors and calls the adapter's After operation to compare them, but
+// never parses or compares cursors itself. An empty cursor means "from the
+// current position" (no durable resume across restarts in P1b).
 type EventCursor string
 
 // ObservationSignal is the normalized wake/activity hint produced by a native
@@ -38,15 +39,22 @@ type ObservationSignal struct {
 	Detail      string
 }
 
-// Valid reports whether every axis of the signal is usable.
+// Valid reports whether every axis of the signal is usable. A usable signal
+// must carry the exact endpoint identity (backend + handle): blank or partial
+// identity signals are malformed and are rejected before any cursor handling.
 func (s ObservationSignal) Valid() bool {
-	return s.Endpoint.Handle != "" && s.Activity.Valid() && s.Source.Valid()
+	return s.Endpoint.Backend != "" && s.Endpoint.Handle != "" && s.Activity.Valid() && s.Source.Valid()
 }
 
 // ObservationEventSource is the adapter-owned native event seam (BEO-17/P1b).
 // Wait blocks until a normalized signal is available for the endpoint, the
 // context deadline (bounded wait) is reached, or the reader fails. `after` is
 // the last consumed cursor; the adapter should skip events already consumed.
+//
+// After reports whether the signal cursor `next` advances past the consumed
+// cursor `prev` under the adapter's opaque ordering. Cursor ordering is
+// adapter-owned: the orchestrator never parses or compares cursors itself and
+// only calls After for duplicate/out-of-order/stale suppression.
 //
 // Return contract:
 //   - (ObservationSignal, nil): a normalized wake/activity hint arrived.
@@ -62,6 +70,10 @@ func (s ObservationSignal) Valid() bool {
 //     caller falls back to polling this cycle and treats the source degraded.
 type ObservationEventSource interface {
 	Wait(ctx context.Context, endpoint EndpointRef, after EventCursor) (ObservationSignal, error)
+	// After reports whether next advances past prev under the adapter's opaque
+	// cursor ordering. Empty prev (no consumed position) always accepts; the
+	// adapter defines how an empty next behaves (no attestable position).
+	After(next, prev EventCursor) bool
 }
 
 // Sentinel errors classify the polling-fallback reason. They never carry a

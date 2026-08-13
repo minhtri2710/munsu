@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +26,23 @@ type fakeEventSource struct {
 	errors  []error
 	timeout time.Duration // per-Wait block before returning timeout
 	closed  bool
+}
+
+// After implements adapter-owned cursor ordering for the fake: numeric cursor
+// comparison with a lexical fallback (same semantics as the herdr adapter).
+func (f *fakeEventSource) After(next, prev backend.EventCursor) bool {
+	if prev == "" {
+		return true
+	}
+	if next == "" {
+		return true
+	}
+	a, errA := strconv.ParseUint(string(prev), 10, 64)
+	b, errB := strconv.ParseUint(string(next), 10, 64)
+	if errA != nil || errB != nil {
+		return strings.Compare(string(next), string(prev)) > 0
+	}
+	return b > a
 }
 
 func (f *fakeEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef, after backend.EventCursor) (backend.ObservationSignal, error) {
@@ -93,6 +112,126 @@ type fakeEventPort struct {
 }
 
 func (p fakeEventPort) Sources(string) ([]EndpointSource, error) { return p.sources, p.err }
+
+func TestEventWaiter_WaitForSignal_BlankEndpointRejected(t *testing.T) {
+	// A source returning a signal with a blank endpoint must never wake the
+	// watcher: exact binding (backend + handle, non-empty) is required before
+	// any cursor handling.
+	cases := []backend.ObservationSignal{
+		{Endpoint: backend.EndpointRef{Backend: "", Handle: ""}, Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "42"},
+		{Endpoint: backend.EndpointRef{Backend: "", Handle: "w:p"}, Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "42"},
+		{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: ""}, Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "42"},
+	}
+	for i, sig := range cases {
+		src := &fakeEventSource{signals: []backend.ObservationSignal{sig}}
+		port := staticEventPort(EndpointSource{
+			Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
+			Source:   src,
+		})
+		w := NewEventWaiter(port)
+		_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), 50*time.Millisecond)
+		if outcome != EventWaitTimeout {
+			t.Fatalf("case %d: outcome = %v, want timeout (blank endpoint rejected)", i, outcome)
+		}
+	}
+}
+
+func TestEventWaiter_WaitForSignal_PartialIdentityMismatchRejected(t *testing.T) {
+	// A signal naming the right backend but a different handle (or vice versa)
+	// must be rejected — the identity must be the exact bound endpoint.
+	sig := backend.ObservationSignal{
+		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "other:p"},
+		Activity: backend.ActivityBusy,
+		Source:   backend.SourceEvent,
+		Cursor:   "42",
+	}
+	src := &fakeEventSource{signals: []backend.ObservationSignal{sig}}
+	port := staticEventPort(EndpointSource{
+		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
+		Source:   src,
+	})
+	w := NewEventWaiter(port)
+	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), 50*time.Millisecond)
+	if outcome != EventWaitTimeout {
+		t.Fatalf("outcome = %v, want timeout (mismatched identity rejected)", outcome)
+	}
+}
+
+func TestEventWaiter_WaitForSignal_InvalidSourceRejected(t *testing.T) {
+	// A signal with a non-event source or invalid activity must be rejected
+	// even when its endpoint is exact: Valid() is enforced before cursor
+	// handling.
+	src := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Activity: backend.ActivityBusy, Source: backend.SourceInvalid, Cursor: "42"},
+	}}
+	port := staticEventPort(EndpointSource{
+		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
+		Source:   src,
+	})
+	w := NewEventWaiter(port)
+	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), 50*time.Millisecond)
+	if outcome != EventWaitTimeout {
+		t.Fatalf("outcome = %v, want timeout (invalid signal rejected)", outcome)
+	}
+}
+
+// concurrentFakeSource is a fake that returns the SAME signal on every Wait
+// (never drains), so concurrent WaitForSignal calls race on the same cursor.
+type concurrentFakeSource struct {
+	sig backend.ObservationSignal
+}
+
+func (c *concurrentFakeSource) Wait(ctx context.Context, endpoint backend.EndpointRef, after backend.EventCursor) (backend.ObservationSignal, error) {
+	select {
+	case <-ctx.Done():
+		return backend.ObservationSignal{}, ctx.Err()
+	default:
+	}
+	return c.sig, nil
+}
+
+func (c *concurrentFakeSource) After(next, prev backend.EventCursor) bool {
+	return next == c.sig.Cursor && next != prev
+}
+
+// TestEventWaiter_WaitForSignal_ConcurrentDuplicateSuppression is the
+// concurrency regression for blocker 3: two concurrent WaitForSignal calls on
+// the same endpoint with the same cursor must accept the signal exactly once.
+func TestEventWaiter_WaitForSignal_ConcurrentDuplicateSuppression(t *testing.T) {
+	sig := backend.ObservationSignal{
+		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
+		Activity: backend.ActivityBusy,
+		Source:   backend.SourceEvent,
+		Cursor:   "42",
+	}
+	src := &concurrentFakeSource{sig: sig}
+	port := staticEventPort(EndpointSource{Endpoint: sig.Endpoint, Source: src})
+	w := NewEventWaiter(port)
+
+	const callers = 8
+	results := make(chan EventWaitOutcome, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
+			results <- outcome
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	accepted := 0
+	for outcome := range results {
+		if outcome == EventWaitSignal {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("accepted signals = %d, want exactly 1 (concurrent duplicate must be suppressed)", accepted)
+	}
+}
 
 func TestEventWaiter_WaitForSignal_ValidSignal(t *testing.T) {
 	src := &fakeEventSource{signals: []backend.ObservationSignal{{
@@ -453,6 +592,23 @@ func (r *raceEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef
 	case <-time.After(10 * time.Millisecond):
 		return sig, nil
 	}
+}
+
+// After implements adapter-owned cursor ordering for the race source: cursor
+// values are monotonically increasing integers.
+func (r *raceEventSource) After(next, prev backend.EventCursor) bool {
+	if prev == "" {
+		return true
+	}
+	if next == "" {
+		return true
+	}
+	a, errA := strconv.ParseUint(string(prev), 10, 64)
+	b, errB := strconv.ParseUint(string(next), 10, 64)
+	if errA != nil || errB != nil {
+		return strings.Compare(string(next), string(prev)) > 0
+	}
+	return b > a
 }
 
 // countingProbe is a TaskEndpointProbe wrapper counting invocations.

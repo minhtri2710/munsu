@@ -181,21 +181,24 @@ func (s *HerdrEventSource) parseAgentWait(endpoint EndpointRef, raw []byte) (Obs
 	return sig, nil
 }
 
-// CursorAfter reports whether a signal's cursor advances past the supplied
-// cursor. Empty cursors compare as "no position" and are accepted (the
-// orchestrator's duplicate/out-of-order suppression is authoritative).
-func CursorAfter(sigC, after EventCursor) bool {
-	if after == "" {
+// After implements the adapter-owned cursor ordering for the herdr surface:
+// it reports whether a signal cursor advances past the consumed cursor. Cursor
+// semantics stay adapter-owned (numeric state_change_seq, lexical fallback for
+// non-numeric); the orchestrator never parses or compares cursors itself.
+// Empty cursors compare as "no position" and are accepted (the orchestrator's
+// duplicate/out-of-order suppression is authoritative).
+func (s *HerdrEventSource) After(sigC, prev EventCursor) bool {
+	if prev == "" {
 		return true
 	}
 	if sigC == "" {
 		return true
 	}
-	a, errA := strconv.ParseUint(string(after), 10, 64)
+	a, errA := strconv.ParseUint(string(prev), 10, 64)
 	b, errB := strconv.ParseUint(string(sigC), 10, 64)
 	if errA != nil || errB != nil {
 		// Non-numeric cursors fall back to lexical comparison.
-		return strings.Compare(string(sigC), string(after)) > 0
+		return strings.Compare(string(sigC), string(prev)) > 0
 	}
 	return b > a
 }

@@ -282,7 +282,10 @@ func TestObservationSourceEventEnum(t *testing.T) {
 	}
 }
 
-func TestCursorAfter(t *testing.T) {
+func TestHerdrEventSource_After(t *testing.T) {
+	// Cursor ordering is adapter-owned: the orchestrator calls After and never
+	// parses or compares cursors itself.
+	src := NewHerdrEventSource("test-s")
 	cases := []struct {
 		sig, after EventCursor
 		want       bool
@@ -298,8 +301,8 @@ func TestCursorAfter(t *testing.T) {
 		{"a1", "a2", false},
 	}
 	for _, tc := range cases {
-		if got := CursorAfter(tc.sig, tc.after); got != tc.want {
-			t.Errorf("CursorAfter(%q, %q) = %v, want %v", tc.sig, tc.after, got, tc.want)
+		if got := src.After(tc.sig, tc.after); got != tc.want {
+			t.Errorf("After(%q, %q) = %v, want %v", tc.sig, tc.after, got, tc.want)
 		}
 	}
 }

@@ -645,6 +645,14 @@ func (h *HerdrBackend) Wait(ctx context.Context, endpoint EndpointRef, after Eve
 	return src.Wait(ctx, endpoint, after)
 }
 
+// After implements the adapter-owned cursor ordering for the herdr surface
+// (BEO-17/P1b). See HerdrEventSource.After: cursor semantics stay adapter-
+// owned; the orchestrator never parses or compares cursors itself.
+func (h *HerdrBackend) After(next, prev EventCursor) bool {
+	src := &HerdrEventSource{Session: h.Session, CLIPath: ""}
+	return src.After(next, prev)
+}
+
 // Capability probes the installed herdr CLI and returns capability info.
 // It discovers the CLI path from PATH resolution (not a stored field) to
 // reflect actual runtime state. The result is suitable for caching by callers
