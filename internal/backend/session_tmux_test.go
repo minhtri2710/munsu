@@ -343,21 +343,37 @@ func TestTmux_Alive_ServerFailureIsNotPaneNotFound(t *testing.T) {
 		})
 	}
 
-	// Control: the same harness must still yield ErrPaneNotFound for an exact
-	// per-target absence, so the assertions above are discrimination, not a
-	// blanket "never ErrPaneNotFound".
-	t.Run("target absent is ErrPaneNotFound", func(t *testing.T) {
-		fakeFailingTmux(t, "can't find window: @99999")
+	// Counterpart: the same harness must still yield ErrPaneNotFound for an
+	// exact per-target absence, so the assertions above are discrimination, not
+	// a blanket "never ErrPaneNotFound". One case per absence wording tmux can
+	// emit, so narrowing the classification — the dangerous direction, where a
+	// dead pane starts reading as an operational error and the task looks alive
+	// — turns this test red.
+	absent := []struct {
+		name string
+		msg  string
+	}{
+		{"can't find window", "can't find window: @99999"},
+		{"can't find pane", "can't find pane: %9"},
+		{"can't find session", "can't find session: nope"},
+		{"no such window", "no such window: @99999"},
+		{"no such pane", "no such pane: %9"},
+		{"no such session", "no such session: nope"},
+	}
+	for _, tc := range absent {
+		t.Run("target absent is ErrPaneNotFound: "+tc.name, func(t *testing.T) {
+			fakeFailingTmux(t, tc.msg)
 
-		tk := &TmuxBackend{}
-		alive, err := tk.CheckAlive("@99999")
-		if alive {
-			t.Error("CheckAlive returned true for an absent window")
-		}
-		if !errors.Is(err, ErrPaneNotFound) {
-			t.Errorf("CheckAlive err = %v, want ErrPaneNotFound", err)
-		}
-	})
+			tk := &TmuxBackend{}
+			alive, err := tk.CheckAlive("@99999")
+			if alive {
+				t.Error("CheckAlive returned true for an absent window")
+			}
+			if !errors.Is(err, ErrPaneNotFound) {
+				t.Errorf("CheckAlive err = %v for %q, want ErrPaneNotFound", err, tc.msg)
+			}
+		})
+	}
 }
 
 // TestTmux_Backend_NotFound tests every method returns an error when tmux is missing.
