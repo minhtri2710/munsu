@@ -675,9 +675,15 @@ func TestEventWaiter_SnapshotCursorStateAtomic(t *testing.T) {
 // caller's deferred cancel tears A down (context.Canceled) with the budget
 // untouched; if B were starved behind A, A would run to the shared deadline
 // (context.DeadlineExceeded) and B would only be looked at afterwards. That
-// distinction is a property of the wait's shape, so no amount of runner
-// slowness changes the verdict — a starved fan-out fails on a fast machine
-// and a healthy one passes on a hopelessly slow one.
+// distinction is a property of the wait's shape, so runner slowness does not
+// change the verdict — a starved fan-out fails on a fast machine, and a
+// healthy one passes on any machine slow enough to still finish inside the 2s
+// budget.
+//
+// The trade-off, stated plainly: this test is ORDERING-ONLY. It bounds no
+// latency at all below the 2s budget — sleep a second before the fan-out loop
+// and it still passes. A wake-latency regression that stays under budget is
+// out of scope here and needs its own (benchmark-shaped) guard.
 func TestEventWaiter_WaitForSignal_MultiEndpointWake(t *testing.T) {
 	home := t.TempDir()
 	blockSrc := &blockingEventSource{release: make(chan struct{}), exited: make(chan error, 1)}
@@ -702,11 +708,27 @@ func TestEventWaiter_WaitForSignal_MultiEndpointWake(t *testing.T) {
 	}
 
 	// A's wait is already unblocked here: WaitForSignal's deferred cancel runs
-	// before it returns, so this receive cannot hang on a healthy fan-out.
-	reason := <-blockSrc.exited
-	if !errors.Is(reason, context.Canceled) {
-		t.Fatalf("A's blocking wait ended with %v, want context.Canceled: B's signal was "+
-			"delivered only after A consumed the shared budget, i.e. B was starved behind A", reason)
+	// before it returns, so this receive cannot hang on a healthy fan-out. The
+	// timeout is not for that case — it is for the regression where the fan-out
+	// never waits on A at all: an unguarded receive would then block until
+	// `go test -timeout` panics the whole package (10 minutes on CI) instead of
+	// failing this one test in seconds.
+	//
+	// context.Canceled is unambiguous here only because it is paired with the
+	// outcome != EventWaitSignal gate above AND because ctx is
+	// context.Background(): the only cancel that can reach A is WaitForSignal's
+	// own deferred one. If anyone later passes a cancellable ctx into this test,
+	// that pair weakens and the assertion needs rethinking.
+	select {
+	case reason := <-blockSrc.exited:
+		if !errors.Is(reason, context.Canceled) {
+			t.Fatalf("A's blocking wait ended with %v, want context.Canceled: the fan-out's "+
+				"teardown of A did not happen as expected — either B's signal was delivered "+
+				"only after A consumed the shared budget (B starved behind A), or the "+
+				"deferred cancel never ran", reason)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("A's wait never ended: the fan-out never waited on A at all")
 	}
 }
 
