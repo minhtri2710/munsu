@@ -30,13 +30,24 @@ die() { echo "::error::$*" >&2; exit 1; }
 
 # Constraint lines, one raw expression per line ("integration", "!darwin && !linux", ...).
 #
-# `[[:space:]]` rather than a literal space, because that is the grammar: go/build
-# accepts any whitespace between `//go:build` and the expression, so
-# `//go:build<TAB>integration` is a real constraint. Matching only a space made a
-# tab-written tag invisible to the derivation -- the same fail-open this script
-# exists to prevent. (No whitespace is allowed between `//` and `go:build`.)
+# Every pattern below follows go/build's grammar rather than the one spelling
+# people usually write, because each deviation was a silent fail-open:
+#
+#   - go/build trims each line before matching, so leading whitespace is allowed:
+#     `<TAB>//go:build integration` is a real constraint. Verified on go1.26.5 --
+#     `go list` excludes the file without the tag and includes it with the tag.
+#     Hence `^[[:space:]]*//`, not `^//`.
+#   - any whitespace separates `//go:build` from the expression, so
+#     `//go:build<TAB>integration` counts too. Hence `[[:space:]]`, not a space.
+#   - `go:build` must follow `//` immediately; `// go:build x` is just a comment.
+#
+# Anchoring at column 0 or on a single literal space made such a file invisible
+# to the derivation: its package dropped out of the lane and its tag never
+# reached the manifest, with `check` green. That is the exact failure this
+# script exists to prevent, so the patterns match what the toolchain honors.
 constraints() {
-	grep -rh --include='*.go' -E '^//go:build[[:space:]]' "$ROOT" | sed 's|^//go:build[[:space:]]*||'
+	grep -rh --include='*.go' -E '^[[:space:]]*//go:build[[:space:]]' "$ROOT" |
+		sed -E 's|^[[:space:]]*//go:build[[:space:]]*||'
 }
 
 # "file<TAB>expression" pairs for every //go:build line, so checks can name the
@@ -44,7 +55,7 @@ constraints() {
 # the path:linenum:content prefix that GNU grep prints anyway, so the sed below
 # also works on BSD grep, where -H alone omits the line number.
 constraint_pairs() {
-	grep -rHn --include='*.go' -E '^//go:build[[:space:]]' "$ROOT" |
+	grep -rHn --include='*.go' -E '^[[:space:]]*//go:build[[:space:]]' "$ROOT" |
 		sed -E 's|^(.*):[0-9]+:[[:space:]]*//go:build[[:space:]]*(.*)$|\1\t\2|'
 }
 
@@ -85,7 +96,7 @@ tag_terms() {
 packages() {
 	local tag="$1" dirs
 	[ -n "$tag" ] || die "packages: missing tag"
-	dirs="$(grep -rlE "^//go:build\b.*\b${tag}\b" --include='*.go' "$ROOT" |
+	dirs="$(grep -rlE "^[[:space:]]*//go:build\b.*\b${tag}\b" --include='*.go' "$ROOT" |
 		xargs -n1 dirname | sed "s|^${ROOT}|.|" |
 		{ grep -vE '/(testdata|[_.][^/]*)(/|$)' || true; } | sort -u)"
 	[ -n "$dirs" ] || die "no package carries build tag '${tag}' -- stale lane or manifest entry"
@@ -125,10 +136,10 @@ check() {
 	# vendor tree. Deal with it then -- do not pre-add an exclusion for a directory
 	# that does not exist, since that is just another hole waiting to be filled.
 	local legacy
-	legacy="$( { grep -rl --include='*.go' -E '^//[[:space:]]*\+build([[:space:]]|$)' "$ROOT" || true; } |
+	legacy="$( { grep -rl --include='*.go' -E '^[[:space:]]*//[[:space:]]*\+build([[:space:]]|$)' "$ROOT" || true; } |
 		while IFS= read -r f; do
 			[ -n "$f" ] || continue
-			grep -qE '^//go:build[[:space:]]' "$f" || echo "${f#"$ROOT"/}"
+			grep -qE '^[[:space:]]*//go:build[[:space:]]' "$f" || echo "${f#"$ROOT"/}"
 		done)"
 	if [ -n "$legacy" ]; then
 		echo "::error::legacy '// +build' line with no '//go:build' line -- run gofmt on:" >&2
