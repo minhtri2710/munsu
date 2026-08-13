@@ -431,6 +431,124 @@ func TestEventWaiter_WaitForSignal_ConcurrentSameIncarnationOrderedEvents(t *tes
 	}
 }
 
+// TestEventWaiter_WaitForSignal_SeededSnapshotRolloverRejectsStale is the
+// blocker ce0cded2 regression: cursor, recorded incarnation, and rollover
+// generation are captured in ONE atomic pre-wait snapshot, so an old in-flight
+// waiter can never read the old cursor together with the new generation (a
+// TOCTOU that would defeat the stale guard). The test seeds an old cursor 42
+// under inc-old, starts an old waiter that snapshots and blocks, commits a
+// rollover (new cursor 1), then releases the old waiter (returns cursor 43):
+// the stale result must be rejected and the new stream's next event (cursor 2)
+// must still be accepted.
+func TestEventWaiter_WaitForSignal_SeededSnapshotRolloverRejectsStale(t *testing.T) {
+	ep := backend.EndpointRef{Backend: "herdr", Handle: "w:p"}
+
+	seedSrc := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: ep, Incarnation: "inc-old", Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "42"},
+	}}
+	oldSrc := &gatedEventSource{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		sig: backend.ObservationSignal{
+			Endpoint:    ep,
+			Incarnation: "inc-old",
+			Activity:    backend.ActivityIdle,
+			Source:      backend.SourceEvent,
+			Cursor:      "43",
+		},
+	}
+	newSrc := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: ep, Incarnation: "inc-new", Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "1"},
+		{Endpoint: ep, Incarnation: "inc-new", Activity: backend.ActivityIdle, Source: backend.SourceEvent, Cursor: "2"},
+	}}
+	w := NewEventWaiter(staticEventPort(
+		EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: seedSrc},
+		EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: oldSrc},
+		EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: newSrc},
+	))
+	esOld := EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: oldSrc}
+	esNew := EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: newSrc}
+
+	// Seed: old incarnation commits cursor 42 (state {inc-old, 42, gen 1}).
+	_, outcome := w.waitEndpoint(context.Background(), EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: seedSrc})
+	if outcome != EventWaitSignal {
+		t.Fatalf("seed outcome = %v, want signal", outcome)
+	}
+
+	// Old waiter A starts, captures its atomic snapshot (after=42, inc-old,
+	// gen 1), then blocks inside Source.Wait.
+	doneOld := make(chan struct{})
+	var oldOutcome EventWaitOutcome
+	go func() {
+		defer close(doneOld)
+		_, oldOutcome = w.waitEndpoint(context.Background(), esOld)
+	}()
+	<-oldSrc.entered
+
+	// Rollover: new incarnation commits cursor 1.
+	sig, outcome := w.waitEndpoint(context.Background(), esNew)
+	if outcome != EventWaitSignal || sig.Cursor != "1" {
+		t.Fatalf("rollover commit = (outcome %v, cursor %q), want (signal, %q)", outcome, sig.Cursor, "1")
+	}
+
+	// Old waiter A returns cursor 43: its snapshot predates the rollover
+	// (generation advanced), so the result is stale — rejected WITHOUT rolling
+	// state back to inc-old.
+	close(oldSrc.release)
+	<-doneOld
+	if oldOutcome != EventWaitTimeout {
+		t.Fatalf("old in-flight result outcome = %v, want timeout (stale snapshot generation rejected)", oldOutcome)
+	}
+
+	// The new stream's next event (cursor 2) is still accepted.
+	sig, outcome = w.waitEndpoint(context.Background(), esNew)
+	if outcome != EventWaitSignal || sig.Cursor != "2" {
+		t.Fatalf("cursor 2 after rejected rollback = (outcome %v, cursor %q), want (signal, %q)", outcome, sig.Cursor, "2")
+	}
+}
+
+// TestEventWaiter_SnapshotCursorStateAtomic verifies the single pre-wait
+// snapshot returns cursor, recorded incarnation, and rollover generation as
+// one consistent view (no split read), and that the 'after' hint is
+// incarnation-scoped.
+func TestEventWaiter_SnapshotCursorStateAtomic(t *testing.T) {
+	ep := backend.EndpointRef{Backend: "herdr", Handle: "w:p"}
+	w := NewEventWaiter(staticEventPort())
+
+	// No state yet: empty snapshot.
+	snap := w.snapshotCursorState(EndpointSource{Endpoint: ep, Incarnation: "inc-old"})
+	if snap.after != "" || snap.incarnation != "" || snap.generation != 0 {
+		t.Fatalf("empty-state snapshot = %+v, want {after:\"\", inc:\"\", gen:0}", snap)
+	}
+
+	// Seed: old incarnation commits cursor 42 (generation advances to 1).
+	w.recordCursor(EndpointSource{Endpoint: ep, Incarnation: "inc-old"}, "42")
+	snap = w.snapshotCursorState(EndpointSource{Endpoint: ep, Incarnation: "inc-old"})
+	if snap.after != "42" || snap.incarnation != "inc-old" || snap.generation != 1 {
+		t.Fatalf("old-state snapshot = %+v, want {after:42, inc:inc-old, gen:1}", snap)
+	}
+
+	// Same-incarnation cursor advance leaves the rollover generation stable
+	// (cursor 43, still inc-old, gen 1) — the token changes ONLY on rollover.
+	w.recordCursor(EndpointSource{Endpoint: ep, Incarnation: "inc-old"}, "43")
+	snap = w.snapshotCursorState(EndpointSource{Endpoint: ep, Incarnation: "inc-old"})
+	if snap.after != "43" || snap.incarnation != "inc-old" || snap.generation != 1 {
+		t.Fatalf("advanced same-incarnation snapshot = %+v, want {after:43, inc:inc-old, gen:1}", snap)
+	}
+
+	// Rollover: new incarnation commits cursor 1; generation advances and the
+	// old-incarnation waiter sees a fresh 'after' hint.
+	w.recordCursor(EndpointSource{Endpoint: ep, Incarnation: "inc-new"}, "1")
+	snap = w.snapshotCursorState(EndpointSource{Endpoint: ep, Incarnation: "inc-old"})
+	if snap.after != "" || snap.incarnation != "inc-new" || snap.generation != 2 {
+		t.Fatalf("post-rollover snapshot (old es) = %+v, want {after:\"\", inc:inc-new, gen:2}", snap)
+	}
+	snap = w.snapshotCursorState(EndpointSource{Endpoint: ep, Incarnation: "inc-new"})
+	if snap.after != "1" || snap.incarnation != "inc-new" || snap.generation != 2 {
+		t.Fatalf("post-rollover snapshot (new es) = %+v, want {after:1, inc:inc-new, gen:2}", snap)
+	}
+}
+
 // TestEventWaiter_WaitForSignal_MultiEndpointWake is the blocker-3
 // regression: endpoint A blocks for its whole budget while endpoint B has a
 // signal ready. The fan-out must deliver B's signal promptly instead of

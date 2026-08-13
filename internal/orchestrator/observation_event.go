@@ -258,14 +258,13 @@ func (w *EventWaiter) WaitForSignal(ctx context.Context, homeDir string, timeout
 // rejected before any cursor handling so a malformed/blank/non-event signal
 // can never wake the watcher.
 func (w *EventWaiter) waitEndpoint(ctx context.Context, es EndpointSource) (backend.ObservationSignal, EventWaitOutcome) {
-	after := w.lastCursor(es)
-	// Capture the cursor-state generation BEFORE the blocking wait. At commit
-	// time a generation mismatch means the state advanced while this waiter
-	// was blocked (e.g. a newer incarnation committed after a rollover), so
-	// this in-flight result is stale: it must be rejected WITHOUT rolling back
-	// state, and the next wait for the current incarnation proceeds fresh.
-	gen := w.generationFor(es.Endpoint)
-	sig, werr := es.Source.Wait(ctx, es.Endpoint, after)
+	// ONE atomic snapshot before the blocking wait: cursor (as the adapter
+	// 'after' hint), recorded incarnation, and rollover generation are read
+	// under a single per-endpoint lock acquisition, so a rollover can never be
+	// observed between the cursor and the generation reads (TOCTOU). At commit
+	// the captured token is compared under the lock before After/mutation.
+	snap := w.snapshotCursorState(es)
+	sig, werr := es.Source.Wait(ctx, es.Endpoint, snap.after)
 	if werr != nil {
 		if errors.Is(werr, context.DeadlineExceeded) || errors.Is(werr, context.Canceled) {
 			// Bounded wait elapsed for this source — normal; the shared
@@ -310,11 +309,11 @@ func (w *EventWaiter) waitEndpoint(ctx context.Context, es EndpointSource) (back
 	// via the adapter-owned After compare-and-record below.
 	lk := w.lockFor(es.Endpoint)
 	lk.Lock()
-	if w.staleRolloverGuard(es, gen) {
+	if w.staleRolloverGuard(es, snap) {
 		lk.Unlock()
 		return backend.ObservationSignal{}, EventWaitTimeout // stale old-incarnation in-flight result
 	}
-	last := w.lastCursor(es)
+	last := w.currentCursor(es)
 	if !es.Source.After(sig.Cursor, last) {
 		lk.Unlock()
 		return backend.ObservationSignal{}, EventWaitTimeout // concurrent duplicate/out-of-order
@@ -344,13 +343,49 @@ func betterOutcome(a, b EventWaitOutcome) EventWaitOutcome {
 	return a
 }
 
-// lastCursor returns the last consumed cursor for an exact bound endpoint,
-// scoped to the expected incarnation. If the expected incarnation differs from
-// the recorded one (a launch rollover), the cursor is treated as empty so the
-// new stream is not suppressed by stale state; the caller (under the
-// per-endpoint lock) then records the new incarnation along with the accepted
-// cursor.
-func (w *EventWaiter) lastCursor(es EndpointSource) backend.EventCursor {
+// cursorSnapshot is the single pre-wait view of the cursor state for one exact
+// bound endpoint: the incarnation-scoped 'after' hint, the recorded
+// incarnation, and the rollover generation, all read under ONE per-endpoint
+// lock acquisition. A rollover can therefore never be observed between the
+// cursor and the generation reads, so an old in-flight waiter can never
+// capture the new generation together with the old cursor (which would defeat
+// the stale-rollover guard at commit).
+type cursorSnapshot struct {
+	after       backend.EventCursor // incarnation-scoped cursor for the adapter hint
+	incarnation string              // recorded incarnation at snapshot time
+	generation  uint64              // rollover generation at snapshot time
+}
+
+// snapshotCursorState atomically reads cursor (incarnation-scoped 'after'
+// hint), recorded incarnation, and rollover generation for an exact bound
+// endpoint under the per-endpoint lock (microseconds — never across a blocking
+// wait). The waiter uses this single snapshot before Source.Wait and compares
+// the captured token against the current state at commit.
+func (w *EventWaiter) snapshotCursorState(es EndpointSource) cursorSnapshot {
+	lk := w.lockFor(es.Endpoint)
+	lk.Lock()
+	defer lk.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	st := w.states[endpointKey(es.Endpoint)]
+	if st == nil {
+		return cursorSnapshot{}
+	}
+	snap := cursorSnapshot{incarnation: st.incarnation, generation: st.generation}
+	if es.Incarnation != "" && st.incarnation != es.Incarnation {
+		snap.after = "" // expected incarnation differs: fresh stream
+	} else {
+		snap.after = st.cursor
+	}
+	return snap
+}
+
+// currentCursor returns the CURRENT cursor for an exact bound endpoint,
+// scoped to the expected incarnation (same scoping as the snapshot's 'after'
+// hint). It is re-read under the per-endpoint lock at commit time so the
+// adapter-owned After compare-and-record operates on the state as it is now,
+// not as it was when the wait started.
+func (w *EventWaiter) currentCursor(es EndpointSource) backend.EventCursor {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	st := w.states[endpointKey(es.Endpoint)]
@@ -363,29 +398,15 @@ func (w *EventWaiter) lastCursor(es EndpointSource) backend.EventCursor {
 	return st.cursor
 }
 
-// generationFor returns the rollover generation for an exact bound endpoint
-// (0 when no state has been recorded yet). It is captured before a blocking
-// Source.Wait and compared at commit time to reject stale in-flight results
-// from a superseded incarnation.
-func (w *EventWaiter) generationFor(endpoint backend.EndpointRef) uint64 {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	st := w.states[endpointKey(endpoint)]
-	if st == nil {
-		return 0
-	}
-	return st.generation
-}
-
 // staleRolloverGuard reports whether an in-flight wait result is stale: the
-// state moved to a DIFFERENT expected incarnation while this waiter was
-// blocked in Source.Wait (a rollover committed by another waiter), so the
-// result belongs to the superseded stream. Same-incarnation concurrent
-// ordered events never trip it — the generation is stable within an
-// incarnation and only advances on a rollover — and a waiter that itself
-// initiates the rollover holds the captured generation, so it is accepted and
+// current state's rollover token (incarnation+generation) moved past the
+// token captured in the single pre-wait snapshot, meaning a rollover was
+// committed by another waiter while this one was blocked in Source.Wait, so
+// the result belongs to the superseded stream. Same-incarnation concurrent
+// ordered events keep a stable token and never trip it; a waiter that itself
+// initiates the rollover holds the captured token, so it is accepted and
 // advances the token on record.
-func (w *EventWaiter) staleRolloverGuard(es EndpointSource, gen uint64) bool {
+func (w *EventWaiter) staleRolloverGuard(es EndpointSource, snap cursorSnapshot) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	st := w.states[endpointKey(es.Endpoint)]
@@ -395,7 +416,7 @@ func (w *EventWaiter) staleRolloverGuard(es EndpointSource, gen uint64) bool {
 	if es.Incarnation == "" || st.incarnation == "" || st.incarnation == es.Incarnation {
 		return false
 	}
-	return st.generation != gen
+	return st.generation != snap.generation
 }
 
 // recordCursor stores the accepted cursor for an exact bound endpoint, along
