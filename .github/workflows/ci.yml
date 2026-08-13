@@ -47,6 +47,24 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+      # Backend integration prerequisites (internal/backend under test): the
+      # herdr Resolve/BackendForTask tests require the binary to be resolvable
+      # on PATH (capability-presence gate only — they never invoke the CLI,
+      # and command-protocol tests install their own behavior-rich fake
+      # herdr), and the tmux tests require a live server, which ubuntu-latest
+      # does not provide by default. herdr is deliberately stubbed rather than
+      # installed via a network installer: the tests only exec.LookPath it,
+      # so a real download would add supply-chain and version-drift failure
+      # modes with no coverage gain.
+      - name: Prepare backend integration prerequisites
+        run: |
+          set -eu
+          bin_dir="$RUNNER_TEMP/munsu-ci-bin"
+          mkdir -p "$bin_dir"
+          printf '#!/bin/sh\nexit 0\n' > "$bin_dir/herdr"
+          chmod +x "$bin_dir/herdr"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          tmux new-session -d -s munsu-ci
       # `go test ./...` never builds integration-tagged files, so this suite
       # was invisible to CI. Packages are listed explicitly: ./internal/cli is
       # excluded because its integration tests fail on main (BEO-20 follow-up),
