@@ -219,13 +219,31 @@ func TestEventWaiter_WaitForSignal_InvalidSourceRejected(t *testing.T) {
 // queued caller's bounded wait is not blocked by an in-flight long wait.
 type blockingEventSource struct {
 	release chan struct{} // optional external release; when closed, Wait returns a signal
+	// exited, when non-nil, records WHY the block ended: the context error on
+	// ctx.Done (context.Canceled when the caller tore the fan-out down after
+	// another endpoint won, context.DeadlineExceeded when the shared budget
+	// ran out) or nil when released externally. Buffered by the test; the
+	// send is non-blocking so an unread channel never stalls a fake.
+	exited chan error
+}
+
+func (b *blockingEventSource) recordExit(reason error) {
+	if b.exited == nil {
+		return
+	}
+	select {
+	case b.exited <- reason:
+	default:
+	}
 }
 
 func (b *blockingEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef, after backend.EventCursor) (backend.ObservationSignal, error) {
 	select {
 	case <-ctx.Done():
+		b.recordExit(ctx.Err())
 		return backend.ObservationSignal{}, ctx.Err()
 	case <-b.release:
+		b.recordExit(nil)
 		return backend.ObservationSignal{
 			Endpoint: endpoint,
 			Activity: backend.ActivityIdle,
@@ -648,9 +666,21 @@ func TestEventWaiter_SnapshotCursorStateAtomic(t *testing.T) {
 // regression: endpoint A blocks for its whole budget while endpoint B has a
 // signal ready. The fan-out must deliver B's signal promptly instead of
 // starving B behind A's blocking wait.
+//
+// "Promptly" is asserted as ORDERING, not wall-clock. The old guard measured
+// elapsed <= 250ms against a 300ms budget — 1.2x headroom, so one delayed
+// goroutine wake-up on a loaded runner or plain -race overhead could redden
+// `main` with no regression behind it. Instead, A's blocking source records
+// why its wait ended: on a healthy fan-out B's signal wins first and the
+// caller's deferred cancel tears A down (context.Canceled) with the budget
+// untouched; if B were starved behind A, A would run to the shared deadline
+// (context.DeadlineExceeded) and B would only be looked at afterwards. That
+// distinction is a property of the wait's shape, so no amount of runner
+// slowness changes the verdict — a starved fan-out fails on a fast machine
+// and a healthy one passes on a hopelessly slow one.
 func TestEventWaiter_WaitForSignal_MultiEndpointWake(t *testing.T) {
 	home := t.TempDir()
-	blockSrc := &blockingEventSource{release: make(chan struct{})}
+	blockSrc := &blockingEventSource{release: make(chan struct{}), exited: make(chan error, 1)}
 	sigSrc := &fakeEventSource{signals: []backend.ObservationSignal{
 		{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:q"}, Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "1"},
 	}}
@@ -660,17 +690,23 @@ func TestEventWaiter_WaitForSignal_MultiEndpointWake(t *testing.T) {
 	)
 	w := NewEventWaiter(port)
 
-	start := time.Now()
-	sig, outcome := w.WaitForSignal(context.Background(), home, 300*time.Millisecond)
-	elapsed := time.Since(start)
+	// The budget is a safety net, not the signal under test: the healthy path
+	// never spends it (B's signal is ready before the wait starts) and nothing
+	// asserts how much of it elapsed.
+	sig, outcome := w.WaitForSignal(context.Background(), home, 2*time.Second)
 	if outcome != EventWaitSignal {
 		t.Fatalf("outcome = %v, want signal from B", outcome)
 	}
 	if sig.Endpoint.Handle != "w:q" {
 		t.Errorf("signal endpoint = %+v, want w:q", sig.Endpoint)
 	}
-	if elapsed > 250*time.Millisecond {
-		t.Fatalf("B's signal was delayed by A's blocking wait: elapsed %v", elapsed)
+
+	// A's wait is already unblocked here: WaitForSignal's deferred cancel runs
+	// before it returns, so this receive cannot hang on a healthy fan-out.
+	reason := <-blockSrc.exited
+	if !errors.Is(reason, context.Canceled) {
+		t.Fatalf("A's blocking wait ended with %v, want context.Canceled: B's signal was "+
+			"delivered only after A consumed the shared budget, i.e. B was starved behind A", reason)
 	}
 }
 
