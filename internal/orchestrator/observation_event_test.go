@@ -46,9 +46,10 @@ func (f *fakeEventSource) After(next, prev backend.EventCursor) bool {
 }
 
 func (f *fakeEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef, after backend.EventCursor) (backend.ObservationSignal, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.waits++
+	// A real adapter (e.g. exec.CommandContext) blocks without holding any
+	// internal lock, and its bounded wait is driven by the context. Model that
+	// here so concurrent callers' waits are genuinely cancellable and a
+	// queued caller's short deadline is never masked by a long in-flight wait.
 	if f.timeout > 0 {
 		select {
 		case <-ctx.Done():
@@ -56,19 +57,34 @@ func (f *fakeEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef
 		case <-time.After(f.timeout):
 		}
 	}
-	if len(f.errors) > 0 {
-		err := f.errors[0]
+
+	f.mu.Lock()
+	f.waits++
+	hasError := len(f.errors) > 0
+	hasSignal := len(f.signals) > 0
+	closed := f.closed
+	var err error
+	var sig backend.ObservationSignal
+	if hasError {
+		err = f.errors[0]
 		f.errors = f.errors[1:]
+	} else if hasSignal {
+		sig = f.signals[0]
+		f.signals = f.signals[1:]
+	}
+	f.mu.Unlock()
+
+	if hasError {
 		return backend.ObservationSignal{}, err
 	}
-	if len(f.signals) > 0 {
-		sig := f.signals[0]
-		f.signals = f.signals[1:]
+	if hasSignal {
 		return sig, nil
 	}
-	if f.closed {
+	if closed {
 		return backend.ObservationSignal{}, backend.ErrEventUnsupported
 	}
+	// No scripted outcome left: block until the bounded context elapses
+	// (normal timeout), without holding the internal lock across the block.
 	select {
 	case <-ctx.Done():
 		return backend.ObservationSignal{}, ctx.Err()
@@ -161,17 +177,111 @@ func TestEventWaiter_WaitForSignal_InvalidSourceRejected(t *testing.T) {
 	// A signal with a non-event source or invalid activity must be rejected
 	// even when its endpoint is exact: Valid() is enforced before cursor
 	// handling.
-	src := &fakeEventSource{signals: []backend.ObservationSignal{
-		{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Activity: backend.ActivityBusy, Source: backend.SourceInvalid, Cursor: "42"},
-	}}
+	for _, src := range []backend.ObservationSource{backend.SourceInvalid, backend.SourceProbe, backend.SourceDerived} {
+		src := &fakeEventSource{signals: []backend.ObservationSignal{
+			{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Activity: backend.ActivityBusy, Source: src, Cursor: "42"},
+		}}
+		port := staticEventPort(EndpointSource{
+			Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
+			Source:   src,
+		})
+		w := NewEventWaiter(port)
+		_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), 50*time.Millisecond)
+		if outcome != EventWaitTimeout {
+			t.Fatalf("source %v: outcome = %v, want timeout (invalid signal rejected)", src, outcome)
+		}
+	}
+}
+
+// blockingEventSource models a real adapter whose Wait blocks until the
+// context is done, WITHOUT holding an internal lock across the block (like
+// exec.CommandContext on the real herdr adapter). It is used to prove that a
+// queued caller's bounded wait is not blocked by an in-flight long wait.
+type blockingEventSource struct {
+	release chan struct{} // optional external release; when closed, Wait returns a signal
+}
+
+func (b *blockingEventSource) Wait(ctx context.Context, endpoint backend.EndpointRef, after backend.EventCursor) (backend.ObservationSignal, error) {
+	select {
+	case <-ctx.Done():
+		return backend.ObservationSignal{}, ctx.Err()
+	case <-b.release:
+		return backend.ObservationSignal{
+			Endpoint: endpoint,
+			Activity: backend.ActivityIdle,
+			Source:   backend.SourceEvent,
+			Cursor:   "1",
+		}, nil
+	}
+}
+
+func (b *blockingEventSource) After(next, prev backend.EventCursor) bool { return next != prev }
+
+// TestEventWaiter_WaitForSignal_ConcurrentBoundedWait is the blocker-2
+// regression: caller A holds a long in-flight wait on an endpoint while caller
+// B waits on the SAME endpoint with a short timeout. B must return within its
+// own bound (the per-endpoint mutex is never held across the blocking
+// Source.Wait).
+func TestEventWaiter_WaitForSignal_ConcurrentBoundedWait(t *testing.T) {
+	home := t.TempDir()
+	src := &blockingEventSource{release: make(chan struct{})}
 	port := staticEventPort(EndpointSource{
 		Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"},
 		Source:   src,
 	})
 	w := NewEventWaiter(port)
-	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), 50*time.Millisecond)
+
+	// Caller A: long bounded wait that blocks the source.
+	doneA := make(chan struct{})
+	go func() {
+		defer close(doneA)
+		w.WaitForSignal(context.Background(), home, 2*time.Second)
+	}()
+
+	// Let A's wait start, then caller B with a short bound on the same
+	// endpoint must return within its own bound.
+	time.Sleep(20 * time.Millisecond)
+	start := time.Now()
+	_, outcome := w.WaitForSignal(context.Background(), home, 50*time.Millisecond)
+	elapsed := time.Since(start)
 	if outcome != EventWaitTimeout {
-		t.Fatalf("outcome = %v, want timeout (invalid signal rejected)", outcome)
+		t.Fatalf("outcome = %v, want timeout", outcome)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("B was blocked by A's long wait: elapsed %v, want <= ~50ms", elapsed)
+	}
+
+	close(src.release)
+	<-doneA
+}
+
+// TestEventWaiter_WaitForSignal_MultiEndpointWake is the blocker-3
+// regression: endpoint A blocks for its whole budget while endpoint B has a
+// signal ready. The fan-out must deliver B's signal promptly instead of
+// starving B behind A's blocking wait.
+func TestEventWaiter_WaitForSignal_MultiEndpointWake(t *testing.T) {
+	home := t.TempDir()
+	blockSrc := &blockingEventSource{release: make(chan struct{})}
+	sigSrc := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:q"}, Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "1"},
+	}}
+	port := staticEventPort(
+		EndpointSource{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:p"}, Source: blockSrc},
+		EndpointSource{Endpoint: backend.EndpointRef{Backend: "herdr", Handle: "w:q"}, Source: sigSrc},
+	)
+	w := NewEventWaiter(port)
+
+	start := time.Now()
+	sig, outcome := w.WaitForSignal(context.Background(), home, 300*time.Millisecond)
+	elapsed := time.Since(start)
+	if outcome != EventWaitSignal {
+		t.Fatalf("outcome = %v, want signal from B", outcome)
+	}
+	if sig.Endpoint.Handle != "w:q" {
+		t.Errorf("signal endpoint = %+v, want w:q", sig.Endpoint)
+	}
+	if elapsed > 250*time.Millisecond {
+		t.Fatalf("B's signal was delayed by A's blocking wait: elapsed %v", elapsed)
 	}
 }
 
@@ -407,10 +517,30 @@ func TestEventWaitOutcome_PollFallback(t *testing.T) {
 	}
 }
 
-// TestEventLane_EventToReprobe runs the full watcher loop with a fake probe
-// and a scripted event source: a validated signal must trigger an immediate
-// re-probe cycle (probe call), and the watcher must keep running on the ticker
-// when the event lane is degraded. It is the event-to-reprobe contract test.
+func TestBetterOutcome(t *testing.T) {
+	cases := []struct {
+		a, b EventWaitOutcome
+		want EventWaitOutcome
+	}{
+		{EventWaitTimeout, EventWaitTimeout, EventWaitTimeout},
+		{EventWaitTimeout, EventWaitReaderFailure, EventWaitReaderFailure},
+		{EventWaitReaderFailure, EventWaitUnavailable, EventWaitReaderFailure}, // equal rank: first wins
+		{EventWaitUnavailable, EventWaitUnsupported, EventWaitUnsupported},
+		{EventWaitUnsupported, EventWaitProtocolMismatch, EventWaitUnsupported}, // equal rank: first wins
+		{EventWaitProtocolMismatch, EventWaitReaderFailure, EventWaitProtocolMismatch},
+	}
+	for _, tc := range cases {
+		if got := betterOutcome(tc.a, tc.b); got != tc.want {
+			t.Errorf("betterOutcome(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// TestEventLane_EventToReprobe runs the FULL watcher loop (run) with a fake
+// probe, a never-firing ticker, and a scripted event source: a validated
+// signal must trigger an immediate re-probe cycle, and the probe must be
+// invoked with the exact bound endpoint's meta. The ticker never fires, so any
+// probe invocation is attributable to the event lane (event-to-reprobe order).
 func TestEventLane_EventToReprobe(t *testing.T) {
 	homeDir := t.TempDir()
 	mustWriteMeta(t, homeDir, "task-1", map[string]string{"backend": "herdr", "window": "w:p", "endpoint_incarnation": "inc-1", "home": homeDir})
@@ -424,29 +554,63 @@ func TestEventLane_EventToReprobe(t *testing.T) {
 	src := &fakeEventSource{signals: []backend.ObservationSignal{sig}}
 	port := fakeEventPort{sources: []EndpointSource{{Endpoint: sig.Endpoint, Incarnation: "inc-1", Source: src}}}
 
-	stopLane := make(chan struct{})
-	pulses := startEventLane(homeDir, NewEventWaiter(port), stopLane)
+	// Probe records every invocation with its meta (exact binding evidence).
+	var probeMu sync.Mutex
+	var probeCalls []map[string]string
+	probe := countingProbe{fn: func(_ string, meta map[string]string) (bool, error) {
+		probeMu.Lock()
+		defer probeMu.Unlock()
+		probeCalls = append(probeCalls, meta)
+		return true, nil
+	}}
 
-	// Consume the pulse: the lane must push a validated signal quickly.
-	select {
-	case p, ok := <-pulses:
-		if !ok {
-			t.Fatal("event lane closed without a signal")
+	// Never-firing ticker: only the event lane can drive a cycle, so any probe
+	// invocation proves event-to-reprobe.
+	neverTicker := func(time.Duration) *time.Ticker { return time.NewTicker(time.Hour) }
+	sigCh := make(chan os.Signal)
+	done := make(chan *WakeReason, 1)
+	go func() {
+		reason, _ := run(homeDir, neverTicker, sigCh, probe, raceCycleSender{}, raceTestHooks{}, NoopRetirementPort{}, raceTaskStatePort{}, port)
+		done <- reason
+	}()
+
+	// The event lane must deliver the signal and trigger an immediate re-probe
+	// cycle: the probe is invoked with the exact bound endpoint's meta.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		probeMu.Lock()
+		n := len(probeCalls)
+		probeMu.Unlock()
+		if n > 0 {
+			break
 		}
-		if p.outcome != EventWaitSignal {
-			t.Fatalf("pulse outcome = %v, want signal", p.outcome)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no event pulse within 2s")
+		time.Sleep(20 * time.Millisecond)
 	}
-	drainLane(t, pulses, stopLane)
-
-	// The orchestrator-side contract: a signal only triggers a re-probe cycle;
-	// the probe itself re-reads the exact binding. Assert the lane itself never
-	// mutated any lifecycle — the signal carries no lifecycle axis, and the
-	// probe is the only observation authority exercised here.
+	probeMu.Lock()
+	calls := probeCalls
+	probeMu.Unlock()
+	if len(calls) == 0 {
+		t.Fatal("event did not trigger a probe cycle within 3s")
+	}
+	foundExact := false
+	for _, meta := range calls {
+		if meta["window"] == "w:p" && meta["backend"] == "herdr" {
+			foundExact = true
+		}
+	}
+	if !foundExact {
+		t.Errorf("probe never invoked with the exact bound endpoint meta; got %v", calls)
+	}
 	if src.waitCount() == 0 {
-		t.Fatal("event source was never waited on")
+		t.Error("event source was never waited on")
+	}
+
+	// Stop the watcher and drain the lane.
+	close(sigCh)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watcher did not stop after signal")
 	}
 }
 

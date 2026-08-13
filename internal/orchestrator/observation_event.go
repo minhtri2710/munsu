@@ -93,9 +93,10 @@ type ObservationEventPort interface {
 // run: per-endpoint last cursor (in-memory only — no durable event resume
 // across process restarts in P1b), exact-binding validation, duplicate/
 // out-of-order suppression, stale cursor/incarnation rejection, and outcome
-// classification. All per-endpoint cursor bookkeeping is serialized by a
-// per-endpoint lock so concurrent WaitForSignal calls cannot accept the same
-// event twice.
+// classification. The per-endpoint mutex is held ONLY for the short atomic
+// compare-and-advance — never across the blocking Source.Wait — so concurrent
+// WaitForSignal calls keep their own bounded wait and a duplicate can never be
+// accepted twice.
 type EventWaiter struct {
 	port ObservationEventPort
 
@@ -113,9 +114,10 @@ func endpointKey(endpoint backend.EndpointRef) string {
 	return endpoint.Backend + ":" + endpoint.Handle
 }
 
-// lockFor returns the per-endpoint mutex serializing wait+validate+record for
-// one bound endpoint. Different endpoints wait concurrently; the same endpoint
-// is fully serialized so cursor acceptance is atomic.
+// lockFor returns the per-endpoint mutex serializing the atomic cursor
+// compare-and-advance for one bound endpoint. Different endpoints advance
+// concurrently; the same endpoint is serialized only for the microsecond-scale
+// compare-and-advance (never for the blocking Source.Wait).
 func (w *EventWaiter) lockFor(endpoint backend.EndpointRef) *sync.Mutex {
 	key := endpointKey(endpoint)
 	w.mu.Lock()
@@ -133,12 +135,17 @@ func (w *EventWaiter) lockFor(endpoint backend.EndpointRef) *sync.Mutex {
 // EventWaitSignal on success, or the classified fallback outcome. A signal is
 // accepted only when its endpoint identity matches the EXACT bound endpoint
 // (both backend and handle, non-empty — blank or partial identities are
-// rejected before cursor handling), its incarnation (when attested) matches
-// the expected incarnation, and its cursor advances past the last consumed
-// cursor per the adapter's opaque ordering. The wait, validation, and cursor
-// record for one endpoint are serialized per-endpoint so a duplicate can never
-// be accepted twice under concurrent waits. Timeout is a normal outcome — the
-// caller polls.
+// rejected before cursor handling), its source is SourceEvent (probe/derived
+// observations are not native event hints and never wake the watcher), its
+// incarnation (when attested) matches the expected incarnation, and its cursor
+// advances past the last consumed cursor per the adapter's opaque ordering.
+//
+// Bounded wait is preserved under concurrency: the per-endpoint mutex is held
+// only for the atomic compare-and-advance, never during the blocking
+// Source.Wait, so a queued caller's context deadline is always honored. Waits
+// fan out across eligible endpoints so one blocking source cannot starve the
+// others; the first validated signal wins and the remaining waits are
+// cancelled. Timeout is a normal outcome — the caller polls.
 func (w *EventWaiter) WaitForSignal(ctx context.Context, homeDir string, timeout time.Duration) (backend.ObservationSignal, EventWaitOutcome) {
 	if w == nil || w.port == nil {
 		return backend.ObservationSignal{}, EventWaitUnsupported
@@ -147,82 +154,156 @@ func (w *EventWaiter) WaitForSignal(ctx context.Context, homeDir string, timeout
 	if err != nil {
 		return backend.ObservationSignal{}, EventWaitUnavailable
 	}
-	if len(sources) == 0 {
-		// No bound endpoint declares a native event surface: pure polling.
-		return backend.ObservationSignal{}, EventWaitUnsupported
-	}
-
-	deadline := time.Now().Add(timeout)
+	// Fan-out targets: eligible endpoints with a real source and an exact,
+	// non-empty binding. Endpoints without an exact binding are skipped (poll).
+	var eligible []EndpointSource
 	for _, es := range sources {
 		if es.Source == nil {
 			continue
 		}
-		// An exact binding is required: without both non-empty backend and
-		// handle there is nothing to match signals against, so the source is
-		// skipped (poll).
 		if es.Endpoint.Backend == "" || es.Endpoint.Handle == "" {
 			continue
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
+		eligible = append(eligible, es)
+	}
+	if len(eligible) == 0 {
+		if len(sources) == 0 {
+			// No bound endpoint declares a native event surface: pure polling.
+			return backend.ObservationSignal{}, EventWaitUnsupported
+		}
+		// Sources exist but none is eligible (nil source / blank binding):
+		// nothing to wait on this cycle.
+		return backend.ObservationSignal{}, EventWaitTimeout
+	}
+
+	// Shared bounded deadline for all fan-out waits; the first validated
+	// signal wins and the deferred cancel aborts the remaining waits, so one
+	// blocking endpoint can never starve the others.
+	waitCtx, cancel := context.WithDeadline(ctx, time.Now().Add(timeout))
+	defer cancel()
+
+	type endpointResult struct {
+		sig  backend.ObservationSignal
+		wait EventWaitOutcome
+	}
+	results := make(chan endpointResult, len(eligible))
+	for _, es := range eligible {
+		go func(es EndpointSource) {
+			sig, outcome := w.waitEndpoint(waitCtx, es)
+			results <- endpointResult{sig: sig, wait: outcome}
+		}(es)
+	}
+
+	// First validated signal wins; otherwise fall back to the best (most
+	// specific) classified outcome across the fan-out.
+	best := EventWaitTimeout
+	remaining := len(eligible)
+	for remaining > 0 {
+		select {
+		case r := <-results:
+			remaining--
+			if r.wait == EventWaitSignal {
+				// Cancels the remaining in-flight waits via the shared context.
+				return r.sig, EventWaitSignal
+			}
+			best = betterOutcome(best, r.wait)
+		case <-waitCtx.Done():
+			// Shared deadline elapsed. Keep collecting already-finished
+			// results so a concurrently accepted signal is not dropped; the
+			// remaining in-flight waits exit via the cancelled context.
+			for remaining > 0 {
+				select {
+				case r := <-results:
+					remaining--
+					if r.wait == EventWaitSignal {
+						return r.sig, EventWaitSignal
+					}
+					best = betterOutcome(best, r.wait)
+				default:
+					return backend.ObservationSignal{}, best
+				}
+			}
+			return backend.ObservationSignal{}, best
+		}
+	}
+	return backend.ObservationSignal{}, best
+}
+
+// waitEndpoint performs ONE bounded wait for one eligible endpoint. The
+// blocking Source.Wait runs WITHOUT the per-endpoint lock; validation and the
+// atomic compare-and-advance happen after it returns. Invalid signals are
+// rejected before any cursor handling so a malformed/blank/non-event signal
+// can never wake the watcher.
+func (w *EventWaiter) waitEndpoint(ctx context.Context, es EndpointSource) (backend.ObservationSignal, EventWaitOutcome) {
+	after := w.lastCursor(es.Endpoint)
+	sig, werr := es.Source.Wait(ctx, es.Endpoint, after)
+	if werr != nil {
+		if errors.Is(werr, context.DeadlineExceeded) || errors.Is(werr, context.Canceled) {
+			// Bounded wait elapsed for this source — normal; the shared
+			// deadline or a winning signal cancelled it.
 			return backend.ObservationSignal{}, EventWaitTimeout
 		}
-
-		// Per-endpoint serialization: wait, validate, and record for one
-		// endpoint happen under the same lock, so two concurrent waits cannot
-		// observe the same cursor and accept it twice.
-		lk := w.lockFor(es.Endpoint)
-		lk.Lock()
-
-		waitCtx, cancel := context.WithDeadline(ctx, deadline)
-		after := w.lastCursor(es.Endpoint)
-		sig, werr := es.Source.Wait(waitCtx, es.Endpoint, after)
-		cancel()
-
-		if werr != nil {
-			lk.Unlock()
-			if errors.Is(werr, context.DeadlineExceeded) || errors.Is(werr, context.Canceled) {
-				// Bounded wait elapsed for this source; try the next one with
-				// the remaining budget before classifying as a timeout.
-				continue
-			}
-			switch {
-			case errors.Is(werr, backend.ErrEventUnsupported):
-				return backend.ObservationSignal{}, EventWaitUnsupported
-			case errors.Is(werr, backend.ErrEventUnavailable):
-				return backend.ObservationSignal{}, EventWaitUnavailable
-			case errors.Is(werr, backend.ErrEventProtocolMismatch):
-				return backend.ObservationSignal{}, EventWaitProtocolMismatch
-			default:
-				return backend.ObservationSignal{}, EventWaitReaderFailure
-			}
+		switch {
+		case errors.Is(werr, backend.ErrEventUnsupported):
+			return backend.ObservationSignal{}, EventWaitUnsupported
+		case errors.Is(werr, backend.ErrEventUnavailable):
+			return backend.ObservationSignal{}, EventWaitUnavailable
+		case errors.Is(werr, backend.ErrEventProtocolMismatch):
+			return backend.ObservationSignal{}, EventWaitProtocolMismatch
+		default:
+			return backend.ObservationSignal{}, EventWaitReaderFailure
 		}
-
-		// Signal validation (orchestrator-owned): EXACT binding identity
-		// (both backend and handle, non-empty), then incarnation match, then
-		// cursor advancement. Invalid signals are rejected BEFORE any cursor
-		// handling so a malformed/blank signal can never wake the watcher.
-		if sig.Endpoint != es.Endpoint {
-			lk.Unlock()
-			continue // not the exact bound endpoint: reject
-		}
-		if !sig.Valid() {
-			lk.Unlock()
-			continue // malformed/blank signal: reject before cursor handling
-		}
-		if es.Incarnation != "" && sig.Incarnation != "" && sig.Incarnation != es.Incarnation {
-			lk.Unlock()
-			continue // stale incarnation: reject
-		}
-		if !es.Source.After(sig.Cursor, after) {
-			lk.Unlock()
-			continue // duplicate/out-of-order: suppress (adapter-owned ordering)
-		}
-		w.recordCursor(es.Endpoint, sig.Cursor)
-		lk.Unlock()
-		return sig, EventWaitSignal
 	}
-	return backend.ObservationSignal{}, EventWaitTimeout
+
+	// Signal validation (orchestrator-owned): EXACT binding identity (both
+	// backend and handle, non-empty), signal validity, native-event source,
+	// then incarnation match. Invalid signals are rejected BEFORE any cursor
+	// handling.
+	if sig.Endpoint != es.Endpoint {
+		return backend.ObservationSignal{}, EventWaitTimeout // not the exact bound endpoint
+	}
+	if !sig.Valid() {
+		return backend.ObservationSignal{}, EventWaitTimeout // malformed/blank signal
+	}
+	if sig.Source != backend.SourceEvent {
+		return backend.ObservationSignal{}, EventWaitTimeout // probe/derived are not event hints
+	}
+	if es.Incarnation != "" && sig.Incarnation != "" && sig.Incarnation != es.Incarnation {
+		return backend.ObservationSignal{}, EventWaitTimeout // stale incarnation
+	}
+	// Atomic compare-and-advance under the per-endpoint lock (microseconds —
+	// never across the blocking wait): the current last cursor is re-read so
+	// a concurrent accepted signal is suppressed exactly once.
+	lk := w.lockFor(es.Endpoint)
+	lk.Lock()
+	last := w.lastCursor(es.Endpoint)
+	if !es.Source.After(sig.Cursor, last) {
+		lk.Unlock()
+		return backend.ObservationSignal{}, EventWaitTimeout // concurrent duplicate/out-of-order
+	}
+	w.recordCursor(es.Endpoint, sig.Cursor)
+	lk.Unlock()
+	return sig, EventWaitSignal
+}
+
+// betterOutcome returns the more specific of two non-signal outcomes so the
+// lane classifies the most actionable fallback (e.g. a typed reader failure
+// beats a plain timeout).
+func betterOutcome(a, b EventWaitOutcome) EventWaitOutcome {
+	rank := func(o EventWaitOutcome) int {
+		switch o {
+		case EventWaitUnsupported, EventWaitProtocolMismatch:
+			return 3
+		case EventWaitUnavailable, EventWaitReaderFailure:
+			return 2
+		default:
+			return 1 // timeout
+		}
+	}
+	if rank(b) > rank(a) {
+		return b
+	}
+	return a
 }
 
 func (w *EventWaiter) lastCursor(endpoint backend.EndpointRef) backend.EventCursor {
