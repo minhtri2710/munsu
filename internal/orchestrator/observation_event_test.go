@@ -361,6 +361,76 @@ func TestEventWaiter_WaitForSignal_OverlappingIncarnationWaits(t *testing.T) {
 	}
 }
 
+// TestEventWaiter_WaitForSignal_ConcurrentSameIncarnationOrderedEvents is the
+// blocker bebbc556 regression: two SAME-incarnation waits on the same endpoint
+// return distinct, ordered cursors (1 then 2) and BOTH must be accepted. The
+// rollover generation advances only on an incarnation change, so a concurrent
+// same-incarnation cursor advance is not mistaken for a stale rollover result;
+// the adapter-owned After compare-and-record accepts cursor 2 after cursor 1.
+func TestEventWaiter_WaitForSignal_ConcurrentSameIncarnationOrderedEvents(t *testing.T) {
+	ep := backend.EndpointRef{Backend: "herdr", Handle: "w:p"}
+	srcA := &gatedEventSource{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		sig: backend.ObservationSignal{
+			Endpoint:    ep,
+			Incarnation: "inc-new",
+			Activity:    backend.ActivityBusy,
+			Source:      backend.SourceEvent,
+			Cursor:      "1",
+		},
+	}
+	srcB := &gatedEventSource{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		sig: backend.ObservationSignal{
+			Endpoint:    ep,
+			Incarnation: "inc-new",
+			Activity:    backend.ActivityIdle,
+			Source:      backend.SourceEvent,
+			Cursor:      "2",
+		},
+	}
+	es := func(src ObservationEventSource) EndpointSource {
+		return EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: src}
+	}
+	w := NewEventWaiter(staticEventPort(es(srcA), es(srcB)))
+
+	// Both same-incarnation waits start and block inside Source.Wait (their
+	// generations are captured before Wait returned control).
+	type result struct {
+		sig     backend.ObservationSignal
+		outcome EventWaitOutcome
+	}
+	doneA := make(chan result, 1)
+	doneB := make(chan result, 1)
+	go func() {
+		sig, outcome := w.waitEndpoint(context.Background(), es(srcA))
+		doneA <- result{sig, outcome}
+	}()
+	go func() {
+		sig, outcome := w.waitEndpoint(context.Background(), es(srcB))
+		doneB <- result{sig, outcome}
+	}()
+	<-srcA.entered
+	<-srcB.entered
+
+	// Release A first: cursor 1 accepted.
+	close(srcA.release)
+	rA := <-doneA
+	if rA.outcome != EventWaitSignal || rA.sig.Cursor != "1" {
+		t.Fatalf("first same-incarnation wait = (outcome %v, cursor %q), want (signal, %q)", rA.outcome, rA.sig.Cursor, "1")
+	}
+
+	// Release B: cursor 2 is a valid ordered event of the SAME incarnation and
+	// must ALSO be accepted (not rejected as a stale rollover result).
+	close(srcB.release)
+	rB := <-doneB
+	if rB.outcome != EventWaitSignal || rB.sig.Cursor != "2" {
+		t.Fatalf("second same-incarnation wait = (outcome %v, cursor %q), want (signal, %q)", rB.outcome, rB.sig.Cursor, "2")
+	}
+}
+
 // TestEventWaiter_WaitForSignal_MultiEndpointWake is the blocker-3
 // regression: endpoint A blocks for its whole budget while endpoint B has a
 // signal ready. The fan-out must deliver B's signal promptly instead of
