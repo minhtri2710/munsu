@@ -32,11 +32,8 @@ Pushing through it runs an AI-driven review/test/lint pipeline in an isolated wo
 
 ## Development
 
-```sh
-go build ./...      # build all packages
-go vet ./...        # static analysis
-go test ./...       # run all tests
-```
+Build, lint, and test per the conventions in `AGENTS.md` ("Build / test / lint").
+CI lane composition (race detector, integration tags) lives in `.github/workflows/ci.yml`.
 
 ## Questions
 

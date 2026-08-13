@@ -8,8 +8,13 @@ This file is the conventions file for soldiers working on munsu.
 ```sh
 go build ./...       # build all packages
 go vet ./...         # static analysis
-go test ./...        # run all tests
+go test ./...        # default-tag suite (skips //go:build integration files)
 ```
+
+CI (`.github/workflows/ci.yml`) also runs a `-race` lane and an integration-tag
+lane (`go test -tags integration`). The integration lane excludes `internal/cli`,
+whose integration tests fail on main (BEO-20 follow-up); run the lane commands
+from `ci.yml` for a full local matrix.
 
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
