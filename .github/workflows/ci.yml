@@ -54,7 +54,26 @@ jobs:
           cache: true
       # The default lane runs without -race, so crash/replay/fence concurrency
       # in home, taskauthority and backend was never race-checked in CI.
-      - run: go test -race -count=1 -timeout 25m ./...
+      #
+      # -tags integration was added after measuring (local, 8 cores, count=1):
+      #   this lane as it stood, `-race ./...`            88.9s
+      #   this lane with -tags integration               190.5s   2.1x
+      #   integration packages without -race             176.3s
+      # So the lane roughly doubles, but the last row is why that is worth
+      # paying: running the integration suites *under* -race costs only ~14s
+      # more than running them at all. Those suites wait on processes and the
+      # filesystem rather than burning CPU, and CPU is what -race taxes. 60
+      # integration files had never been through the race detector; 3m10s is
+      # ~13% of the 25m timeout, so that stays untouched.
+      #
+      # This lane keeps ./... while the integration lane restricts itself to
+      # the tagged packages: the concurrency worth race-checking lives mostly
+      # in packages with no integration files at all (taskauthority, home),
+      # so narrowing this one would lose the coverage it exists for.
+      #
+      # Note `//go:build !race` (orchestrator/lifecycle_lifecycle_test.go) is
+      # still excluded here and always will be -- see .github/build-tags.manifest.
+      - run: go test -race -count=1 -timeout 25m -tags integration ./...
 
   integration:
     name: Integration tests
