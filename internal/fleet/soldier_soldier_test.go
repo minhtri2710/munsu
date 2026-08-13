@@ -788,14 +788,16 @@ func TestTerminalReport_ScoutUsesFindingsSummary(t *testing.T) {
 
 func TestBuildLaunchPrompt_ScoutContainsFindingsReportCommand(t *testing.T) {
 	prompt, _, err := BuildLaunchPrompt(LaunchPromptInput{
-		TaskID:          "scout-report-test",
-		TaskKind:        "scout",
-		ParentCaptainID: "captain-alpha",
-		ParentHome:      "/tmp/parent",
-		WorktreePath:    t.TempDir(),
-		HomeDir:         "/tmp/home",
-		BriefContent:    []byte("# Scout brief\n\nInvestigate.\n"),
-		HarnessName:     "pi",
+		TaskID:                 "scout-report-test",
+		TaskKind:               "scout",
+		ParentCaptainID:        "captain-alpha",
+		ParentHome:             "/tmp/parent",
+		WorktreePath:           t.TempDir(),
+		HomeDir:                "/tmp/home",
+		BriefContent:           []byte("# Scout brief\n\nInvestigate.\n"),
+		HarnessName:            "pi",
+		ScoutScope:             "investigate scope",
+		ScoutRuntimeBudgetSecs: 300,
 	})
 	if err != nil {
 		t.Fatal(err)

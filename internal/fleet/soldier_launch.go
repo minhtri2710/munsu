@@ -196,7 +196,7 @@ func terminalReportReminder(taskID, taskKind, parentCaptainID string) string {
 
 When the task is complete, you MUST execute exactly:
 
-%smunsu report done "%[5]s" --key %[2]s%s
+%[1]smunsu report done "%[5]s" --key %[2]s%[4]s
 
 This is the authoritative terminal report signal to your parent Captain (%[3]s).
 Do not use any other command or mechanism for terminal reporting.
