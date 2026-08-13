@@ -507,6 +507,101 @@ func TestEventWaiter_WaitForSignal_SeededSnapshotRolloverRejectsStale(t *testing
 	}
 }
 
+// TestEventWaiter_WaitForSignal_MultiRolloverTokenRejectsStale is the blocker
+// 1338d5db regression: the rollover token must be validated as a COMPLETE
+// (incarnation+generation) pair, not generation-only-when-incarnation-differs.
+// An old waiter snapshots {inc-old, gen 1} and blocks; the endpoint rolls to
+// inc-new (gen 2), then a stale/late binding projection presents inc-old
+// again (second rollover, gen 3). The old waiter returns cursor 43: because
+// the current incarnation now matches its expected incarnation again, an
+// incarnation-only guard would wrongly accept it and roll the state back over
+// the restarted stream. The token guard must reject it, and the current
+// inc-old stream (cursor 2) must remain authoritative.
+func TestEventWaiter_WaitForSignal_MultiRolloverTokenRejectsStale(t *testing.T) {
+	ep := backend.EndpointRef{Backend: "herdr", Handle: "w:p"}
+
+	seedSrc := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: ep, Incarnation: "inc-old", Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "42"},
+	}}
+	oldSrc := &gatedEventSource{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		sig: backend.ObservationSignal{
+			Endpoint:    ep,
+			Incarnation: "inc-old",
+			Activity:    backend.ActivityIdle,
+			Source:      backend.SourceEvent,
+			Cursor:      "43",
+		},
+	}
+	// Rollover 1: the new incarnation commits cursor 1 (state {inc-new, 1,
+	// gen 2}).
+	newSrc := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: ep, Incarnation: "inc-new", Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "1"},
+	}}
+	// Rollover 2: a stale/late binding projection presents inc-old again; the
+	// restarted inc-old stream commits cursor 1 (state {inc-old, 1, gen 3}),
+	// then cursor 2 (the current stream stays authoritative).
+	backSrc := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: ep, Incarnation: "inc-old", Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "1"},
+		{Endpoint: ep, Incarnation: "inc-old", Activity: backend.ActivityIdle, Source: backend.SourceEvent, Cursor: "2"},
+	}}
+	w := NewEventWaiter(staticEventPort(
+		EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: seedSrc},
+		EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: oldSrc},
+		EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: newSrc},
+		EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: backSrc},
+	))
+	esOld := EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: oldSrc}
+	esNew := EndpointSource{Endpoint: ep, Incarnation: "inc-new", Source: newSrc}
+	esBack := EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: backSrc}
+
+	// Seed: old incarnation commits cursor 42 (state {inc-old, 42, gen 1}).
+	_, outcome := w.waitEndpoint(context.Background(), EndpointSource{Endpoint: ep, Incarnation: "inc-old", Source: seedSrc})
+	if outcome != EventWaitSignal {
+		t.Fatalf("seed outcome = %v, want signal", outcome)
+	}
+
+	// Old waiter A snapshots {after 42, inc-old, gen 1} and blocks inside
+	// Source.Wait.
+	doneOld := make(chan struct{})
+	var oldOutcome EventWaitOutcome
+	go func() {
+		defer close(doneOld)
+		_, oldOutcome = w.waitEndpoint(context.Background(), esOld)
+	}()
+	<-oldSrc.entered
+
+	// Rollover 1: new incarnation commits cursor 1.
+	sig, outcome := w.waitEndpoint(context.Background(), esNew)
+	if outcome != EventWaitSignal || sig.Cursor != "1" {
+		t.Fatalf("rollover 1 = (outcome %v, cursor %q), want (signal, %q)", outcome, sig.Cursor, "1")
+	}
+
+	// Rollover 2: stale projection presents inc-old again; restarted stream
+	// commits cursor 1 (state {inc-old, 1, gen 3}).
+	sig, outcome = w.waitEndpoint(context.Background(), esBack)
+	if outcome != EventWaitSignal || sig.Cursor != "1" {
+		t.Fatalf("rollover 2 = (outcome %v, cursor %q), want (signal, %q)", outcome, sig.Cursor, "1")
+	}
+
+	// Old waiter A returns cursor 43: the current incarnation matches its
+	// expected one again, but the rollover token advanced (gen 1 → 3) while
+	// it was blocked — rejected WITHOUT rolling state back over the restarted
+	// stream.
+	close(oldSrc.release)
+	<-doneOld
+	if oldOutcome != EventWaitTimeout {
+		t.Fatalf("old in-flight result outcome = %v, want timeout (multi-rollover token rejected)", oldOutcome)
+	}
+
+	// The current inc-old stream remains authoritative: cursor 2 accepted.
+	sig, outcome = w.waitEndpoint(context.Background(), esBack)
+	if outcome != EventWaitSignal || sig.Cursor != "2" {
+		t.Fatalf("cursor 2 after rejected double rollback = (outcome %v, cursor %q), want (signal, %q)", outcome, sig.Cursor, "2")
+	}
+}
+
 // TestEventWaiter_SnapshotCursorStateAtomic verifies the single pre-wait
 // snapshot returns cursor, recorded incarnation, and rollover generation as
 // one consistent view (no split read), and that the 'after' hint is

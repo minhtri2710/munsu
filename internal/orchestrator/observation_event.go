@@ -402,10 +402,23 @@ func (w *EventWaiter) currentCursor(es EndpointSource) backend.EventCursor {
 // current state's rollover token (incarnation+generation) moved past the
 // token captured in the single pre-wait snapshot, meaning a rollover was
 // committed by another waiter while this one was blocked in Source.Wait, so
-// the result belongs to the superseded stream. Same-incarnation concurrent
-// ordered events keep a stable token and never trip it; a waiter that itself
-// initiates the rollover holds the captured token, so it is accepted and
-// advances the token on record.
+// the result belongs to the superseded stream.
+//
+// The token is compared as a COMPLETE pair: generation advances ONLY when the
+// recorded incarnation changes, so any advance while this waiter was blocked
+// means the stream it waited on was superseded — including when a second
+// rollover brings the incarnation back to the snapshot value (inc-old →
+// inc-new → inc-old), which an incarnation-only comparison would wrongly
+// accept. A waiter that itself initiates the rollover holds the unchanged
+// token, so it is accepted and advances the token on record. Same-incarnation
+// concurrent ordered events keep a stable generation and never trip it.
+//
+// Special case: a snapshot that captured NO prior stream (fresh state) means
+// the waiter raced the FIRST commit, which is stream initialization, not a
+// rollover; it is stale only if the stream was initialized under a DIFFERENT
+// expected incarnation. A waiter without an expected incarnation (adapter
+// cannot attest) is never judged stale — accept and let the adapter-owned
+// After compare decide.
 func (w *EventWaiter) staleRolloverGuard(es EndpointSource, snap cursorSnapshot) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -413,9 +426,15 @@ func (w *EventWaiter) staleRolloverGuard(es EndpointSource, snap cursorSnapshot)
 	if st == nil {
 		return false
 	}
-	if es.Incarnation == "" || st.incarnation == "" || st.incarnation == es.Incarnation {
+	if es.Incarnation == "" {
 		return false
 	}
+	if snap.incarnation == "" {
+		// Fresh state at snapshot: the waiter raced the first commit; stale
+		// only when the stream was initialized under a different incarnation.
+		return st.incarnation != "" && st.incarnation != es.Incarnation
+	}
+	// Existing stream at snapshot: reject on ANY rollover-token advance.
 	return st.generation != snap.generation
 }
 
