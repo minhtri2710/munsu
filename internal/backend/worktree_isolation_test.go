@@ -27,6 +27,18 @@ func isolationRepo(t *testing.T) string {
 	return root
 }
 
+// isolationWorktree creates a primary checkout plus one linked worktree and
+// returns the worktree path. Tests that need a genuinely isolated checkout must
+// build one instead of assuming the directory the test binary runs in is a
+// worktree — that holds under a soldier but not in CI, where it is a clone.
+func isolationWorktree(t *testing.T) string {
+	t.Helper()
+	root := isolationRepo(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	gitIso(t, root, "worktree", "add", "--detach", wt)
+	return wt
+}
+
 func gitIso(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -87,9 +99,7 @@ func TestEnsureNotPrimary_PrimaryCheckoutRejected(t *testing.T) {
 // linked worktree still reports isolated, from its root and from a
 // subdirectory, so the fix cannot be "always return false".
 func TestIsIsolated_RealWorktree(t *testing.T) {
-	root := isolationRepo(t)
-	wt := filepath.Join(t.TempDir(), "wt")
-	gitIso(t, root, "worktree", "add", "--detach", wt)
+	wt := isolationWorktree(t)
 
 	for _, tc := range []struct {
 		name string

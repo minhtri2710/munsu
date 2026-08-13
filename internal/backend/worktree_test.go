@@ -11,14 +11,17 @@ import (
 )
 
 func TestIsIsolated_Worktree(t *testing.T) {
-	// We are running inside an isolated worktree, so IsIsolated should
-	// return true for the current directory.
-	isolated, err := IsIsolated(".")
+	// A real linked worktree is isolated. Build one rather than asserting on
+	// the current directory: the checkout this test runs in is a worktree
+	// under a soldier but a primary clone in CI, so "." asserted the ambient
+	// environment, not the contract.
+	wt := isolationWorktree(t)
+	isolated, err := IsIsolated(wt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !isolated {
-		t.Error("IsIsolated('.') = false, want true (running in worktree)")
+		t.Errorf("IsIsolated(%s) = false, want true (linked worktree)", wt)
 	}
 }
 
@@ -40,9 +43,10 @@ func TestIsIsolated_NonGitDir(t *testing.T) {
 }
 
 func TestEnsureNotPrimary_Success(t *testing.T) {
-	// In our worktree, this should pass (we are isolated).
-	if err := EnsureNotPrimary("."); err != nil {
-		t.Fatalf("EnsureNotPrimary('.') = %v, want nil (running in worktree)", err)
+	// The guard lets a real worktree through.
+	wt := isolationWorktree(t)
+	if err := EnsureNotPrimary(wt); err != nil {
+		t.Fatalf("EnsureNotPrimary(%s) = %v, want nil (linked worktree)", wt, err)
 	}
 }
 
@@ -425,7 +429,8 @@ func TestGitRevParse(t *testing.T) {
 // TestIsIsolatedWithoutTreehouse ensures IsIsolated doesn't need treehouse to work.
 func TestIsIsolatedWithoutTreehouse(t *testing.T) {
 	// IsIsolated should work without treehouse present (it only uses git)
-	isolated, err := IsIsolated(".")
+	wt := isolationWorktree(t)
+	isolated, err := IsIsolated(wt)
 	if err != nil {
 		t.Fatalf("IsIsolated should work without treehouse: %v", err)
 	}
