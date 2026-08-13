@@ -129,6 +129,26 @@ type fakeEventPort struct {
 
 func (p fakeEventPort) Sources(string) ([]EndpointSource, error) { return p.sources, p.err }
 
+// sequenceEventPort returns a different source set per Sources call, in order
+// (used to simulate an incarnation rollover between waits: same endpoint,
+// new expected incarnation).
+type sequenceEventPort struct {
+	mu     sync.Mutex
+	stages [][]EndpointSource
+	next   int
+}
+
+func (p *sequenceEventPort) Sources(string) ([]EndpointSource, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.next >= len(p.stages) {
+		return nil, nil
+	}
+	s := p.stages[p.next]
+	p.next++
+	return s, nil
+}
+
 func TestEventWaiter_WaitForSignal_BlankEndpointRejected(t *testing.T) {
 	// A source returning a signal with a blank endpoint must never wake the
 	// watcher: exact binding (backend + handle, non-empty) is required before
@@ -426,6 +446,44 @@ func TestEventWaiter_WaitForSignal_StaleIncarnationRejected(t *testing.T) {
 	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), 50*time.Millisecond)
 	if outcome != EventWaitTimeout {
 		t.Fatalf("stale-incarnation outcome = %v, want timeout (rejected)", outcome)
+	}
+}
+
+// TestEventWaiter_WaitForSignal_IncarnationRolloverResetsCursor is the
+// regression for blocker 3caa8122: cursor state must be scoped to the expected
+// incarnation, so a rollover that reuses the same backend/handle with a fresh
+// stream restarting at a LOWER cursor is not suppressed by stale state from
+// the previous incarnation.
+func TestEventWaiter_WaitForSignal_IncarnationRolloverResetsCursor(t *testing.T) {
+	ep := backend.EndpointRef{Backend: "herdr", Handle: "w:p"}
+	// Old incarnation stream consumed up to cursor 42; the new incarnation
+	// restarts at cursor 1 (a reset stream). Without incarnation-aware cursor
+	// state, After("1", "42") = false and every new event would be
+	// suppressed until the cursor exceeds 42.
+	src := &fakeEventSource{signals: []backend.ObservationSignal{
+		{Endpoint: ep, Activity: backend.ActivityIdle, Source: backend.SourceEvent, Cursor: "42"},
+		{Endpoint: ep, Activity: backend.ActivityBusy, Source: backend.SourceEvent, Cursor: "1"},
+	}}
+	port := &sequenceEventPort{stages: [][]EndpointSource{
+		{{Endpoint: ep, Incarnation: "inc-old", Source: src}},
+		{{Endpoint: ep, Incarnation: "inc-new", Source: src}},
+	}}
+	w := NewEventWaiter(port)
+
+	// First wait: old incarnation, cursor 42 accepted and recorded.
+	_, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
+	if outcome != EventWaitSignal {
+		t.Fatalf("old-incarnation outcome = %v, want signal", outcome)
+	}
+	// Second wait: same backend/handle but the expected incarnation changed
+	// (rollover); cursor 1 of the fresh stream must be accepted, not
+	// suppressed by the recorded 42.
+	sig, outcome := w.WaitForSignal(context.Background(), t.TempDir(), time.Second)
+	if outcome != EventWaitSignal {
+		t.Fatalf("rollover outcome = %v, want signal (cursor reset on incarnation change); got signal=%+v", outcome, sig)
+	}
+	if sig.Cursor != "1" {
+		t.Errorf("rollover signal cursor = %q, want %q", sig.Cursor, "1")
 	}
 }
 

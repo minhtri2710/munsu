@@ -90,24 +90,37 @@ type ObservationEventPort interface {
 }
 
 // EventWaiter owns the orchestrator-side bounded wait state for one watcher
-// run: per-endpoint last cursor (in-memory only — no durable event resume
-// across process restarts in P1b), exact-binding validation, duplicate/
-// out-of-order suppression, stale cursor/incarnation rejection, and outcome
-// classification. The per-endpoint mutex is held ONLY for the short atomic
-// compare-and-advance — never across the blocking Source.Wait — so concurrent
-// WaitForSignal calls keep their own bounded wait and a duplicate can never be
-// accepted twice.
+// run: per-endpoint last cursor scoped to the expected incarnation (in-memory
+// only — no durable event resume across process restarts in P1b),
+// exact-binding validation, duplicate/out-of-order suppression, stale
+// cursor/incarnation rejection, and outcome classification. The per-endpoint
+// mutex is held ONLY for the short atomic compare-and-advance — never across
+// the blocking Source.Wait — so concurrent WaitForSignal calls keep their own
+// bounded wait and a duplicate can never be accepted twice.
+//
+// Cursor state is keyed by the exact bound endpoint (backend + handle) and
+// scoped to the expected incarnation: when the expected incarnation changes
+// (a launch rollover), the recorded cursor is atomically reset so the new
+// incarnation's stream is never suppressed by stale state from the old one.
 type EventWaiter struct {
 	port ObservationEventPort
 
-	mu      sync.Mutex
-	cursors map[string]backend.EventCursor
-	locks   map[string]*sync.Mutex
+	mu     sync.Mutex
+	states map[string]*endpointCursorState
+	locks  map[string]*sync.Mutex
+}
+
+// endpointCursorState is the per-endpoint cursor state scoped to the expected
+// incarnation. A change of expected incarnation resets the cursor (fresh
+// stream), so a rollover that restarts at a lower cursor is never suppressed.
+type endpointCursorState struct {
+	incarnation string
+	cursor      backend.EventCursor
 }
 
 // NewEventWaiter constructs the bounded event wait state over a port.
 func NewEventWaiter(port ObservationEventPort) *EventWaiter {
-	return &EventWaiter{port: port, cursors: map[string]backend.EventCursor{}, locks: map[string]*sync.Mutex{}}
+	return &EventWaiter{port: port, states: map[string]*endpointCursorState{}, locks: map[string]*sync.Mutex{}}
 }
 
 func endpointKey(endpoint backend.EndpointRef) string {
@@ -235,7 +248,7 @@ func (w *EventWaiter) WaitForSignal(ctx context.Context, homeDir string, timeout
 // rejected before any cursor handling so a malformed/blank/non-event signal
 // can never wake the watcher.
 func (w *EventWaiter) waitEndpoint(ctx context.Context, es EndpointSource) (backend.ObservationSignal, EventWaitOutcome) {
-	after := w.lastCursor(es.Endpoint)
+	after := w.lastCursor(es)
 	sig, werr := es.Source.Wait(ctx, es.Endpoint, after)
 	if werr != nil {
 		if errors.Is(werr, context.DeadlineExceeded) || errors.Is(werr, context.Canceled) {
@@ -272,16 +285,17 @@ func (w *EventWaiter) waitEndpoint(ctx context.Context, es EndpointSource) (back
 		return backend.ObservationSignal{}, EventWaitTimeout // stale incarnation
 	}
 	// Atomic compare-and-advance under the per-endpoint lock (microseconds —
-	// never across the blocking wait): the current last cursor is re-read so
-	// a concurrent accepted signal is suppressed exactly once.
+	// never across the blocking wait): the current cursor is re-read scoped to
+	// the expected incarnation, so a concurrent accepted signal is suppressed
+	// exactly once and an incarnation rollover resets the stream exactly once.
 	lk := w.lockFor(es.Endpoint)
 	lk.Lock()
-	last := w.lastCursor(es.Endpoint)
+	last := w.lastCursor(es)
 	if !es.Source.After(sig.Cursor, last) {
 		lk.Unlock()
 		return backend.ObservationSignal{}, EventWaitTimeout // concurrent duplicate/out-of-order
 	}
-	w.recordCursor(es.Endpoint, sig.Cursor)
+	w.recordCursor(es, sig.Cursor)
 	lk.Unlock()
 	return sig, EventWaitSignal
 }
@@ -306,17 +320,41 @@ func betterOutcome(a, b EventWaitOutcome) EventWaitOutcome {
 	return a
 }
 
-func (w *EventWaiter) lastCursor(endpoint backend.EndpointRef) backend.EventCursor {
+// lastCursor returns the last consumed cursor for an exact bound endpoint,
+// scoped to the expected incarnation. If the expected incarnation differs from
+// the recorded one (a launch rollover), the cursor is treated as empty so the
+// new stream is not suppressed by stale state; the caller (under the
+// per-endpoint lock) then records the new incarnation along with the accepted
+// cursor.
+func (w *EventWaiter) lastCursor(es EndpointSource) backend.EventCursor {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.cursors[endpointKey(endpoint)]
+	st := w.states[endpointKey(es.Endpoint)]
+	if st == nil {
+		return ""
+	}
+	if es.Incarnation != "" && st.incarnation != es.Incarnation {
+		return ""
+	}
+	return st.cursor
 }
 
-func (w *EventWaiter) recordCursor(endpoint backend.EndpointRef, cursor backend.EventCursor) {
+// recordCursor stores the accepted cursor for an exact bound endpoint, along
+// with the expected incarnation it was accepted under. A change of incarnation
+// atomically replaces the state (fresh stream); the empty cursor is not
+// recorded (the state still tracks the incarnation change).
+func (w *EventWaiter) recordCursor(es EndpointSource, cursor backend.EventCursor) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	key := endpointKey(es.Endpoint)
+	st := w.states[key]
+	if st == nil {
+		st = &endpointCursorState{}
+		w.states[key] = st
+	}
+	st.incarnation = es.Incarnation
 	if cursor != "" {
-		w.cursors[endpointKey(endpoint)] = cursor
+		st.cursor = cursor
 	}
 }
 
