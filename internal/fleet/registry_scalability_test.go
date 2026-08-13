@@ -365,8 +365,12 @@ func TestRegistryBindLockScopeIsSmallestTruthful(t *testing.T) {
 // a property of the SHAPE of the cost curve, and a ratio between two samples
 // from the same run cancels out machine speed, -race overhead and runner load.
 // Measured healthy shape: first-decile median 108ms vs last-decile median
-// 109ms (ratio ~1.0 over a 10x cardinality increase). An O(n) per-op scan would
-// put that ratio near 19x. The 3x guard sits far from both.
+// 109ms (ratio ~1.0 over a 10x cardinality increase). Sensitivity is set by
+// the ~110ms durable-commit floor F: a regression adding c per stored binding
+// yields ratio (F+190c)/(F+10c), so the 3x guard trips only when c > F/80
+// (~1.4ms per stored binding). That catches heavy per-binding I/O (per-binding
+// fsync, doc re-read); a microsecond in-memory scan stays under the floor,
+// out of reach of any wall-clock shape guard.
 func TestRegistryBindingScaleBound(t *testing.T) {
 	const n = 200
 	r, _, _ := newTestRegistry(t)
