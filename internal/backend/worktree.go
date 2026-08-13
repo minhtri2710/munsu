@@ -421,12 +421,16 @@ func IsIsolated(path string) (bool, error) {
 		return false, fmt.Errorf("path is not a git repository: %w", err)
 	}
 
-	// Resolve both to absolute paths
-	gitDirAbs, err := filepath.Abs(filepath.Join(absPath, gitDir))
+	// Resolve both to canonical absolute paths. git reports these two in
+	// different forms depending on where it is invoked from: a primary
+	// checkout queried from a subdirectory answers --git-dir absolutely but
+	// --git-common-dir relatively. Joining an already-absolute value onto
+	// absPath produces a bogus path that never matches the other side.
+	gitDirAbs, err := resolveGitDir(absPath, gitDir)
 	if err != nil {
 		return false, err
 	}
-	commonDirAbs, err := filepath.Abs(filepath.Join(absPath, commonDir))
+	commonDirAbs, err := resolveGitDir(absPath, commonDir)
 	if err != nil {
 		return false, err
 	}
@@ -438,6 +442,26 @@ func IsIsolated(path string) (bool, error) {
 		return false, nil // primary checkout
 	}
 	return true, nil // isolated worktree
+}
+
+// resolveGitDir canonicalizes a path reported by git rev-parse. Relative values
+// are resolved against base (the directory git ran in); absolute values are kept
+// as-is. Symlinks are evaluated so that the two sides stay comparable on systems
+// where the repository sits under a symlinked prefix (macOS /tmp → /private/tmp).
+func resolveGitDir(base, gitPath string) (string, error) {
+	if !filepath.IsAbs(gitPath) {
+		gitPath = filepath.Join(base, gitPath)
+	}
+	abs, err := filepath.Abs(gitPath)
+	if err != nil {
+		return "", err
+	}
+	// EvalSymlinks fails on paths that do not exist; the un-evaluated absolute
+	// path is still the best answer we have in that case.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	return abs, nil
 }
 
 // gitRevParse runs git rev-parse --<flag> in the given directory.
