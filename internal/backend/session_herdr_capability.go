@@ -166,6 +166,7 @@ const (
 	HerdrErrTabNotFound       = "tab_not_found"
 	HerdrErrUnknownCommand    = "unknown_command"
 	HerdrErrInternal          = "internal_error"
+	HerdrErrTimeout           = "timeout"
 )
 
 // parseHerdrError attempts to parse an exec error from herdr CLI as a typed

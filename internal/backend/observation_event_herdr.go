@@ -129,6 +129,15 @@ func (s *HerdrEventSource) Wait(ctx context.Context, endpoint EndpointRef, after
 		if isHerdrProtocolMismatch(werr) {
 			return ObservationSignal{}, fmt.Errorf("%w: %v", ErrEventProtocolMismatch, werr)
 		}
+		if isHerdrWaitTimeout(werr) {
+			// The herdr CLI's own bounded wait elapsed and it reported a
+			// structured timeout. This is the same normal bounded-wait
+			// outcome as a context deadline: wrap context.DeadlineExceeded so
+			// the orchestrator classifies it as a timeout (poll fallback)
+			// instead of a generic reader failure. Caller cancellation still
+			// takes precedence via ctx.Err() above.
+			return ObservationSignal{}, fmt.Errorf("%w: %v", context.DeadlineExceeded, werr)
+		}
 		if isNotFoundErr(werr) {
 			// A vanished pane during an event wait is an absence hint, but a
 			// native event must not self-assert lifecycle: the orchestrator

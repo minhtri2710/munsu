@@ -67,6 +67,47 @@ func eventSourceWithFake(t *testing.T, waitJSON string, waitExit int, logPath st
 	return NewHerdrEventSource("test-s"), tmp
 }
 
+// eventSourceWithFakeBlocking creates a fake herdr binary whose agent-wait
+// branch blocks until the invoking process is killed (context cancellation
+// via exec.CommandContext), then returns a placeholder JSON body.
+func eventSourceWithFakeBlocking(t *testing.T, logPath string) (*HerdrEventSource, string) {
+	t.Helper()
+	tmp := t.TempDir()
+	writeFakeHerdrEventWaitBlocking(t, tmp, fakeHerdrSchemaReady, logPath)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmp+":"+oldPath)
+	return NewHerdrEventSource("test-s"), tmp
+}
+
+// writeFakeHerdrEventWaitBlocking is like writeFakeHerdrEventWait but the
+// `agent wait` branch sleeps until killed (models a herdr CLI blocked inside
+// its own bounded wait, only interruptible by the caller's context).
+func writeFakeHerdrEventWaitBlocking(t *testing.T, dir, schemaJSON, logPath string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "herdr")
+	script := "#!/usr/bin/env bash\n" +
+		`if [ "$1" = "--version" ]; then` + "\n" +
+		`  echo "herdr 0.7.5"` + "\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		`if [ "$1" = "api" ] && [ "$2" = "schema" ] && [ "$3" = "--json" ]; then` + "\n" +
+		`  cat <<'SCHEMA_EOF'` + "\n" +
+		schemaJSON + "\n" +
+		"SCHEMA_EOF\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		`if [ "$3" = "agent" ] && [ "$4" = "wait" ]; then` + "\n" +
+		`  echo "$@" >> "` + logPath + `"` + "\n" +
+		"  sleep 300\n" +
+		"fi\n" +
+		`echo '{"error":{"code":"unknown_command"}}'` + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestHerdrEventSource_Wait_NormalizedSignal(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "args.log")
 	src, _ := eventSourceWithFake(t, `{"agent_status":"working","state_change_seq":42,"pane_id":"w1:p1"}`, 0, logPath)
@@ -176,15 +217,53 @@ func TestHerdrEventSource_NegotiationGates(t *testing.T) {
 }
 
 func TestHerdrEventSource_Wait_Timeout(t *testing.T) {
-	// The fake exits non-zero on agent wait; the adapter must classify a
-	// context deadline as the normal bounded-wait outcome.
+	// The fake exits non-zero with a STRUCTURED timeout error envelope. The
+	// adapter must map the herdr CLI's own bounded-wait timeout to
+	// context.DeadlineExceeded (the normal bounded-wait outcome, poll
+	// fallback) — NOT to a generic reader failure. A deadline-free context
+	// keeps this deterministic: the structured-error path is always the one
+	// exercised, never the caller-cancellation path.
 	logPath := filepath.Join(t.TempDir(), "args.log")
 	src, _ := eventSourceWithFake(t, `{"error":{"code":"timeout","message":"wait timed out"}}`, 1, logPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	_, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
+	_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want context deadline exceeded", err)
+	}
+}
+
+func TestHerdrEventSource_Wait_ContextCancellation(t *testing.T) {
+	// Caller cancellation must surface as the caller's own ctx.Err() (the
+	// adapter never masks a cancelled bounded wait as anything else).
+	logPath := filepath.Join(t.TempDir(), "args.log")
+	src, _ := eventSourceWithFakeBlocking(t, logPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := src.Wait(ctx, EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
+		done <- err
+	}()
+	// Let the fake enter its blocking agent-wait branch, then cancel.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not return after context cancellation")
+	}
+}
+
+func TestHerdrEventSource_Wait_StructuredNonTimeoutReaderFailure(t *testing.T) {
+	// A structured, NON-timeout herdr error (internal_error) must stay a
+	// generic reader failure — only the 'timeout' code maps to a context
+	// deadline. This pins the narrowness of the timeout mapping.
+	logPath := filepath.Join(t.TempDir(), "args.log")
+	src, _ := eventSourceWithFake(t, `{"error":{"code":"internal_error","message":"boom"}}`, 1, logPath)
+	_, err := src.Wait(context.Background(), EndpointRef{Backend: "herdr", Handle: "w:p"}, "")
+	if !errors.Is(err, ErrEventReaderFailure) {
+		t.Errorf("err = %v, want ErrEventReaderFailure", err)
 	}
 }
 

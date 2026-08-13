@@ -175,6 +175,22 @@ func (h *HerdrBackend) herdrForWindow(windowID string, args ...string) (string, 
 	return h.herdr(args...)
 }
 
+// isHerdrWaitTimeout returns true when the herdr CLI reported a structured
+// 'timeout' error — its own bounded wait elapsed before a status change. This
+// is the normal bounded-wait outcome and must be classified as a context
+// deadline (poll fallback), never as a generic reader failure.
+func isHerdrWaitTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if herr := parseHerdrError(err); herr != nil {
+		return herr.Code == HerdrErrTimeout
+	}
+	// No structured envelope: this is not a typed timeout; leave it to the
+	// generic reader-failure path (no textual guessing here).
+	return false
+}
+
 // isNotFoundErr returns true for structured 'not found' / 'pane_not_found' herdr errors.
 // Prefers typed error code matching over textual substring for known codes;
 // falls back to textual matching for legacy/unknown error formats.
