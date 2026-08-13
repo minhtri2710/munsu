@@ -12,9 +12,9 @@ go test ./...        # default-tag suite (skips //go:build integration files)
 ```
 
 CI (`.github/workflows/ci.yml`) also runs a `-race` lane and an integration-tag
-lane (`go test -tags integration`). The integration lane excludes `internal/cli`,
-whose integration tests fail on main (BEO-20 follow-up); run the lane commands
-from `ci.yml` for a full local matrix.
+lane (`go test -tags integration`). The integration lane covers every package
+carrying `//go:build integration`; run the lane commands from `ci.yml` for a
+full local matrix.
 
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 

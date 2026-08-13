@@ -66,10 +66,9 @@ jobs:
           echo "$bin_dir" >> "$GITHUB_PATH"
           tmux new-session -d -s munsu-ci
       # `go test ./...` never builds integration-tagged files, so this suite
-      # was invisible to CI. Packages are listed explicitly: ./internal/cli is
-      # excluded because its integration tests fail on main (BEO-20 follow-up),
-      # every other package carrying `//go:build integration` is covered.
-      - run: go test -count=1 -timeout 35m -tags integration ./internal/backend ./internal/bootstrap ./internal/fleet ./internal/orchestrator
+      # was invisible to CI. Packages are listed explicitly, and the list
+      # covers every package carrying `//go:build integration`.
+      - run: go test -count=1 -timeout 35m -tags integration ./internal/backend ./internal/bootstrap ./internal/cli ./internal/fleet ./internal/orchestrator
 
   invariants:
     name: Repo invariants
