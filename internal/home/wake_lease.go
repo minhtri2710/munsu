@@ -305,6 +305,3 @@ func ReclaimExpiredLeases(homeDir string) (int, error) {
 
 	return reclaimed, nil
 }
-
-// ClaimExpiryGrace returns the grace period before expired leases are reclaimed.
-func ClaimExpiryGrace() time.Duration { return defaultLeaseGrace }

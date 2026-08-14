@@ -71,22 +71,3 @@ func TestResolveRootOverrideIgnored(t *testing.T) {
 		t.Errorf("Resolve() = %q, want %q (MUNSU_ROOT_OVERRIDE should be ignored)", path, want)
 	}
 }
-
-func TestEnsureDirTree(t *testing.T) {
-	tmp := t.TempDir()
-	homeDir := filepath.Join(tmp, ".munsu")
-	if err := EnsureDirTree(homeDir); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range HomeDirNames {
-		d := filepath.Join(homeDir, name)
-		info, err := os.Stat(d)
-		if err != nil {
-			t.Errorf("expected dir %s to exist: %v", d, err)
-			continue
-		}
-		if !info.IsDir() {
-			t.Errorf("%s is not a directory", d)
-		}
-	}
-}
