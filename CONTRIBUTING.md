@@ -33,7 +33,7 @@ Pushing through it runs an AI-driven review/test/lint pipeline in an isolated wo
 ## Development
 
 Build, lint, and test per the conventions in `AGENTS.md` ("Build / test / lint").
-CI lane composition (race detector, integration tags) lives in `.github/workflows/ci.yml`.
+CI lane composition (race detector, integration tags) lives in `.github/workflows/ci.yml`; build-tag classification and lane coverage checks live in `.github/build-tags.manifest` and `.github/scripts/build-tags.sh`.
 
 ## Questions
 

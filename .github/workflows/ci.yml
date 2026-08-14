@@ -22,6 +22,25 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # GOOS-gated files never compile on a linux runner, so no test lane can
+      # reach them -- three _test.go files had never been compiled by CI at
+      # all. Cross-target vet is the only cover for them; `go vet` includes
+      # test files. GOOS=windows also covers the `!darwin && !linux` file.
+      - name: Cross-target vet for GOOS-gated files
+        run: |
+          GOOS=darwin go vet ./...
+          GOOS=windows go vet ./...
+      # `go test ./...` never builds these two tags, which is where a compile
+      # break sat unnoticed for four months. The tagged tests themselves cost
+      # 0.88s and 0.29s, so they run for real rather than being compile-
+      # checked. Go's granularity is the package, so each step also repeats
+      # its package's default suite (~24s total); deriving the package from
+      # the tag is worth that over an enumerated -run filter that a new test
+      # would silently fall outside of.
+      - name: e2e-tagged tests
+        run: go test -count=1 -tags e2e $(.github/scripts/build-tags.sh packages e2e)
+      - name: lifecycle_integration-tagged tests
+        run: go test -count=1 -tags lifecycle_integration $(.github/scripts/build-tags.sh packages lifecycle_integration)
 
   race:
     name: Race detector
@@ -35,7 +54,26 @@ jobs:
           cache: true
       # The default lane runs without -race, so crash/replay/fence concurrency
       # in home, taskauthority and backend was never race-checked in CI.
-      - run: go test -race -count=1 -timeout 25m ./...
+      #
+      # -tags integration was added after measuring (local, 8 cores, count=1):
+      #   this lane as it stood, `-race ./...`            88.9s
+      #   this lane with -tags integration               190.5s   2.1x
+      #   integration packages without -race             176.3s
+      # So the lane roughly doubles, but the last row is why that is worth
+      # paying: running the integration suites *under* -race costs only ~14s
+      # more than running them at all. Those suites wait on processes and the
+      # filesystem rather than burning CPU, and CPU is what -race taxes. 60
+      # integration files had never been through the race detector; 3m10s is
+      # ~13% of the 25m timeout, so that stays untouched.
+      #
+      # This lane keeps ./... while the integration lane restricts itself to
+      # the tagged packages: the concurrency worth race-checking lives mostly
+      # in packages with no integration files at all (taskauthority, home),
+      # so narrowing this one would lose the coverage it exists for.
+      #
+      # Note `//go:build !race` (orchestrator/lifecycle_lifecycle_test.go) is
+      # still excluded here and always will be -- see .github/build-tags.manifest.
+      - run: go test -race -count=1 -timeout 25m -tags integration ./...
 
   integration:
     name: Integration tests
@@ -48,15 +86,17 @@ jobs:
           go-version: "1.26"
           cache: true
       # `go test ./...` never builds integration-tagged files, so this suite
-      # was invisible to CI. Packages are listed explicitly, and the list
-      # covers every package carrying `//go:build integration`.
+      # was invisible to CI. The package list used to be maintained by hand;
+      # it is now derived from the tag itself, so a `//go:build integration`
+      # file in a sixth package joins the lane instead of silently falling
+      # outside it.
       #
       # -v is deliberate: tests gate themselves on prerequisites with t.Skip
       # (the backend tmux/herdr/cmux/orca suites need the binary on PATH; the
       # tmux tests provision their own disposable session, so no test depends
       # on a live server), and without per-test output a skipped test is
       # indistinguishable from a passing one in the job log.
-      - run: go test -v -count=1 -timeout 35m -tags integration ./internal/backend ./internal/bootstrap ./internal/cli ./internal/fleet ./internal/orchestrator
+      - run: go test -v -count=1 -timeout 35m -tags integration $(.github/scripts/build-tags.sh packages integration)
 
   invariants:
     name: Repo invariants
@@ -67,6 +107,15 @@ jobs:
         run: |
           set -eu
           [ "$(readlink .claude/skills)" = "../.agents/skills" ] || { echo "::error::.claude/skills must be a symlink to ../.agents/skills"; exit 1; }
+      # Every `//go:build` tag must be classified in .github/build-tags.manifest
+      # and, if it claims a lane, a non-comment line of this file must carry
+      # that lane's command. Catches the tag that arrives with no lane at all --
+      # the one gap deriving package lists from the tree cannot close by itself.
+      # The lane assertion is textual, not semantic: it does not evaluate `if:`,
+      # so it catches a lane that was forgotten or commented out, not one
+      # deliberately disabled. See the header of build-tags.sh for the limits.
+      - name: Build tags must be covered by a lane
+        run: .github/scripts/build-tags.sh check
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

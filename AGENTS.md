@@ -11,9 +11,14 @@ go vet ./...         # static analysis
 go test ./...        # default-tag suite (skips //go:build integration files)
 ```
 
-CI (`.github/workflows/ci.yml`) also runs a `-race` lane and an integration-tag
-lane (`go test -tags integration`). The integration lane covers every package
-carrying `//go:build integration`; run the lane commands from `ci.yml` for a
+CI (`.github/workflows/ci.yml`) also runs a `-race` lane and tag lanes for
+`integration`, `e2e` and `lifecycle_integration`. Lanes derive their package
+lists from the tag itself (`.github/scripts/build-tags.sh packages <tag>`), so
+adding a tagged file to a new package needs no workflow edit. Adding a *new*
+tag does: every tag must be classified in `.github/build-tags.manifest`, and
+the `invariants` job fails until it is. Write constraints as `//go:build` only
+— a lone legacy `// +build` line is invisible to that derivation, so the job
+fails it and asks you to run `gofmt`. Run the lane commands from `ci.yml` for a
 full local matrix.
 
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
