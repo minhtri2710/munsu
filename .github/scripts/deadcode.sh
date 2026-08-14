@@ -35,8 +35,32 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOW="$ROOT/.github/deadcode.allow"
+MANIFEST="$ROOT/.github/build-tags.manifest"
 
 die() { echo "::error::$*" >&2; exit 1; }
+
+# Every GOOS this repo builds for. One run per platform, unioned, because a
+# GOOS-gated file only exists in the build that selects it: `platformProcessIdentity`
+# lives in both process_identity_linux.go and process_identity_darwin.go, and a
+# single run sees exactly one of them. Analyzing only the runner's platform
+# would leave the other file permanently outside the lane -- the same shape of
+# hole that hid a compile break behind `//go:build e2e` for four months (BEO-25).
+#
+# It also makes the answer independent of who is asking: a baseline generated on
+# a macOS laptop was red on the linux runner for these two pairs, which is how
+# this was found. With the union, `check` gives the same result everywhere.
+#
+# Derived from .github/build-tags.manifest rather than listed here, so a fourth
+# platform joins this lane by being classified there instead of by someone
+# remembering this file exists. `linux` is classified `default` (ubuntu
+# satisfies it), so it is added explicitly.
+goos_list() {
+	[ -f "$MANIFEST" ] || die "missing ${MANIFEST#"$ROOT"/}"
+	{
+		echo linux
+		grep -vE '^[[:space:]]*(#|$)' "$MANIFEST" | awk -F '\t' '$2 == "goos-vet" { print $1 }'
+	} | sort -u
+}
 
 # "file<TAB>func" for every unreachable function, sorted.
 #
@@ -56,12 +80,20 @@ die() { echo "::error::$*" >&2; exit 1; }
 # have -- and a future release adding a second diagnostic form would silence
 # every instance of it with the lane green.
 tree_entries() {
-	local raw unparsed
-	raw="$(cd "$ROOT" && deadcode ./cmd/munsu)" ||
-		die "deadcode could not analyze ./cmd/munsu, so it cannot judge reachability"
+	local raw unparsed goos all="" platforms
+	# Resolved before the loop: `for goos in $(goos_list)` would swallow a
+	# failure there and analyze nothing, which reads as "everything is
+	# reachable" -- fail-open in the one place that must not be.
+	platforms="$(goos_list)" || exit 1
+	[ -n "$platforms" ] || die "no GOOS to analyze -- ${MANIFEST#"$ROOT"/} classifies none"
+	for goos in $platforms; do
+		raw="$(cd "$ROOT" && GOOS="$goos" deadcode ./cmd/munsu)" ||
+			die "deadcode could not analyze ./cmd/munsu for GOOS=${goos}, so it cannot judge reachability"
+		all="${all}${raw}"$'\n'
+	done
 	# Paths come out relative to the module root; strip an absolute prefix
 	# anyway so the keys are stable if that ever changes.
-	raw="$(printf '%s\n' "$raw" | sed -E "s|^${ROOT}/||" | { grep -v '^[[:space:]]*$' || true; })"
+	raw="$(printf '%s\n' "$all" | sed -E "s|^${ROOT}/||" | { grep -v '^[[:space:]]*$' || true; })"
 	unparsed="$(printf '%s\n' "$raw" | { grep -vE '^.+:[0-9]+:[0-9]+: unreachable func: .+$' || true; })"
 	if [ -n "$unparsed" ]; then
 		echo "::error::deadcode printed output this lane cannot read, so a finding could be lost:" >&2
@@ -71,7 +103,7 @@ tree_entries() {
 		exit 1
 	fi
 	printf '%s\n' "$raw" |
-		sed -E 's|^(.+):[0-9]+:[0-9]+: unreachable func: (.+)$|\1\t\2|' | sort
+		sed -E 's|^(.+):[0-9]+:[0-9]+: unreachable func: (.+)$|\1\t\2|' | sort -u
 }
 
 # "file<TAB>func" for every allow-file entry, sorted. -u so a duplicate cannot

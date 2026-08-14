@@ -214,6 +214,12 @@ jobs:
       # precisely the finding. `-test` would relabel it "reachable" and silence
       # the case this lane exists for. See ADR-0009 and the script header.
       #
+      # The script runs one analysis per GOOS in .github/build-tags.manifest and
+      # unions them, for the same reason the cross-target vet above exists: a
+      # `_darwin.go` file is invisible to a linux-only analysis, so half of every
+      # platform pair would sit permanently outside this lane. That is also what
+      # makes the result the same on a laptop as on the runner.
+      #
       # deadcode is pinned rather than @latest: its RTA result is the input to a
       # fail-closed comparison, so an upstream change in what counts as reachable
       # has to arrive in a diff someone reads, not on a Tuesday.

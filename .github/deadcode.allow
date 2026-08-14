@@ -16,6 +16,11 @@
 # No line numbers on purpose: they are not part of an entry's identity, and
 # including them would rewrite this file on every unrelated edit above a
 # function. Run `.github/scripts/deadcode.sh list` for the current keys.
+#
+# The set is the union across every GOOS in .github/build-tags.manifest, so a
+# GOOS-gated file is covered even though only one build ever compiles it. That
+# is why the linux and darwin halves of a `_linux.go`/`_darwin.go` pair both
+# appear below, and why this file reads the same on a laptop and on the runner.
 
 # --- Known open bugs, NOT accepted debt -------------------------------------
 # These two are the reason the lane was built, found by the first run of a
@@ -29,7 +34,7 @@ internal/fleet/delivery_amend.go	verifyAncestry	OPEN-BUG(BEO-64): guard refuses 
 internal/fleet/delivery_amend.go	verifySnapshotIdentity	OPEN-BUG(BEO-64): guard refuses an unsafe delivery but has no call site, so the refusal cannot fire
 
 # --- Accepted debt, imported as the baseline --------------------------------
-# The 262 entries below are what `deadcode ./cmd/munsu` reported on b7536f6,
+# The 270 entries below are what `deadcode ./cmd/munsu` reported on b7536f6,
 # the first time it was ever run here. They are pre-existing debt made visible,
 # not debt this lane created. Triaging them one by one -- wire up, delete, or
 # waive with a real reason -- is the burn-down in ADR-0009 (estimated 3-6
@@ -45,12 +50,12 @@ internal/backend/backend_capabilities.go	CapabilityMatrix	burn-down(BEO-63): pre
 internal/backend/backend_capabilities.go	ProbeGranularity.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/backend_capabilities.go	VerificationTier.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/observation_event_herdr.go	NewHerdrEventSource	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/operations.go	newService	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/operations.go	NewService	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/operations.go	Service.CreateEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/operations.go	Service.DisposeEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/operations.go	Service.ProbeEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/operations.go	Service.SubmitPrompt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/backend/operations.go	newService	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/runner_runner.go	FuncRunner.Run	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/runner_runner.go	OSExecutor.Run	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/runner_runner.go	RunError.Error	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -62,9 +67,9 @@ internal/backend/session_session.go	Select	burn-down(BEO-63): pre-existing, impo
 internal/backend/session_zellij.go	ZellijBackend.zellijCmd	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/worktree.go	AbsRoot	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/worktree.go	EnsureNotPrimary	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/backend/worktree.go	gitRevParse	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/worktree.go	IsIsolated	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/worktree.go	IsTreehouseNotFound	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/backend/worktree.go	gitRevParse	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/worktree.go	resolveGitDir	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/bootstrap/integration_agy.go	AgyHooksAllTargetPaths	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/bootstrap/integration_grok.go	GrokHooksDigest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -91,9 +96,9 @@ internal/cli/cli_test_helpers.go	mustOpIDFor	burn-down(BEO-63): pre-existing, im
 internal/cli/cli_test_helpers.go	writeTaskMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/contract_correction.go	exactCommandCorrection	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/integrate_cmd.go	renderIntegrateResult	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/cli/selfupdate_update.go	UpdateWithHandshake	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/selfupdate_update.go	setHandshakeTimeout	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/selfupdate_update.go	setHeartBeatPoll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/cli/selfupdate_update.go	UpdateWithHandshake	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/skills_install.go	installAllSkills	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/skills_validate.go	bundleSkillNames	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/cli/skills_validate.go	isCompanionMarkdown	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -123,20 +128,21 @@ internal/domain/lifecycle.go	RetryAfter	burn-down(BEO-63): pre-existing, importe
 internal/domain/lifecycle.go	ValidateUplinkTransition	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/operation.go	Replay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/operation.go	ReusedWithDifferentIntent	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_captain.go	configPush	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	ConvergeLockPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	RecoverResult.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	Seed	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	SeedWithParent	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_captain.go	configPush	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	typedConfigMode	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_process_unix.go	configureWatcherProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_process_windows.go	configureWatcherProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	ConsumeReadyEvent	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_soldier_queue.go	hasReadyEvents	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	SoldierAckNotification	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	SoldierInboxPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	SoldierIsAcked	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	SoldierOutboxPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	SoldierReceiveNotification	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/captain_soldier_queue.go	hasReadyEvents	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_watcher.go	ConvergeWatcherStatus	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/context_manifest.go	ContextManifest.AddEntry	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/context_manifest.go	ContextManifest.CheckStale	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -157,24 +163,30 @@ internal/fleet/delivery_issuelinks.go	VerifyDeliveryIssueLinks	burn-down(BEO-63)
 internal/fleet/delivery_journal.go	SetDeliveryCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesRespond	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesStatus	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/endpoint_fence.go	ServiceEndpointController.DisposeBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/endpoint_fence.go	ServiceEndpointController.ProbeBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/endpoint_fence.go	TaskEndpointScanner.ScanEndpoints	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	fenceEndpoints	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	metaUint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	readEndpointMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	sameBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	ServiceEndpointController.DisposeBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	ServiceEndpointController.ProbeBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	TaskEndpointScanner.ScanEndpoints	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	validBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_args.go	splitProcessCommand	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_args.go	writerKindForArgs	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_identity_darwin.go	platformProcessIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/process_identity_linux.go	platformProcessIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_inventory_darwin.go	listWriterProcesses	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/process_inventory_linux.go	listWriterProcesses	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_runtime_unix.go	inspectProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_runtime_unix.go	invalidProcessIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_runtime_unix.go	isProcessMissing	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_runtime_unix.go	terminateProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/propagate_config.go	ensureConfigPreconditions	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/process_runtime_windows.go	inspectProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/process_runtime_windows.go	isProcessMissing	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/process_runtime_windows.go	listWriterProcesses	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/process_runtime_windows.go	terminateProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	IsPropagateConfigUnchanged	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/propagate_config.go	ensureConfigPreconditions	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	propagateConfigLogPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	Registry.UnbindCaptain	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/registry_ops.go	UnbindCaptainRequest.DigestBytes	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -190,9 +202,9 @@ internal/fleet/soldier_envelope.go	VerifyRequiredSkills	burn-down(BEO-63): pre-e
 internal/fleet/soldierstate_soldierstate.go	ReadSoldierState	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/spawn_spawn.go	ResolveDeliveryModeFromBase	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	SetHandoffCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/writer_fence.go	canonicalHome	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/writer_fence.go	CompositeWriterFence.FenceOSWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/writer_fence.go	CompositeWriterFence.FenceWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/writer_fence.go	canonicalHome	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/writer_fence.go	correlateWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/writer_runtime.go	DurableArtifactScanner.Scan	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/writer_runtime.go	FenceBoundEndpoints	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -203,35 +215,36 @@ internal/fleet/writer_runtime.go	OSProcessController.TerminateExact	burn-down(BE
 internal/fleet/writer_runtime.go	OSProcessInventory.List	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/writer_runtime.go	OSProcessVerifier.VerifyDead	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	DispatchConfig.normalize	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/harness/dispatch.go	normalizeDispatchProfile	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	ResolveDispatch	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	SaveDispatch	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	SelectProfile	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/harness/dispatch.go	normalizeDispatchProfile	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/launch.go	LaunchString	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/launch.go	LaunchStringFromAdapter	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/preflight.go	PreflightBinaryName	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/quota_balanced.go	newQuotaSelectorWithProvider	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/atomic.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/home/atomic_windows.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/dispatch_degraded.go	CheckWatcherHealthOwnership	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/dispatch_degraded.go	ClearDegradedMode	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/home/dispatch_degraded.go	degradedModeLockPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/dispatch_degraded.go	IsDegradedMode	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/dispatch_degraded.go	MarkDegradedMode	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/dispatch_degraded.go	RecoverAndClearDegradedMode	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/dispatch_degraded.go	RequireHealthyWatcherOrRepair	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/home/dispatch_degraded.go	degradedModeLockPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/home.go	EnsureDirTree	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/taskmeta.go	RemoveStatusKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/taskmeta.go	WriteStatus	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/wake_lease.go	ClaimExpiryGrace	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/watcher_lock.go	IsWatchLockHeld	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/watcher_lock.go	ReleaseSessionLock	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/home/writers.go	inventoryLegacyWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/writers.go	LegacyWriterPreflight.Inspect	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/home/writers.go	inventoryLegacyWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/writers.go	readLegacyMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_daemon.go	Daemon.SetBackend	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_daemon.go	Daemon.SetPaneCapture	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_digester.go	Digester.EntryCount	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_gate.go	IsReturnSignal	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_injector.go	DirectInject	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -239,14 +252,14 @@ internal/orchestrator/afk_injector.go	Injector.LastEvents	burn-down(BEO-63): pre
 internal/orchestrator/afk_injector.go	NewInjector	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_lock.go	Lock.PID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_lock.go	Lock.StartAt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_main.go	runLoop	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_main.go	scanStatusFiles	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_main.go	Start	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_main.go	Status	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_main.go	runLoop	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_main.go	scanStatusFiles	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	NudgeTracker.Exhausted	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	NudgeTracker.InCooldown	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_recovery.go	NudgeTracker.prune	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	NudgeTracker.Record	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/afk_recovery.go	NudgeTracker.prune	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Clear	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	RecoveryDiagnosticStore.Read	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_recovery.go	ResolveRecovery	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -275,11 +288,11 @@ internal/orchestrator/orchestrator.go	DisableAFK	burn-down(BEO-63): pre-existing
 internal/orchestrator/orchestrator.go	IsAFKActive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/orchestrator.go	StartAFK	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	BuildIdentity.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/supervision_identity.go	WatcherIdentity.BuildIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	formatIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	identityPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	parseIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_identity.go	resolveExecPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/supervision_identity.go	WatcherIdentity.BuildIdentity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	NoopRetirementPort.RecoverPendingRetirements	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	NoopRetirementPort.RetireMergedPoll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/supervision_watcher.go	NoopTaskStatePort.ReadTaskState	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -288,14 +301,14 @@ internal/orchestrator/supervision_watcher.go	NoopWatcherHooks.Reconcile	burn-dow
 internal/orchestrator/supervision_watcher.go	RunWithProbeAndSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ClearAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ClearTaskAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/turnend_obligations.go	parseKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/turnend_obligations.go	ParseTermKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/turnend_obligations.go	parseKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/uplink_uplink.go	HasAcceptedReport	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/uplink_uplink.go	HasOpenReport	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/wakedelivery_deliver.go	reconcileOne	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/wakedelivery_deliver.go	ReconcilePending	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Failed	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Relayed	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/orchestrator/wakedelivery_deliver.go	reconcileOne	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/waker_drain.go	CheckGuard	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/waker_drain.go	Drain	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/waker_drain.go	GuardWarnings	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
