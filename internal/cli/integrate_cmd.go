@@ -16,10 +16,11 @@ import (
 )
 
 type integrateFlags struct {
-	harness string
-	scope   string
-	dryRun  bool
-	command string
+	harness  string
+	scope    string
+	dryRun   bool
+	command  string
+	filePath string
 }
 
 func newIntegrateCmd() *cobra.Command {
@@ -121,6 +122,7 @@ Results:
 
 Flags:
   --command      Command string to evaluate for blocking rules (for tool_call safety)
+  --file-path    Target path of a native file-write tool call (Write/Edit/...)
   --harness      Output shape: "pi" (default, JSON contract), "claude" (native deny exit 2 + stderr), "codex" (stderr plaintext + exit 2), "grok" (stdout decision=deny object + exit 2), "opencode" (stderr plaintext + exit 2, same as codex), or "agy" (stdout decision JSON + exit 0)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: withHome(func(cmd *cobra.Command, args []string, ctx Ctx) error {
@@ -128,10 +130,11 @@ Flags:
 			if len(args) > 0 {
 				checkPath = args[0]
 			}
-			return runSafetyCheck(cmd, checkPath, flags.command, flags.harness)
+			return runSafetyCheck(cmd, checkPath, flags.command, flags.filePath, flags.harness)
 		}),
 	}
 	safetyCmd.Flags().StringVar(&flags.command, "command", "", "Command to evaluate for blocking rules")
+	safetyCmd.Flags().StringVar(&flags.filePath, "file-path", "", "File path a native write tool is about to touch")
 	safetyCmd.Flags().StringVar(&flags.harness, "harness", "", "Output shape: pi (default), claude, grok, codex, opencode, or agy")
 	configureContractCommand(safetyCmd)
 
@@ -316,55 +319,83 @@ var exitWithCode = func(code int) {
 // Supports Claude shape (.tool_input.command), Grok shape (.toolInput.command),
 // and plain JSON with command.
 func readStdinForCommand() (string, error) {
+	command, _, err := readStdinForToolPayload()
+	return command, err
+}
+
+// readStdinForToolPayload reads the harness tool payload from stdin exactly
+// once and extracts both the shell command and the native write-tool target
+// path. Both come from the same JSON object and stdin is not rewindable, so a
+// single reader owns the extraction: a Bash call carries a command, a
+// Write/Edit call carries a path, and neither can be fetched by a second read.
+//
+// Field names are tried per harness shape. A payload that carries neither
+// yields two empty strings, which every caller treats as "nothing to check".
+func readStdinForToolPayload() (string, string, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return "", fmt.Errorf("reading stdin: %w", err)
+		return "", "", fmt.Errorf("reading stdin: %w", err)
 	}
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {
-		return "", nil
+		return "", "", nil
 	}
 
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		return "", nil // not JSON, return empty
+		return "", "", nil // not JSON, return empty
 	}
 
-	// Try Claude shape: .tool_input.command
+	// Containers, in the order harnesses nest their tool arguments:
+	// Claude/Codex .tool_input, agy .toolCall.args, Grok .toolInput, flat.
+	containers := []map[string]interface{}{}
 	if ti, ok := payload["tool_input"].(map[string]interface{}); ok {
-		if cmd, ok := ti["command"].(string); ok && cmd != "" {
-			return cmd, nil
-		}
+		containers = append(containers, ti)
 	}
-	// Try agy shape: .toolCall.args.CommandLine (PascalCase nested)
 	if tc, ok := payload["toolCall"].(map[string]interface{}); ok {
 		if args, ok := tc["args"].(map[string]interface{}); ok {
-			if cmd, ok := args["CommandLine"].(string); ok && cmd != "" {
-				return cmd, nil
+			containers = append(containers, args)
+		}
+	}
+	if ti, ok := payload["toolInput"].(map[string]interface{}); ok {
+		containers = append(containers, ti)
+	}
+	containers = append(containers, payload)
+
+	commandKeys := []string{"command", "CommandLine"}
+	// notebook_path is NotebookEdit's target; the rest cover the PascalCase and
+	// camelCase spellings the other harnesses use for the same argument.
+	filePathKeys := []string{"file_path", "filePath", "FilePath", "notebook_path", "notebookPath", "path", "Path"}
+
+	command := firstStringField(containers, commandKeys)
+	filePath := firstStringField(containers, filePathKeys)
+	return command, filePath, nil
+}
+
+// firstStringField returns the first non-empty string value found by scanning
+// keys in order within each container, containers in order.
+func firstStringField(containers []map[string]interface{}, keys []string) string {
+	for _, container := range containers {
+		for _, key := range keys {
+			if v, ok := container[key].(string); ok && v != "" {
+				return v
 			}
 		}
 	}
-	// Try Grok shape: .toolInput.command (camelCase)
-	if ti, ok := payload["toolInput"].(map[string]interface{}); ok {
-		if cmd, ok := ti["command"].(string); ok && cmd != "" {
-			return cmd, nil
-		}
-	}
-	// Try non-nested "command" key
-	if cmd, ok := payload["command"].(string); ok && cmd != "" {
-		return cmd, nil
-	}
-
-	return "", nil
+	return ""
 }
 
-func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, harnessFlag string) error {
-	// When --harness claude or --harness grok and no --command, try to read command from stdin
+func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, checkFilePath string, harnessFlag string) error {
+	// Harnesses that deliver the tool payload on stdin: read it once and take
+	// whichever of command / file path the tool call actually carries.
 	effectiveCommand := checkCommand
-	if (harnessFlag == "claude" || harnessFlag == "grok" || harnessFlag == "codex" || harnessFlag == "agy") && effectiveCommand == "" {
-		stdinCommand, err := readStdinForCommand()
-		if err == nil && stdinCommand != "" {
+	effectiveFilePath := checkFilePath
+	if (harnessFlag == "claude" || harnessFlag == "grok" || harnessFlag == "codex" || harnessFlag == "agy") &&
+		effectiveCommand == "" && effectiveFilePath == "" {
+		stdinCommand, stdinFilePath, err := readStdinForToolPayload()
+		if err == nil {
 			effectiveCommand = stdinCommand
+			effectiveFilePath = stdinFilePath
 		}
 	}
 
@@ -411,6 +442,15 @@ func runSafetyCheck(cmd *cobra.Command, checkPath string, checkCommand string, h
 			}
 		}
 		_ = nmHome
+	}
+
+	// Native file-write tools carry their target in the payload rather than in
+	// a command string, so they are evaluated on the path alone.
+	if !block && effectiveFilePath != "" {
+		if writeBlock, writeReason := evaluateFileWriteSafety(effectiveFilePath); writeBlock {
+			block = true
+			reason = writeReason
+		}
 	}
 
 	// Determine effective block: gate_refused also blocks

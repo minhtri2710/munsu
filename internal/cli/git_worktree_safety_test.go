@@ -17,12 +17,17 @@ import (
 
 func TestSafetyCheckGitReadsRemainAvailableWithoutBinding(t *testing.T) {
 	repo := initGitRepoForSafety(t, t.TempDir())
+	// A worktree, not the primary checkout: inside a task run the primary
+	// checkout is refused outright regardless of the command (see
+	// TestSafetyCheckRefusesPrimaryCheckoutDuringTaskRun).
+	worktree := filepath.Join(t.TempDir(), "wt")
+	runGitForSafety(t, repo, "worktree", "add", "--detach", worktree)
 	homeDir := t.TempDir()
 	t.Setenv("MUNSU_HOME", homeDir)
 	t.Setenv("MUNSU_TASK_ID", "ship-read")
 
 	for _, command := range []string{"git status --short", "git branch --show-current"} {
-		block, reason := runPiSafetyForGit(t, repo, command)
+		block, reason := runPiSafetyForGit(t, worktree, command)
 		if block || reason != "" {
 			t.Fatalf("%q block=%v reason=%q", command, block, reason)
 		}
@@ -348,7 +353,7 @@ func runPiSafetyForGit(t *testing.T, checkPath, command string) (bool, string) {
 	configureContractCommand(cmd)
 	cmd.SetErr(io.Discard)
 	stdout, _ := captureBoth(func() {
-		if err := runSafetyCheck(cmd, checkPath, command, ""); err != nil {
+		if err := runSafetyCheck(cmd, checkPath, command, "", ""); err != nil {
 			t.Fatalf("runSafetyCheck: %v", err)
 		}
 	})

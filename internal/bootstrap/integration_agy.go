@@ -69,12 +69,22 @@ func agyBuildHookJSON(munsuBin string) string {
 	// Build the three munsu-owned hooks
 	hooks := make(map[string]interface{})
 
-	// Safety check: PreToolUse with matcher run_command
+	// Safety check: PreToolUse for run_command plus the native file-write
+	// tools, which bypass the shell entirely and would otherwise reach the
+	// filesystem with no guard at all.
 	safetyCommand := agyHookCommand(munsuBin, "integrate", "safety-check", "--harness", "agy")
 	hooks["munsu-safety-check"] = map[string]interface{}{
 		"PreToolUse": []map[string]interface{}{
 			{
 				"matcher": "run_command",
+				"hooks": []map[string]interface{}{
+					{
+						"command": safetyCommand,
+					},
+				},
+			},
+			{
+				"matcher": writeToolMatcher(agyWriteToolNames),
 				"hooks": []map[string]interface{}{
 					{
 						"command": safetyCommand,
@@ -198,6 +208,15 @@ func AgyHooksHasOwnedHooks(hooksDir, munsuBin string) (bool, string, error) {
 
 		if !foundMunsu {
 			missing = append(missing, name+" (command does not reference munsu)")
+			continue
+		}
+
+		// The safety-check hook must carry BOTH PreToolUse matchers. Accepting
+		// the run_command one alone reports an installation that predates the
+		// native-write matcher as healthy, so it is never repaired and the
+		// write path stays unguarded on machines already running munsu.
+		if name == "munsu-safety-check" && !agyHasWriteToolMatcher(hookConfig) {
+			missing = append(missing, name+" (missing native file-write matcher)")
 		}
 	}
 
@@ -205,6 +224,26 @@ func AgyHooksHasOwnedHooks(hooksDir, munsuBin string) (bool, string, error) {
 		return false, fmt.Sprintf("missing or mismatched munsu-owned hooks: %s", strings.Join(missing, ", ")), nil
 	}
 	return true, "all munsu-owned agy hooks present", nil
+}
+
+// agyHasWriteToolMatcher reports whether the hook config carries a PreToolUse
+// entry matching the native file-write tools.
+func agyHasWriteToolMatcher(hookConfig map[string]interface{}) bool {
+	want := writeToolMatcher(agyWriteToolNames)
+	entries, ok := hookConfig["PreToolUse"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if matcher, ok := entryMap["matcher"].(string); ok && matcher == want {
+			return true
+		}
+	}
+	return false
 }
 
 // AgyAdapter implements hook generation and installation for the Agy harness.

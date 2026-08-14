@@ -592,7 +592,8 @@ func SafetyCheck(path string) *SafetyCheckResult {
 	}
 
 	// GateRefused: true when classification errored (GateUnknown), gate is present,
-	// or identity is Unrelated (fail closed for unknown repos).
+	// identity is Unrelated (fail closed for unknown repos), or the path is a
+	// primary checkout while a munsu task run is active.
 	if scopeResult.Err != nil {
 		result.GateRefused = true
 		result.Error = scopeResult.Err.Error()
@@ -603,6 +604,17 @@ func SafetyCheck(path string) *SafetyCheckResult {
 		// Unrelated identity with no explicit gate still fails closed
 		result.GateRefused = true
 		result.Error = "unrelated checkout (not a recognized repository)"
+	} else if scopeResult.Identity == fleet.Primary && IsBoundRepository(scopeResult.CommonDir) {
+		// Inside an active task run the bound worktree is the only legal
+		// working tree for the bound repository; its primary checkout is the
+		// shared state. The refusal is scoped to that one repository — every
+		// other primary checkout (a cloned reference repo, a fixture the agent
+		// created) is ordinary work. Outside a task run nothing is refused:
+		// generals and humans work in the primary checkout, and munsu's own
+		// sync paths (internal/fleet/fleetsync.go, internal/cli/selfupdate_update.go)
+		// write there on purpose.
+		result.GateRefused = true
+		result.Error = "shared primary checkout of the bound repository refused inside an active munsu task run; use the bound worktree"
 	}
 
 	return result
