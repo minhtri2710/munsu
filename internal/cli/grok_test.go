@@ -328,7 +328,7 @@ func TestGrokGuardHealthyExit(t *testing.T) {
 	}
 }
 
-// TestGrokReadStdinToolInputCommand verifies readStdinForCommand
+// TestGrokReadStdinToolInputCommand verifies readStdinForToolPayload
 // handles Grok's .toolInput.command (camelCase) shape.
 func TestGrokReadStdinToolInputCommand(t *testing.T) {
 	// Stdin with Grok's .toolInput.command
@@ -338,7 +338,7 @@ func TestGrokReadStdinToolInputCommand(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	cmd, err := readStdinForCommand()
+	cmd, _, err := readStdinForToolPayload()
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -358,7 +358,7 @@ func TestGrokReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	cmd, err := readStdinForCommand()
+	cmd, _, err := readStdinForToolPayload()
 	os.Stdin = oldStdin
 
 	if err != nil {
