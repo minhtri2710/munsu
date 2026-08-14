@@ -10,6 +10,7 @@ Full command map grouped by lifecycle phase.
 | `munsu init` | Create home directory and seed the orchestrator operating manual. Auto-detects backend and soldier harness. |
 | `munsu init --reconfigure` | Re-run auto-detection and overwrite existing config files. |
 | `munsu doctor` | Run read-only diagnostics with fix commands for missing tools. |
+| `munsu doctor --orphans` | Report processes whose owning run has ended, grouped GARBAGE / UNKNOWN / OWNED. Never terminates anything; exit 1 leftovers found, 2 nothing conclusive but a member should look. |
 | `munsu config get <key>` | Read a configuration value. |
 | `munsu project add <name> <path-or-url>` | Register a project. Git URLs are cloned automatically. |
 | `munsu project list` | List registered projects. |

@@ -8,32 +8,64 @@ import (
 	"github.com/minhtri2710/munsu/internal/fleet"
 )
 
-// Exit codes of the orphan scan, so a member or CI can script it:
-// 0 nothing to look at, 1 leftovers found, 2 nothing conclusive but a human
-// should look.
+// Exit codes of the orphan scan, so a member or CI can script it: 0 nothing to
+// look at, 1 leftovers found, 2 nothing conclusive but a human should look.
+// They reach the shell as a contract error status through WriteContractError,
+// the way every other exit code in this CLI does.
+//
+// GARBAGE wins over UNKNOWN when a report holds both, so a machine with real
+// leftovers always signals 1. The consequence is deliberate: exit 1 means "at
+// least one leftover, and there may be unresolved processes too — read the
+// report". Inverting the priority would make such a machine report 2, which a
+// `if munsu doctor --orphans; then ...; fi` script reads as nothing to clean.
 const (
-	orphanExitClean       = 0
-	orphanExitGarbage     = 1
-	orphanExitNeedsMember = 2
+	orphanExitGarbage     = exitOperation
+	orphanExitNeedsMember = exitUsage
 )
 
 // runOrphanScan wires the existing writer fence to `munsu doctor --orphans`.
 // The scan reports and stops there: it never signals a process. Termination
 // stays a member decision until munsu can tell a leftover from a daemon
 // somebody started on purpose (ADR-BEO-40-01 §5).
-func runOrphanScan(out io.Writer, homeDir string) (int, error) {
-	report, err := fleet.NewRuntimeWriterFence().InspectOrphans(homeDir)
+func runOrphanScan(out io.Writer, homeDir string) error {
+	return runOrphanScanWith(out, fleet.NewRuntimeWriterFence(), homeDir)
+}
+
+// runOrphanScanWith is runOrphanScan over an explicit fence, so every exit
+// path can be driven from a test without a machine in a particular state.
+func runOrphanScanWith(out io.Writer, fence fleet.CompositeWriterFence, homeDir string) error {
+	report, err := fence.InspectOrphans(homeDir)
 	if err != nil {
-		return orphanExitNeedsMember, fmt.Errorf("orphan scan: %w", err)
+		// A scan that failed resolved nothing, so it exits like an
+		// unresolved finding rather than like a leftover: a script must not
+		// read a broken scan as "garbage found".
+		return orphanError(orphanExitNeedsMember, "orphan_scan_failed",
+			"Fix the scan failure, then re-run `munsu doctor --orphans`", fmt.Sprintf("orphan scan: %v", err))
 	}
 	writeOrphanReport(out, report)
 	switch {
 	case len(report.Garbage) > 0:
-		return orphanExitGarbage, nil
+		return orphanError(orphanExitGarbage, "orphans_found",
+			"Inspect each reported PID and decide by hand; munsu never terminates them",
+			fmt.Sprintf("%d processes whose owning run has ended, %d unresolved", len(report.Garbage), len(report.Unknown)))
 	case len(report.Unknown) > 0:
-		return orphanExitNeedsMember, nil
+		return orphanError(orphanExitNeedsMember, "orphans_unresolved",
+			"Inspect each reported PID and decide by hand; munsu never terminates them",
+			fmt.Sprintf("%d processes no oracle could resolve", len(report.Unknown)))
 	default:
-		return orphanExitClean, nil
+		return nil
+	}
+}
+
+func orphanError(status int, code, action, message string) error {
+	return &contractError{
+		status: status,
+		value: ErrorResponse{
+			SchemaVersion: SchemaVersion,
+			Kind:          "error",
+			Status:        "error",
+			Error:         ErrorEnvelope{ErrorCode: code, Action: action, Message: message},
+		},
 	}
 }
 

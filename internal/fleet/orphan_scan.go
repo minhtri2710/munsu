@@ -20,19 +20,17 @@ import (
 // Ownership marker keys read out of a scanned process environment. The list is
 // a whitelist: no other key is ever kept, rendered or logged, because process
 // environments carry credentials (MULTICA_TOKEN, EXA_API_KEY, ...).
+// It holds exactly the keys a classifier reads — a key nothing resolves would
+// widen the read for nothing.
 const (
-	MarkerMulticaTask       = "MULTICA_TASK_ID"
-	MarkerMulticaAgent      = "MULTICA_AGENT_NAME"
-	MarkerMulticaConfigRoot = "MULTICA_TASK_CONFIG_ROOT"
-	MarkerMunsuTask         = "MUNSU_TASK_ID"
-	MarkerMunsuRole         = "MUNSU_ROLE"
-	MarkerMunsuHome         = "MUNSU_HOME"
-	MarkerTmpdir            = "TMPDIR"
+	MarkerMulticaTask = "MULTICA_TASK_ID"
+	MarkerMunsuTask   = "MUNSU_TASK_ID"
+	MarkerMunsuHome   = "MUNSU_HOME"
+	MarkerTmpdir      = "TMPDIR"
 )
 
 var orphanMarkerKeys = map[string]bool{
-	MarkerMulticaTask: true, MarkerMulticaAgent: true, MarkerMulticaConfigRoot: true,
-	MarkerMunsuTask: true, MarkerMunsuRole: true, MarkerMunsuHome: true, MarkerTmpdir: true,
+	MarkerMulticaTask: true, MarkerMunsuTask: true, MarkerMunsuHome: true, MarkerTmpdir: true,
 }
 
 // runScopedTmpdirBasePrefix is the observed naming convention of the per-run
@@ -145,7 +143,14 @@ func munsuTaskLiveness(scanHome string, process MarkedProcess, task string) (Run
 	}
 	aggregate, ok := aggregates[task]
 	if !ok {
-		return RunEnded, fmt.Sprintf("task %s has no current record in this home", task)
+		// Absence is not evidence the run ended. Both oracles conclude
+		// GARBAGE only from positive evidence — L0 from a run-scoped TMPDIR
+		// that is demonstrably gone, L1 from a record that says retired. A
+		// live soldier whose record has not committed yet, or a home that was
+		// rebuilt under it, would otherwise be labelled GARBAGE and hand a
+		// member a reason to kill it: the same irreversible mistake automatic
+		// cleanup would make, one step slower.
+		return RunUnresolved, fmt.Sprintf("task %s has no current record in this home; absence does not prove the run ended", task)
 	}
 	if aggregate.Phase == tauth.PhaseRetired {
 		return RunEnded, fmt.Sprintf("task %s is retired", task)

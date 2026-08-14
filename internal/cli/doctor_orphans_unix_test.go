@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -40,15 +41,11 @@ func TestOrphanScanReportsRealGarbageAndLeavesItRunning(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	var code int
+	var scanErr error
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		out.Reset()
-		scanned, err := runOrphanScan(&out, t.TempDir())
-		if err != nil {
-			t.Fatalf("runOrphanScan: %v", err)
-		}
-		code = scanned
+		scanErr = runOrphanScan(&out, t.TempDir())
 		if strings.Contains(out.String(), fmt.Sprintf("PID %d", pid)) {
 			break
 		}
@@ -63,8 +60,9 @@ func TestOrphanScanReportsRealGarbageAndLeavesItRunning(t *testing.T) {
 	if !strings.Contains(garbage, vanished) {
 		t.Fatalf("expected the vanished run TMPDIR as the evidence, got:\n%s", garbage)
 	}
-	if code != orphanExitGarbage {
-		t.Fatalf("expected exit code %d when leftovers are found, got %d", orphanExitGarbage, code)
+	var contract *contractError
+	if !errors.As(scanErr, &contract) || contract.status != orphanExitGarbage {
+		t.Fatalf("expected exit status %d when leftovers are found, got %v", orphanExitGarbage, scanErr)
 	}
 	if !strings.Contains(report, "does not terminate anything") {
 		t.Fatalf("the report must state that it terminates nothing, got:\n%s", report)

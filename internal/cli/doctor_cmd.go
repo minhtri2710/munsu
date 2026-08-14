@@ -36,14 +36,7 @@ Use --role for role-specific integration matrix:
 			}
 
 			if orphans, _ := cmd.Flags().GetBool("orphans"); orphans {
-				code, err := runOrphanScan(cmd.OutOrStdout(), ctx.Home)
-				if err != nil {
-					return err
-				}
-				if code != orphanExitClean {
-					os.Exit(code)
-				}
-				return nil
+				return runOrphanScan(cmd.OutOrStdout(), ctx.Home)
 			}
 
 			// Role-specific doctor scan
@@ -185,7 +178,7 @@ Use --role for role-specific integration matrix:
 		}),
 	}
 	cmd.Flags().Bool("check-instructions", false, "Verify AGENTS.md/orchestrator manual references against real commands")
-	cmd.Flags().Bool("orphans", false, "Report processes whose owning run has ended (never terminates anything; exit 1 garbage, 2 needs a member)")
+	cmd.Flags().Bool("orphans", false, "Report processes whose owning run has ended (never terminates anything; exit 1 leftovers found — the report may also list unresolved ones, 2 nothing conclusive but a member should look)")
 	cmd.Flags().StringVar(&role, "role", "", "Role-specific scan: general, captain, or soldier")
 	return cmd
 }
