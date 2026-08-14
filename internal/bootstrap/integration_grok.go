@@ -183,6 +183,38 @@ func GrokHooksAllTargetPaths(scope Scope, cwd string) ([]string, error) {
 // GrokHooksHasOwnedHooks checks whether all 4 Grok hook files in the hooksDir
 // contain munsu-owned commands anchored to the given munsu binary path.
 // Returns true when all expected hooks are present, along with a descriptive message.
+//
+// grokHookDocument is the on-disk shape of one Grok hook file. Both the
+// installed file and the freshly generated expectation are decoded into it so
+// the two can be compared entry by entry.
+type grokHookDocument struct {
+	Hooks map[string][]struct {
+		Matcher string `json:"matcher,omitempty"`
+		Hooks   []struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+			Timeout int    `json:"timeout"`
+		} `json:"hooks"`
+	} `json:"hooks"`
+}
+
+// grokHookEntries flattens a hook document into comparable
+// "event|matcher|command" keys.
+func grokHookEntries(doc grokHookDocument) []string {
+	var entries []string
+	for event, matchers := range doc.Hooks {
+		for _, m := range matchers {
+			for _, h := range m.Hooks {
+				if h.Type != "" && h.Type != "command" {
+					continue
+				}
+				entries = append(entries, event+"|"+m.Matcher+"|"+h.Command)
+			}
+		}
+	}
+	return entries
+}
+
 func GrokHooksHasOwnedHooks(hooksDir, munsuBin string) (bool, string, error) {
 	var missing []string
 
@@ -194,77 +226,34 @@ func GrokHooksHasOwnedHooks(hooksDir, munsuBin string) (bool, string, error) {
 			continue
 		}
 
-		var parsed struct {
-			Hooks map[string][]struct {
-				Matcher string `json:"matcher,omitempty"`
-				Hooks   []struct {
-					Type    string `json:"type"`
-					Command string `json:"command"`
-					Timeout int    `json:"timeout"`
-				} `json:"hooks"`
-			} `json:"hooks"`
-		}
+		var parsed grokHookDocument
 		if err := json.Unmarshal(data, &parsed); err != nil {
 			missing = append(missing, name+" (invalid JSON)")
 			continue
 		}
 
-		expectedJSON := grokHookFile(munsuBin, name)
-		var expectedParsed struct {
-			Hooks map[string][]struct {
-				Hooks []struct {
-					Command string `json:"command"`
-				} `json:"hooks"`
-			} `json:"hooks"`
-		}
-		if err := json.Unmarshal([]byte(expectedJSON), &expectedParsed); err != nil {
+		var expectedParsed grokHookDocument
+		if err := json.Unmarshal([]byte(grokHookFile(munsuBin, name)), &expectedParsed); err != nil {
 			missing = append(missing, name+" (cannot parse expected)")
 			continue
 		}
 
-		// Find the first command hook in the parsed file
-		var actualCommand string
-		for _, matchers := range parsed.Hooks {
-			for _, m := range matchers {
-				for _, h := range m.Hooks {
-					if h.Type == "command" {
-						actualCommand = h.Command
-						break
-					}
-				}
-				if actualCommand != "" {
-					break
-				}
-			}
-			if actualCommand != "" {
-				break
+		// Compare the full set of event+matcher+command entries, not just the
+		// first command found. Taking the first match reports an installation
+		// that predates a newly added matcher as healthy, so it is never
+		// repaired and the new matcher never reaches the machines running today.
+		actual := make(map[string]bool)
+		for _, entry := range grokHookEntries(parsed) {
+			actual[entry] = true
+		}
+		var absent []string
+		for _, want := range grokHookEntries(expectedParsed) {
+			if !actual[want] {
+				absent = append(absent, want)
 			}
 		}
-
-		// Find the expected command
-		var expectedCommand string
-		for _, matchers := range expectedParsed.Hooks {
-			for _, m := range matchers {
-				for _, h := range m.Hooks {
-					expectedCommand = h.Command
-					break
-				}
-				if expectedCommand != "" {
-					break
-				}
-			}
-			if expectedCommand != "" {
-				break
-			}
-		}
-
-		if actualCommand == "" {
-			missing = append(missing, name+" (no command hook found)")
-			continue
-		}
-
-		if actualCommand != expectedCommand {
-			missing = append(missing, name+" (command mismatch)")
+		if len(absent) > 0 {
+			missing = append(missing, name+" (missing hook entries: "+strings.Join(absent, ", ")+")")
 			continue
 		}
 	}

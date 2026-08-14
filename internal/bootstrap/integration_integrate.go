@@ -604,26 +604,20 @@ func SafetyCheck(path string) *SafetyCheckResult {
 		// Unrelated identity with no explicit gate still fails closed
 		result.GateRefused = true
 		result.Error = "unrelated checkout (not a recognized repository)"
-	} else if scopeResult.Identity == fleet.Primary && TaskRunActive() {
+	} else if scopeResult.Identity == fleet.Primary && IsBoundRepository(scopeResult.CommonDir) {
 		// Inside an active task run the bound worktree is the only legal
-		// working tree; the primary checkout is shared state. Outside a task
-		// run this must stay open: generals and humans work in the primary
-		// checkout, and munsu's own sync paths (internal/fleet/fleetsync.go,
-		// internal/cli/selfupdate_update.go) write there on purpose.
+		// working tree for the bound repository; its primary checkout is the
+		// shared state. The refusal is scoped to that one repository — every
+		// other primary checkout (a cloned reference repo, a fixture the agent
+		// created) is ordinary work. Outside a task run nothing is refused:
+		// generals and humans work in the primary checkout, and munsu's own
+		// sync paths (internal/fleet/fleetsync.go, internal/cli/selfupdate_update.go)
+		// write there on purpose.
 		result.GateRefused = true
-		result.Error = "primary checkout refused inside an active munsu task run (MUNSU_TASK_ID set); use the bound worktree"
+		result.Error = "shared primary checkout of the bound repository refused inside an active munsu task run; use the bound worktree"
 	}
 
 	return result
-}
-
-// TaskRunActive reports whether the process is running inside a munsu task run,
-// i.e. whether MUNSU_TASK_ID is set. It is the single switch that turns the
-// primary-checkout refusals on: soldier and captain launch scripts export
-// MUNSU_TASK_ID (internal/fleet/soldier_launch.go, internal/fleet/captain_captain.go),
-// interactive and general sessions do not.
-func TaskRunActive() bool {
-	return strings.TrimSpace(os.Getenv("MUNSU_TASK_ID")) != ""
 }
 
 // FileContainsOwnershipMarker reports whether the file at path has the

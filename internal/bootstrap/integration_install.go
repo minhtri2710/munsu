@@ -614,7 +614,26 @@ func Status(homeDir, cwd, harnessName string, scope Scope) (*IntegrationResult, 
 			}
 			sum := sha256.Sum256(currentData)
 			currentDigest := hex.EncodeToString(sum[:])
-			if currentDigest != manifest.ContentDigest {
+
+			// The Pi extension file is wholly munsu-owned, so the expectation
+			// is regenerated here rather than read from the manifest. The
+			// stored digest only proves the file still matches what the
+			// *installing* binary produced; an installation that predates a
+			// change to the extension source would match it forever and never
+			// be repaired. Claude and Codex keep the stored digest because
+			// their settings files are merged with user-owned hooks, so a
+			// freshly generated file is legitimately not byte-identical —
+			// their coverage comes from the structural checks above.
+			expectedDigest := manifest.ContentDigest
+			if harnessName == harness.Pi {
+				munsuBin, resolveErr := ResolveMunsuPathString()
+				if resolveErr != nil {
+					allPresent = false
+					continue
+				}
+				expectedDigest = PiExtensionContentDigest(munsuBin)
+			}
+			if currentDigest != expectedDigest {
 				allPresent = false
 			}
 		}

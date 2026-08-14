@@ -24,13 +24,22 @@ import (
 //   - A name missing from the list keeps the C2 gap open for that tool.
 //
 // So over-listing is safe and under-listing is not.
+//
+// One exception overrides that rule: a tool whose payload carries no file path
+// at all is NOT listed, even though listing it would be harmless at runtime.
+// The apply-patch family (codex `apply_patch`, pi/opencode `patch`, agy
+// `apply_patch`) embeds its targets inside a patch body, so the hook would fire,
+// find nothing in the path fields, and fail open every single time. Listing it
+// would make the matcher read as coverage it does not provide. Reading those
+// targets needs a parser for a third-party patch format, which belongs in its
+// own change with its own tests — see the limits section of the PR.
 var (
 	claudeWriteToolNames   = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
-	codexWriteToolNames    = []string{"Write", "Edit", "MultiEdit", "NotebookEdit", "ApplyPatch", "apply_patch"}
+	codexWriteToolNames    = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
 	grokWriteToolNames     = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
-	agyWriteToolNames      = []string{"write_file", "edit_file", "create_file", "replace_in_file", "apply_patch", "notebook_edit"}
-	piWriteToolNames       = []string{"write", "edit", "multi_edit", "multiedit", "notebook_edit", "apply_patch", "patch"}
-	opencodeWriteToolNames = []string{"write", "edit", "multiedit", "notebook_edit", "patch"}
+	agyWriteToolNames      = []string{"write_file", "edit_file", "create_file", "replace_in_file", "notebook_edit"}
+	piWriteToolNames       = []string{"write", "edit", "multi_edit", "multiedit", "notebook_edit"}
+	opencodeWriteToolNames = []string{"write", "edit", "multiedit", "notebook_edit"}
 )
 
 // writeToolMatcher renders a hook matcher for harnesses that take an

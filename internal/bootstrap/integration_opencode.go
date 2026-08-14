@@ -535,6 +535,15 @@ func OpencodePluginsHasOwnedHooks(pluginsDir, munsuBin string) (bool, string, er
 			missing = append(missing, name+" (missing expected export function)")
 			continue
 		}
+
+		// The pre-tool plugin must also carry the native file-write tool
+		// table. Without this check an installation that predates it reports
+		// as healthy, is never repaired, and leaves the write path unguarded
+		// on machines already running munsu.
+		if name == "munsu-pretool-check.js" && !strings.Contains(content, "MUNSU_WRITE_TOOLS") {
+			missing = append(missing, name+" (missing native file-write tool coverage)")
+			continue
+		}
 	}
 
 	if len(missing) > 0 {

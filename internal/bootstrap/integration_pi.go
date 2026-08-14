@@ -364,7 +364,12 @@ export default function (pi: ExtensionAPI) {
       // Fail closed: cannot verify safety, block the command.
       return { block: true, reason: "Command blocked: safety check failed (" + safety.reason + ")" };
     }
-    if (safety.block) {
+    // The Pi contract reports the command verdict and the scope/gate verdict
+    // in separate fields. The other five harnesses receive them already merged
+    // (effectiveBlock in runSafetyCheck), so checking only "block" here would
+    // silently drop every scope/gate refusal — including the primary-checkout
+    // refusal — on Pi alone.
+    if (safety.block || safety.gate_refused) {
       return { block: true, reason: safety.reason || "Command blocked by munsu safety policy." };
     }
   });
