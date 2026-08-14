@@ -18,8 +18,8 @@ import (
 // mutation) and ObservePR (read-only observation) through the gh-axi
 // capability; the capability must be Ready and no raw gh fallback or
 // alternate execution route exists on the delivery path. Read-only status
-// and identity helpers (ViewPRJSON, ViewIssueState, CaptureIdentity) back
-// the retained provider-neutral seams and route through gh-axi.
+// and identity helpers (ViewPRJSON, CaptureIdentity) back the retained
+// provider-neutral seams and route through gh-axi.
 type GitHubClient interface {
 	// MergePR merges a pull request via gh-axi. It is the irreversible
 	// provider mutation of the delivery execution path, called at most once
@@ -39,9 +39,6 @@ type GitHubClient interface {
 	// CaptureIdentity captures a full domain.DeliveryIdentity from a PR URL
 	// via gh-axi.
 	CaptureIdentity(prURL string) (*domain.DeliveryIdentity, error)
-
-	// ViewIssueState returns the issue state (OPEN, CLOSED) via gh-axi.
-	ViewIssueState(owner, repo string, number int) (string, error)
 }
 
 // ghAxiClient implements GitHubClient backed by gh-axi.
@@ -273,22 +270,4 @@ func (c *ghAxiClient) CaptureIdentity(prURL string) (*domain.DeliveryIdentity, e
 		HeadSHA:    values["headRefOid"],
 		CapturedAt: time.Now().UTC().Format(time.RFC3339),
 	}, nil
-}
-
-// ViewIssueState returns the issue state (OPEN, CLOSED) via gh-axi api.
-func (c *ghAxiClient) ViewIssueState(owner, repo string, number int) (string, error) {
-	out, err := ghAxiAPI(
-		fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, number),
-		"--jq", `.state`,
-	)
-	if err != nil {
-		return "", err
-	}
-	state := strings.ToUpper(strings.TrimSpace(string(out)))
-	switch state {
-	case "OPEN", "CLOSED":
-		return state, nil
-	default:
-		return "", fmt.Errorf("gh-axi api: unexpected issue state %q", strings.TrimSpace(string(out)))
-	}
 }

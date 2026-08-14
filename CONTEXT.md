@@ -88,7 +88,7 @@ The single current-state authority for a task, identified by Task ID and Task Ge
 
 ## Delivery Transaction
 
-Delivery preparation verifies immutable provider identity, head SHA, and required checks before entering the pre-merge `delivered` phase. Merge authorization is a separate Decision bound to Task Generation and head SHA. Merge and retirement are separate durable transactions with typed partial/unknown outcomes; linked Issue reconciliation follows explicit `IssueLink` policy. See [ADR-0004](docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md).
+Delivery preparation verifies immutable provider identity, head SHA, and required checks before entering the pre-merge `delivered` phase. Merge authorization is a separate Decision bound to Task Generation and head SHA. Merge and retirement are separate durable transactions with typed partial/unknown outcomes. munsu does not own Issue closure: the PR body author writes the closing keyword and the provider enforces it at merge. See [ADR-0004](docs/adr/0004-authoritative-task-lifecycle-delivery-and-projections.md) and [ADR-0010](docs/adr/0010-munsu-does-not-own-issue-closure.md).
 
 ## Dispatch Hold
 

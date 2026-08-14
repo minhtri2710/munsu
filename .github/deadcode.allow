@@ -110,15 +110,8 @@ internal/config/project_overlay.go	ProjectOverlayAvailable	burn-down(BEO-63): pr
 internal/config/project_overlay.go	RemoveProjectOverlay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/config/project_overlay.go	StoreProjectOverlay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/config/resolved_snapshot.go	ResolvedSnapshot.LoadedAt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	DefaultClosurePolicy	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLink.ClosingReference	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLink.MetaKeys	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLink.ToMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLinkFromMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLinksFromMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/domain.go	PR.CanMerge	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/domain.go	Review.IsApproving	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	ValidateIssueLink	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/ghurl_ghurl.go	GHURL.FormatPRRef	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/glurl_glurl.go	GLURL.FormatMRRef	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/identity.go	NewResourceID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -156,10 +149,6 @@ internal/fleet/delivery_amend.go	appendAmendHistory	burn-down(BEO-63): pre-exist
 internal/fleet/delivery_amend.go	incrementRevision	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_attestation.go	ModeVisibilityFields	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_attestation.go	ReadAttestationFromMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_issuelinks.go	PrepareDeliveryIssueLinks	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_issuelinks.go	ReconcileIssueLinks	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_issuelinks.go	RenderIssueLinkReconciliationResults	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_issuelinks.go	VerifyDeliveryIssueLinks	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_journal.go	SetDeliveryCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesRespond	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesStatus	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged

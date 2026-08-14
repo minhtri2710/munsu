@@ -58,11 +58,9 @@ The wrapper returns a typed composite result. Cleanup failure is non-zero and ex
 
 Merge mutation outcomes include `merge_failed`, `merged_verified`, `already_merged`, `merged_metadata_failed`, and `merged_cleanup_failed`. If provider mutation returns an error and read-only reconciliation cannot determine remote truth, persist a `MergeAttempt` with `remote_unknown`. Never retry that mutation attempt. Read-only reconciliation continues with bounded backoff; a verified-open PR closes the attempt as failed and permits a new attempt ID, while persistent uncertainty escalates to operator attention.
 
-### 5. Linked Issue policy
+### 5. Linked Issue policy — RETIRED by ADR-0010
 
-Tasks carry explicit typed `IssueLink[]` records bound to Task Generation. Each link has provider identity, relation (`closes`, `related`, or `parent`), and closure policy (`on-merged-delivery`, `manual-authorization`, or `never-automatic`). Task IDs such as `gh-364` are not Issue authority.
-
-Delivery preparation provides a canonical PR-body fragment. At `delivered`, provider verification fails closed if required closing references are absent or incorrectly scoped. After merge, Issue reconciliation returns typed outcomes such as `merged_issue_closed`, `merged_issue_closure_pending`, `merged_issue_open`, and `merged_issue_unavailable`. Repair is idempotent, never closes parent/related links, and requires a separate Decision for manual-close policy.
+This section is retired. munsu does not own Issue closure on delivery: the PR body author writes the closing keyword and the provider enforces it at merge. The `IssueLink` model and its delivery guard were deleted; see ADR-0010 for the decision and for the front door a future auto-close guarantee must come through.
 
 ### 6. Delivery-mode transitions
 
