@@ -23,27 +23,56 @@
 # appear below, and why this file reads the same on a laptop and on the runner.
 
 # --- Known open bugs, NOT accepted debt -------------------------------------
-# These two are the reason the lane was built, found by the first run of a
-# command that had never been run in this repo. They refuse a branch
-# replacement and a rewritten history respectively, and nothing calls either
-# one, so neither refusal can happen. They are listed here only so this lane
-# can go green on the commit that introduces it; `deadcode.sh check` reprints
-# both as a warning on every single run. Fixing them is BEO-64 -- when that
-# lands, these two lines go with it.
+# Guards that exist, are complete, and cannot fire because nothing in the
+# binary calls them. They are listed here only so this lane can go green;
+# `deadcode.sh check` reprints every one as a warning on every single run.
+# Each line names the issue that owns the verdict -- wire it up or delete it --
+# and the line goes away with that issue, not before. Nobody may quietly
+# downgrade one of these to accepted debt.
+#
+#   BEO-64  branch replacement and rewritten history are not refused
+#   BEO-83  delivery issue links are not verified (call site lost in 1d0c4b5)
+#   BEO-84  launch envelope SHA-256 pins are written but never checked
+internal/domain/domain.go	DefaultClosurePolicy	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/domain/domain.go	IssueLink.ClosingReference	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/domain/domain.go	IssueLink.MetaKeys	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/domain/domain.go	IssueLink.ToMeta	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/domain/domain.go	IssueLinkFromMeta	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/domain/domain.go	IssueLinksFromMeta	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/domain/domain.go	ValidateIssueLink	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
 internal/fleet/delivery_amend.go	verifyAncestry	OPEN-BUG(BEO-64): guard refuses an unsafe delivery but has no call site, so the refusal cannot fire
 internal/fleet/delivery_amend.go	verifySnapshotIdentity	OPEN-BUG(BEO-64): guard refuses an unsafe delivery but has no call site, so the refusal cannot fire
+internal/fleet/delivery_issuelinks.go	PrepareDeliveryIssueLinks	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/fleet/delivery_issuelinks.go	VerifyDeliveryIssueLinks	OPEN-BUG(BEO-83): delivery issue-link verification; call site removed by 1d0c4b5, so the refusal cannot fire
+internal/fleet/soldier_envelope.go	ReadEnvelope	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written but never verified; this half of the contract was never wired
+internal/fleet/soldier_envelope.go	VerifyEnvelopeIntegrity	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written but never verified; this half of the contract was never wired
+internal/fleet/soldier_envelope.go	VerifyRequiredSkills	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written but never verified; this half of the contract was never wired
+
+# --- Not findings: GOOS-union artifacts -------------------------------------
+# The set above is the union across every GOOS in .github/build-tags.manifest,
+# so a function reachable on one platform and absent from another shows up as
+# unreachable in the union. These are live code on the platform that compiles
+# them. They are not debt and there is nothing to burn down: the lane is being
+# conservative on purpose, because the alternative -- intersecting the
+# platforms -- would hide a real finding on any GOOS-gated file.
+internal/fleet/captain_process_unix.go	configureWatcherProcess	GOOS-union artifact: live on linux and darwin; only the windows build cannot reach it
+internal/fleet/captain_process_windows.go	configureWatcherProcess	GOOS-union artifact: live on windows; only the linux and darwin build cannot reach it
+internal/fleet/orphan_scan.go	hasOwnershipMarker	GOOS-union artifact: live on linux and darwin via orphan_inventory_{linux,darwin}.go; only the windows build, which ships no orphan inventory backend, cannot reach it
+internal/fleet/orphan_scan.go	keepMarkers	GOOS-union artifact: live on linux and darwin via orphan_inventory_{linux,darwin}.go; only the windows build, which ships no orphan inventory backend, cannot reach it
+internal/fleet/process_args.go	splitProcessCommand	GOOS-union artifact: live on linux and windows; only the darwin build cannot reach it
+internal/fleet/process_args.go	writerKindForArgs	GOOS-union artifact: live on windows; only the linux and darwin build cannot reach it
+internal/home/atomic.go	publishExclusive	GOOS-union artifact: live on linux and darwin; only the windows build cannot reach it
+internal/home/atomic_windows.go	publishExclusive	GOOS-union artifact: live on windows; only the linux and darwin build cannot reach it
 
 # --- Accepted debt, imported as the baseline --------------------------------
-# The 270 entries below are what `deadcode ./cmd/munsu` reported on b7536f6,
-# the first time it was ever run here. They are pre-existing debt made visible,
-# not debt this lane created. Triaging them one by one -- wire up, delete, or
-# waive with a real reason -- is the burn-down in ADR-0009 (estimated 3-6
-# person-days) and is deliberately not part of the change that adds this lane:
-# a baseline nobody can land is a baseline nobody adopts.
+# What `deadcode ./cmd/munsu` reported on b7536f6, the first time it was ever
+# run here, minus everything triaged since. They are pre-existing debt made
+# visible, not debt this lane created. Triaging them one by one -- wire up,
+# delete, or waive with a real reason -- is the burn-down in ADR-0009 (BEO-67).
 #
-# So every line below carries the same marker, and that marker means "nobody
-# has looked at this yet". It is not a justification and must not be reused on
-# a new entry -- a new entry gets a real reason or it does not go in.
+# Every line below carries the same marker, and that marker means "nobody has
+# looked at this yet". It is not a justification and must not be reused on a
+# new entry -- a new entry gets a real reason or it does not go in.
 internal/backend/backend_capabilities.go	Capabilities	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/backend_capabilities.go	CapabilityAvailability.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/backend_capabilities.go	CapabilityMatrix	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -106,15 +135,8 @@ internal/config/project_overlay.go	ProjectOverlayAvailable	burn-down(BEO-63): pr
 internal/config/project_overlay.go	RemoveProjectOverlay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/config/project_overlay.go	StoreProjectOverlay	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/config/resolved_snapshot.go	ResolvedSnapshot.LoadedAt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	DefaultClosurePolicy	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLink.ClosingReference	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLink.MetaKeys	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLink.ToMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLinkFromMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	IssueLinksFromMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/domain.go	PR.CanMerge	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/domain.go	Review.IsApproving	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/domain/domain.go	ValidateIssueLink	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/ghurl_ghurl.go	GHURL.FormatPRRef	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/glurl_glurl.go	GLURL.FormatMRRef	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/domain/identity.go	NewResourceID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -130,8 +152,6 @@ internal/fleet/captain_captain.go	Seed	burn-down(BEO-63): pre-existing, imported
 internal/fleet/captain_captain.go	SeedWithParent	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	configPush	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_captain.go	typedConfigMode	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_process_unix.go	configureWatcherProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/captain_process_windows.go	configureWatcherProcess	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	ConsumeReadyEvent	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	SoldierAckNotification	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/captain_soldier_queue.go	SoldierInboxPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -152,10 +172,8 @@ internal/fleet/delivery_amend.go	appendAmendHistory	burn-down(BEO-63): pre-exist
 internal/fleet/delivery_amend.go	incrementRevision	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_attestation.go	ModeVisibilityFields	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_attestation.go	ReadAttestationFromMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_issuelinks.go	PrepareDeliveryIssueLinks	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_issuelinks.go	ReconcileIssueLinks	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_issuelinks.go	RenderIssueLinkReconciliationResults	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_issuelinks.go	VerifyDeliveryIssueLinks	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_journal.go	SetDeliveryCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesRespond	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesStatus	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -167,10 +185,6 @@ internal/fleet/endpoint_fence.go	metaUint	burn-down(BEO-63): pre-existing, impor
 internal/fleet/endpoint_fence.go	readEndpointMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	sameBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	validBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/orphan_scan.go	hasOwnershipMarker	GOOS-union artifact: live on linux and darwin via orphan_inventory_{linux,darwin}.go; only the windows build, which ships no orphan inventory backend, cannot reach it
-internal/fleet/orphan_scan.go	keepMarkers	GOOS-union artifact: live on linux and darwin via orphan_inventory_{linux,darwin}.go; only the windows build, which ships no orphan inventory backend, cannot reach it
-internal/fleet/process_args.go	splitProcessCommand	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/process_args.go	writerKindForArgs	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	IsPropagateConfigUnchanged	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	ensureConfigPreconditions	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	propagateConfigLogPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -182,9 +196,6 @@ internal/fleet/scope_scope.go	DetectGateCapability	burn-down(BEO-63): pre-existi
 internal/fleet/scope_scope.go	IsGateAgentActive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/scope_scope.go	Result.IsGateRefusal	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_charter.go	LaunchArtifactNames	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_envelope.go	ReadEnvelope	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_envelope.go	VerifyEnvelopeIntegrity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_envelope.go	VerifyRequiredSkills	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldierstate_soldierstate.go	ReadSoldierState	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/spawn_spawn.go	ResolveDeliveryModeFromBase	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	SetHandoffCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -202,8 +213,6 @@ internal/harness/launch.go	LaunchString	burn-down(BEO-63): pre-existing, importe
 internal/harness/launch.go	LaunchStringFromAdapter	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/preflight.go	PreflightBinaryName	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/quota_balanced.go	newQuotaSelectorWithProvider	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/home/atomic.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/home/atomic_windows.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_daemon.go	Daemon.SetBackend	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_daemon.go	Daemon.SetPaneCapture	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/orchestrator/afk_daemon.go	Daemon.maybeInitInjector	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
