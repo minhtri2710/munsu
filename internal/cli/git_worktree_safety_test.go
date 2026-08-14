@@ -101,6 +101,9 @@ func TestSafetyCheckGitMutationRefusesPrimaryWrongRepoStaleGenerationAndHead(t *
 	}{
 		{"primary", primary, "git checkout -b mu/ship-2", "primary checkout"},
 		{"wrong repo", otherWorktree, "git checkout -b mu/ship-2", "wrong repository"},
+		// A target outside any repository classifies as unrelated, which the
+		// worktree whitelist refuses just as firmly as a primary checkout.
+		{"non-git target", t.TempDir(), "git checkout -b mu/ship-2", "not the bound worktree"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

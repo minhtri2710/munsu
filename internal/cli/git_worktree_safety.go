@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/minhtri2710/munsu/internal/domain"
+	"github.com/minhtri2710/munsu/internal/fleet"
 	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
@@ -351,21 +352,20 @@ func createsBranch(args []string) bool {
 	return false
 }
 
+// gitSafetyIdentity classifies the git mutation target. Classification itself
+// has one owner — fleet.ClassifyIdentity (ADR-0009) — so this only renders the
+// verdict as the string the safety gate compares against, and the git-dir and
+// common-dir it returns are canonicalized by exactly the same code that
+// produced the binding it is checked against.
 func gitSafetyIdentity(path string) (string, string, string, error) {
-	gitDir, err := gitSafetyOutput(path, "rev-parse", "--git-dir")
+	identity, gitDir, commonDir, err := fleet.ClassifyIdentity(path)
 	if err != nil {
 		return "", "", "", err
 	}
-	commonDir, err := gitSafetyOutput(path, "rev-parse", "--git-common-dir")
-	if err != nil {
-		return "", "", "", err
+	if identity != fleet.Primary && identity != fleet.Worktree {
+		return identity.String(), "", "", nil
 	}
-	gitDir = canonicalSafetyPathRuntime(resolveSafetyPath(path, gitDir))
-	commonDir = canonicalSafetyPathRuntime(resolveSafetyPath(path, commonDir))
-	if gitDir == commonDir {
-		return "primary", gitDir, commonDir, nil
-	}
-	return "worktree", gitDir, commonDir, nil
+	return identity.String(), gitDir, commonDir, nil
 }
 
 func gitSafetyOutput(dir string, args ...string) (string, error) {

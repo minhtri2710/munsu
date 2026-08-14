@@ -10,53 +10,6 @@ import (
 	"testing"
 )
 
-func TestIsIsolated_Worktree(t *testing.T) {
-	// A real linked worktree is isolated. Build one rather than asserting on
-	// the current directory: the checkout this test runs in is a worktree
-	// under a soldier but a primary clone in CI, so "." asserted the ambient
-	// environment, not the contract.
-	wt := isolationWorktree(t)
-	isolated, err := IsIsolated(wt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !isolated {
-		t.Errorf("IsIsolated(%s) = false, want true (linked worktree)", wt)
-	}
-}
-
-func TestIsIsolated_PrimaryCheckout(t *testing.T) {
-	// A non-git temp directory should fail isolation check.
-	tmp := t.TempDir()
-	_, err := IsIsolated(tmp)
-	if err == nil {
-		t.Log("non-git path did not error (expected when git is not present)")
-	}
-}
-
-func TestIsIsolated_NonGitDir(t *testing.T) {
-	tmp := t.TempDir()
-	_, err := IsIsolated(tmp)
-	if err == nil {
-		t.Error("IsIsolated(temp dir) expected error for non-git directory, got nil")
-	}
-}
-
-func TestEnsureNotPrimary_Success(t *testing.T) {
-	// The guard lets a real worktree through.
-	wt := isolationWorktree(t)
-	if err := EnsureNotPrimary(wt); err != nil {
-		t.Fatalf("EnsureNotPrimary(%s) = %v, want nil (linked worktree)", wt, err)
-	}
-}
-
-func TestEnsureNotPrimary_NonGit(t *testing.T) {
-	tmp := t.TempDir()
-	if err := EnsureNotPrimary(tmp); err == nil {
-		t.Error("EnsureNotPrimary(temp dir) expected error, got nil")
-	}
-}
-
 func TestGitFallback_GetAndReturnWorktree(t *testing.T) {
 	// Create a real git repo with a commit, then exercise the git fallback
 	// via gitWorktreeProvider directly.
@@ -81,13 +34,16 @@ func TestGitFallback_GetAndReturnWorktree(t *testing.T) {
 		t.Fatal("expected non-empty worktree path from git fallback")
 	}
 
-	// Verify it is a real worktree
-	isolated, err := IsIsolated(wtPath)
+	// Verify it is a real linked worktree: git marks one with a .git *file*
+	// pointing at the common dir, where a primary checkout has a directory.
+	// Asserted locally — internal/backend does not classify checkout identity
+	// (ADR-0009) and must not import internal/fleet to do so.
+	info, err := os.Lstat(filepath.Join(wtPath, ".git"))
 	if err != nil {
-		t.Fatalf("IsIsolated on worktree: %v", err)
+		t.Fatalf("stat .git in worktree: %v", err)
 	}
-	if !isolated {
-		t.Error("expected isolated worktree from git fallback")
+	if info.IsDir() {
+		t.Error("expected linked worktree from git fallback, got a primary checkout (.git is a directory)")
 	}
 
 	// Return the worktree
@@ -403,39 +359,6 @@ func TestAbsRoot(t *testing.T) {
 	}
 	if !filepath.IsAbs(root) {
 		t.Errorf("AbsRoot() = %q, want absolute path", root)
-	}
-}
-
-// TestGitRevParse validates the git rev-parse helper.
-func TestGitRevParse(t *testing.T) {
-	// Should work from within any git repo
-	gd, err := gitRevParse(".", "--git-dir")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gd == "" {
-		t.Fatal("--git-dir returned empty")
-	}
-
-	cd, err := gitRevParse(".", "--git-common-dir")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cd == "" {
-		t.Fatal("--git-common-dir returned empty")
-	}
-}
-
-// TestIsIsolatedWithoutTreehouse ensures IsIsolated doesn't need treehouse to work.
-func TestIsIsolatedWithoutTreehouse(t *testing.T) {
-	// IsIsolated should work without treehouse present (it only uses git)
-	wt := isolationWorktree(t)
-	isolated, err := IsIsolated(wt)
-	if err != nil {
-		t.Fatalf("IsIsolated should work without treehouse: %v", err)
-	}
-	if !isolated {
-		t.Error("expected isolated worktree")
 	}
 }
 
