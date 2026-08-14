@@ -1,6 +1,6 @@
 # 0009. Checkout Identity Classification Has One Owner
 
-* **Status:** Proposed
+* **Status:** Accepted
 * **Date:** 2026-08-14
 * **Extends:** ADR-0008 (one owner and one canonical implementation path per lifecycle)
 * **Triggered by:** BEO-46 audit finding C1 → BEO-48 → BEO-51 architecture review
@@ -78,6 +78,19 @@ the rule is a whitelist:
 * `buildTaskWorktreeBinding` (`spawn_runner.go:1051`) admits only `Worktree`.
 * `authorizeSpawn` (`spawn_runner.go:396`) refuses only `Worktree` callers —
   the opposite direction, same owner.
+* `validateGitTargetBinding` (`internal/cli/git_worktree_safety.go:277`) admits
+  only `Worktree` for a git mutation. It reaches the classification through
+  `gitSafetyIdentity` (`:354`), which is a rendering step — it calls
+  `ClassifyIdentity` and maps the `Identity` to the string the gate compares —
+  not a second derivation.
+
+That last one is the reason this ADR is a rule rather than an observation.
+`gitSafetyIdentity` used to re-derive the answer itself, with its own
+`rev-parse --git-dir` / `--git-common-dir` comparison and its own path
+canonicalization, and unlike the copy in `internal/backend` it was *live*. Two
+independent derivations feeding one comparison is also a correctness problem in
+its own right: the git-dir and common-dir the gate checks against a
+`WorktreeBinding` are now canonicalized by the same code that wrote them.
 
 ### 2. `backend.IsIsolated` and `backend.EnsureNotPrimary` are removed
 
@@ -148,12 +161,26 @@ no-mistakes gate-agent refusal, mirroring firstmate's `fm-refuse-if-gate-agent`
   locally (a `.git` *file*, not a directory) or invoke `git rev-parse` inline in
   the test.
 * Protection of the primary checkout at Soldier launch now rests on a single
-  check. It is covered by `TestClassifyIdentity_*`
-  (`internal/fleet/scope_scope_test.go`, build tag `integration`), including
-  `TestClassifyIdentity_DeletedPathFailsClosed` (`:116`) and
-  `TestClassifyIdentity_GitUnavailableFailsClosed` (`:376`). The `identity !=
-  Worktree` refusal in `buildTaskWorktreeBinding` should get a direct test in
-  its own right.
+  check, so that check carries its own tests rather than inheriting coverage
+  from the classifier. `TestBuildTaskWorktreeBinding_RefusesNonWorktree` and
+  `TestBuildTaskWorktreeBinding_AdmitsLinkedWorktree`
+  (`internal/fleet/spawn_worktree_binding_test.go`, default lane) pin both
+  directions; `TestClassifyIdentity_*` (`internal/fleet/scope_scope_test.go`,
+  build tag `integration`) pins the classifier beneath them, including
+  `TestClassifyIdentity_DeletedPathFailsClosed` and
+  `TestClassifyIdentity_GitUnavailableFailsClosed`.
+* The git mutation gate stops carrying its own path canonicalization for
+  identity. `canonicalSafetyPathRuntime` (`git_worktree_safety.go:388`) falls
+  back to the un-evaluated path when `EvalSymlinks` fails — the same weakness
+  §4 cites against `resolveGitDir` — so routing identity through
+  `ClassifyIdentity` removes it from the classification path. It still
+  canonicalizes `--show-toplevel` and the explicit `--git-dir` / `--work-tree`
+  overrides, which are path comparisons, not classification.
+* One behaviour change at that gate, in the refusing direction: a target
+  outside any repository used to fail as `git mutation target unavailable`
+  (git errored) and now fails as `git mutation target is not the bound
+  worktree` (classified `Unrelated`, refused by the whitelist). Refused either
+  way; only the reason text differs.
 
 ## Residual risk (out of scope for this ADR)
 
