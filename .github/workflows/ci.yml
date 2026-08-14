@@ -135,11 +135,13 @@ jobs:
       #
       # For every real constraint shape, this lane now *subsumes* the rule
       # above: gofmt does not only touch the leading comment block, it hoists a
-      # `// +build` line from below the package clause (and from inside a
-      # function body) to the top and writes the matching `//go:build`, so
-      # `gofmt -l` lists that file. Measured on go1.26.5, not reasoned from the
-      # usual example. Keep the rule above anyway, for two things this lane
-      # cannot do:
+      # `// +build` line from below the package clause to the top and writes the
+      # matching `//go:build`, so `gofmt -l` lists that file. A line inside a
+      # function body is hoisted too, but the `//go:build` only appears on a
+      # second pass -- so one `gofmt -w` leaves the tree still unclean there,
+      # and the lane stays red until it is run again. Measured on go1.26.5, not
+      # reasoned from the usual example. Keep the rule above anyway, for two
+      # things this lane cannot do:
       #
       #   - Its error names the consequence -- that the tag stays invisible to
       #     lane derivation. `::error::not gofmt-clean` says nothing about that,
@@ -166,7 +168,7 @@ jobs:
       # Note for whoever adds `vendor/` later: this repo has none today, so the
       # walk covering it costs nothing. Vendored third-party code carries no
       # promise of being gofmt-clean under this toolchain, so `go mod vendor`
-      # will turn this lane red in bulk. Deal with it then, and weigh it against
+      # can turn this lane red in bulk. Deal with it then, and weigh it against
       # the subsumption note above before reaching for the obvious fix: an
       # exclusion here is exactly what makes the build-tag rule load-bearing
       # again, so narrowing this lane without saying so there trades one guard
