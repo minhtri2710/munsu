@@ -28,14 +28,19 @@ var (
 // supervision loop that batches routine wakes and escalates general-relevant
 // events. Blocks until SIGTERM/SIGINT, then clears the flag.
 func Start(homeDir string) error {
+	// Install the handler before writing the flag: the flag is what tells the
+	// outside world the daemon is up, and a SIGTERM arriving before Notify would
+	// kill the process outright and leave the flag behind. Same ordering rule as
+	// Daemon.Start.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+
 	flagPath := filepath.Join(homeDir, afkFlagFile)
 	if err := os.WriteFile(flagPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644); err != nil {
 		return fmt.Errorf("setting afk flag: %w", err)
 	}
 	fmt.Println("AFK daemon started, flag set")
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
 	stopCh := make(chan struct{})
 	go runLoop(homeDir, stopCh)

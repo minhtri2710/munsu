@@ -34,6 +34,13 @@ type Daemon struct {
 	circuits     *CircuitStore
 	recoveryDiag *RecoveryDiagnosticStore
 	nudgeTracker *NudgeTracker
+
+	// afterFlagSet, when non-nil, runs right after the consent flag is written.
+	// Test seam: widening that window must stay harmless, because Start installs
+	// the signal handler before the flag — the flag is the first side effect an
+	// outside observer can see, so it must not become visible while SIGTERM is
+	// still at its default disposition.
+	afterFlagSet func()
 }
 
 // SetPaneCapture sets the pane capture interface for checking target safety.
@@ -59,13 +66,18 @@ func (d *Daemon) maybeInitInjector() {
 
 // Start runs the AFK daemon foreground process:
 //  1. Acquire the identity lock (idempotent — no-op if already running).
-//  2. Set the consent flag (state/.afk).
-//  3. Clear stale artifacts from any prior session.
-//  4. Start the runLoop goroutine (triage → feed digester → check wedge → clear stale → flush).
-//  5. Block until SIGTERM/SIGINT.
-//  6. Flush any remaining digest entries.
-//  7. Clear the consent flag.
-//  8. Release the identity lock.
+//  2. Install the SIGTERM/SIGINT handler.
+//  3. Set the consent flag (state/.afk).
+//  4. Clear stale artifacts from any prior session.
+//  5. Start the runLoop goroutine (triage → feed digester → check wedge → clear stale → flush).
+//  6. Block until SIGTERM/SIGINT.
+//  7. Flush any remaining digest entries.
+//  8. Clear the consent flag.
+//  9. Release the identity lock.
+//
+// Step 2 precedes step 3 on purpose: the consent flag is the first side effect
+// visible outside the process, so it must not appear while a SIGTERM would
+// still terminate the process instead of starting an orderly shutdown.
 //
 // Returns an error if lock acquisition or flag writing fails.
 // Returns nil on clean shutdown.
@@ -88,7 +100,16 @@ func (d *Daemon) Start(homeDir string) error {
 	}
 	defer clearDaemonIdentity(homeDir, identity)
 
-	// 2. Set consent flag.
+	// 2. Install the signal handler before any externally observable side effect.
+	// Until Notify runs, SIGTERM still carries its default disposition and would
+	// kill the process outright, skipping steps 7 and 8 and leaving an orphaned
+	// consent flag and lock behind. Anything watching for the flag would then be
+	// able to signal a daemon that cannot yet catch it.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+
+	// 3. Set consent flag.
 	flagPath := filepath.Join(homeDir, afkFlagFile)
 	if err := os.MkdirAll(filepath.Dir(flagPath), 0755); err != nil {
 		d.lock.Release()
@@ -99,8 +120,11 @@ func (d *Daemon) Start(homeDir string) error {
 		return fmt.Errorf("setting afk flag: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "afk: daemon started, consent flag set\n")
+	if d.afterFlagSet != nil {
+		d.afterFlagSet()
+	}
 
-	// 3. Clear stale artifacts from any prior session.
+	// 4. Clear stale artifacts from any prior session.
 	if err := ClearStaleArtifacts(homeDir); err != nil {
 		fmt.Fprintf(os.Stderr, "afk: stale artifact clear error (non-fatal): %v\n", err)
 	}
@@ -114,26 +138,24 @@ func (d *Daemon) Start(homeDir string) error {
 
 	// Load optional AFK config (digest window, wedge thresholds).
 	loadAfkConfig(homeDir, d.digester, d.wedge)
-	// 4. Start the runLoop goroutine.
+	// 5. Start the runLoop goroutine.
 	stopCh := make(chan struct{})
 	go d.runLoop(stopCh)
 
-	// 5. Wait for signal.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	// 6. Wait for signal.
 	<-sigCh
 	close(stopCh)
 	fmt.Fprintf(os.Stderr, "afk: signal received, shutting down\n")
 
-	// 6. Flush any remaining digest entries.
+	// 7. Flush any remaining digest entries.
 	if err := d.digester.Flush(time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "afk: final digest flush error (non-fatal): %v\n", err)
 	}
 
-	// 7. Clear consent flag.
+	// 8. Clear consent flag.
 	os.Remove(flagPath)
 
-	// 8. Release lock.
+	// 9. Release lock.
 	d.lock.Release()
 
 	return nil

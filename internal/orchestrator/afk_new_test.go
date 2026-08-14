@@ -315,7 +315,8 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 		done <- d.Start(tmp)
 	}()
 
-	// Wait for flag to appear
+	// Wait for flag to appear. Start installs the signal handler before writing
+	// the flag, so a visible flag also means SIGTERM is already caught.
 	var flagExists bool
 	for i := 0; i < 20; i++ {
 		time.Sleep(10 * time.Millisecond)
@@ -348,6 +349,63 @@ func TestDaemonSetsAndClearsFlag(t *testing.T) {
 	}
 
 	// Lock file should be cleared
+	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
+		t.Error("lock file still exists after daemon stop")
+	}
+}
+
+// TestDaemonCatchesSignalStalledAfterConsentFlag pins the ordering invariant of
+// Daemon.Start: once the consent flag is visible, SIGTERM must start an orderly
+// shutdown rather than terminate the process.
+//
+// The startup path between the flag write and the old signal.Notify call was all
+// filesystem work (ClearStaleArtifacts, four config reads), so a loaded machine
+// could stall there past the 10ms the lifecycle test polls at. A SIGTERM landing
+// in that window hit the default disposition and killed the whole test binary —
+// no --- FAIL line, every later test in the package silently unreported.
+// afterFlagSet widens that window deliberately; with the handler installed first
+// the width no longer matters.
+func TestDaemonCatchesSignalStalledAfterConsentFlag(t *testing.T) {
+	tmp := t.TempDir()
+
+	const stall = 200 * time.Millisecond
+	d := &Daemon{afterFlagSet: func() { time.Sleep(stall) }}
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Start(tmp)
+	}()
+
+	var flagExists bool
+	for i := 0; i < 20; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); err == nil {
+			flagExists = true
+			break
+		}
+	}
+	if !flagExists {
+		t.Fatal("consent flag was not created within 200ms")
+	}
+
+	// Signal while Start is still inside the stalled startup window.
+	if err := stopProcess(os.Getpid()); err != nil {
+		t.Skipf("self-termination unavailable on this platform: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Daemon.Start returned error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Daemon.Start did not return within 3s after SIGTERM")
+	}
+
+	// Shutdown steps must still have run: a signal caught during startup has to
+	// unwind through the same path as one caught in the run loop.
+	if _, err := os.Stat(filepath.Join(tmp, afkFlagFile)); !os.IsNotExist(err) {
+		t.Error("consent flag still exists after daemon stop")
+	}
 	if _, err := os.Stat(filepath.Join(tmp, afkLockFile)); !os.IsNotExist(err) {
 		t.Error("lock file still exists after daemon stop")
 	}
