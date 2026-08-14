@@ -115,11 +115,14 @@ func (r *DeliverResult) Render() string {
 
 // DeliveryProviderObservation is the typed read-only provider observation
 // used to reconcile a delivery against remote truth after an irreversible
-// mutation. State is one of OPEN, MERGED, CLOSED.
+// mutation. State is one of OPEN, MERGED, CLOSED. BaseRef carries the branch
+// the provider would merge into right now, so the pre-mutation fence can
+// reject a base changed since the identity was captured.
 type DeliveryProviderObservation struct {
 	State     string `json:"state"`
 	HeadSHA   string `json:"head_sha,omitempty"`
 	MergedSHA string `json:"merged_sha,omitempty"`
+	BaseRef   string `json:"base_ref,omitempty"`
 }
 
 // DeliveryProvider is the one narrow typed Fleet capability consumed by
@@ -568,15 +571,24 @@ func verifyDeliveryCurrency(c *taskauthority.Canonical, journal *deliveryJournal
 }
 
 // verifyProviderHead fails closed before mutation when the provider reports a
-// head different from the pinned delivery identity head (identity/head
-// change). Merged observations carry consumed-head evidence and are not
-// re-checked; empty provider heads are unverifiable and accepted only for
-// merged truth (the classifier still fails closed on unknown states).
+// head or a base ref different from the pinned delivery identity (identity
+// change since capture). The base ref matters because the provider merge
+// lands in the PR's CURRENT base, not the authorized one: a base changed
+// inside the capture-to-merge window would land the irreversible mutation on
+// a branch that was never authorized. Merged observations carry consumed
+// evidence and are not re-checked; empty provider fields are unverifiable and
+// accepted (the classifier still fails closed on unknown states).
 func verifyProviderHead(journal *deliveryJournal, obs DeliveryProviderObservation) error {
-	if obs.State == "MERGED" || obs.HeadSHA == "" || obs.HeadSHA == journal.Identity.HeadSHA {
+	if obs.State == "MERGED" {
 		return nil
 	}
-	return fmt.Errorf("provider head changed since capture: provider reports %q but the delivery identity pins %q", obs.HeadSHA, journal.Identity.HeadSHA)
+	if obs.HeadSHA != "" && obs.HeadSHA != journal.Identity.HeadSHA {
+		return fmt.Errorf("provider head changed since capture: provider reports %q but the delivery identity pins %q", obs.HeadSHA, journal.Identity.HeadSHA)
+	}
+	if obs.BaseRef != "" && obs.BaseRef != journal.Identity.BaseRef {
+		return fmt.Errorf("provider base ref changed since capture: provider reports %q but the delivery identity pins %q", obs.BaseRef, journal.Identity.BaseRef)
+	}
+	return nil
 }
 
 // deliveryOutcomeDerivation is the derived truthful canonical outcome of one

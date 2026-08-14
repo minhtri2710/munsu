@@ -135,12 +135,17 @@ func TestObservePR_ClassifiesMergedByEvidence(t *testing.T) {
 }
 
 func TestObservePR_ClassifiesOpen(t *testing.T) {
-	obs, err := observePRFromOutput("state: open\nheadSha: abc\nmergedSha: \nmerged: false\n")
+	obs, err := observePRFromOutput("state: open\nheadSha: abc\nbaseRef: main\nmergedSha: \nmerged: false\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if obs.State != "OPEN" {
 		t.Errorf("state = %q, want OPEN", obs.State)
+	}
+	// The PR base ref feeds the pre-mutation base ref fence: an observation
+	// without it cannot reject a base changed since capture.
+	if obs.BaseRef != "main" {
+		t.Errorf("baseRef = %q, want main", obs.BaseRef)
 	}
 }
 

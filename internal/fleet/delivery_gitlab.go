@@ -197,11 +197,30 @@ func (p *gitlabDeliveryProvider) Observe(ident domain.DeliveryIdentity) (Deliver
 	if err != nil {
 		return DeliveryProviderObservation{}, err
 	}
+	baseRef, err := parseGLTargetBranch(data)
+	if err != nil {
+		return DeliveryProviderObservation{}, err
+	}
 	return DeliveryProviderObservation{
 		State:     status.State,
 		HeadSHA:   status.HeadSHA,
 		MergedSHA: status.MergedSHA,
+		BaseRef:   baseRef,
 	}, nil
+}
+
+// parseGLTargetBranch reads the MR target branch (the GitLab name for the
+// base ref) from the same MR JSON the merge status is parsed from. It is read
+// here rather than in domain.PRMergeStatus because only the delivery
+// observation fences on it.
+func parseGLTargetBranch(data []byte) (string, error) {
+	var raw struct {
+		TargetBranch string `json:"target_branch"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return "", fmt.Errorf("parsing glab mr view JSON: %w", err)
+	}
+	return raw.TargetBranch, nil
 }
 
 // MergeMR merges a merge request via glab with the given method: squash,

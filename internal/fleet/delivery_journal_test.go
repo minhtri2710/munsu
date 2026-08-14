@@ -21,6 +21,11 @@ import (
 // identity and the bound worktree head in the delivery tests.
 const deliveryTestHead = "abc123def456abc123def456abc123def456abc1"
 
+// deliveryTestBase is the base ref the delivery identity pins and the scripted
+// provider observations report, so the tests exercise the pre-mutation base
+// ref fence in its accepting direction.
+const deliveryTestBase = "main"
+
 // fakeDeliveryProvider is a recording fake DeliveryProvider for the
 // journaled delivery state-machine tests. It consumes scripted observations
 // in order and records every irreversible Merge call.
@@ -77,7 +82,7 @@ func deliveryTestIdentity() domain.DeliveryIdentity {
 		Repo:       "munsu",
 		Number:     42,
 		URL:        "https://github.com/minhtri2710/munsu/pull/42",
-		BaseRef:    "main",
+		BaseRef:    deliveryTestBase,
 		HeadRef:    "feature/delivery",
 		HeadSHA:    deliveryTestHead,
 		CapturedAt: "2026-08-05T00:00:00Z",
@@ -171,20 +176,20 @@ func installScriptedProviderFor(t *testing.T, script string) *fakeDeliveryProvid
 	switch script {
 	case "open-then-merged":
 		provider.script(
-			DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead},
-			DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+			DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase},
+			DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
 		)
 	case "open-then-unreachable":
 		provider.script(
-			DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead},
+			DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase},
 		)
 		provider.scriptErr(fmt.Errorf("provider unreachable after merge"))
 	case "open":
-		provider.script(DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead})
+		provider.script(DeliveryProviderObservation{State: "OPEN", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase})
 	case "merged":
-		provider.script(DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
+		provider.script(DeliveryProviderObservation{State: "MERGED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase, MergedSHA: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
 	case "closed":
-		provider.script(DeliveryProviderObservation{State: "CLOSED", HeadSHA: deliveryTestHead})
+		provider.script(DeliveryProviderObservation{State: "CLOSED", HeadSHA: deliveryTestHead, BaseRef: deliveryTestBase})
 	case "unreachable":
 		provider.scriptErr(fmt.Errorf("provider unreachable"))
 	default:
