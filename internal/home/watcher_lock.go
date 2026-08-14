@@ -75,8 +75,7 @@ func releaseWatcherLock(p string) error {
 	}
 	return f.Close()
 }
-func ReleaseSessionLock(h string) error { return releaseWatcherLock(SessionLockPath(h)) }
-func ReleaseWatchLock(h string) error   { return releaseWatcherLock(WatchLockPath(h)) }
+func ReleaseWatchLock(h string) error { return releaseWatcherLock(WatchLockPath(h)) }
 func watcherLockHeld(p string) bool {
 	f, e := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0644)
 	if e != nil {
@@ -90,4 +89,3 @@ func watcherLockHeld(p string) bool {
 	return false
 }
 func IsSessionLockHeld(h string) bool { return watcherLockHeld(SessionLockPath(h)) }
-func IsWatchLockHeld(h string) bool   { return watcherLockHeld(WatchLockPath(h)) }

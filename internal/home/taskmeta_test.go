@@ -412,22 +412,3 @@ func TestParseStatusKey(t *testing.T) {
 		}
 	}
 }
-
-func TestRemoveStatusKey(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"working: started", "working: started"},
-		{"done: done [key=x]", "done: done"},
-		{"blocked: blocked [key=dep]", "blocked: blocked"},
-		{"no key here", "no key here"},
-	}
-
-	for _, tt := range tests {
-		got := RemoveStatusKey(tt.input)
-		if got != tt.want {
-			t.Errorf("RemoveStatusKey(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}

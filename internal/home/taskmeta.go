@@ -178,57 +178,6 @@ func AppendStatus(homeDir string, id, line string) error {
 	return nil
 }
 
-// WriteStatus atomically overwrites the task status projection at
-// $MUNSU_HOME/state/<id>.status with the given lines. It is the rebuild
-// primitive for projection reconciliation: the status file is an append-only
-// projection of typed audit history, and a deleted or corrupt projection is
-// rebuilt from canonical records without touching the authority.
-// Acquires the advisory per-task lock, mirroring WriteMeta.
-func WriteStatus(homeDir string, id string, lines []string) error {
-	_, unlock, err := acquireMetaLock(homeDir, id)
-	if err != nil {
-		return fmt.Errorf("write status: %w", err)
-	}
-	defer unlock()
-
-	p, err := statusPath(homeDir, id)
-	if err != nil {
-		return err
-	}
-	if err := ensurePrivateStateDir(filepath.Dir(p)); err != nil {
-		return fmt.Errorf("creating state directory: %w", err)
-	}
-	var b strings.Builder
-	for _, line := range lines {
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	tmpF, err := os.CreateTemp(filepath.Dir(p), id+".status.*.tmp")
-	if err != nil {
-		return fmt.Errorf("creating temp status file: %w", err)
-	}
-	tmpPath := tmpF.Name()
-	if err := tmpF.Chmod(0600); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("securing temp status file: %w", err)
-	}
-	if _, err := tmpF.WriteString(b.String()); err != nil {
-		tmpF.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("writing temp status file: %w", err)
-	}
-	if err := tmpF.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("closing temp status file: %w", err)
-	}
-	if err := os.Rename(tmpPath, p); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("renaming temp status file: %w", err)
-	}
-	return nil
-}
-
 // ReadStatus reads all status lines from $MUNSU_HOME/state/<id>.status.
 func ReadStatus(homeDir string, id string) ([]string, error) {
 	p, err := statusPath(homeDir, id)
@@ -293,12 +242,6 @@ func ParseStatusKey(line string) (message, key string) {
 		}
 	}
 	return line, ""
-}
-
-// RemoveStatusKey removes the [key=<slug>] suffix from a line if present.
-func RemoveStatusKey(line string) string {
-	msg, _ := ParseStatusKey(line)
-	return msg
 }
 
 // ValidMetaFields lists the recognized fields in a task meta file.
