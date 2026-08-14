@@ -91,8 +91,9 @@ tag_terms() {
 # `testdata` segment, or a segment starting with `_` or `.`. Fixtures under
 # `testdata/` are routinely code that is not meant to compile, so emitting them
 # would hand the lane an explicit path and turn a fixture into a red lane. The
-# filter is textual rather than a `go list` call because the `invariants` job
-# has no Go toolchain.
+# filter is textual rather than a `go list` call so this script needs no
+# toolchain and no module download -- `invariants` now installs Go, but only
+# for its gofmt step, and `check` still runs without one.
 packages() {
 	local tag="$1" dirs
 	[ -n "$tag" ] || die "packages: missing tag"

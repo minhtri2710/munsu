@@ -103,6 +103,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # Only the gofmt step below needs this. gofmt's output is a function of
+      # the toolchain version, so the runner image's preinstalled Go would let
+      # the lane drift against the 1.26 developers use -- pin it like every
+      # other job. `cache: false`: this job compiles nothing, so a module cache
+      # would be written and never read.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
       - name: Symlinks must stay intact
         run: |
           set -eu
@@ -116,6 +125,39 @@ jobs:
       # deliberately disabled. See the header of build-tags.sh for the limits.
       - name: Build tags must be covered by a lane
         run: .github/scripts/build-tags.sh check
+      # `gofmt -l` was in no lane at all, and 21 files were adrift when this
+      # was added. It belongs next to the build-tag rule above rather than in
+      # `build`: both are cheap textual invariants, and the two are coupled --
+      # gofmt is what normally hoists a legacy `// +build` line and writes the
+      # `//go:build` line that the tag derivation reads. With no lane forcing
+      # gofmt, "the old syntax upgrades itself" stopped being true here, which
+      # is why that rule has to fail closed on its own.
+      #
+      # The two are complementary, not redundant. gofmt only syncs constraints
+      # in the leading comment block; the rule above scans the whole file, so a
+      # `// +build` line below the package clause is caught there and nowhere
+      # else.
+      #
+      # `gofmt -l` prints one path per unformatted file and nothing on a clean
+      # tree, so an empty list is the pass condition. On an unparseable file it
+      # writes to stderr and exits 2 while the -l list may still look clean --
+      # that has to fail the lane rather than pass it, hence the explicit
+      # status and stderr checks before the list is trusted.
+      - name: Go sources must be gofmt-clean
+        run: |
+          set -eu
+          errs="$(mktemp)"
+          if ! unformatted="$(gofmt -l . 2>"$errs")" || [ -s "$errs" ]; then
+            echo "::error::gofmt could not read the tree, so it cannot judge formatting:" >&2
+            cat "$errs" >&2
+            exit 1
+          fi
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt-clean -- run 'gofmt -w' on:" >&2
+            printf '  %s\n' $unformatted >&2
+            exit 1
+          fi
+          echo "gofmt: clean"
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu
