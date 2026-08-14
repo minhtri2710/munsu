@@ -221,10 +221,10 @@ func TestCircuitStoreSaveLoad(t *testing.T) {
 			Window:      5 * time.Minute,
 			Cooldown:    30 * time.Second,
 		},
-		Attempts:   2,
-		LastAt:     now,
-		State:      CircuitOpen,
-		Series:     "series-1",
+		Attempts:    2,
+		LastAt:      now,
+		State:       CircuitOpen,
+		Series:      "series-1",
 		StableAlive: 2,
 	}
 

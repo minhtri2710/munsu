@@ -13,7 +13,7 @@ import (
 // agentAwareBackend implements AgentAwareBackend to exercise the full
 // ObserveBackendEndpoint type-switching path in probeAdapter.Probe.
 type agentAwareBackend struct {
-	checkAlive   func(string) (bool, bool, error)
+	checkAlive func(string) (bool, bool, error)
 }
 
 func (b *agentAwareBackend) NewWindow(string, string) (string, error) { return "", nil }
@@ -39,34 +39,34 @@ func (b *plainBackend) Teardown(string) error                    { return nil }
 
 func TestProbeAdapter_AgentAwareBackendProducesTypedStates(t *testing.T) {
 	tests := []struct {
-		name        string
-		checkAlive  func(string) (bool, bool, error)
-		wantState   orchestrator.EndpointObservationState
-		wantAlive   bool // alive() should match
+		name       string
+		checkAlive func(string) (bool, bool, error)
+		wantState  orchestrator.EndpointObservationState
+		wantAlive  bool // alive() should match
 	}{
 		{
-			name:      "alive",
+			name:       "alive",
 			checkAlive: func(string) (bool, bool, error) { return true, true, nil },
-			wantState: orchestrator.EndpointAlive,
-			wantAlive: true,
+			wantState:  orchestrator.EndpointAlive,
+			wantAlive:  true,
 		},
 		{
-			name:      "starting",
+			name:       "starting",
 			checkAlive: func(string) (bool, bool, error) { return true, false, nil },
-			wantState: orchestrator.EndpointStarting,
-			wantAlive: false,
+			wantState:  orchestrator.EndpointStarting,
+			wantAlive:  false,
 		},
 		{
-			name:      "dead",
+			name:       "dead",
 			checkAlive: func(string) (bool, bool, error) { return false, false, backend.ErrPaneNotFound },
-			wantState: orchestrator.EndpointDead,
-			wantAlive: false,
+			wantState:  orchestrator.EndpointDead,
+			wantAlive:  false,
 		},
 		{
-			name:      "unresponsive",
+			name:       "unresponsive",
 			checkAlive: func(string) (bool, bool, error) { return false, false, errors.New("timeout") },
-			wantState: orchestrator.EndpointUnresponsive,
-			wantAlive: false,
+			wantState:  orchestrator.EndpointUnresponsive,
+			wantAlive:  false,
 		},
 	}
 	for _, tt := range tests {

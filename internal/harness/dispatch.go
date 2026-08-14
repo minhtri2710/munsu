@@ -297,5 +297,3 @@ func SelectProfile(profiles []DispatchProfile, strategy string) string {
 	}
 	return sel.selectCandidate(cands).Harness
 }
-
-

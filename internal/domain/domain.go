@@ -306,14 +306,14 @@ const (
 // is connected to. It carries provider identity, the issue URL/number, the
 // semantic relation, and the closure policy.
 type IssueLink struct {
-	Provider      string                  `json:"provider"`
-	Owner         string                  `json:"owner"`
-	Repo          string                  `json:"repo"`
-	Number        int                     `json:"number"`
-	URL           string                  `json:"url"`
-	Relation      IssueLinkRelation       `json:"relation"`
-	ClosurePolicy IssueLinkClosurePolicy  `json:"closurePolicy"`
-	ClosingRef    string                  `json:"closingRef,omitempty"`
+	Provider      string                 `json:"provider"`
+	Owner         string                 `json:"owner"`
+	Repo          string                 `json:"repo"`
+	Number        int                    `json:"number"`
+	URL           string                 `json:"url"`
+	Relation      IssueLinkRelation      `json:"relation"`
+	ClosurePolicy IssueLinkClosurePolicy `json:"closurePolicy"`
+	ClosingRef    string                 `json:"closingRef,omitempty"`
 }
 
 // IssueLinkReconciliationResult captures the outcome of reconciling one
