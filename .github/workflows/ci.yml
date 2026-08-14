@@ -103,15 +103,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # Only the gofmt step below needs this. gofmt's output is a function of
-      # the toolchain version, so the runner image's preinstalled Go would let
-      # the lane drift against the 1.26 developers use -- pin it like every
-      # other job. `cache: false`: this job compiles nothing, so a module cache
-      # would be written and never read.
+      # gofmt's output is a function of the toolchain version, so the runner
+      # image's preinstalled Go would let that lane drift against the 1.26
+      # developers use -- pin it like every other job. The reachability lane
+      # below needs the same toolchain for a different reason: it type-checks
+      # the module, so it has to agree with the compiler the other jobs use.
+      # `cache: true` since that lane arrived: this job now builds a tool and
+      # loads every package, so the module and build caches are read, not just
+      # written.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache: false
+          cache: true
       - name: Symlinks must stay intact
         run: |
           set -eu
@@ -197,6 +200,28 @@ jobs:
             exit 1
           fi
           echo "gofmt: clean"
+      # Five times now, a guard was written correctly, placed correctly, and
+      # called by nothing -- and every lane above stayed green, because deleting
+      # a guard does not change the happy path by a single bit. That is
+      # structural, not a gap in the test suite: no measurement taken *inside* a
+      # function can see that production never calls it. `EnsureNotPrimary` has
+      # four tests and coverage count 2 on its refusal branch while having zero
+      # production call sites. Reachability is the only lane that sees it, and
+      # it found two more open holes (BEO-64) on its first run here.
+      #
+      # The root is `./cmd/munsu` and `-test` is deliberately absent: a guard
+      # only its own test calls is unreachable from the shipped binary, which is
+      # precisely the finding. `-test` would relabel it "reachable" and silence
+      # the case this lane exists for. See ADR-0009 and the script header.
+      #
+      # deadcode is pinned rather than @latest: its RTA result is the input to a
+      # fail-closed comparison, so an upstream change in what counts as reachable
+      # has to arrive in a diff someone reads, not on a Tuesday.
+      - name: Every function must be reachable from the munsu binary
+        run: |
+          set -eu
+          go install golang.org/x/tools/cmd/deadcode@v0.49.0
+          PATH="$(go env GOPATH)/bin:$PATH" .github/scripts/deadcode.sh check
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

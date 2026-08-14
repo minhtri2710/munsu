@@ -22,6 +22,12 @@ fails it and asks you to run `gofmt`. The same job also fails on any file
 `gofmt -l .` lists, so run `gofmt -w` before pushing. Run the lane commands
 from `ci.yml` for a full local matrix.
 
+That job also fails on any function the `munsu` binary cannot reach, compared
+both ways against `.github/deadcode.allow` (`.github/scripts/deadcode.sh check`,
+needs `golang.org/x/tools/cmd/deadcode`). A guard with no call site passes its
+own tests and protects nothing — five of those reached `main` before this lane
+existed, so wire it up, delete it, or waive it with a real reason.
+
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
 ## Module map
