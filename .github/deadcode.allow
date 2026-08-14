@@ -144,6 +144,8 @@ internal/fleet/endpoint_fence.go	metaUint	burn-down(BEO-63): pre-existing, impor
 internal/fleet/endpoint_fence.go	readEndpointMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	sameBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	validBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
+internal/fleet/orphan_scan.go	hasOwnershipMarker	live on linux and darwin (orphan_inventory_linux.go / orphan_inventory_darwin.go call it); dead only in the GOOS=windows union, where orphan_inventory_other.go reports unsupported and never scans markers
+internal/fleet/orphan_scan.go	keepMarkers	live on linux and darwin (orphan_inventory_linux.go / orphan_inventory_darwin.go call it); dead only in the GOOS=windows union, where orphan_inventory_other.go reports unsupported and never scans markers
 internal/fleet/process_args.go	splitProcessCommand	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/process_args.go	writerKindForArgs	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	IsPropagateConfigUnchanged	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
