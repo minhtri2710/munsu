@@ -144,7 +144,18 @@ check() {
 		done)"
 	if [ -n "$legacy" ]; then
 		echo "::error::legacy '// +build' line with no '//go:build' line -- run gofmt on:" >&2
-		printf '  %s\n' $legacy >&2
+		# Read line by line rather than letting `printf` word-split the list:
+		# `$legacy` holds file paths, so a path with a space would split across
+		# two lines, and a path with a glob character would be expanded against
+		# the working directory, printing a name that is not the offending file.
+		# Quoting the whole list instead is not the fix -- it feeds the block to
+		# a single `%s`, so only the first path gets the indent. The two sibling
+		# loops below print tag identifiers, not paths, and a Go build tag holds
+		# neither spaces nor glob characters, so they carry no such exposure and
+		# are left alone.
+		printf '%s\n' "$legacy" | while IFS= read -r file; do
+			printf '  %s\n' "$file" >&2
+		done
 		echo "  gofmt turns that line into a real build constraint (hoisting it and adding //go:build)," >&2
 		echo "  and tag derivation only reads //go:build -- so leaving it here hides the tag from every lane." >&2
 		failed=1
