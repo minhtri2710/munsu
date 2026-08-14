@@ -62,8 +62,17 @@ func TestOpencodePluginsContent_PretoolCheck(t *testing.T) {
 	}
 
 	// Verify it checks for bash tool
-	if !strings.Contains(content, `input?.tool !== "bash"`) {
+	if !strings.Contains(content, `const isBash = tool === "bash"`) {
 		t.Error("pretool-check must guard on bash tool")
+	}
+
+	// Verify native file-write tools are covered too, and route the target
+	// path rather than a command string.
+	if !strings.Contains(content, `"write"`) || !strings.Contains(content, `"edit"`) {
+		t.Error("pretool-check must cover native file-write tools")
+	}
+	if !strings.Contains(content, `args.push("--file-path", filePath)`) {
+		t.Error("pretool-check must pass the write target as --file-path")
 	}
 
 	// Verify it spawns safety-check with --harness opencode --command

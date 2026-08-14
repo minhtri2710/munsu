@@ -22,7 +22,8 @@ type PiAdapter struct {
 }
 
 // piExtensionSource is the TypeScript extension source. BINPATH is substituted
-// at install time with the munsu binary path (JSON-encoded string).
+// at install time with the munsu binary path (JSON-encoded string), and
+// WRITETOOLS with the Pi native file-write tool names (JSON array literal).
 //
 // Uses agent_settled (not agent_end) for wake claim/follow-up because Pi may
 // still auto-retry, auto-compact and retry, or continue with queued follow-up
@@ -34,6 +35,7 @@ const piExtensionSource = `// munsu-integrate v1 -- do not edit this section
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MUNSU_BIN: string = BINPATH;
+const MUNSU_WRITE_TOOLS: string[] = WRITETOOLS;
 const SESSION_CONSUMER = "munsu:wake";
 
 // Strict contract parser — rejects malformed, missing fields, wrong schema/kind/status.
@@ -329,16 +331,31 @@ export default function (pi: ExtensionAPI) {
 
   // 4. Pre-tool safety checks — block unsafe operations. Fail closed on any error.
   pi.on("tool_call", async (event: any, ctx: any) => {
-    if (event.toolName !== "bash") return;
-    const cmd: string = event.input?.command ?? "";
-    if (typeof cmd !== "string") return;
+    // Native file-write tools never go through the shell, so a bash-only
+    // check leaves the most common write path unguarded. They carry their
+    // target as a path argument instead of a command string.
+    const toolName: string = String(event.toolName ?? "");
+    const isBash = toolName === "bash";
+    const isWrite = MUNSU_WRITE_TOOLS.indexOf(toolName) !== -1;
+    if (!isBash && !isWrite) return;
+
+    const checkArgs: string[] = ["integrate", "safety-check", ctx.cwd || "."];
+    if (isBash) {
+      const cmd: string = event.input?.command ?? "";
+      if (typeof cmd !== "string" || cmd === "") return;
+      checkArgs.push("--command", cmd);
+    } else {
+      const input: any = event.input ?? {};
+      const filePath = input.file_path ?? input.filePath ?? input.notebook_path ?? input.path ?? "";
+      // No path in the payload means there is nothing location-based to
+      // check; leave the call alone rather than refusing an unknown shape.
+      if (typeof filePath !== "string" || filePath === "") return;
+      checkArgs.push("--file-path", filePath);
+    }
+    checkArgs.push("--output", "json");
 
     // Use safety-check command for all tool safety decisions.
-    const safetyResult = await pi.exec(MUNSU_BIN, [
-      "integrate", "safety-check", ctx.cwd || ".",
-      "--command", cmd,
-      "--output", "json",
-    ]);
+    const safetyResult = await pi.exec(MUNSU_BIN, checkArgs);
     if (safetyResult.code !== 0) {
       return { block: true, reason: "Command blocked: safety check failed (exit " + safetyResult.code + ")" };
     }
@@ -431,13 +448,14 @@ export default function (pi: ExtensionAPI) {
 // with the JSON-encoded munsu binary path substituted.
 func PiExtensionTemplate(munsuBinPath string) string {
 	// JSON-serialize the path to safely encode spaces, quotes, backslashes.
+	source := strings.ReplaceAll(piExtensionSource, "WRITETOOLS", writeToolJSArray(piWriteToolNames))
 	data, err := json.Marshal(munsuBinPath)
 	if err != nil {
 		// Fallback: use %q which is safe for strings without control chars.
 		encoded := fmt.Sprintf("%q", munsuBinPath)
-		return strings.ReplaceAll(piExtensionSource, "BINPATH", encoded)
+		return strings.ReplaceAll(source, "BINPATH", encoded)
 	}
-	return strings.ReplaceAll(piExtensionSource, "BINPATH", string(data))
+	return strings.ReplaceAll(source, "BINPATH", string(data))
 }
 
 // GenerateManifest creates the integration manifest for the Pi adapter,

@@ -36,7 +36,7 @@ func TestOpencodeSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "opencode")
+		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "opencode")
 	})
 
 	if exitCode != 2 {
@@ -79,7 +79,7 @@ func TestOpencodeSafetyCheckAllow(t *testing.T) {
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 
-	runSafetyCheck(cmd, gitDir, "echo hello", "opencode")
+	runSafetyCheck(cmd, gitDir, "echo hello", "", "opencode")
 	if exitCode != 0 {
 		t.Errorf("expected exit 0 for opencode allow, got %d", exitCode)
 	}
@@ -102,7 +102,7 @@ func TestOpencodeSafetyCheckGateRefused(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, tmpDir, "echo hello", "opencode")
+		runSafetyCheck(cmd, tmpDir, "echo hello", "", "opencode")
 	})
 
 	if exitCode != 2 {

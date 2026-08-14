@@ -35,7 +35,7 @@ func TestGrokSafetyCheckAllow(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		err := runSafetyCheck(cmd, gitDir, "echo hello", "grok")
+		err := runSafetyCheck(cmd, gitDir, "echo hello", "", "grok")
 		if err != nil {
 			exitCode = 1
 		}
@@ -73,7 +73,7 @@ func TestGrokSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "grok")
+		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "grok")
 	})
 
 	if exitCode != 2 {
@@ -138,7 +138,7 @@ func TestGrokSafetyCheckDenyViaStdin(t *testing.T) {
 	os.Stdin = r
 
 	stdout, _ := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "", "grok")
+		runSafetyCheck(cmd, gitDir, "", "", "grok")
 	})
 
 	os.Stdin = oldStdin
@@ -179,7 +179,7 @@ func TestGrokSafetyCheckGateRefused(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, _ := captureBoth(func() {
-		runSafetyCheck(cmd, tmpDir, "echo hello", "grok")
+		runSafetyCheck(cmd, tmpDir, "echo hello", "", "grok")
 	})
 
 	if exitCode != 2 {

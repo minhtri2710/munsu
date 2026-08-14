@@ -35,7 +35,7 @@ func TestAgySafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "agy")
+		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "agy")
 	})
 
 	if exitCode != 0 {
@@ -92,7 +92,7 @@ func TestAgySafetyCheckAllow(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		err := runSafetyCheck(cmd, gitDir, "echo hello", "agy")
+		err := runSafetyCheck(cmd, gitDir, "echo hello", "", "agy")
 		if err != nil {
 			exitCode = 1
 		}
@@ -152,7 +152,7 @@ func TestAgySafetyCheckDenyViaStdin(t *testing.T) {
 	os.Stdin = r
 
 	stdout, _ := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "", "agy")
+		runSafetyCheck(cmd, gitDir, "", "", "agy")
 	})
 
 	os.Stdin = oldStdin
@@ -193,7 +193,7 @@ func TestAgySafetyCheckGateRefused(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, _ := captureBoth(func() {
-		runSafetyCheck(cmd, tmpDir, "echo hello", "agy")
+		runSafetyCheck(cmd, tmpDir, "echo hello", "", "agy")
 	})
 
 	if exitCode != 0 {

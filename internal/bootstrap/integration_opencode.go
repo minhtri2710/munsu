@@ -93,6 +93,7 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
 const MUNSU_BIN = "%s";
+const MUNSU_WRITE_TOOLS = %s;
 
 function runProcess(command, args) {
   return new Promise((resolvePromise) => {
@@ -121,11 +122,30 @@ export const MunsuPretoolCheck = async ({ directory, worktree }) => {
 
   return {
     "tool.execute.before": async (input, output) => {
-      if (!root || input?.tool !== "bash") return;
-      const command = output?.args?.command;
-      if (!command || typeof command !== "string") return;
+      if (!root) return;
+      const tool = input?.tool;
+      // Native file-write tools never go through the shell, so a bash-only
+      // check leaves the most common write path unguarded. They carry their
+      // target as a path argument instead of a command string.
+      const isBash = tool === "bash";
+      const isWrite = MUNSU_WRITE_TOOLS.indexOf(tool) !== -1;
+      if (!isBash && !isWrite) return;
 
-      const result = await runProcess(MUNSU_BIN, ["integrate", "safety-check", "--harness", "opencode", "--command", command]);
+      const args = ["integrate", "safety-check", "--harness", "opencode"];
+      if (isBash) {
+        const command = output?.args?.command;
+        if (!command || typeof command !== "string") return;
+        args.push("--command", command);
+      } else {
+        const a = output?.args ?? {};
+        const filePath = a.filePath ?? a.file_path ?? a.notebookPath ?? a.path ?? "";
+        // No path in the payload means there is nothing location-based to
+        // check; leave the call alone rather than refusing an unknown shape.
+        if (!filePath || typeof filePath !== "string") return;
+        args.push("--file-path", filePath);
+      }
+
+      const result = await runProcess(MUNSU_BIN, args);
       if (result.code !== 2) return;
 
       const reason = result.stderr.trim() || "denied by munsu PreToolUse seatbelt";
@@ -133,7 +153,7 @@ export const MunsuPretoolCheck = async ({ directory, worktree }) => {
     },
   };
 };
-`, munsuBin)
+`, munsuBin, writeToolJSArray(opencodeWriteToolNames))
 }
 
 // opencodeSessionstartNudgePlugin generates the session-start nudge plugin JS.

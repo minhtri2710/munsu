@@ -35,7 +35,7 @@ func TestCodexSafetyCheckAllow(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		err := runSafetyCheck(cmd, gitDir, "echo hello", "codex")
+		err := runSafetyCheck(cmd, gitDir, "echo hello", "", "codex")
 		if err != nil {
 			exitCode = 1
 		}
@@ -73,7 +73,7 @@ func TestCodexSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "codex")
+		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "codex")
 	})
 
 	if exitCode != 2 {
@@ -128,7 +128,7 @@ func TestCodexSafetyCheckDenyViaStdin(t *testing.T) {
 	os.Stdin = r
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "", "codex")
+		runSafetyCheck(cmd, gitDir, "", "", "codex")
 	})
 
 	os.Stdin = oldStdin
@@ -166,7 +166,7 @@ func TestCodexSafetyCheckGateRefused(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, tmpDir, "echo hello", "codex")
+		runSafetyCheck(cmd, tmpDir, "echo hello", "", "codex")
 	})
 
 	if exitCode != 2 {

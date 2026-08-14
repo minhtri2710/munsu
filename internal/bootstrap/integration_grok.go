@@ -65,7 +65,7 @@ var grokHookFileNames = []string{
 func grokHookFile(munsuBin string, hookName string) string {
 	var command string
 	var event string
-	var matcher string
+	var matchers []string
 	var timeout int
 
 	switch hookName {
@@ -75,12 +75,16 @@ func grokHookFile(munsuBin string, hookName string) string {
 		timeout = 10
 	case "fm-primary-pretool-check.json":
 		event = "PreToolUse"
-		matcher = "Bash"
+		// Bash plus the native file-write tools: the latter bypass the shell
+		// entirely and would otherwise reach the filesystem with no guard.
+		// A second matcher in the same file keeps the four-file manifest
+		// contract intact.
+		matchers = []string{"Bash", writeToolMatcher(grokWriteToolNames)}
 		command = grokHookCommand(munsuBin, "integrate", "safety-check", "--harness", "grok")
 		timeout = 10
 	case "fm-primary-cd-check.json":
 		event = "PreToolUse"
-		matcher = "Bash"
+		matchers = []string{"Bash"}
 		command = grokHookCommand(munsuBin, "integrate", "safety-check", "--harness", "grok")
 		timeout = 10
 	case "fm-primary-turnend-guard.json":
@@ -91,11 +95,12 @@ func grokHookFile(munsuBin string, hookName string) string {
 		return ""
 	}
 
-	return grokBuildHookJSON(event, matcher, command, timeout)
+	return grokBuildHookJSON(event, matchers, command, timeout)
 }
 
 // grokBuildHookJSON builds the complete hook JSON for a single Grok hook file.
-func grokBuildHookJSON(event, matcher, command string, timeout int) string {
+// An empty matcher list produces one unmatched entry (the Stop hook shape).
+func grokBuildHookJSON(event string, matcherNames []string, command string, timeout int) string {
 	type hookEntry struct {
 		Type    string `json:"type"`
 		Command string `json:"command"`
@@ -112,14 +117,13 @@ func grokBuildHookJSON(event, matcher, command string, timeout int) string {
 	}
 
 	var matchers []hookMatcher
-	if matcher != "" {
-		matchers = []hookMatcher{
-			{
-				Matcher: matcher,
-				Hooks:   entries,
-			},
+	for _, name := range matcherNames {
+		if name == "" {
+			continue
 		}
-	} else {
+		matchers = append(matchers, hookMatcher{Matcher: name, Hooks: entries})
+	}
+	if len(matchers) == 0 {
 		matchers = []hookMatcher{
 			{
 				Hooks: entries,

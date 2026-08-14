@@ -89,6 +89,14 @@ func claudeSettingsJSON(munsuBin string) ([]byte, error) {
 						{Type: "command", Command: safetyCheck},
 					},
 				},
+				{
+					// Native file-write tools bypass the shell entirely; without
+					// this matcher they reach the filesystem with no guard at all.
+					Matcher: writeToolMatcher(claudeWriteToolNames),
+					Hooks: []hookEntry{
+						{Type: "command", Command: safetyCheck},
+					},
+				},
 			},
 			"Stop": {
 				{
@@ -173,23 +181,32 @@ func ClaudeSettingsHasOwnedHooks(settingsPath, munsuBin string) (bool, string, e
 		missing = append(missing, "SessionStart")
 	}
 
-	// Check PreToolUse hook
-	foundPreToolUse := false
+	// Check PreToolUse hooks. Both matchers must be present: an install that
+	// predates the native-write matcher still has the Bash one, and reporting
+	// it as healthy would leave the file-write path unguarded forever.
+	foundBashPreToolUse := false
+	foundWritePreToolUse := false
+	writeMatcher := writeToolMatcher(claudeWriteToolNames)
 	if matchers, ok := hooksByEvent["PreToolUse"]; ok {
 		for _, m := range matchers {
 			for _, h := range m.Hooks {
-				if h.Type == "command" && h.Command == safetyCheckCmd {
-					foundPreToolUse = true
-					break
+				if h.Type != "command" || h.Command != safetyCheckCmd {
+					continue
 				}
-			}
-			if foundPreToolUse {
-				break
+				switch m.Matcher {
+				case "Bash":
+					foundBashPreToolUse = true
+				case writeMatcher:
+					foundWritePreToolUse = true
+				}
 			}
 		}
 	}
-	if !foundPreToolUse {
-		missing = append(missing, "PreToolUse")
+	if !foundBashPreToolUse {
+		missing = append(missing, "PreToolUse(Bash)")
+	}
+	if !foundWritePreToolUse {
+		missing = append(missing, "PreToolUse("+writeMatcher+")")
 	}
 
 	// Check Stop hook

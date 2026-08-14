@@ -592,7 +592,8 @@ func SafetyCheck(path string) *SafetyCheckResult {
 	}
 
 	// GateRefused: true when classification errored (GateUnknown), gate is present,
-	// or identity is Unrelated (fail closed for unknown repos).
+	// identity is Unrelated (fail closed for unknown repos), or the path is a
+	// primary checkout while a munsu task run is active.
 	if scopeResult.Err != nil {
 		result.GateRefused = true
 		result.Error = scopeResult.Err.Error()
@@ -603,9 +604,26 @@ func SafetyCheck(path string) *SafetyCheckResult {
 		// Unrelated identity with no explicit gate still fails closed
 		result.GateRefused = true
 		result.Error = "unrelated checkout (not a recognized repository)"
+	} else if scopeResult.Identity == fleet.Primary && TaskRunActive() {
+		// Inside an active task run the bound worktree is the only legal
+		// working tree; the primary checkout is shared state. Outside a task
+		// run this must stay open: generals and humans work in the primary
+		// checkout, and munsu's own sync paths (internal/fleet/fleetsync.go,
+		// internal/cli/selfupdate_update.go) write there on purpose.
+		result.GateRefused = true
+		result.Error = "primary checkout refused inside an active munsu task run (MUNSU_TASK_ID set); use the bound worktree"
 	}
 
 	return result
+}
+
+// TaskRunActive reports whether the process is running inside a munsu task run,
+// i.e. whether MUNSU_TASK_ID is set. It is the single switch that turns the
+// primary-checkout refusals on: soldier and captain launch scripts export
+// MUNSU_TASK_ID (internal/fleet/soldier_launch.go, internal/fleet/captain_captain.go),
+// interactive and general sessions do not.
+func TaskRunActive() bool {
+	return strings.TrimSpace(os.Getenv("MUNSU_TASK_ID")) != ""
 }
 
 // FileContainsOwnershipMarker reports whether the file at path has the

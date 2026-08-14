@@ -69,12 +69,22 @@ func agyBuildHookJSON(munsuBin string) string {
 	// Build the three munsu-owned hooks
 	hooks := make(map[string]interface{})
 
-	// Safety check: PreToolUse with matcher run_command
+	// Safety check: PreToolUse for run_command plus the native file-write
+	// tools, which bypass the shell entirely and would otherwise reach the
+	// filesystem with no guard at all.
 	safetyCommand := agyHookCommand(munsuBin, "integrate", "safety-check", "--harness", "agy")
 	hooks["munsu-safety-check"] = map[string]interface{}{
 		"PreToolUse": []map[string]interface{}{
 			{
 				"matcher": "run_command",
+				"hooks": []map[string]interface{}{
+					{
+						"command": safetyCommand,
+					},
+				},
+			},
+			{
+				"matcher": writeToolMatcher(agyWriteToolNames),
 				"hooks": []map[string]interface{}{
 					{
 						"command": safetyCommand,

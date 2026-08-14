@@ -37,7 +37,7 @@ func TestClaudeSafetyCheckAllow(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		err := runSafetyCheck(cmd, gitDir, "echo hello", "claude")
+		err := runSafetyCheck(cmd, gitDir, "echo hello", "", "claude")
 		if err != nil {
 			exitCode = 1
 		}
@@ -75,7 +75,7 @@ func TestClaudeSafetyCheckDeny(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "munsu watch arm", "claude")
+		runSafetyCheck(cmd, gitDir, "munsu watch arm", "", "claude")
 	})
 
 	if exitCode != 2 {
@@ -141,7 +141,7 @@ func TestClaudeSafetyCheckDenyViaStdin(t *testing.T) {
 	os.Stdin = r
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, gitDir, "", "claude")
+		runSafetyCheck(cmd, gitDir, "", "", "claude")
 	})
 
 	os.Stdin = oldStdin
@@ -181,7 +181,7 @@ func TestClaudeSafetyCheckGateRefused(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	stdout, stderr := captureBoth(func() {
-		runSafetyCheck(cmd, tmpDir, "echo hello", "claude")
+		runSafetyCheck(cmd, tmpDir, "echo hello", "", "claude")
 	})
 
 	if exitCode != 2 {
