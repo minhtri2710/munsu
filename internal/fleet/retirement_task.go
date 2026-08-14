@@ -1069,18 +1069,13 @@ func shipSafetyCheck(opts Options, meta map[string]string, backend BoundTeardown
 		return nil, fmt.Errorf("checking worktree %s: %w", wtPath, err)
 	}
 
-	// Get expected manifest SHA-256 from task metadata (anchored outside worktree).
+	// Get expected manifest SHA-256 from task metadata (anchored outside
+	// worktree). A missing or malformed anchor is a refusal, never a reason to
+	// derive the expectation from the worktree: the manifest lives inside the
+	// thing being verified, so a self-derived expectation matches by
+	// construction and the tamper evidence evaporates exactly when it matters.
+	// The pre-return recheck before ReturnWorktree fails closed the same way.
 	expectedManifestSHA := meta["launch_manifest_sha256"]
-	if expectedManifestSHA == "" || !sha256Regex.MatchString(expectedManifestSHA) {
-		// Fallback: compute the manifest digest from the worktree when meta
-		// does not provide it. This is a backward-compatibility path for
-		// callers that have not yet persisted the anchor. In production,
-		// the meta should always contain launch_manifest_sha256.
-		manifestPath := filepath.Join(wtPath, ManifestName)
-		if manifestBytes, readErr := os.ReadFile(manifestPath); readErr == nil {
-			expectedManifestSHA = sha256Content(manifestBytes)
-		}
-	}
 
 	// Verify launch artifacts using the manifest.
 	if err := VerifyLaunchArtifacts(wtPath, expectedManifestSHA); err != nil {

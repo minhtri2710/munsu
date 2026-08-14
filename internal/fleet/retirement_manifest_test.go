@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minhtri2710/munsu/internal/taskauthority"
 )
 
 // setupWorktreeWithManifest creates a git repo with a remote and writes
@@ -379,11 +381,14 @@ func TestShipSafetyCheck_EmptyExpectedManifestSHA(t *testing.T) {
 	tmp := t.TempDir()
 	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
-	// Empty manifest SHA in meta falls back to computing from the worktree.
-	// This is allowed for backward compatibility.
+	// An empty anchor is a refusal: there is nothing outside the worktree left
+	// to verify the manifest against.
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, ""), fakeTeardown{}, nil)
-	if err != nil {
-		t.Fatalf("empty manifest SHA should fall back to worktree: %v", err)
+	if err == nil {
+		t.Fatal("empty manifest SHA should block")
+	}
+	if !strings.Contains(err.Error(), "invalid expected manifest SHA-256") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -391,15 +396,112 @@ func TestShipSafetyCheck_NoLaunchManifestSHAInMeta(t *testing.T) {
 	tmp := t.TempDir()
 	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
 
-	// Meta without launch_manifest_sha256 falls back to computing from the worktree.
-	// This is allowed for backward compatibility.
+	// Meta without launch_manifest_sha256 is the reachable state left by
+	// spawn_runner.go when manifestSHA256 is empty. It must block.
 	meta := map[string]string{
 		"worktree": wt,
 		"kind":     "ship",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	if err == nil {
+		t.Fatal("missing manifest SHA should block")
+	}
+	if !strings.Contains(err.Error(), "invalid expected manifest SHA-256") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// rewriteManifestFromWorktree rebuilds the manifest from the current file
+// contents, the way an attacker who edits an artifact and refreshes the
+// manifest to match would. Returns the new manifest digest, which is the value
+// the external anchor would have to hold for the tamper to go unnoticed.
+func rewriteManifestFromWorktree(t *testing.T, wt string) string {
+	t.Helper()
+	entries := []ManifestEntry{}
+	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+		entry, err := ManifestEntryForFile(wt, name, DisposalPolicyCleanable)
+		if err != nil {
+			t.Fatalf("manifest entry for %s: %v", name, err)
+		}
+		entries = append(entries, entry)
+	}
+	manifest := BuildManifest(entries)
+	policy := LegacyBriefMatchCanonicalV1
+	manifest.LegacyBriefMigration = &policy
+	digest, err := WriteManifest(wt, manifest)
 	if err != nil {
-		t.Fatalf("missing manifest SHA should fall back to worktree: %v", err)
+		t.Fatalf("writing manifest: %v", err)
+	}
+	return digest
+}
+
+// TestShipSafetyCheck_MissingAnchorTamperedCharterBlocks pins the whole point
+// of anchoring the manifest digest outside the worktree: with no anchor in
+// meta, a charter edit plus a refreshed manifest is internally consistent, so
+// any expectation derived from the worktree accepts it. The check must refuse
+// instead of re-deriving what it is supposed to verify.
+func TestShipSafetyCheck_MissingAnchorTamperedCharterBlocks(t *testing.T) {
+	tmp := t.TempDir()
+	wt, _ := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
+
+	// Tamper one byte of the charter, then refresh the manifest so the
+	// worktree is self-consistent again.
+	charterPath := filepath.Join(wt, CharterName)
+	charter, err := os.ReadFile(charterPath)
+	if err != nil {
+		t.Fatalf("reading charter: %v", err)
+	}
+	tampered := append([]byte{}, charter...)
+	tampered[0] = 'X'
+	if err := os.WriteFile(charterPath, tampered, 0644); err != nil {
+		t.Fatalf("writing tampered charter: %v", err)
+	}
+	rewriteManifestFromWorktree(t, wt)
+
+	// Meta carries no anchor — exactly the state spawn_runner.go leaves when
+	// manifestSHA256 is empty.
+	meta := map[string]string{
+		"worktree": wt,
+		"kind":     "ship",
+	}
+	_, err = shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, meta, fakeTeardown{}, nil)
+	if err == nil {
+		t.Fatal("tampered charter with a refreshed manifest and no anchor should block")
+	}
+	if !strings.Contains(err.Error(), "launch artifact verification failed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestShipSafetyCheck_CommittedSoldierWorkPasses is the non-rejection
+// direction: real Soldier activity (new file, committed and pushed on the task
+// branch) must not be mistaken for tampering. A false block here holds the
+// lease and stalls teardown.
+func TestShipSafetyCheck_CommittedSoldierWorkPasses(t *testing.T) {
+	tmp := t.TempDir()
+	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
+
+	gitEnv := append(os.Environ(),
+		fmt.Sprintf("GIT_CEILING_DIRECTORIES=%s", wt),
+	)
+
+	os.WriteFile(filepath.Join(wt, "feature.go"), []byte("package main\n\nfunc Feature() {}\n"), 0644)
+	for _, args := range [][]string{
+		{"add", "feature.go"},
+		{"commit", "-m", "add feature"},
+		{"push", "origin", "fm/manifest-test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = wt
+		cmd.Env = gitEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %s", strings.Join(args, " "), out)
+		}
+	}
+
+	_, err := shipSafetyCheck(Options{ID: "test", HomeDir: tmp}, metaWithManifest(wt, md), fakeTeardown{}, nil)
+	if err != nil {
+		t.Fatalf("committed Soldier work should not block: %v", err)
 	}
 }
 
@@ -445,5 +547,75 @@ func TestShipSafetyCheck_UnlistedIgnoredFileBlocks(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "uncommitted changes") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// retireScoutFixture prepares a scout task whose worktree carries canonical
+// launch artifacts, so a non-Force retirement reaches the pre-return artifact
+// recheck immediately before ReturnWorktree.
+func retireScoutFixture(t *testing.T, anchor bool) (Options, *taskauthority.Canonical, string) {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("MUNSU_HOME", tmp)
+
+	auth := canonicalMergeTestAuth(t, tmp, "scout-manifest")
+
+	wt, md := setupWorktreeWithManifest(t, filepath.Join(tmp, "worktree"), filepath.Join(tmp, "remote.git"), nil)
+	seedWorktreeEvidence(t, auth, "scout-manifest", wt, "lease-wt", "fence-wt")
+	seedEndpointEvidence(t, auth, "scout-manifest", "@1", "lease-ep", "fence-ep")
+
+	dataDir := filepath.Join(tmp, "data", "scout-manifest")
+	os.MkdirAll(dataDir, 0755)
+	os.WriteFile(filepath.Join(dataDir, "report.md"), []byte("# Report\n"), 0644)
+
+	stateDir := filepath.Join(tmp, "state")
+	os.MkdirAll(stateDir, 0755)
+	meta := "kind=scout\nbackend=tmux\nwindow=@1\nworktree=" + wt + "\n"
+	if anchor {
+		meta += "launch_manifest_sha256=" + md + "\n"
+	}
+	os.WriteFile(filepath.Join(stateDir, "scout-manifest.meta"), []byte(meta), 0644)
+
+	return Options{HomeDir: tmp, ID: "scout-manifest", Force: false}, auth, wt
+}
+
+// TestRetire_IntactWorktreeReturnedToPool is the non-rejection direction at
+// teardown level: an intact worktree with a valid anchor must run teardown to
+// completion and hand the worktree back. A false block here strands the lease.
+func TestRetire_IntactWorktreeReturnedToPool(t *testing.T) {
+	opts, auth, _ := retireScoutFixture(t, true)
+
+	res, err := RetireTask(opts, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	if err != nil {
+		t.Fatalf("intact worktree should tear down cleanly: %v", err)
+	}
+	found := false
+	for _, s := range res.Steps {
+		if s == "worktree returned to pool" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing 'worktree returned to pool' step: %v", res.Steps)
+	}
+}
+
+// TestRetire_MissingAnchorBlocksWorktreeReturn pins the second call site: the
+// pre-return recheck refuses a missing anchor instead of deriving one from the
+// worktree, so cleanup stays pending and the worktree is not returned.
+func TestRetire_MissingAnchorBlocksWorktreeReturn(t *testing.T) {
+	opts, auth, _ := retireScoutFixture(t, false)
+
+	res, err := RetireTask(opts, fakeTeardown{}, fakeRetirementJournals{}, auth)
+	if err == nil {
+		t.Fatal("missing anchor should leave cleanup pending")
+	}
+	if !strings.Contains(err.Error(), "pre-return artifact verification failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, s := range res.Steps {
+		if s == "worktree returned to pool" {
+			t.Fatal("worktree must not be returned when the anchor is missing")
+		}
 	}
 }

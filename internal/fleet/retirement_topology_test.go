@@ -555,20 +555,21 @@ func TestShipSafetyCheck_Topology_PartialIdentityFailsClosed(t *testing.T) {
 func TestShipSafetyCheck_Topology_MissingProviderFailsClosed(t *testing.T) {
 	// All fields except pr_provider set — ValidateIdentity should reject.
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head":      "abc123def456",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_base":      "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":            "",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head":                "abc123def456",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_base":                "main",
+		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{}, nil)
 	if err == nil {
@@ -942,18 +943,19 @@ func TestShipSafetyCheck_Topology_PartialIdentityNoURL(t *testing.T) {
 	// Partial identity with multiple fields but no pr_url must fail closed
 	// and NOT fall through to the legacy remote branch check.
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	meta := map[string]string{
-		"worktree":    wt,
-		"kind":        "ship",
-		"pr_provider": "github",
-		"pr_owner":    "minhtri2710",
-		"pr_repo":     "munsu",
-		"pr_number":   "42",
-		"pr_head":     "abc123def456abc123def456abc123def456abc1",
-		"pr_head_ref": "fm/feature-branch",
-		"pr_base":     "main",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_provider":            "github",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head":                "abc123def456abc123def456abc123def456abc1",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_base":                "main",
 		// No pr_url
 	}
 	_, err := shipSafetyCheck(Options{ID: "test"}, meta, fakeTeardown{}, nil)
@@ -976,7 +978,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 	//   - Provider confirms: MERGED
 	//   -> shipSafetyCheck MUST succeed without Force
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1008,19 +1010,20 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 
 	// Build meta with complete typed identity using both old and new field names
 	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head":      headSHA,
-		"pr_head_sha":  headSHA,
-		"pr_base":      "main",
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":            "github",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_head":                headSHA,
+		"pr_head_sha":            headSHA,
+		"pr_base":                "main",
+		"pr_base_ref":            "main",
+		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 
 	// Mock provider: merged with matching HeadSHA
@@ -1049,7 +1052,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHeadCompleteIdentity(t *tes
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1075,19 +1078,20 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 	delCmd.Run()
 
 	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head":      headSHA,
-		"pr_head_sha":  headSHA,
-		"pr_base":      "main",
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":            "github",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_head":                headSHA,
+		"pr_head_sha":            headSHA,
+		"pr_base":                "main",
+		"pr_base_ref":            "main",
+		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 
 	// Provider returns empty HeadSHA — fail closed
@@ -1110,7 +1114,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderEmptyHeadSHA(t
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1136,19 +1140,20 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing
 	delCmd.Run()
 
 	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head":      headSHA,
-		"pr_head_sha":  headSHA,
-		"pr_base":      "main",
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":            "github",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_head":                headSHA,
+		"pr_head_sha":            headSHA,
+		"pr_base":                "main",
+		"pr_base_ref":            "main",
+		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 
 	// Provider reports DIFFERENT HeadSHA — fail closed
@@ -1171,7 +1176,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_SHAMismatch(t *testing
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1195,19 +1200,20 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
 	delCmd.Run()
 
 	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head":      headSHA,
-		"pr_head_sha":  headSHA,
-		"pr_base":      "main",
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":            "github",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_head":                headSHA,
+		"pr_head_sha":            headSHA,
+		"pr_base":                "main",
+		"pr_base_ref":            "main",
+		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 
 	// Provider: still OPEN (not merged)
@@ -1230,7 +1236,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_OpenPR(t *testing.T) {
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1254,19 +1260,20 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *test
 	delCmd.Run()
 
 	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head":      headSHA,
-		"pr_head_sha":  headSHA,
-		"pr_base":      "main",
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":            "github",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_head":                headSHA,
+		"pr_head_sha":            headSHA,
+		"pr_base":                "main",
+		"pr_base_ref":            "main",
+		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 
 	// Provider: CLOSED but not merged
@@ -1289,7 +1296,7 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ClosedUnmerged(t *test
 
 func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testing.T) {
 	tmp := t.TempDir()
-	wt, _, _ := setupTopologyRepo(t, tmp)
+	wt, _, md := setupTopologyRepo(t, tmp)
 
 	gitEnv := topologyGitEnv(wt)
 
@@ -1313,19 +1320,20 @@ func TestShipSafetyCheck_Regression_NoUpstreamDeletedHead_ProviderError(t *testi
 	delCmd.Run()
 
 	meta := map[string]string{
-		"worktree":     wt,
-		"kind":         "ship",
-		"pr_url":       "https://github.com/minhtri2710/munsu/pull/42",
-		"pr_provider":  "github",
-		"pr_owner":     "minhtri2710",
-		"pr_repo":      "munsu",
-		"pr_number":    "42",
-		"pr_head_ref":  "fm/feature-branch",
-		"pr_head":      headSHA,
-		"pr_head_sha":  headSHA,
-		"pr_base":      "main",
-		"pr_base_ref":  "main",
-		"pr_timestamp": "2026-07-18T00:00:00Z",
+		"worktree":               wt,
+		"kind":                   "ship",
+		"launch_manifest_sha256": md,
+		"pr_url":                 "https://github.com/minhtri2710/munsu/pull/42",
+		"pr_provider":            "github",
+		"pr_owner":               "minhtri2710",
+		"pr_repo":                "munsu",
+		"pr_number":              "42",
+		"pr_head_ref":            "fm/feature-branch",
+		"pr_head":                headSHA,
+		"pr_head_sha":            headSHA,
+		"pr_base":                "main",
+		"pr_base_ref":            "main",
+		"pr_timestamp":           "2026-07-18T00:00:00Z",
 	}
 
 	// Provider returns error — fail closed
