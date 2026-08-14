@@ -24,8 +24,9 @@
 
 # --- Accepted debt, imported as the baseline --------------------------------
 # The entries below are what `deadcode ./cmd/munsu` reported on b7536f6, the
-# first time it was ever run here, minus the ones triaged away since. They are pre-existing debt made visible,
-# not debt this lane created. Triaging them one by one -- wire up, delete, or
+# first time it was ever run here, minus the ones triaged away since. They are
+# pre-existing debt made visible, not debt this lane created. Triaging them
+# one by one -- wire up, delete, or
 # waive with a real reason -- is the burn-down in ADR-0009 (estimated 3-6
 # person-days) and is deliberately not part of the change that adds this lane:
 # a baseline nobody can land is a baseline nobody adopts.
