@@ -181,7 +181,7 @@ func parseGhAxiKeyValues(output string) map[string]string {
 func (c *ghAxiClient) ObservePR(owner, repo string, number int) (DeliveryProviderObservation, error) {
 	out, err := ghAxiAPI(
 		fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number),
-		"--jq", `{state: .state, headSha: .head.sha, mergedSha: (.merge_commit_sha // ""), merged: (.merged // false)}`,
+		"--jq", `{state: .state, headSha: .head.sha, baseRef: .base.ref, mergedSha: (.merge_commit_sha // ""), merged: (.merged // false)}`,
 	)
 	if err != nil {
 		return DeliveryProviderObservation{}, err
@@ -199,6 +199,7 @@ func classifyGitHubObservation(values map[string]string) (DeliveryProviderObserv
 		State:     state,
 		HeadSHA:   values["headSha"],
 		MergedSHA: values["mergedSha"],
+		BaseRef:   values["baseRef"],
 	}
 	switch {
 	case strings.EqualFold(values["merged"], "true") || obs.MergedSHA != "":

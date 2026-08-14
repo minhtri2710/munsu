@@ -920,6 +920,11 @@ func TestGitlabDeliveryProvider_UsesTypedCapabilityOnly(t *testing.T) {
 	if obs.State != "OPEN" || obs.HeadSHA != "abc123def456abc123def456abc123def456abc1" {
 		t.Fatalf("observation = %+v", obs)
 	}
+	// The MR target branch feeds the pre-mutation base ref fence: an
+	// observation without it cannot reject a base changed since capture.
+	if obs.BaseRef != "main" {
+		t.Fatalf("observation base ref = %q, want the MR target_branch %q", obs.BaseRef, "main")
+	}
 	if err := provider.Merge(ident, "squash"); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
