@@ -18,8 +18,9 @@ adding a tagged file to a new package needs no workflow edit. Adding a *new*
 tag does: every tag must be classified in `.github/build-tags.manifest`, and
 the `invariants` job fails until it is. Write constraints as `//go:build` only
 — a lone legacy `// +build` line is invisible to that derivation, so the job
-fails it and asks you to run `gofmt`. Run the lane commands from `ci.yml` for a
-full local matrix.
+fails it and asks you to run `gofmt`. The same job also fails on any file
+`gofmt -l .` lists, so run `gofmt -w` before pushing. Run the lane commands
+from `ci.yml` for a full local matrix.
 
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 

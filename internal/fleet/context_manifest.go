@@ -32,12 +32,12 @@ const (
 // ContextManifestEntry binds one source file reference with its content digest,
 // git revision, category, and an explicit reason for inclusion.
 type ContextManifestEntry struct {
-	Path     string                      `json:"path"`
-	SHA256   string                      `json:"sha256"`
-	Revision string                      `json:"revision"`
+	Path     string                       `json:"path"`
+	SHA256   string                       `json:"sha256"`
+	Revision string                       `json:"revision"`
 	Category ContextManifestEntryCategory `json:"category"`
-	Reason   string                      `json:"reason"`
-	Stale    bool                        `json:"stale,omitempty"`
+	Reason   string                       `json:"reason"`
+	Stale    bool                         `json:"stale,omitempty"`
 }
 
 // ContextManifestBudgets constrains the default number of entries per category.
@@ -61,12 +61,12 @@ func DefaultContextManifestBudgets() ContextManifestBudgets {
 // references that combines author hints with bounded repository evidence
 // and explicit reasons for each reference.
 type ContextManifest struct {
-	ManifestVersion string                   `json:"manifest_version"`
-	Revision        int                      `json:"revision"`
-	AuthorHint      string                   `json:"author_hint,omitempty"`
-	Budgets         ContextManifestBudgets   `json:"budgets"`
-	Entries         []ContextManifestEntry   `json:"entries"`
-	Stale           bool                     `json:"stale,omitempty"`
+	ManifestVersion string                 `json:"manifest_version"`
+	Revision        int                    `json:"revision"`
+	AuthorHint      string                 `json:"author_hint,omitempty"`
+	Budgets         ContextManifestBudgets `json:"budgets"`
+	Entries         []ContextManifestEntry `json:"entries"`
+	Stale           bool                   `json:"stale,omitempty"`
 }
 
 // NewContextManifest creates a new context manifest with the given author hint

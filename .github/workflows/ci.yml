@@ -103,6 +103,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # Only the gofmt step below needs this. gofmt's output is a function of
+      # the toolchain version, so the runner image's preinstalled Go would let
+      # the lane drift against the 1.26 developers use -- pin it like every
+      # other job. `cache: false`: this job compiles nothing, so a module cache
+      # would be written and never read.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
       - name: Symlinks must stay intact
         run: |
           set -eu
@@ -116,6 +125,76 @@ jobs:
       # deliberately disabled. See the header of build-tags.sh for the limits.
       - name: Build tags must be covered by a lane
         run: .github/scripts/build-tags.sh check
+      # `gofmt -l` was in no lane at all, and 21 files were adrift when this
+      # was added. It belongs next to the build-tag rule above rather than in
+      # `build`: both are cheap textual invariants, and the two are coupled --
+      # gofmt is what normally hoists a legacy `// +build` line and writes the
+      # `//go:build` line that the tag derivation reads. With no lane forcing
+      # gofmt, "the old syntax upgrades itself" stopped being true here, which
+      # is why that rule has to fail closed on its own.
+      #
+      # For every real constraint shape, this lane now *subsumes* the rule
+      # above: gofmt does not only touch the leading comment block, it hoists a
+      # `// +build` line from below the package clause (and from inside a
+      # function body) to the top and writes the matching `//go:build`, so
+      # `gofmt -l` lists that file. Measured on go1.26.5, not reasoned from the
+      # usual example. Keep the rule above anyway, for two things this lane
+      # cannot do:
+      #
+      #   - Its error names the consequence -- that the tag stays invisible to
+      #     lane derivation. `::error::not gofmt-clean` says nothing about that,
+      #     so the author reformats and never learns what was at stake.
+      #   - It is the second net if this lane's scope is ever narrowed (see the
+      #     vendor note below). Subsumption holds only while this lane scans
+      #     everything.
+      #
+      # The other direction is real too, and only this lane covers it: a file
+      # whose two lines disagree (`//go:build foo` + `// +build bar`) satisfies
+      # the rule above, which asks only that a `//go:build` line exist, while
+      # gofmt rewrites the stale line and `-l` flags it.
+      #
+      # `gofmt -l` prints one path per unformatted file and nothing on a clean
+      # tree, so an empty list is the pass condition. On an unparseable file it
+      # writes to stderr and exits 2 while the -l list may still look clean --
+      # that has to fail the lane rather than pass it, hence the explicit
+      # status and stderr checks before the list is trusted.
+      #
+      # The argument is `.`, a filesystem walk, not a package list: `go list
+      # ./...` skips `testdata/` and `_*`/`.*` directories, and a walk is what
+      # makes a new file in a brand new package join this lane by existing.
+      #
+      # Note for whoever adds `vendor/` later: this repo has none today, so the
+      # walk covering it costs nothing. Vendored third-party code carries no
+      # promise of being gofmt-clean under this toolchain, so `go mod vendor`
+      # will turn this lane red in bulk. Deal with it then, and weigh it against
+      # the subsumption note above before reaching for the obvious fix: an
+      # exclusion here is exactly what makes the build-tag rule load-bearing
+      # again, so narrowing this lane without saying so there trades one guard
+      # for a gap in both. Do not pre-add an exclusion for a directory that does
+      # not exist.
+      - name: Go sources must be gofmt-clean
+        run: |
+          set -eu
+          errs="$(mktemp)"
+          if ! unformatted="$(gofmt -l . 2>"$errs")" || [ -s "$errs" ]; then
+            echo "::error::gofmt could not read the tree, so it cannot judge formatting:" >&2
+            cat "$errs" >&2
+            exit 1
+          fi
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt-clean -- run 'gofmt -w' on:" >&2
+            # Read line by line rather than letting `printf` word-split the
+            # list: a path with a space would split across two lines, and a
+            # path with a glob character would be expanded against the working
+            # directory, printing a name that is not the offending file.
+            # Quoting the whole list instead is not the fix -- it feeds the
+            # block to a single `%s`, so only the first path gets the indent.
+            printf '%s\n' "$unformatted" | while IFS= read -r file; do
+              printf '  %s\n' "$file" >&2
+            done
+            exit 1
+          fi
+          echo "gofmt: clean"
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu
