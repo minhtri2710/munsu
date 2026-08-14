@@ -109,7 +109,7 @@ func (OSProcessVerifier) VerifyDead(artifact WriterArtifact) (bool, error) {
 }
 
 func NewRuntimeWriterFence() CompositeWriterFence {
-	return CompositeWriterFence{Artifacts: DurableArtifactScanner{Kinds: []string{"watcher", "afk"}}, Processes: OSProcessInventory{}, Endpoints: NoEndpointDrainer{}, Controller: OSProcessController{}, Verifier: OSProcessVerifier{}}
+	return CompositeWriterFence{Artifacts: DurableArtifactScanner{Kinds: []string{"watcher", "afk"}}, Processes: OSProcessInventory{}, Endpoints: NoEndpointDrainer{}, Controller: OSProcessController{}, Verifier: OSProcessVerifier{}, Marked: OSMarkerInventory{}, Oracle: OSRunOracle{}}
 }
 
 func FenceBoundEndpoints(homeDir string, scanner EndpointScanner, controller EndpointController) ([]string, error) {

@@ -24,7 +24,7 @@
 integration	test-lane	60 test files across 5 packages. Run by the "Integration tests" lane over the package set derived from the tag.
 e2e	test-lane	2 tests in internal/cli, 0.88s of actual test time, so the "Build and test" lane runs them for real rather than compile-checking them.
 lifecycle_integration	test-lane	2 tests in internal/orchestrator, 0.29s of actual test time, so the "Build and test" lane runs them for real rather than compile-checking them.
-windows	goos-vet	15 files, 3 of them _test.go that no lane had ever compiled. `GOOS=windows go vet ./...` covers them, and also covers the sole `!darwin && !linux` file. The 12 `!windows` files need nothing extra: ubuntu satisfies the negation.
-darwin	goos-vet	3 files. `GOOS=darwin go vet ./...` covers them, and also covers the `darwin || linux` file through its darwin branch.
-linux	default	3 `//go:build linux` files, compiled by every lane on ubuntu. The negated use inside `!darwin && !linux` is covered by the windows goos-vet entry.
+windows	goos-vet	15 files, 3 of them _test.go that no lane had ever compiled. `GOOS=windows go vet ./...` covers them, and also covers the two `!darwin && !linux` files. The 12 `!windows` files need nothing extra: ubuntu satisfies the negation.
+darwin	goos-vet	4 files. `GOOS=darwin go vet ./...` covers them, and also covers the `darwin || linux` files through their darwin branch.
+linux	default	4 `//go:build linux` files, compiled by every lane on ubuntu. The negated use inside `!darwin && !linux` is covered by the windows goos-vet entry.
 race	race-excluded	Only appears as `//go:build !race` on internal/orchestrator/lifecycle_lifecycle_test.go. Those 7 lock and queue tests measure their own timing, which the race detector distorts, so their absence from the race lane is intended rather than a gap.

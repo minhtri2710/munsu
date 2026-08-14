@@ -54,6 +54,11 @@ type CompositeWriterFence struct {
 	Verifier           ProcessVerifier
 	EndpointArtifacts  EndpointScanner
 	EndpointController EndpointController
+	// Marked and Oracle serve InspectOrphans only: the report-only scan over
+	// processes that carry an ownership marker. Neither is used by the fencing
+	// paths below, and InspectOrphans never uses Controller.
+	Marked MarkerInventory
+	Oracle RunOracle
 }
 
 func canonicalHome(path string) (string, error) {
