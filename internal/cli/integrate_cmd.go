@@ -315,14 +315,6 @@ var exitWithCode = func(code int) {
 	os.Exit(code)
 }
 
-// readStdinForCommand reads JSON from stdin and extracts the command field.
-// Supports Claude shape (.tool_input.command), Grok shape (.toolInput.command),
-// and plain JSON with command.
-func readStdinForCommand() (string, error) {
-	command, _, err := readStdinForToolPayload()
-	return command, err
-}
-
 // readStdinForToolPayload reads the harness tool payload from stdin exactly
 // once and extracts both the shell command and the native write-tool target
 // path. Both come from the same JSON object and stdin is not rewindable, so a

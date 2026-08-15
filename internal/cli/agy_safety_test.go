@@ -215,7 +215,7 @@ func TestAgySafetyCheckGateRefused(t *testing.T) {
 	}
 }
 
-// TestAgyReadStdinToolCallArgsCommandLine verifies readStdinForCommand
+// TestAgyReadStdinToolCallArgsCommandLine verifies readStdinForToolPayload
 // handles agy's .toolCall.args.CommandLine (PascalCase nested) shape.
 func TestAgyReadStdinToolCallArgsCommandLine(t *testing.T) {
 	// Stdin with agy's .toolCall.args.CommandLine
@@ -225,7 +225,7 @@ func TestAgyReadStdinToolCallArgsCommandLine(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	cmd, err := readStdinForCommand()
+	cmd, _, err := readStdinForToolPayload()
 	os.Stdin = oldStdin
 
 	if err != nil {
@@ -245,7 +245,7 @@ func TestAgyReadStdinClaudeShapeAlsoWorks(t *testing.T) {
 	w.Close()
 	os.Stdin = r
 
-	cmd, err := readStdinForCommand()
+	cmd, _, err := readStdinForToolPayload()
 	os.Stdin = oldStdin
 
 	if err != nil {
