@@ -22,18 +22,42 @@
 # is why the linux and darwin halves of a `_linux.go`/`_darwin.go` pair both
 # appear below, and why this file reads the same on a laptop and on the runner.
 
-# --- Accepted debt, imported as the baseline --------------------------------
-# The entries below are what `deadcode ./cmd/munsu` reported on b7536f6, the
-# first time it was ever run here, minus the ones triaged away since. They are
-# pre-existing debt made visible, not debt this lane created. Triaging them
-# one by one -- wire up, delete, or
-# waive with a real reason -- is the burn-down in ADR-0009 (estimated 3-6
-# person-days) and is deliberately not part of the change that adds this lane:
-# a baseline nobody can land is a baseline nobody adopts.
+# --- Known open bugs, NOT accepted debt -------------------------------------
+# A guard that exists, is complete, and cannot fire because nothing in the
+# binary calls it. These are holes, not debt: the code was written to refuse
+# something and the refusal can never happen. They are listed here only so the
+# lane can go green; `deadcode.sh check` reprints every one as a warning on
+# every single run, and each line names the issue that owns the verdict --
+# wire it up or delete it. A line leaves this section with that issue, not
+# before, and nobody may quietly demote one to accepted debt.
 #
-# So every line below carries the same marker, and that marker means "nobody
-# has looked at this yet". It is not a justification and must not be reused on
-# a new entry -- a new entry gets a real reason or it does not go in.
+#   BEO-84  the Soldier launch envelope pins charter/brief/prompt SHA-256 on
+#           every launch (WriteEnvelope, live) and nothing ever compares them
+internal/fleet/soldier_envelope.go	ReadEnvelope	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
+internal/fleet/soldier_envelope.go	VerifyEnvelopeIntegrity	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
+internal/fleet/soldier_envelope.go	VerifyRequiredSkills	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
+
+# --- Not findings: GOOS-union artifacts --------------------------------------
+# The set is the union across every GOOS, so a function reachable on one
+# platform and unreachable on another lands in the union. These two are live
+# code on the platforms that call them; there is nothing to burn down and no
+# issue to open. Intersecting the platforms instead would be the wrong fix --
+# it would hide a genuinely dead function in any GOOS-gated file.
+#
+# A platform-gated file whose function is unreachable on the very platform that
+# compiles it is NOT this case. Those are ordinary debt and stay below.
+internal/fleet/process_args.go	splitProcessCommand	GOOS-union artifact: live on darwin via process_inventory_darwin.go; the linux and windows builds have no caller for it
+internal/fleet/process_args.go	writerKindForArgs	GOOS-union artifact: live on linux and darwin via process_inventory_{linux,darwin}.go; only the windows build cannot reach it
+
+# --- Accepted debt, imported as the baseline --------------------------------
+# What `deadcode ./cmd/munsu` reported on b7536f6, the first time it was ever
+# run here, minus the ones triaged away since. They are pre-existing debt made
+# visible, not debt this lane created. Triaging them one by one -- wire up,
+# delete, or waive with a real reason -- is the burn-down in ADR-0009 (BEO-67).
+#
+# Every line below carries the same marker, and that marker means "nobody has
+# looked at this yet". It is not a justification and must not be reused on a
+# new entry -- a new entry gets a real reason or it does not go in.
 internal/backend/backend_capabilities.go	Capabilities	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/backend_capabilities.go	CapabilityAvailability.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/backend/backend_capabilities.go	CapabilityMatrix	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -144,8 +168,6 @@ internal/fleet/endpoint_fence.go	metaUint	burn-down(BEO-63): pre-existing, impor
 internal/fleet/endpoint_fence.go	readEndpointMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	sameBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/endpoint_fence.go	validBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/process_args.go	splitProcessCommand	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/process_args.go	writerKindForArgs	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	IsPropagateConfigUnchanged	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	ensureConfigPreconditions	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	propagateConfigLogPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -157,9 +179,6 @@ internal/fleet/scope_scope.go	DetectGateCapability	burn-down(BEO-63): pre-existi
 internal/fleet/scope_scope.go	IsGateAgentActive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/scope_scope.go	Result.IsGateRefusal	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldier_charter.go	LaunchArtifactNames	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_envelope.go	ReadEnvelope	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_envelope.go	VerifyEnvelopeIntegrity	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/soldier_envelope.go	VerifyRequiredSkills	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/soldierstate_soldierstate.go	ReadSoldierState	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/spawn_spawn.go	ResolveDeliveryModeFromBase	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	SetHandoffCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
