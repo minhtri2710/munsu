@@ -151,10 +151,9 @@ allow_format_errors() {
 }
 
 # Entries whose reason marks them as a known-open bug rather than accepted debt,
-# reprinted on every run. The two guards behind BEO-64 are real holes, listed
-# only so the lane could go green on the commit that introduces it; an
-# annotation on every single run is the difference between a waiver and a silent
-# line.
+# reprinted on every run so a known-broken guard stays visible until it is wired
+# up or deleted. An annotation on every single run is the difference between a
+# waiver and a silent line.
 announce_open_bugs() {
 	awk -F '\t' '
 		/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }

@@ -4,8 +4,6 @@ package fleet
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"time"
 
 	"github.com/minhtri2710/munsu/internal/domain"
@@ -55,29 +53,8 @@ type ProviderSnapshot struct {
 	ObservedAt string `json:"observedAt"`          // ISO 8601
 }
 
-// AmendRecord is a single audit record for an identity amendment.
-// Stored as a JSON array in the meta field `amendment_history`.
-type AmendRecord struct {
-	OldHeadSHA       string `json:"oldHeadSHA"`
-	NewHeadSHA       string `json:"newHeadSHA"`
-	PRIdentity       string `json:"prIdentity"`       // e.g. "github/minhtri2710/munsu#42"
-	ProviderEvidence string `json:"providerEvidence"` // provider-reported head at amendment time
-	Timestamp        string `json:"timestamp"`
-	Reason           string `json:"reason"` // e.g. "amendment", "reconciliation"
-}
-
-// Meta field keys for the delivery lifecycle projection.
-const (
-	MetaDeliveryState     = "delivery_state"
-	MetaIdentityRevision  = "pr_identity_revision"
-	MetaAmendExpectedHead = "amend_expected_head"
-	MetaAmendStartedAt    = "amend_started_at"
-	MetaAmendHistory      = "amendment_history"
-	// MetaLegacyMergeAuth is the legacy .meta projection key of the
-	// retired merge authorization record. The canonical read path treats a
-	// meta-only value as legacy evidence that never authorizes delivery.
-	MetaLegacyMergeAuth = "merge_authorization"
-)
+// MetaDeliveryState is the meta field key for the delivery lifecycle projection.
+const MetaDeliveryState = "delivery_state"
 
 // FetchProviderSnapshot queries the provider for a point-in-time snapshot of a
 // PR/MR through the typed provider clients. Read-only; fail-closed on
@@ -220,91 +197,4 @@ func fetchGitLabProviderSnapshot(mrURL string) (*ProviderSnapshot, error) {
 	}
 
 	return snap, nil
-}
-
-// verifySnapshotIdentity checks that a stored identity matches the provider
-// snapshot on all critical fields: provider, owner, repo, number, base ref,
-// and head ref. Branch replacement is rejected.
-func verifySnapshotIdentity(stored *domain.DeliveryIdentity, snap *ProviderSnapshot) error {
-	if stored.Provider != snap.Provider {
-		return fmt.Errorf("provider mismatch: stored=%q snapshot=%q", stored.Provider, snap.Provider)
-	}
-	if stored.Owner != snap.Owner {
-		return fmt.Errorf("owner mismatch: stored=%q snapshot=%q", stored.Owner, snap.Owner)
-	}
-	if stored.Repo != snap.Repo {
-		return fmt.Errorf("repo mismatch: stored=%q snapshot=%q", stored.Repo, snap.Repo)
-	}
-	if stored.Number != snap.Number {
-		return fmt.Errorf("PR number mismatch: stored=%d snapshot=%d", stored.Number, snap.Number)
-	}
-	// URL identity must match (canonical comparison)
-	if stored.URL != snap.URL {
-		return fmt.Errorf("URL mismatch: stored=%q snapshot=%q", stored.URL, snap.URL)
-	}
-	if stored.BaseRef != snap.BaseRef {
-		return fmt.Errorf("base ref mismatch: stored=%q snapshot=%q", stored.BaseRef, snap.BaseRef)
-	}
-	if stored.HeadRef != snap.HeadRef {
-		return fmt.Errorf("head ref mismatch: stored=%q snapshot=%q (branch replacement not allowed)", stored.HeadRef, snap.HeadRef)
-	}
-	return nil
-}
-
-// verifyAncestry checks that oldSHA is an ancestor of newSHA in the given
-// git repository. Returns nil if oldSHA is ancestor of newSHA.
-// Rejects force-push/rewritten ancestry.
-func verifyAncestry(repoPath, oldSHA, newSHA string) error {
-	if oldSHA == "" || newSHA == "" {
-		return fmt.Errorf("empty SHA in ancestry check")
-	}
-	if oldSHA == newSHA {
-		return fmt.Errorf("SHAs are identical, no movement")
-	}
-	// Ensure the worktree exists
-	if _, err := os.Stat(repoPath); err != nil {
-		return fmt.Errorf("worktree %s does not exist: %w", repoPath, err)
-	}
-	// Check if oldSHA exists in the repo
-	catCmd := exec.Command("git", "cat-file", "-e", oldSHA)
-	catCmd.Dir = repoPath
-	if err := catCmd.Run(); err != nil {
-		return fmt.Errorf("old SHA %q not found in local repo (may have been garbage-collected or force-pushed)", oldSHA)
-	}
-	// Check ancestry: `git merge-base --is-ancestor <old> <new>`
-	cmd := exec.Command("git", "merge-base", "--is-ancestor", oldSHA, newSHA)
-	cmd.Dir = repoPath
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return fmt.Errorf("old SHA %q is not an ancestor of new SHA %q (force-push or rewritten ancestry)", oldSHA[:minInt(12, len(oldSHA))], newSHA[:minInt(12, len(newSHA))])
-		}
-		return fmt.Errorf("git merge-base --is-ancestor: %w", err)
-	}
-	return nil
-}
-
-// appendAmendHistory appends an AmendRecord to the existing history JSON.
-// The history is stored as a JSON array. Returns the serialized array.
-func appendAmendHistory(existing string, record *AmendRecord) string {
-	var history []*AmendRecord
-	if existing != "" {
-		json.Unmarshal([]byte(existing), &history)
-	}
-	history = append(history, record)
-	data, _ := json.Marshal(history)
-	return string(data)
-}
-
-// incrementRevision increments a revision string. The revision is a
-// non-negative integer. Returns "1" if the input is empty or invalid.
-func incrementRevision(rev string) string {
-	var n int
-	for _, c := range rev {
-		if c >= '0' && c <= '9' {
-			n = n*10 + int(c-'0')
-		} else {
-			break
-		}
-	}
-	return fmt.Sprintf("%d", n+1)
 }
