@@ -22,21 +22,11 @@
 # is why the linux and darwin halves of a `_linux.go`/`_darwin.go` pair both
 # appear below, and why this file reads the same on a laptop and on the runner.
 
-# --- Known open bugs, NOT accepted debt -------------------------------------
-# These two are the reason the lane was built, found by the first run of a
-# command that had never been run in this repo. They refuse a branch
-# replacement and a rewritten history respectively, and nothing calls either
-# one, so neither refusal can happen. They are listed here only so this lane
-# can go green on the commit that introduces it; `deadcode.sh check` reprints
-# both as a warning on every single run. Fixing them is BEO-64 -- when that
-# lands, these two lines go with it.
-internal/fleet/delivery_amend.go	verifyAncestry	OPEN-BUG(BEO-64): guard refuses an unsafe delivery but has no call site, so the refusal cannot fire
-internal/fleet/delivery_amend.go	verifySnapshotIdentity	OPEN-BUG(BEO-64): guard refuses an unsafe delivery but has no call site, so the refusal cannot fire
-
 # --- Accepted debt, imported as the baseline --------------------------------
-# The 270 entries below are what `deadcode ./cmd/munsu` reported on b7536f6,
-# the first time it was ever run here. They are pre-existing debt made visible,
-# not debt this lane created. Triaging them one by one -- wire up, delete, or
+# The entries below are what `deadcode ./cmd/munsu` reported on b7536f6, the
+# first time it was ever run here, minus the ones triaged away since. They are
+# pre-existing debt made visible, not debt this lane created. Triaging them
+# one by one -- wire up, delete, or
 # waive with a real reason -- is the burn-down in ADR-0009 (estimated 3-6
 # person-days) and is deliberately not part of the change that adds this lane:
 # a baseline nobody can land is a baseline nobody adopts.
@@ -148,8 +138,6 @@ internal/fleet/context_manifest.go	NewContextManifest	burn-down(BEO-63): pre-exi
 internal/fleet/context_manifest.go	ReadContextManifest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/context_manifest.go	ValidateContextManifest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/context_manifest.go	WriteContextManifest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_amend.go	appendAmendHistory	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/delivery_amend.go	incrementRevision	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_attestation.go	ModeVisibilityFields	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_attestation.go	ReadAttestationFromMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_issuelinks.go	PrepareDeliveryIssueLinks	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
