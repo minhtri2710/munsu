@@ -30,12 +30,6 @@
 # every single run, and each line names the issue that owns the verdict --
 # wire it up or delete it. A line leaves this section with that issue, not
 # before, and nobody may quietly demote one to accepted debt.
-#
-#   BEO-84  the Soldier launch envelope pins charter/brief/prompt SHA-256 on
-#           every launch (WriteEnvelope, live) and nothing ever compares them
-internal/fleet/soldier_envelope.go	ReadEnvelope	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
-internal/fleet/soldier_envelope.go	VerifyEnvelopeIntegrity	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
-internal/fleet/soldier_envelope.go	VerifyRequiredSkills	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
 
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one

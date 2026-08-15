@@ -67,7 +67,6 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 
 	// 1. Build charter.
 	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
-	charterSHA := sha256Content([]byte(charter))
 
 	// 2. Build skill instructions section (strict: read/hash errors propagate).
 	skillSection, err := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills, input.WorktreePath)
@@ -88,10 +87,8 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	b.WriteString(terminalReportReminder(input.TaskID, input.TaskKind, input.ParentCaptainID))
 
 	prompt := b.String()
-	promptSHA := sha256Content([]byte(prompt))
 
 	// 4. Build envelope.
-	briefSHA := sha256Content(input.BriefContent)
 	env := &LaunchEnvelope{
 		EnvelopeVersion:        EnvelopeVersion,
 		TaskID:                 input.TaskID,
@@ -102,9 +99,6 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 		ParentHome:             input.ParentHome,
 		ScoutScope:             input.ScoutScope,
 		ScoutRuntimeBudgetSecs: input.ScoutRuntimeBudgetSecs,
-		CharterSHA256:          charterSHA,
-		BriefSHA256:            briefSHA,
-		PromptSHA256:           promptSHA,
 		RequiredSkills:         input.RequiredSkills,
 		OptionalSkills:         input.OptionalSkills,
 		Metadata: map[string]string{

@@ -3,6 +3,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,15 +101,16 @@ func TestLaunchEnvelope_WriteAndRead(t *testing.T) {
 		Repository:      "test-repo",
 		ParentCaptainID: "captain-1",
 		ParentHome:      "/tmp/parent",
-		CharterSHA256:   "abc123",
-		BriefSHA256:     "def456",
-		PromptSHA256:    "ghi789",
 	}
 	if err := WriteEnvelope(tmp, env); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadEnvelope(tmp)
+	data, err := os.ReadFile(filepath.Join(tmp, EnvelopeName))
 	if err != nil {
+		t.Fatal(err)
+	}
+	var got LaunchEnvelope
+	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.TaskID != "test-task" {
@@ -119,156 +121,6 @@ func TestLaunchEnvelope_WriteAndRead(t *testing.T) {
 	}
 	if got.ParentCaptainID != "captain-1" {
 		t.Errorf("ParentCaptainID = %q, want %q", got.ParentCaptainID, "captain-1")
-	}
-}
-
-func TestLaunchEnvelope_IntegrityVerify(t *testing.T) {
-	tmp := t.TempDir()
-	charter := DefaultCharter("verify-test", "ship", "direct-PR")
-	brief := []byte("# Task brief: verify-test\n\nSome content.\n")
-	prompt := "full prompt with charter and brief\n"
-
-	if err := os.WriteFile(filepath.Join(tmp, CharterName), []byte(charter), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, BriefName), brief, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, PromptName), []byte(prompt), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	env := &LaunchEnvelope{
-		EnvelopeVersion: EnvelopeVersion,
-		TaskID:          "verify-test",
-		DeliveryMode:    "direct-PR",
-		ParentCaptainID: "captain-1",
-		ParentHome:      "/tmp/parent",
-		CharterSHA256:   sha256Content([]byte(charter)),
-		BriefSHA256:     sha256Content(brief),
-		PromptSHA256:    sha256Content([]byte(prompt)),
-	}
-	if err := WriteEnvelope(tmp, env); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyEnvelopeIntegrity(tmp); err != nil {
-		t.Errorf("integrity verification failed: %v", err)
-	}
-}
-
-func TestLaunchEnvelope_IntegrityFailCharter(t *testing.T) {
-	tmp := t.TempDir()
-	charter := DefaultCharter("fail-test", "ship", "direct-PR")
-	brief := []byte("brief")
-	prompt := "prompt"
-	if err := os.WriteFile(filepath.Join(tmp, CharterName), []byte(charter), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, BriefName), brief, 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, PromptName), []byte(prompt), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// Wrong hash.
-	env := &LaunchEnvelope{
-		EnvelopeVersion: EnvelopeVersion,
-		TaskID:          "fail-test",
-		DeliveryMode:    "direct-PR",
-		ParentCaptainID: "captain-1",
-		ParentHome:      "/tmp/parent",
-		CharterSHA256:   "deadbeef",
-		BriefSHA256:     sha256Content(brief),
-		PromptSHA256:    sha256Content([]byte(prompt)),
-	}
-	if err := WriteEnvelope(tmp, env); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyEnvelopeIntegrity(tmp); err == nil {
-		t.Error("expected integrity verification to fail, got nil")
-	}
-}
-
-func TestLaunchEnvelope_IntegrityFailMissingBrief(t *testing.T) {
-	tmp := t.TempDir()
-	charter := DefaultCharter("brief-test", "ship", "direct-PR")
-	if err := os.WriteFile(filepath.Join(tmp, CharterName), []byte(charter), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// No brief file.
-	env := &LaunchEnvelope{
-		EnvelopeVersion: EnvelopeVersion,
-		TaskID:          "brief-test",
-		DeliveryMode:    "direct-PR",
-		ParentCaptainID: "captain-1",
-		ParentHome:      "/tmp/parent",
-		CharterSHA256:   sha256Content([]byte(charter)),
-		BriefSHA256:     "should-exist",
-		PromptSHA256:    "should-exist",
-	}
-	if err := WriteEnvelope(tmp, env); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyEnvelopeIntegrity(tmp); err == nil {
-		t.Error("expected integrity verification to fail for missing brief, got nil")
-	}
-}
-
-func TestLaunchEnvelope_IntegrityFailMissingPrompt(t *testing.T) {
-	tmp := t.TempDir()
-	charter := DefaultCharter("prompt-test", "ship", "direct-PR")
-	brief := []byte("brief")
-	if err := os.WriteFile(filepath.Join(tmp, CharterName), []byte(charter), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, BriefName), brief, 0644); err != nil {
-		t.Fatal(err)
-	}
-	// No prompt file.
-	env := &LaunchEnvelope{
-		EnvelopeVersion: EnvelopeVersion,
-		TaskID:          "prompt-test",
-		DeliveryMode:    "direct-PR",
-		ParentCaptainID: "captain-1",
-		ParentHome:      "/tmp/parent",
-		CharterSHA256:   sha256Content([]byte(charter)),
-		BriefSHA256:     sha256Content(brief),
-		PromptSHA256:    "should-exist",
-	}
-	if err := WriteEnvelope(tmp, env); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyEnvelopeIntegrity(tmp); err == nil {
-		t.Error("expected integrity verification to fail for missing prompt, got nil")
-	}
-}
-
-func TestLaunchEnvelope_IntegrityEmptyMetaFields(t *testing.T) {
-	tmp := t.TempDir()
-	charter := DefaultCharter("meta-test", "ship", "direct-PR")
-	brief := []byte("brief")
-	prompt := "prompt"
-	for _, f := range []string{CharterName, BriefName, PromptName} {
-		data := []byte(charter)
-		if f == BriefName {
-			data = brief
-		} else if f == PromptName {
-			data = []byte(prompt)
-		}
-		os.WriteFile(filepath.Join(tmp, f), data, 0644)
-	}
-	// Envelope with empty TaskID and empty DeliveryMode.
-	env := &LaunchEnvelope{
-		EnvelopeVersion: EnvelopeVersion,
-		CharterSHA256:   sha256Content([]byte(charter)),
-		BriefSHA256:     sha256Content(brief),
-		PromptSHA256:    sha256Content([]byte(prompt)),
-	}
-	if err := WriteEnvelope(tmp, env); err != nil {
-		t.Fatal(err)
-	}
-	if err := VerifyEnvelopeIntegrity(tmp); err == nil {
-		t.Error("expected integrity verification to fail for empty meta fields, got nil")
 	}
 }
 
@@ -458,15 +310,6 @@ func TestBuildLaunchPrompt_BasicContent(t *testing.T) {
 	if env.TaskID != "test-task" {
 		t.Errorf("envelope TaskID = %q, want %q", env.TaskID, "test-task")
 	}
-	if env.CharterSHA256 == "" {
-		t.Error("envelope must have charter SHA-256")
-	}
-	if env.BriefSHA256 == "" {
-		t.Error("envelope must have brief SHA-256")
-	}
-	if env.PromptSHA256 == "" {
-		t.Error("envelope must have prompt SHA-256")
-	}
 }
 
 func TestBuildLaunchPrompt_EmptyInputFails(t *testing.T) {
@@ -614,9 +457,6 @@ func TestPersistLaunchFiles_WritesAllFiles(t *testing.T) {
 	env := &LaunchEnvelope{
 		EnvelopeVersion: EnvelopeVersion,
 		TaskID:          "persist-test",
-		CharterSHA256:   sha256Content([]byte(charter)),
-		BriefSHA256:     sha256Content(brief),
-		PromptSHA256:    sha256Content([]byte(prompt)),
 	}
 	if err := PersistLaunchFiles(tmp, charter, brief, env, prompt); err != nil {
 		t.Fatal(err)
@@ -626,39 +466,6 @@ func TestPersistLaunchFiles_WritesAllFiles(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("%s not written: %v", name, err)
 		}
-	}
-}
-
-func TestPersistLaunchFiles_EnvelopeHashesMatch(t *testing.T) {
-	tmp := t.TempDir()
-	charter := DefaultCharter("hash-test", "ship", "direct-PR")
-	brief := []byte("# Task brief\n\nVerify hashes.\n")
-	prompt := "complete prompt with charter and brief"
-	charterHash := sha256Content([]byte(charter))
-	briefHash := sha256Content(brief)
-	promptHash := sha256Content([]byte(prompt))
-	env := &LaunchEnvelope{
-		EnvelopeVersion: EnvelopeVersion,
-		TaskID:          "hash-test",
-		CharterSHA256:   charterHash,
-		BriefSHA256:     briefHash,
-		PromptSHA256:    promptHash,
-	}
-	if err := PersistLaunchFiles(tmp, charter, brief, env, prompt); err != nil {
-		t.Fatal(err)
-	}
-	readEnv, err := ReadEnvelope(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if readEnv.CharterSHA256 != charterHash {
-		t.Errorf("envelope charter hash = %q, want %q", readEnv.CharterSHA256, charterHash)
-	}
-	if readEnv.BriefSHA256 != briefHash {
-		t.Errorf("envelope brief hash = %q, want %q", readEnv.BriefSHA256, briefHash)
-	}
-	if readEnv.PromptSHA256 != promptHash {
-		t.Errorf("envelope prompt hash = %q, want %q", readEnv.PromptSHA256, promptHash)
 	}
 }
 
@@ -855,82 +662,16 @@ func TestBuildLaunchPrompt_RecoveryDeterminism(t *testing.T) {
 		BriefContent:    brief,
 		HarnessName:     "pi",
 	}
-	prompt1, env1, err := BuildLaunchPrompt(input)
+	prompt1, _, err := BuildLaunchPrompt(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt2, env2, err := BuildLaunchPrompt(input)
+	prompt2, _, err := BuildLaunchPrompt(input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if prompt1 != prompt2 {
 		t.Error("repeated BuildLaunchPrompt with same input should produce identical prompt")
-	}
-	if env1.PromptSHA256 != env2.PromptSHA256 {
-		t.Error("repeated BuildLaunchPrompt should produce identical prompt hash")
-	}
-}
-
-// =============================================================================
-// VerifyRequiredSkills test
-// =============================================================================
-
-func TestVerifyRequiredSkills_SourcePresent(t *testing.T) {
-	tmp := t.TempDir()
-	skillPath := filepath.Join(tmp, "my-skill.md")
-	skillContent := "# My Skill\n\nInstructions.\n"
-	if err := os.WriteFile(skillPath, []byte(skillContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-	env := &LaunchEnvelope{
-		RequiredSkills: []SkillEntry{
-			{Name: "my-skill", Applicable: true, SourcePath: skillPath, SourceSHA256: sha256Content([]byte(skillContent))},
-		},
-	}
-	_, err := VerifyRequiredSkills(env, tmp)
-	if err != nil {
-		t.Errorf("expected no error, got: %v", err)
-	}
-}
-
-func TestVerifyRequiredSkills_SourceMissing(t *testing.T) {
-	env := &LaunchEnvelope{
-		RequiredSkills: []SkillEntry{
-			{Name: "missing-skill", Applicable: true, SourcePath: "/nonexistent/skill.md"},
-		},
-	}
-	_, err := VerifyRequiredSkills(env, "/tmp")
-	if err == nil {
-		t.Error("expected error for missing required skill source")
-	}
-}
-
-func TestVerifyRequiredSkills_HashMismatch(t *testing.T) {
-	tmp := t.TempDir()
-	skillPath := filepath.Join(tmp, "my-skill.md")
-	if err := os.WriteFile(skillPath, []byte("original content"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	env := &LaunchEnvelope{
-		RequiredSkills: []SkillEntry{
-			{Name: "my-skill", Applicable: true, SourcePath: skillPath, SourceSHA256: "deadbeef"},
-		},
-	}
-	_, err := VerifyRequiredSkills(env, tmp)
-	if err == nil {
-		t.Error("expected error for SHA-256 mismatch")
-	}
-}
-
-func TestVerifyRequiredSkills_NonApplicableSkipped(t *testing.T) {
-	env := &LaunchEnvelope{
-		RequiredSkills: []SkillEntry{
-			{Name: "captain-skill", Applicable: false, SourcePath: "/nonexistent"},
-		},
-	}
-	_, err := VerifyRequiredSkills(env, "/tmp")
-	if err != nil {
-		t.Errorf("non-applicable skills should be skipped, got: %v", err)
 	}
 }
 
