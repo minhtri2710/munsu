@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"github.com/minhtri2710/munsu/internal/home"
-	"time"
 )
 
 type ClaimedWakeRecord = home.ClaimedWakeRecord
@@ -18,4 +17,3 @@ func ResolveWake(h, leaseID, eventID, summary string) error {
 	return home.ResolveWake(h, leaseID, eventID, summary)
 }
 func reclaimExpiredLeases(h string) (int, error) { return home.ReclaimExpiredLeases(h) }
-func ClaimExpiryGrace() time.Duration            { return home.ClaimExpiryGrace() }

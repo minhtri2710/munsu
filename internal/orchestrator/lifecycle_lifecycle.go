@@ -30,13 +30,11 @@ func lifecycleLockPolicy() home.WatcherLockPolicy {
 func AcquireSession(homeDir string) (bool, error) {
 	return home.AcquireSessionLock(homeDir, lifecycleLockPolicy())
 }
-func ReleaseSession(homeDir string) error { return home.ReleaseSessionLock(homeDir) }
 func IsSessionLocked(homeDir string) bool { return home.IsSessionLockHeld(homeDir) }
 func AcquireWatch(homeDir string) (bool, error) {
 	return home.AcquireWatchLock(homeDir, lifecycleLockPolicy())
 }
 func ReleaseWatch(homeDir string) error { return home.ReleaseWatchLock(homeDir) }
-func IsWatchLocked(homeDir string) bool { return home.IsWatchLockHeld(homeDir) }
 func isLifecycleProcessAlive(pid int) bool {
 	return exec.Command("kill", "-0", strconv.Itoa(pid)).Run() == nil
 }
