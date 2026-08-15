@@ -4,16 +4,16 @@
 # accounted for in .github/deadcode.allow.
 #
 # This exists because a guard with no call site is invisible to every other lane
-# in this repo. `EnsureNotPrimary` (internal/backend/worktree.go) has four tests
-# and its refusal branch has coverage count 2 -- a perfect mutation score on a
-# function production never calls. No measurement taken *inside* a function can
-# see that, which is why reachability is its own lane and not a test. See
-# ADR-0009 and BEO-63.
+# in this repo. `EnsureNotPrimary` (internal/backend/worktree.go) was the
+# founding case: four tests and coverage count 2 on its refusal branch -- a
+# perfect mutation score on a function production never called (since deleted,
+# see ADR-0009). No measurement taken *inside* a function can see that, which
+# is why reachability is its own lane and not a test. See ADR-0009 and BEO-63.
 #
 # The analysis root is `./cmd/munsu` and `-test` is deliberately OFF. A guard
 # that only its own test calls is unreachable from the shipped binary, and that
 # is exactly the finding this lane exists to produce. Turning `-test` on would
-# make `EnsureNotPrimary` "reachable" and silence the case the whole mechanism
+# relabel such a guard "reachable" and silence the case the whole mechanism
 # was built for. Do not add it.
 #
 # The allow file is compared BOTH ways, like .github/build-tags.manifest:

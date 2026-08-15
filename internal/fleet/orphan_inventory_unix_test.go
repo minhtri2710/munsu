@@ -71,6 +71,20 @@ func TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets(t *testing.T) {
 	}
 }
 
+func TestKeepMarkersDropsEverythingOutsideTheWhitelist(t *testing.T) {
+	markers := keepMarkers([]string{
+		"MULTICA_TASK_ID=run-a",
+		"TMPDIR=/tmp/multica-task-1",
+		"MULTICA_TOKEN=super-secret",
+		"EXA_API_KEY=super-secret",
+		"AWS_SECRET_ACCESS_KEY=super-secret",
+		"malformed-entry",
+	})
+	if len(markers) != 2 || markers[MarkerMulticaTask] != "run-a" || markers[MarkerTmpdir] != "/tmp/multica-task-1" {
+		t.Fatalf("expected only whitelisted markers, got %v", markers)
+	}
+}
+
 // TestOrphanScanChildProcess is the scanned child of the test above: it blocks
 // until killed so the scan has something to find. Under `go test` it is a
 // no-op.

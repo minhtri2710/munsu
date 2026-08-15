@@ -204,10 +204,11 @@ jobs:
       # called by nothing -- and every lane above stayed green, because deleting
       # a guard does not change the happy path by a single bit. That is
       # structural, not a gap in the test suite: no measurement taken *inside* a
-      # function can see that production never calls it. `EnsureNotPrimary` has
+      # function can see that production never calls it. `EnsureNotPrimary` had
       # four tests and coverage count 2 on its refusal branch while having zero
-      # production call sites. Reachability is the only lane that sees it, and
-      # it found two more open holes (BEO-64) on its first run here.
+      # production call sites (since deleted -- ADR-0009). Reachability is the
+      # only lane that sees that shape of guard, and it found two more open
+      # holes (BEO-64) on its first run here.
       #
       # The root is `./cmd/munsu` and `-test` is deliberately absent: a guard
       # only its own test calls is unreachable from the shipped binary, which is
