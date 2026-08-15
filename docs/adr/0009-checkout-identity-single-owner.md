@@ -1,6 +1,6 @@
 # 0009. Checkout Identity Classification Has One Owner
 
-* **Status:** Accepted
+* **Status:** Accepted; implementation complete
 * **Date:** 2026-08-14
 * **Extends:** ADR-0008 (one owner and one canonical implementation path per lifecycle)
 * **Triggered by:** BEO-46 audit finding C1 → BEO-48 → BEO-51 architecture review
