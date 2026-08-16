@@ -1,0 +1,55 @@
+name: Auto-update PR branches
+
+on:
+  push:
+    branches: [main]
+
+# The repo default for GITHUB_TOKEN is `read` and stays that way: this file
+# raises the scope for one job only, so every other workflow -- including all
+# four required lanes in ci.yml -- keeps the read-only token it has today.
+# Deliberately empty at workflow level so a job added later has to state its
+# own needs rather than inheriting these.
+permissions: {}
+
+# main can advance several times in a row (four merges landed inside an hour on
+# 15/08). Each push queues a fresh sweep, and a sweep started against an older
+# main has nothing to contribute that the newer one will not redo -- so the
+# newest run wins and the older one is cancelled instead of racing it.
+concurrency:
+  group: auto-update-branch
+  cancel-in-progress: true
+
+jobs:
+  update:
+    name: Update auto-merge PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # All three are load-bearing, and each was established by a failed run
+    # rather than from the docs:
+    #   pull-requests: write   the documented scope for update-branch...
+    #   contents: write        ...which is not enough on its own -- the call is
+    #                          403 "user doesn't have permission to update head
+    #                          repository" without it, because it writes a merge
+    #                          commit to the head branch.
+    #   actions: write         to release the CI run GitHub parks at
+    #                          `action_required` because the commit above was
+    #                          written by github-actions[bot]. Without it the
+    #                          updated PR has no checks at all and auto-merge
+    #                          waits forever. See the script.
+    # None of this raises the repo-wide default, which stays `read`.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+      # The script exits 0 on every failure it anticipates; this is the
+      # backstop for the ones it does not. This job is a convenience, not a
+      # gate: a PR that fails to update is exactly as merge-blocked as it was
+      # a second earlier, while a red run here would be a false alarm about
+      # main itself.
+      - name: Update every auto-merge PR that is behind main
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/update-auto-merge-prs.sh "${{ github.ref_name }}"
