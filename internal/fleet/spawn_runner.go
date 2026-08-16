@@ -222,7 +222,8 @@ func (r *Runner) Run() (string, error) {
 	if err := r.acquireWorktree(); err != nil {
 		return "", err
 	}
-	if err := r.bindWorktree(); err != nil {
+	bound, err := r.bindWorktree()
+	if err != nil {
 		return "", err
 	}
 
@@ -233,7 +234,7 @@ func (r *Runner) Run() (string, error) {
 	if err := r.createAttestation(); err != nil {
 		return "", err
 	}
-	if err := r.buildSoldierPrompt(); err != nil {
+	if err := r.buildSoldierPrompt(bound); err != nil {
 		return "", err
 	}
 	if err := r.checkAttestation(); err != nil {
@@ -976,30 +977,70 @@ func launchFence(salt, taskID string, gen uint64) string {
 	return hex.EncodeToString(h[:8])
 }
 
+// BoundWorktree is the proof that a launch target has been bound under the
+// launch intent's worktree reservation fence AND classified as an isolated
+// worktree by ClassifyIdentity (ADR-0009).
+//
+// Only bindWorktree returns one, and every phase that writes into the worktree
+// takes one, so the invariant no longer rests on the phase ORDER inside Run():
+// moving buildSoldierPrompt above bindWorktree does not compile, instead of
+// silently dropping the only classification of the path being written to.
+type BoundWorktree struct{ path string }
+
+// Path returns the canonical path of the bound worktree.
+func (b BoundWorktree) Path() string { return b.path }
+
+// newBoundWorktree canonicalizes path and refuses anything ClassifyIdentity
+// does not call an isolated worktree.
+func newBoundWorktree(path string) (BoundWorktree, error) {
+	canonical, err := canonicalExistingPath(path)
+	if err != nil {
+		return BoundWorktree{}, fmt.Errorf("resolving worktree path: %w", err)
+	}
+	identity, _, _, err := ClassifyIdentity(canonical)
+	if err != nil {
+		return BoundWorktree{}, err
+	}
+	if identity != Worktree {
+		return BoundWorktree{}, fmt.Errorf("worktree binding target is %s, not worktree", identity)
+	}
+	return BoundWorktree{path: canonical}, nil
+}
+
 // bindWorktree binds the acquired worktree under the launch intent's one-time
 // worktree reservation fence. When the aggregate already holds the binding
 // (recovery), the exact identity is verified (intent fence) and the bound path
 // adopted; a mismatch fails closed. Binding an already-bound generation is a
 // canonical conflict, so a stale or reused intent never double-binds.
-func (r *Runner) bindWorktree() error {
+func (r *Runner) bindWorktree() (BoundWorktree, error) {
 	if r.args.Authority == nil {
-		return fmt.Errorf("binding worktree before endpoint launch: task authority is not composed for spawn")
+		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: task authority is not composed for spawn")
 	}
 	taskID, err := domain.NewTaskID(r.args.ID)
 	if err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
 	agg, err := r.args.Authority.Get(taskID)
 	if err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
 	prec := domain.Of(uint64(agg.Generation), uint64(agg.Revision))
 	if agg.Worktree != nil {
 		if r.launch != nil && (agg.Worktree.LeaseID != r.launch.WorktreeReservationID || agg.Worktree.FenceToken != r.launch.WorktreeFenceToken) {
-			return fmt.Errorf("binding worktree before endpoint launch: committed worktree binding does not match the launch worktree reservation fence; refuse")
+			return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: committed worktree binding does not match the launch worktree reservation fence; refuse")
 		}
-		r.wtPath = agg.Worktree.Path
-		return nil
+		// The adopted path is re-classified, not trusted. The fence proves the
+		// binding belongs to THIS launch intent; it proves nothing about what
+		// the path is now. Between two launches the worktree can be removed
+		// (`git worktree remove`) and the path replaced by a primary checkout
+		// or an ordinary directory, and this is the only classification the
+		// recovery path ever gets before PersistLaunchFiles writes into it.
+		bw, err := newBoundWorktree(agg.Worktree.Path)
+		if err != nil {
+			return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: adopting committed binding: %w", err)
+		}
+		r.wtPath = bw.Path()
+		return bw, nil
 	}
 	var leaseID, fenceToken string
 	if r.launch != nil {
@@ -1009,7 +1050,7 @@ func (r *Runner) bindWorktree() error {
 	}
 	binding, err := buildTaskWorktreeBinding(r.projPath, r.wtPath, leaseID, fenceToken)
 	if err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
 	req := taskauthority.CanonicalBindWorktreeRequest{
 		HomeID:       r.args.Authority.HomeID(),
@@ -1020,12 +1061,14 @@ func (r *Runner) bindWorktree() error {
 	}
 	op, err := r.spawnOperation("bindwt", agg.Generation, req)
 	if err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
 	if _, err := r.args.Authority.BindWorktree(op, req); err != nil {
-		return fmt.Errorf("binding worktree before endpoint launch: %w", err)
+		return BoundWorktree{}, fmt.Errorf("binding worktree before endpoint launch: %w", err)
 	}
-	return nil
+	// buildTaskWorktreeBinding admitted only Worktree for binding.Path, so the
+	// committed path carries the same proof the recovery branch re-derives.
+	return BoundWorktree{path: binding.Path}, nil
 }
 
 // spawnOperation builds the deterministic Operation for one launch phase
@@ -1447,9 +1490,11 @@ func (r *Runner) recordedAcquiredEndpoint() *taskauthority.AcquiredEndpoint {
 
 // Phase 11a: buildSoldierPrompt builds the complete Soldier launch prompt,
 // runs fail-closed validation, and persists durable files to the worktree.
-// Must be called AFTER acquireWorktree and BEFORE createSession so that
-// fail-closed checks happen before any session allocation.
-func (r *Runner) buildSoldierPrompt() error {
+// Must be called BEFORE createSession so that fail-closed checks happen before
+// any session allocation. It writes into the BoundWorktree it is given, which
+// only bindWorktree can produce — running before that phase is a compile
+// error, not a lost check.
+func (r *Runner) buildSoldierPrompt(bound BoundWorktree) error {
 	// Read brief content from the registered brief path.
 	briefPath := Path(r.homeDir, r.args.ID)
 	briefData, readErr := os.ReadFile(briefPath)
@@ -1476,7 +1521,7 @@ func (r *Runner) buildSoldierPrompt() error {
 		Repository:             r.args.ProjectName,
 		ParentCaptainID:        parentCaptainID,
 		ParentHome:             r.homeDir,
-		WorktreePath:           r.wtPath,
+		WorktreePath:           bound.Path(),
 		HomeDir:                r.homeDir,
 		BriefContent:           briefData,
 		RequiredSkills:         requiredSkills,
@@ -1509,12 +1554,12 @@ func (r *Runner) buildSoldierPrompt() error {
 
 	// Persist durable files to the worktree.
 	charter := DefaultCharter(r.args.ID, r.args.Kind, r.effectiveMode)
-	if err := PersistLaunchFiles(r.wtPath, charter, briefData, env, promptText); err != nil {
+	if err := PersistLaunchFiles(bound.Path(), charter, briefData, env, promptText); err != nil {
 		return fmt.Errorf("persisting soldier launch files: %w", err)
 	}
 
 	// Build launch arguments with the complete prompt, passing model and effort.
-	bin, args, err := BuildLaunchArgs(r.wtPath, r.harness, r.model, r.effort, promptText)
+	bin, args, err := BuildLaunchArgs(bound.Path(), r.harness, r.model, r.effort, promptText)
 	if err != nil {
 		return fmt.Errorf("building soldier launch arguments: %w", err)
 	}

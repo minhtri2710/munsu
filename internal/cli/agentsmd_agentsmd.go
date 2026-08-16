@@ -62,7 +62,13 @@ func Ensure(projectDir string, stage bool) (*EnsureResult, error) {
 	// git add only when --stage flag is set
 	if stage && changed {
 		for _, p := range []string{agentsPath, claudePath(projectDir, agentsPath)} {
-			exec.Command("git", "add", "--", p).Run()
+			// The index this stages into must come from the binding
+			// (projectDir), never from the process cwd: without cmd.Dir a
+			// munsu run started inside another checkout stages the paths
+			// into THAT repository's index.
+			cmd := exec.Command("git", "add", "--", p)
+			cmd.Dir = projectDir
+			cmd.Run()
 		}
 	}
 

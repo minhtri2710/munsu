@@ -115,8 +115,27 @@ func TestClassifyIdentity_Worktree(t *testing.T) {
 
 func TestClassifyIdentity_DeletedPathFailsClosed(t *testing.T) {
 	nonexistent := filepath.Join(t.TempDir(), "does-not-exist")
-	if _, _, _, err := ClassifyIdentity(nonexistent); err == nil {
+	identity, _, _, err := ClassifyIdentity(nonexistent)
+	if err == nil {
 		t.Fatal("expected deleted path classification error")
+	}
+	if identity != Unknown {
+		t.Errorf("errored classification = %v, want Unknown (never a verdict it did not reach)", identity)
+	}
+}
+
+// TestClassify_ErrorIdentityIsUnknown pins the zero value of Identity. It used
+// to be Primary, so a Classify that failed before assigning anything reported
+// "primary" for a path it could not classify at all — wrong evidence today,
+// and a loaded trap for any future `if identity == Primary { block }` written
+// without an Err check.
+func TestClassify_ErrorIdentityIsUnknown(t *testing.T) {
+	res := Classify(filepath.Join(t.TempDir(), "does-not-exist"))
+	if res.Err == nil {
+		t.Fatal("expected classification error for a deleted path")
+	}
+	if res.Identity != Unknown {
+		t.Errorf("Identity = %v (%s), want Unknown", res.Identity, res.Identity)
 	}
 }
 

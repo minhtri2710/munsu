@@ -199,14 +199,22 @@ var errCrashSimulated = errors.New("simulated crash boundary")
 // exactly like a crash). A nil crashAfter runs every phase.
 func runLaunchPhases(f *launchFixture, crashAfter string) error {
 	r := f.runner
+	// The bound worktree is produced by bind-worktree and consumed by prompt:
+	// the phases carry the same BoundWorktree value production does, so a
+	// reordering of this list fails the same way production would.
+	var bound BoundWorktree
 	phases := []struct {
 		name string
 		fn   func() error
 	}{
 		{"begin", r.beginLaunchIntent},
 		{"acquire", r.acquireWorktree},
-		{"bind-worktree", r.bindWorktree},
-		{"prompt", r.buildSoldierPrompt},
+		{"bind-worktree", func() error {
+			var err error
+			bound, err = r.bindWorktree()
+			return err
+		}},
+		{"prompt", func() error { return r.buildSoldierPrompt(bound) }},
 		{"create-session", r.createSession},
 		{"attach-endpoint", r.attachEndpoint},
 		{"submit", r.submitLaunch},

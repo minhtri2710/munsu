@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,4 +84,45 @@ func TestProbeBuildCommands_GoTakesPrecedence(t *testing.T) {
 	if !strings.Contains(cmds, "go build") {
 		t.Errorf("expected Go commands when go.mod present, got: %s", cmds)
 	}
+}
+
+// TestEnsureStagesIntoTheBoundRepoNotTheCwdRepo pins where `--stage` writes:
+// the index of the project it was given, resolved from that binding and never
+// from the process working directory.
+func TestEnsureStagesIntoTheBoundRepoNotTheCwdRepo(t *testing.T) {
+	target := initStagingRepo(t)
+	cwdRepo := initStagingRepo(t)
+	t.Chdir(cwdRepo)
+
+	if _, err := Ensure(target, true); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if staged := stagedPaths(t, target); !strings.Contains(staged, "AGENTS.md") {
+		t.Fatalf("target repository index = %q, want AGENTS.md staged", staged)
+	}
+	if staged := stagedPaths(t, cwdRepo); staged != "" {
+		t.Fatalf("cwd repository index = %q, want nothing staged there", staged)
+	}
+}
+
+func initStagingRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	return dir
+}
+
+func stagedPaths(t *testing.T, repo string) string {
+	t.Helper()
+	cmd := exec.Command("git", "diff", "--cached", "--name-only")
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git diff --cached: %v: %s", err, out)
+	}
+	return strings.TrimSpace(string(out))
 }

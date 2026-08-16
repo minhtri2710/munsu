@@ -66,7 +66,7 @@ type Manifest struct {
 
 // SafetyCheckResult is returned by SafetyCheck.
 type SafetyCheckResult struct {
-	Identity       string `json:"identity"`        // "primary", "worktree", "unrelated"
+	Identity       string `json:"identity"`        // "primary", "worktree", "unrelated", "unknown"
 	GateCapability string `json:"gate_capability"` // "gate-present", "gate-absent", "gate-unknown"
 	CanonicalPath  string `json:"canonical_path,omitempty"`
 	GateRefused    bool   `json:"gate_refused"`
@@ -571,14 +571,18 @@ func SafetyCheck(path string) *SafetyCheckResult {
 		CanonicalPath: scopeResult.CanonicalPath,
 	}
 
-	// Map fleet.Identity to string
+	// Map fleet.Identity to string. A classification that failed reports
+	// "unknown", not a verdict it never reached — the refusal below still
+	// fails closed on it through scopeResult.Err.
 	switch scopeResult.Identity {
 	case fleet.Primary:
 		result.Identity = "primary"
 	case fleet.Worktree:
 		result.Identity = "worktree"
-	default:
+	case fleet.Unrelated:
 		result.Identity = "unrelated"
+	default:
+		result.Identity = "unknown"
 	}
 
 	// Map fleet.GateCap

@@ -224,12 +224,18 @@ func TestLaunchRecoveryCallCountsAfterAttach(t *testing.T) {
 // durably bound.
 func breakWorktreeRepo(t *testing.T, f *launchFixture) error {
 	t.Helper()
-	// Remove the primary repo: a re-acquisition through the git fallback
-	// would fail (git worktree add needs the repo). The bound worktree path
-	// itself is a separate directory under the home and stays usable.
-	if err := os.RemoveAll(f.repoPath); err != nil {
-		return fmt.Errorf("removing repo for acquisition probe: %w", err)
-	}
+	// Point the launch at a repo path that does not exist: a re-acquisition
+	// through the git fallback would fail (git worktree add needs the repo),
+	// so a recovery that reaches the provider cannot succeed.
+	//
+	// The primary repo itself must survive. Deleting it would also break the
+	// bound worktree — a linked worktree whose common dir is gone no longer
+	// classifies as a worktree — and recovery re-classifies the path it
+	// adopts (bindWorktree), so the probe would fail on identity instead of
+	// on the acquisition it is meant to detect.
+	missing := filepath.Join(t.TempDir(), "removed-repo")
+	f.runner.projPath = missing
+	f.runner.projectConfig.ProjectPath = missing
 	return nil
 }
 
@@ -325,10 +331,34 @@ func TestLaunchRecoveryWorktreeIdentitySubstitutionFailsClosed(t *testing.T) {
 		EndpointFenceToken:    f2.runner.launch.EndpointFenceToken,
 		Backend:               f2.runner.launch.Backend,
 	}
-	if err := f2.runner.bindWorktree(); err == nil {
+	if _, err := f2.runner.bindWorktree(); err == nil {
 		t.Fatal("worktree fence substitution must fail closed")
 	} else if !strings.Contains(err.Error(), "reservation fence") {
 		t.Fatalf("error = %v, want worktree reservation fence refusal", err)
+	}
+}
+
+// TestLaunchRecoveryAdoptedBindingIsReclassified proves the recovery branch of
+// bindWorktree re-classifies the path it adopts instead of trusting the
+// aggregate. The fence proves the binding belongs to this launch intent; it
+// says nothing about what the path IS now, and between two launches the
+// worktree can be removed and the path replaced. Only classification catches
+// that, and it must catch it before any launch file is written there.
+func TestLaunchRecoveryAdoptedBindingIsReclassified(t *testing.T) {
+	f := newLaunchFixture(t, "recover-wt-identity")
+	if err := runLaunchPhases(f, "bind-worktree"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("first run: %v", err)
+	}
+	// An ordinary directory now sits at the bound path; lease and fence token
+	// are untouched, so the fence check passes.
+	replacement := t.TempDir()
+	tamperTaskAggregate(t, f.homeDir, f.taskID, func(agg *taskauthority.Aggregate) {
+		agg.Worktree.Path = replacement
+	})
+	if _, err := f.runner.bindWorktree(); err == nil {
+		t.Fatal("adopting a bound path that is no longer a worktree must fail closed")
+	} else if !strings.Contains(err.Error(), "not worktree") {
+		t.Fatalf("error = %v, want worktree identity refusal", err)
 	}
 }
 
@@ -456,10 +486,11 @@ func TestLaunchArtifactGuardProvesSingleProcessLaunches(t *testing.T) {
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
-	if err := f.runner.bindWorktree(); err != nil {
+	bound, err := f.runner.bindWorktree()
+	if err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
-	if err := f.runner.buildSoldierPrompt(); err != nil {
+	if err := f.runner.buildSoldierPrompt(bound); err != nil {
 		t.Fatalf("buildSoldierPrompt: %v", err)
 	}
 	counter := filepath.Join(t.TempDir(), "harness-launches.log")
@@ -536,10 +567,11 @@ func TestLaunchArtifactGuardExistsSkipsProcessOnReEntry(t *testing.T) {
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
-	if err := f.runner.bindWorktree(); err != nil {
+	bound, err := f.runner.bindWorktree()
+	if err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
-	if err := f.runner.buildSoldierPrompt(); err != nil {
+	if err := f.runner.buildSoldierPrompt(bound); err != nil {
 		t.Fatalf("buildSoldierPrompt: %v", err)
 	}
 	counter := filepath.Join(t.TempDir(), "harness-launches.log")
@@ -594,10 +626,11 @@ func TestLaunchArtifactGuardConcurrentSubmissionsSingleProcess(t *testing.T) {
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
-	if err := f.runner.bindWorktree(); err != nil {
+	bound, err := f.runner.bindWorktree()
+	if err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
-	if err := f.runner.buildSoldierPrompt(); err != nil {
+	if err := f.runner.buildSoldierPrompt(bound); err != nil {
 		t.Fatalf("buildSoldierPrompt: %v", err)
 	}
 	counter := filepath.Join(t.TempDir(), "harness-launches.log")
@@ -728,10 +761,11 @@ func TestLaunchArtifactReentrantGuardRealPath(t *testing.T) {
 	if err := f.runner.acquireWorktree(); err != nil {
 		t.Fatalf("acquireWorktree: %v", err)
 	}
-	if err := f.runner.bindWorktree(); err != nil {
+	bound, err := f.runner.bindWorktree()
+	if err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
-	if err := f.runner.buildSoldierPrompt(); err != nil {
+	if err := f.runner.buildSoldierPrompt(bound); err != nil {
 		t.Fatalf("buildSoldierPrompt: %v", err)
 	}
 	agg := f.aggregate()
