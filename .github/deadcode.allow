@@ -22,6 +22,21 @@
 # is why the linux and darwin halves of a `_linux.go`/`_darwin.go` pair both
 # appear below, and why this file reads the same on a laptop and on the runner.
 
+# --- Known open bugs, NOT accepted debt -------------------------------------
+# A guard that exists, is complete, and cannot fire because nothing in the
+# binary calls it. These are holes, not debt: the code was written to refuse
+# something and the refusal can never happen. They are listed here only so the
+# lane can go green; `deadcode.sh check` reprints every one as a warning on
+# every single run, and each line names the issue that owns the verdict --
+# wire it up or delete it. A line leaves this section with that issue, not
+# before, and nobody may quietly demote one to accepted debt.
+#
+# Currently empty, and the section stays anyway: this is the rule that tells a
+# hole apart from debt, and `announce_open_bugs` in `.github/scripts/deadcode.sh`
+# still reads `OPEN-BUG` markers on every run. Deleting the rule because no line
+# happens to need it today is how the next unreachable guard gets filed as
+# burn-down debt -- a marker that means "nobody has looked at this yet".
+
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
 # platform and unreachable on another lands in the union. These two are live
