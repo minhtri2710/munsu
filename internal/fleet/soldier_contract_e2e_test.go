@@ -13,6 +13,34 @@ import (
 // E2E contract: full soldier launch prompt => charter + brief + envelope + report identity
 // =============================================================================
 
+// writeLaunchManifestForTest writes the launch script and the digest manifest
+// over the canonical artifacts in worktreePath, mirroring
+// Runner.writeLaunchManifest. It returns the manifest digest — the value
+// production stores outside the worktree as the launch_manifest_sha256 anchor.
+func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
+	t.Helper()
+	script := "#!/usr/bin/env bash\nexec true\n"
+	if err := os.WriteFile(filepath.Join(worktreePath, LaunchScriptName), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	entries := []ManifestEntry{}
+	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
+		entry, err := ManifestEntryForFile(worktreePath, name, DisposalPolicyCleanable)
+		if err != nil {
+			t.Fatalf("manifest entry for %s: %v", name, err)
+		}
+		entries = append(entries, entry)
+	}
+	manifest := BuildManifest(entries)
+	policy := LegacyBriefMatchCanonicalV1
+	manifest.LegacyBriefMigration = &policy
+	digest, err := WriteManifest(worktreePath, manifest)
+	if err != nil {
+		t.Fatalf("writing launch manifest: %v", err)
+	}
+	return digest
+}
+
 func TestE2E_SoldierFullPrompt(t *testing.T) {
 	worktree := t.TempDir()
 	briefContent := []byte(`# Task brief: e2e-test
@@ -68,15 +96,6 @@ When delivery is complete, run munsu report done "PR {url}" and stop.
 	}
 
 	// Envelope fields.
-	if env.CharterSHA256 == "" {
-		t.Error("envelope must have charter hash")
-	}
-	if env.BriefSHA256 == "" {
-		t.Error("envelope must have brief hash")
-	}
-	if env.PromptSHA256 == "" {
-		t.Error("envelope must have prompt hash")
-	}
 	if env.TaskID != "e2e-test" {
 		t.Errorf("envelope TaskID = %q, want 'e2e-test'", env.TaskID)
 	}
@@ -98,18 +117,29 @@ When delivery is complete, run munsu report done "PR {url}" and stop.
 		}
 	}
 
-	// Verify envelope integrity.
-	if err := VerifyEnvelopeIntegrity(worktree); err != nil {
-		t.Errorf("integrity verification failed: %v", err)
+	// Anchor the durable files with the launch manifest, then verify them
+	// against the digest production keeps outside the worktree.
+	manifestSHA := writeLaunchManifestForTest(t, worktree)
+	if err := VerifyLaunchArtifacts(worktree, manifestSHA); err != nil {
+		t.Errorf("launch artifact verification failed: %v", err)
 	}
 
-	// Verify prompt file hash matches envelope.
-	readEnv, err := ReadEnvelope(worktree)
+	// The persisted prompt is exactly what BuildLaunchPrompt returned, and the
+	// manifest is what proves it.
+	promptOnDisk, err := os.ReadFile(filepath.Join(worktree, PromptName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if readEnv.PromptSHA256 != sha256Content([]byte(prompt)) {
-		t.Error("persisted prompt hash does not match actual prompt on disk")
+	if string(promptOnDisk) != prompt {
+		t.Error("persisted prompt does not match the built prompt")
+	}
+
+	// A tampered artifact must fail against the anchor.
+	if err := os.WriteFile(filepath.Join(worktree, PromptName), []byte("tampered prompt\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyLaunchArtifacts(worktree, manifestSHA); err == nil {
+		t.Error("tampered prompt must fail launch artifact verification")
 	}
 }
 
@@ -225,22 +255,19 @@ func TestE2E_HashRecovery(t *testing.T) {
 		HarnessName:     "pi",
 	}
 
-	prompt1, env1, err := BuildLaunchPrompt(input)
+	prompt1, _, err := BuildLaunchPrompt(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt2, env2, err := BuildLaunchPrompt(input)
+	prompt2, _, err := BuildLaunchPrompt(input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if prompt1 != prompt2 {
 		t.Error("prompts must be identical for identical inputs (deterministic recovery)")
 	}
-	if env1.PromptSHA256 != env2.PromptSHA256 {
-		t.Error("prompt hashes must be identical for identical inputs")
-	}
-	if env1.CharterSHA256 != env2.CharterSHA256 {
-		t.Error("charter hashes must be identical for identical inputs")
+	if sha256Content([]byte(prompt1)) != sha256Content([]byte(prompt2)) {
+		t.Error("prompt digests must be identical for identical inputs")
 	}
 }
 
@@ -250,19 +277,12 @@ func TestE2E_VerifyAllDurableFilesOnDisk(t *testing.T) {
 	brief := []byte("# Task\n\nDisk consistency.\n")
 	prompt := "full prompt content\n"
 
-	charterHash := sha256Content([]byte(charter))
-	briefHash := sha256Content(brief)
-	promptHash := sha256Content([]byte(prompt))
-
 	env := &LaunchEnvelope{
 		EnvelopeVersion: EnvelopeVersion,
 		TaskID:          "disk-test",
 		DeliveryMode:    "direct-PR",
 		ParentCaptainID: "captain-1",
 		ParentHome:      "/tmp/parent",
-		CharterSHA256:   charterHash,
-		BriefSHA256:     briefHash,
-		PromptSHA256:    promptHash,
 	}
 	if err := PersistLaunchFiles(tmp, charter, brief, env, prompt); err != nil {
 		t.Fatal(err)
@@ -275,8 +295,9 @@ func TestE2E_VerifyAllDurableFilesOnDisk(t *testing.T) {
 		}
 	}
 
-	if err := VerifyEnvelopeIntegrity(tmp); err != nil {
-		t.Fatalf("full integrity verification failed: %v", err)
+	manifestSHA := writeLaunchManifestForTest(t, tmp)
+	if err := VerifyLaunchArtifacts(tmp, manifestSHA); err != nil {
+		t.Fatalf("full artifact verification failed: %v", err)
 	}
 }
 
@@ -313,12 +334,13 @@ func TestE2E_TerminalReportHasExactKey(t *testing.T) {
 }
 
 // TestE2E_FullProductionFlow simulates the entire production launch sequence:
-//  1. BuildPrompt + Envelope (identity, hashes, delivery mode)
+//  1. BuildPrompt + Envelope (identity, delivery mode)
 //  2. PersistLaunchFiles (charter + brief + prompt + envelope)
-//  3. VerifyEnvelopeIntegrity (all hashes match, meta consistent)
+//  3. Launch manifest written, artifacts verified against its digest
 //  4. BuildLaunchArgs (Pi harness with model/effort/prompt)
 //  5. Prompt contains exact terminal report command with --key <task-id>
-//  6. All files survive a verify round-trip
+//  6. Tampering is rejected by the anchor even when the worktree is
+//     made self-consistent again
 func TestE2E_FullProductionFlow(t *testing.T) {
 	worktree := t.TempDir()
 	taskID := "prod-flow-99"
@@ -367,9 +389,6 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 	if env.ParentCaptainID != "captain-prod" {
 		t.Errorf("env.ParentCaptainID = %q, want 'captain-prod'", env.ParentCaptainID)
 	}
-	if env.CharterSHA256 == "" || env.BriefSHA256 == "" || env.PromptSHA256 == "" {
-		t.Error("all hashes must be non-empty")
-	}
 
 	// Step 2: Persist all files.
 	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
@@ -377,9 +396,10 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 		t.Fatal(err)
 	}
 
-	// Step 3: Verify integrity of all persisted files.
-	if err := VerifyEnvelopeIntegrity(worktree); err != nil {
-		t.Fatalf("integrity verification failed: %v", err)
+	// Step 3: Anchor the persisted files and verify them against the anchor.
+	manifestSHA := writeLaunchManifestForTest(t, worktree)
+	if err := VerifyLaunchArtifacts(worktree, manifestSHA); err != nil {
+		t.Fatalf("launch artifact verification failed: %v", err)
 	}
 
 	// Step 4: Build launch args (Pi harness).
@@ -418,19 +438,22 @@ Task complete when committed. Run munsu report done "PR {url}" and stop.
 		t.Errorf("prompt must contain exact report command:\nwant: %s", expectedReport)
 	}
 
-	// Step 6: Verify round-trip integrity - read envelope back and check hashes.
-	readEnv, err := ReadEnvelope(worktree)
-	if err != nil {
+	// Step 6: A self-consistent worktree is not evidence. Tamper with the
+	// charter and refresh the manifest to match — whoever can write the
+	// charter can write the manifest beside it. Only the anchor held outside
+	// the worktree rejects this.
+	if err := os.WriteFile(filepath.Join(worktree, CharterName), []byte(charter+"\ntampered\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if readEnv.PromptSHA256 != sha256Content([]byte(promptText)) {
-		t.Error("envelope prompt hash does not match actual prompt on disk")
+	refreshedSHA := writeLaunchManifestForTest(t, worktree)
+	if refreshedSHA == manifestSHA {
+		t.Fatal("refreshed manifest digest must differ after tampering")
 	}
-	if readEnv.CharterSHA256 != sha256Content([]byte(charter)) {
-		t.Error("envelope charter hash does not match actual charter on disk")
+	if err := VerifyLaunchArtifacts(worktree, refreshedSHA); err != nil {
+		t.Errorf("refreshed manifest is self-consistent, so it must pass on its own terms: %v", err)
 	}
-	if readEnv.BriefSHA256 != sha256Content(briefContent) {
-		t.Error("envelope brief hash does not match actual brief on disk")
+	if err := VerifyLaunchArtifacts(worktree, manifestSHA); err == nil {
+		t.Error("tampered charter with a refreshed manifest must fail against the original anchor")
 	}
 }
 
@@ -558,10 +581,5 @@ func TestRegression_BuildLaunchPromptWithoutSrcwalk(t *testing.T) {
 	// Verify prompt contains essential soldier charter elements.
 	if !strings.Contains(prompt, "Soldier Charter") {
 		t.Error("prompt must contain soldier charter header")
-	}
-
-	// Verify the prompt hash is non-empty.
-	if env.PromptSHA256 == "" {
-		t.Error("prompt SHA256 must be set")
 	}
 }
