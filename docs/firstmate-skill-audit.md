@@ -80,7 +80,7 @@ Firstmate's skill selection authority is deterministic: structured JSON config (
 - Agent-only skills: absence blocks the operation (required)
 - Captain-invoked skills: human can proceed without (optional)
 - Dispatch config: missing profile -> fallback to default harness
-- Munsu soldier: required skills missing -> fail-closed before session allocation; optional missing -> durable diagnostic, proceed
+- Munsu soldier: a required skill CLI missing -> fail-closed before session allocation for ship tasks in direct-PR/no-mistakes modes; scout tasks and local-only ships emit a non-blocking stderr diagnostic instead (the gate is mode-scoped to stay consistent with bootstrap's `{Required: false}` classification of gh-axi). Optional missing -> durable diagnostic, proceed
 
 ### 5. Verified native invocation over inline content (CONTRIBUTING.md lines 49-50)
 

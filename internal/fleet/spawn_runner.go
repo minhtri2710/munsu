@@ -1486,6 +1486,14 @@ func (r *Runner) buildSoldierPrompt() error {
 		ScoutRuntimeBudgetSecs: r.taskScoutBudget,
 	}
 
+	// Modes that do not hard-gate on skill presence still report what is absent,
+	// so a later in-task failure is traceable to the launch host.
+	if !requiredSkillsAreHardGate(input.TaskKind, input.DeliveryMode) {
+		for _, name := range missingRequiredSkillBinaries(input.RequiredSkills) {
+			fmt.Fprintf(os.Stderr, "skill diagnostic: required skill %q not on PATH (not blocking for kind=%s mode=%s)\n", name, input.TaskKind, input.DeliveryMode)
+		}
+	}
+
 	// Fail-closed: validate before building.
 	if err := FailClosedDuringLaunch(input); err != nil {
 		return fmt.Errorf("pre-launch fail-closed: %w", err)
@@ -1516,6 +1524,11 @@ func (r *Runner) buildSoldierPrompt() error {
 	return nil
 }
 
+// shipRequiredSkill is the CLI a ship task cannot complete without: every
+// PR-producing delivery mode routes its GitHub work through it, and both the
+// charter and the brief instruct the Soldier to use it.
+const shipRequiredSkill = "gh-axi"
+
 // resolveSkills returns deterministic required/optional skills for the current
 // spawn based on task kind, delivery mode, and lifecycle policy.
 // Uses explicit typed declarations — no keyword guessing or load-all.
@@ -1539,7 +1552,7 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 	}
 
 	// Determine required skills from task kind and delivery mode.
-	// ship tasks always get gh-axi; scout tasks may not need GitHub.
+	// ship tasks always get shipRequiredSkill; scout tasks may not need GitHub.
 	var requiredNames []string
 	var optionalNames []string
 
@@ -1549,13 +1562,13 @@ func (r *Runner) resolveSkills() (required, optional []SkillEntry, diags []strin
 		optionalNames = []string{"gh-axi"}
 	default:
 		// ship tasks: github required.
-		requiredNames = []string{"gh-axi"}
+		requiredNames = []string{shipRequiredSkill}
 		optionalNames = []string{"qmd", "chrome-devtools-axi"}
 	}
 
-	// Apply no-mistakes mode policy: no-mistakes requires gh-axi always.
+	// Apply no-mistakes mode policy: no-mistakes requires shipRequiredSkill always.
 	if r.effectiveMode == "no-mistakes" {
-		requiredNames = append(requiredNames, "gh-axi")
+		requiredNames = append(requiredNames, shipRequiredSkill)
 	}
 
 	required, optional, diags = CollectSkills(catalog, requiredNames, optionalNames)
