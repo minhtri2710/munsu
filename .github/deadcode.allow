@@ -31,11 +31,25 @@
 # wire it up or delete it. A line leaves this section with that issue, not
 # before, and nobody may quietly demote one to accepted debt.
 #
-# Currently empty, and the section stays anyway: this is the rule that tells a
-# hole apart from debt, and `announce_open_bugs` in `.github/scripts/deadcode.sh`
-# still reads `OPEN-BUG` markers on every run. Deleting the rule because no line
-# happens to need it today is how the next unreachable guard gets filed as
-# burn-down debt -- a marker that means "nobody has looked at this yet".
+#   BEO-102  the writer/endpoint fence computes exactly the quiescence proof a
+#            destructive teardown needs -- terminate exactly, rescan, then set
+#            VerifiedQuiescent -- and nothing calls it. `captain retire
+#            --remove-home` reaches os.RemoveAll having checked provenance,
+#            meta, and an artifact scan that --force skips outright, and never
+#            verifies at the OS-process level that the directory it is about to
+#            delete has stopped being written to.
+internal/fleet/endpoint_fence.go	ServiceEndpointController.DisposeBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/endpoint_fence.go	ServiceEndpointController.ProbeBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/endpoint_fence.go	TaskEndpointScanner.ScanEndpoints	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/endpoint_fence.go	fenceEndpoints	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/endpoint_fence.go	metaUint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/endpoint_fence.go	readEndpointMeta	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/endpoint_fence.go	sameBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/endpoint_fence.go	validBoundEndpoint	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/writer_fence.go	CompositeWriterFence.FenceOSWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/writer_fence.go	CompositeWriterFence.FenceWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/writer_fence.go	correlateWriters	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
+internal/fleet/writer_runtime.go	FenceBoundEndpoints	OPEN-BUG(BEO-102): writer/endpoint fence computes the quiescence proof a destructive teardown needs, and nothing calls it; captain retire --remove-home runs os.RemoveAll without it
 
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
@@ -160,14 +174,6 @@ internal/fleet/delivery_attestation.go	ReadAttestationFromMeta	burn-down(BEO-63)
 internal/fleet/delivery_journal.go	SetDeliveryCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesRespond	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/delivery_nomistakes.go	NoMistakesStatus	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	ServiceEndpointController.DisposeBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	ServiceEndpointController.ProbeBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	TaskEndpointScanner.ScanEndpoints	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	fenceEndpoints	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	metaUint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	readEndpointMeta	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	sameBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/endpoint_fence.go	validBoundEndpoint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	IsPropagateConfigUnchanged	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	ensureConfigPreconditions	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/propagate_config.go	propagateConfigLogPath	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
@@ -182,10 +188,6 @@ internal/fleet/soldier_charter.go	LaunchArtifactNames	burn-down(BEO-63): pre-exi
 internal/fleet/soldierstate_soldierstate.go	ReadSoldierState	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/spawn_spawn.go	ResolveDeliveryModeFromBase	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/fleet/task_handoff_transaction.go	SetHandoffCrashHookForTest	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/writer_fence.go	CompositeWriterFence.FenceOSWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/writer_fence.go	CompositeWriterFence.FenceWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/writer_fence.go	correlateWriters	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/fleet/writer_runtime.go	FenceBoundEndpoints	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	DispatchConfig.normalize	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	ResolveDispatch	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/harness/dispatch.go	ResolveDispatchSelectionWithPreflight	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
