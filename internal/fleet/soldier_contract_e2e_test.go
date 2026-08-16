@@ -15,7 +15,7 @@ import (
 
 // writeLaunchManifestForTest writes the launch script and the digest manifest
 // over the canonical artifacts in worktreePath, mirroring
-// Runner.writeLaunchManifest. It returns the manifest digest — the value
+// Runner.writeLaunchManifest. BEO-100 probe c: deliberate conflict. It returns the manifest digest — the value
 // production stores outside the worktree as the launch_manifest_sha256 anchor.
 func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 	t.Helper()
