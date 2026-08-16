@@ -36,13 +36,13 @@ The real checkout guard lives in the Soldier launch sequence
 
 ```go
 // Run(): the launch sequence, in order
-if err := r.acquireWorktree(); err != nil { ... }   // line 222
-if err := r.bindWorktree(); err != nil { ... }      // line 225  ← guard
+if err := r.acquireWorktree(); err != nil { ... }        // acquire
+bound, err := r.bindWorktree()                           // ← guard
 ...
-if err := r.buildSoldierPrompt(); err != nil { ... } // line 236 (FailClosedDuringLaunch + PersistLaunchFiles)
-if err := r.createSession(); err != nil { ... }      // line 242
-if err := r.submitLaunch(); err != nil { ... }       // line 251
-if err := r.writeLaunchManifest(); err != nil { ... }// line 254
+if err := r.buildSoldierPrompt(bound); err != nil { ... } // PersistLaunchFiles
+if err := r.createSession(); err != nil { ... }
+if err := r.submitLaunch(); err != nil { ... }
+if err := r.writeLaunchManifest(); err != nil { ... }
 ```
 
 ```go
@@ -57,11 +57,26 @@ if identity != Worktree {
 ```
 
 `bindWorktree` is unconditional in `Run()` and fails closed when the Task
-Authority is not composed. `r.wtPath` is assigned only in `acquireWorktree`
-(lines 734, 758) and `bindWorktree` (line 1001) and never afterwards, so every
-write and every launch step downstream of line 225 operates on a path that
-`ClassifyIdentity` has already classified as `Worktree` — or the spawn has
-already been refused.
+Authority is not composed, so every write and every launch step downstream of
+it operates on a path `ClassifyIdentity` has classified as `Worktree` — or the
+spawn has already been refused.
+
+BEO-60 closed the two ways that sentence used to be less true than it read:
+
+* **Recovery adopted a path it never classified.** When the aggregate already
+  held the binding, `bindWorktree` checked only the lease and fence token and
+  adopted `agg.Worktree.Path` verbatim. The fence proves the binding belongs to
+  this launch intent, not what the path is now — between two launches the
+  worktree can be removed and the path replaced. The recovery branch now
+  re-classifies through `newBoundWorktree` and refuses anything but `Worktree`.
+* **The order was the only thing enforcing it.** Nothing but the position of
+  `buildSoldierPrompt` after `bindWorktree` in `Run()` kept launch files from
+  being written to an unclassified path, and no test pinned that order. The
+  proof is now a value: `BoundWorktree` (`spawn_runner.go`) is returned only by
+  `bindWorktree` and required as an argument by `buildSoldierPrompt`, so
+  swapping the two phases does not compile. `FailClosedDuringLaunch` does NOT
+  repeat the classification — one owner, checked by the compiler on every
+  caller, beats a second copy nobody is forced to call.
 
 ## Decision
 

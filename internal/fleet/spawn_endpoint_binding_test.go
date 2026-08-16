@@ -269,7 +269,7 @@ func TestSpawnBindWorktreePersistsExactRepositoryIdentityAndLease(t *testing.T) 
 	canonicalCreateTask(t, auth, "bind-wt", "ship", "test-proj")
 	r := &Runner{homeDir: homeDir, args: Args{ID: "bind-wt", ProjectName: "test-proj", Authority: auth}, projPath: primary, wtPath: worktree}
 	seedLaunchIntent(t, auth, r, "bind-wt")
-	if err := r.bindWorktree(); err != nil {
+	if _, err := r.bindWorktree(); err != nil {
 		t.Fatalf("bindWorktree: %v", err)
 	}
 	agg, err := auth.Get(mustTaskID(t, "bind-wt"))
