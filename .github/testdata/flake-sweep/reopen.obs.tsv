@@ -10,3 +10,6 @@ fail	3001	1	integration	TestReopens	github.com/minhtri2710/munsu/internal/reopen
 fail	3003	1	integration	TestReopens	github.com/minhtri2710/munsu/internal/reopen
 compared	aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222
 compared	cccc3333cccc3333cccc3333cccc3333cccc3333	dddd4444dddd4444dddd4444dddd4444dddd4444
+fixedsha	abc1234	on-main
+fixedsha	f00dbab	off-main
+fixedsha	deadbee	unknown-sha

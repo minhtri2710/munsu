@@ -272,6 +272,15 @@ jobs:
       # (.github/workflows/flake-ledger.yml), deliberately not here: this job is
       # trusted precisely because nothing outside the checkout can change what
       # it says.
+      #
+      # The selftest runs first, and it is here rather than in the sweep's own
+      # workflow for the reason the step below exists at all: this script is the
+      # half that runs on every PR, so it is the half a PR can break. Ten of its
+      # rules were deleted one at a time (BEO-103) and every lane in this repo
+      # stayed green -- the same shape as the unreachable guards the deadcode
+      # lane above was built for. It is hermetic and takes under a second.
+      - name: Flake ledger rules must agree with their fixtures
+        run: .github/scripts/flake-ledger.sh selftest
       - name: Flake ledger deadlines must not have passed
         run: .github/scripts/flake-ledger.sh check
       - name: Personal fleet paths must not be tracked

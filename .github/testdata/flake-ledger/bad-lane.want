@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/bad-lane.md:8: TestAlpha: lane must be one of build|race|integration, got "unit"
+exit 1

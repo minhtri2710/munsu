@@ -1,0 +1,3 @@
+::error::.github/testdata/flake-ledger/header-reordered.md:6: first table row must be the header `| test|lane|first_seen|last_seen|deadline|owner_issue|state |`
+::error::.github/testdata/flake-ledger/header-reordered.md:8: TestAlpha: deadline must be YYYY-MM-DD, got "BEO-79"
+exit 1

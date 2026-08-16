@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/markers-out-of-order.md has its flake-ledger markers in the wrong order
+exit 1

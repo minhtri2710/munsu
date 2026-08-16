@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/duplicate-row.md:9: TestAlpha (integration): already listed on line 8
+exit 1

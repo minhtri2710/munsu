@@ -1,0 +1,7 @@
+::error::flake ledger entries are past their deadline:
+  TestAlpha (integration): due 2020-01-01, owned by BEO-79
+  A flake with an expired deadline is a skipped test with paperwork. Fix the test and set
+  its state to fixed:<sha>, or argue in the owning issue why the date moves and move it
+  in a diff someone reads. This lane is red on every open PR until then -- that is the
+  mechanism, not a bug: the owner of a flake is whoever needs main green next.
+exit 1

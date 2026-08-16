@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/bad-test-name.md:8: first column must be a Go test name, got "flaky_thing"
+exit 1
