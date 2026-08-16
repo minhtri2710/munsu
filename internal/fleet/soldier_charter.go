@@ -120,7 +120,7 @@ canonical launch context:
 |------|---------|
 | .soldier-charter.md | This charter (version %[1]s) |
 | .soldier-brief.md | Task brief with setup, rules, and done criteria |
-| .soldier-envelope.json | Structured launch envelope with SHA-256 integrity |
+| .soldier-envelope.json | Structured record of the launch context |
 
 These files are regenerated at spawn time. Do not modify them.
 
@@ -128,7 +128,7 @@ These files are regenerated at spawn time. Do not modify them.
 
 On recovery or relaunch, the same canonical prompt is reconstructed
 idempotently from durable inputs. The launch envelope (.soldier-envelope.json)
-contains integrity metadata for deterministic verification.
+records the launch context these inputs were resolved from.
 
 ## Definition of Done
 

@@ -22,21 +22,6 @@
 # is why the linux and darwin halves of a `_linux.go`/`_darwin.go` pair both
 # appear below, and why this file reads the same on a laptop and on the runner.
 
-# --- Known open bugs, NOT accepted debt -------------------------------------
-# A guard that exists, is complete, and cannot fire because nothing in the
-# binary calls it. These are holes, not debt: the code was written to refuse
-# something and the refusal can never happen. They are listed here only so the
-# lane can go green; `deadcode.sh check` reprints every one as a warning on
-# every single run, and each line names the issue that owns the verdict --
-# wire it up or delete it. A line leaves this section with that issue, not
-# before, and nobody may quietly demote one to accepted debt.
-#
-#   BEO-84  the Soldier launch envelope pins charter/brief/prompt SHA-256 on
-#           every launch (WriteEnvelope, live) and nothing ever compares them
-internal/fleet/soldier_envelope.go	ReadEnvelope	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
-internal/fleet/soldier_envelope.go	VerifyEnvelopeIntegrity	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
-internal/fleet/soldier_envelope.go	VerifyRequiredSkills	OPEN-BUG(BEO-84): launch envelope SHA-256 pins are written on every launch but nothing ever checks them; this half of the contract was never wired
-
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
 # platform and unreachable on another lands in the union. These two are live

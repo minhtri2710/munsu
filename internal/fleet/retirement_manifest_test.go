@@ -52,16 +52,13 @@ func setupWorktreeWithManifest(t *testing.T, wt, remote string, briefContent []b
 	os.WriteFile(filepath.Join(wt, EnvelopeName), []byte("{}"), 0644)
 	os.WriteFile(filepath.Join(wt, LaunchScriptName), []byte(launchScript), 0644)
 
-	// Write envelope with correct brief SHA-256.
+	// Write the launch envelope; the manifest is what anchors artifact digests.
 	env := &LaunchEnvelope{
 		EnvelopeVersion: EnvelopeVersion,
 		TaskID:          "manifest-test",
 		DeliveryMode:    "direct-PR",
 		ParentCaptainID: "captain-1",
 		ParentHome:      "/tmp/parent",
-		CharterSHA256:   sha256Content([]byte(charter)),
-		BriefSHA256:     sha256Content(briefContent),
-		PromptSHA256:    sha256Content([]byte(prompt)),
 	}
 	WriteEnvelope(wt, env)
 
