@@ -1,0 +1,12 @@
+run	3001	1	aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111	2026-08-10T00:00:00Z
+run	3002	1	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222	2026-08-11T00:00:00Z
+run	3003	1	cccc3333cccc3333cccc3333cccc3333cccc3333	2026-08-12T00:00:00Z
+run	3004	1	dddd4444dddd4444dddd4444dddd4444dddd4444	2026-08-13T00:00:00Z
+job	3001	1	integration	failure
+job	3002	1	integration	success
+job	3003	1	integration	failure
+job	3004	1	integration	success
+fail	3001	1	integration	TestReopens	github.com/minhtri2710/munsu/internal/reopen
+fail	3003	1	integration	TestReopens	github.com/minhtri2710/munsu/internal/reopen
+compared	aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222
+compared	cccc3333cccc3333cccc3333cccc3333cccc3333	dddd4444dddd4444dddd4444dddd4444dddd4444

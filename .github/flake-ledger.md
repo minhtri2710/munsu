@@ -49,6 +49,11 @@ re-ran a red lane 14 times on the red SHA and saw zero failures; a run of greens
 is not evidence of a fix. The ledger only ever accuses -- absence from it proves
 nothing about a test, and a green streak proves nothing about an entry.
 
+`fixed:` is not a silencer. If the sweep observes the test flaking again after
+the fix was declared, the row goes back to `open` with a fresh deadline,
+keeping the issue that owns the fix -- marking a test fixed can never be a way
+to make its re-flakes silent.
+
 ## Columns
 
 | column | meaning |
@@ -56,6 +61,7 @@ nothing about a test, and a green streak proves nothing about an entry.
 | `test` | Go test name, top level (a subtest is filed under its parent) |
 | `lane` | `build`, `race` or `integration` |
 | `first_seen` | `<sha>@<run_id>/<attempt>` -- the attempt is the part a later rerun cannot invalidate |
+| `last_seen` | the newest observation the sweep has seen, same `<sha>@<run_id>/<attempt>` format as `first_seen`; bot-maintained, and the sweep is red while it lags the evidence |
 | `deadline` | `YYYY-MM-DD`, 14 days from filing by default |
 | `owner_issue` | the issue that will fix it. `TBD` is refused: filing the flake and filing the work are the same act |
 | `state` | `open`, or `fixed:<ref>` once the fix has landed |
@@ -68,15 +74,16 @@ against the tree: observed but unfiled is red, filed but no longer observable is
 red too.
 
 The rows between the markers below are machine-maintained. Edit `owner_issue`,
-`deadline` and `state` by hand; leave `test`, `lane` and `first_seen` to the
-sweep, and if you disagree with a row, argue with it in the owning issue rather
-than deleting it -- the sweep will re-add it on the next `main` run.
+`deadline` and `state` by hand; leave `test`, `lane`, `first_seen` and
+`last_seen` to the sweep, and if you disagree with a row, argue with it in the
+owning issue rather than deleting it -- the sweep will re-add it on the next
+`main` run.
 
 <!-- flake-ledger:begin -->
-| test | lane | first_seen | deadline | owner_issue | state |
-| --- | --- | --- | --- | --- | --- |
-| TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets | integration | 869319d8@31805867146/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
-| TestRegistryBindingScaleBound | integration | 665c301e@31805801020/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
-| TestRegistryBindingScaleBound | race | 282f6cfb@31680287927/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
-| TestTmux_Alive_UnknownWindow | integration | 6c408310@31805831782/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
+| test | lane | first_seen | last_seen | deadline | owner_issue | state |
+| --- | --- | --- | --- | --- | --- | --- |
+| TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets | integration | 869319d8@31805867146/1 | 869319d8@31805867146/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
+| TestRegistryBindingScaleBound | integration | 665c301e@31805801020/1 | 665c301e@31805801020/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
+| TestRegistryBindingScaleBound | race | 282f6cfb@31680287927/1 | 282f6cfb@31680287927/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
+| TestTmux_Alive_UnknownWindow | integration | 6c408310@31805831782/1 | 6c408310@31805831782/1 | 2026-08-30 | BEO-79 | fixed:7e295ea |
 <!-- flake-ledger:end -->

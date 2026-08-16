@@ -104,7 +104,11 @@ jobs:
           # no commit, no push -- and must be completed first. The compare step
           # above has already failed, so this job is still red; exiting 0 here
           # only keeps that verdict instead of layering another failure on it.
-          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+          prs="$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" || {
+            echo "::error::cannot list open PRs on $branch; refusing to push"
+            exit 1
+          }
+          if [ -n "$prs" ]; then
             echo "::error::the open ledger PR on $branch has to be completed first; this sweep will not overwrite it"
             exit 0
           fi

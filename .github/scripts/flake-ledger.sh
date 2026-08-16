@@ -40,14 +40,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LEDGER="$ROOT/.github/flake-ledger.md"
+LEDGER="${LEDGER:-$ROOT/.github/flake-ledger.md}"
 LEDGER_REL="${LEDGER#"$ROOT"/}"
 
 # The header row the table must have, in this order. Checked rather than
 # assumed: a reordered column would otherwise be parsed as a different field
 # entirely -- a deadline read out of the owner_issue column would compare as a
 # string that is never past due, so the whole lane would quietly stop failing.
-readonly COLUMNS='test|lane|first_seen|deadline|owner_issue|state'
+readonly COLUMNS='test|lane|first_seen|last_seen|deadline|owner_issue|state'
 
 # Lane keys, not job display names. The sweep maps `Integration tests` to
 # `integration`; the display name can be reworded in ci.yml without rewriting
@@ -95,20 +95,20 @@ entries() {
 		/^<!-- flake-ledger:end -->$/   { inside = 0; next }
 		!inside { next }
 		# A markdown table row is `| a | b |`, so splitting on | yields an
-		# empty field on each end: six columns is NF == 8, in $2..$7. A row of
+		# empty field on each end: seven columns is NF == 9, in $2..$8. A row of
 		# any other width is not emitted at all -- it is malformed, and saying
 		# so is format_errors() job, not this one. This function is only ever
 		# read after that has passed.
-		/^[[:space:]]*\|/ && NF == 8 {
+		/^[[:space:]]*\|/ && NF == 9 {
 			sep = 1
-			for (i = 2; i <= 7; i++) {
+			for (i = 2; i <= 8; i++) {
 				f[i] = trim($i)
 				if (f[i] !~ /^-+$/) sep = 0
 			}
 			# The header and the ---|--- rule under it are table syntax.
 			if (sep) next
 			if (f[2] == "test" && f[3] == "lane") next
-			printf "%s\t%s\t%s\t%s\t%s\t%s\n", f[2], f[3], f[4], f[5], f[6], f[7]
+			printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f[2], f[3], f[4], f[5], f[6], f[7], f[8]
 		}
 	' "$LEDGER"
 }
@@ -131,12 +131,12 @@ format_errors() {
 			gsub(/[ \t]/, "", line)
 			if (line ~ /^\|-+(\|-+)*\|$/) { next }
 
-			if (line !~ /^\|.*\|$/ || NF != 8) {
-				bad("expected a 6-column row `| " cols " |`, got " (NF > 2 ? NF - 2 : 0) " columns")
+			if (line !~ /^\|.*\|$/ || NF != 9) {
+				bad("expected a 7-column row `| " cols " |`, got " (NF > 2 ? NF - 2 : 0) " columns")
 				next
 			}
-			test = trim($2); lane = trim($3); seen = trim($4)
-			deadline = trim($5); owner = trim($6); state = trim($7)
+			test = trim($2); lane = trim($3); seen = trim($4); last = trim($5)
+			deadline = trim($6); owner = trim($7); state = trim($8)
 
 			# The header is checked rather than skipped by position: a
 			# reordered column would otherwise be parsed as a different field
@@ -145,7 +145,7 @@ format_errors() {
 			# stop failing and look healthy doing it.
 			if (!seenheader) {
 				seenheader = 1
-				if (test "|" lane "|" seen "|" deadline "|" owner "|" state != cols)
+				if (test "|" lane "|" seen "|" last "|" deadline "|" owner "|" state != cols)
 					bad("first table row must be the header `| " cols " |`")
 				next
 			}
@@ -156,6 +156,7 @@ format_errors() {
 			# overwrites a run conclusion, so a citation without an attempt
 			# number points at evidence that may already read green.
 			if (seen !~ /^[0-9a-f]{8,40}@[0-9]+\/[0-9]+$/) bad(test ": first_seen must be <sha>@<run_id>/<attempt>, got \"" seen "\"")
+			if (last !~ /^[0-9a-f]{8,40}@[0-9]+\/[0-9]+$/) bad(test ": last_seen must be <sha>@<run_id>/<attempt>, got \"" last "\"")
 			if (deadline !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) bad(test ": deadline must be YYYY-MM-DD, got \"" deadline "\"")
 			# The bot cannot know which issue owns a flake, so it writes TBD and
 			# this rule refuses to let TBD reach main. That is the point at
@@ -187,10 +188,10 @@ check() {
 	# incompatibilities between BSD and GNU that the sweep has to deal with.
 	today="$(date -u +%F)"
 
-	overdue="$(entries | awk -F '\t' -v today="$today" '$6 == "open" && $4 < today')"
+	overdue="$(entries | awk -F '\t' -v today="$today" '$7 == "open" && $5 < today')"
 	if [ -n "$overdue" ]; then
 		echo "::error::flake ledger entries are past their deadline:" >&2
-		printf '%s\n' "$overdue" | while IFS=$'\t' read -r test lane _seen deadline owner _state; do
+		printf '%s\n' "$overdue" | while IFS=$'\t' read -r test lane _seen _last deadline owner _state; do
 			printf '  %s (%s): due %s, owned by %s\n' "$test" "$lane" "$deadline" "$owner" >&2
 		done
 		echo "  A flake with an expired deadline is a skipped test with paperwork. Fix the test and set" >&2
@@ -205,7 +206,7 @@ check() {
 	# Printed on every run for the same reason deadcode.sh prints its count:
 	# a ledger that never shrinks is a mechanism being routed around, and that
 	# is only visible if the number is in the log.
-	open_count="$(entries | awk -F '\t' '$6 == "open"' | grep -c . || true)"
+	open_count="$(entries | awk -F '\t' '$7 == "open"' | grep -c . || true)"
 	echo "flake ledger: $(entries | grep -c . || true) entries, $open_count open, 0 overdue"
 }
 

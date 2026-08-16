@@ -94,7 +94,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LEDGER="$ROOT/.github/flake-ledger.md"
+LEDGER="${LEDGER:-$ROOT/.github/flake-ledger.md}"
 LEDGER_REL=".github/flake-ledger.md"
 FIXTURES="$ROOT/.github/testdata/flake-sweep"
 
@@ -443,16 +443,23 @@ classify() {
 # The observed set, reduced to one row per (test, lane)
 # ---------------------------------------------------------------------------
 #
-# first_seen is the earliest flake observation, cited as sha@run/attempt. The
-# attempt is not decoration: it is the only citation a later rerun cannot
-# invalidate, which is the whole reason this mechanism exists.
+# first_seen is the earliest flake observation and last_seen the newest one
+# this window saw, both cited as sha@run/attempt. The attempt is not
+# decoration: it is the only citation a later rerun cannot invalidate, which is
+# the whole reason this mechanism exists. last_seen is what keeps a re-flake of
+# a `fixed:` row from being silent: check() is red while the ledger lags the
+# evidence, and sync() reopens the row when the evidence moves.
 
 observed_set() {
 	local records="$1"
 	classify <"$records" |
 		awk -F '\t' '$1 == "flake" { print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 }' |
 		sort -t"$(printf '\t')" -k1,1 -k2,2 -k4,4n -k5,5n |
-		awk -F '\t' '!seen[$1 "\t" $2]++ { printf "%s\t%s\t%.8s@%s/%s\n", $1, $2, $3, $4, $5 }' |
+		awk -F '\t' '
+			!seen[$1 "\t" $2]++ { first[$1 "\t" $2] = sprintf("%.8s@%s/%s", $3, $4, $5) }
+			{ last[$1 "\t" $2] = sprintf("%.8s@%s/%s", $3, $4, $5) }
+			END { for (k in first) print k "\t" first[k] "\t" last[k] }
+		' |
 		sort
 }
 
@@ -500,20 +507,27 @@ records_file() {
 	printf '%s' "$f"
 }
 
-# Both directions, in the shape .github/deadcode.allow already uses in this
-# repo: observed but unfiled is red, filed but no longer observable is red too.
-# The second direction is what stops the file rotting into a graveyard.
+# Three directions, in the shape .github/deadcode.allow already uses in this
+# repo: observed but unfiled is red, filed but no longer observable is red too,
+# and a row this sweep observed must carry the newest observation as its
+# last_seen. The second direction is what stops the file rotting into a
+# graveyard; the third is what keeps a re-flake of a `fixed:` row from being
+# silent.
 #
-# The two directions are not symmetrical in scope, and should not be. A test
+# The directions are not symmetrical in scope, and should not be. A test
 # observed flaky now is missing from the ledger whether or not its entry would
 # have come from this window, so that direction compares against every entry. An
 # entry is only demanded for deletion when this sweep actually read the run it
 # cites.
 check() {
-	local records failed=0 missing extra
+	local records obs obstmp failed=0 missing extra stale
 	records="$(records_file)"
 
-	missing="$(comm -23 <(observed_set "$records" | cut -f1,2) <(ledger_set))"
+	obs="$(observed_set "$records")"
+	obstmp="$(mktemp)"
+	printf '%s\n' "$obs" >"$obstmp"
+
+	missing="$(comm -23 <(printf '%s\n' "$obs" | cut -f1,2) <(ledger_set))"
 	if [ -n "$missing" ]; then
 		echo "::error::flaky tests observed in CI with no entry in $LEDGER_REL:" >&2
 		printf '%s\n' "$missing" | while IFS=$'\t' read -r test lane; do
@@ -525,7 +539,7 @@ check() {
 		failed=1
 	fi
 
-	extra="$(comm -13 <(observed_set "$records" | cut -f1,2) <(ledger_in_scope "$records"))"
+	extra="$(comm -13 <(printf '%s\n' "$obs" | cut -f1,2) <(ledger_in_scope "$records"))"
 	if [ -n "$extra" ]; then
 		echo "::error::$LEDGER_REL entries this sweep can no longer derive from the run they cite:" >&2
 		printf '%s\n' "$extra" | while IFS=$'\t' read -r test lane; do
@@ -537,16 +551,47 @@ check() {
 		failed=1
 	fi
 
+	stale="$(awk -F '\t' -v obs="$obstmp" '
+		BEGIN { while ((getline o < obs) > 0) { split(o, p, "\t"); newest[p[1] "\t" p[2]] = p[4] } }
+		($1 "\t" $2) in newest && $4 != newest[$1 "\t" $2] {
+			what = ($7 ~ /^fixed:/) ? "flaked again after being declared fixed; must be reopened" : "has new evidence to record"
+			print $1 "\t" $2 "\t" $4 "\t" newest[$1 "\t" $2] "\t" what
+		}' <<<"$("$ROOT/.github/scripts/flake-ledger.sh" entries)")"
+	if [ -n "$stale" ]; then
+		echo "::error::$LEDGER_REL rows whose last_seen lags the evidence this sweep observed:" >&2
+		printf '%s\n' "$stale" | while IFS=$'\t' read -r test lane recorded observed what; do
+			printf '  %s (%s): recorded %s, observed %s -- %s\n' "$test" "$lane" "$recorded" "$observed" "$what" >&2
+		done
+		echo "  Run 'flake-sweep.sh sync' to record the evidence; a row that flaked again after being" >&2
+		echo "  declared fixed is reopened with a fresh deadline, keeping its owning issue." >&2
+		failed=1
+	fi
+
+	rm -f "$obstmp"
 	[ "$failed" -eq 0 ] || exit 1
-	echo "flake sweep: $(observed_set "$records" | grep -c . || true) flaky (test, lane) pairs observed, all filed"
+	echo "flake sweep: $(printf '%s\n' "$obs" | grep -c . || true) flaky (test, lane) pairs observed, all filed"
+}
+
+# Strictly-newer comparison of two <sha>@<run_id>/<attempt> citations: run ids
+# grow with time, and equal run ids are disambiguated by attempt.
+newer() {
+	local a_run a_att b_run b_att
+	a_run="${1#*@}"; a_run="${a_run%%/*}"
+	a_att="${1##*/}"
+	b_run="${2#*@}"; b_run="${b_run%%/*}"
+	b_att="${2##*/}"
+	[ "$a_run" -gt "$b_run" ] 2>/dev/null ||
+		{ [ "$a_run" -eq "$b_run" ] 2>/dev/null && [ "$a_att" -gt "$b_att" ] 2>/dev/null; }
 }
 
 # Rewrite the table between the markers to match the observed set: keep the
 # deadline, owner and state of a row that is still grounded, add a row for a new
 # flake, drop an in-scope row the evidence no longer supports, and leave rows
-# from outside this window untouched. Never edits the prose around it.
+# from outside this window untouched. Rows this window observed get their
+# last_seen updated to the newest observation, and a `fixed:` row with newer
+# evidence is reopened with a fresh deadline. Never edits the prose around it.
 sync() {
-	local records rows runs observed tmp existing seen deadline owner state
+	local records rows runs observed tmp existing seen last_seen recorded_last deadline owner state
 	records="$(records_file)"
 	grep -q '^<!-- flake-ledger:begin -->$' "$LEDGER" || die "$LEDGER_REL has no <!-- flake-ledger:begin --> marker"
 
@@ -556,15 +601,21 @@ sync() {
 	window_runs "$records" >"$runs"
 	observed_set "$records" | cut -f1,2 >"$observed"
 
-	observed_set "$records" | while IFS=$'\t' read -r test lane first_seen; do
+	observed_set "$records" | while IFS=$'\t' read -r test lane first_seen last_seen; do
 		existing="$("$ROOT/.github/scripts/flake-ledger.sh" entries |
 			awk -F '\t' -v t="$test" -v l="$lane" '$1 == t && $2 == l')"
 		if [ -n "$existing" ]; then
 			# An existing row keeps its own first_seen. Re-deriving it on every
 			# sweep would let a deadline walk forward on its own, which is
 			# exactly the escape this file has to make visible rather than
-			# provide.
-			IFS=$'\t' read -r _ _ seen deadline owner state <<<"$existing"
+			# provide. A `fixed:` row with newer evidence has flaked again after
+			# being declared fixed: it is reopened with a fresh deadline,
+			# keeping the issue that owns the fix.
+			IFS=$'\t' read -r _ _ seen recorded_last deadline owner state <<<"$existing"
+			if [[ "$state" == fixed:* ]] && newer "$last_seen" "$recorded_last"; then
+				state="open"
+				deadline="$(date_shift "$(today)" "+$DEADLINE_DAYS")"
+			fi
 		else
 			seen="$first_seen"
 			deadline="$(date_shift "$(today)" "+$DEADLINE_DAYS")"
@@ -575,7 +626,7 @@ sync() {
 			owner="TBD"
 			state="open"
 		fi
-		printf '| %s | %s | %s | %s | %s | %s |\n' "$test" "$lane" "$seen" "$deadline" "$owner" "$state"
+		printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$test" "$lane" "$seen" "$last_seen" "$deadline" "$owner" "$state"
 	done >"$rows"
 
 	"$ROOT/.github/scripts/flake-ledger.sh" entries |
@@ -588,14 +639,14 @@ sync() {
 				if (($1 "\t" $2) in observed) next   # already rewritten above
 				split($3, part, /[@\/]/)
 				if (part[2] in inwindow) next         # in scope and unsupported: dropped
-				printf "| %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6
+				printf "| %s | %s | %s | %s | %s | %s | %s |\n", $1, $2, $3, $4, $5, $6, $7
 			}' >>"$rows"
 
 	tmp="$(mktemp)"
 	{
 		sed -n '1,/^<!-- flake-ledger:begin -->$/p' "$LEDGER"
-		echo '| test | lane | first_seen | deadline | owner_issue | state |'
-		echo '| --- | --- | --- | --- | --- | --- |'
+		echo '| test | lane | first_seen | last_seen | deadline | owner_issue | state |'
+		echo '| --- | --- | --- | --- | --- | --- | --- |'
 		sort "$rows"
 		sed -n '/^<!-- flake-ledger:end -->$/,$p' "$LEDGER"
 	} >"$tmp"
@@ -630,6 +681,47 @@ selftest() {
 			failed=1
 		fi
 	done
+
+	# A row observed flaky again after being declared fixed must not be silent:
+	# check() has to be red on the mismatch, and sync() has to reopen the row
+	# with a fresh deadline, keeping its owning issue. Driven end to end through
+	# the real check() and sync() on a throwaway ledger, because the classify
+	# fixtures above only pin the evidence, not what the comparison does with it.
+	local ledger reopen reopen_msg
+	ledger="$(mktemp)"
+	reopen="$FIXTURES/reopen.obs.tsv"
+	{
+		echo '# Flake ledger -- selftest fixture'
+		echo '<!-- flake-ledger:begin -->'
+		echo '| test | lane | first_seen | last_seen | deadline | owner_issue | state |'
+		echo '| --- | --- | --- | --- | --- | --- | --- |'
+		echo '| TestReopens | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 2026-08-30 | BEO-99 | fixed:abc123 |'
+		echo '<!-- flake-ledger:end -->'
+	} >"$ledger"
+	if SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check >/dev/null 2>&1; then
+		echo "::error::reopen scenario: check() accepted a re-flaked fixed row" >&2
+		failed=1
+	else
+		reopen_msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
+		if ! printf '%s\n' "$reopen_msg" | grep -q 'reopened'; then
+			echo "::error::reopen scenario: check() flagged the re-flake without the reopen message" >&2
+			failed=1
+		fi
+	fi
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync >/dev/null || {
+		echo "::error::reopen scenario: sync() failed" >&2
+		failed=1
+	}
+	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| BEO-99 | open |' "$ledger"; then
+		echo "::error::reopen scenario: sync did not reopen the fixed row with a fresh deadline" >&2
+		failed=1
+	fi
+	if ! SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check >/dev/null 2>&1; then
+		echo "::error::reopen scenario: check() is still red after sync reopened the row" >&2
+		failed=1
+	fi
+	rm -f "$ledger"
+
 	[ "$failed" -eq 0 ] || exit 1
 	echo "flake sweep selftest: all fixtures agree"
 }
