@@ -4,7 +4,9 @@ package fleet
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -427,21 +429,87 @@ func TestFailClosedDuringLaunch_EmptyBrief(t *testing.T) {
 	}
 }
 
-func TestFailClosedDuringLaunch_RequiredSkillMissing(t *testing.T) {
-	tmp := t.TempDir()
-	err := FailClosedDuringLaunch(LaunchPromptInput{
+// requiredSkillLaunchInput is the canonical ship-task input the required-skill
+// presence gate is evaluated against. Callers vary only mode and skills.
+func requiredSkillLaunchInput(t *testing.T, mode string, required ...SkillEntry) LaunchPromptInput {
+	t.Helper()
+	return LaunchPromptInput{
 		TaskID:          "test",
+		TaskKind:        "ship",
 		ParentCaptainID: "captain-1",
 		ParentHome:      "/tmp/parent",
-		WorktreePath:    tmp,
+		WorktreePath:    t.TempDir(),
 		BriefContent:    []byte("brief"),
-		DeliveryMode:    "direct-PR",
-		RequiredSkills: []SkillEntry{
-			{Name: "missing-skill", Applicable: true, SourcePath: "/nonexistent/skill.md"},
-		},
-	})
+		DeliveryMode:    mode,
+		RequiredSkills:  required,
+	}
+}
+
+// skillBinaryOnPath installs an executable named after the skill on a PATH that
+// contains nothing else, so presence is decided by this file alone.
+func skillBinaryOnPath(t *testing.T, name string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("writing %s stub: %v", name, err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+func TestFailClosedDuringLaunch_RequiredSkillBinaryMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	err := FailClosedDuringLaunch(requiredSkillLaunchInput(t, "direct-PR",
+		SkillEntry{Name: shipRequiredSkill, Applicable: true}))
 	if err == nil {
-		t.Error("expected error for missing required skill source")
+		t.Fatalf("expected fail-closed when %q is absent from PATH", shipRequiredSkill)
+	}
+	if !strings.Contains(err.Error(), shipRequiredSkill) {
+		t.Errorf("error must name the skill, got: %v", err)
+	}
+}
+
+func TestFailClosedDuringLaunch_RequiredSkillBinaryPresent(t *testing.T) {
+	skillBinaryOnPath(t, shipRequiredSkill)
+	err := FailClosedDuringLaunch(requiredSkillLaunchInput(t, "direct-PR",
+		SkillEntry{Name: shipRequiredSkill, Applicable: true}))
+	if err != nil {
+		t.Errorf("expected no error when %q is on PATH, got: %v", shipRequiredSkill, err)
+	}
+}
+
+// TestFailClosedDuringLaunch_RequiredSkillGateIsModeScoped pins the reconciliation
+// with bootstrap's {Required: false} classification of gh-axi: the gate is hard
+// only where the charter actually mandates the tool.
+func TestFailClosedDuringLaunch_RequiredSkillGateIsModeScoped(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	for _, mode := range []string{"direct-PR", "no-mistakes"} {
+		input := requiredSkillLaunchInput(t, mode, SkillEntry{Name: shipRequiredSkill, Applicable: true})
+		if err := FailClosedDuringLaunch(input); err == nil {
+			t.Errorf("mode %q: expected hard fail on missing required skill", mode)
+		}
+	}
+
+	local := requiredSkillLaunchInput(t, "local-only", SkillEntry{Name: shipRequiredSkill, Applicable: true})
+	if err := FailClosedDuringLaunch(local); err != nil {
+		t.Errorf("local-only must stay diagnostic, got: %v", err)
+	}
+
+	scout := requiredSkillLaunchInput(t, "direct-PR", SkillEntry{Name: shipRequiredSkill, Applicable: true})
+	scout.TaskKind = "scout"
+	if err := FailClosedDuringLaunch(scout); err != nil {
+		t.Errorf("scout must stay diagnostic, got: %v", err)
+	}
+}
+
+// TestFailClosedDuringLaunch_NonApplicableSkillNotGated keeps the gate aligned
+// with CollectSkills: an entry rejected by authority classification carries
+// Applicable=false and is not a launch precondition.
+func TestFailClosedDuringLaunch_NonApplicableSkillNotGated(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	err := FailClosedDuringLaunch(requiredSkillLaunchInput(t, "direct-PR",
+		SkillEntry{Name: shipRequiredSkill, Applicable: false}))
+	if err != nil {
+		t.Errorf("non-applicable required skill must not gate launch, got: %v", err)
 	}
 }
 
@@ -676,57 +744,42 @@ func TestBuildLaunchPrompt_RecoveryDeterminism(t *testing.T) {
 }
 
 // =============================================================================
-// buildSkillInstructions with strict read/hash verification
+// buildSkillInstructions: a manifest of names, not a carrier of skill content
 // =============================================================================
 
-func TestBuildSkillInstructions_RequiredSkillReadError(t *testing.T) {
-	tmp := t.TempDir()
-	skillPath := filepath.Join(tmp, "nonexistent.md")
-	_, err := buildSkillInstructions(
-		[]SkillEntry{{Name: "missing-skill", Applicable: true, SourcePath: skillPath}},
-		nil, tmp,
+func TestBuildSkillInstructions_ManifestsNamesAndIntent(t *testing.T) {
+	result := buildSkillInstructions(
+		[]SkillEntry{{Name: shipRequiredSkill, Applicable: true}},
+		[]SkillEntry{{Name: "qmd", Applicable: true}},
 	)
-	if err == nil {
-		t.Error("expected error for missing required skill source at build time")
+	if !strings.Contains(result, "## Required Skills") || !strings.Contains(result, shipRequiredSkill) {
+		t.Errorf("required section must name %q, got:\n%s", shipRequiredSkill, result)
 	}
-	if err != nil && !strings.Contains(err.Error(), "missing-skill") {
-		t.Errorf("error should mention skill name, got: %v", err)
+	if !strings.Contains(result, "## Optional Skills") || !strings.Contains(result, "qmd") {
+		t.Errorf("optional section must name qmd, got:\n%s", result)
+	}
+	// The section must carry invocation intent, not a bare noun.
+	if !strings.Contains(result, skillInvocationNote[shipRequiredSkill]) {
+		t.Errorf("required entry must carry its invocation note, got:\n%s", result)
 	}
 }
 
-func TestBuildSkillInstructions_RequiredSkillHashFail(t *testing.T) {
-	tmp := t.TempDir()
-	skillPath := filepath.Join(tmp, "skill.md")
-	os.WriteFile(skillPath, []byte("content"), 0644)
-	_, err := buildSkillInstructions(
-		[]SkillEntry{{Name: "my-skill", Applicable: true, SourcePath: skillPath, SourceSHA256: "badhash"}},
-		nil, tmp,
+func TestBuildSkillInstructions_SkipsNonApplicable(t *testing.T) {
+	result := buildSkillInstructions(
+		[]SkillEntry{{Name: "captain-provisioning", Applicable: false}},
+		[]SkillEntry{{Name: "munsu-ops", Applicable: false}},
 	)
-	if err == nil {
-		t.Error("expected error for SHA-256 mismatch at build time")
+	if result != "" {
+		t.Errorf("non-applicable entries must produce no section, got:\n%s", result)
 	}
 }
 
-func TestBuildSkillInstructions_RequiredSkillSuccess(t *testing.T) {
-	tmp := t.TempDir()
-	skillPath := filepath.Join(tmp, "good-skill.md")
-	content := []byte("# Good Skill\n\nInstructions.\n")
-	os.WriteFile(skillPath, content, 0644)
-	result, err := buildSkillInstructions(
-		[]SkillEntry{{
-			Name: "good-skill", Applicable: true, SourcePath: skillPath,
-			SourceSHA256: sha256Content(content),
-		}},
-		nil, tmp,
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "Good Skill") {
-		t.Error("result should contain skill name")
-	}
-	if !strings.Contains(result, "Instructions.") {
-		t.Error("result should contain inlined skill content")
+// TestBuildSkillInstructions_UnknownSkillDegradesToName keeps the note map from
+// becoming a required registry: a catalog addition still renders.
+func TestBuildSkillInstructions_UnknownSkillDegradesToName(t *testing.T) {
+	result := buildSkillInstructions([]SkillEntry{{Name: "brand-new-axi", Applicable: true}}, nil)
+	if !strings.Contains(result, "- brand-new-axi") {
+		t.Errorf("unknown skill must still be listed by name, got:\n%s", result)
 	}
 }
 
@@ -790,5 +843,56 @@ func TestHarnessPromptArgSupported(t *testing.T) {
 		if name == "pi" && (!a.CaptainLaunch.Supported || !a.CaptainLaunch.PromptArg) {
 			t.Error("pi must have verified prompt-arg contract for soldier launch")
 		}
+	}
+}
+
+// =============================================================================
+// Required-skill presence on the production launch path
+// =============================================================================
+
+// TestLaunchProceedsWhenRequiredSkillOnPath is the positive direction and the
+// more important one: with the required CLI installed, the real launch phases
+// build a prompt carrying the required section and a runnable argv. It guards
+// against the presence gate being mis-wired into killing every ship launch.
+func TestLaunchProceedsWhenRequiredSkillOnPath(t *testing.T) {
+	f := newLaunchFixture(t, "skill-present")
+	if err := runLaunchPhases(f, "prompt"); !errors.Is(err, errCrashSimulated) {
+		t.Fatalf("launch must reach the prompt phase cleanly, got: %v", err)
+	}
+	r := f.runner
+	if !strings.Contains(r.prompt, "## Required Skills") || !strings.Contains(r.prompt, shipRequiredSkill) {
+		t.Errorf("prompt missing required skill section:\n%s", r.prompt)
+	}
+	if r.launchBin == "" || len(r.launchArgs) == 0 {
+		t.Errorf("launch arguments not built: bin=%q args=%v", r.launchBin, r.launchArgs)
+	}
+}
+
+// TestLaunchFailsClosedBeforeSessionWhenRequiredSkillMissing is the negative
+// direction: the ship launch stops at the prompt phase and NO session is ever
+// allocated — the fail-closed promise is about resource allocation, not just
+// about returning an error.
+func TestLaunchFailsClosedBeforeSessionWhenRequiredSkillMissing(t *testing.T) {
+	f := newLaunchFixture(t, "skill-absent")
+	// Strip the fixture's skill stub back off PATH, keeping git so worktree
+	// acquisition still reaches the prompt phase.
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git on PATH: %v", err)
+	}
+	t.Setenv("PATH", filepath.Dir(gitBin))
+
+	err = runLaunchPhases(f, "")
+	if err == nil {
+		t.Fatalf("expected launch to fail closed without %q on PATH", shipRequiredSkill)
+	}
+	if !strings.Contains(err.Error(), shipRequiredSkill) {
+		t.Errorf("error must name the missing skill, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "prompt:") {
+		t.Errorf("failure must occur in the prompt phase, got: %v", err)
+	}
+	if f.endpoints.createCount() != 0 {
+		t.Fatalf("session allocated despite fail-closed launch: %d created", f.endpoints.createCount())
 	}
 }

@@ -106,6 +106,19 @@ type launchFixture struct {
 	endpoints *reentrantEndpointCapabilities
 }
 
+// requiredSkillStubDir returns a directory holding an executable stub named
+// after shipRequiredSkill. Launch fixtures put it on PATH because a real ship
+// host has that CLI installed; without it FailClosedDuringLaunch refuses the
+// launch before any session is allocated.
+func requiredSkillStubDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, shipRequiredSkill), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("writing %s stub: %v", shipRequiredSkill, err)
+	}
+	return dir
+}
+
 // newLaunchFixture builds the fixture. PATH is sanitized to git only so the
 // worktree acquisition uses the deterministic git fallback (never the
 // external treehouse pool).
@@ -123,7 +136,7 @@ func newLaunchFixture(t *testing.T, taskID string) *launchFixture {
 	if err != nil {
 		t.Fatalf("git on PATH: %v", err)
 	}
-	t.Setenv("PATH", filepath.Dir(gitBin))
+	t.Setenv("PATH", filepath.Dir(gitBin)+string(os.PathListSeparator)+requiredSkillStubDir(t))
 
 	snap, err := config.NewResolvedSnapshot(
 		config.FleetBaseDocument{

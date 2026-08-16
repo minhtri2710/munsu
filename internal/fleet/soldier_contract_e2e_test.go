@@ -568,8 +568,8 @@ func TestRegression_BuildLaunchPromptWithoutSrcwalk(t *testing.T) {
 	if !strings.Contains(prompt, "## Required Skills") {
 		t.Error("prompt must contain ## Required Skills section")
 	}
-	if !strings.Contains(prompt, "### gh-axi") {
-		t.Error("prompt must contain ### gh-axi section")
+	if !strings.Contains(prompt, "- gh-axi") {
+		t.Error("prompt must list gh-axi under required skills")
 	}
 	if !strings.Contains(prompt, "## Optional Skills") {
 		t.Error("prompt must contain ## Optional Skills section")
