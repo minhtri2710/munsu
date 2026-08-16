@@ -21,6 +21,52 @@ const tmuxSetupTimeout = 10 * time.Second
 // sessionSeq makes disposable session names unique within a test binary.
 var sessionSeq atomic.Int64
 
+// TestMain owns the tmux server these tests talk to, for the whole package run.
+//
+// Two properties come from that, and both are the point:
+//
+//   - TMUX_TMPDIR moves the default socket into a per-run directory, so the
+//     server is this binary's alone — never the developer's, never another
+//     job's on the same runner.
+//   - The anchor session lives from before the first test to after the last
+//     one, so the server never has zero sessions while a test is running. A
+//     tmux server exits when its last session dies, and a `new-session` issued
+//     into that shutdown fails with "server exited unexpectedly". That is how
+//     TestTmux_Alive_UnknownWindow failed on CI (run 31805831782): it created
+//     its session in the moment TestTmux_NewWindow's t.Cleanup had just killed
+//     the previous — and last — one. With the anchor there is no such moment,
+//     so run order and inter-test timing stop being inputs to the verdict.
+func TestMain(m *testing.M) {
+	if !hasTmux() {
+		os.Exit(m.Run())
+	}
+
+	// Under /tmp, not the default temp root: the socket path lands in
+	// sun_path, which is ~104 bytes on darwin, and macOS's per-user temp
+	// directory alone eats most of that.
+	dir, err := os.MkdirTemp("/tmp", "munsu-it-tmux-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "backend TestMain: tmux socket dir: %v\n", err)
+		os.Exit(1)
+	}
+	os.Setenv("TMUX_TMPDIR", dir)
+
+	anchor := fmt.Sprintf("munsu-it-anchor-%d", os.Getpid())
+	if out, err := exec.Command("tmux", "new-session", "-d", "-s", anchor).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "backend TestMain: tmux new-session -d -s %s: %v: %s\n", anchor, err, strings.TrimSpace(string(out)))
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+
+	// kill-server, not kill-session: the private socket has nothing on it worth
+	// keeping, and this leaves no server and no socket behind on a dev machine.
+	_ = exec.Command("tmux", "kill-server").Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 // disposableSessionName reserves a tmux session name scoped to this process —
 // so it never collides with a developer's own sessions — and registers the
 // t.Cleanup that kills it. It does NOT create the session: use it when the code
@@ -112,6 +158,37 @@ func TestTmux_Alive_UnknownWindow(t *testing.T) {
 	if alive, err := tk.CheckAlive("@99999"); alive || !errors.Is(err, ErrPaneNotFound) {
 		t.Errorf("CheckAlive('@99999') = %v, %v; want false + ErrPaneNotFound", alive, err)
 	}
+}
+
+// TestTmuxServerOutlivesItsLastDisposableSession forces the condition that made
+// TestTmux_Alive_UnknownWindow fail on CI instead of waiting for a runner to
+// produce it: every disposable session this test owns is gone, so the server
+// would have exited if the anchor in TestMain did not exist. Both assertions
+// below are red without that anchor — `list-sessions` reports "no server
+// running" and the follow-up `new-session` is the one that races the shutdown.
+func TestTmuxServerOutlivesItsLastDisposableSession(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not on PATH")
+	}
+
+	session := newDisposableSession(t)
+
+	// Kill it exactly the way the registered t.Cleanup would, but now, while
+	// this test can still observe what the server does next.
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxSetupTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "tmux", "kill-session", "-t", "="+session).CombinedOutput(); err != nil {
+		t.Fatalf("tmux kill-session -t =%s: %v: %s", session, err, strings.TrimSpace(string(out)))
+	}
+
+	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("the tmux server died with the last disposable session: tmux list-sessions: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	// A server that survived must also still take new sessions: this is the
+	// call that returned "server exited unexpectedly" on CI.
+	newDisposableSession(t)
 }
 
 func TestTmux_NewWindow_SessionAutoCreated(t *testing.T) {

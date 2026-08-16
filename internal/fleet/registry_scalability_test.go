@@ -351,49 +351,87 @@ func TestRegistryBindLockScopeIsSmallestTruthful(t *testing.T) {
 // cost bound is the SHAPE of per-binding cost, not its absolute value.
 //
 // The guard used to be an absolute wall-clock ceiling (60s for the whole
-// sequence). That ceiling was unrunnable as a stable signal: the sequence is
-// dominated by durable per-commit I/O (~110ms per binding on an idle SSD, so
-// ~20s of pure floor), leaving under 3x headroom, and the same unchanged code
-// measured 10s to 71s across CI runs depending on runner load and -race build
-// contention. It failed on `main` (run 31680287927) without a single line of
-// internal/fleet having changed. Absolute wall-clock cannot separate "the code
-// regressed" from "the runner was busy", so it is not asserted on here.
+// sequence), then a ratio between the first and the last decile of one bind
+// loop. Neither survived contact with a shared runner. The ratio form failed on
+// `main` in run 31805801020 with ratio 7.7 (first-decile median 10.68ms,
+// last-decile median 82.42ms, 18.02s total) while the same unchanged code
+// measured ratio 1.14 and 2.05s in run 31805831782. The defect was in the
+// measurement, not the threshold: the first and last deciles are taken seconds
+// to tens of seconds apart, so runner load rising during the loop is
+// indistinguishable from cost rising with cardinality. Recalibrating the
+// threshold would only move the price of that confusion.
 //
-// What the guard actually needs to catch is a pathological regression — an
-// accidental per-binding scan over all existing bindings, which turns per-op
-// cost from flat into linear in the number of bindings already stored. That is
-// a property of the SHAPE of the cost curve, and a ratio between two samples
-// from the same run cancels out machine speed, -race overhead and runner load.
-// Measured healthy shape: first-decile median 108ms vs last-decile median
-// 109ms (ratio ~1.0 over a 10x cardinality increase). Sensitivity is set by
-// the ~110ms durable-commit floor F: a regression adding c per stored binding
-// yields ratio (F+190c)/(F+10c), so the 3x guard trips only when c > F/80
-// (~1.4ms per stored binding). That catches heavy per-binding I/O (per-binding
-// fsync, doc re-read); a microsecond in-memory scan stays under the floor,
-// out of reach of any wall-clock shape guard.
+// So the two samples are taken at the same time instead. Two registries run
+// side by side — one already holding n-decile bindings, one starting empty —
+// and their binds are interleaved, alternating which goes first. A load spike
+// now lands on both arms and cancels in the ratio; only cardinality differs
+// between them. That is what the guard is for: a pathological per-binding scan
+// over all stored bindings, which turns per-op cost from flat into linear in
+// the number already stored.
+//
+// Sensitivity is unchanged from the ratio form and still set by the durable
+// commit floor F: a regression adding c per stored binding yields
+// (F+190c)/(F+10c), so the 3x guard trips when c > F/80. Below that floor a
+// regression is out of reach of any wall-clock guard — see
+// TestBindCostShapeRatioSeparatesLoadFromCardinality for what this ratio does
+// and does not catch, asserted on samples rather than on a runner.
 func TestRegistryBindingScaleBound(t *testing.T) {
 	const n = 200
-	r, _, _ := newTestRegistry(t)
+	const decile = n / 10
+
+	// loaded is the arm under test; control is the same code at low
+	// cardinality, on its own home.
+	loaded, _, _ := newTestRegistry(t)
+	control, _, _ := newTestRegistry(t)
 	start := time.Now()
 	for i := 0; i < n; i++ {
-		mustRegisterProject(t, r, fmt.Sprintf("scale-proj-%d", i))
+		mustRegisterProject(t, loaded, fmt.Sprintf("scale-proj-%d", i))
 	}
 	for i := 0; i < n; i++ {
-		mustRegisterCaptain(t, r, fmt.Sprintf("scale-cap-%d", i))
+		mustRegisterCaptain(t, loaded, fmt.Sprintf("scale-cap-%d", i))
 	}
-	perBind := make([]time.Duration, n)
-	for i := 0; i < n; i++ {
-		bindStart := time.Now()
-		mustBind(t, r, fmt.Sprintf("scale-cap-%d", i), fmt.Sprintf("scale-proj-%d", i))
-		perBind[i] = time.Since(bindStart)
+	for i := 0; i < decile; i++ {
+		mustRegisterProject(t, control, fmt.Sprintf("ctl-proj-%d", i))
+		mustRegisterCaptain(t, control, fmt.Sprintf("ctl-cap-%d", i))
+	}
+
+	// Grow the loaded registry to n-decile stored bindings. Unmeasured: these
+	// binds only build the cardinality the measured ones run against.
+	for i := 0; i < n-decile; i++ {
+		mustBind(t, loaded, fmt.Sprintf("scale-cap-%d", i), fmt.Sprintf("scale-proj-%d", i))
+	}
+
+	// Interleaved measurement. Alternating which arm binds first keeps a
+	// systematic per-pair effect (cache warmth, a periodic background task)
+	// from landing on the same arm every time.
+	high := make([]time.Duration, 0, decile)
+	low := make([]time.Duration, 0, decile)
+	for i := 0; i < decile; i++ {
+		bindHigh := func() {
+			at := time.Now()
+			mustBind(t, loaded, fmt.Sprintf("scale-cap-%d", n-decile+i), fmt.Sprintf("scale-proj-%d", n-decile+i))
+			high = append(high, time.Since(at))
+		}
+		bindLow := func() {
+			at := time.Now()
+			mustBind(t, control, fmt.Sprintf("ctl-cap-%d", i), fmt.Sprintf("ctl-proj-%d", i))
+			low = append(low, time.Since(at))
+		}
+		if i%2 == 0 {
+			bindHigh()
+			bindLow()
+		} else {
+			bindLow()
+			bindHigh()
+		}
 	}
 	// Elapsed is evidence, not an assertion: logged so a genuinely slow run is
 	// still visible in CI output without being a failure signal on its own.
-	t.Logf("%d projects + %d captains + %d bindings in %v", n, n, n, time.Since(start))
+	t.Logf("%d projects + %d captains + %d bindings (+%d control bindings) in %v", n, n, n, decile, time.Since(start))
 
 	// Hard invariant: every binding is readable and one-to-one.
 	for i := 0; i < n; i++ {
-		owner, err := r.OwnerOf(mustProjectID(t, fmt.Sprintf("scale-proj-%d", i)))
+		owner, err := loaded.OwnerOf(mustProjectID(t, fmt.Sprintf("scale-proj-%d", i)))
 		if err != nil {
 			t.Fatalf("owner of project %d: %v", i, err)
 		}
@@ -402,21 +440,83 @@ func TestRegistryBindingScaleBound(t *testing.T) {
 		}
 	}
 
-	// Shape guard: per-binding cost must stay flat as the stored binding count
-	// grows 10x. Medians, not means, so a single scheduling stall on a loaded
-	// runner cannot move the verdict.
-	const decile = n / 10
-	first := medianDuration(perBind[:decile])
-	last := medianDuration(perBind[n-decile:])
-	t.Logf("per-binding median: first decile %v, last decile %v", first, last)
-	if first <= 0 {
-		t.Fatalf("first-decile median is %v — clock resolution too coarse to judge cost shape", first)
+	ratio, highMedian, lowMedian, err := bindCostShapeRatio(high, low)
+	t.Logf("per-binding median: %v against %d stored bindings, %v against a fresh registry", highMedian, n-decile, lowMedian)
+	if err != nil {
+		t.Fatalf("cost shape not judgeable: %v", err)
 	}
-	if ratio := float64(last) / float64(first); ratio > 3 {
-		t.Fatalf("per-binding cost grew %.1fx from the first to the last decile "+
-			"(median %v -> %v): binding cost scales with the number of stored "+
+	if ratio > 3 {
+		t.Fatalf("per-binding cost is %.1fx higher against %d stored bindings than against a fresh registry "+
+			"measured in the same window (median %v vs %v): binding cost scales with the number of stored "+
 			"bindings, which is the pathological per-binding scan this guard exists to catch",
-			ratio, first, last)
+			ratio, n-decile, highMedian, lowMedian)
+	}
+}
+
+// bindCostShapeRatio reports how much more a bind costs against many stored
+// bindings than against almost none, from two interleaved sample sets. Medians,
+// not means, so a single scheduling stall on a loaded runner cannot move the
+// verdict — and because the samples are interleaved, load that lasts longer
+// than one bind moves both medians together and cancels.
+func bindCostShapeRatio(high, low []time.Duration) (ratio float64, highMedian, lowMedian time.Duration, err error) {
+	if len(high) == 0 || len(low) == 0 {
+		return 0, 0, 0, fmt.Errorf("need samples from both arms, got %d high and %d low", len(high), len(low))
+	}
+	highMedian = medianDuration(high)
+	lowMedian = medianDuration(low)
+	if lowMedian <= 0 {
+		return 0, highMedian, lowMedian, fmt.Errorf("low-cardinality median is %v — clock resolution too coarse to judge cost shape", lowMedian)
+	}
+	return float64(highMedian) / float64(lowMedian), highMedian, lowMedian, nil
+}
+
+// TestBindCostShapeRatioSeparatesLoadFromCardinality asserts the two properties
+// the guard above is claimed to have, on samples instead of on a runner: load
+// that moves both arms must not trip it, and a per-stored-binding cost must.
+// The first case is the failure this measurement was rebuilt to remove — it
+// carries the shape of run 31805801020, where a load ramp during one bind loop
+// produced ratio 7.7 with no code change.
+func TestBindCostShapeRatioSeparatesLoadFromCardinality(t *testing.T) {
+	const samples = 20
+	const floor = 5 * time.Millisecond
+
+	// Case 1: flat per-binding cost, runner load ramping 8x across the window
+	// and spiking hard in the middle. Interleaved samples see it together.
+	var rampHigh, rampLow []time.Duration
+	for i := 0; i < samples; i++ {
+		load := time.Duration(1+7*i/samples) * floor
+		if i == samples/2 {
+			load = 40 * floor
+		}
+		rampHigh = append(rampHigh, floor+load)
+		rampLow = append(rampLow, floor+load)
+	}
+	ratio, high, low, err := bindCostShapeRatio(rampHigh, rampLow)
+	if err != nil {
+		t.Fatalf("ramp case: %v", err)
+	}
+	if ratio > 3 {
+		t.Fatalf("runner load alone tripped the guard: ratio %.1f (median %v vs %v)", ratio, high, low)
+	}
+
+	// Case 2: a per-binding scan over stored bindings, c per stored binding,
+	// measured at 180 stored vs 0 stored — with the same load ramp on top. The
+	// ramp raises the effective floor, so it also raises the c a 3x ratio can
+	// see: that is the cost of using wall-clock at all, stated rather than
+	// hidden.
+	const c = 500 * time.Microsecond
+	var scanHigh, scanLow []time.Duration
+	for i := 0; i < samples; i++ {
+		load := time.Duration(1+7*i/samples) * floor
+		scanHigh = append(scanHigh, floor+load+180*c)
+		scanLow = append(scanLow, floor+load)
+	}
+	ratio, high, low, err = bindCostShapeRatio(scanHigh, scanLow)
+	if err != nil {
+		t.Fatalf("scan case: %v", err)
+	}
+	if ratio <= 3 {
+		t.Fatalf("a per-stored-binding cost of %v did not trip the guard: ratio %.1f (median %v vs %v)", c, ratio, high, low)
 	}
 }
 
