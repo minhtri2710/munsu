@@ -429,6 +429,12 @@ func requiredSkillsAreHardGate(taskKind, deliveryMode string) bool {
 // fails — charter, brief, envelope, task meta, parent identity or delivery mode
 // absent/unreadable, or a required skill CLI missing in a mode that hard-gates
 // on it (requiredSkillsAreHardGate).
+//
+// It does NOT re-classify WorktreePath. "The target is an isolated worktree"
+// is carried by fleet.BoundWorktree, which only bindWorktree can produce and
+// buildSoldierPrompt requires as an argument — the compiler enforces it on
+// every caller, so repeating the git classification here would be a second
+// owner of the same invariant (ADR-0009) for no added guarantee.
 func FailClosedDuringLaunch(input LaunchPromptInput) error {
 	var failures []string
 

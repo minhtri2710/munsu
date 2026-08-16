@@ -13,7 +13,14 @@ import (
 type Identity int
 
 const (
-	Primary Identity = iota
+	// Unknown is the zero value on purpose: an Identity nobody assigned, or
+	// one produced alongside a classification error, must never read as a
+	// real verdict. With Primary at zero, a failed classification reported
+	// "primary" for a path it could not classify at all, and any future
+	// `if identity == Primary { block }` written without an Err check would
+	// have refused on it.
+	Unknown Identity = iota
+	Primary
 	Worktree
 	Unrelated
 )
@@ -123,29 +130,29 @@ func gitPath(path, flag string) (string, bool, error) {
 func ClassifyIdentity(path string) (Identity, string, string, error) {
 	canonical, err := canonicalPath(path)
 	if err != nil {
-		return Unrelated, "", "", fmt.Errorf("resolving repository path %s: %w", path, err)
+		return Unknown, "", "", fmt.Errorf("resolving repository path %s: %w", path, err)
 	}
 	info, err := os.Stat(canonical)
 	if err != nil {
-		return Unrelated, "", "", fmt.Errorf("inspecting repository path %s: %w", canonical, err)
+		return Unknown, "", "", fmt.Errorf("inspecting repository path %s: %w", canonical, err)
 	}
 	if !info.IsDir() {
-		return Unrelated, "", "", fmt.Errorf("repository path %s is not a directory", canonical)
+		return Unknown, "", "", fmt.Errorf("repository path %s is not a directory", canonical)
 	}
 
 	gitDir, isRepo, err := gitPath(canonical, "--git-dir")
 	if err != nil {
-		return Unrelated, "", "", err
+		return Unknown, "", "", err
 	}
 	if !isRepo {
 		return Unrelated, "", "", nil
 	}
 	commonDir, isRepo, err := gitPath(canonical, "--git-common-dir")
 	if err != nil {
-		return Unrelated, "", "", err
+		return Unknown, "", "", err
 	}
 	if !isRepo {
-		return Unrelated, "", "", fmt.Errorf("git common-dir unavailable for repository %s", canonical)
+		return Unknown, "", "", fmt.Errorf("git common-dir unavailable for repository %s", canonical)
 	}
 	if gitDir == commonDir {
 		return Primary, gitDir, commonDir, nil
@@ -206,6 +213,7 @@ func Classify(path string) *Result {
 	identity, gitDir, commonDir, err := ClassifyIdentity(path)
 	if err != nil {
 		res.GateCap = GateUnknown
+		res.Identity = Unknown
 		res.Err = fmt.Errorf("classifying identity: %w", err)
 		return res
 	}
