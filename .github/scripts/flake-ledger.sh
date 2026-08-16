@@ -37,11 +37,13 @@
 # Usage:
 #   flake-ledger.sh entries   parsed rows, tab-separated, for other scripts
 #   flake-ledger.sh check     format and deadlines, fail-closed
+#   flake-ledger.sh selftest  every rule above against a fixture that breaks it
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LEDGER="${LEDGER:-$ROOT/.github/flake-ledger.md}"
 LEDGER_REL="${LEDGER#"$ROOT"/}"
+FIXTURES="$ROOT/.github/testdata/flake-ledger"
 
 # The header row the table must have, in this order. Checked rather than
 # assumed: a reordered column would otherwise be parsed as a different field
@@ -68,9 +70,14 @@ die() {
 # the entry set to nothing, and an empty ledger is indistinguishable from a
 # clean one at the point where it matters.
 markers() {
+	# `|| true` because a file with no marker at all is the case this function
+	# exists to name: grep exits 1 there, and under `set -e -o pipefail` that
+	# aborted the script one line before the message that says what is wrong --
+	# fail-closed, but silently, which is the failure mode this repo asks its
+	# guards not to have.
 	local begin end
-	begin="$(grep -n '^<!-- flake-ledger:begin -->$' "$LEDGER" | cut -d: -f1)"
-	end="$(grep -n '^<!-- flake-ledger:end -->$' "$LEDGER" | cut -d: -f1)"
+	begin="$(grep -n '^<!-- flake-ledger:begin -->$' "$LEDGER" | cut -d: -f1 || true)"
+	end="$(grep -n '^<!-- flake-ledger:end -->$' "$LEDGER" | cut -d: -f1 || true)"
 	case "$begin$end" in
 	*$'\n'*) die "$LEDGER_REL has duplicate flake-ledger markers" ;;
 	esac
@@ -163,7 +170,15 @@ format_errors() {
 			# which the alarm becomes work: the ledger PR cannot merge until a
 			# person files the issue that will do the fixing.
 			if (owner == "" || owner == "TBD") bad(test ": entry needs an owning issue in owner_issue, not \"" owner "\"")
-			if (state !~ /^(open|fixed:[^ \t]+)$/) bad(test ": state must be `open` or `fixed:<ref>`, got \"" state "\"")
+			# `fixed:` is the one state no deadline is compared against, so it
+			# is the one state that has to be checkable. It used to accept any
+			# ref with no whitespace in it: `fixed:i-never-fixed-it` read as
+			# `0 open, 0 overdue`, permanently, for the cost of one word --
+			# cheaper than moving the deadline, which has to be repeated every
+			# 14 days and widens a gap `git log` shows. A commit id does not
+			# prove the fix; it makes the claim something the other half can
+			# check, and `flake-sweep.sh verify-fixed` then checks it is on main.
+			if (state !~ /^(open|fixed:[0-9a-f]{7,40})$/) bad(test ": state must be `open` or `fixed:<sha>` naming the commit that landed the fix, got \"" state "\"")
 
 			key = test "\t" lane
 			if (key in first) bad(test " (" lane "): already listed on line " first[key])
@@ -195,7 +210,7 @@ check() {
 			printf '  %s (%s): due %s, owned by %s\n' "$test" "$lane" "$deadline" "$owner" >&2
 		done
 		echo "  A flake with an expired deadline is a skipped test with paperwork. Fix the test and set" >&2
-		echo "  its state to fixed:<ref>, or argue in the owning issue why the date moves and move it" >&2
+		echo "  its state to fixed:<sha>, or argue in the owning issue why the date moves and move it" >&2
 		echo "  in a diff someone reads. This lane is red on every open PR until then -- that is the" >&2
 		echo "  mechanism, not a bug: the owner of a flake is whoever needs main green next." >&2
 		failed=1
@@ -210,11 +225,70 @@ check() {
 	echo "flake ledger: $(entries | grep -c . || true) entries, $open_count open, 0 overdue"
 }
 
+# ---------------------------------------------------------------------------
+# selftest
+# ---------------------------------------------------------------------------
+#
+# This is the half that runs on every PR, and until BEO-103 it was the only
+# guard in `invariants` with nothing watching it: ten of its rules were deleted
+# one at a time and every lane in the repo stayed green, because removing a rule
+# does not change the happy path by a single bit. That is the same shape the
+# reachability lane exists for, one level up -- a guard nothing exercises
+# protects nothing, and a guard nothing *tests* stops protecting silently.
+#
+# One fixture per rule, each breaking exactly that rule, and the .want pins the
+# whole run -- stdout, stderr and the exit status -- so a deleted rule changes
+# one file and says which. The mutation each fixture answers, verbatim:
+#
+#   clean                  none; the row every other fixture is a copy of
+#   bad-test-name          delete the `test !~ /^Test[A-Za-z0-9_]*$/` rule
+#   bad-lane               delete the `lane !~ ("^(" lanes ")$")` rule
+#   bad-first-seen         delete the `seen !~ /^[0-9a-f]{8,40}@.../` rule
+#   bad-last-seen          delete the `last !~ /^[0-9a-f]{8,40}@.../` rule
+#   bad-deadline           delete the `deadline !~ /^[0-9]{4}-.../` rule
+#   owner-tbd              delete the `owner == "" || owner == "TBD"` rule
+#   bad-state              delete the `state !~ /^(open|fixed:...)$/` rule
+#   fixed-not-a-sha        loosen that same rule back to `fixed:[^ \t]+`
+#   duplicate-row          delete the `key in first` rule
+#   wrong-column-count     delete the `NF != 9` rule
+#   header-reordered       delete the `!seenheader` comparison against cols
+#   overdue-deadline       delete the `$7 == "open" && $5 < today` comparison
+#   missing-markers        delete the `[ -n "$begin" ] && [ -n "$end" ]` check
+#   duplicate-markers      delete the `*$'\n'*` case in markers()
+#   markers-out-of-order   delete the `[ "$begin" -lt "$end" ]` check
+#
+# Dates are 9999-12-31 for "not due" and 2020-01-01 for "overdue" so that no
+# fixture expires and starts failing on a date nobody chose.
+selftest() {
+	local failed=0 fixture name want got rc
+	[ -d "$FIXTURES" ] || die "missing ${FIXTURES#"$ROOT"/}"
+	for fixture in "$FIXTURES"/*.md; do
+		name="$(basename "$fixture" .md)"
+		want="${fixture%.md}.want"
+		[ -f "$want" ] || die "fixture $name has no .want"
+		# A subprocess, not a function call: `check` exits, and its exit status
+		# is half of what each fixture pins.
+		if got="$(LEDGER="$fixture" "$0" check 2>&1)"; then rc=0; else rc=$?; fi
+		got="$got
+exit $rc"
+		if [ "$got" = "$(cat "$want")" ]; then
+			echo "  ok   $name"
+		else
+			echo "::error::flake-ledger check disagrees with fixture $name:" >&2
+			diff -u "$want" <(printf '%s\n' "$got") >&2 || true
+			failed=1
+		fi
+	done
+	[ "$failed" -eq 0 ] || exit 1
+	echo "flake ledger selftest: all fixtures agree"
+}
+
 case "${1:-}" in
 entries) entries ;;
 check) check ;;
+selftest) selftest ;;
 *)
-	echo "usage: flake-ledger.sh {entries|check}" >&2
+	echo "usage: flake-ledger.sh {entries|check|selftest}" >&2
 	exit 2
 	;;
 esac

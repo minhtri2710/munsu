@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/duplicate-markers.md has duplicate flake-ledger markers
+exit 1

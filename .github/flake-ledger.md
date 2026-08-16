@@ -41,7 +41,7 @@ By being fixed, by hand. Rows are never dropped automatically by age. While the
 run a row cites is still inside the sweep's window, the row is mandatory:
 deleting it there is red, and if the test is still flaky the sweep re-files it
 on the next main run. Once that evidence has aged out of the window, nothing
-can re-derive the row, so once the fix has landed (`state` reads `fixed:<ref>`)
+can re-derive the row, so once the fix has landed (`state` reads `fixed:<sha>`)
 a person can remove the row and it will not come back.
 
 A row is **never** closed because "we have not seen it fail in a while". BEO-82
@@ -64,14 +64,23 @@ to make its re-flakes silent.
 | `last_seen` | the newest observation the sweep has seen, same `<sha>@<run_id>/<attempt>` format as `first_seen`; bot-maintained, and the sweep is red while it lags the evidence |
 | `deadline` | `YYYY-MM-DD`, 14 days from filing by default |
 | `owner_issue` | the issue that will fix it. `TBD` is refused: filing the flake and filing the work are the same act |
-| `state` | `open`, or `fixed:<ref>` once the fix has landed |
+| `state` | `open`, or `fixed:<sha>` naming the commit that landed the fix |
+
+`fixed:` is the one state no deadline is compared against, so it is the one
+state that has to be checkable: the ref must be a commit id, and it must be a
+commit reachable from `main`. `fixed:i-never-fixed-it` used to read as `0 open,
+0 overdue` for the cost of one word -- cheaper than the escape this file already
+admits to, and permanent.
 
 `.github/scripts/flake-ledger.sh check` enforces the shape and the deadlines
-with no network access at all, next to the ADR-number and gofmt rules.
+with no network access at all, next to the ADR-number and gofmt rules, and
+`flake-ledger.sh selftest` runs beside it with one fixture per rule -- the rules
+themselves are guards, and a guard nothing tests stops protecting silently.
 `.github/scripts/flake-sweep.sh check` compares this table against the API in
 both directions, the way `deadcode.sh check` compares `.github/deadcode.allow`
 against the tree: observed but unfiled is red, filed but no longer observable is
-red too.
+red too. `flake-sweep.sh verify-fixed` is the half that can check a `fixed:` ref
+against `main`.
 
 The rows between the markers below are machine-maintained. Edit `owner_issue`,
 `deadline` and `state` by hand; leave `test`, `lane`, `first_seen` and

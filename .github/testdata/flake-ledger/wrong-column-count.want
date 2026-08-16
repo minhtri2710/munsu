@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/wrong-column-count.md:8: expected a 7-column row `| test|lane|first_seen|last_seen|deadline|owner_issue|state |`, got 6 columns
+exit 1

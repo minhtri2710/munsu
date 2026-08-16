@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/bad-deadline.md:8: TestAlpha: deadline must be YYYY-MM-DD, got "9999-8-3"
+exit 1

@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/fixed-not-a-sha.md:8: TestAlpha: state must be `open` or `fixed:<sha>` naming the commit that landed the fix, got "fixed:i-never-fixed-it"
+exit 1

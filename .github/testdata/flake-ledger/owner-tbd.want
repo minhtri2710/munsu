@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/owner-tbd.md:8: TestAlpha: entry needs an owning issue in owner_issue, not "TBD"
+exit 1

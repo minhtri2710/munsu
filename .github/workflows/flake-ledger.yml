@@ -19,9 +19,16 @@ on:
   workflow_dispatch:
     inputs:
       window-days:
-        description: How many days of main runs to re-derive
+        # No default here, and none in the step below either. This input used to
+        # default to 7 and `workflow_run` carries no inputs, so every automatic
+        # sweep ran a 7-day window while flake-sweep.sh documented 30 and said
+        # in a comment that the window must stay comfortably wider than the
+        # 14-day deadline. A window narrower than the deadline makes deleting a
+        # row -- or the whole table -- green in both halves at once. The script
+        # owns the number and refuses anything below its floor; leave this empty
+        # to get it.
+        description: Days of main runs to re-derive (default and minimum come from flake-sweep.sh)
         required: false
-        default: "7"
 
 permissions:
   contents: read
@@ -70,10 +77,10 @@ jobs:
       - name: Derive the flaky set from what CI already ran
         env:
           GH_TOKEN: ${{ github.token }}
-          WINDOW: ${{ inputs.window-days || '7' }}
+          WINDOW: ${{ inputs.window-days }}
         run: |
           set -eu
-          .github/scripts/flake-sweep.sh observe --window-days "$WINDOW" > records.tsv
+          .github/scripts/flake-sweep.sh observe ${WINDOW:+--window-days "$WINDOW"} > records.tsv
           wc -l < records.tsv | xargs printf 'observation records: %s\n'
 
       # Fail-closed, in the same shape as `deadcode.sh check`: a flake CI can
@@ -88,6 +95,22 @@ jobs:
         env:
           SWEEP_RECORDS: records.tsv
         run: .github/scripts/flake-sweep.sh check
+
+      # `fixed:<sha>` is the one state no deadline is compared against, and the
+      # hermetic half can only judge its shape. This is the half that can check
+      # the commit exists and is reachable from main.
+      #
+      # Its own step rather than a fourth direction inside `check`, because the
+      # remedies differ: `check`'s is the PR below, and the step that opens it
+      # treats "the comparison failed but sync changed nothing" as a bug in the
+      # script. A wrong fix ref is repaired by a person, and sync cannot write
+      # that diff -- folded in, it would look like that bug.
+      - name: "Every fixed: row must cite a commit on main"
+        id: fixed
+        continue-on-error: true
+        env:
+          SWEEP_RECORDS: records.tsv
+        run: .github/scripts/flake-sweep.sh verify-fixed
 
       - name: Open a pull request for the difference
         if: steps.compare.outcome == 'failure'
@@ -147,8 +170,10 @@ jobs:
             --title "chore: flake ledger needs an update" \
             --body-file pr-body.md
 
-      # The comparison's verdict is this job's verdict. `continue-on-error` above
-      # exists so the PR still gets opened when it fails, not to swallow it.
-      - name: Report the comparison's verdict
-        if: steps.compare.outcome == 'failure'
+      # The two verdicts above are this job's verdict. `continue-on-error` on
+      # both exists so the PR still gets opened when the comparison fails, and
+      # so a wrong fix ref does not stop the comparison from being reported --
+      # not to swallow either of them.
+      - name: Report the verdicts
+        if: steps.compare.outcome == 'failure' || steps.fixed.outcome == 'failure'
         run: exit 1

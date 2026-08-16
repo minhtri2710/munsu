@@ -86,6 +86,7 @@
 #   flake-sweep.sh classify < records          records -> verdicts (pure text)
 #   flake-sweep.sh check    [--window-days N]  observed set vs ledger, both ways
 #   flake-sweep.sh sync     [--window-days N]  rewrite the ledger table to match
+#   flake-sweep.sh verify-fixed                every `fixed:<sha>` is on main
 #   flake-sweep.sh selftest                    classify against committed fixtures
 #
 # `observe` and `classify` are separate on purpose: classification is pure text
@@ -107,6 +108,20 @@ WINDOW_DAYS=30
 
 # Days from first sighting to the deadline the bot writes.
 DEADLINE_DAYS=14
+
+# ...and "comfortably wider" is now a number this script refuses to go below,
+# because the invariant above was stated in a comment and contradicted by the
+# workflow that calls it: flake-ledger.yml ran `--window-days 7` on every push
+# to main (its `inputs.window-days || '7'` fallback, and `workflow_run` carries
+# no inputs). At 7 days every row older than a week is out of window, and a
+# window narrower than the deadline makes deleting a row -- or the whole table
+# -- green in both halves at once.
+#
+# Twice the deadline, not once: a row has to stay re-derivable for a full
+# deadline period *after* it comes due, or the days when someone is actually
+# dealing with an overdue row are exactly the days its evidence is ageing out
+# from under them.
+WINDOW_FLOOR=$((DEADLINE_DAYS * 2))
 
 REPO="${GITHUB_REPOSITORY:-minhtri2710/munsu}"
 
@@ -274,28 +289,46 @@ observe() {
 	# than in up to 12.8 hours) and the self-healing ones (which are not allowed
 	# to count until the touch check has had its say). In a 30-day window that is
 	# a handful of SHAs instead of the 31 that went red.
-	local enrich head_sha head_run
+	local enrich head_sha head_run headjobs
 	enrich="$(classify <"$pass1" |
 		awk -F '\t' '$1 == "pending" || ($1 == "flake" && $7 ~ /^self-healing/) { print $4 }' |
 		sort -u)"
 
+	# Every call here dies on failure, like every other call in this script, and
+	# the distinction it is protecting is worth stating: an empty answer means
+	# "this merge commit has no PR" or "that PR never ran CI", which is a fact
+	# about the world and correctly leaves the red `pending`. A failed call means
+	# this script does not know, and the two must not collapse into each other.
+	#
+	# They did, until BEO-103. A 403, a secondary rate limit or one 5xx turned a
+	# `flake` into a `pending`, `check` then reported the row already in the
+	# ledger as no longer derivable, and `sync` deleted it -- taking its
+	# owner_issue and deadline with it -- inside a PR that asks the reader not to
+	# argue with the sweep. The fast path is the only route to a verdict for the
+	# median 43 minutes (p90 7.3 hours) before the next main run reaches this
+	# lane, so this is not a rare corner: it is the window the fast path exists
+	# to fill. Fail closed: no verdict, no row deleted.
 	for sha in $enrich; do
-		head_sha="$(gh api "repos/$REPO/commits/$sha/pulls" --jq '.[0].head.sha // empty')" || head_sha=""
+		head_sha="$(gh api "repos/$REPO/commits/$sha/pulls" --jq '.[0].head.sha // empty')" ||
+			die "cannot look up the pull request of $sha"
 		[ -n "$head_sha" ] || continue
 		head_run="$(api "repos/$REPO/actions/workflows/ci.yml/runs" \
 			-f "head_sha=$head_sha" -f per_page=10 \
-			--jq '[.workflow_runs[] | select(.event == "pull_request")] | first | .id // empty')" || head_run=""
+			--jq '[.workflow_runs[] | select(.event == "pull_request")] | first | .id // empty')" ||
+			die "cannot list CI runs of PR head $head_sha"
 		[ -n "$head_run" ] || continue
 		# Attempt 1 of the head run, for the same reason the main side reads
 		# attempt 1: a rerun on the PR would otherwise launder a red head into a
 		# green one and turn a real regression into a ledger entry.
-		api "repos/$REPO/actions/runs/$head_run/attempts/1/jobs" -f per_page=100 \
-			--jq '.jobs[] | [.name, .conclusion] | @tsv' |
-			while IFS=$'\t' read -r job_name conc; do
-				lane="$(lane_key "$job_name")"
-				[ -n "$lane" ] || continue
-				printf 'headjob\t%s\t%s\t%s\n' "$sha" "$lane" "$conc"
-			done
+		headjobs="$(api "repos/$REPO/actions/runs/$head_run/attempts/1/jobs" -f per_page=100 \
+			--jq '.jobs[] | [.name, .conclusion] | @tsv')" ||
+			die "cannot read jobs of PR head run $head_run attempt 1"
+		while IFS=$'\t' read -r job_name conc; do
+			[ -n "$job_name" ] || continue
+			lane="$(lane_key "$job_name")"
+			[ -n "$lane" ] || continue
+			printf 'headjob\t%s\t%s\t%s\n' "$sha" "$lane" "$conc"
+		done <<<"$headjobs"
 	done
 
 	# Packages touched between a red main commit and the next main commit. The
@@ -303,23 +336,51 @@ observe() {
 	# commit fixed it is not a flake, and filing it as one would put an
 	# already-fixed test under a deadline. It only knows the test's own
 	# directory -- a fix that landed in a dependency still reads as a flake.
-	local prev_sha="" next_sha
+	local prev_sha="" next_sha files
 	while IFS=$'\t' read -r run_id attempts sha created conclusion; do
 		if [ -n "$prev_sha" ] && printf '%s\n' "$enrich" | grep -qx "$prev_sha"; then
 			next_sha="$sha"
+			# Fetched before the pair is announced, and fatal if it fails, for
+			# the same reason the fast path above is: a compare that errored
+			# would otherwise be announced as "compared, nothing touched", which
+			# is the record that turns a real fix into a flake entry.
+			files="$(gh api "repos/$REPO/compare/$prev_sha...$next_sha" --jq '.files[].filename')" ||
+				die "cannot compare $prev_sha...$next_sha"
 			# The pair is announced separately from its files, so the
 			# classifier can tell "compared, nothing touched" from "never
 			# compared". Without that distinction an absent comparison reads
 			# as an untouched package, and a fix would be filed as a flake.
 			printf 'compared\t%s\t%s\n' "$prev_sha" "$next_sha"
-			gh api "repos/$REPO/compare/$prev_sha...$next_sha" --jq '.files[].filename' |
-				sed -E 's|/[^/]+$||' | sort -u |
+			printf '%s\n' "$files" | sed -E 's|/[^/]+$||' | sort -u |
 				while IFS= read -r dir; do
+					[ -n "$dir" ] || continue
 					printf 'touch\t%s\t%s\t%s\n' "$prev_sha" "$next_sha" "$dir"
 				done
 		fi
 		prev_sha="$sha"
 	done <<<"$runs"
+
+	# `state: fixed:<sha>` is a claim that a commit stopped a test flaking, and
+	# it is the one state that takes a row out of the deadline comparison
+	# entirely. The hermetic half cannot check it -- it has no network, on
+	# purpose -- so the answer is fetched here, with every other API call, and
+	# written out as a record. That keeps `verify-fixed` a pure function of this
+	# stream, so the selftest can pin all three answers without a network.
+	local fsha status
+	while IFS= read -r fsha; do
+		[ -n "$fsha" ] || continue
+		if status="$(gh api "repos/$REPO/compare/$fsha...main" --jq '.status' 2>&1)"; then
+			case "$status" in
+			identical | ahead) printf 'fixedsha\t%s\ton-main\n' "$fsha" ;;
+			*) printf 'fixedsha\t%s\toff-main\n' "$fsha" ;;
+			esac
+		elif printf '%s' "$status" | grep -q 'HTTP 404'; then
+			printf 'fixedsha\t%s\tunknown-sha\n' "$fsha"
+		else
+			die "cannot tell whether $fsha is on main: $status"
+		fi
+	done < <("$ROOT/.github/scripts/flake-ledger.sh" entries |
+		awk -F '\t' '$7 ~ /^fixed:/ { print substr($7, 7) }' | sort -u)
 
 	rm -f "$pass1"
 }
@@ -572,6 +633,64 @@ check() {
 	echo "flake sweep: $(printf '%s\n' "$obs" | grep -c . || true) flaky (test, lane) pairs observed, all filed"
 }
 
+# ---------------------------------------------------------------------------
+# verify-fixed
+# ---------------------------------------------------------------------------
+#
+# `state: fixed:<sha>` is the only value that takes a row out of the deadline
+# comparison, and before BEO-103 it proved nothing: `fixed:i-never-fixed-it` and
+# `fixed:0000000` both read `0 open, 0 overdue`. That made it cheaper than the
+# escape this file already admits to -- moving the deadline, which has to be
+# repeated every 14 days and shows up in `git log` as a widening gap -- while
+# being permanent and invisible.
+#
+# The hermetic half now demands the shape of a commit id, which is all a file
+# can judge about itself. This demands the commit exists and is reachable from
+# main.
+#
+# A separate command rather than a fourth direction inside check(), because the
+# two have different remedies: check()'s is `sync`, and the workflow treats "the
+# comparison failed but sync changed nothing" as a bug in this script. A row
+# whose fix ref is wrong is repaired by a person, and sync cannot produce that
+# diff -- folding it in would make a human-fixable row look like a bug here.
+verify_fixed() {
+	local records unfounded
+	records="$(records_file)"
+
+	# Absence of an answer is not an answer: a row whose sha this sweep never
+	# asked about is reported too, so a lookup that silently stops happening
+	# cannot read as a clean bill of health.
+	unfounded="$(awk -F '\t' -v recs="$records" '
+		BEGIN {
+			while ((getline r < recs) > 0) {
+				split(r, p, "\t")
+				if (p[1] == "fixedsha") answer[p[2]] = p[3]
+			}
+		}
+		$7 ~ /^fixed:/ {
+			sha = substr($7, 7)
+			verdict = (sha in answer) ? answer[sha] : "not-checked"
+			if (verdict != "on-main") print $1 "\t" $2 "\t" sha "\t" verdict
+		}' <<<"$("$ROOT/.github/scripts/flake-ledger.sh" entries)")"
+
+	if [ -n "$unfounded" ]; then
+		echo "::error::$LEDGER_REL rows whose fixed: state does not cite a commit on main:" >&2
+		printf '%s\n' "$unfounded" | while IFS=$'\t' read -r test lane sha verdict; do
+			case "$verdict" in
+			unknown-sha) why="is not a commit in this repository" ;;
+			off-main) why="is a commit, but nothing on main reaches it" ;;
+			*) why="was not checked by this sweep" ;;
+			esac
+			printf '  %s (%s): fixed:%s %s\n' "$test" "$lane" "$sha" "$why" >&2
+		done
+		echo "  A fix that is not on main has not fixed main. Cite the commit that landed, or set the" >&2
+		echo "  row back to 'open' with a deadline -- 'fixed:' is the one state no deadline is compared" >&2
+		echo "  against, so it is the one state that has to be checkable." >&2
+		exit 1
+	fi
+	echo "flake sweep: every fixed: row cites a commit on main"
+}
+
 # Strictly-newer comparison of two <sha>@<run_id>/<attempt> citations: run ids
 # grow with time, and equal run ids are disambiguated by attempt.
 newer() {
@@ -664,6 +783,28 @@ sync() {
 # of the four runs in the header: it must recover all three original reds, the
 # two that read `success` at run level included. That is the only test that
 # proves this reads attempts rather than conclusions.
+#
+# The classify fixtures pin the evidence and nothing else, which was the gap
+# BEO-103 measured: replacing either direction of check()'s comparison with
+# `if false` left this selftest green, so the two rules the whole mechanism is
+# named after had no test at all. The scenarios below drive the real check(),
+# sync() and verify_fixed() over a throwaway ledger, and the mutation each one
+# answers is named next to it.
+
+# A throwaway ledger with the given table rows, for the scenarios below. The
+# prose around the markers is what a real ledger has and sync() must not touch.
+scratch_ledger() {
+	local file="$1"
+	shift
+	{
+		echo '# Flake ledger -- selftest scratch'
+		echo '<!-- flake-ledger:begin -->'
+		echo '| test | lane | first_seen | last_seen | deadline | owner_issue | state |'
+		echo '| --- | --- | --- | --- | --- | --- | --- |'
+		if [ $# -gt 0 ]; then printf '%s\n' "$@"; fi
+		echo '<!-- flake-ledger:end -->'
+	} >"$file"
+}
 
 selftest() {
 	local failed=0 obs want got name
@@ -682,32 +823,101 @@ selftest() {
 		fi
 	done
 
-	# A row observed flaky again after being declared fixed must not be silent:
-	# check() has to be red on the mismatch, and sync() has to reopen the row
-	# with a fresh deadline, keeping its owning issue. Driven end to end through
-	# the real check() and sync() on a throwaway ledger, because the classify
-	# fixtures above only pin the evidence, not what the comparison does with it.
-	local ledger reopen reopen_msg
+	# All the scenarios below run against one record set: reopen.obs.tsv observes
+	# TestReopens (integration) flaking on runs 3001 and 3003, so the observed
+	# set is a single pair, first_seen aaaa1111@3001/1, last_seen cccc3333@3003/1.
+	# What changes between them is the ledger they are compared against.
+	local ledger msg expect
+	local reopen="$FIXTURES/reopen.obs.tsv"
 	ledger="$(mktemp)"
-	reopen="$FIXTURES/reopen.obs.tsv"
-	{
-		echo '# Flake ledger -- selftest fixture'
-		echo '<!-- flake-ledger:begin -->'
-		echo '| test | lane | first_seen | last_seen | deadline | owner_issue | state |'
-		echo '| --- | --- | --- | --- | --- | --- | --- |'
-		echo '| TestReopens | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 2026-08-30 | BEO-99 | fixed:abc123 |'
-		echo '<!-- flake-ledger:end -->'
-	} >"$ledger"
-	if SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check >/dev/null 2>&1; then
-		echo "::error::reopen scenario: check() accepted a re-flaked fixed row" >&2
+
+	# 1. Observed and unfiled. check() must be red and name the test; sync() must
+	# file it with TBD in owner_issue, which is what makes the bot PR unmergeable
+	# until a person files the work.
+	#
+	# Mutation this answers: replace the `if [ -n "$missing" ]` guard in check()
+	# with `if false`.
+	scratch_ledger "$ledger"
+	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
+	case "$msg" in
+	*"no entry in"*"TestReopens (integration)"*) ;;
+	*)
+		echo "::error::unfiled scenario: check() did not report an observed flake missing from the ledger" >&2
+		printf '%s\n' "$msg" >&2
 		failed=1
-	else
-		reopen_msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
-		if ! printf '%s\n' "$reopen_msg" | grep -q 'reopened'; then
-			echo "::error::reopen scenario: check() flagged the re-flake without the reopen message" >&2
-			failed=1
-		fi
+		;;
+	esac
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync >/dev/null || {
+		echo "::error::unfiled scenario: sync() failed" >&2
+		failed=1
+	}
+	if ! grep -q '| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 |.*| TBD | open |' "$ledger"; then
+		echo "::error::unfiled scenario: sync did not file the observed flake with owner_issue TBD" >&2
+		failed=1
 	fi
+
+	# 2. Filed, in scope, and no longer derivable. check() must be red and name
+	# TestVanished; it must not name TestOutsideWindow, whose first_seen run this
+	# record set never read -- that scoping is what stops a narrow window from
+	# demanding the deletion of everything older than it. sync() drops the first
+	# and keeps the second.
+	#
+	# Mutation this answers: replace the `if [ -n "$extra" ]` guard in check()
+	# with `if false`, or drop the `part[2] in inwindow` test in
+	# ledger_in_scope().
+	scratch_ledger "$ledger" \
+		'| TestOutsideWindow | integration | eeee5555@2999/1 | eeee5555@2999/1 | 9999-12-31 | BEO-99 | open |' \
+		'| TestReopens | integration | aaaa1111@3001/1 | cccc3333@3003/1 | 9999-12-31 | BEO-99 | open |' \
+		'| TestVanished | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 9999-12-31 | BEO-99 | open |'
+	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
+	case "$msg" in
+	*"can no longer derive"*"TestVanished (integration)"*) ;;
+	*)
+		echo "::error::unfounded scenario: check() did not report an in-scope row the evidence no longer supports" >&2
+		printf '%s\n' "$msg" >&2
+		failed=1
+		;;
+	esac
+	case "$msg" in
+	*TestOutsideWindow*)
+		echo "::error::unfounded scenario: check() demanded a row whose first_seen run is outside the window" >&2
+		failed=1
+		;;
+	esac
+	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync >/dev/null || {
+		echo "::error::unfounded scenario: sync() failed" >&2
+		failed=1
+	}
+	if grep -q 'TestVanished' "$ledger"; then
+		echo "::error::unfounded scenario: sync kept an in-scope row nothing supports" >&2
+		failed=1
+	fi
+	if ! grep -q 'TestOutsideWindow' "$ledger"; then
+		echo "::error::unfounded scenario: sync dropped a row from outside the window it read" >&2
+		failed=1
+	fi
+	if ! SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check >/dev/null 2>&1; then
+		echo "::error::unfounded scenario: check() is still red after sync" >&2
+		failed=1
+	fi
+
+	# 3. A row observed flaky again after being declared fixed must not be
+	# silent: check() has to be red on the mismatch, and sync() has to reopen the
+	# row with a fresh deadline, keeping its owning issue.
+	#
+	# Mutation this answers: drop the `stale` block in check(), or the
+	# `newer "$last_seen" "$recorded_last"` reopen branch in sync().
+	scratch_ledger "$ledger" \
+		'| TestReopens | integration | aaaa1111@3001/1 | aaaa1111@3001/1 | 2026-08-30 | BEO-99 | fixed:abc1234 |'
+	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" check 2>&1 || true)"
+	case "$msg" in
+	*reopened*) ;;
+	*)
+		echo "::error::reopen scenario: check() did not flag a re-flaked fixed row for reopening" >&2
+		printf '%s\n' "$msg" >&2
+		failed=1
+		;;
+	esac
 	SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" sync >/dev/null || {
 		echo "::error::reopen scenario: sync() failed" >&2
 		failed=1
@@ -720,6 +930,59 @@ selftest() {
 		echo "::error::reopen scenario: check() is still red after sync reopened the row" >&2
 		failed=1
 	fi
+
+	# 4. Every `fixed:<sha>` has to name a commit on main. reopen.obs.tsv carries
+	# one answer of each kind, and the fourth row deliberately has none: a sha
+	# this sweep never asked about is unfounded too, so a lookup that stops
+	# happening cannot read as clean.
+	#
+	# Mutation this answers: drop the `verdict != "on-main"` filter in
+	# verify_fixed(), or default a missing answer to "on-main".
+	scratch_ledger "$ledger" \
+		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |' \
+		'| TestFixedOffMain | integration | bbbb2222@2998/1 | bbbb2222@2998/1 | 9999-12-31 | BEO-99 | fixed:f00dbab |' \
+		'| TestFixedUnknown | integration | cccc3333@2997/1 | cccc3333@2997/1 | 9999-12-31 | BEO-99 | fixed:deadbee |' \
+		'| TestFixedUnchecked | integration | dddd4444@2996/1 | dddd4444@2996/1 | 9999-12-31 | BEO-99 | fixed:cafe123 |'
+	msg="$(SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" verify-fixed 2>&1 || true)"
+	for expect in \
+		"TestFixedOffMain (integration): fixed:f00dbab is a commit" \
+		"TestFixedUnknown (integration): fixed:deadbee is not a commit" \
+		"TestFixedUnchecked (integration): fixed:cafe123 was not checked"; do
+		case "$msg" in
+		*"$expect"*) ;;
+		*)
+			echo "::error::fixed-sha scenario: verify-fixed did not report \"$expect\"" >&2
+			failed=1
+			;;
+		esac
+	done
+	case "$msg" in
+	*TestFixedOnMain*)
+		echo "::error::fixed-sha scenario: verify-fixed rejected a sha that is on main" >&2
+		failed=1
+		;;
+	esac
+	scratch_ledger "$ledger" \
+		'| TestFixedOnMain | integration | aaaa1111@2999/1 | aaaa1111@2999/1 | 9999-12-31 | BEO-99 | fixed:abc1234 |'
+	if ! SWEEP_RECORDS="$reopen" LEDGER="$ledger" "$0" verify-fixed >/dev/null 2>&1; then
+		echo "::error::fixed-sha scenario: verify-fixed is red on a ledger whose only fix ref is on main" >&2
+		failed=1
+	fi
+
+	# 5. The window can never be narrower than the deadline. This is the rule
+	# flake-ledger.yml contradicted for the whole of v0 by passing 7, so it is
+	# enforced where the constant lives and pinned here rather than left to the
+	# comment that already said it. `classify` needs no network, so this costs
+	# nothing and still exercises the same validation every command goes through.
+	if "$0" classify --window-days "$((WINDOW_FLOOR - 1))" </dev/null >/dev/null 2>&1; then
+		echo "::error::window scenario: --window-days $((WINDOW_FLOOR - 1)) was accepted below the $WINDOW_FLOOR-day floor" >&2
+		failed=1
+	fi
+	if ! "$0" classify </dev/null >/dev/null 2>&1; then
+		echo "::error::window scenario: the default window of $WINDOW_DAYS days is below its own floor of $WINDOW_FLOOR" >&2
+		failed=1
+	fi
+
 	rm -f "$ledger"
 
 	[ "$failed" -eq 0 ] || exit 1
@@ -731,21 +994,31 @@ cmd="${1:-}"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--window-days)
-		WINDOW_DAYS="$2"
+		WINDOW_DAYS="${2:-}"
 		shift 2
 		;;
 	*) die "unknown flag $1" ;;
 	esac
 done
 
+# Checked for every command, including the default, so there is one place a
+# narrower window can be introduced and it is this file. A caller that wants a
+# cheaper sweep does not get to trade the invariant for it.
+case "$WINDOW_DAYS" in
+'' | *[!0-9]*) die "--window-days takes a whole number of days, got \"$WINDOW_DAYS\"" ;;
+esac
+[ "$WINDOW_DAYS" -ge "$WINDOW_FLOOR" ] ||
+	die "--window-days $WINDOW_DAYS is narrower than the $WINDOW_FLOOR days this ledger's $DEADLINE_DAYS-day deadline needs: a row whose evidence ages out before its deadline is overdue and unfounded at once, and deleting it reads green in both halves"
+
 case "$cmd" in
 observe) observe ;;
 classify) classify ;;
 check) check ;;
 sync) sync ;;
+verify-fixed) verify_fixed ;;
 selftest) selftest ;;
 *)
-	echo "usage: flake-sweep.sh {observe|classify|check|sync|selftest} [--window-days N]" >&2
+	echo "usage: flake-sweep.sh {observe|classify|check|sync|verify-fixed|selftest} [--window-days N]" >&2
 	exit 2
 	;;
 esac

@@ -1,0 +1,2 @@
+::error::.github/testdata/flake-ledger/missing-markers.md needs a <!-- flake-ledger:begin --> and a <!-- flake-ledger:end --> marker around the table
+exit 1
