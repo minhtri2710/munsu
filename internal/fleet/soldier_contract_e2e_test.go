@@ -13,32 +13,44 @@ import (
 // E2E contract: full soldier launch prompt => charter + brief + envelope + report identity
 // =============================================================================
 
-// writeLaunchManifestForTest writes the launch script and the digest manifest
-// over the canonical artifacts in worktreePath, mirroring
-// Runner.writeLaunchManifest. It returns the manifest digest — the value
-// production stores outside the worktree as the launch_manifest_sha256 anchor.
+// writeLaunchManifestForTest stands in the launch script production's
+// submitLaunch would have written, then calls the production writer itself for
+// the manifest. It returns the manifest digest — the value production stores
+// outside the worktree as the launch_manifest_sha256 anchor.
+//
+// The manifest is deliberately NOT rebuilt here. A second copy of the entry
+// list and the migration policy would be a mirror of Runner.writeLaunchManifest
+// with nothing binding the two: an entry added or a policy dropped on the
+// production side would leave these tests asserting a manifest shape no soldier
+// is ever launched with, and green (BEO-95, BEO-70). Only r.wtPath is read and
+// only r.manifestSHA256 is written by that phase, so a bare Runner is the whole
+// fixture it needs.
 func writeLaunchManifestForTest(t *testing.T, worktreePath string) string {
 	t.Helper()
 	script := "#!/usr/bin/env bash\nexec true\n"
 	if err := os.WriteFile(filepath.Join(worktreePath, LaunchScriptName), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
-	entries := []ManifestEntry{}
-	for _, name := range []string{CharterName, BriefName, EnvelopeName, PromptName, LaunchScriptName} {
-		entry, err := ManifestEntryForFile(worktreePath, name, DisposalPolicyCleanable)
-		if err != nil {
-			t.Fatalf("manifest entry for %s: %v", name, err)
-		}
-		entries = append(entries, entry)
-	}
-	manifest := BuildManifest(entries)
-	policy := LegacyBriefMatchCanonicalV1
-	manifest.LegacyBriefMigration = &policy
-	digest, err := WriteManifest(worktreePath, manifest)
-	if err != nil {
+	r := &Runner{wtPath: worktreePath}
+	if err := r.writeLaunchManifest(); err != nil {
 		t.Fatalf("writing launch manifest: %v", err)
 	}
-	return digest
+
+	// The entry set the writer declares is already guarded: ValidateManifest
+	// holds the expected paths and WriteManifest refuses a manifest missing one,
+	// so a dropped entry fails the line above. The migration policy has no such
+	// guard -- it is optional in the schema, so a writer that stops declaring it
+	// still produces a valid manifest, and retirement then treats a leftover
+	// .soldier-md as unexplained. Assert it here, where every e2e caller sees it.
+	manifest, err := ReadManifest(worktreePath)
+	if err != nil {
+		t.Fatalf("reading back the written manifest: %v", err)
+	}
+	if manifest.LegacyBriefMigration == nil || *manifest.LegacyBriefMigration != LegacyBriefMatchCanonicalV1 {
+		t.Fatalf("production writer must declare legacy brief migration %q, got %v",
+			LegacyBriefMatchCanonicalV1, manifest.LegacyBriefMigration)
+	}
+	return r.manifestSHA256
 }
 
 func TestE2E_SoldierFullPrompt(t *testing.T) {
