@@ -3,6 +3,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"testing"
@@ -351,26 +352,28 @@ func TestRegistryBindLockScopeIsSmallestTruthful(t *testing.T) {
 // cost bound is the SHAPE of per-binding cost, not its absolute value.
 //
 // The guard used to be an absolute wall-clock ceiling (60s for the whole
-// sequence). That ceiling was unrunnable as a stable signal: the sequence is
-// dominated by durable per-commit I/O (~110ms per binding on an idle SSD, so
-// ~20s of pure floor), leaving under 3x headroom, and the same unchanged code
-// measured 10s to 71s across CI runs depending on runner load and -race build
-// contention. It failed on `main` (run 31680287927) without a single line of
-// internal/fleet having changed. Absolute wall-clock cannot separate "the code
-// regressed" from "the runner was busy", so it is not asserted on here.
+// sequence), then a ratio between wall-clock deciles of the same run. Both were
+// wall-clock, and wall-clock cannot carry this signal on a shared runner. The
+// ratio form assumed a ~110ms durable-commit floor F, which is where its
+// sensitivity came from; that floor was measured on the -race lane and does not
+// exist on the integration lane, where the same code measured a 3.4ms floor and
+// a 2.05s total on one run against a 10.7ms floor and an 18.02s total on
+// another (BEO-82). A ratio cancels a constant speed factor, not a load change
+// that happens *during* the measurement — and the first and last deciles are
+// seconds apart, so runner load drifting between them reads exactly like
+// per-binding cost growth. That is what failed run 31805801020 on unchanged
+// code.
 //
-// What the guard actually needs to catch is a pathological regression — an
+// What the guard actually needs to catch is a pathological regression: an
 // accidental per-binding scan over all existing bindings, which turns per-op
-// cost from flat into linear in the number of bindings already stored. That is
-// a property of the SHAPE of the cost curve, and a ratio between two samples
-// from the same run cancels out machine speed, -race overhead and runner load.
-// Measured healthy shape: first-decile median 108ms vs last-decile median
-// 109ms (ratio ~1.0 over a 10x cardinality increase). Sensitivity is set by
-// the ~110ms durable-commit floor F: a regression adding c per stored binding
-// yields ratio (F+190c)/(F+10c), so the 3x guard trips only when c > F/80
-// (~1.4ms per stored binding). That catches heavy per-binding I/O (per-binding
-// fsync, doc re-read); a microsecond in-memory scan stays under the floor,
-// out of reach of any wall-clock shape guard.
+// work from flat into linear in the number of bindings already stored. That is
+// a count, not a duration. A healthy bind reads a fixed set of documents
+// (receipt, project registry, captain registry, binding doc) no matter how many
+// bindings are stored — the binding doc gets bigger, but it is still read once.
+// A per-binding re-read or per-binding fsync multiplies that count by the
+// stored cardinality. So the guard asserts on read syscalls per bind, which no
+// amount of runner load can inflate, and keeps wall-clock only as logged
+// evidence.
 func TestRegistryBindingScaleBound(t *testing.T) {
 	const n = 200
 	r, _, _ := newTestRegistry(t)
@@ -382,10 +385,15 @@ func TestRegistryBindingScaleBound(t *testing.T) {
 		mustRegisterCaptain(t, r, fmt.Sprintf("scale-cap-%d", i))
 	}
 	perBind := make([]time.Duration, n)
+	perBindReads := make([]int64, n)
+	_, countable := readSyscalls()
 	for i := 0; i < n; i++ {
+		readsBefore, _ := readSyscalls()
 		bindStart := time.Now()
 		mustBind(t, r, fmt.Sprintf("scale-cap-%d", i), fmt.Sprintf("scale-proj-%d", i))
 		perBind[i] = time.Since(bindStart)
+		readsAfter, _ := readSyscalls()
+		perBindReads[i] = readsAfter - readsBefore
 	}
 	// Elapsed is evidence, not an assertion: logged so a genuinely slow run is
 	// still visible in CI output without being a failure signal on its own.
@@ -402,22 +410,40 @@ func TestRegistryBindingScaleBound(t *testing.T) {
 		}
 	}
 
-	// Shape guard: per-binding cost must stay flat as the stored binding count
-	// grows 10x. Medians, not means, so a single scheduling stall on a loaded
-	// runner cannot move the verdict.
+	// Evidence, not assertions: durations are logged so a genuinely slow run
+	// stays visible, and they are what the shape guard used to be built on.
 	const decile = n / 10
-	first := medianDuration(perBind[:decile])
-	last := medianDuration(perBind[n-decile:])
-	t.Logf("per-binding median: first decile %v, last decile %v", first, last)
-	if first <= 0 {
-		t.Fatalf("first-decile median is %v — clock resolution too coarse to judge cost shape", first)
+	t.Logf("per-binding median duration: first decile %v, last decile %v",
+		medianDuration(perBind[:decile]), medianDuration(perBind[n-decile:]))
+
+	// Shape guard: the number of documents a bind reads must stay flat as the
+	// stored binding count grows 10x. Medians, not means, so a stray read from
+	// elsewhere in the process cannot move the verdict.
+	if !countable {
+		t.Logf("per-binding read-syscall counts are unavailable on %s, so the cost-shape guard is not asserted here; "+
+			"the CI lane that this guard exists for runs on Linux", runtime.GOOS)
+		return
 	}
-	if ratio := float64(last) / float64(first); ratio > 3 {
-		t.Fatalf("per-binding cost grew %.1fx from the first to the last decile "+
-			"(median %v -> %v): binding cost scales with the number of stored "+
+	firstReads := medianInt64(perBindReads[:decile])
+	lastReads := medianInt64(perBindReads[n-decile:])
+	t.Logf("per-binding read syscalls: first decile %d, last decile %d", firstReads, lastReads)
+	if firstReads <= 0 {
+		t.Fatalf("first-decile median is %d read syscalls — the counter is not observing the commit path", firstReads)
+	}
+	if ratio := float64(lastReads) / float64(firstReads); ratio > 3 {
+		t.Fatalf("per-binding document reads grew %.1fx from the first to the last decile "+
+			"(median %d -> %d): binding cost scales with the number of stored "+
 			"bindings, which is the pathological per-binding scan this guard exists to catch",
-			ratio, first, last)
+			ratio, firstReads, lastReads)
 	}
+}
+
+// medianInt64 returns the median of samples without mutating the caller's
+// slice. Callers pass windows of a live measurement series.
+func medianInt64(samples []int64) int64 {
+	sorted := append([]int64(nil), samples...)
+	sort.Slice(sorted, func(a, b int) bool { return sorted[a] < sorted[b] })
+	return sorted[len(sorted)/2]
 }
 
 // medianDuration returns the median of samples without mutating the caller's
