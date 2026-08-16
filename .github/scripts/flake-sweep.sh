@@ -72,8 +72,11 @@
 #     filed as a flake. The touch check below only knows the test's own
 #     directory; a call-graph is out of scope at this size.
 #   - The window is bounded by log retention. Evidence older than
-#     --window-days is not re-derivable, which is why entries age out of the
-#     ledger rather than accumulating forever.
+#     --window-days is not re-derivable: a row is mandatory while the run it
+#     cites is inside the window (deleting it there is red, and while the test
+#     is still flaky the sweep re-files it), and once that evidence ages out
+#     nothing can re-derive the row, so a fixed row can then be removed by hand
+#     and will not come back. Rows are never dropped automatically by age.
 #
 # ---------------------------------------------------------------------------
 # Usage
@@ -396,14 +399,16 @@ classify() {
 				}
 
 				# 3. Self-healing vs persistent, judged on the next main run
-				# that actually ran this lane on a different commit. A
-				# cancelled run in between decides nothing, so it is stepped
-				# over rather than read as a verdict.
+				# that actually ran this lane on a different commit. Only a
+				# decisive verdict -- success or failure -- decides; a run whose
+				# lane conclusion is cancelled, skipped or empty decides nothing,
+				# so it is stepped over rather than read as a verdict.
 				if (verdict == "") {
 					nxt = ""
 					for (i = idx[run] + 1; i <= n; i++) {
 						if (runsha[order[i]] == sha) continue
-						if ((order[i] SUBSEP 1 SUBSEP lane) in jobconc) { nxt = order[i]; break }
+						c = jobconc[order[i] SUBSEP 1 SUBSEP lane]
+						if (c == "success" || c == "failure") { nxt = order[i]; break }
 					}
 					nxtsha = (nxt == "" ? "" : runsha[nxt])
 					if (nxt == "") {

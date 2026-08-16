@@ -96,22 +96,30 @@ jobs:
           SWEEP_RECORDS: records.tsv
         run: |
           set -eu
+          branch=flake-ledger/sweep
+
+          # A person fills in owner_issue on the open PR's branch between their
+          # push and their merge; a rewrite computed from main would overwrite
+          # that back to TBD. So an open ledger PR blocks this sweep entirely --
+          # no commit, no push -- and must be completed first. The compare step
+          # above has already failed, so this job is still red; exiting 0 here
+          # only keeps that verdict instead of layering another failure on it.
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "::error::the open ledger PR on $branch has to be completed first; this sweep will not overwrite it"
+            exit 0
+          fi
+
           .github/scripts/flake-sweep.sh sync
           if git diff --quiet -- .github/flake-ledger.md; then
             echo "::error::the comparison failed but sync changed nothing -- the two disagree, which is a bug in flake-sweep.sh"
             exit 1
           fi
-          branch=flake-ledger/sweep
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           git add .github/flake-ledger.md
           git commit -m "chore: file what CI observed in .github/flake-ledger.md"
           git push --force origin "$branch"
-          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
-            echo "the open ledger PR now carries this diff"
-            exit 0
-          fi
           cat > pr-body.md <<'BODY'
           `.github/scripts/flake-sweep.sh` derived this from runs CI had already
           produced, reading `/actions/runs/<id>/attempts/<n>/jobs` rather than run

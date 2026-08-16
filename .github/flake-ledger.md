@@ -37,8 +37,12 @@ and does not belong here.
 
 ## How a row leaves
 
-By being fixed. `state` goes from `open` to `fixed:<ref>` when the fix lands,
-and the row is dropped once its evidence ages out of the sweep's 30-day window.
+By being fixed, by hand. Rows are never dropped automatically by age. While the
+run a row cites is still inside the sweep's window, the row is mandatory:
+deleting it there is red, and if the test is still flaky the sweep re-files it
+on the next main run. Once that evidence has aged out of the window, nothing
+can re-derive the row, so once the fix has landed (`state` reads `fixed:<ref>`)
+a person can remove the row and it will not come back.
 
 A row is **never** closed because "we have not seen it fail in a while". BEO-82
 re-ran a red lane 14 times on the red SHA and saw zero failures; a run of greens
