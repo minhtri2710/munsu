@@ -1,4 +1,4 @@
-# 0010. munsu Does Not Own Issue Closure on Delivery
+# 0011. munsu Does Not Own Issue Closure on Delivery
 
 * **Status:** Accepted
 * **Date:** 2026-08-14

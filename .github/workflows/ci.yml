@@ -229,6 +229,28 @@ jobs:
           set -eu
           go install golang.org/x/tools/cmd/deadcode@v0.49.0
           PATH="$(go env GOPATH)/bin:$PATH" .github/scripts/deadcode.sh check
+      # Two ADRs landed as 0010 (BEO-93): #468 and #469 both reserved the number
+      # while it was free, #469 rebased onto main without renumbering, and every
+      # lane stayed green because nothing reads the ADR filenames. References by
+      # number then point at whichever file the reader opens first -- ADR-0004 §5
+      # cited "ADR-0010" and resolved to the wrong decision for a day.
+      #
+      # ADR numbers are assigned by hand, so the collision is only visible in the
+      # tree: the check is that no two files under docs/adr/ share the leading
+      # NNNN. Gaps are fine and one exists (no 0006) -- a missing number costs a
+      # reader nothing, a duplicate one costs them the decision.
+      - name: ADR numbers must be unique
+        run: |
+          set -eu
+          dupes=$(ls docs/adr | sed -n 's/^\([0-9][0-9][0-9][0-9]\)-.*\.md$/\1/p' | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::Duplicate ADR numbers under docs/adr/ -- renumber the one that landed second:" >&2
+            printf '%s\n' "$dupes" | while IFS= read -r n; do
+              ls docs/adr/"$n"-*.md | while IFS= read -r f; do printf '  %s\n' "$f" >&2; done
+            done
+            exit 1
+          fi
+          echo "ADR numbers: unique"
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu
