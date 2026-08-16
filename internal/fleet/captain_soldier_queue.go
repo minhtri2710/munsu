@@ -254,16 +254,6 @@ func ReconcileSoldierPending(senderHome, senderIdentity string) error {
 	return nil
 }
 
-// SoldierInboxPath returns the path to the inbox directory for a sender.
-func SoldierInboxPath(senderHome, senderIdentity string) string {
-	return filepath.Join(senderHome, "state", home.InboxDir, senderIdentity)
-}
-
-// SoldierOutboxPath returns the path to the pending records directory for a sender.
-func SoldierOutboxPath(senderHome, senderIdentity string) string {
-	return filepath.Join(senderHome, "state", home.OutboxDir, senderIdentity)
-}
-
 // EmitReadyEvent writes a durable ready event marker for a soldier task.
 //
 // The ready marker is stored at state/.ready/<taskID>/<event-id>.ready
@@ -520,12 +510,6 @@ func ConsumeAllReadyEvents(senderHome, soldierTaskID, senderIdentity, metaGenera
 	return flushed, nil
 }
 
-// hasReadyEvents returns true if any ready event markers exist for the task.
-func hasReadyEvents(homeDir, taskID string) bool {
-	events, err := ScanReadyEvents(homeDir, taskID)
-	return err == nil && len(events) > 0
-}
-
 // dispatchedPath returns the path for a dispatch marker file.
 // Dispatch markers track that a NotificationRef was sent for a pending
 // message, preventing duplicate sends on duplicate ready events.
@@ -579,110 +563,6 @@ func cleanDispatched(senderHome, taskID, messageID string) error {
 		return nil
 	}
 	return err
-}
-
-// SoldierReceiveNotification reads and validates an envelope from the shared
-// inbox using a NotificationRef. The caller (typically a soldier agent) provides
-// the expected TaskID and RankSoldier receiver identity validation.
-//
-// Returns the envelope payload. Writes NO ack.
-// Returns an error if the envelope is not found or validation fails.
-func SoldierReceiveNotification(senderHome string, ref home.NotificationRef, expectedTaskID string) (string, error) {
-	if err := ref.Validate(); err != nil {
-		return "", fmt.Errorf("invalid ref: %w", err)
-	}
-
-	store := home.NewStore(senderHome)
-	env, err := store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
-	if err != nil {
-		return "", fmt.Errorf("reading envelope: %w", err)
-	}
-	if env == nil {
-		return "", fmt.Errorf("envelope not found: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
-	}
-
-	// Validate the envelope.
-	if err := home.ValidateEnvelope(env); err != nil {
-		return "", fmt.Errorf("invalid envelope: %w", err)
-	}
-
-	// Validate it targets this soldier's task.
-	if env.TaskID != expectedTaskID {
-		return "", fmt.Errorf("envelope task ID %q does not match expected %q", env.TaskID, expectedTaskID)
-	}
-	if env.ReceiverRank != home.RankSoldier {
-		return "", fmt.Errorf("envelope receiver rank %q, expected soldier", env.ReceiverRank)
-	}
-	if env.SenderIdentity != ref.SenderIdentity {
-		return "", fmt.Errorf("sender identity mismatch: envelope %q vs ref %q", env.SenderIdentity, ref.SenderIdentity)
-	}
-	if env.MessageID != ref.MessageID {
-		return "", fmt.Errorf("message ID mismatch: envelope %q vs ref %q", env.MessageID, ref.MessageID)
-	}
-
-	return env.Payload, nil
-}
-
-// SoldierAckNotification writes a ProcessingAck (accepted) for the given
-// NotificationRef on the soldier side (shared home inbox).
-//
-// Validates that the envelope exists, matches expected task ID, and writes
-// an "accepted" ack. Idempotent: calling with the same ref returns the
-// existing ack with preserved timestamp.
-func SoldierAckNotification(senderHome string, ref home.NotificationRef, expectedTaskID string) (*home.ProcessingAck, error) {
-	if err := ref.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid ref: %w", err)
-	}
-
-	store := home.NewStore(senderHome)
-	env, err := store.ReadEnvelope(ref.SenderIdentity, ref.MessageID)
-	if err != nil {
-		return nil, fmt.Errorf("reading envelope: %w", err)
-	}
-	if env == nil {
-		return nil, fmt.Errorf("envelope not found: sender=%s msg=%s", ref.SenderIdentity, ref.MessageID)
-	}
-
-	if err := home.ValidateEnvelope(env); err != nil {
-		return nil, fmt.Errorf("invalid envelope: %w", err)
-	}
-	if env.TaskID != expectedTaskID {
-		return nil, fmt.Errorf("envelope task ID %q does not match expected %q", env.TaskID, expectedTaskID)
-	}
-
-	// Check for existing ack (idempotent).
-	existing, err := store.ReadAck(ref.SenderIdentity, ref.MessageID)
-	if err != nil {
-		return nil, fmt.Errorf("reading existing ack: %w", err)
-	}
-	if existing != nil {
-		if existing.Outcome == home.OutcomeAccepted {
-			return existing, nil // idempotent
-		}
-		return nil, fmt.Errorf("ack conflict: existing outcome %q", existing.Outcome)
-	}
-
-	ack := &home.ProcessingAck{
-		MessageID:      env.MessageID,
-		SenderRank:     env.SenderRank,
-		SenderIdentity: env.SenderIdentity,
-		ReceiverRank:   env.ReceiverRank,
-		ReceiverID:     env.ReceiverID,
-		TaskID:         env.TaskID,
-		Key:            env.Key,
-		PayloadHash:    env.PayloadHash,
-		ProcessedAt:    time.Now().UnixNano(),
-		Outcome:        home.OutcomeAccepted,
-	}
-	if err := store.WriteAck(ack); err != nil {
-		return nil, fmt.Errorf("writing ack: %w", err)
-	}
-	return ack, nil
-}
-
-// SoldierIsAcked checks whether a specific message has been acknowledged.
-func SoldierIsAcked(senderHome, senderIdentity, messageID string) bool {
-	return home.NewStore(senderHome).IsAcked(senderIdentity, messageID)
 }
 
 // ReadyEvent carries the durable ready signal from a soldier.
@@ -748,25 +628,4 @@ func ParseReadyEvent(s string) (*ReadyEvent, error) {
 		return nil, fmt.Errorf("ready event: empty event ID after parse")
 	}
 	return &e, nil
-}
-
-// ConsumeReadyEvent validates and processes a ready event.
-// Returns true if a pending command was flushed, false if no pending existed.
-// Returns error if the event is invalid or the flush failed.
-func ConsumeReadyEvent(senderHome, soldierTaskID, senderIdentity string, event *ReadyEvent, metaGeneration string, endpoint SoldierEndpointCapabilities) (bool, error) {
-	meta, err := mhome.ReadMeta(senderHome, soldierTaskID)
-	if err != nil {
-		return false, fmt.Errorf("reading soldier meta: %w", err)
-	}
-
-	if err := ValidateReadyEvent(event, soldierTaskID, meta["key"], metaGeneration); err != nil {
-		return false, fmt.Errorf("ready event validation: %w", err)
-	}
-
-	result := FlushPendingSoldierCommands(senderHome, soldierTaskID, senderIdentity, endpoint)
-	if result.Err != nil {
-		return false, fmt.Errorf("flush after ready event: %w", result.Err)
-	}
-
-	return result.Sent, nil
 }
