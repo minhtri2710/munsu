@@ -1,0 +1,31 @@
+run	31805801020	1	665c301e67fd194c3617fc0bd4eacbfca41a65e7	2026-08-14T13:40:17Z
+job	31805801020	1	integration	failure
+fail	31805801020	1	integration	TestRegistryBindingScaleBound	github.com/minhtri2710/munsu/internal/fleet
+job	31805801020	1	build	success
+job	31805801020	1	race	success
+run	31805831782	1	6c408310c077b551690f52c26b3096f4e90fd763	2026-08-14T13:40:40Z
+job	31805831782	1	integration	failure
+fail	31805831782	1	integration	TestTmux_Alive_UnknownWindow	github.com/minhtri2710/munsu/internal/backend
+job	31805831782	1	build	success
+job	31805831782	1	race	success
+run	31805848148	1	01a1a5b9ebc3b56a99b4d3db1f0f2c72f2396f87	2026-08-14T13:40:54Z
+job	31805848148	1	integration	success
+job	31805848148	1	race	success
+job	31805848148	1	build	success
+run	31805867146	1	869319d85f40bea457e32ce1cb51ce4a9d1a3827	2026-08-14T13:41:09Z
+job	31805867146	1	race	success
+job	31805867146	1	build	success
+job	31805867146	1	integration	failure
+fail	31805867146	1	integration	TestListMarkedProcessesSeesSetsidChildWithoutItsSecrets	github.com/minhtri2710/munsu/internal/fleet
+headjob	665c301e67fd194c3617fc0bd4eacbfca41a65e7	race	success
+headjob	665c301e67fd194c3617fc0bd4eacbfca41a65e7	integration	success
+headjob	665c301e67fd194c3617fc0bd4eacbfca41a65e7	build	success
+headjob	6c408310c077b551690f52c26b3096f4e90fd763	race	success
+headjob	6c408310c077b551690f52c26b3096f4e90fd763	integration	success
+headjob	6c408310c077b551690f52c26b3096f4e90fd763	build	success
+headjob	01a1a5b9ebc3b56a99b4d3db1f0f2c72f2396f87	race	success
+headjob	01a1a5b9ebc3b56a99b4d3db1f0f2c72f2396f87	integration	success
+headjob	01a1a5b9ebc3b56a99b4d3db1f0f2c72f2396f87	build	success
+headjob	869319d85f40bea457e32ce1cb51ce4a9d1a3827	build	success
+headjob	869319d85f40bea457e32ce1cb51ce4a9d1a3827	integration	success
+headjob	869319d85f40bea457e32ce1cb51ce4a9d1a3827	race	success

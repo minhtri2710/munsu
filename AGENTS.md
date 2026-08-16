@@ -28,6 +28,15 @@ needs `golang.org/x/tools/cmd/deadcode`). A guard with no call site passes its
 own tests and protects nothing — five of those reached `main` before this lane
 existed, so wire it up, delete it, or waive it with a real reason.
 
+That job also enforces `.github/flake-ledger.md`: a test CI caught being flaky
+on `main` has a row there with a deadline, and an `open` row past its deadline
+turns `invariants` red on every PR until someone fixes the test. Rows are
+derived by `.github/scripts/flake-sweep.sh` from per-attempt Actions data (a
+rerun overwrites a run's conclusion, so run-level history is not evidence) and
+arrive through a bot PR; the deadline half (`.github/scripts/flake-ledger.sh`)
+reads nothing but the committed file. Never close a row because the test has
+been green for a while — refusing that inference is why the file exists.
+
 Delivery mode: no-mistakes (push through the gate, never to `origin` directly).
 
 ## Module map

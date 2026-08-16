@@ -251,6 +251,29 @@ jobs:
             exit 1
           fi
           echo "ADR numbers: unique"
+      # A flaky test has no owner. Every other red in this repo does -- whoever
+      # wrote the change that caused it -- which is why every other lane can end
+      # at "it is red, someone will fix it" and this one cannot. Four pushes to
+      # main on 2026-08-14 13:40 produced three red `integration` lanes, and two
+      # of those runs read `success` today: reruns overwrite a run's conclusion,
+      # so the reflex a flaky lane provokes is also what erases the evidence for
+      # it. .github/flake-ledger.md is where that evidence is kept instead, and
+      # this step is the only thing that makes an entry cost anything.
+      #
+      # Past its deadline with no fix, an entry turns this lane red on every
+      # open PR, including PRs with nothing to do with the flake. That is the
+      # mechanism working: it appoints the next person who needs to merge, and
+      # that person always exists. Without it the file is `t.Skip` with better
+      # paperwork.
+      #
+      # Text only, no network, like the four rules above it -- it reads one
+      # committed file and today's date and nothing else. The half that has to
+      # talk to the Actions API is a separate workflow
+      # (.github/workflows/flake-ledger.yml), deliberately not here: this job is
+      # trusted precisely because nothing outside the checkout can change what
+      # it says.
+      - name: Flake ledger deadlines must not have passed
+        run: .github/scripts/flake-ledger.sh check
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

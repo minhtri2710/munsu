@@ -1,0 +1,7 @@
+ambiguous	TestBroken	race	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222	1002	1	green again on cccc3333, but that diff touched internal/bar
+flake	TestHealer	build	aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111	1001	1	self-healing: green again on bbbb2222 with no change to its package
+flake	TestOther	integration	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222	1002	1	self-healing: green again on cccc3333 with no change to its package
+flake	TestSomethingElse	integration	cccc3333cccc3333cccc3333cccc3333cccc3333	1003	1	self-healing: green again on dddd4444 with no change to its package
+pending	TestLate	integration	dddd4444dddd4444dddd4444dddd4444dddd4444	1004	1	no later main commit has run this lane yet
+persistent	TestBroken	race	aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111	1001	1	still failing on the next main commit bbbb2222
+unattributed	-	build	cccc3333cccc3333cccc3333cccc3333cccc3333	1003	1	lane failed naming no test
