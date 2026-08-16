@@ -1,0 +1,154 @@
+name: Flake ledger
+
+# Runs after every CI run on main, never on the PR path. The PR path is where
+# wall-clock is expensive and this adds none to it: no lane in ci.yml is
+# touched, and nothing here runs before a merge.
+#
+# `workflow_run` rather than a schedule, and the difference is not cosmetic.
+# Consecutive pushes to main are a median 43 minutes apart but p90 7.3 hours and
+# max 12.8; in a quiet week they are days apart. A daily cron would cost one
+# runner minute and delay every finding by up to 24 hours on top of that. This
+# costs ~1 minute per main run -- about 20 a day at the busiest, all of it free
+# on a public repo -- and reports a merge-commit flake within a minute of the
+# merge, which is the only latency that matters here.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      window-days:
+        description: How many days of main runs to re-derive
+        required: false
+        default: "7"
+
+permissions:
+  contents: read
+
+# A merge burst produces four runs in a minute (2026-08-14 13:40 did exactly
+# that), and each would sweep an almost identical window and race the others to
+# push the same branch. The last one has the most complete picture, so let it
+# cancel the others.
+concurrency:
+  group: flake-ledger
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    name: Flake sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # Per-attempt jobs and their logs. This is the whole point: a rerun
+      # overwrites a run's conclusion, and only the attempt-level endpoints
+      # still hold what the original run said.
+      actions: read
+      # Both are for the ledger PR, and for nothing else. The sweep never
+      # pushes to main -- its output is a branch and a pull request that a
+      # person has to complete, because the one field it cannot fill in is the
+      # issue that will do the fixing.
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      # The classifier is the part that can be wrong without anyone noticing,
+      # so it is pinned by committed fixtures before it is trusted with live
+      # data. cluster-13-40 is the real record set of four main runs from
+      # 2026-08-14: two of them read `success` at run level today because they
+      # were rerun, and the fixture requires all three original reds to come
+      # back out. If that ever stops holding, this job stops before it can file
+      # anything.
+      #
+      # It runs here rather than in `invariants` so ci.yml keeps exactly one new
+      # step. The cost is real and worth naming: a PR that breaks the
+      # classifier stays green until it merges.
+      - name: Classifier must agree with its fixtures
+        run: .github/scripts/flake-sweep.sh selftest
+
+      - name: Derive the flaky set from what CI already ran
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOW: ${{ inputs.window-days || '7' }}
+        run: |
+          set -eu
+          .github/scripts/flake-sweep.sh observe --window-days "$WINDOW" > records.tsv
+          wc -l < records.tsv | xargs printf 'observation records: %s\n'
+
+      # Fail-closed, in the same shape as `deadcode.sh check`: a flake CI can
+      # see and the file does not name is red, and so is a row this sweep read
+      # the run for and found nothing behind. The failure is recorded here, on
+      # main, and the remedy is the PR the next step opens -- so this job going
+      # red means "main's ledger is out of date", not "someone should press
+      # rerun".
+      - name: Ledger must match what CI observed
+        id: compare
+        continue-on-error: true
+        env:
+          SWEEP_RECORDS: records.tsv
+        run: .github/scripts/flake-sweep.sh check
+
+      - name: Open a pull request for the difference
+        if: steps.compare.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SWEEP_RECORDS: records.tsv
+        run: |
+          set -eu
+          branch=flake-ledger/sweep
+
+          # A person fills in owner_issue on the open PR's branch between their
+          # push and their merge; a rewrite computed from main would overwrite
+          # that back to TBD. So an open ledger PR blocks this sweep entirely --
+          # no commit, no push -- and must be completed first. The compare step
+          # above has already failed, so this job is still red; exiting 0 here
+          # only keeps that verdict instead of layering another failure on it.
+          prs="$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" || {
+            echo "::error::cannot list open PRs on $branch; refusing to push"
+            exit 1
+          }
+          if [ -n "$prs" ]; then
+            echo "::error::the open ledger PR on $branch has to be completed first; this sweep will not overwrite it"
+            exit 0
+          fi
+
+          .github/scripts/flake-sweep.sh sync
+          if git diff --quiet -- .github/flake-ledger.md; then
+            echo "::error::the comparison failed but sync changed nothing -- the two disagree, which is a bug in flake-sweep.sh"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add .github/flake-ledger.md
+          git commit -m "chore: file what CI observed in .github/flake-ledger.md"
+          git push --force origin "$branch"
+          cat > pr-body.md <<'BODY'
+          `.github/scripts/flake-sweep.sh` derived this from runs CI had already
+          produced, reading `/actions/runs/<id>/attempts/<n>/jobs` rather than run
+          conclusions -- a rerun overwrites a conclusion, and two of the three reds
+          in the 2026-08-14 13:40 cluster read `success` today because of exactly
+          that.
+
+          **This PR cannot merge as it stands, on purpose.** Every new row says
+          `owner_issue: TBD`, and `.github/scripts/flake-ledger.sh check` refuses
+          TBD, so `invariants` is red until someone files the issue that will fix
+          the test and writes its id here. Filing the flake and filing the work are
+          meant to be the same act.
+
+          Pushing to this branch is also what makes CI run on it: a PR opened by
+          `GITHUB_TOKEN` gets no workflow runs of its own until a person touches it.
+
+          If you think a row is wrong, argue with it in the owning issue rather than
+          deleting it -- the sweep re-derives the same row on the next main run.
+          BODY
+          gh pr create --head "$branch" --base main \
+            --title "chore: flake ledger needs an update" \
+            --body-file pr-body.md
+
+      # The comparison's verdict is this job's verdict. `continue-on-error` above
+      # exists so the PR still gets opened when it fails, not to swallow it.
+      - name: Report the comparison's verdict
+        if: steps.compare.outcome == 'failure'
+        run: exit 1

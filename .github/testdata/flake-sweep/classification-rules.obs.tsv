@@ -1,0 +1,26 @@
+run	1001	1	aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111	2026-08-01T00:00:00Z
+run	1002	1	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222	2026-08-01T01:00:00Z
+run	1003	1	cccc3333cccc3333cccc3333cccc3333cccc3333	2026-08-01T02:00:00Z
+run	1004	1	dddd4444dddd4444dddd4444dddd4444dddd4444	2026-08-01T03:00:00Z
+job	1001	1	build	failure
+job	1001	1	race	failure
+job	1001	1	integration	success
+job	1002	1	build	success
+job	1002	1	race	failure
+job	1002	1	integration	failure
+job	1003	1	build	failure
+job	1003	1	race	success
+job	1003	1	integration	failure
+job	1004	1	build	success
+job	1004	1	race	success
+job	1004	1	integration	failure
+fail	1001	1	build	TestHealer	github.com/minhtri2710/munsu/internal/foo
+fail	1001	1	race	TestBroken	github.com/minhtri2710/munsu/internal/bar
+fail	1002	1	race	TestBroken	github.com/minhtri2710/munsu/internal/bar
+fail	1002	1	integration	TestOther	github.com/minhtri2710/munsu/internal/baz
+fail	1003	1	integration	TestSomethingElse	github.com/minhtri2710/munsu/internal/baz
+fail	1004	1	integration	TestLate	github.com/minhtri2710/munsu/internal/baz
+touch	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222	cccc3333cccc3333cccc3333cccc3333cccc3333	internal/bar
+compared	aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222
+compared	bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222	cccc3333cccc3333cccc3333cccc3333cccc3333
+compared	cccc3333cccc3333cccc3333cccc3333cccc3333	dddd4444dddd4444dddd4444dddd4444dddd4444

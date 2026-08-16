@@ -1,0 +1,25 @@
+run	2001	1	e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1	2026-08-02T00:00:00Z
+run	2002	1	e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2	2026-08-02T01:00:00Z
+run	2003	1	e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3	2026-08-02T02:00:00Z
+run	2004	1	e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4	2026-08-02T03:00:00Z
+job	2001	1	build	success
+job	2001	1	integration	failure
+job	2002	1	build	success
+job	2003	1	build	failure
+job	2003	1	integration	success
+job	2004	1	build	success
+fail	2001	1	integration	TestGap	github.com/minhtri2710/munsu/internal/gap
+fail	2003	1	build	TestUncompared	github.com/minhtri2710/munsu/internal/unc
+compared	e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1	e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3
+touch	e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1	e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3	internal/other
+run	2005	1	f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5	2026-08-02T04:00:00Z
+run	2006	1	f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6	2026-08-02T05:00:00Z
+run	2007	1	f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7	2026-08-02T06:00:00Z
+job	2005	1	build	success
+job	2005	1	integration	failure
+job	2006	1	build	success
+job	2006	1	integration	cancelled
+job	2007	1	build	success
+job	2007	1	integration	success
+fail	2005	1	integration	TestCancelSteps	github.com/minhtri2710/munsu/internal/cancel
+compared	f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5	f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7
