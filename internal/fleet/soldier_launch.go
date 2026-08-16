@@ -3,6 +3,7 @@ package fleet
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -68,11 +69,8 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	// 1. Build charter.
 	charter := DefaultCharter(input.TaskID, input.TaskKind, input.DeliveryMode)
 
-	// 2. Build skill instructions section (strict: read/hash errors propagate).
-	skillSection, err := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills, input.WorktreePath)
-	if err != nil {
-		return "", nil, fmt.Errorf("soldier launch: skill instruction build failed: %w", err)
-	}
+	// 2. Build the skill manifest section.
+	skillSection := buildSkillInstructions(input.RequiredSkills, input.OptionalSkills)
 
 	// 3. Build prompt: charter + brief content + skill instructions + terminal command.
 	var b strings.Builder
@@ -110,15 +108,26 @@ func BuildLaunchPrompt(input LaunchPromptInput) (string, *LaunchEnvelope, error)
 	return prompt, env, nil
 }
 
-// buildSkillInstructions returns a markdown section with skill content for
-// applicable required skills (inline instructions) and a note about optional skills.
-// An error is returned when a required skill's source file cannot be read or its
-// SHA-256 does not match the declared hash. Optional read errors produce durable
-// diagnostics without blocking prompt construction.
-func buildSkillInstructions(required, optional []SkillEntry, baseDir string) (string, error) {
+// skillInvocationNote gives each catalog skill the reason it is listed, so the
+// manifest names an action instead of a bare noun. An unlisted skill degrades to
+// its name alone.
+var skillInvocationNote = map[string]string{
+	"gh-axi":              "invoke for every GitHub operation (issues, pull requests, CI runs)",
+	"qmd":                 "invoke to search local markdown knowledge bases and docs",
+	"chrome-devtools-axi": "invoke to drive a real browser session",
+}
+
+// buildSkillInstructions returns the markdown manifest of the skills selected
+// for this launch: required skills the Soldier must invoke, and optional ones
+// available to it.
+//
+// Skills are external CLI tools, not munsu-owned documents — the Soldier gets
+// the tool's own instructions by running it. The manifest therefore carries
+// names and invocation intent only; the presence precondition lives in
+// FailClosedDuringLaunch, before any session is allocated.
+func buildSkillInstructions(required, optional []SkillEntry) string {
 	var b strings.Builder
 
-	// Required skills: inline canonical content. Read/hash verification is strict.
 	var hasRequired bool
 	for _, s := range required {
 		if !s.Applicable {
@@ -128,32 +137,13 @@ func buildSkillInstructions(required, optional []SkillEntry, baseDir string) (st
 			b.WriteString("## Required Skills\n\n")
 			hasRequired = true
 		}
-		b.WriteString(fmt.Sprintf("### %s\n\n", s.Name))
-		if s.Version != "" {
-			b.WriteString(fmt.Sprintf("Version: %s\n\n", s.Version))
-		}
-		if s.SourceSHA256 != "" {
-			b.WriteString(fmt.Sprintf("Integrity: %s\n\n", s.SourceSHA256))
-		}
-
-		// Inline skill content from source. Read errors and hash mismatches are
-		// hard failures for required skills.
-		if s.SourcePath != "" {
-			content, err := os.ReadFile(s.SourcePath)
-			if err != nil {
-				return "", fmt.Errorf("reading required skill %q from %s: %w", s.Name, s.SourcePath, err)
-			}
-			if s.SourceSHA256 != "" && sha256Content(content) != s.SourceSHA256 {
-				return "", fmt.Errorf("required skill %q at %s: SHA-256 mismatch (declared %s)", s.Name, s.SourcePath, s.SourceSHA256)
-			}
-			if len(content) > 0 {
-				b.WriteString(string(content))
-				b.WriteString("\n\n")
-			}
+		if note := skillInvocationNote[s.Name]; note != "" {
+			b.WriteString(fmt.Sprintf("- %s — %s\n", s.Name, note))
+		} else {
+			b.WriteString(fmt.Sprintf("- %s\n", s.Name))
 		}
 	}
 
-	// Optional skills: just list them.
 	var hasOptional bool
 	for _, s := range optional {
 		if !s.Applicable {
@@ -161,19 +151,19 @@ func buildSkillInstructions(required, optional []SkillEntry, baseDir string) (st
 		}
 		if !hasOptional {
 			if hasRequired {
-				b.WriteString("---\n")
+				b.WriteString("\n---\n")
 			}
 			b.WriteString("## Optional Skills\n\n")
 			hasOptional = true
 		}
-		b.WriteString(fmt.Sprintf("- %s", s.Name))
-		if s.Version != "" {
-			b.WriteString(fmt.Sprintf(" (version: %s)", s.Version))
+		if note := skillInvocationNote[s.Name]; note != "" {
+			b.WriteString(fmt.Sprintf("- %s — %s\n", s.Name, note))
+		} else {
+			b.WriteString(fmt.Sprintf("- %s\n", s.Name))
 		}
-		b.WriteString("\n")
 	}
 
-	return strings.TrimSpace(b.String()), nil
+	return strings.TrimSpace(b.String())
 }
 
 // terminalReportReminder returns the exact terminal report command
@@ -394,9 +384,51 @@ func PersistLaunchFiles(worktreePath string, charter string, briefContent []byte
 	return nil
 }
 
-// FailClosedDuringLaunch returns true when a pre-session-allocation check
-// fails — charter, brief, envelope, task meta, parent identity, delivery
-// mode, or hashes are absent/mismatched/unreadable.
+// missingRequiredSkillBinaries returns the names of applicable required skills
+// whose CLI binary is not on PATH. Catalog skill names are the binary names
+// (resolveSkills selects gh-axi, qmd, chrome-devtools-axi), so the name is
+// looked up directly.
+//
+// ASSUMPTION: this probes the PATH of the LAUNCHER process, not the Soldier's
+// harness environment. It is valid only because .soldier-launch.sh execs
+// locally, on this same host. It BREAKS if launch ever becomes remote: a remote
+// Soldier's PATH is not this process's PATH, so the check would be both
+// false-negative and false-positive. Move the probe into the launch script or a
+// remote pre-flight at that point.
+func missingRequiredSkillBinaries(required []SkillEntry) []string {
+	var missing []string
+	for _, s := range required {
+		if !s.Applicable {
+			continue
+		}
+		if _, err := exec.LookPath(s.Name); err != nil {
+			missing = append(missing, s.Name)
+		}
+	}
+	return missing
+}
+
+// requiredSkillsAreHardGate reports whether a missing required skill must abort
+// the launch rather than only produce a diagnostic.
+//
+// Ship tasks in a PR-producing mode cannot finish without gh-axi — charter and
+// brief both instruct the Soldier to use it — so launching there is a failure
+// already decided, only later and less legibly. local-only ship tasks and
+// scouts stay diagnostic: bootstrap classifies gh-axi as {Required: false}
+// (internal/bootstrap/tools.go), and a global hard requirement would contradict
+// that classification. Soft at the bootstrap layer means "munsu runs without
+// it", not "a ship task runs without it".
+func requiredSkillsAreHardGate(taskKind, deliveryMode string) bool {
+	if taskKind == "scout" {
+		return false
+	}
+	return deliveryMode == "direct-PR" || deliveryMode == "no-mistakes"
+}
+
+// FailClosedDuringLaunch returns an error when a pre-session-allocation check
+// fails — charter, brief, envelope, task meta, parent identity or delivery mode
+// absent/unreadable, or a required skill CLI missing in a mode that hard-gates
+// on it (requiredSkillsAreHardGate).
 func FailClosedDuringLaunch(input LaunchPromptInput) error {
 	var failures []string
 
@@ -426,13 +458,10 @@ func FailClosedDuringLaunch(input LaunchPromptInput) error {
 		}
 	}
 
-	// Verify required skills are present (when source paths are set).
-	for _, s := range input.RequiredSkills {
-		if !s.Applicable || s.SourcePath == "" {
-			continue
-		}
-		if _, err := os.Stat(s.SourcePath); err != nil {
-			failures = append(failures, fmt.Sprintf("required skill %q source %s: %v", s.Name, s.SourcePath, err))
+	// Verify required skill CLIs are installed, before any session is allocated.
+	if requiredSkillsAreHardGate(input.TaskKind, input.DeliveryMode) {
+		for _, name := range missingRequiredSkillBinaries(input.RequiredSkills) {
+			failures = append(failures, fmt.Sprintf("required skill %q: binary not found on PATH", name))
 		}
 	}
 

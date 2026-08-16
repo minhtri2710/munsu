@@ -9,13 +9,14 @@ import (
 )
 
 // SkillEntry records one selected skill in the launch envelope.
+//
+// A skill is a CLI tool the Soldier invokes natively (gh-axi, qmd,
+// chrome-devtools-axi); munsu neither owns nor ships its text. The envelope is
+// therefore a manifest of names, not a carrier of skill content.
 type SkillEntry struct {
-	Name         string `json:"name"`
-	Role         string `json:"role"`       // "soldier", "captain", "general", or empty
-	Applicable   bool   `json:"applicable"` // true when soldier-applicable
-	SourcePath   string `json:"source_path,omitempty"`
-	SourceSHA256 string `json:"source_sha256,omitempty"`
-	Version      string `json:"version,omitempty"`
+	Name       string `json:"name"`
+	Role       string `json:"role"`       // "soldier", "captain", "general", or empty
+	Applicable bool   `json:"applicable"` // true when soldier-applicable
 }
 
 // SoldierSkillDenied lists skill names that are explicitly forbidden in
@@ -94,7 +95,7 @@ func WriteEnvelope(worktreePath string, env *LaunchEnvelope) error {
 }
 
 // CollectSkills filters skills by role applicability (soldier/any) and builds
-// the required/optional lists with integrity metadata.
+// the required/optional lists.
 // Uses SkillAuthorityClass for classification: skills in the denylist
 // (SoldierSkillDenied) or with Captain/General-only roles are excluded.
 // Non-applicable required skills are still returned (Applicable=false) with
