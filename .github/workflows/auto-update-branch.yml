@@ -1,8 +1,44 @@
 name: Auto-update PR branches
 
+# Two independent events can leave a PR needing an update, and until BEO-109
+# this workflow listened to only one of them:
+#
+#   push to main            an already-queued PR falls behind
+#   auto_merge_enabled      a PR that was already behind joins the queue
+#
+# Listening to the first alone is a deadlock, not a gap: a PR that enables
+# auto-merge while main sits still produces no push, so nothing sweeps it; it
+# stays behind, so `strict: true` blocks the merge; so there is no push to
+# main to sweep it later. Run 32010442914 is that state written down --
+# #498 and #500 enabled auto-merge five seconds after the sweep for #499 had
+# already listed its candidates, and the run logged
+# `no open PR targeting main has auto-merge enabled; nothing to update`
+# while both sat `behind`. Nothing was red. Both needed a hand-run of
+# update-branch. The orchestrator's natural order -- merge the reviewed PR,
+# then queue the next one -- walks into this window every time.
+#
+# `auto_merge_enabled` fires at exactly the moment a PR enters "waiting to be
+# updated so it can merge", which is the condition this workflow exists to
+# clear. `branches: [main]` keeps it to PRs whose base is the branch under
+# `strict: true`.
+#
+# The schedule is a backstop for the cases that raise the need without raising
+# either event -- a required check being added or renamed in branch protection
+# leaves already-queued PRs stuck with no push and no auto-merge transition to
+# announce it. It also covers a sharper one: an event raised by GITHUB_TOKEN
+# does not start a workflow run, so the day something in this repo enables
+# auto-merge with the token rather than by hand, `auto_merge_enabled` will not
+# fire and the deadlock returns intact. Cheap either way: the sweep exits in
+# under a second when there is nothing to do, and only ever runs from the
+# default branch.
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [auto_merge_enabled]
+    branches: [main]
+  schedule:
+    - cron: '*/30 * * * *'
 
 # The repo default for GITHUB_TOKEN is `read` and stays that way: this file
 # raises the scope for one job only, so every other workflow -- including all
@@ -15,8 +51,37 @@ permissions: {}
 # 15/08). Each push queues a fresh sweep, and a sweep started against an older
 # main has nothing to contribute that the newer one will not redo -- so the
 # newest run wins and the older one is cancelled instead of racing it.
+#
+# That "the newer one will redo it" only holds between two runs sweeping the
+# same base for the same reason, so the key is per triggering event and, for
+# auto-merge, per PR. Cancelling across those boundaries is what brings the
+# BEO-109 hang back:
+#
+# A sweep that updated a PR is not finished at the PUT. It then waits, for up
+# to ~120s across two poll loops, for the parked CI run on the head it just
+# wrote, and approves it. Cancel it mid-wait and the next run finds that PR at
+# `behind_by = 0`, skips it before reaching the release step, and no later
+# sweep ever reaches it either -- `behind_by` stays 0, and the PR cannot merge
+# so it never produces a push. The PR ends up up to date, carrying no checks
+# at all, with auto-merge waiting on four required checks that will never be
+# reported. Green run, `updated=0 skipped=1 failed=0`, no warning: the same
+# silent deadlock this file exists to remove, one step to the left.
+#
+# Two cross-boundary cancels would do that, and the key separates both:
+#   - two PRs enabling auto-merge seconds apart (#498 and #500 did exactly
+#     that on 17/08) -- separated by PR number;
+#   - the half-hourly cron landing inside a push run's release wait --
+#     separated by event name, which `github.ref_name` did not do, because it
+#     is `main` on a scheduled run just as it is on a push.
+#
+# Letting them run concurrently instead is safe, and it is worth being exact
+# about why: the loser of a race on the same PR either gets a 422 from
+# `expected_head_sha` or reads `behind_by = 0` and skips, while the winner
+# still performs its release. Concurrency costs a warning; cancellation costs
+# the PR. Within a boundary a newer run does supersede an older one, which is
+# the push-after-push case this block has always described.
 concurrency:
-  group: auto-update-branch
+  group: auto-update-branch-${{ github.event.pull_request.number || github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -42,7 +107,25 @@ jobs:
       pull-requests: write
       actions: write
     steps:
+      # Pinned, not defaulted. On a `pull_request` event checkout would take
+      # `refs/pull/N/merge` -- the script below would then be the PR's copy of
+      # itself, running against a token holding three write scopes, on nothing
+      # more than its author enabling auto-merge. The base branch is the only
+      # version of this script that has been through review.
+      #
+      # What the pin does not cover, stated plainly rather than left to be
+      # discovered: GitHub resolves the *workflow file* itself from the PR's
+      # merge ref on this event, so a branch that edits this yaml runs its own
+      # version of it under those three write scopes, before review. That is
+      # not an escalation -- enabling auto-merge already requires write on the
+      # repo, and a write-role user holds contents and actions write under
+      # their own account -- and the token cannot reach `main` past
+      # `strict: true`, four required checks and `enforce_admins`. It is not
+      # the same shape as ci.yml either: that one runs head *code* under
+      # `contents: read`. Same trigger model, different blast radius.
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.base_ref || github.sha }}
       # The script exits 0 on every failure it anticipates; this is the
       # backstop for the ones it does not. This job is a convenience, not a
       # gate: a PR that fails to update is exactly as merge-blocked as it was
@@ -52,4 +135,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .github/scripts/update-auto-merge-prs.sh "${{ github.ref_name }}"
+        # `base_ref` is the PR's base and is empty on every other event, where
+        # `ref_name` is already the branch that moved. Both resolve to main
+        # under the filters above; written as the fallback rather than the
+        # literal so the argument still names whatever branch fired the run.
+        run: .github/scripts/update-auto-merge-prs.sh "${{ github.base_ref || github.ref_name }}"
