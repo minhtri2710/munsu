@@ -485,49 +485,6 @@ internal/taskauthority/canonical_delivery.go	Canonical.readDeliveryRevocation	1	
 internal/taskauthority/canonical_delivery.go	Canonical.RevokeDeliveryAuthorization	1	!ok	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/canonical_delivery.go	Canonical.RevokeDeliveryAuthorization	1	index.AuthorizationOpID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/canonical_delivery.go	Canonical.RevokeDeliveryAuthorization	1	strings.TrimSpace(req.Reason) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!a.Kind.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!a.Phase.Valid() || a.Phase != PhaseWorking	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!domain.IsSHA256(a.BindingDigest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!domain.IsSHA256(a.Digest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!domain.IsSHA256(a.HoldsDigest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!p.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	!safeSHAValue(a.Identity.HeadSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.ExpectedState != nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.ExpectedState == nil	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.IssuedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.OperationID == "" || strings.ContainsAny(a.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.Revision == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	a.TaskID == "" || strings.ContainsAny(a.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	len(a.Preconditions) == 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	seen[p]	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorization	1	strings.TrimSpace(a.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorizationRequest	1	!p.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryAuthorizationRequest	1	!safeSHAValue(req.Identity.HeadSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryExpectedState	1	es.Ref == "" || es.Ref != strings.TrimSpace(es.Ref) || strings.ContainsAny(es.Ref, `\\`) || strings.ContainsAny(es.Ref, " \t\n\r") || es.Ref == "." || es.Ref == ".."	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.AuthorizationOpID != "" && !safeIdentityValue(index.AuthorizationOpID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.OutcomeOpID != "" && !safeIdentityValue(index.OutcomeOpID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.OutcomeOpID != "" && index.AuthorizationOpID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.RevocationOpID != "" && !safeIdentityValue(index.RevocationOpID)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.RevocationOpID != "" && index.AuthorizationOpID == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryIndex	1	index.TaskID == "" || strings.ContainsAny(index.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	!domain.IsSHA256(o.Digest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	!o.Status.Valid()	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.AuthorizationOperationID == "" || strings.ContainsAny(o.AuthorizationOperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.CommittedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.HeadSHA != "" && !safeSHAValue(o.HeadSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.MergedSHA != "" && !safeSHAValue(o.MergedSHA)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.OperationID == "" || strings.ContainsAny(o.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	o.TaskID == "" || strings.ContainsAny(o.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryOutcome	1	strings.TrimSpace(o.Detail) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	!domain.IsSHA256(r.Digest)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.AuthorizationOperationID == "" || strings.ContainsAny(r.AuthorizationOperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.OperationID == "" || strings.ContainsAny(r.OperationID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.RevokedAt <= 0	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.SchemaVersion != TaskAuthoritySchema	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	r.TaskID == "" || strings.ContainsAny(r.TaskID, `/\\`)	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
-internal/taskauthority/canonical_delivery.go	validateDeliveryRevocation	1	strings.TrimSpace(r.Reason) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/canonical_launch.go	Canonical.AttachEndpoint	1	cur.Phase != PhaseQueued	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/canonical_launch.go	Canonical.AttachEndpoint	1	req.Incarnation == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/canonical_launch.go	Canonical.BeginSpawn	1	strings.TrimSpace(cur.Definition.Owner) == ""	burn-down(BEO-69): pre-existing, imported with the baseline, not yet triaged
