@@ -73,19 +73,6 @@ func ValidateTargetOwnership(result *TargetResult) error {
 	return nil
 }
 
-// ResolveTarget resolves the general pane handle from explicit config or runtime metadata.
-// Resolution order: config/general-pane, TMUX_PANE, HERDR_PANE_ID, unsupported.
-// Returns (paneHandle, session, error). paneHandle is in "session:pane_id" format
-// for herdr, or a bare pane ID for tmux. Returns empty strings with nil error
-// when no target is configured.
-func ResolveTarget(homeDir string) (string, string, error) {
-	result, err := ResolveTargetWithSource(homeDir)
-	if err != nil {
-		return "", "", err
-	}
-	return result.Handle, result.Session, nil
-}
-
 // ResolveTargetWithSource resolves the general pane handle with source diagnostics.
 func ResolveTargetWithSource(homeDir string) (TargetResult, error) {
 	path := filepath.Join(homeDir, generalPaneConfig)

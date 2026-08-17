@@ -42,40 +42,6 @@ func TestIsActive_FlagRemoved(t *testing.T) {
 	}
 }
 
-func TestStatus_NoFlagFile(t *testing.T) {
-	tmp := t.TempDir()
-	active, startedAt, err := Status(tmp)
-	if err != nil {
-		t.Fatalf("Status() with no flag: unexpected error: %v", err)
-	}
-	if active {
-		t.Error("Status() with no flag: active=true, want false")
-	}
-	if startedAt != "" {
-		t.Errorf("Status() with no flag: startedAt=%q, want empty", startedAt)
-	}
-}
-
-func TestStatus_WithFlag(t *testing.T) {
-	tmp := t.TempDir()
-	flagPath := filepath.Join(tmp, afkFlagFile)
-	os.MkdirAll(filepath.Dir(flagPath), 0755)
-	ts := "2024-06-01T12:00:00Z"
-	if err := os.WriteFile(flagPath, []byte(ts+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	active, startedAt, err := Status(tmp)
-	if err != nil {
-		t.Fatalf("Status() with flag: unexpected error: %v", err)
-	}
-	if !active {
-		t.Error("Status() with flag: active=false, want true")
-	}
-	if startedAt != ts {
-		t.Errorf("Status() with flag: startedAt=%q, want %q", startedAt, ts)
-	}
-}
-
 func TestDisable_RemovesFlag(t *testing.T) {
 	tmp := t.TempDir()
 	flagPath := filepath.Join(tmp, afkFlagFile)

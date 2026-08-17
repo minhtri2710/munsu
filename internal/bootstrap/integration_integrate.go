@@ -564,6 +564,12 @@ console.log("API probe passed");
 // Safety check
 // ---------------------------------------------------------------------------
 
+// UnrelatedCheckoutRefusal is the refusal SafetyCheck raises when the session
+// working directory belongs to no recognized repository. It is exported so the
+// one caller allowed to narrow that refusal (ADR-0014 §3) can recognize it
+// without matching on a literal it does not own.
+const UnrelatedCheckoutRefusal = "unrelated checkout (not a recognized repository)"
+
 func SafetyCheck(path string) *SafetyCheckResult {
 	scopeResult := fleet.Classify(path)
 
@@ -607,7 +613,7 @@ func SafetyCheck(path string) *SafetyCheckResult {
 	} else if scopeResult.Identity == fleet.Unrelated {
 		// Unrelated identity with no explicit gate still fails closed
 		result.GateRefused = true
-		result.Error = "unrelated checkout (not a recognized repository)"
+		result.Error = UnrelatedCheckoutRefusal
 	} else if scopeResult.Identity == fleet.Primary && IsBoundRepository(scopeResult.CommonDir) {
 		// Inside an active task run the bound worktree is the only legal
 		// working tree for the bound repository; its primary checkout is the

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -25,20 +24,6 @@ func IsActive(homeDir string) bool {
 // because the AFK daemon will batch and escalate via its own injection cycle.
 func ShouldBatch(homeDir string) bool {
 	return IsActive(homeDir)
-}
-
-// Status returns the current AFK state: whether the daemon is active,
-// and the timestamp from the flag file if it exists.
-func Status(homeDir string) (active bool, startedAt string, err error) {
-	data, err := os.ReadFile(filepath.Join(homeDir, afkFlagFile))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, "", nil
-		}
-		return false, "", err
-	}
-	s := strings.TrimSpace(string(data))
-	return true, s, nil
 }
 
 // Disable idempotently removes the AFK flag file. Returns nil if the flag

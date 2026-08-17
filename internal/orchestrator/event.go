@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -108,64 +107,6 @@ func AppendWithID(homeDir string, id uint64, eventType, producer, key, payload s
 		return fmt.Errorf("writing event: %w", err)
 	}
 	return nil
-}
-
-// ReadAll reads all events from the log, ordered by ID.
-func ReadAll(homeDir string) ([]Record, error) {
-	path := LogPath(homeDir)
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("opening event log: %w", err)
-	}
-	defer f.Close()
-
-	var records []Record
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 6)
-		if len(parts) < 6 {
-			continue
-		}
-		id, _ := strconv.ParseUint(parts[0], 10, 64)
-		ts, _ := strconv.ParseInt(parts[1], 10, 64)
-		records = append(records, Record{
-			ID:        id,
-			Timestamp: ts,
-			Type:      parts[2],
-			Producer:  parts[3],
-			Key:       parts[4],
-			Payload:   parts[5],
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scanning event log: %w", err)
-	}
-	sort.Slice(records, func(i, j int) bool {
-		return records[i].ID < records[j].ID
-	})
-	return records, nil
-}
-
-// ReadFrom reads events with ID >= fromID.
-func ReadFrom(homeDir string, fromID uint64) ([]Record, error) {
-	all, err := ReadAll(homeDir)
-	if err != nil {
-		return nil, err
-	}
-	var result []Record
-	for _, r := range all {
-		if r.ID >= fromID {
-			result = append(result, r)
-		}
-	}
-	return result, nil
 }
 
 var syntheticID atomic.Uint64

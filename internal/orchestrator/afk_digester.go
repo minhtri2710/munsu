@@ -112,13 +112,6 @@ func (d *Digester) FirstAt() time.Time {
 	return d.firstAt
 }
 
-// EntryCount returns the total number of unflushed entries.
-func (d *Digester) EntryCount() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return len(d.entries)
-}
-
 // MaxDeferDuration returns the max-defer threshold.
 func (d *Digester) MaxDeferDuration() time.Duration {
 	d.mu.Lock()

@@ -1369,17 +1369,8 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	if !result.BeatStatus.Stale {
 		t.Fatal("expected stale beat status")
 	}
-	// Force the guard to include a stale condition by checking GuardWarnings.
-	warnings := GuardWarnings(tmp)
-	foundStale := false
-	for _, w := range warnings {
-		if strings.Contains(w, "STALE") {
-			foundStale = true
-			break
-		}
-	}
-	if !foundStale {
-		t.Errorf("stale beat not in GuardWarnings: %v", warnings)
+	if !HasQueuedWakes(tmp) {
+		t.Error("material wake not queued")
 	}
 }
 
@@ -1402,22 +1393,18 @@ func TestDeadStaleWatcher_AutoRecoverOrFailClosed(t *testing.T) {
 
 	// Bounded status command should detect the situation.
 	// (Unit test for the diagnostic evaluation logic)
-	warnings := GuardWarnings(tmp)
-	hasAbsentWarn := false
-	hasWakeWarn := false
-	for _, w := range warnings {
-		if strings.Contains(w, "NEVER STARTED") {
-			hasAbsentWarn = true
-		}
-		if strings.Contains(w, "WAKES PENDING") {
-			hasWakeWarn = true
+	result := EvaluateGuard(tmp, 1, time.Now())
+	if result.BeatStatus.Exists {
+		t.Error("absent watcher reported as existing")
+	}
+	hasWakeCondition := false
+	for _, c := range result.Conditions {
+		if c.Code == ConditionQueuedWakesPending {
+			hasWakeCondition = true
 		}
 	}
-	if !hasAbsentWarn {
-		t.Errorf("missing absent warning: %v", warnings)
-	}
-	if !hasWakeWarn {
-		t.Errorf("missing wake warning: %v", warnings)
+	if !hasWakeCondition {
+		t.Errorf("missing queued-wake condition: %v", result.Conditions)
 	}
 
 	// Run cycle to attempt recovery — with no watcher, cycles still produce

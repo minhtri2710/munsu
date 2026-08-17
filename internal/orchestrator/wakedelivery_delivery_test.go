@@ -95,10 +95,7 @@ func TestDeliverWake_SoldierMaterialState(t *testing.T) {
 	}
 
 	// Local event log should exist
-	events, err := ReadAll(soldierHome)
-	if err != nil {
-		t.Fatalf("event log: %v", err)
-	}
+	events := readEventLog(t, soldierHome)
 	if len(events) == 0 {
 		t.Fatal("expected at least one event")
 	}
@@ -163,10 +160,7 @@ func TestDeliverWake_SoldierNonMaterialState(t *testing.T) {
 	}
 
 	// Event should exist
-	events, err := ReadAll(soldierHome)
-	if err != nil {
-		t.Fatalf("event log: %v", err)
-	}
+	events := readEventLog(t, soldierHome)
 	if len(events) == 0 {
 		t.Fatal("expected event for non-material state")
 	}

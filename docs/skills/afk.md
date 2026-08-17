@@ -60,9 +60,13 @@ locks (dead PID) are reclaimed silently.
 ### Sentinel marker (U+2063)
 
 Wake-delivery activation nudges (`wakedelivery_deliver.go`) are prefixed with `\u2063` — the
-Unicode INVISIBLE SEPARATOR. This zero-width marker distinguishes machine-delivered messages
-from captain-typed input. The return gate (`IsReturnSignal`) rejects marked lines as return
-candidates; the AFK daemon writes no marked message of its own.
+Unicode INVISIBLE SEPARATOR (`orchestrator.FM_INJECT_MARK`, applied by `Mark`). The zero-width
+marker leaves the nudge visually identical to plain text while keeping it distinguishable from
+captain-typed input in the pane transcript, and it survives Herdr/tmux injection. It is a
+write-only prefix: no gate in the binary reads it back, and no AFK path branches on it. The
+marker that *is* read is the separate General→Captain one — `home.FromGeneralMark` (visible
+label plus the same separator), checked by `home.IsFromGeneral`. The AFK daemon writes no
+marked message of its own.
 
 ### Batched digest (`state/.afk-digest`)
 

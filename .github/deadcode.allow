@@ -31,9 +31,13 @@
 # wire it up or delete it. A line leaves this section with that issue, not
 # before, and nobody may quietly demote one to accepted debt.
 #
-# The section is empty. That is the intended resting state, not a dead heading:
-# `announce_open_bugs` runs on every `check`, so the next OPEN-BUG line lands
-# here and starts warning the moment it is added.
+# `announce_open_bugs` runs on every `check`, so every line below is reprinted
+# as a warning until its issue closes. An empty section is the intended resting
+# state; it is not empty right now.
+internal/orchestrator/wakedelivery_deliver.go	ReconcilePending	OPEN-BUG(BEO-112): captain-side relay of soldier terminal receipts. #417 deleted its only call site (ReconcileCaptainHook) as "legacy read compatibility", but DeliverWake still writes those receipts today (wakedelivery_deliver.go:143) and only self-acks when the parent is NOT a captain home. Nothing else writes the ack.
+internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Failed	OPEN-BUG(BEO-112): outcome tally of the unwired relay sweep; reachable only once ReconcilePending is wired back.
+internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Relayed	OPEN-BUG(BEO-112): outcome tally of the unwired relay sweep; reachable only once ReconcilePending is wired back.
+internal/orchestrator/wakedelivery_deliver.go	reconcileOne	OPEN-BUG(BEO-112): the per-receipt relay chain (General status -> .turnend event -> ack -> obligation close). Same hole as ReconcilePending; only that dead caller reaches it.
 
 # --- Not findings: GOOS-union artifacts --------------------------------------
 # The set is the union across every GOOS, so a function reachable on one
@@ -169,35 +173,4 @@ internal/harness/preflight.go	PreflightBinaryName	burn-down(BEO-63): pre-existin
 internal/harness/quota_balanced.go	newQuotaSelectorWithProvider	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/atomic.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/home/atomic_windows.go	publishExclusive	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_digester.go	Digester.EntryCount	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_gate.go	IsReturnSignal	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_lock.go	Lock.PID	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_lock.go	Lock.StartAt	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_main.go	Status	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_sentinel.go	Marked	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/afk_target.go	ResolveTarget	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/event.go	ReadAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/event.go	ReadFrom	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/mailbox_delivery.go	AwaitedSendReportWithSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/mailbox_delivery.go	DeliverEnvelopeWithMetaAndSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/mailbox_delivery.go	DeliverEnvelopeWithSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/mailbox_delivery.go	SendReportWithSender	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/mailbox_recovery.go	CleanRecoveryMarkers	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/mailbox_recovery.go	RecoveryFingerprint	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/observation_event.go	EventWaitOutcome.PollFallback	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/observation_event.go	EventWaitOutcome.String	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/turnend_obligations.go	ClearAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/turnend_obligations.go	ClearTaskAll	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/turnend_obligations.go	ParseTermKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/turnend_obligations.go	parseKey	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/uplink_uplink.go	HasAcceptedReport	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/uplink_uplink.go	HasOpenReport	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/wakedelivery_deliver.go	ReconcilePending	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Failed	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/wakedelivery_deliver.go	ReconcileResult.Relayed	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/wakedelivery_deliver.go	reconcileOne	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/waker_drain.go	CheckGuard	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/waker_drain.go	Drain	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/waker_drain.go	GuardWarnings	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
-internal/orchestrator/waker_drain.go	PrintRecords	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged
 internal/taskauthority/canonical_cleanup.go	cleanupStatusLabel	burn-down(BEO-63): pre-existing, imported with the baseline, not yet triaged

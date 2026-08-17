@@ -62,12 +62,6 @@ func (l *Lock) Release() error {
 	return os.Remove(l.path)
 }
 
-// PID returns the process ID that holds this lock.
-func (l *Lock) PID() int { return l.pid }
-
-// StartAt returns the timestamp when this lock was acquired.
-func (l *Lock) StartAt() time.Time { return l.startAt }
-
 // parseLockContent extracts PID and start time from lock file content.
 // Format: "<pid>\t<RFC3339>\n"
 func parseLockContent(data []byte) (pid int, startStr string) {

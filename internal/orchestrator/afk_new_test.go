@@ -17,9 +17,6 @@ func TestSentinelMark(t *testing.T) {
 	if !strings.HasPrefix(marked, FM_INJECT_MARK) {
 		t.Errorf("Mark(%q) = %q, expected %q prefix", payload, marked, FM_INJECT_MARK)
 	}
-	if !Marked(marked) {
-		t.Errorf("Marked(%q) = false, want true", marked)
-	}
 }
 
 func TestSentinelRoundTrip(t *testing.T) {
@@ -35,18 +32,6 @@ func TestSentinelRoundTrip(t *testing.T) {
 		if got != p {
 			t.Errorf("Mark/Marked round-trip failed: input=%q, got=%q", p, got)
 		}
-		if !Marked(marked) {
-			t.Errorf("Marked(%q) = false, want true", marked)
-		}
-	}
-}
-
-func TestSentinelNotMarked(t *testing.T) {
-	if Marked("plain text without mark") {
-		t.Error("Marked(plain text) = true, want false")
-	}
-	if Marked("") {
-		t.Error("Marked(empty) = true, want false")
 	}
 }
 
@@ -61,11 +46,11 @@ func TestLockAcquireRelease(t *testing.T) {
 	if !acquired {
 		t.Fatal("AcquireLock returned not acquired, want acquired")
 	}
-	if lock.PID() == 0 {
-		t.Error("Lock.PID() = 0, want non-zero")
+	if lock.pid == 0 {
+		t.Error("Lock.pid = 0, want non-zero")
 	}
-	if lock.StartAt().IsZero() {
-		t.Error("Lock.StartAt() is zero, want non-zero")
+	if lock.startAt.IsZero() {
+		t.Error("Lock.startAt is zero, want non-zero")
 	}
 	if err := lock.Release(); err != nil {
 		t.Fatalf("Lock.Release: %v", err)
@@ -124,8 +109,8 @@ func TestLockStaleRecovery(t *testing.T) {
 	}
 	defer lock.Release()
 
-	if lock.PID() != os.Getpid() {
-		t.Errorf("Lock.PID() = %d, want %d", lock.PID(), os.Getpid())
+	if lock.pid != os.Getpid() {
+		t.Errorf("Lock.pid = %d, want %d", lock.pid, os.Getpid())
 	}
 }
 
