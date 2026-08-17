@@ -1355,7 +1355,7 @@ func TestDeadStaleWatcher_PendingWakeDetectsDeadWatcher(t *testing.T) {
 	// Set up a stale watcher beat.
 	old := time.Now().Add(-(StaleThreshold() + time.Minute))
 	beatContent := fmt.Sprintf("%d %d", old.Unix(), 99999)
-	os.WriteFile(BeatPath(tmp), []byte(beatContent), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(tmp), []byte(beatContent), 0644)
 
 	// Add an in-flight task.
 	mhome.WriteMeta(tmp, "task-stale", map[string]string{"window": "@test"})

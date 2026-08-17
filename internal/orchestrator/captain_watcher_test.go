@@ -57,7 +57,7 @@ func TestWatcherStatusSummary_StoppedStaleBeat(t *testing.T) {
 
 	// Write an old beat beyond the stale threshold.
 	old := time.Now().Add(-2 * StaleThreshold())
-	beatPath := BeatPath(tmp)
+	beatPath := mhome.WatcherBeatPath(tmp)
 	os.WriteFile(beatPath, []byte(old.Format("060102150405")+" 99999\n"), 0644)
 
 	status := WatcherStatusSummary(tmp)

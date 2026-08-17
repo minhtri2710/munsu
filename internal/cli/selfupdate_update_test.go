@@ -5,6 +5,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	mhome "github.com/minhtri2710/munsu/internal/home"
 	"os"
 	"os/exec"
 	"strings"
@@ -290,7 +291,7 @@ func TestWaitForNewWatcher_SpoofedIdentity(t *testing.T) {
 
 	// Write beat matching the spoofed PID with fresh timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Unix(), 99999)
-	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(home), []byte(beatContent), 0644)
 
 	err := waitForNewWatcher(home, snap)
 	if err == nil {
@@ -328,7 +329,7 @@ func TestWaitForNewWatcher_StaleBeat(t *testing.T) {
 
 	// Beat with stale timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
-	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(home), []byte(beatContent), 0644)
 
 	err := waitForNewWatcher(home, snap)
 	if err == nil {
@@ -366,7 +367,7 @@ func TestWaitForNewWatcher_FutureBeat(t *testing.T) {
 
 	// Beat with future timestamp.
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
-	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(home), []byte(beatContent), 0644)
 
 	err := waitForNewWatcher(home, snap)
 	if err == nil {
@@ -952,7 +953,7 @@ func TestSnapshotWatcher_StaleBeat(t *testing.T) {
 
 	// Write a beat with a stale timestamp (beyond StaleThreshold).
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(-10*time.Minute).Unix(), os.Getpid())
-	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(home), []byte(beatContent), 0644)
 
 	snap := snapshotWatcher(home)
 	if snap.Active {
@@ -967,7 +968,7 @@ func TestSnapshotWatcher_FutureBeat(t *testing.T) {
 
 	// Write a beat with a future timestamp (>5s skew).
 	beatContent := fmt.Sprintf("%d %d", time.Now().Add(1*time.Hour).Unix(), os.Getpid())
-	os.WriteFile(orchestrator.BeatPath(home), []byte(beatContent), 0644)
+	os.WriteFile(mhome.WatcherBeatPath(home), []byte(beatContent), 0644)
 
 	snap := snapshotWatcher(home)
 	if snap.Active {

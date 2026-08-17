@@ -7,8 +7,6 @@ import (
 type ClaimedWakeRecord = home.ClaimedWakeRecord
 type ClaimResult = home.ClaimResult
 
-func LeaseDir(h string) string          { return home.LeaseDir(h) }
-func LeaseFilePath(h, id string) string { return home.LeaseFilePath(h, id) }
 func ClaimWakes(h, c string, seconds, limit int) (*ClaimResult, error) {
 	return home.ClaimWakes(h, c, seconds, limit)
 }
@@ -16,4 +14,3 @@ func AckWakes(h, id string, events []string) error { return home.AckWakes(h, id,
 func ResolveWake(h, leaseID, eventID, summary string) error {
 	return home.ResolveWake(h, leaseID, eventID, summary)
 }
-func reclaimExpiredLeases(h string) (int, error) { return home.ReclaimExpiredLeases(h) }

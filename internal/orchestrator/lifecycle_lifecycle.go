@@ -20,10 +20,7 @@ type WakeRecord = home.WakeRecord
 type BeatStatus = home.WatcherBeatStatus
 
 func StaleThreshold() time.Duration   { return home.WatcherStaleThreshold() }
-func BeatPath(homeDir string) string  { return home.WatcherBeatPath(homeDir) }
 func QueuePath(homeDir string) string { return home.WakeQueuePath(homeDir) }
-func LockPath(homeDir string) string  { return home.SessionLockPath(homeDir) }
-func WatchPath(homeDir string) string { return home.WatchLockPath(homeDir) }
 func lifecycleLockPolicy() home.WatcherLockPolicy {
 	return home.WatcherLockPolicy{ProcessAlive: isLifecycleProcessAlive, IsWatcher: isWatchProcess}
 }
