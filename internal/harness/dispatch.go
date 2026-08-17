@@ -223,9 +223,6 @@ func ResolveDispatchSelectionWithPreflight(cfg *DispatchConfig, taskDesc string)
 	if err != nil {
 		return sel, err
 	}
-	if result.AdapterKnown == PreflightAbsent {
-		return sel, &PreflightError{Harness: sel.Harness, Reason: "adapter-unknown"}
-	}
 	if result.BinaryOnPath == PreflightAbsent {
 		return sel, &PreflightError{Harness: sel.Harness, Reason: "binary-absent"}
 	}
